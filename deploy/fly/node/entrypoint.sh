@@ -2,10 +2,11 @@
 #
 # entrypoint.sh — PID 1 on the Fly worker node.
 #
-# Topology is PROVIDER-ATTACH, not federation. This machine runs exactly two
+# Topology is PROVIDER-ATTACH, not federation. This machine runs three
 # workspacer processes:
 #
 #   claudemon serve --host 127.0.0.1        the session daemon, loopback only
+#   mcp --addr 127.0.0.1:7897               the agent-facing MCP facade
 #   brain --hub <wss://…/bus> --token <tok> dials the always-on hub and
 #                                           registers ~60 capabilities
 #
@@ -32,7 +33,7 @@
 #                                    the serve path ever runs this; without it
 #                                    PTY sessions emit no hook events and read
 #                                    as permanently idle. Idempotent.
-#   7. claudemon serve, then brain
+#   7. claudemon serve, mcp facade, then brain
 #
 set -euo pipefail
 
@@ -71,6 +72,12 @@ export WKS_STATE_DB="${WKS_STATE_DB:-$XDG_DATA_HOME/claudemon/state.db}"
 CLAUDEMON_API_PORT="${CLAUDEMON_API_PORT:-7891}"
 CLAUDEMON_HOOK_PORT="${CLAUDEMON_HOOK_PORT:-7890}"
 CLAUDEMON_URL="http://127.0.0.1:${CLAUDEMON_API_PORT}"
+MCP_FACADE_PORT="${WKS_MCP_FACADE_PORT:-7897}"
+MCP_FACADE_ADDR="${WKS_MCP_FACADE_ADDR:-127.0.0.1:${MCP_FACADE_PORT}}"
+MCP_FACADE_URL="${WKS_MCP_FACADE_URL:-http://127.0.0.1:${MCP_FACADE_PORT}/mcp}"
+MCP_FACADE_HEALTH="${WKS_MCP_FACADE_HEALTH:-http://127.0.0.1:${MCP_FACADE_PORT}/health}"
+MCP_FACADE_ENABLED="${WKS_MCP_FACADE_ENABLED:-1}"
+WKS_MCP_UNTOKENED="${WKS_MCP_UNTOKENED:-deny}"
 
 TS_STATE="${WKS_DATA}/tailscale/tailscaled.state"
 TS_SOCKET="${TS_SOCKET:-/var/run/tailscale/tailscaled.sock}"
@@ -269,8 +276,14 @@ record_exit() {
 
 CLAUDEMON_PID=""
 BRAIN_PID=""
+MCP_PID=""
 DOORBELL_PID=""
 TAILSCALED_PID=""
+
+pid_alive() {
+  local p="${1:-}"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
 
 shutdown() {
   local sig="$1"
@@ -279,13 +292,13 @@ shutdown() {
   # claudemon's own shutdown path kills its PTYs; its SQLite is WAL with
   # synchronous=NORMAL and written continuously, so sessions rehydrate as
   # Stopped/resumable. There is no drain handshake in the codebase yet.
-  for p in "$BRAIN_PID" "$CLAUDEMON_PID" "$DOORBELL_PID" "$TAILSCALED_PID"; do
+  for p in "$BRAIN_PID" "$MCP_PID" "$CLAUDEMON_PID" "$DOORBELL_PID" "$TAILSCALED_PID"; do
     [ -n "$p" ] && kill -TERM "$p" 2>/dev/null || true
   done
   # kill_timeout in fly.toml is 60s. Give the children 45 and keep 15 in hand.
   local waited=0
   while [ "$waited" -lt 45 ]; do
-    if ! kill -0 "${CLAUDEMON_PID:-0}" 2>/dev/null && ! kill -0 "${BRAIN_PID:-0}" 2>/dev/null; then
+    if ! pid_alive "$CLAUDEMON_PID" && ! pid_alive "$MCP_PID" && ! pid_alive "$BRAIN_PID"; then
       break
     fi
     sleep 1
@@ -330,6 +343,8 @@ export npm_config_cache='${npm_config_cache}'
 export HISTFILE='${HISTFILE}'
 export PATH='/usr/local/go/bin:${GOPATH}/bin:/usr/local/bin:/usr/bin:/bin'
 export WKS_STATE_DB='${WKS_STATE_DB}'
+export WKS_MCP_FACADE_URL='${MCP_FACADE_URL}'
+export WKS_MCP_UNTOKENED='${WKS_MCP_UNTOKENED}'
 EOF
 chown "${WKS_UID}:${WKS_GID}" "${WKS_HOME}/.wks-env" 2>/dev/null || true
 
@@ -478,7 +493,7 @@ as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$X
   log "WARNING: claudemon init failed — PTY sessions on this node may pin the machine awake without ever receiving a prompt"
 
 # --------------------------------------------------------------------------
-# 7. claudemon, then brain.
+# 7. claudemon, mcp facade, then brain.
 # --------------------------------------------------------------------------
 log "starting claudemon (api=${CLAUDEMON_API_PORT} hook=${CLAUDEMON_HOOK_PORT} db=${WKS_STATE_DB})"
 as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
@@ -503,16 +518,55 @@ log "claudemon ready (pid $CLAUDEMON_PID)"
 [ -n "${HUB_BUS_URL:-}" ] || die "HUB_BUS_URL is unset — the node has nothing to attach to. fly secrets set HUB_BUS_URL=wss://<hub>/bus"
 [ -n "${HUB_TOKEN:-}" ] || log "WARNING: HUB_TOKEN is unset — the brain will attach with no auth, which the hub will refuse if it requires a token"
 
+MCP_FACADE_FOR_BRAIN=""
+if [ "$MCP_FACADE_ENABLED" = "1" ]; then
+  MCP_HUB_TOKEN="${WKS_MCP_HUB_TOKEN:-${HUB_TOKEN:-}}"
+  if [ -z "$MCP_HUB_TOKEN" ]; then
+    log "WARNING: MCP facade disabled because neither WKS_MCP_HUB_TOKEN nor HUB_TOKEN is set"
+  else
+    if [ -z "${WKS_MCP_HUB_TOKEN:-}" ]; then
+      log "WARNING: WKS_MCP_HUB_TOKEN is unset; MCP facade will use HUB_TOKEN. If HUB_TOKEN is provider-scoped, agent MCP tools will connect but hub calls will be denied."
+    fi
+    log "starting mcp facade (addr=${MCP_FACADE_ADDR} hub=${HUB_BUS_URL} untokened=${WKS_MCP_UNTOKENED})"
+    as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
+      XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
+      HUB_TOKEN="$MCP_HUB_TOKEN" WKS_MCP_UNTOKENED="$WKS_MCP_UNTOKENED" \
+      mcp \
+      --addr "$MCP_FACADE_ADDR" \
+      --hub "$HUB_BUS_URL" \
+      --token "$MCP_HUB_TOKEN" \
+      --tokens "$XDG_CONFIG_HOME/workspacer/tokens.json" \
+      --untokened "$WKS_MCP_UNTOKENED" &
+    MCP_PID=$!
+    for _ in $(seq 1 50); do
+      curl -sf "$MCP_FACADE_HEALTH" >/dev/null 2>&1 && break
+      kill -0 "$MCP_PID" 2>/dev/null || die "mcp facade exited during startup — see above"
+      sleep 0.2
+    done
+    curl -sf "$MCP_FACADE_HEALTH" >/dev/null 2>&1 || die "mcp facade did not answer on ${MCP_FACADE_HEALTH} within 10s"
+    MCP_FACADE_FOR_BRAIN="$MCP_FACADE_URL"
+    log "mcp facade ready (pid $MCP_PID)"
+  fi
+else
+  log "mcp facade disabled by WKS_MCP_FACADE_ENABLED=0"
+fi
+
+brain_args=(
+  --hub "$HUB_BUS_URL"
+  --token "${HUB_TOKEN:-}"
+  --claudemon "$CLAUDEMON_URL"
+  --scope "${WKS_BRAIN_SCOPE:-full}"
+)
+if [ -n "$MCP_FACADE_FOR_BRAIN" ]; then
+  brain_args+=(--mcp-facade "$MCP_FACADE_FOR_BRAIN")
+fi
+
 log "starting brain, attaching to ${HUB_BUS_URL} as a capability provider"
 as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
   XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
   GOPATH="$GOPATH" GOMODCACHE="$GOMODCACHE" GOCACHE="$GOCACHE" BUNDLE_PATH="$BUNDLE_PATH" \
   BUN_INSTALL_CACHE_DIR="$BUN_INSTALL_CACHE_DIR" npm_config_cache="$npm_config_cache" \
-  brain \
-  --hub "$HUB_BUS_URL" \
-  --token "${HUB_TOKEN:-}" \
-  --claudemon "$CLAUDEMON_URL" \
-  --scope "${WKS_BRAIN_SCOPE:-full}" &
+  brain "${brain_args[@]}" &
 BRAIN_PID=$!
 log "brain started (pid $BRAIN_PID). The node is READY once the hub logs the provider registration."
 log "BOOT COMPLETE $BOOT_ID"
@@ -527,7 +581,17 @@ while true; do
     wait "$CLAUDEMON_PID" 2>/dev/null || true
     EXIT_REASON="claudemon-died"
     log "claudemon exited unexpectedly — bringing the node down so the hub sees a clean disconnect"
+    kill -TERM "$MCP_PID" 2>/dev/null || true
     kill -TERM "$BRAIN_PID" 2>/dev/null || true
+    record_exit 1
+    exit 1
+  fi
+  if [ -n "$MCP_PID" ] && ! kill -0 "$MCP_PID" 2>/dev/null; then
+    wait "$MCP_PID" 2>/dev/null || true
+    EXIT_REASON="mcp-died"
+    log "mcp facade exited unexpectedly — agent MCP tools are gone, bringing the node down"
+    kill -TERM "$BRAIN_PID" 2>/dev/null || true
+    kill -TERM "$CLAUDEMON_PID" 2>/dev/null || true
     record_exit 1
     exit 1
   fi
@@ -535,6 +599,7 @@ while true; do
     wait "$BRAIN_PID" 2>/dev/null || true
     EXIT_REASON="brain-died"
     log "brain exited unexpectedly — the node has no provider, bringing it down"
+    kill -TERM "$MCP_PID" 2>/dev/null || true
     kill -TERM "$CLAUDEMON_PID" 2>/dev/null || true
     record_exit 1
     exit 1

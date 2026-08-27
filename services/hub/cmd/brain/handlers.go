@@ -31,6 +31,10 @@ type registry struct {
 	publish func(string, json.RawMessage)
 	vis     *visibility // shared desktop fleet-visibility rule; nil → show everything
 	scope   string      // registration scope this brain was started with
+	// mcpFacadeURL is the local MCP facade URL injected into spawned sessions
+	// when callers request mcpFacade/toolScope/supervisor. Empty means disabled,
+	// and such spawns fail loudly instead of starting without the requested tools.
+	mcpFacadeURL string
 
 	// The agent-facing fleet verbs' own state: per-worker progress budgets and
 	// armed threshold watches (agentops.go). In-memory and per-process by
@@ -550,6 +554,16 @@ type spawnParams struct {
 	Label           string `json:"label"`
 	ParentSessionID string `json:"parentSessionId"`
 	Supervisor      bool   `json:"supervisor"`
+	// Legacy desktop spelling: request the Workspacer MCP facade with the
+	// default operator scope. Prefer ToolScope for new callers.
+	MCPFacade bool `json:"mcpFacade"`
+	// ToolScope requests a session-scoped facade token at a specific tier
+	// (view/triage/operator). The token is minted locally from config, never from
+	// caller-supplied grants; supervisor always resolves to operator.
+	ToolScope string `json:"toolScope"`
+	// PluginTools carries plugin tool grants recorded onto the session token.
+	// These are inert unless the facade is requested by ToolScope/MCPFacade.
+	PluginTools []string `json:"pluginTools"`
 	// Manager is the Fleet Manager flag: a nudge-eligible parent WITHOUT the
 	// /supervise watch loop. Headless it means exactly one thing — the session
 	// is recorded as a wake target (spawnMeta.IsSupervisor, surfaced as the
@@ -558,17 +572,16 @@ type spawnParams struct {
 	// fixed on the desktop: a bus-spawned Fleet Manager came up invisible to the
 	// wake router, so its workers finished into the void.
 	//
-	// NOT A PRIVILEGE HERE, deliberately. On the desktop `manager` ALSO widens
-	// the minted session facade token (every profile in profilesAllowed, the
-	// config-resolved yolo grant, the 'manager' role tag) — but every one of
-	// those lives in mintSessionFacadeToken, and the headless brain mints no
-	// facade token at all (see spawnParamsDeclined's mcpFacade/toolScope
-	// entries). So a bus client asserting `manager:true` here gains a wake
-	// subscription for the agent it was already authorized to spawn and nothing
-	// else: it does not touch skip, PermissionMode, ProfileGranted or
-	// YoloGranted, and the bypass clamp in spawn() below is untouched by it.
-	// If this field ever grows a privilege implication, it must move behind the
-	// same hub-verified stamp as YoloGranted rather than staying caller-set.
+	// NOT A PRIVILEGE BY ITSELF, deliberately. When a facade is configured and
+	// requested, `manager` widens the locally minted session token the same way
+	// the desktop does (profile ids, config-resolved yolo grant, role tag), but
+	// those grants are resolved from this host's config at mint time. A bus
+	// client asserting `manager:true` alone gains a wake subscription for the
+	// agent it was already authorized to spawn and nothing else: it does not
+	// touch skip, PermissionMode, ProfileGranted or YoloGranted, and the bypass
+	// clamp in spawn() below is untouched by it. If this field ever grows a
+	// direct privilege implication, it must move behind the same hub-verified
+	// stamp as YoloGranted rather than staying caller-set.
 	Manager bool `json:"manager"`
 	// Message is the new agent's FIRST PROMPT, carried by the spawn instead of
 	// a follow-up agents.sendMessage.
@@ -726,6 +739,10 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 			return nil, err
 		}
 	}
+	facade, err := r.buildSessionFacade(sessionID, p)
+	if err != nil {
+		return nil, err
+	}
 
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
@@ -746,8 +763,17 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		rows = 32
 	}
 
+	argv := buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume)
+	if facade != nil {
+		args, err := facade.claudeArgs()
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, args...)
+	}
+
 	id, queued, err := r.cm.spawn(ctx, spawnReq{
-		Argv:         buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume),
+		Argv:         argv,
 		Cwd:          cwd,
 		Cols:         cols,
 		Rows:         rows,
@@ -844,6 +870,10 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			return nil, err
 		}
 	}
+	facade, err := r.buildSessionFacade(sessionID, p)
+	if err != nil {
+		return nil, err
+	}
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
 		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
 	}
@@ -893,6 +923,18 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			if len(prof.ExtraArgs) > 0 {
 				req.ExtraArgs = prof.ExtraArgs
 			}
+		}
+	}
+	if facade != nil {
+		req.Instructions = facade.Instructions
+		if isClaudeStream {
+			args, err := facade.claudeArgs()
+			if err != nil {
+				return nil, err
+			}
+			req.ExtraArgs = append(req.ExtraArgs, args...)
+		} else {
+			req.MCP = facade.URL
 		}
 	}
 	req.FirstMessage = p.Message

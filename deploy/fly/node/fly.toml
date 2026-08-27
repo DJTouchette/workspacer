@@ -122,6 +122,10 @@ kill_timeout = 60
 #   HUB_BUS_URL         wss://<hub>/bus — a secret only to keep the tailnet
 #                       name out of git
 #   HUB_TOKEN           the scoped bus token the always-on hub issued
+#   WKS_MCP_HUB_TOKEN   optional outbound bus token for the node MCP facade.
+#                       If HUB_TOKEN is provider-scoped, set this to an
+#                       operator-capable scoped token or agent MCP tools can
+#                       connect locally but will be denied by the hub.
 
 [[mounts]]
   source        = "wks_data"

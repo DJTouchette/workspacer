@@ -11,7 +11,7 @@
  *   4. Neither / null   — empty or null data
  */
 import { describe, it, expect } from 'vitest';
-import { migrateSessionData } from '../../src/App';
+import { migrateSessionData, shouldShowFirstRunWelcome } from '../../src/App';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -279,5 +279,49 @@ describe('schemaVersion gate', () => {
 
   it('still calls a genuinely absent session recognised', () => {
     expect(migrateSessionData(null, FALLBACK_CWD).recognised).toBe(true);
+  });
+});
+
+describe('first-run welcome gate', () => {
+  it('does not trap the user when dismissal cannot persist', () => {
+    const base = {
+      configLoaded: true,
+      sessionPhase: 'active' as const,
+      onboardingDismissed: false,
+      hasRealAgents: false,
+    };
+
+    expect(shouldShowFirstRunWelcome({ ...base, welcomeDismissedLocally: false })).toBe(true);
+    expect(shouldShowFirstRunWelcome({ ...base, welcomeDismissedLocally: true })).toBe(false);
+  });
+
+  it('waits for config/session restore and stays hidden for existing workspaces', () => {
+    expect(
+      shouldShowFirstRunWelcome({
+        configLoaded: false,
+        sessionPhase: 'active',
+        onboardingDismissed: false,
+        welcomeDismissedLocally: false,
+        hasRealAgents: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowFirstRunWelcome({
+        configLoaded: true,
+        sessionPhase: 'loading',
+        onboardingDismissed: false,
+        welcomeDismissedLocally: false,
+        hasRealAgents: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowFirstRunWelcome({
+        configLoaded: true,
+        sessionPhase: 'active',
+        onboardingDismissed: false,
+        welcomeDismissedLocally: false,
+        hasRealAgents: true,
+      }),
+    ).toBe(false);
   });
 });

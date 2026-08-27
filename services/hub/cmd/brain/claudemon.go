@@ -169,6 +169,11 @@ type spawnManagedReq struct {
 	// spawn handler): the clamp zeroes skipPermissions unless the hub verified
 	// the caller's token grant.
 	Yolo bool `json:"yolo"`
+	// Managed providers register the Workspacer MCP facade through their own
+	// config path. Claude stream receives the facade through ExtraArgs instead.
+	MCP string `json:"mcp,omitempty"`
+	// Role instructions prepended by claudemon to the first managed-provider turn.
+	Instructions string `json:"instructions,omitempty"`
 	// Codex only: "stream" runs headless (GUI-only, no native TUI PTY).
 	Transport string `json:"transport,omitempty"`
 	// Claude only: full permission mode (`--permission-mode`).

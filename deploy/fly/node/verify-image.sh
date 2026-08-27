@@ -28,7 +28,7 @@
 # PATH either.
 #
 # The second half of the script checks that the layer above did not break the
-# base's own contract — the three daemons, the entrypoint, the wks user and its
+# base's own contract — the workspacer daemons, the entrypoint, the wks user and its
 # uid/gid. Those are what `entrypoint.sh` and `fly.toml` assume, and a
 # downstream `USER`, `useradd` or `ENV HOME=` silently invalidates them.
 #
@@ -178,7 +178,7 @@ done
 # ---------------------------------------------------------------------------
 hdr 'The base image contract is intact'
 # ---------------------------------------------------------------------------
-for bin in brain workspacer claudemon tailscaled tailscale claude tini; do
+for bin in brain workspacer mcp claudemon tailscaled tailscale claude tini; do
   if command -v "$bin" >/dev/null 2>&1; then
     ok "$bin on PATH ($(command -v "$bin"))"
   else

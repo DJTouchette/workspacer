@@ -31,20 +31,22 @@ on top of it.
         │     hub       │                               │
         │  (elsewhere)  │ ◀── brain dials IN over ──┐   │
         └───────────────┘     the tailnet           │   ▼
-                                                    │  ┌──────────────────┐
-                                                    └──│  Fly worker node │
-                                                       │  claudemon (lo)  │
-                                                       │  brain --hub …   │
-                                                       │  /data volume    │
-                                                       └──────────────────┘
+	                                                    │  ┌──────────────────┐
+	                                                    └──│  Fly worker node │
+	                                                       │  claudemon (lo)  │
+	                                                       │  mcp facade (lo) │
+	                                                       │  brain --hub …   │
+	                                                       │  /data volume    │
+	                                                       └──────────────────┘
 ```
 
-**Topology is provider-attach, not federation.** The node runs exactly two
-workspacer processes: `claudemon serve` bound to loopback, and
-`brain --hub <wss url> --token <tok>`, which dials the always-on hub and
-registers ~60 capabilities as a provider. There is **no hub on this machine**,
-no `peers.json`, no federation link, no `hub:<peer>/` qualification. From the
-hub's point of view the node's sessions are ordinary local sessions.
+**Topology is provider-attach, not federation.** The node runs three workspacer
+processes: `claudemon serve` bound to loopback, `mcp` bound to loopback as the
+agent-facing facade, and `brain --hub <wss url> --token <tok>`, which dials the
+always-on hub and registers ~60 capabilities as a provider. There is **no hub
+on this machine**, no `peers.json`, no federation link, no `hub:<peer>/`
+qualification. From the hub's point of view the node's sessions are ordinary
+local sessions.
 
 Consequences worth internalising, because they simplify the persistence story:
 
@@ -55,7 +57,8 @@ Consequences worth internalising, because they simplify the persistence story:
   means switching to a federation topology later is a config change rather than
   a volume migration.)
 - **Plugins do not load here.** The hub is what loads plugins, and there is no
-  hub on this machine.
+  hub on this machine. The node facade can expose plugin-contributed tools only
+  when the always-on hub provides them and the session token grants the plugin.
 - **`fleet.quiescence` on the hub already covers this node's sessions**, because
   the node's brain answers `sessions.snapshots` and registers as a Provider
   (which `ClientInfo.UserFacing()` correctly does not count as "someone using
@@ -228,7 +231,10 @@ it, so it is a two-value swap and you can go back.
 > Rollback is re-setting the old secret; it stays valid until you revoke it.
 > Nothing in `deploy/fly/node` changes — no Dockerfile, entrypoint, `fly.toml` or
 > brain code — because the brain dials with whatever `HUB_TOKEN` it is handed and
-> never inspects its own tier.
+> never inspects its own tier. If the MCP facade is enabled and `HUB_TOKEN` is
+> provider-scoped, also mint an operator-capable scoped token for
+> `WKS_MCP_HUB_TOKEN`; the facade uses that separate outbound bus connection to
+> forward per-session tool calls after its own session-token gate.
 
 Then, back in this repo:
 
@@ -236,7 +242,8 @@ Then, back in this repo:
 fly secrets set --app workspacer-node --stage \
   TAILSCALE_AUTHKEY='tskey-auth-…' \
   HUB_BUS_URL='wss://your-hub.your-tailnet.ts.net/bus' \
-  HUB_TOKEN='…'
+  HUB_TOKEN='…' \
+  WKS_MCP_HUB_TOKEN='…'
 ```
 
 `--stage` holds them until the first deploy rather than triggering one — **a
@@ -727,7 +734,7 @@ Two further things fall out of it:
 | **`~/.claude.json`** (sibling, not inside) | MUST | `/data/home/.claude.json` | `$HOME` on volume — **no file symlink** |
 | `~/.claudemon/state.db` | MUST | `/data/home/.local/share/claudemon/state.db` | `$HOME` + explicit `--db-path` |
 | `~/.config/workspacer/config.yaml` | MUST | `/data/home/.config/workspacer/` | `$HOME` + `XDG_CONFIG_HOME` |
-| `~/.config/workspacer/tokens.json` | MUST (hub) | *hub-side*; dir exists here | provider-attach: the node presents `HUB_TOKEN`, it does not host a token store |
+| `~/.config/workspacer/tokens.json` | MUST | hub-side for issued scoped tokens; node-side for per-session MCP facade tokens | the node mints `session:<id>` records here so spawned agents can present a scoped facade token |
 | `~/.config/workspacer/remote-token` | MUST (hub) | *hub-side*; dir exists here | ditto — silent re-mint is a hub-side hazard |
 | `~/.config/workspacer/peers.json` | MUST (hub) | *hub-side*; dir exists here | no federation on this node |
 | `~/.config/workspacer-hub/vapid.json`, `push-subscriptions.json`, `jobs.json`, `layout.json` | MUST/SHOULD (hub) | *hub-side*; dirs exist here | there is no hub on this machine |

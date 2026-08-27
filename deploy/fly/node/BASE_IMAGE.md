@@ -20,7 +20,7 @@ file and became an executable check.
 Before the split, one Dockerfile built the Go and Rust daemons **and** installed
 Go, Ruby, bundler, bun, python3, sqlite and build-essential. Adding a Rails gem
 invalidated a layer sitting above the builder stages, so a dependency bump
-recompiled `brain`, `workspacer` and `claudemon` from scratch.
+recompiled `brain`, `workspacer`, `mcp` and `claudemon` from scratch.
 
 | | changes when | owns |
 |---|---|---|
@@ -40,6 +40,7 @@ why it lives in your repo and not in workspacer's.
 |---|---|
 | `/usr/local/bin/brain` | the node's control-plane client — connects out to the hub over the bus |
 | `/usr/local/bin/workspacer` | the workspacer CLI |
+| `/usr/local/bin/mcp` | the loopback MCP facade injected into spawned agents |
 | `/usr/local/bin/claudemon` | the agent supervisor daemon (Rust) |
 | `/usr/local/bin/tailscaled`, `/usr/local/bin/tailscale` | kernel-mode Tailscale |
 | `/usr/local/bin/claude` | Claude Code, via a global npm install under `/usr/local/lib/node_modules` |
@@ -55,7 +56,7 @@ Plus the operational toolkit the entrypoint, bootstrap and agents assume:
 
 | Path | What |
 |---|---|
-| `/usr/local/lib/wks/entrypoint.sh` | PID 1's payload: boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → brain, plus signals and exit-reason recording |
+| `/usr/local/lib/wks/entrypoint.sh` | PID 1's payload: boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → mcp facade → brain, plus signals and exit-reason recording |
 | `/usr/local/lib/wks/bootstrap.sh` | prepares the volume; idempotent on empty, populated and damaged volumes; creates **zero symlinks** |
 | `/usr/local/lib/wks/test-bootstrap.sh` | 106 assertions over `bootstrap.sh` |
 | `/usr/local/lib/wks/verify-image.sh` | **the contract check.** See [the rules](#the-rules) |
@@ -109,7 +110,8 @@ the volume would make the volume unreproducible. A downstream layer installs the
 toolchain and inherits the cache location for free — `BUNDLE_PATH` and
 `npm_config_cache` are already pointed at `/data`.
 
-Secrets (`TAILSCALE_AUTHKEY`, `HUB_BUS_URL`, `HUB_TOKEN`) come from
+Secrets (`TAILSCALE_AUTHKEY`, `HUB_BUS_URL`, `HUB_TOKEN`, and optionally
+`WKS_MCP_HUB_TOKEN`) come from
 `fly secrets set`. See [RUNBOOK.md](RUNBOOK.md).
 
 ---
@@ -195,7 +197,7 @@ inherits the distro and should not try to change it.
 
 ### 7. Do not remove things from `/usr/local/bin`
 
-`verify-image.sh` checks that `brain`, `workspacer`, `claudemon`, `tailscale`,
+`verify-image.sh` checks that `brain`, `workspacer`, `mcp`, `claudemon`, `tailscale`,
 `tailscaled`, `claude` and `tini` are all still resolvable.
 
 ---

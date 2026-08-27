@@ -180,6 +180,28 @@ export function migrateSessionData(
   };
 }
 
+export function shouldShowFirstRunWelcome({
+  configLoaded,
+  sessionPhase,
+  onboardingDismissed,
+  welcomeDismissedLocally,
+  hasRealAgents,
+}: {
+  configLoaded: boolean;
+  sessionPhase: 'loading' | 'active';
+  onboardingDismissed?: boolean;
+  welcomeDismissedLocally?: boolean;
+  hasRealAgents: boolean;
+}): boolean {
+  return (
+    configLoaded &&
+    sessionPhase === 'active' &&
+    !welcomeDismissedLocally &&
+    !onboardingDismissed &&
+    !hasRealAgents
+  );
+}
+
 /** Stable per-agent callbacks/props, bundled once in App so the memo below holds. */
 interface AgentViewHandlers {
   onTabFocus: (tabId: string) => void;
@@ -369,6 +391,10 @@ function App() {
   // The welcome card replayed from the palette (modal; independent of the
   // first-run onboardingDismissed flag).
   const [showWelcome, setShowWelcome] = useState(false);
+  // If config.save fails (most commonly: desktop remote-client mode pointed at
+  // an offline server), the persisted flag cannot change. The modal still has
+  // to get out of the user's way so they can open Settings / Connect to Server.
+  const [welcomeDismissedLocally, setWelcomeDismissedLocally] = useState(false);
   // In-app update status (main pushes transitions; 'unsupported' in dev/web).
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   // One notice per version, the first time this install runs a new one.
@@ -593,12 +619,15 @@ function App() {
   // new user" means no *real* agent workspaces. Wait for the config (the
   // dismissed flag) and for session restore to settle, so an existing user's
   // agents never race the card into a flash.
-  const firstRunWelcome =
-    configLoaded &&
-    sessionPhase === 'active' &&
-    !config.onboardingDismissed &&
-    !agents.some((a) => !a.global);
+  const firstRunWelcome = shouldShowFirstRunWelcome({
+    configLoaded,
+    sessionPhase,
+    onboardingDismissed: config.onboardingDismissed,
+    welcomeDismissedLocally,
+    hasRealAgents: agents.some((a) => !a.global),
+  });
   const dismissWelcome = useCallback(() => {
+    setWelcomeDismissedLocally(true);
     setShowWelcome(false);
     if (!config.onboardingDismissed) saveConfig({ onboardingDismissed: true });
   }, [config.onboardingDismissed, saveConfig]);

@@ -5,7 +5,7 @@
 # ===========================================================================
 #
 # This image is the answer to "how do I run a workspacer worker node". It
-# contains the three daemons, Tailscale, Claude Code, the entrypoint and
+# contains the workspacer daemons, Tailscale, Claude Code, the entrypoint and
 # bootstrap, and the `wks` user — and it deliberately contains NO language
 # toolchain for anybody's application code. It changes when workspacer changes.
 #
@@ -30,7 +30,7 @@
 # Before the split this file also installed Go, Ruby, bundler, bun, python3,
 # sqlite and build-essential. That meant adding a Rails gem or a new language
 # invalidated a layer above the Go and Rust BUILDER stages, so every dependency
-# bump recompiled brain, workspacer and claudemon from scratch.
+# bump recompiled brain, workspacer, mcp and claudemon from scratch.
 #
 # Now: this file is workspacer. A downstream image adds toolchains. Bumping Go
 # for one project no longer rebuilds the hub, and — the more important half —
@@ -96,7 +96,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /out && \
     go build -trimpath -o /out/brain ./cmd/brain && \
-    go build -trimpath -o /out/workspacer ./cmd/workspacer
+    go build -trimpath -o /out/workspacer ./cmd/workspacer && \
+    go build -trimpath -o /out/mcp ./cmd/mcp
 
 # ---------------------------------------------------------------------------
 FROM rust:1-trixie AS rustbuild
@@ -182,6 +183,7 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && \
 
 COPY --from=gobuild   /out/brain      /usr/local/bin/brain
 COPY --from=gobuild   /out/workspacer /usr/local/bin/workspacer
+COPY --from=gobuild   /out/mcp        /usr/local/bin/mcp
 COPY --from=rustbuild /out/claudemon  /usr/local/bin/claudemon
 
 COPY deploy/fly/node/entrypoint.sh      /usr/local/lib/wks/entrypoint.sh

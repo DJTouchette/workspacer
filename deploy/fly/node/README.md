@@ -1,8 +1,8 @@
 # `deploy/fly/node` — the Fly.io headless worker node
 
-A single Fly Machine that runs `claudemon` plus `brain --hub <wss url> --token`,
-sleeps when idle, and is reachable over Tailscale. **Provider-attach topology:**
-no hub on this machine, no federation.
+A single Fly Machine that runs `claudemon`, the loopback `mcp` facade, and
+`brain --hub <wss url> --token`, sleeps when idle, and is reachable over
+Tailscale. **Provider-attach topology:** no hub on this machine, no federation.
 
 **Start with [RUNBOOK.md](RUNBOOK.md).** Provisioning is a one-time,
 order-dependent procedure with three interactive logins that cannot be scripted,
@@ -12,11 +12,11 @@ and the runbook is the only place the order is written down.
 |---|---|
 | `RUNBOOK.md` | The provisioning procedure, the persistence map, and what is *not* verified |
 | `BASE_IMAGE.md` | **The base image contract** — what it provides, what a downstream layer must not do, how to extend it, how it is named |
-| `Dockerfile` | Multi-stage: Go builders for `brain`/`workspacer`, Rust for `claudemon`, Debian trixie runtime with Tailscale and Claude Code. **No project toolchains** |
+| `Dockerfile` | Multi-stage: Go builders for `brain`/`workspacer`/`mcp`, Rust for `claudemon`, Debian trixie runtime with Tailscale and Claude Code. **No project toolchains** |
 | `example.Dockerfile` | A minimal project image `FROM` the base. Scaffolding that proves the base extends |
 | `Dockerfile.dockerignore` | Build context is the repo root; this keeps it to the two services |
 | `fly.toml` | Region, sizing, volume, restart policy, and the `auto_start_machines` wake backstop — each with the reasoning inline |
-| `entrypoint.sh` | PID 1: **replay the previous boot to stdout** → boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → brain, plus signal handling and exit-reason recording |
+| `entrypoint.sh` | PID 1: **replay the previous boot to stdout** → boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → mcp facade → brain, plus signal handling and exit-reason recording |
 | `bootstrap.sh` | Prepares the volume **and decides FIRST RUN vs STATE LOSS per file**. Idempotent, correct on both an empty and a populated volume, and creates **zero symlinks** |
 | `test-bootstrap.sh` | 106 assertions over `bootstrap.sh`. No root, no Docker, no Fly, ~1 second |
 | `verify-image.sh` | Shipped into the image. The **last `RUN` of every build**, base and downstream: fails the build if anything was installed into `$HOME` |
@@ -29,8 +29,8 @@ in whatever repo owns that code — see [BASE_IMAGE.md](BASE_IMAGE.md).
 
 It used to be one file that also installed Go, Ruby, bundler, bun, python3,
 sqlite and build-essential. That put a frequently-changing layer *above* the Go
-and Rust builder stages, so adding a Rails gem recompiled `brain`, `workspacer`
-and `claudemon` from scratch. It no longer does.
+and Rust builder stages, so adding a Rails gem recompiled `brain`, `workspacer`,
+`mcp` and `claudemon` from scratch. It no longer does.
 
 ## Two things to know before editing anything here
 
