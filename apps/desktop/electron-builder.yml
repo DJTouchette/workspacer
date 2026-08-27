@@ -29,9 +29,9 @@ files:
   - dist/**/*
   - node_modules/**/*
   - package.json
-  - "!node_modules/**/*.{md,map,ts}"
-  - "!node_modules/**/{test,tests,__tests__,docs,.github}/**"
-  - "!**/*.d.ts"
+  - '!node_modules/**/*.{md,map,ts}'
+  - '!node_modules/**/{test,tests,__tests__,docs,.github}/**'
+  - '!**/*.d.ts'
 
 asarUnpack:
   - node_modules/better-sqlite3/**

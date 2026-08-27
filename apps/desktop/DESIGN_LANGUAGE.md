@@ -8,10 +8,10 @@ exception, document it here.
 
 Two icon sets, one rule: **UI affordances are icon components, never raw unicode/emoji.**
 
-| Set | Where | Style |
-|---|---|---|
+| Set                                             | Where                                                           | Style                                                                                                                             |
+| ----------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **Workspacer pack** (`components/wksIcons.tsx`) | Purpose-built glyphs: panes, agent status, actions, diff, tools | 24×24 grid, 2.2 stroke, round caps, two-tone: `currentColor` body + accent node in `--wks-accent` (overridable via `accent` prop) |
-| **lucide-react** | Everything the pack doesn't cover | Thin stroke (1.75–2.25), `currentColor` |
+| **lucide-react**                                | Everything the pack doesn't cover                               | Thin stroke (1.75–2.25), `currentColor`                                                                                           |
 
 - `components/icons.tsx` is the hub: the `PaneIcon` map (pane type → icon), re-exports of
   commonly used lucide glyphs, and `export *` of the pack. Import from it or from
@@ -23,12 +23,12 @@ Two icon sets, one rule: **UI affordances are icon components, never raw unicode
 
 **Sizing** — match the surrounding text, don't freestyle:
 
-| Context | Size | strokeWidth |
-|---|---|---|
+| Context                                              | Size  | strokeWidth       |
+| ---------------------------------------------------- | ----- | ----------------- |
 | Inline with 0.6–0.7rem text (chevrons, status marks) | 10–12 | 2 (2.25 at ≤10px) |
-| Buttons / close ✕ / toolbar glyphs | 12–14 | 2 |
-| Pane tabs, list leading icons | 14–16 | 1.75 |
-| Empty states, tiles | 18–24 | 1.75 |
+| Buttons / close ✕ / toolbar glyphs                   | 12–14 | 2                 |
+| Pane tabs, list leading icons                        | 14–16 | 1.75              |
+| Empty states, tiles                                  | 18–24 | 1.75              |
 
 **Mechanics**: icons inherit `currentColor` — color the parent, not the icon. A container
 that holds only an icon gets `display:flex; alignItems:center`; icon-beside-text gets
@@ -44,7 +44,7 @@ Expand/collapse → `ChevronDown`/`ChevronRight` · close/dismiss → `X` · suc
 ### Intentional typographic exceptions (do NOT "fix" these)
 
 - **Status dots stay dots** — the colored `●`-style dots (rendered as styled spans/divs)
-  and the sidebar's pulsing `■` busy square are status *tokens*, not icons.
+  and the sidebar's pulsing `■` busy square are status _tokens_, not icons.
 - **Micro corner badges** — the `KIND_GLYPH`/`KIND_VISUAL` families (`! ? × ◷ ± ✓`) in
   `SideBar.tsx` and `attention/AttentionCard.tsx` render inside ≤17px tinted badges where
   bold text marks read better than icons. Migrate the whole family or not at all.
@@ -54,7 +54,7 @@ Expand/collapse → `ChevronDown`/`ChevronRight` · close/dismiss → `X` · suc
 - **`×N` multipliers** (e.g. file-frequency counts) are text.
 - **`❯` prompt glyph** in SpawnAgentDialog's cwd field — deliberate shell aesthetic.
 - **User-supplied emoji** — plugin `icon` fields and configured app-launcher icons are
-  data; render them as given (code-side *fallbacks* must be icon components).
+  data; render them as given (code-side _fallbacks_ must be icon components).
 
 ## 2. Color
 
@@ -63,14 +63,14 @@ All color goes through the `--wks-*` CSS custom properties, set by `applyTheme()
 registry lookup). `App.css` `:root` carries first-paint defaults mirroring `darkTheme` —
 keep the two in sync when adding a token.
 
-| Family | Tokens |
-|---|---|
+| Family   | Tokens                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------- |
 | Surfaces | `--wks-bg-base / raised / surface / elevated / header / input / hover / selected / terminal` |
-| Borders | `--wks-border`, `-subtle`, `-input`, `-active` |
-| Text | `--wks-text-primary / secondary / tertiary / muted / faint / disabled` |
-| Accent | `--wks-accent`, `-text`, `-glow`, `-bg` |
-| Status | `--wks-success`, `--wks-error`, `--wks-warning`, `--wks-busy`, `--wks-purple` |
-| Chrome | `--wks-overlay`, `--wks-shadow`, `--wks-scrollbar-*`, `--wks-glass-*`, `--wks-claude-*` |
+| Borders  | `--wks-border`, `-subtle`, `-input`, `-active`                                               |
+| Text     | `--wks-text-primary / secondary / tertiary / muted / faint / disabled`                       |
+| Accent   | `--wks-accent`, `-text`, `-glow`, `-bg`                                                      |
+| Status   | `--wks-success`, `--wks-error`, `--wks-warning`, `--wks-busy`, `--wks-purple`                |
+| Chrome   | `--wks-overlay`, `--wks-shadow`, `--wks-scrollbar-*`, `--wks-glass-*`, `--wks-claude-*`      |
 
 Rules:
 
@@ -97,14 +97,14 @@ Rules:
 - Sizes are rem. **Pick from the scale; don't invent in-between values** (the 0.62/0.64/
   0.68/0.69 cluster is historical drift — collapse toward these steps when touching code):
 
-| Step | Use |
-|---|---|
-| `0.6rem` | micro badges, keycaps, overlines |
-| `0.66rem` | dense meta rows, mono labels |
+| Step      | Use                                     |
+| --------- | --------------------------------------- |
+| `0.6rem`  | micro badges, keycaps, overlines        |
+| `0.66rem` | dense meta rows, mono labels            |
 | `0.72rem` | standard chrome text, secondary content |
-| `0.8rem` | body / primary content |
-| `0.9rem` | emphasized body, section headers |
-| `1.05rem` | pane/dialog titles |
+| `0.8rem`  | body / primary content                  |
+| `0.9rem`  | emphasized body, section headers        |
+| `1.05rem` | pane/dialog titles                      |
 
 - Weights: 400 body · 500 labels · 600 emphasis/buttons · 700 titles.
 
@@ -135,7 +135,7 @@ both — and surfaces do not nest more than two deep.**
 
 That rule exists because density, not palette, was what made the app feel busy: a
 blocked agent card stacked card → footer band → question picker → option row, each
-drawing border *and* fill, so a single card contributed eight edges and the fleet
+drawing border _and_ fill, so a single card contributed eight edges and the fleet
 view showed ~20 bordered rectangles at rest. Depth is the budget. If you need a
 third level, you almost always want a fill step or a single left accent rule
 instead of another box.
@@ -143,7 +143,7 @@ instead of another box.
 - `elevation="raised"` is **lit, not outlined**: an inset top lip + ambient halo +
   hairline drop. A plain fill step cannot carry it — several themes put
   `--wks-bg-surface` within 2–3 RGB units of `--wks-bg-base` (everforest, kanagawa)
-  and one-dark puts surface *below* base. See the module comment for the full
+  and one-dark puts surface _below_ base. See the module comment for the full
   reasoning before changing the treatment.
 - Hover/edge declarations live in an injected stylesheet, not inline, so `:hover`
   wins on specificity without `!important` and a caller's own `onMouseEnter` still
@@ -193,7 +193,7 @@ Converted so far: `AgentCard`, `AgentCardBody`, `AttentionCard`, `ApprovalPrompt
 - `SideBar.tsx` still has 5 border+fill blocks and 7 hardcoded `borderRadius` numbers.
   It was deliberately left alone during the Surface pass to keep that diff reviewable;
   it is the next file to convert.
-- `deriveSupervisorName` bakes a 🧭 emoji into the supervisor *name string* (crosses
+- `deriveSupervisorName` bakes a 🧭 emoji into the supervisor _name string_ (crosses
   process boundaries); display sites now use the `Compass` icon — unifying the name
   format needs a coordinated change.
 - Default app-launcher emoji icons come from `config_defaults.json` (Go-embedded,

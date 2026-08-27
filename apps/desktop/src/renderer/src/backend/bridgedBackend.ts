@@ -175,7 +175,9 @@ export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: st
     }
     const overBus = await busWorkflowAgentTranscript(sessionId, runId, agentId);
     if (overBus) return overBus;
-    return ipcWorkflowAgentTranscript ? ipcWorkflowAgentTranscript(sessionId, runId, agentId) : null;
+    return ipcWorkflowAgentTranscript
+      ? ipcWorkflowAgentTranscript(sessionId, runId, agentId)
+      : null;
   };
 
   const busWorkflowAgentConversation = bus.workflowAgentConversation.bind(bus);

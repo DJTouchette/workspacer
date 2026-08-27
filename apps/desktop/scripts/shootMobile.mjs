@@ -45,7 +45,9 @@ const HOST_TOKEN = 'shoot-host-token';
 const PHONE_TOKEN = 'shoot-phone-token';
 
 if (!fs.existsSync(HUB_BIN)) {
-  console.error(`hub binary not found at ${HUB_BIN} (cd services/hub && go build -o hub ./cmd/hub)`);
+  console.error(
+    `hub binary not found at ${HUB_BIN} (cd services/hub && go build -o hub ./cmd/hub)`,
+  );
   process.exit(1);
 }
 fs.mkdirSync(OUT, { recursive: true });
@@ -156,7 +158,8 @@ const SESSIONS = [
           tool('c3', 'Edit', {
             file_path: '/tmp/dev/ledger/internal/fees/round.go',
             old_string: 'for _, li := range inv.Lines {\n\ttotal += round(li.Fee)\n}',
-            new_string: 'for _, li := range inv.Lines {\n\ttotal += li.Fee\n}\ntotal = round(total)',
+            new_string:
+              'for _, li := range inv.Lines {\n\ttotal += li.Fee\n}\ntotal = round(total)',
           }),
         ],
       },
@@ -305,12 +308,18 @@ const url = `http://127.0.0.1:${port}`;
 const hub = spawn(
   HUB_BIN,
   [
-    '--addr', `127.0.0.1:${port}`,
-    '--token', HOST_TOKEN,
-    '--tokens-file', tokensFile,
-    '--layout-file', path.join(dir, 'layout.json'),
-    '--push-dir', path.join(dir, 'push'),
-    '--brain-scope', 'off',
+    '--addr',
+    `127.0.0.1:${port}`,
+    '--token',
+    HOST_TOKEN,
+    '--tokens-file',
+    tokensFile,
+    '--layout-file',
+    path.join(dir, 'layout.json'),
+    '--push-dir',
+    path.join(dir, 'push'),
+    '--brain-scope',
+    'off',
   ],
   // stdin stays OPEN: the hub's parentwatch reads a closed stdin as "my parent
   // died" and shuts down at once.

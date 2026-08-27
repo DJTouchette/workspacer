@@ -211,9 +211,7 @@ const atlasLines = [
   ),
   resultLine('tu_grep', '11 files', iso(12 * min)),
   asstLine(
-    [
-      text('Eleven call sites, nine of them in tests. Rewriting the two real ones onto v2 first.'),
-    ],
+    [text('Eleven call sites, nine of them in tests. Rewriting the two real ones onto v2 first.')],
     iso(6 * min),
   ),
 ];
@@ -250,7 +248,8 @@ const ledgerLines = [
       toolUse('tu_fix', 'Edit', {
         file_path: '/tmp/dev/ledger/internal/fees/round.go',
         old_string: 'for _, li := range inv.Lines {\n\t\ttotal += round(li.Fee)\n\t}',
-        new_string: 'for _, li := range inv.Lines {\n\t\ttotal += li.Fee\n\t}\n\ttotal = round(total)',
+        new_string:
+          'for _, li := range inv.Lines {\n\t\ttotal += li.Fee\n\t}\n\ttotal = round(total)',
       }),
     ],
     iso(9 * min),
@@ -275,7 +274,11 @@ const ledgerLines = [
     ],
     iso(7 * min),
   ),
-  resultLine('tu_fixture', 'The file contracts/fee-rounding-cases.json has been updated.', iso(7 * min)),
+  resultLine(
+    'tu_fixture',
+    'The file contracts/fee-rounding-cases.json has been updated.',
+    iso(7 * min),
+  ),
   resultLine('tu_case', 'The file internal/fees/round_test.go has been updated.', iso(7 * min)),
   asstLine(
     [
@@ -353,7 +356,11 @@ export const AGENTS = [
     meta: { label: WORKERS[0].label, parentSessionId: MANAGER.id },
     statusline: {
       model: { display_name: 'Sonnet 5' },
-      context_window: { used_percentage: 44, total_input_tokens: 88000, total_output_tokens: 21000 },
+      context_window: {
+        used_percentage: 44,
+        total_input_tokens: 88000,
+        total_output_tokens: 21000,
+      },
       cost: { total_cost_usd: 2.9 },
     },
     // Live tool call → "In flight".
@@ -388,7 +395,11 @@ export const AGENTS = [
     ],
     statusline: {
       model: { display_name: 'Opus 4.8' },
-      context_window: { used_percentage: 37, total_input_tokens: 71000, total_output_tokens: 18000 },
+      context_window: {
+        used_percentage: 37,
+        total_input_tokens: 71000,
+        total_output_tokens: 18000,
+      },
       cost: { total_cost_usd: 4.12 },
     },
   },
@@ -451,7 +462,8 @@ export async function seedFleet(stageHome) {
       });
     }
     if (a.settled) await post(`${HOOK}/hook/stop`, { session_id: a.id, cwd: a.cwd });
-    if (a.working) await post(`${HOOK}/hook/pre_tool`, { session_id: a.id, cwd: a.cwd, ...a.working });
+    if (a.working)
+      await post(`${HOOK}/hook/pre_tool`, { session_id: a.id, cwd: a.cwd, ...a.working });
     if (a.approval)
       await post(`${HOOK}/hook/permission`, { session_id: a.id, cwd: a.cwd, ...a.approval });
   }
@@ -490,7 +502,9 @@ export function seedSavedSession(stageHome) {
     transport: 'pty',
     model: a.statusline.model.display_name.toLowerCase().split(' ')[0],
     sessionId: a.id,
-    tabs: [{ id: `tab-${a.id}`, title: 'Claude', panes: [paneFor(a)], activePaneId: `claude-${a.id}` }],
+    tabs: [
+      { id: `tab-${a.id}`, title: 'Claude', panes: [paneFor(a)], activePaneId: `claude-${a.id}` },
+    ],
     activeTabId: `tab-${a.id}`,
     ...extra,
   });
@@ -660,7 +674,8 @@ export async function fireQuestion() {
     tool_input: {
       questions: [
         {
-          question: '138 invoices already went out with the old total. How do you want them handled?',
+          question:
+            '138 invoices already went out with the old total. How do you want them handled?',
           header: 'Mismatched invoices',
           multiSelect: false,
           options: [

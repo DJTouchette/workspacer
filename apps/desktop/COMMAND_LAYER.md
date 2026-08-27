@@ -15,8 +15,8 @@ DESIGN_LANGUAGE.md.**
 
 This is the synthesis of a three-way design competition (tmux prefix layer vs. full
 neovim modal app vs. Hyprland-style mod layer), judged on one killer criterion —
-*the reliability of the boundary between "keys drive the app" and "keys go to the
-focused terminal/composer"* — then hardened against a 22-point adversarial gap
+_the reliability of the boundary between "keys drive the app" and "keys go to the
+focused terminal/composer"_ — then hardened against a 22-point adversarial gap
 review. Decisions below are settled unless marked OPEN.
 
 ## The verdict, and why
@@ -37,27 +37,28 @@ four grafts from the losing designs.**
   terminals the doctrine protects (`alt+f/b/d` are readline; macOS Option types
   characters; AltGr reports ctrl+alt; the user's own Hyprland owns Super and
   much of Alt). Its best inventions are grafted instead.
-- The prefix layer wins because its worst case is *visible* (an armed strip you
+- The prefix layer wins because its worst case is _visible_ (an armed strip you
   can see and Esc out of), it reuses the ONE boundary mechanism already proven
   in production (the capture-phase leader in useKeyboardNav.ts), and with
   `enabled: false` the dispatcher is behaviorally today's.
 
 **The four grafts:**
-1. *(from Mod Layer)* All new verbs register with `scope: 'layer'` in
-   ACTION_REGISTRY + RENDERER_ONLY_SHORTCUTS — the fleet-*/inbox-* pattern. The
+
+1. _(from Mod Layer)_ All new verbs register with `scope: 'layer'` in
+   ACTION_REGISTRY + RENDERER_ONLY_SHORTCUTS — the fleet-_/inbox-_ pattern. The
    preset drift test filters scoped actions, so the three preset maps,
    config_defaults.json, both generated twins, and the Go writer stay untouched.
-2. *(from Mod Layer, redefined per gap review)* **Dwell-HUD**: if armed and no
+2. _(from Mod Layer, redefined per gap review)_ **Dwell-HUD**: if armed and no
    key arrives within `hudDelayMs` (400ms default), the compact strip expands
    into the full grouped key grid (Focus / Move / Create / Layout / Act),
    rendered live from the merged chord tree so it cannot drift. (It is a dwell
    timer, NOT a "hold" — on Linux the leader arms on key-UP; there is no held key.)
-3. *(from Normal Mode)* **FocusChip** — a persistent bottom-right chip showing
+3. _(from Normal Mode)_ **FocusChip** — a persistent bottom-right chip showing
    INSERT (composer, green) / TERM (xterm, red, "keys go to the agent") /
    BROWSE (any webview, incl. plugin panes) / APP, derived purely from
    focusin/focusout. Pure telemetry, zero behavior, zero modes. It answers
    "where do my unprefixed keys go?" — TUI mode-chip parity.
-4. *(from Normal Mode)* Extract `CommandPalette.commandActions` into
+4. _(from Normal Mode)_ Extract `CommandPalette.commandActions` into
    `lib/commandRegistry.ts` and add a `prefix :` cmdline palette variant with the
    TUI's ex-verbs (`q vs sp on clo new term pin rename`). One verb table, two
    surfaces; ~15 palette-only commands become keyboard-reachable.
@@ -85,36 +86,36 @@ Grammar note (gap fix): chord steps are matched on `e.key` **case- and
 shift-aware** (`prefix shift+k` is distinct from `prefix k`) — this requires the
 Phase 2 grammar extension; buildChordTree gets a duplicate-path assertion.
 
-| Keys | Action | Status |
-|---|---|---|
-| `h j k l` | focus pane left/down/up/right (repeat) | exists |
-| `] / [` | next / prev tab (repeat) — brackets navigate tabs, braces (`{ }`) move panes; `n` belongs to deny | exists |
-| `< / >` | move tab | exists |
-| `,` | rename tab (tmux-exact) | exists |
-| `c` / `t` / `shift+b` | new Claude / terminal / browser | exists |
-| `v` / `s` | quick split / split palette | exists |
-| `x` | close pane | exists |
-| `z` | zoom pane (tmux semantics: any structural/nav action unzooms) | build |
-| `{ / }` | swap pane | build |
-| `o` | cycle pane | build |
-| `q` → digit | pane hints (numbered badges) | build |
-| `Enter` | focus composer | build |
-| `( / )` | prev / next agent | exists |
-| `a` | jump to next agent needing attention | exists |
-| `'` | alternate (last-focused) agent | build |
-| `ctrl+o / ctrl+i` | session jumplist back / forward | build |
-| `1-9` | jump to pinned agent (⚓ badges; session-keyed — 2026-08-20 revision: cwd slots were ambiguous with two agents in one repo) | build |
-| `m` | pin/unpin agent | build |
-| `y` / `n` | approve / deny top attention item — matches Fleet Deck & sidebar-card conventions; the strip SHOWS the item summary; no-ops with a toast if nothing is pending or the top item changed in the last ~1s | build (backend exists) |
-| `shift+n` | spawn agent | exists |
-| `w` | Fleet Deck (its scoped keys already shipped) | exists |
-| `i` | toggle inspector (freed by the Inbox deprecation below) | exists |
-| `shift+k / shift+j` | chat scroll half-page (repeat) | build (chatScrollBus) |
-| `g g` / `shift+g` | chat scroll top / bottom | build |
-| `:` | cmdline palette (ex-verbs) | build |
-| `/` | library picker | exists — dead today, fixed by Phase 1 |
-| `e` / `-` | sidebar / bottom terminal | exists |
-| `f` / `r` / `?` | open file / review / help | exists |
+| Keys                  | Action                                                                                                                                                                                                 | Status                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `h j k l`             | focus pane left/down/up/right (repeat)                                                                                                                                                                 | exists                                |
+| `] / [`               | next / prev tab (repeat) — brackets navigate tabs, braces (`{ }`) move panes; `n` belongs to deny                                                                                                      | exists                                |
+| `< / >`               | move tab                                                                                                                                                                                               | exists                                |
+| `,`                   | rename tab (tmux-exact)                                                                                                                                                                                | exists                                |
+| `c` / `t` / `shift+b` | new Claude / terminal / browser                                                                                                                                                                        | exists                                |
+| `v` / `s`             | quick split / split palette                                                                                                                                                                            | exists                                |
+| `x`                   | close pane                                                                                                                                                                                             | exists                                |
+| `z`                   | zoom pane (tmux semantics: any structural/nav action unzooms)                                                                                                                                          | build                                 |
+| `{ / }`               | swap pane                                                                                                                                                                                              | build                                 |
+| `o`                   | cycle pane                                                                                                                                                                                             | build                                 |
+| `q` → digit           | pane hints (numbered badges)                                                                                                                                                                           | build                                 |
+| `Enter`               | focus composer                                                                                                                                                                                         | build                                 |
+| `( / )`               | prev / next agent                                                                                                                                                                                      | exists                                |
+| `a`                   | jump to next agent needing attention                                                                                                                                                                   | exists                                |
+| `'`                   | alternate (last-focused) agent                                                                                                                                                                         | build                                 |
+| `ctrl+o / ctrl+i`     | session jumplist back / forward                                                                                                                                                                        | build                                 |
+| `1-9`                 | jump to pinned agent (⚓ badges; session-keyed — 2026-08-20 revision: cwd slots were ambiguous with two agents in one repo)                                                                            | build                                 |
+| `m`                   | pin/unpin agent                                                                                                                                                                                        | build                                 |
+| `y` / `n`             | approve / deny top attention item — matches Fleet Deck & sidebar-card conventions; the strip SHOWS the item summary; no-ops with a toast if nothing is pending or the top item changed in the last ~1s | build (backend exists)                |
+| `shift+n`             | spawn agent                                                                                                                                                                                            | exists                                |
+| `w`                   | Fleet Deck (its scoped keys already shipped)                                                                                                                                                           | exists                                |
+| `i`                   | toggle inspector (freed by the Inbox deprecation below)                                                                                                                                                | exists                                |
+| `shift+k / shift+j`   | chat scroll half-page (repeat)                                                                                                                                                                         | build (chatScrollBus)                 |
+| `g g` / `shift+g`     | chat scroll top / bottom                                                                                                                                                                               | build                                 |
+| `:`                   | cmdline palette (ex-verbs)                                                                                                                                                                             | build                                 |
+| `/`                   | library picker                                                                                                                                                                                         | exists — dead today, fixed by Phase 1 |
+| `e` / `-`             | sidebar / bottom terminal                                                                                                                                                                              | exists                                |
+| `f` / `r` / `?`       | open file / review / help                                                                                                                                                                              | exists                                |
 
 **Approve/deny: SETTLED — `y` / `n` everywhere** (user decision 2026-08-20),
 matching Fleet Deck and the sidebar cards. Next/prev tab moved to `] / [` to
@@ -140,13 +141,13 @@ supersede it as the attention surface. Consequences for this plan:
 ```yaml
 keybindings:
   commandLayer:
-    enabled: false        # THE switch; Settings → Keybindings toggle
-    timeoutMs: 0          # 0 = armed until resolved
+    enabled: false # THE switch; Settings → Keybindings toggle
+    timeoutMs: 0 # 0 = armed until resolved
     repeatMs: 500
-    hudDelayMs: 400       # dwell before strip → full HUD
-    passthrough: true     # prefix-prefix → literal to terminal
-    indicator: strip      # strip | minimal; never 'none' — no invisible armed state
-    leaderOverride: ''    # per-platform escape hatch (Hyprland Alt conflicts, web client)
+    hudDelayMs: 400 # dwell before strip → full HUD
+    passthrough: true # prefix-prefix → literal to terminal
+    indicator: strip # strip | minimal; never 'none' — no invisible armed state
+    leaderOverride: '' # per-platform escape hatch (Hyprland Alt conflicts, web client)
 ```
 
 Defaults land in `services/hub/cmd/brain/config_defaults.json` →

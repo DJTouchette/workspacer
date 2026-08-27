@@ -202,7 +202,10 @@ await shot('overview');
 // REAL working directory of the machine it was taken on legible in its path
 // field, on a public page.
 await page.keyboard.press('Control+Shift+KeyN');
-await page.getByText('Give it a home directory', { exact: false }).first().waitFor({ timeout: 15000 });
+await page
+  .getByText('Give it a home directory', { exact: false })
+  .first()
+  .waitFor({ timeout: 15000 });
 await page.waitForTimeout(1500);
 await shot('spawn-dialog');
 await page.keyboard.press('Escape');
