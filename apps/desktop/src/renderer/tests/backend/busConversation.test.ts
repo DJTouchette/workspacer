@@ -297,8 +297,16 @@ describe('createBusConversations.applyDelta', () => {
     await convo.poke('s1'); // seed: lastSeq = 1
     const fetches = calls.length;
 
-    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] }, true);
-    convo.applyDelta('s1', { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] },
+      true,
+    );
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] },
+      true,
+    );
 
     expect(calls.length, 'a contiguous delta costs zero RPCs').toBe(fetches);
     const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
@@ -312,7 +320,11 @@ describe('createBusConversations.applyDelta', () => {
   it('pokes when a delta outruns the seed snapshot', async () => {
     const { convo, calls } = rig();
     // Not contiguous with anything we hold — the anchored fetch heals it.
-    convo.applyDelta('s1', { session_id: 's1', seq: 7, items: [{ kind: 'assistant_text', text: 'x' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 7, items: [{ kind: 'assistant_text', text: 'x' }] },
+      true,
+    );
     await Promise.resolve();
     expect(calls.length).toBe(1);
   });
@@ -321,7 +333,11 @@ describe('createBusConversations.applyDelta', () => {
     const { convo, calls } = rig();
     await convo.poke('s1'); // seed: lastSeq = 1
     const fetches = calls.length;
-    convo.applyDelta('s1', { session_id: 's1', seq: 9, items: [{ kind: 'assistant_text', text: 'y' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 9, items: [{ kind: 'assistant_text', text: 'y' }] },
+      true,
+    );
     await Promise.resolve();
     expect(calls.length).toBe(fetches + 1);
   });
@@ -342,7 +358,11 @@ describe('createBusConversations.applyDelta', () => {
     const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
     expect(merged.conversation?.map((t) => t.content)).toEqual(['fresh thread']);
     // And the counter followed the rebuild: the next contiguous delta folds.
-    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'ok' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'ok' }] },
+      true,
+    );
     const after = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
     expect(after.conversation?.map((t) => t.content)).toEqual(['fresh thread', 'ok']);
   });
@@ -356,10 +376,18 @@ describe('createBusConversations.applyDelta', () => {
     // contract, and this pins it.
     const { convo } = rig();
     await convo.poke('s1');
-    convo.applyDelta('s1', { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'hel' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 2, items: [{ kind: 'assistant_text', text: 'hel' }] },
+      true,
+    );
     const snap = { sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot;
     const first = convo.merge(snap);
-    convo.applyDelta('s1', { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'lo' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 3, items: [{ kind: 'assistant_text', text: 'lo' }] },
+      true,
+    );
     const second = convo.merge(snap);
 
     expect(second.conversation).not.toBe(first.conversation);
@@ -376,7 +404,11 @@ describe('createBusConversations.applyDelta', () => {
     const fetches = calls.length;
     convo.applyDelta('s1', { session_id: 's1', ready: true }, true); // no seq: not a delta
     convo.applyDelta('s1', { session_id: 's1', seq: 4, items: [] }, true); // heartbeat
-    convo.applyDelta('s1', { session_id: 's1', seq: 5, items: [{ kind: 'assistant_text', text: 'hi' }] }, true);
+    convo.applyDelta(
+      's1',
+      { session_id: 's1', seq: 5, items: [{ kind: 'assistant_text', text: 'hi' }] },
+      true,
+    );
     await Promise.resolve();
     expect(calls.length, 'neither frame may look like a gap').toBe(fetches);
     const merged = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
@@ -567,8 +599,12 @@ describe('webBackend against a headless (brain-provided) fleet', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(convFetches(), 'the tick is dead once push is live').toBe(settled);
 
-    push!({ data: { session_id: 'sess-1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] } });
-    push!({ data: { session_id: 'sess-1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] } });
+    push!({
+      data: { session_id: 'sess-1', seq: 2, items: [{ kind: 'assistant_text', text: 'PO' }] },
+    });
+    push!({
+      data: { session_id: 'sess-1', seq: 3, items: [{ kind: 'assistant_text', text: 'NG' }] },
+    });
     expect(convFetches(), 'a contiguous delta costs no RPC').toBe(settled);
     const last = seen[seen.length - 1];
     expect(last.conversation?.map((t) => [t.role, t.content])).toEqual([
@@ -612,7 +648,9 @@ describe('webBackend against a headless (brain-provided) fleet', () => {
     const settled = convFetches();
     // seq jumps 1 → 9: frames were missed (broker drop, tab suspend). One
     // incremental fetch — the worst case is the old behaviour, once.
-    push({ data: { session_id: 'sess-1', seq: 9, items: [{ kind: 'assistant_text', text: 'x' }] } });
+    push({
+      data: { session_id: 'sess-1', seq: 9, items: [{ kind: 'assistant_text', text: 'x' }] },
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(convFetches()).toBe(settled + 1);
     vi.useRealTimers();

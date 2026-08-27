@@ -561,8 +561,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
    *  conversationApplier.ts's `streaming` test. */
   const deltaStreaming = (sessionId: string): boolean => {
     const snap = lastSnaps.get(sessionId) as
-      | (ClaudeSessionSnapshot & { provider?: string })
-      | undefined;
+      (ClaudeSessionSnapshot & { provider?: string }) | undefined;
     return snap?.transport === 'stream' || (!!snap?.provider && snap.provider !== 'claude');
   };
   const armPush = (sessionId: string): void => {
