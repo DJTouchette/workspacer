@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -610,9 +611,9 @@ func readClaudeItems(cwd string, guard libraryFileGuard) []libraryItem {
 }
 
 // listLibrary merges global + project (project wins on id) + claude (namespaced),
-// sorted by title. Seeds the global dir with starter items on first use.
+// sorted by title. Seeds the global dir with any starter it has never seeded.
 func listLibrary(cwd string, guard libraryFileGuard) []libraryItem {
-	seedLibraryIfEmpty()
+	seedLibraryStarters()
 	byID := map[string]libraryItem{}
 	order := []string{}
 	put := func(key string, it libraryItem) {
@@ -855,21 +856,140 @@ func removeLibrary(scope, id, cwd, kind, origin string, guard libraryFileGuard) 
 	return nil
 }
 
-// seedLibraryIfEmpty writes starter items to the global dir on first use, the
-// same set the app ships (seedGlobalIfEmpty). Best-effort and idempotent: it
-// no-ops once any .md exists.
-func seedLibraryIfEmpty() {
+// preMarkerStarterIDs are the starters that shipped BEFORE library-seeded.json
+// existed, and the only reason that file needs a bootstrap rule at all.
+//
+// An install predating the marker has demonstrably been offered these four (the
+// old all-or-nothing seeder wrote them on its first run or not at all), so one
+// of them missing from a NON-EMPTY library means the user deleted it, and the
+// seeder must not put it back. A starter not in this list postdates the marker,
+// has never been offered to such an install, and its absence means nothing.
+//
+// Frozen by definition: never add to it. A new starter belongs in starterItems
+// only, which is exactly what makes it seed for existing users. The TS twin's
+// PRE_MARKER_STARTER_IDS is the same list.
+var preMarkerStarterIDs = []string{
+	"summarize-and-plan",
+	"careful-refactor",
+	"context7-mcp",
+	"make-workspacer-plugin",
+}
+
+// starterItem is one starter and the file id (<id>.md) it is written as.
+type starterItem struct {
+	ID   string
+	Item libraryItem
+}
+
+// librarySeedStatePath is where "we have already offered this starter" is
+// recorded: a small JSON file beside the library dir, in the same shape as the
+// config store's other sidecars (peers.json, claude-profiles.json).
+//
+// It exists because the only other available signal — is the file on disk? —
+// cannot tell "you have never been offered this" apart from "I deleted it on
+// purpose", and the seeder must never undo the second one. The TS twin
+// (libraryService.ts seedStatePath) reads and writes this same file with the
+// same key, so whichever process runs first records for both.
+func librarySeedStatePath() string { return filepath.Join(configDir(), "library-seeded.json") }
+
+// readLibrarySeedState returns the ids ever seeded, or nil when the marker has
+// never been written. Unreadable or malformed reads as nil: re-offering the
+// post-marker starters is recoverable, and the bootstrap in seedLibraryStarters
+// still protects the pre-marker four from being resurrected.
+func readLibrarySeedState() map[string]bool {
+	raw, err := os.ReadFile(librarySeedStatePath())
+	if err != nil {
+		return nil
+	}
+	var state struct {
+		Seeded []string `json:"seeded"`
+	}
+	if json.Unmarshal(raw, &state) != nil || state.Seeded == nil {
+		return nil
+	}
+	seeded := map[string]bool{}
+	for _, id := range state.Seeded {
+		seeded[id] = true
+	}
+	return seeded
+}
+
+// seedLibraryStarters seeds every starter that has never been seeded and is not
+// already on disk, the same set (and order) the app ships (seedGlobalStarters).
+//
+// This was seedLibraryIfEmpty, which returned the moment the global dir held
+// ANY .md — so a starter added after a user's first run (the three dispatch
+// templates, most recently) stayed invisible forever to every existing install.
+// Seeding is per-ITEM now. Two rules it must not break: never overwrite a file
+// that exists (the user may have edited it), and never resurrect one the user
+// DELETED — which is what the marker buys. A genuinely empty dir still gets the
+// whole set, exactly as before. Best-effort and idempotent.
+func seedLibraryStarters() {
 	dir := libraryGlobalDir()
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
-				return
+	recorded := readLibrarySeedState()
+	seeded := recorded
+	if seeded == nil {
+		// No marker yet: a non-empty library is a pre-marker install, so treat
+		// the starters that shipped before the marker as already offered. An
+		// empty one is a true first run.
+		seeded = map[string]bool{}
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+					for _, id := range preMarkerStarterIDs {
+						seeded[id] = true
+					}
+					break
+				}
 			}
 		}
+	}
+	var fresh []starterItem
+	for _, s := range starterItems() {
+		if !seeded[s.ID] {
+			fresh = append(fresh, s)
+		}
+	}
+	// Idempotent fast path: every run after the first has nothing to seed and
+	// nothing to record, and touches no files at all. listLibrary calls this on
+	// EVERY call, so the steady state must stay a single stat.
+	if len(fresh) == 0 && recorded != nil {
+		return
 	}
 	if os.MkdirAll(dir, 0o755) != nil {
 		return
 	}
+	for _, s := range fresh {
+		full := filepath.Join(dir, s.ID+".md")
+		// An existing file is the user's, even when the marker has never seen
+		// it. It is still recorded below — just never written over.
+		if _, err := os.Stat(full); err == nil {
+			continue
+		}
+		item := s.Item
+		_ = os.WriteFile(full, []byte(serializeItem(&item)), 0o644)
+	}
+	// Record everything offered on this pass, written or skipped, so that
+	// deleting it afterwards keeps it gone.
+	for _, s := range fresh {
+		seeded[s.ID] = true
+	}
+	ids := make([]string, 0, len(seeded))
+	for id := range seeded {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	if blob, err := json.MarshalIndent(struct {
+		Seeded []string `json:"seeded"`
+	}{ids}, "", "  "); err == nil {
+		_ = writeFileAtomic(librarySeedStatePath(), append(blob, '\n'), 0o644)
+	}
+}
+
+// starterItems is the starter library, by file id. The TS twin ships the same
+// set in the same order (libraryService.ts starters()); the seed-count tests on
+// both sides pin that they agree.
+func starterItems() []starterItem {
 	seeds := []libraryItem{
 		{
 			Title: "Summarize & plan", Kind: "prompt", Action: "insert",
@@ -1044,10 +1164,17 @@ func seedLibraryIfEmpty() {
 			}, "\n"),
 		},
 	}
-	names := []string{"summarize-and-plan.md", "careful-refactor.md", "context7-mcp.md", "make-workspacer-plugin.md", "ship-task.md", "scout-task.md", "two-explanations.md"}
+	// Positional pairing, as before — ids[i] names seeds[i]. A mismatched length
+	// is a programming error caught by the seed-count test, not a runtime case.
+	ids := []string{"summarize-and-plan", "careful-refactor", "context7-mcp", "make-workspacer-plugin", "ship-task", "scout-task", "two-explanations"}
+	out := make([]starterItem, 0, len(seeds))
 	for i := range seeds {
-		_ = os.WriteFile(filepath.Join(dir, names[i]), []byte(serializeItem(&seeds[i])), 0o644)
+		if i >= len(ids) {
+			break
+		}
+		out = append(out, starterItem{ID: ids[i], Item: seeds[i]})
 	}
+	return out
 }
 
 func mustCwd() string {

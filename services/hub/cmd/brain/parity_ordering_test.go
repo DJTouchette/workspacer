@@ -149,6 +149,8 @@ func TestListersUseTheFixtureOrdering(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		// This asserts on the WHOLE list, so the starters must not join it.
+		suppressLibrarySeed(t)
 		for i, title := range c.Input {
 			body := "---\ntitle: " + title + "\n---\n\nx\n"
 			if err := os.WriteFile(filepath.Join(dir, string(rune('a'+i))+".md"), []byte(body), 0o644); err != nil {

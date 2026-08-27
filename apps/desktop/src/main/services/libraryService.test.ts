@@ -21,7 +21,7 @@ import * as path from 'path';
 const CAN_SYMLINK_LIB = CAN_SYMLINK;
 
 // Seed a real temp configDir at hoist time: the libraryService singleton runs
-// seedGlobalIfEmpty() in its constructor at import, before beforeEach, so an
+// seedGlobalStarters() in its constructor at import, before beforeEach, so an
 // empty configDir would write the seed into a repo-relative ./library dir.
 const h = vi.hoisted(() => {
   const nodeFs = require('fs') as typeof import('fs');
@@ -1279,5 +1279,122 @@ describe('libraryService — MCP secrets never leave the process in the clear', 
     // whole `headers` block, so assert on the key rather than through it.
     expect(stored.mcp!.headers?.Authorization).toBeUndefined();
     expect(fs.readFileSync(saved.path, 'utf-8')).not.toContain('__WKS_SECRET__');
+  });
+});
+
+/**
+ * Seeding is ADDITIVE PER ITEM. It used to return the moment the global library
+ * held any .md at all, so every starter added after a user's first run — the
+ * three dispatch templates, most recently — was invisible forever to every
+ * existing install, which is the whole installed base.
+ *
+ * The two rules that additive seeding must not break are the reason
+ * `library-seeded.json` exists: an existing file is never overwritten (the user
+ * may have edited it), and a starter the user DELETED is never resurrected. The
+ * second one is unanswerable from the directory alone, which cannot tell "you
+ * deleted this" from "you were never offered this".
+ */
+describe('libraryService — the global seed is additive per item', () => {
+  const seed = (): void =>
+    (libraryService as unknown as { seedGlobalStarters: () => void }).seedGlobalStarters();
+  const libDir = (): string => path.join(h.configDir, 'library');
+  const markerPath = (): string => path.join(h.configDir, 'library-seeded.json');
+  const names = (): string[] => fs.readdirSync(libDir()).sort();
+
+  it('a genuinely empty dir still gets the whole starter set, as before', () => {
+    seed();
+    expect(names()).toEqual(
+      [
+        'careful-refactor.md',
+        'context7-mcp.md',
+        'make-workspacer-plugin.md',
+        'scout-task.md',
+        'ship-task.md',
+        'summarize-and-plan.md',
+        'two-explanations.md',
+      ].sort(),
+    );
+    // …and every id it wrote is recorded, or the next start would re-offer them.
+    const marker = JSON.parse(fs.readFileSync(markerPath(), 'utf-8')) as { seeded: string[] };
+    expect(marker.seeded).toContain('ship-task');
+    expect(marker.seeded).toHaveLength(7);
+  });
+
+  it('seeds a NEW starter into a populated pre-marker library', () => {
+    // The exact shape of the install that surfaced this: two of the four
+    // originals kept, two deleted, no marker, no dispatch templates.
+    fs.mkdirSync(libDir(), { recursive: true });
+    fs.writeFileSync(path.join(libDir(), 'summarize-and-plan.md'), '---\ntitle: Mine\n---\n\nx\n');
+    fs.writeFileSync(
+      path.join(libDir(), 'careful-refactor.md'),
+      '---\ntitle: Mine\nkind: prompt\n---\n\nedited by hand\n',
+    );
+
+    seed();
+
+    for (const want of ['ship-task.md', 'scout-task.md', 'two-explanations.md']) {
+      expect(names()).toContain(want);
+    }
+    // The dispatch templates land as real dispatch items, schema and all —
+    // seeding them is pointless if they don't parse as the kind.
+    const items = libraryService.list();
+    const ship = items.find((i) => i.id === 'ship-task')!;
+    expect(ship.kind).toBe('dispatch');
+    expect(ship.resultSchema).toMatchObject({ type: 'object', required: ['commit'] });
+  });
+
+  it('does not resurrect a pre-marker starter the user deleted', () => {
+    fs.mkdirSync(libDir(), { recursive: true });
+    fs.writeFileSync(path.join(libDir(), 'careful-refactor.md'), '---\ntitle: Mine\n---\n\nx\n');
+
+    seed();
+
+    // context7-mcp and make-workspacer-plugin shipped BEFORE the marker, so
+    // their absence from a populated library is a deletion, not an omission.
+    expect(names()).not.toContain('context7-mcp.md');
+    expect(names()).not.toContain('make-workspacer-plugin.md');
+  });
+
+  it('never overwrites an existing file, even one the marker has not seen', () => {
+    fs.mkdirSync(libDir(), { recursive: true });
+    const mine = path.join(libDir(), 'ship-task.md');
+    fs.writeFileSync(mine, '---\ntitle: My ship task\nkind: dispatch\n---\n\nmy own text\n');
+
+    seed();
+
+    expect(fs.readFileSync(mine, 'utf-8')).toContain('my own text');
+    // …and it is RECORDED as seeded all the same, so deleting it later sticks.
+    const marker = JSON.parse(fs.readFileSync(markerPath(), 'utf-8')) as { seeded: string[] };
+    expect(marker.seeded).toContain('ship-task');
+    fs.unlinkSync(mine);
+    seed();
+    expect(names()).not.toContain('ship-task.md');
+  });
+
+  it('never resurrects a starter it seeded itself and the user then deleted', () => {
+    seed(); // first run: the full set + the marker
+    fs.unlinkSync(path.join(libDir(), 'two-explanations.md'));
+
+    seed();
+
+    expect(names()).not.toContain('two-explanations.md');
+    // Clearing the library WHOLESALE is a deliberate act too — an empty dir
+    // with a marker must not re-trigger the first-run seed.
+    for (const n of names()) fs.unlinkSync(path.join(libDir(), n));
+    seed();
+    expect(names()).toEqual([]);
+  });
+
+  it('is idempotent — a second run seeds nothing and rewrites nothing', () => {
+    seed();
+    const before = names();
+    const stamps = before.map((n) => fs.statSync(path.join(libDir(), n)).mtimeMs);
+
+    seed();
+
+    expect(names()).toEqual(before);
+    // Not merely "same files": the constructor path and list() are called often,
+    // and a seeder that rewrites its own output churns the user's library.
+    expect(before.map((n) => fs.statSync(path.join(libDir(), n)).mtimeMs)).toEqual(stamps);
   });
 });
