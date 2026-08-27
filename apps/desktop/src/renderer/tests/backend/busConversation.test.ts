@@ -151,6 +151,46 @@ describe('createBusConversations', () => {
     expect(merged.conversation?.map((t) => t.content)).toEqual(['new thread']);
   });
 
+  it('hands each snapshot its OWN array, so a memo keyed on the transcript re-runs', async () => {
+    // The fold buffer is mutated in place; handing it out directly gave every
+    // snapshot the same array identity forever. ClaudePane memoizes the
+    // "Working for …" anchor on exactly that identity (`[conversation]`), so a
+    // stable reference froze the anchor a whole turn behind and the label
+    // counted the gap between turns as work. Electron IPC gives the desktop a
+    // fresh array per push (structured clone); the bus seam must match.
+    let turn = 0;
+    const convo = createBusConversations(
+      () =>
+        Promise.resolve({
+          seq: ++turn,
+          first_seq: 1,
+          items: [
+            {
+              kind: 'user_message',
+              text: `ask ${turn}`,
+              timestamp: `2026-08-26T14:4${turn}:00.000Z`,
+            },
+          ],
+        }),
+      () => {},
+    );
+    await convo.poke('s1');
+    const first = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    // Two merges of the SAME fold still hand out distinct arrays — cheap, and
+    // it means no caller can ever come to depend on the buffer's identity.
+    const again = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(again.conversation).not.toBe(first.conversation);
+    expect(again.conversation).toEqual(first.conversation);
+
+    await convo.poke('s1');
+    const second = convo.merge({ sessionId: 's1', status: 'active' } as ClaudeSessionSnapshot);
+    expect(second.conversation).not.toBe(first.conversation);
+    // …and the older array is a real snapshot of the older transcript, not a
+    // view onto the buffer that grew under it.
+    expect(first.conversation?.map((t) => t.content)).toEqual(['ask 1']);
+    expect(second.conversation?.map((t) => t.content)).toEqual(['ask 1', 'ask 2']);
+  });
+
   it('leaves a snapshot that brought its own conversation untouched', () => {
     const convo = createBusConversations(
       () => Promise.resolve(null),

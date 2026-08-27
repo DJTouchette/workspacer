@@ -378,7 +378,17 @@ export function createBusConversations(
     if (!st) return snap;
     return {
       ...snap,
-      conversation: st.turns,
+      // A COPY, deliberately, and the cost (a pointer per turn, capped at
+      // MAX_TURNS) is the price of the renderer's snapshot contract. `st.turns`
+      // is a fold buffer mutated in place, so handing it out directly gives
+      // every snapshot the SAME array identity forever — and the renderer
+      // memoizes on exactly that identity. ClaudePane's `lastUserTs` (the
+      // "Working for 1m 04s" anchor) is `useMemo(..., [conversation])`: against
+      // a headless fleet it never recomputed, so every turn was anchored to the
+      // PREVIOUS turn's user message and the label counted the idle gaps
+      // between turns as work. Over Electron IPC the desktop gets a fresh array
+      // per push for free (structured clone); this is that guarantee, restored.
+      conversation: st.turns.slice(),
       conversationOffset: st.offset,
       conversationUserOffset: st.userOffset,
       ...(st.plan && !snap.plan ? { plan: st.plan } : {}),

@@ -1548,13 +1548,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // lastUserTs) can't restart the clock on a turn that never stopped.
   const lastUserTsRef = useRef(lastUserTs);
   lastUserTsRef.current = lastUserTs;
+  // When we last watched this session go idle — the end of the previous turn.
+  // A user turn stamped BEFORE that instant belongs to a turn that is over, so
+  // it cannot be this run's start: the transcript reaches a bus client through
+  // a separate `sessions.conversation` fetch than the state flip does, so a new
+  // turn routinely begins before its own user message has been folded in. Left
+  // at 0 until we actually observe an idle, so an attach mid-turn (we never saw
+  // the boundary) still trusts the transcript and reports the real wait.
+  const lastIdleAtRef = useRef(0);
+  useEffect(() => {
+    if (ambientIdle) lastIdleAtRef.current = Date.now();
+  }, [ambientIdle]);
   const [workStartedAt, setWorkStartedAt] = useState<number | null>(null);
   useEffect(() => {
     // Streaming wins over idle: the optimistic bridge right after a send is
     // "streaming" while ambientState is STILL idle (the daemon hasn't flipped
     // yet), and clearing first there left the label blank for the whole settle
     // window — the exact stretch the user is waiting through.
-    if (isStreaming) setWorkStartedAt((prev) => prev ?? lastUserTsRef.current ?? Date.now());
+    if (isStreaming)
+      setWorkStartedAt((prev) => {
+        if (prev !== null) return prev;
+        const ts = lastUserTsRef.current;
+        return ts !== undefined && ts >= lastIdleAtRef.current ? ts : Date.now();
+      });
     else if (ambientIdle) setWorkStartedAt(null);
   }, [isStreaming, ambientIdle]);
 
