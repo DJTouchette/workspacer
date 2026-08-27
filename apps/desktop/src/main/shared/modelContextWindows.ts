@@ -1,0 +1,202 @@
+/**
+ * The context window: one table, one resolver.
+ *
+ * TWINS: `services/claudemon/src/session/windows.rs` (Rust) and
+ * `services/hub/cmd/brain/windows.go` (Go). All three are pinned to
+ * `contracts/model-context-windows.json` by `modelContextWindowsContract.test.ts`
+ * and its opposite numbers — edit one table and the others go red.
+ *
+ * This replaced five hand-maintained window tables, three of which disagreed
+ * for the same model id: a `gpt-5-codex` session reported 272_000 through the
+ * provider status line and 200_000 through `usage`, at the same instant, for
+ * the same session, depending on which client asked.
+ *
+ * The other half of what lives here is the shape of NOT KNOWING. A window is
+ * `number | null` and `null` means "we do not know", which is a different fact
+ * from any number. It used to be spelled `200_000` in four places — including
+ * `emptyUsage()`, which asserted a 200k window before a single token had been
+ * counted, and which is the whole of the "every session starts at 200k and
+ * upgrades later" complaint.
+ */
+
+/** How a table row matches a model id (already lowercased).
+ *
+ *  Normative, not an implementation detail: the `o3`/`o4` rows are `prefix`
+ *  rows precisely so an `o3` buried inside an unrelated id does not match, and
+ *  a port that read every row as a substring would pass every lookup case in
+ *  the fixture except that one. */
+export type WindowMatchKind = 'contains' | 'prefix';
+
+export interface WindowRow {
+  /** Lowercased needle. */
+  match: string;
+  kind: WindowMatchKind;
+  window: number;
+}
+
+/** THE TABLE, in order: first match wins, so the specific rows come before the
+ *  families they overlap. Pinned row-for-row to the fixture's `windows` block. */
+export const CONTEXT_WINDOWS: readonly WindowRow[] = [
+  // Marker rows first — a statement about the WINDOW outranks a statement
+  // about the family, whichever family carries it.
+  { match: '[1m]', kind: 'contains', window: 1_000_000 },
+  { match: '-1m', kind: 'contains', window: 1_000_000 },
+  // 1M-native: the max window is also the default, so these ids never carry a
+  // marker. Before the generic claude row or their gauges read 5× too full.
+  { match: 'fable', kind: 'contains', window: 1_000_000 },
+  { match: 'mythos', kind: 'contains', window: 1_000_000 },
+  { match: 'gemini', kind: 'contains', window: 1_048_576 },
+  { match: 'gpt-4.1', kind: 'contains', window: 1_047_576 },
+  // Table KNOWLEDGE, not a fallback: an unmarked Claude model really does hold
+  // 200k. The four places that spelled *unknown* 200_000 are gone.
+  { match: 'claude', kind: 'contains', window: 200_000 },
+  { match: 'gpt-5', kind: 'contains', window: 272_000 },
+  { match: 'codex', kind: 'contains', window: 272_000 },
+  { match: 'gpt-4o', kind: 'contains', window: 128_000 },
+  { match: 'o3', kind: 'prefix', window: 200_000 },
+  { match: 'o4', kind: 'prefix', window: 200_000 },
+  { match: '/o3', kind: 'contains', window: 200_000 },
+  { match: '/o4', kind: 'contains', window: 200_000 },
+  { match: 'grok', kind: 'contains', window: 256_000 },
+  { match: 'deepseek', kind: 'contains', window: 131_072 },
+  { match: 'kimi', kind: 'contains', window: 262_144 },
+  { match: 'qwen', kind: 'contains', window: 262_144 },
+];
+
+/** How far past the claimed window a session may be observed before we stop
+ *  believing the claim. Two percent absorbs the provider's own rounding. */
+export const DRIFT_TOLERANCE = 1.02;
+
+/**
+ * The table's answer for a concrete model id, or `null` when no row covers it.
+ *
+ * `null` is the honest unknown and it is load-bearing: every readout in the
+ * repo already hides its meter on an absent window, so a model this table has
+ * never heard of shows no meter instead of a familiar-looking wrong one.
+ */
+export function windowFor(model: string | null | undefined): number | null {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  for (const row of CONTEXT_WINDOWS) {
+    const hit = row.kind === 'prefix' ? m.startsWith(row.match) : m.includes(row.match);
+    if (hit) return row.window;
+  }
+  return null;
+}
+
+/**
+ * The window implied by the model string a session was *asked* for — the alias
+ * the user picked (`opus[1m]`), not the concrete id the transcript records.
+ *
+ * Deliberately narrower than `windowFor`: it answers only "was 1M asked for",
+ * and `null` means "says nothing", NOT "200k". A bare `opus` may be a 200k
+ * session or whatever Claude Code's default becomes tomorrow; pinning a number
+ * here is exactly how a wrong window gets asserted from token zero.
+ */
+export function requestedWindowFor(model: string | null | undefined): number | null {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  if (m.includes('[1m]') || m.includes('-1m') || m.includes('fable') || m.includes('mythos')) {
+    return 1_000_000;
+  }
+  return null;
+}
+
+/** Everything beyond the transcript's `model` id that can speak to a session's
+ *  window. Each is optional; a session with none of them falls back to the
+ *  table, and then to honest unknown. */
+export interface WindowSignals {
+  /** The window the provider itself reported, in tokens. For Claude this is
+   *  `context_window.context_window_size` off the statusLine payload (PTY) or
+   *  the stream `result` frame's `modelUsage.*.contextWindow`; for Codex it is
+   *  `model_context_window`. Real provider truth, so it outranks every guess. */
+  reportedWindow?: number | null;
+  /** The user's `~/.workspacer/model-rates.json` `context_limit`. */
+  overrideWindow?: number | null;
+  /** The model string this session was *asked* for at spawn — the alias the
+   *  user picked (`opus[1m]`), not the concrete id. Claude Code strips the
+   *  `[1m]` marker from the transcript's `model` field, so this is the only
+   *  place the 1M choice survives before the provider reports a window. */
+  requestedModel?: string | null;
+  /** The session's high-water context occupancy, for the drift alarm. */
+  peakContext?: number;
+}
+
+/**
+ * THE RESOLVER. One hierarchy, and the order is the design:
+ *
+ *   1. `reportedWindow` — the window the provider gave for THIS session. A fact.
+ *   2. `overrideWindow` — the user's `model-rates.json` `context_limit`. They
+ *      are overruling us deliberately, so it outranks the marker below. This
+ *      REPLACED a `Math.max()`, under which a coarse alias could silently raise
+ *      the window back over what the user wrote.
+ *   3. `requestedModel`'s `[1m]` marker — known from token zero, which is what
+ *      makes birth-time knowledge possible.
+ *   4. the contract table, by concrete model id.
+ *   5. `null` — unknown. Never 200_000.
+ *
+ * Then the DRIFT ALARM. If `peakContext` exceeds the window we just resolved
+ * (past `DRIFT_TOLERANCE`) then whatever we resolved is demonstrably wrong, and
+ * the answer becomes unknown plus a loud log. This is the retrospective
+ * 200k→1M promotion, demoted from a source of truth to an alarm: it used to
+ * silently REWRITE the window to 1M, a guess dressed as a correction, and it
+ * could only ever fire after ~200k tokens of already-wrong readings.
+ */
+export function resolveContextWindow(
+  model: string | null | undefined,
+  signals?: WindowSignals,
+): number | null {
+  const resolved = resolveClaim(model, signals);
+  if (resolved === null) return null;
+  const peak = signals?.peakContext ?? 0;
+  if (peak > resolved * DRIFT_TOLERANCE) {
+    console.warn(
+      `[contextWindow] drift: session on model ${JSON.stringify(model)} ` +
+        `(requested ${JSON.stringify(signals?.requestedModel ?? null)}) holds ${peak} tokens, ` +
+        `past the ${resolved}-token window we resolved for it. Reporting the window as UNKNOWN. ` +
+        `If this model is real, contracts/model-context-windows.json is stale for it.`,
+    );
+    return null;
+  }
+  return resolved;
+}
+
+/** The hierarchy without the alarm — split out so the alarm has something to
+ *  compare against and so tests can name the two halves separately. */
+function resolveClaim(model: string | null | undefined, signals?: WindowSignals): number | null {
+  const reported = signals?.reportedWindow;
+  if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) return reported;
+  const override = signals?.overrideWindow;
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return override;
+  const requested = requestedWindowFor(signals?.requestedModel);
+  if (requested !== null) return requested;
+  return windowFor(model);
+}
+
+/**
+ * The model picker's `context` badge for one of Claude Code's own aliases.
+ *
+ * The alias rows in `claudeModels.ts` (and their Go twin in
+ * `cmd/brain/models.go`) used to hardcode `'200K'` / `'1M'`, which is how a
+ * display-only sixth window table came to exist alongside the four numeric ones.
+ *
+ * DOMAIN: a `claude.listModels` alias — `opus`, `sonnet[1m]`, `haiku`, `fable` —
+ * or a concrete Claude id the user has been seen running. Nothing else is ever
+ * passed here. That matters because a bare alias names no vendor and so matches
+ * no row: the table keys the family on the string `claude`, which a concrete
+ * transcript id always carries and an alias never does. Hence the second
+ * lookup — within this domain, prepending the family is the identity, not a
+ * guess. A marker alias (`opus[1m]`) or a 1M-native one (`fable`) is answered by
+ * the first lookup and never reaches it.
+ *
+ * TWIN: `formatClaudeAliasWindow` in services/hub/cmd/brain/windows.go. The two
+ * answers are pinned to each other by contracts/claude-model-catalog-cases.json.
+ */
+export function formatClaudeAliasWindow(alias: string): string {
+  const w = windowFor(alias) ?? windowFor(`claude-${alias}`);
+  // An id the table has never heard of gets no badge rather than an invented
+  // one — the same honest unknown as everywhere else.
+  if (w === null) return '';
+  if (w >= 1_000_000) return '1M';
+  return `${Math.round(w / 1000)}K`;
+}
