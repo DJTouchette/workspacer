@@ -17,6 +17,34 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Repo-root guard: unresolved git conflict markers. Every other job in this
+  # file is directory-scoped (working-directory: apps/desktop, services/*) —
+  # landing/docs.html shipped conflict markers to master in 31fde022 because
+  # landing/ sits inside no job's blast radius. This job has no
+  # working-directory override and no toolchain setup, so it stays cheap and
+  # actually covers the whole tree via `git grep` (tracked files only, skips
+  # node_modules for free).
+  #
+  # Pattern is just the two start/end markers, not the `=======` separator:
+  # a bare line of seven equals signs is also valid setext-heading underline
+  # and legitimate table/ASCII-art separator syntax, so it's not unambiguous
+  # the way `<<<<<<< ` and `>>>>>>> ` are (git always emits a ref/branch name
+  # after them). Repo currently has zero legitimate `^=======$` lines, but the
+  # narrower pattern is the one that can't false-positive as the repo grows.
+  # ---------------------------------------------------------------------------
+  conflict-markers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: No unresolved conflict markers
+        run: |
+          if git grep -InE '^(<<<<<<< |>>>>>>> )' -- .; then
+            echo "::error::Unresolved git conflict markers found in the files listed above (see file:line)."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
   # Desktop: TypeScript typecheck (main + renderer) and the vitest suites.
   # apps/desktop and apps/desktop/src/renderer each have their own
   # package-lock.json, so both need their own `npm ci` (same as release.yml).
