@@ -17,6 +17,13 @@ import {
 import HarnessModelSelect from './HarnessModelSelect';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
 import type { AgentProvider } from '../../types/pane';
+import { useProviderDetection } from '../../hooks/useProviderDetection';
+import {
+  visibleProviderOptions,
+  isProviderOffered,
+  NOT_INSTALLED_SUFFIX,
+  type ProviderDetection,
+} from '../../lib/providerAvailability';
 
 interface SessionSectionProps {
   config: Config;
@@ -46,16 +53,12 @@ const AGENT_PROVIDERS: {
   { label: 'Pi', value: 'pi', beta: true },
 ];
 
+/** Stable empty list so `detection.find` callers keep a stable identity. */
+const EMPTY_DETECTION: ProviderDetection[] = [];
+
 /** Provider label with a Beta suffix for not-yet-hardened backends. */
 const providerLabel = (p: { label: string; beta?: boolean }): string =>
   p.beta ? `${p.label} (Beta)` : p.label;
-
-interface ProviderDetection {
-  provider: string;
-  found: boolean;
-  resolvedPath: string | null;
-  customBin: string;
-}
 
 /** One editable binary-path row for a provider in the settings panel. */
 const BinaryRow: React.FC<{
@@ -216,16 +219,24 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
     };
   }, [keepWarm.enabled]);
 
-  const [detection, setDetection] = useState<ProviderDetection[]>([]);
-  const refreshDetection = () => {
-    window.electronAPI
-      .providerCheckAll?.()
-      .then((list) => setDetection(list ?? []))
-      .catch(() => {});
-  };
-  useEffect(() => {
-    refreshDetection();
-  }, []);
+  // Shared with every other provider picker (hooks/useProviderDetection): the
+  // Tool paths rows below use it for their green/red dots, and the harness
+  // pickers above use it to decide which harnesses to offer at all.
+  const { detection: detectionOrNull, refresh: refreshDetection } = useProviderDetection();
+  const detection: ProviderDetection[] = detectionOrNull ?? EMPTY_DETECTION;
+  // "Default agent" and "Title model for" offer only installed harnesses; the
+  // configured value is always kept (flagged) so the row can't render with
+  // nothing selected. The Tool paths rows below are deliberately NOT filtered —
+  // that is where a missing CLI gets pointed at a custom binary, so hiding the
+  // row would hide the fix.
+  const visibleAgentProviders = visibleProviderOptions(AGENT_PROVIDERS, detectionOrNull, [
+    defaultProvider,
+  ]);
+  const defaultProviderMissing = visibleAgentProviders.some(
+    (p) => p.value === defaultProvider && p.missing,
+  );
+  // A codex-only transport row is noise on a machine with no codex.
+  const codexOffered = isProviderOffered(detectionOrNull, 'codex');
 
   // Default directory for new agents. Local state so typing is smooth; persisted
   // on blur / Enter (and immediately when picked via Browse).
@@ -248,6 +259,12 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
     config.agents?.defaultProvider ?? 'claude',
   );
   const autoTitle = config.agents?.autoTitle;
+  // Keep any harness that already has a saved title model, so a configured
+  // value stays visible (and editable) even after its CLI goes away.
+  const visibleTitleProviders = visibleProviderOptions(TITLE_PROVIDERS, detectionOrNull, [
+    titleHarness,
+    ...Object.keys(config.agents?.autoTitle?.models ?? {}),
+  ]);
   // Same resolution main uses (lib/roleModels): this harness's entry, then the
   // legacy single field but only where it is servable — `'haiku'` is a claude
   // alias and must not be shown as codex's configured title model.
@@ -288,16 +305,22 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
     <Section title="Session">
       <Row label="Default agent">
         <div style={{ display: 'flex', gap: 4 }}>
-          {AGENT_PROVIDERS.map((p) => (
+          {visibleAgentProviders.map((p) => (
             <ModeButton
               key={p.value}
-              label={providerLabel(p)}
+              label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : providerLabel(p)}
               active={defaultProvider === p.value}
               onClick={() => save({ agents: { ...config.agents, defaultProvider: p.value } })}
             />
           ))}
         </div>
       </Row>
+      {defaultProviderMissing && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
+          The <strong>{defaultProvider}</strong> CLI was not found on this machine — new agents
+          will fail to launch until you install it or set its path under Tool paths below.
+        </div>
+      )}
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         The coding agent pre-selected in the spawn dialog. Codex and OpenCode run via claudemon's
         adapters with live telemetry; Claude is the default.
@@ -407,10 +430,10 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
       <Row label="Title model for">
         <div style={{ display: 'flex', gap: 4 }}>
-          {TITLE_PROVIDERS.map((p) => (
+          {visibleTitleProviders.map((p) => (
             <ModeButton
               key={p.value}
-              label={p.label}
+              label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
               active={titleHarness === p.value}
               onClick={() => setTitleHarness(p.value)}
             />
@@ -454,6 +477,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         structured GUI only, no terminal view. Overridable per spawn in the spawn dialog.
       </div>
 
+      {codexOffered && (
+        <>
       <Row label="Codex transport">
         <div style={{ display: 'flex', gap: 4 }}>
           <ModeButton
@@ -474,6 +499,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         the exact twin of Claude's headless transport. Hybrid also runs the native Codex TUI in a
         terminal, rejoined onto the same thread, so you get a Term view too. Overridable per spawn.
       </div>
+        </>
+      )}
 
       <Row label="Default permission mode">
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>

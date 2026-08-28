@@ -89,6 +89,7 @@ const checkAllProviders = vi.fn(async () => ({ codex: true }));
 const resolveAgentBinary = vi.fn(() => '/bin/codex');
 vi.mock('./agentProviders', () => ({
   checkAllProviders: (...a: unknown[]) => checkAllProviders(...a),
+  checkAllProvidersCached: (...a: unknown[]) => checkAllProviders(...a),
   resolveAgentBinary: (...a: unknown[]) => resolveAgentBinary(...a),
 }));
 

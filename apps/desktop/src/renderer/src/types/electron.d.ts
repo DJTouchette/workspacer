@@ -206,7 +206,9 @@ export interface ElectronAPI {
       defaultEffort?: string;
     }>
   >;
-  providerCheckAll: () => Promise<
+  providerCheckAll: (
+    force?: boolean,
+  ) => Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   >;
   keepWarmHeartbeats: (limit?: number) => Promise<

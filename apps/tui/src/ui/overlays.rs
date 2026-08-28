@@ -60,7 +60,9 @@ pub(super) fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         .filter(|p| !p.extra_args.is_empty())
         .map(|p| format!("  ({})", p.extra_args.join(" ")))
         .unwrap_or_default();
-    let providers = crate::app::SPAWN_PROVIDERS;
+    // Only the harnesses this machine can launch (App::offered_providers);
+    // `provider_idx` indexes into this list, not the full vocabulary.
+    let providers = app.offered_providers(None);
     let provider = providers
         .get(form.provider_idx)
         .copied()

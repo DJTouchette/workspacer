@@ -3741,10 +3741,21 @@
         <span class="star ${i < favs.length ? 'on' : ''}">★</span>
       </button>`).join('');
 
-    const provRows = ['claude', 'codex', 'copilot', 'opencode', 'pi'].map((p) => {
-      const probe = providerProbe && providerProbe.find((x) => x.provider === p);
-      const tag = probe ? (probe.found ? 'installed' : 'not found') : (p === 'claude' ? 'default' : 'harness');
-      return `<button class="provbtn ${S.spawn.provider === p ? 'on' : ''}" data-prov="${p}"${probe && !probe.found ? ' disabled style="opacity:.45"' : ''}>
+    // Only harnesses that are actually installed on the HOST get a button —
+    // the desktop's pickers do the same (renderer lib/providerAvailability), and
+    // a phone is the surface least able to go install the missing CLI. Fail
+    // open: no probe answer at all keeps every button. The currently-selected
+    // provider is never vanished — it stays, disabled and tagged, so the screen
+    // says why it can't dispatch instead of quietly re-picking for you.
+    const probeFor = (p) => providerProbe && providerProbe.find((x) => x.provider === p);
+    const provRows = ['claude', 'codex', 'copilot', 'opencode', 'pi'].filter((p) => {
+      const probe = probeFor(p);
+      return !probe || probe.found || S.spawn.provider === p;
+    }).map((p) => {
+      const probe = probeFor(p);
+      const missing = !!probe && !probe.found;
+      const tag = probe ? (probe.found ? 'installed' : 'not installed') : (p === 'claude' ? 'default' : 'harness');
+      return `<button class="provbtn ${S.spawn.provider === p ? 'on' : ''}" data-prov="${p}"${missing ? ' disabled style="opacity:.45"' : ''}>
         <span class="nm">${esc(PROVIDER_LABEL[p])}</span><span class="tag">${esc(tag)}</span>
       </button>`;
     }).join('');

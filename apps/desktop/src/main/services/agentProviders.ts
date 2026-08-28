@@ -95,6 +95,41 @@ export function checkAllProviders(
   });
 }
 
+/**
+ * Rescan window for {@link checkAllProvidersCached}. Every provider picker in
+ * the app now asks on open (renderer hook useProviderDetection) so it can hide
+ * harnesses that aren't installed — that turns one PATH walk per provider into
+ * a call the UI makes routinely, and PATH can be long. Binaries don't move
+ * often, so a few seconds of staleness buys a free reopen while still letting a
+ * CLI installed mid-session appear without a restart.
+ */
+const DETECTION_TTL_MS = 5000;
+
+let detectionCache: { key: string; at: number; value: ProviderStatus[] } | null = null;
+
+/**
+ * {@link checkAllProviders} with a short TTL. The cache key includes the
+ * binary overrides, so editing `agents.binaries` is answered by a fresh scan
+ * rather than by the previous override's result.
+ */
+export function checkAllProvidersCached(
+  binaries: Partial<Record<AgentProvider, string>> = {},
+  force = false,
+): ProviderStatus[] {
+  const key = JSON.stringify(
+    Object.entries(binaries)
+      .map(([k, v]) => [k, (v ?? '').trim()])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+  const now = Date.now();
+  if (!force && detectionCache && detectionCache.key === key && now - detectionCache.at < DETECTION_TTL_MS) {
+    return detectionCache.value;
+  }
+  const value = checkAllProviders(binaries);
+  detectionCache = { key, at: now, value };
+  return value;
+}
+
 export interface AgentArgvOptions extends ClaudeArgvOptions {
   /** The agent backend to launch. Defaults to 'claude'. */
   provider?: AgentProvider;

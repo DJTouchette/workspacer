@@ -278,9 +278,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       defaultEffort?: string;
     }>
   > => ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
-  providerCheckAll: (): Promise<
+  /** Detection status per provider. Cached for a few seconds in main; pass
+   *  `force` (Settings' "re-check") to rescan PATH immediately. */
+  providerCheckAll: (
+    force?: boolean,
+  ): Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
-  > => ipcRenderer.invoke(IPC.PROVIDER_CHECK_ALL),
+  > => ipcRenderer.invoke(IPC.PROVIDER_CHECK_ALL, force),
   keepWarmHeartbeats: (
     limit?: number,
   ): Promise<

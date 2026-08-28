@@ -3,6 +3,8 @@ import { Config } from '../../hooks/useConfig';
 import type { AgentProvider } from '../../types/pane';
 import HarnessModelSelect, { useModelOptions } from './HarnessModelSelect';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
+import { useProviderDetection } from '../../hooks/useProviderDetection';
+import { visibleProviderOptions, NOT_INSTALLED_SUFFIX } from '../../lib/providerAvailability';
 import {
   Section,
   Row,
@@ -68,6 +70,17 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
     (isForeignModel(supProvider, sup.summarizerModel) ? '' : (sup.summarizerModel ?? ''));
   const pollSeconds = sup.pollSeconds ?? 45;
 
+  // A harness whose CLI isn't installed can't run a supervisor, so it isn't
+  // offered — except when it IS the configured one, which stays listed and
+  // flagged (same treatment as a model that left the harness's catalog below:
+  // a picker that silently drops its own value reads as a reset, not a
+  // diagnosis).
+  const { detection } = useProviderDetection();
+  const visibleSupProviders = visibleProviderOptions(SUP_PROVIDERS, detection, [supProvider]);
+  const supProviderMissing = visibleSupProviders.some(
+    (p) => p.value === supProvider && p.missing,
+  );
+
   const { options: harnessModels, loaded: harnessModelsLoaded } = useModelOptions(supProvider);
   // The current value is always offered even when the harness's catalog doesn't
   // know it (a hand-edited config, a model since retired) — dropping it from
@@ -116,6 +129,12 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   const fleetRoot = agents.fleetRoot ?? '';
   const fleetFullAccess = agents.fleetFullAccess === true;
   const managerProvider: AgentProvider = agents.managerProvider ?? 'claude';
+  const visibleManagerProviders = visibleProviderOptions(MANAGER_PROVIDERS, detection, [
+    managerProvider,
+  ]);
+  const managerProviderMissing = visibleManagerProviders.some(
+    (p) => p.value === managerProvider && p.missing,
+  );
   const patchAgents = (p: Partial<NonNullable<Config['agents']>>) =>
     save({ agents: { ...agents, ...p } });
 
@@ -129,16 +148,23 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
 
       <Row label="Supervisor agent">
         <div style={{ display: 'flex', gap: 4 }}>
-          {SUP_PROVIDERS.map((p) => (
+          {visibleSupProviders.map((p) => (
             <ModeButton
               key={p.value}
-              label={p.label}
+              label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
               active={supProvider === p.value}
               onClick={() => setProvider(p.value)}
             />
           ))}
         </div>
       </Row>
+      {supProviderMissing && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
+          The <strong>{supProvider}</strong> CLI was not found on this machine — a supervisor
+          started on it will fail to launch. Install it, set its path under Settings → Session →
+          Tool paths, or pick a harness above.
+        </div>
+      )}
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
         Codex and OpenCode supervisors are wired to the workspacer MCP facade — the supervisor’s
@@ -222,16 +248,22 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
 
       <Row label="Manager agent">
         <div style={{ display: 'flex', gap: 4 }}>
-          {MANAGER_PROVIDERS.map((p) => (
+          {visibleManagerProviders.map((p) => (
             <ModeButton
               key={p.value}
-              label={p.label}
+              label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
               active={managerProvider === p.value}
               onClick={() => patchAgents({ managerProvider: p.value })}
             />
           ))}
         </div>
       </Row>
+      {managerProviderMissing && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
+          The <strong>{managerProvider}</strong> CLI was not found on this machine — the Fleet
+          Manager will fail to start on it.
+        </div>
+      )}
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         The harness the manager itself runs on. It dispatches workers on any harness either way —
         this is only which one hosts the manager’s own conversation.{' '}

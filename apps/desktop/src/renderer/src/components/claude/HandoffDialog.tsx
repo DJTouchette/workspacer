@@ -28,6 +28,8 @@ import { capsFor, effortLevelLabel, type EffortLevel } from '../../lib/providerC
 import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
 import { deriveSessionStats } from '../../lib/sessionStats';
 import { shortModelLabel } from '../../lib/modelLabel';
+import { useProviderDetection } from '../../hooks/useProviderDetection';
+import { visibleProviderOptions } from '../../lib/providerAvailability';
 import { AgentLogo } from '../agentLogos';
 
 /** What the dialog hands back — everything the successor spawns with. */
@@ -103,6 +105,12 @@ export const HandoffDialog: React.FC<{
   const sourceMode = snapshot?.livePermissionMode ?? snapshot?.settings?.permissionMode;
 
   const [target, setTarget] = useState<AgentProvider>(sourceProvider);
+  // Hand off only to harnesses that are installed — a successor spawned on a
+  // missing CLI dies on argv. The SOURCE session's own harness is kept listed
+  // even when detection can't find it (same-harness handoff is the default and
+  // the session is demonstrably running), flagged rather than dropped.
+  const { detection } = useProviderDetection();
+  const visibleTargets = visibleProviderOptions(PROVIDERS, detection, [sourceProvider, target]);
   const [model, setModel] = useState(sourceModel);
   const [permissionMode, setPermissionMode] = useState(() =>
     carryPermissionMode(sourceProvider, sourceMode),
@@ -350,7 +358,7 @@ export const HandoffDialog: React.FC<{
         {/* ── Target provider ────────────────────────────────────────── */}
         <div style={{ ...quietLabel, marginTop: 20 }}>hand off to</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-          {PROVIDERS.map((p) => {
+          {visibleTargets.map((p) => {
             const active = target === p.value;
             return (
               <button
@@ -358,9 +366,11 @@ export const HandoffDialog: React.FC<{
                 onClick={() => handleProvider(p.value)}
                 disabled={!!busy}
                 title={
-                  p.value === sourceProvider
-                    ? `${p.label} — same harness, fresh context`
-                    : `Hand off to ${p.label}`
+                  p.missing
+                    ? `${p.label} — CLI not detected on this machine`
+                    : p.value === sourceProvider
+                      ? `${p.label} — same harness, fresh context`
+                      : `Hand off to ${p.label}`
                 }
                 style={{
                   flex: 1,
@@ -398,7 +408,11 @@ export const HandoffDialog: React.FC<{
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     maxWidth: '100%',
-                    color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                    color: p.missing
+                      ? 'var(--wks-error)'
+                      : active
+                        ? 'var(--wks-accent-text)'
+                        : 'var(--wks-text-tertiary)',
                   }}
                 >
                   {p.label}

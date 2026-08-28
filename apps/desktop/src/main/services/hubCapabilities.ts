@@ -16,7 +16,11 @@ import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
-import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
+import {
+  resolveAgentBinary,
+  checkAllProvidersCached,
+  type AgentProvider,
+} from './agentProviders';
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
@@ -1535,7 +1539,7 @@ export function registerHubCapabilities(): void {
   });
   registerCapability('providers.checkAll', () => {
     const binaries = configService.getConfig().agents?.binaries ?? {};
-    return checkAllProviders(binaries);
+    return checkAllProvidersCached(binaries);
   });
 
   // ── Saved sessions (workspace layouts) ─────────────────────────────────

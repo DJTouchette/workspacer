@@ -35,7 +35,7 @@ import {
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { agentHandoffBrief } from './services/agentHandoff';
-import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
+import { resolveAgentBinary, checkAllProvidersCached } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
 import { managedOptionsFromRequest, type AgentSpawnRequest } from './lib/managedSpawnOptions';
 import { resolveTransport } from './lib/spawnTransport';
@@ -942,9 +942,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // Detection status for all providers — returns path + found flag, using the
   // user-configured binary overrides from config when present.
-  ipcMain.handle(IPC.PROVIDER_CHECK_ALL, () => {
+  // Short-TTL cached: every provider picker asks on open so it can hide the
+  // harnesses that aren't installed. `force` is the Settings "re-check" path.
+  ipcMain.handle(IPC.PROVIDER_CHECK_ALL, (_event, force?: boolean) => {
     const binaries = configService.getConfig().agents?.binaries ?? {};
-    return checkAllProviders(binaries);
+    return checkAllProvidersCached(binaries, !!force);
   });
 
   // Recent keep-warm heartbeats from claudemon's log (Settings shows them).

@@ -10,6 +10,11 @@ import type { LibraryItem } from '../types/library';
 import type { AgentProvider } from '../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
 import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
+import { useProviderDetection } from '../hooks/useProviderDetection';
+import {
+  visibleProviderOptions,
+  type ProviderDetection,
+} from '../lib/providerAvailability';
 
 /** Bypass-everything mode id per provider family (claude vs managed). */
 const bypassModeFor = (provider: AgentProvider): string =>
@@ -81,6 +86,8 @@ interface SpawnAgentDialogProps {
 }
 
 const CUSTOM = '__custom__';
+/** Stable empty list so effects keyed on the detection array don't re-run. */
+const NO_DETECTION: ProviderDetection[] = [];
 const ADVANCED_OPEN_KEY = 'workspacer.spawn.advancedOpen';
 
 const PROVIDERS: { value: AgentProvider; label: string; beta?: boolean }[] = [
@@ -107,14 +114,6 @@ function modelPlaceholder(provider: AgentProvider): string {
     default:
       return 'anthropic/claude-sonnet-4  (blank = OpenCode default)';
   }
-}
-
-/** Detection result for one provider (mirrors main-process ProviderStatus). */
-interface ProviderDetection {
-  provider: string;
-  found: boolean;
-  resolvedPath: string | null;
-  customBin: string;
 }
 
 interface ProviderModel {
@@ -164,7 +163,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     setTransportTouched(true);
     setTransportChoice(t);
   };
-  const [providerDetection, setProviderDetection] = useState<ProviderDetection[]>([]);
+  // Detection drives BOTH the per-card dot and which cards exist at all: the
+  // picker offers only installed harnesses (see visibleProviders below).
+  const { detection, refresh: refreshDetection } = useProviderDetection();
+  const providerDetection: ProviderDetection[] = detection ?? NO_DETECTION;
   const [customBinPath, setCustomBinPath] = useState('');
   const isClaude = provider === 'claude';
   // Model picker for non-Claude providers. The list is live-queried from the
@@ -271,14 +273,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   useEffect(() => {
     setCwd(defaultCwd);
   }, [defaultCwd]);
-
-  // Fetch provider detection status once on mount.
-  useEffect(() => {
-    window.electronAPI
-      .providerCheckAll?.()
-      .then((list) => setProviderDetection(list ?? []))
-      .catch(() => {});
-  }, []);
 
   // When switching provider, seed the custom-bin field from the detected config.
   useEffect(() => {
@@ -519,12 +513,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     const binaries = { [provider]: value.trim() };
     window.electronAPI
       .saveConfig?.({ agents: { binaries } } as any)
-      .then(() =>
-        window.electronAPI
-          .providerCheckAll?.()
-          .then((list) => setProviderDetection(list ?? []))
-          .catch(() => {}),
-      )
+      .then(() => refreshDetection())
       .catch(() => {});
   };
 
@@ -537,6 +526,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   };
 
   const currentDetection = providerDetection.find((d) => d.provider === provider);
+  // Only harnesses whose CLI is actually on this machine — plus whatever this
+  // dialog is already pointed at (the picked provider, the configured default),
+  // which stays listed and flagged rather than vanishing under the selection.
+  const visibleProviders = visibleProviderOptions(PROVIDERS, detection, [provider, defaultProvider]);
 
   const submit = () => {
     if (!cwd.trim()) return;
@@ -1281,6 +1274,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           </div>
 
           {/* ── Provider: a row of logo cards ───────────────────────────── */}
+          {/* One card is not a choice: on a machine with only Claude installed
+              the row is a decoration, so it collapses entirely. */}
+          {visibleProviders.length > 1 && (
           <div
             style={{
               display: 'flex',
@@ -1291,7 +1287,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               justifyContent: 'center',
             }}
           >
-            {PROVIDERS.map((p) => {
+            {visibleProviders.map((p) => {
               const active = provider === p.value;
               const det = providerDetection.find((d) => d.provider === p.value);
               const dotColor =
@@ -1365,7 +1361,24 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     }}
                   >
                     {p.label}
-                    {p.beta && (
+                    {p.missing && (
+                      <span
+                        title="This CLI was not found — the card is only here because it is the current selection"
+                        style={{
+                          fontSize: '0.55rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          lineHeight: 1,
+                          padding: '2px 3px',
+                          borderRadius: 3,
+                          color: 'var(--wks-error)',
+                          border: '1px solid var(--wks-error)',
+                        }}
+                      >
+                        NOT INSTALLED
+                      </span>
+                    )}
+                    {!p.missing && p.beta && (
                       <span
                         title="Beta — not yet thoroughly tested"
                         style={{
@@ -1388,6 +1401,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               );
             })}
           </div>
+          )}
 
           {/* Diagnostics are failure-only: a healthy provider says nothing here
               (the card's green dot + tooltip carry the resolved path, and the

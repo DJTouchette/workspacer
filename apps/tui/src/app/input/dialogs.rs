@@ -207,7 +207,9 @@ impl App {
 
     pub(in crate::app) fn handle_spawn_key(&mut self, key: KeyEvent) {
         let n = self.profiles.len();
-        let np = crate::app::SPAWN_PROVIDERS.len();
+        // ←/→ cycle the harnesses this machine can actually launch, not the
+        // full vocabulary — see App::offered_providers.
+        let np = self.spawn_provider_choices().len().max(1);
         let Some(form) = self.spawn_form.as_mut() else {
             return;
         };
@@ -253,7 +255,18 @@ impl App {
         self.open_spawn_inner(Some(prompt));
     }
 
+    /// The provider list the spawn modal is cycling. The form's `provider_idx`
+    /// indexes into THIS, not into the full [`crate::providers::ALL_PROVIDERS`], so
+    /// a machine with only claude has a one-entry picker rather than four
+    /// choices that cannot launch.
+    pub(in crate::app) fn spawn_provider_choices(&self) -> Vec<&'static str> {
+        self.offered_providers(None)
+    }
+
     pub(in crate::app) fn open_spawn_inner(&mut self, initial_prompt: Option<String>) {
+        // Opening the modal is the re-check: a CLI installed since the TUI
+        // started shows up here, not after a restart.
+        self.probe_providers();
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
@@ -285,7 +298,8 @@ impl App {
             self.set_toast("working directory required");
             return;
         }
-        let provider = crate::app::SPAWN_PROVIDERS
+        let provider = self
+            .spawn_provider_choices()
             .get(form.provider_idx)
             .copied()
             .unwrap_or("claude");

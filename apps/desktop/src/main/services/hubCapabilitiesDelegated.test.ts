@@ -34,7 +34,11 @@ vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: {} }));
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: { getAllSnapshots: vi.fn(() => []), getSnapshot: vi.fn() },
 }));
-vi.mock('./agentProviders', () => ({ checkAllProviders: vi.fn(), resolveAgentBinary: vi.fn() }));
+vi.mock('./agentProviders', () => ({
+  checkAllProviders: vi.fn(),
+  checkAllProvidersCached: vi.fn(),
+  resolveAgentBinary: vi.fn(),
+}));
 vi.mock('./configService', () => ({
   configService: { getConfig: vi.fn(() => ({})) },
   getConfigDir: vi.fn(() => '/nonexistent'),

@@ -88,6 +88,7 @@ vi.mock('./services/agentHandoff', () => ({ agentHandoffBrief: vi.fn() }));
 vi.mock('./services/agentProviders', () => ({
   resolveAgentBinary: vi.fn(),
   checkAllProviders: vi.fn(),
+  checkAllProvidersCached: vi.fn(),
 }));
 vi.mock('./services/logFile', () => ({ logsDir: vi.fn(() => '/logs') }));
 vi.mock('./services/supervisorSkill', () => ({ ensureSupervisorHome: vi.fn() }));

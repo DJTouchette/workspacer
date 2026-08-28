@@ -33,6 +33,7 @@ use state::{fuzzy_match, TOAST_TTL};
 mod agents;
 mod git;
 mod nodes;
+mod providers;
 mod runs;
 mod session;
 mod terminal;
@@ -107,6 +108,12 @@ pub struct App {
     pub nodes: Option<crate::nodes::NodeRegistry>,
     /// The remote-nodes overlay, when open.
     pub nodes_view: Option<NodesState>,
+    /// Provider ids whose CLI the HOST has installed, from
+    /// `providers.checkAll`. `None` = no answer yet (or a hub/transport that
+    /// can't answer), which means every harness is offered — see
+    /// [`crate::providers`]. Re-probed each time a provider picker opens, so a
+    /// CLI installed mid-session shows up without a restart.
+    pub installed_providers: Option<Vec<String>>,
     /// The tier this bus connection authenticated as, off the hub's `hello`
     /// frame (`"operator"` for a host/operator token, the scoped tier
     /// otherwise, absent for a plugin token or before the greeting lands).
@@ -290,6 +297,7 @@ impl App {
             notes: crate::notes::load(),
             nodes: None,
             nodes_view: None,
+            installed_providers: None,
             bus_scope: None,
             git_summary: HashMap::new(),
             connected: false,
@@ -546,6 +554,16 @@ impl App {
             AppMsg::HubDown { hub } => {
                 self.remote.set_offline(&hub);
                 self.fold_fleet();
+            }
+            AppMsg::InstalledProviders(found) => {
+                self.installed_providers = Some(found);
+                // The answer can land while the spawn modal is open and shrink
+                // the list under the cursor; clamp so it never points past the
+                // end (which would silently read as claude on submit).
+                let last = self.offered_providers(None).len().saturating_sub(1);
+                if let Some(form) = self.spawn_form.as_mut() {
+                    form.provider_idx = form.provider_idx.min(last);
+                }
             }
             AppMsg::Nodes(nodes) => self.set_nodes(nodes),
             AppMsg::NodeWake { id, node, error } => {

@@ -5,6 +5,8 @@ import { AgentLogo } from '../components/agentLogos';
 import { ArrowRight } from '../components/icons';
 import { ASK_PRESETS } from './askPresets';
 import { findSessionRefs } from './askLinks';
+import { useProviderDetection } from '../hooks/useProviderDetection';
+import { visibleProviderOptions, NOT_INSTALLED_SUFFIX } from '../lib/providerAvailability';
 
 export interface AskPaneProps {
   /** The current fleet — used to resolve session:<id> links and to scope. */
@@ -118,6 +120,14 @@ const AskPane: React.FC<AskPaneProps> = ({
 
   const [question, setQuestion] = useState<string>(prefix);
   const [provider, setProvider] = useState<AgentProvider>(config.supervisor?.provider ?? 'claude');
+  // Offer only harnesses that are installed. The configured supervisor harness
+  // and the current pick stay listed even when missing — flagged, not hidden,
+  // so "why can't I pick Codex any more" has an answer on screen.
+  const { detection } = useProviderDetection();
+  const visibleProviders = visibleProviderOptions(SUP_PROVIDERS, detection, [
+    provider,
+    config.supervisor?.provider,
+  ]);
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -327,9 +337,13 @@ const AskPane: React.FC<AskPaneProps> = ({
 
         {/* Supervisor agent picker */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* With a single installed harness there is nothing to pick. */}
+          {visibleProviders.length > 1 && (
           <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)' }}>Run on</span>
+          )}
+          {visibleProviders.length > 1 && (
           <div style={{ display: 'flex', gap: 4 }}>
-            {SUP_PROVIDERS.map((p) => {
+            {visibleProviders.map((p) => {
               const active = provider === p.value;
               return (
                 <button
@@ -358,11 +372,12 @@ const AskPane: React.FC<AskPaneProps> = ({
                     size={13}
                     style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
                   />
-                  {p.label}
+                  {p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
                 </button>
               );
             })}
           </div>
+          )}
           {provider !== 'claude' && (
             <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
               fleet tools via MCP facade · experimental

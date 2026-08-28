@@ -76,7 +76,14 @@ impl App {
             self.set_toast("no working directory for a handoff");
             return;
         };
-        let items: Vec<PickerItem> = ["claude", "codex", "copilot", "opencode", "pi"]
+        // Only harnesses this machine can launch — a successor spawned on a
+        // missing CLI dies on argv. The SOURCE session's own harness is kept
+        // listed either way: same-harness handoff (fresh context) is the common
+        // case, and that session is demonstrably running.
+        self.probe_providers();
+        let source = self.target_agent().map(|a| a.provider.clone());
+        let items: Vec<PickerItem> = self
+            .offered_providers(source.as_deref())
             .iter()
             .map(|p| PickerItem {
                 id: (*p).to_string(),
