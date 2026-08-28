@@ -26,10 +26,11 @@ describe('ReleaseNotes', () => {
     const firstSection = newest.sections[0];
     expect(screen.getByText(firstSection.title)).toBeTruthy();
     // The entry text, not just the section heading — an open card with a heading
-    // and no body is the exact shape this test exists to catch. Markdown renders
-    // **bold** as an element, so match on a distinctive plain-text tail instead.
-    const tail = firstSection.items[0].replace(/^\*\*.+?\*\*\s*/, '').slice(0, 30);
-    expect(screen.getByText(new RegExp(escapeRe(tail)))).toBeTruthy();
+    // and no body is the exact shape this test exists to catch. Inline markdown
+    // (bold, code, italics, links) renders as separate child elements, so match
+    // on plain text normalized across the whole entry rather than a raw substring.
+    const plainTail = stripInlineMarkdown(firstSection.items[0]).slice(0, 40);
+    expect(getByTextAcrossNodes(plainTail)).toBeTruthy();
   });
 
   it('collapses and re-opens a release', () => {
@@ -56,6 +57,29 @@ describe('ReleaseNotes', () => {
   });
 });
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Strip the inline markdown syntax this app's renderer understands, leaving
+ *  the plain text a reader — or a DOM-node-spanning test matcher — would see. */
+function stripInlineMarkdown(s: string): string {
+  return s
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/``(.+?)``/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1');
+}
+
+/** getByText, but matching plain text normalized across an element's children
+ *  instead of a single text node — markdown like `code` or **bold** splits its
+ *  surrounding sentence across multiple DOM nodes, which getByText's default
+ *  string/RegExp matching cannot see across. */
+function getByTextAcrossNodes(text: string) {
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const needle = normalize(text);
+  return screen.getByText((_content, element) => {
+    if (!element) return false;
+    if (!normalize(element.textContent ?? '').includes(needle)) return false;
+    return Array.from(element.children).every(
+      (child) => !normalize(child.textContent ?? '').includes(needle),
+    );
+  });
 }
