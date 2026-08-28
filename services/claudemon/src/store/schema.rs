@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-const USER_VERSION: i32 = 5;
+const USER_VERSION: i32 = 7;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -56,6 +56,23 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // and a daemon restart used to revert a 1M session to the table's guess
         // for its stripped id.
         step(conn, 5, add_session_requested_model)?;
+    }
+    if current < 6 {
+        // v6: sessions remember their TRANSCRIPT PATH. Without it every
+        // rehydrated row folded usage from `None` and reported $0.00 / 0 tokens
+        // forever — see `add_session_transcript_path` for the full story and
+        // for why the backfill is real data rather than a guess.
+        step(conn, 6, add_session_transcript_path)?;
+    }
+    if current < 7 {
+        // v7: drop `total_cost_usd`. Written as a literal 0 by every insert
+        // since v1, updated by nothing and read by nothing — it summed to
+        // exactly 0.0 across all 806 rows on the author's machine. Cost is
+        // folded from the transcript (`session::usage`), which is the single
+        // authority; a second, permanently-stale copy in SQLite is a trap for
+        // whoever reads it next, so the column goes rather than acquiring a
+        // writer that would then have to be kept in agreement.
+        step(conn, 7, drop_session_total_cost_usd)?;
     }
     Ok(())
 }
@@ -113,6 +130,53 @@ fn add_session_requested_model(conn: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     conn.execute_batch(SCHEMA_V5)
+}
+
+/// v6's body: `sessions.transcript_path`, plus a backfill of every existing row.
+///
+/// Why this column has to exist. `usage::usage_for_session` folds a session's
+/// cost and tokens out of `state.transcript_path`, and `usage_for_path(None)`
+/// returns `Usage::default()` — all zeros. `transcript_path` was only ever
+/// assigned from a LIVE hook event, so `SessionStore::hydrate` could not restore
+/// it (there was no column to restore it from) and every rehydrated row folded
+/// from `None`. Measured on the live daemon: 102 sessions listed, 94 of them
+/// with `transcript_path: null` and `usage {cost_usd: 0.0}`. Only the handful
+/// that instance had seen live carried real numbers. That is the $0.00 the user
+/// sees at boot.
+///
+/// The backfill is NOT a guess. Every hook event Claude Code emits carries
+/// `transcript_path`, and `events.payload_json` has been storing them verbatim
+/// all along — all 806 session rows on the author's machine have a recoverable
+/// path in their own event log. This takes the newest one per session, which is
+/// the right choice if a session's path ever moved (a profile respawn).
+///
+/// Catalog-checked and therefore replay-safe, for the reason spelled out on
+/// [`add_heartbeat_provider`].
+fn add_session_transcript_path(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let present = stmt.exists(["transcript_path"])?;
+    drop(stmt);
+    if !present {
+        conn.execute_batch(SCHEMA_V6)?;
+    }
+    // Runs whether or not the ALTER just happened: a DB wedged mid-step (column
+    // added, version unstamped) still needs the backfill, and re-running it is a
+    // no-op because of the `IS NULL` guard.
+    conn.execute_batch(BACKFILL_V6)
+}
+
+/// v7's body. `ALTER TABLE … DROP COLUMN` (SQLite ≥ 3.35, and rusqlite's bundled
+/// build is well past that) refuses on a second run, so the catalog decides.
+/// Safe to drop: no index, view or trigger references the column, and nothing
+/// outside this file has ever mentioned it.
+fn drop_session_total_cost_usd(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let present = stmt.exists(["total_cost_usd"])?;
+    drop(stmt);
+    if !present {
+        return Ok(());
+    }
+    conn.execute_batch(SCHEMA_V7)
 }
 
 const SCHEMA_V1: &str = r#"
@@ -178,6 +242,32 @@ ALTER TABLE heartbeats ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
 /// did not spawn, genuinely do not know, and `NULL` says so.
 const SCHEMA_V5: &str = r#"
 ALTER TABLE sessions ADD COLUMN requested_model TEXT;
+"#;
+
+/// v6 migration: the transcript a session's usage is folded from. Nullable —
+/// a session whose event log never carried one genuinely has no path, and
+/// `NULL` says "unknown", which the fold already treats as such.
+const SCHEMA_V6: &str = r#"
+ALTER TABLE sessions ADD COLUMN transcript_path TEXT;
+"#;
+
+/// v6's backfill: recover each session's newest recorded transcript path from
+/// its own persisted hook events. Only fills rows that have none, so it is
+/// idempotent and never overwrites a live write.
+const BACKFILL_V6: &str = r#"
+UPDATE sessions SET transcript_path = (
+  SELECT json_extract(e.payload_json, '$.transcript_path')
+    FROM events e
+   WHERE e.session_id = sessions.id
+     AND json_extract(e.payload_json, '$.transcript_path') IS NOT NULL
+   ORDER BY e.timestamp DESC, e.id DESC
+   LIMIT 1
+) WHERE transcript_path IS NULL;
+"#;
+
+/// v7 migration: retire the never-written, never-read `total_cost_usd`.
+const SCHEMA_V7: &str = r#"
+ALTER TABLE sessions DROP COLUMN total_cost_usd;
 "#;
 
 #[cfg(test)]

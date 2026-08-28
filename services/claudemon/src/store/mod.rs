@@ -158,7 +158,7 @@ impl Db {
             "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
                     (SELECT COUNT(*) FROM events e
                        WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit'),
-                    s.model, s.requested_model
+                    s.model, s.requested_model, s.transcript_path
              FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
@@ -172,6 +172,7 @@ impl Db {
                 user_prompt_count: r.get::<_, i64>(5)?.max(0) as u64,
                 model: r.get::<_, Option<String>>(6)?.filter(|m| !m.is_empty()),
                 requested_model: r.get::<_, Option<String>>(7)?.filter(|m| !m.is_empty()),
+                transcript_path: r.get::<_, Option<String>>(8)?.filter(|p| !p.is_empty()),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -279,6 +280,12 @@ pub struct RestoredSession {
     /// idea it was one, and every client's gauge read ~5× too full for the rest
     /// of its life. `None` is honest for a session the daemon did not spawn.
     pub requested_model: Option<String>,
+    /// The transcript this session's usage is folded from. THE load-bearing
+    /// field for cost-at-boot: `usage::usage_for_path(None)` is all zeros, so a
+    /// row rehydrated without this reports $0.00 and 0 tokens no matter how much
+    /// the session actually cost. `None` only for a session whose event log
+    /// never carried a `transcript_path` — which is honestly unknown, not zero.
+    pub transcript_path: Option<String>,
 }
 
 fn upsert_session_tx(
@@ -311,19 +318,35 @@ fn upsert_session_tx(
     // report: Claude Code strips the `[1m]` marker from the id it writes.
     let requested_model = requested_model.map(str::trim).filter(|m| !m.is_empty());
     let branch = payload.get("branch").and_then(Value::as_str);
+    // The transcript this session's usage folds from. Every Claude Code hook
+    // carries it; persisting it here is what lets a rehydrated row report real
+    // cost instead of $0.00 (see `schema::add_session_transcript_path`).
+    //
+    // Stored EXACTLY as the CLI spelled it — never canonicalized. The path
+    // string is also the only carrier of which account wrote the session, and
+    // `~/.claude/accounts/<name>/projects` is a symlink to the shared
+    // `~/.claude/projects`, so a `realpath` here would silently merge two
+    // accounts into one.
+    let transcript_path = payload
+        .get("transcript_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
 
     tx.execute(
         "INSERT INTO sessions (
             id, name, project, cwd, worktree_path, branch, base_branch, model,
-            state, pid, created_at, last_event_at, total_cost_usd, tool_call_count,
-            requested_model
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, 0, ?9)
+            state, pid, created_at, last_event_at, tool_call_count,
+            requested_model, transcript_path
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, ?9, ?10)
          ON CONFLICT(id) DO UPDATE SET
             last_event_at = excluded.last_event_at,
             cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
             model = COALESCE(sessions.model, excluded.model),
             branch = COALESCE(sessions.branch, excluded.branch),
-            requested_model = COALESCE(sessions.requested_model, excluded.requested_model)",
+            requested_model = COALESCE(sessions.requested_model, excluded.requested_model),
+            transcript_path =
+                COALESCE(excluded.transcript_path, sessions.transcript_path)",
         params![
             session_id,
             name,
@@ -333,7 +356,8 @@ fn upsert_session_tx(
             branch,
             model,
             now,
-            requested_model
+            requested_model,
+            transcript_path
         ],
     )?;
 
@@ -406,6 +430,139 @@ mod tests {
 
     fn tempfile_path() -> PathBuf {
         crate::testtmp::db_path("store-test")
+    }
+
+    /// THE OTHER daemon-restart drop, and the one every $0.00 came from.
+    ///
+    /// `usage::usage_for_session` folds from `state.transcript_path`, and
+    /// `usage_for_path(None)` is `Usage::default()` — all zeros. The path was
+    /// only ever set from a live hook, so before v6 every rehydrated row came
+    /// back with `None` and reported no cost, no tokens and no model. Measured
+    /// on the live daemon: 94 of 102 listed sessions.
+    #[test]
+    fn transcript_path_survives_a_daemon_restart() {
+        let db = Db::open(tempfile_path()).unwrap();
+        let mut e = ev("SessionStart", "s1");
+        e.payload.insert(
+            "transcript_path".into(),
+            json!("/home/u/.claude/projects/-home-u-work/s1.jsonl"),
+        );
+        db.record_event(&e).unwrap();
+
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(
+            restored[0].transcript_path.as_deref(),
+            Some("/home/u/.claude/projects/-home-u-work/s1.jsonl"),
+            "without this the fold has nothing to read and bills $0.00",
+        );
+    }
+
+    /// A later hook naming a DIFFERENT transcript wins; a later hook naming
+    /// none must not blank the column (most hooks carry it, but the upsert has
+    /// to survive one that does not).
+    #[test]
+    fn transcript_path_takes_the_newest_and_is_never_blanked() {
+        let db = Db::open(tempfile_path()).unwrap();
+        let mut first = ev("SessionStart", "s1");
+        first
+            .payload
+            .insert("transcript_path".into(), json!("/home/u/.claude/projects/p/a.jsonl"));
+        db.record_event(&first).unwrap();
+
+        let mut moved = ev("PreToolUse", "s1");
+        moved.payload.insert(
+            "transcript_path".into(),
+            json!("/home/u/.claude/accounts/work/projects/p/a.jsonl"),
+        );
+        db.record_event(&moved).unwrap();
+        // No transcript_path at all on this one.
+        db.record_event(&ev("Stop", "s1")).unwrap();
+
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(
+            restored[0].transcript_path.as_deref(),
+            Some("/home/u/.claude/accounts/work/projects/p/a.jsonl"),
+            "newest non-null wins, and a path-less hook leaves it alone",
+        );
+    }
+
+    /// The v6 backfill, against the shape of a real pre-v6 database: session
+    /// rows with no `transcript_path`, but an event log that has been recording
+    /// the paths verbatim all along. This is recovery of stored data, not a
+    /// guess — which is why 806 historical rows can be attributed and folded.
+    #[test]
+    fn migration_backfills_transcript_path_from_the_event_log() {
+        let path = tempfile_path();
+        {
+            // Stand up a v5-era database by hand: no transcript_path column.
+            let conn = Connection::open(&path).unwrap();
+            schema::migrate(&conn).unwrap();
+            conn.execute("ALTER TABLE sessions DROP COLUMN transcript_path", [])
+                .unwrap();
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN total_cost_usd REAL DEFAULT 0",
+                [],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "DELETE FROM events; DELETE FROM sessions;
+                 INSERT INTO sessions (id, name, project, cwd, worktree_path, state,
+                                       created_at, last_event_at, tool_call_count)
+                   VALUES ('old', 'n', 'p', '/w', '/w', 'working', 100, 200, 0);
+                 INSERT INTO events (session_id, timestamp, event_type, payload_json)
+                   VALUES ('old', 100, 'SessionStart',
+                           '{\"transcript_path\":\"/home/u/.claude/projects/p/old.jsonl\"}'),
+                          ('old', 150, 'PreToolUse', '{\"tool_name\":\"Bash\"}'),
+                          ('old', 190, 'Stop',
+                           '{\"transcript_path\":\"/home/u/.claude/projects/p/old.jsonl\"}');",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(
+            restored[0].transcript_path.as_deref(),
+            Some("/home/u/.claude/projects/p/old.jsonl"),
+            "an existing row recovers its path from its own persisted events",
+        );
+
+        // …and the dead cost column is gone rather than left as a permanent 0.
+        let guard = db.conn.lock().unwrap();
+        let has_cost: bool = guard
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")
+            .unwrap()
+            .exists(["total_cost_usd"])
+            .unwrap();
+        assert!(!has_cost, "total_cost_usd dropped, not left summing to 0.0");
+    }
+
+    /// A session whose event log genuinely never carried a path stays `None`.
+    /// Unknown is not zero, and the backfill must never invent one.
+    #[test]
+    fn migration_leaves_a_pathless_session_null() {
+        let path = tempfile_path();
+        {
+            let conn = Connection::open(&path).unwrap();
+            schema::migrate(&conn).unwrap();
+            conn.execute("ALTER TABLE sessions DROP COLUMN transcript_path", [])
+                .unwrap();
+            conn.execute_batch(
+                "DELETE FROM events; DELETE FROM sessions;
+                 INSERT INTO sessions (id, name, project, cwd, worktree_path, state,
+                                       created_at, last_event_at, tool_call_count)
+                   VALUES ('bare', 'n', 'p', '/w', '/w', 'working', 100, 200, 0);
+                 INSERT INTO events (session_id, timestamp, event_type, payload_json)
+                   VALUES ('bare', 100, 'SessionStart', '{}');",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let restored = db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored[0].transcript_path, None);
     }
 
     /// THE DAEMON-RESTART DROP, end to end.

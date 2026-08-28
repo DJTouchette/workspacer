@@ -544,6 +544,14 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_model = s.requested_model.clone();
+                // The transcript path, which is what `usage::usage_for_session`
+                // folds cost and tokens out of. `hydrate` could not restore it
+                // before v6 — the column did not exist — so EVERY rehydrated
+                // row folded from `None` and reported $0.00 / 0 tokens / no
+                // model for the rest of the daemon's life. It also carries the
+                // account attribution (`claude_config_root`), which likewise
+                // went blank across a restart.
+                st.transcript_path = s.transcript_path.clone();
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -3000,6 +3008,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -3010,6 +3019,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -3020,6 +3030,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -3030,6 +3041,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -3059,6 +3071,68 @@ mod tests {
         assert!(store.get("live").is_some(), "live row survives");
     }
 
+    /// THE $0.00 BUG, end to end.
+    ///
+    /// A session restored from SQLite must fold its real cost and tokens out of
+    /// its transcript. Before `transcript_path` was persisted and rehydrated,
+    /// `usage_for_session` folded from `None` — `Usage::default()`, every field
+    /// zero — so on a fresh daemon 94 of 102 listed sessions reported $0.00, 0
+    /// context tokens and no model however much they had actually cost. This
+    /// test fails against that behaviour: drop the `st.transcript_path` line in
+    /// `hydrate` and the cost goes back to 0.0.
+    #[test]
+    fn a_rehydrated_session_folds_real_usage_from_its_transcript() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "wks-hydrate-usage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::session::transcript::allow_root(&dir);
+
+        // 1M output tokens of opus — a real, non-zero bill.
+        let row = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-4-8",
+                "usage": {
+                    "input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1_000_000
+                }
+            }
+        });
+        let path = dir.join("restored.jsonl");
+        std::fs::write(&path, format!("{}\n", serde_json::to_string(&row).unwrap())).unwrap();
+
+        let store = SessionStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "restored".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: None,
+            transcript_path: Some(path.to_str().unwrap().to_string()),
+        }]);
+
+        let state = store.get("restored").expect("hydrated");
+        let u = crate::session::usage::usage_for_session(&state);
+        assert!(
+            u.cost_usd > 0.0,
+            "a restored session must bill what its transcript says, got {u:?}",
+        );
+        assert_eq!(u.model.as_deref(), Some("claude-opus-4-8"));
+    }
+
     #[test]
     fn hydrate_restores_sessions_as_stopped_without_clobbering_live() {
         let store = SessionStore::new();
@@ -3078,6 +3152,7 @@ mod tests {
                 // this restored, a resumed 1M session reverts to the table's
                 // 200k answer for its stripped id and reads 5x too full.
                 requested_model: Some("opus[1m]".into()),
+                transcript_path: Some("/home/u/.claude/projects/-work/restored.jsonl".into()),
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -3089,6 +3164,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
             },
         ]);
 
@@ -3099,6 +3175,11 @@ mod tests {
         assert_eq!(
             restored.user_prompts, 3,
             "prompt count restored from the persisted event log"
+        );
+        assert_eq!(
+            restored.transcript_path.as_deref(),
+            Some("/home/u/.claude/projects/-work/restored.jsonl"),
+            "the path the usage fold and the account attribution both read"
         );
         assert!(
             !restored.is_empty_stopped(),
