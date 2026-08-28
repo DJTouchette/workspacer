@@ -100,3 +100,41 @@ export function resolveTitleModel(provider: AgentProvider): string | undefined {
     { model?: string; models?: Record<string, string> } | undefined;
   return perHarnessModel(provider, auto?.models, auto?.model);
 }
+
+/**
+ * Reasoning EFFORT for an internal role, per harness
+ * (`supervisor.efforts` / `agents.managerEfforts`).
+ *
+ * Same per-harness shape as the model maps and for the same reason: the effort
+ * ladders are not portable either (claude's is low|medium|high|max, codex's is
+ * minimal…xhigh, copilot's is its own seven), so one shared field would push a
+ * level at a CLI that has never heard of it. There is no legacy single field —
+ * these settings were born per-harness — so an unknown value is simply passed
+ * through: the ladders come from live catalogs (providerCaps), and refusing an
+ * unrecognized id would discard a deliberate choice on a newer CLI.
+ *
+ * Blank = the harness's own default, which is what these roles ran on before:
+ * a supervisor's effort was un-settable, so a codex supervisor coordinated the
+ * whole fleet at whatever `codex` defaults to with no way to raise it.
+ */
+function perHarnessEffort(
+  provider: AgentProvider,
+  map: Record<string, string> | undefined,
+): string | undefined {
+  const chosen = map?.[provider];
+  return typeof chosen === 'string' && chosen.trim() ? chosen.trim() : undefined;
+}
+
+/** Effort for a SUPERVISOR spawn on `provider` (`supervisor.efforts`). */
+export function resolveSupervisorEffort(provider: AgentProvider): string | undefined {
+  const sup = configService.getConfig().supervisor as
+    { efforts?: Record<string, string> } | undefined;
+  return perHarnessEffort(provider, sup?.efforts);
+}
+
+/** Effort for a FLEET MANAGER spawn on `provider` (`agents.managerEfforts`). */
+export function resolveManagerEffort(provider: AgentProvider): string | undefined {
+  const agents = configService.getConfig().agents as
+    { managerEfforts?: Record<string, string> } | undefined;
+  return perHarnessEffort(provider, agents?.managerEfforts);
+}

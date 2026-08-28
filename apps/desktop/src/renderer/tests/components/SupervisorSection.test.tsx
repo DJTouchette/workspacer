@@ -23,7 +23,7 @@ function renderSection(config: Partial<Config> = {}) {
 describe('SupervisorSection — Pi has no facade access, so it must not be offered or claimed', () => {
   it('does not offer Pi as a supervisor harness', () => {
     renderSection();
-    const row = within(screen.getByText('Supervisor agent').closest('div') as HTMLElement);
+    const row = within(screen.getByText('Supervisor runs on').closest('div') as HTMLElement);
     expect(row.queryByRole('button', { name: 'Pi' })).not.toBeInTheDocument();
     expect(row.getByRole('button', { name: 'Claude' })).toBeInTheDocument();
     expect(row.getByRole('button', { name: 'Codex' })).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe('SupervisorSection — the model picker follows the selected harness', 
         save={save}
       />,
     );
-    const row = within(screen.getByText('Supervisor agent').closest('div') as HTMLElement);
+    const row = within(screen.getByText('Supervisor runs on').closest('div') as HTMLElement);
     fireEvent.click(row.getByRole('button', { name: 'Codex' }));
     // The outgoing choice is filed under claude (so flipping back restores it)
     // and codex starts on its own default rather than inheriting `fable`.
@@ -118,7 +118,7 @@ describe('SupervisorSection — the model picker follows the selected harness', 
         save={save}
       />,
     );
-    const row = within(screen.getByText('Supervisor agent').closest('div') as HTMLElement);
+    const row = within(screen.getByText('Supervisor runs on').closest('div') as HTMLElement);
     fireEvent.click(row.getByRole('button', { name: 'Claude' }));
     expect(save).toHaveBeenCalledWith({
       supervisor: {
@@ -280,5 +280,118 @@ describe('SupervisorSection — the summarizer picker follows the supervisor har
     // over only because nothing else claims it — what must never happen is the
     // reverse, a claude id being rewritten to mean codex.
     expect(patched.supervisor.summarizerModel).not.toBe('sonnet');
+  });
+});
+
+/**
+ * The pane's two invariants, and the confusion that motivated them.
+ *
+ * Two DIFFERENT agents are configured here — the Fleet Manager (started from
+ * the dashboard) and the supervisor (started from "Ask the Fleet") — and the
+ * pane used to be titled "Supervisor" with both harness rows labelled "… agent".
+ * Setting "Supervisor agent" to Codex and then launching the manager therefore
+ * produced a Claude agent, correctly, and read as the setting being ignored.
+ *
+ * Invariant 1: no control exists that a spawn path ignores.
+ * Invariant 2: no setting a spawn path honours is missing from the pane. Effort
+ * is the one that was missing outright — both roles pass a `--effort`/
+ * `model_reasoning_effort` through to the CLI and neither had a way to set it.
+ */
+describe('SupervisorSection — the two roles are told apart', () => {
+  it('names both roles and says what starts each', () => {
+    const { container } = renderSection();
+    // (Each name appears twice: the role heading, and the launcher it names in
+    // the sentence under it.)
+    expect(screen.getAllByText('Fleet Manager').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Supervisor').length).toBeGreaterThan(0);
+    // Each harness row says WHICH role it is for, rather than both reading
+    // "… agent" as they used to.
+    expect(screen.getByText('Manager runs on')).toBeInTheDocument();
+    expect(screen.getByText('Supervisor runs on')).toBeInTheDocument();
+    expect(container.textContent).toMatch(/Overview dashboard/);
+    expect(container.textContent).toMatch(/Ask the Fleet/);
+  });
+});
+
+describe('SupervisorSection — reasoning effort, per role and per harness', () => {
+  it('writes the supervisor level under the supervisor harness only', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection
+        config={
+          {
+            supervisor: { provider: 'codex', efforts: { claude: 'high' } },
+          } as Config
+        }
+        save={save}
+      />,
+    );
+    const row = within(
+      screen.getByText('Supervisor thinking effort').closest('div') as HTMLElement,
+    );
+    fireEvent.click(row.getByRole('button'));
+    await waitFor(() => expect(row.getByText('Extra high')).toBeInTheDocument());
+    fireEvent.click(row.getByText('Extra high'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const patched = save.mock.calls.at(-1)![0] as {
+      supervisor: { efforts: Record<string, string> };
+    };
+    // The other harness's choice survives — same per-harness memory as models.
+    expect(patched.supervisor.efforts).toEqual({ claude: 'high', codex: 'xhigh' });
+  });
+
+  it('writes the manager level under the manager harness, independently', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection
+        config={
+          {
+            supervisor: { provider: 'claude' },
+            agents: { managerProvider: 'codex' },
+          } as Config
+        }
+        save={save}
+      />,
+    );
+    const row = within(screen.getByText('Manager thinking effort').closest('div') as HTMLElement);
+    fireEvent.click(row.getByRole('button'));
+    await waitFor(() => expect(row.getByText('Extra high')).toBeInTheDocument());
+    fireEvent.click(row.getByText('Extra high'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    const patched = save.mock.calls.at(-1)![0] as {
+      agents: { managerEfforts: Record<string, string> };
+    };
+    expect(patched.agents.managerEfforts).toEqual({ codex: 'xhigh' });
+  });
+
+  it('reads back the level for the current harness only', () => {
+    render(
+      <SupervisorSection
+        config={
+          {
+            supervisor: { provider: 'codex', efforts: { claude: 'high', codex: 'low' } },
+          } as Config
+        }
+        save={vi.fn().mockResolvedValue({})}
+      />,
+    );
+    const row = within(
+      screen.getByText('Supervisor thinking effort').closest('div') as HTMLElement,
+    );
+    expect(row.getByRole('button').textContent).toMatch(/Low/);
+  });
+
+  it('shows NO effort row for a harness with no such knob', () => {
+    // OpenCode has `effort: null` in providerCaps. A row that could never be
+    // honoured is worse than no row: it is a control the spawn path ignores.
+    render(
+      <SupervisorSection
+        config={{ supervisor: { provider: 'opencode' } } as Config}
+        save={vi.fn().mockResolvedValue({})}
+      />,
+    );
+    expect(screen.queryByText('Supervisor thinking effort')).toBeNull();
+    // …while the manager's own row (claude) is unaffected.
+    expect(screen.getByText('Manager thinking effort')).toBeInTheDocument();
   });
 });

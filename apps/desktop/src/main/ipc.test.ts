@@ -23,12 +23,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { handlers, spawnManagedAgent, spawnClaudeAgent, installWorkspacerCli } = vi.hoisted(() => ({
-  handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
-  spawnManagedAgent: vi.fn(async () => 'managed-1'),
-  spawnClaudeAgent: vi.fn(async () => 'claude-1'),
-  installWorkspacerCli: vi.fn(async () => ({ ok: true, message: 'installed' })),
-}));
+const { handlers, spawnManagedAgent, spawnClaudeAgent, installWorkspacerCli, cfg } = vi.hoisted(
+  () => ({
+    handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
+    spawnManagedAgent: vi.fn(async () => 'managed-1'),
+    spawnClaudeAgent: vi.fn(async () => 'claude-1'),
+    installWorkspacerCli: vi.fn(async () => ({ ok: true, message: 'installed' })),
+    /** Mutable config the mocked configService serves — the role-harness
+     *  settings this handler now resolves live here. */
+    cfg: { value: {} as Record<string, unknown> },
+  }),
+);
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -60,7 +65,7 @@ vi.mock('./services/cliInstall', () => ({
 vi.mock('./services/configService', () => ({
   // onChange is subscribed at registration time (the config-changed push), so
   // the stub has to hand back an unsubscribe like the real one.
-  configService: { getConfig: vi.fn(() => ({})), onChange: vi.fn(() => () => {}) },
+  configService: { getConfig: vi.fn(() => cfg.value), onChange: vi.fn(() => () => {}) },
 }));
 vi.mock('./services/libraryService', () => ({
   libraryService: { setMainWindow: vi.fn() },
@@ -149,6 +154,7 @@ function lastManagedOpts(): Record<string, unknown> {
 beforeEach(() => {
   spawnManagedAgent.mockClear();
   spawnClaudeAgent.mockClear();
+  cfg.value = {};
 });
 
 describe('claude:spawn — transport rides spawn-managed only for codex+stream', () => {
@@ -211,5 +217,58 @@ describe('cli:install — delegates to installWorkspacerCli and returns its resu
     const result = await handlers.get('cli:install')!(null);
     expect(installWorkspacerCli).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ ok: true, message: 'installed' });
+  });
+});
+
+/**
+ * The reported bug: Settings said the supervisor runs on codex, and launching
+ * one produced a Claude session.
+ *
+ * `supervisor.provider` / `agents.managerProvider` were read in ONE renderer
+ * component each, so every other way a role starts — the hub bus (web client,
+ * phone, a hub job), a respawn of a card that predates the field, the next
+ * entry point somebody adds — arrived here with no provider and fell through
+ * `opts.provider ?? 'claude'`. A silently-Claude supervisor is indistinguishable
+ * from a working one. The resolution now lives in main (lib/roleProviders), so
+ * this handler honours the setting whoever calls it.
+ */
+describe('claude:spawn — a role spawn with no provider resolves the configured harness', () => {
+  it('spawns the supervisor on config supervisor.provider', async () => {
+    cfg.value = { supervisor: { provider: 'codex' } };
+    await spawn({ supervisor: true, cwd: '/proj' });
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+    expect(lastManagedOpts().provider).toBe('codex');
+    expect(lastManagedOpts().supervisor).toBe(true);
+  });
+
+  it('spawns the Fleet Manager on config agents.managerProvider', async () => {
+    cfg.value = { agents: { managerProvider: 'codex' } };
+    await spawn({ manager: true, cwd: '/proj' });
+    expect(lastManagedOpts().provider).toBe('codex');
+    expect(lastManagedOpts().manager).toBe(true);
+  });
+
+  it('an EXPLICIT provider still wins — the launcher can override Settings', async () => {
+    // "Ask the Fleet" offers a per-launch harness pick; a config default must
+    // not quietly reclaim it.
+    cfg.value = { supervisor: { provider: 'codex' } };
+    await spawn({ supervisor: true, provider: 'claude', transport: 'pty', cwd: '/proj' });
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+    expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+
+  it('ignores an unknown configured harness rather than passing it on', async () => {
+    // A hand-edited config naming a harness we do not speak would otherwise
+    // reach an adapter that has no idea what it is; claude at least runs.
+    cfg.value = { supervisor: { provider: 'nonesuch' } };
+    await spawn({ supervisor: true, transport: 'pty', cwd: '/proj' });
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a plain worker alone — no role flags means claude, as before', async () => {
+    cfg.value = { supervisor: { provider: 'codex' }, agents: { managerProvider: 'codex' } };
+    await spawn({ cwd: '/proj', transport: 'pty' });
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+    expect(spawnManagedAgent).not.toHaveBeenCalled();
   });
 });

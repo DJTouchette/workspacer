@@ -1083,6 +1083,44 @@ describe('agents.spawn — dispatch', () => {
       expect(arg.fleetFullAccess).toBeUndefined();
     });
 
+    /**
+     * This is THE path a supervisor or manager started anywhere but the desktop
+     * window takes — the web /app client, the /m PWA, a hub job, a federated
+     * peer — and every one of those sends the role flag with no provider. It
+     * fell through to claude, so Settings could say codex while everything off
+     * the desktop spawned Claude. See lib/roleProviders (TWIN: ipc.ts).
+     */
+    describe('an omitted role provider resolves from config', () => {
+      const DEFAULT_CFG = { agents: { binaries: { codex: '/custom/codex' } } };
+      afterEach(() => getConfig.mockReturnValue(DEFAULT_CFG));
+
+      it('spawns a supervisor on config supervisor.provider', async () => {
+        getConfig.mockReturnValue({ ...DEFAULT_CFG, supervisor: { provider: 'codex' } });
+        await call('agents.spawn', { cwd: '/proj', supervisor: true });
+        expect(spawnClaudeAgent).not.toHaveBeenCalled();
+        const arg = spawnManagedAgent.mock.calls[0][0] as {
+          provider?: string;
+          supervisor?: boolean;
+        };
+        expect(arg.provider).toBe('codex');
+        expect(arg.supervisor).toBe(true);
+      });
+
+      it('spawns the Fleet Manager on config agents.managerProvider', async () => {
+        getConfig.mockReturnValue({ agents: { ...DEFAULT_CFG.agents, managerProvider: 'codex' } });
+        await call('agents.spawn', { cwd: '/proj', manager: true });
+        const arg = spawnManagedAgent.mock.calls[0][0] as { provider?: string };
+        expect(arg.provider).toBe('codex');
+      });
+
+      it('leaves a plain worker on claude — the role settings are not a global default', async () => {
+        getConfig.mockReturnValue({ ...DEFAULT_CFG, supervisor: { provider: 'codex' } });
+        await call('agents.spawn', { cwd: '/proj' });
+        expect(spawnManagedAgent).not.toHaveBeenCalled();
+        expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it('warns and drops profileId for a non-claude managed provider instead of silently discarding it', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       await call('agents.spawn', { provider: 'codex', cwd: '/proj', profileId: 'work' });

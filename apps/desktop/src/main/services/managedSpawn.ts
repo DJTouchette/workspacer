@@ -47,7 +47,12 @@ import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModel } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveSupervisorModel } from '../lib/supervisorModel';
-import { resolveManagerModel, resolveSummarizerModel } from '../lib/roleModels';
+import {
+  resolveManagerModel,
+  resolveSummarizerModel,
+  resolveSupervisorEffort,
+  resolveManagerEffort,
+} from '../lib/roleModels';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -271,6 +276,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       (opts.supervisor ? resolveSupervisorModel(provider) : undefined) ||
       (opts.manager ? resolveManagerModel(provider) : undefined),
   );
+  // Reasoning effort, same rule as the model above: an explicit request wins,
+  // otherwise a ROLE spawn takes the level configured for it on THIS harness
+  // (supervisor.efforts / agents.managerEfforts). Per-harness because the
+  // ladders are not portable — codex's 'xhigh' means nothing to claude — and
+  // resolved here so it reaches every entry point, not just a launcher.
+  const spawnEffort =
+    opts.effort?.trim() ||
+    (opts.supervisor ? resolveSupervisorEffort(provider) : undefined) ||
+    (opts.manager ? resolveManagerEffort(provider) : undefined);
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
   // A supervisor is operator by definition; a plain facade session takes its
@@ -415,7 +429,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(provider === 'codex' && { transport }),
     settings: {
       model: spawnModel,
-      effort: opts.effort,
+      effort: spawnEffort,
       permissionMode,
       // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
       // adapter puts on the argv, and Claude gates live switches *to*
@@ -427,7 +441,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
         // `--effort` resolves to is read from the settings chain at spawn (the
         // stream argv takes the same flag as the PTY one). Codex's default comes
         // from its live model catalog instead — the composer reads it there.
-        ...(!opts.effort?.trim() && {
+        ...(!spawnEffort?.trim() && {
           defaultEffort: resolveClaudeDefaultEffort(cwd, profile?.configDir),
         }),
       }),
@@ -464,7 +478,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     provider,
     cwd,
     model: spawnModel,
-    effort: opts.effort,
+    effort: spawnEffort,
     bin,
     yolo,
     sessionId: managedId,
@@ -539,6 +553,12 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
       (opts.supervisor ? resolveSupervisorModel('codex') : undefined) ||
       (opts.manager ? resolveManagerModel('codex') : undefined),
   );
+  // …and the same for effort: a role spawn with none requested takes the level
+  // configured for it on codex (supervisor.efforts / agents.managerEfforts).
+  const spawnEffort =
+    opts.effort?.trim() ||
+    (opts.supervisor ? resolveSupervisorEffort('codex') : undefined) ||
+    (opts.manager ? resolveManagerEffort('codex') : undefined);
   // Same supervisor full-access resolution as the managed path above.
   const skipPermissions =
     !!opts.skipPermissions ||
@@ -565,7 +585,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     transport: 'pty' as const,
     settings: {
       model: spawnModel,
-      effort: opts.effort,
+      effort: spawnEffort,
       permissionMode: skipPermissions ? 'yolo' : 'ask',
     },
   });
@@ -575,7 +595,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
   // approval/sandbox prompts so the TUI doesn't block on them.
   const model = spawnModel;
-  const effort = opts.effort?.trim();
+  const effort = spawnEffort;
   const argv = [
     bin,
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),

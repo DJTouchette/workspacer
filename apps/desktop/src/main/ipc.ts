@@ -39,6 +39,7 @@ import { resolveAgentBinary, checkAllProvidersCached } from './services/agentPro
 import { spawnManagedAgent } from './services/managedSpawn';
 import { managedOptionsFromRequest, type AgentSpawnRequest } from './lib/managedSpawnOptions';
 import { resolveTransport } from './lib/spawnTransport';
+import { resolveSpawnProvider } from './lib/roleProviders';
 import { spawnClaudeAgent } from './services/claudeSpawn';
 import { applyLiveEffort } from './services/liveEffort';
 import { logsDir } from './services/logFile';
@@ -262,7 +263,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
     // / `codex app-server` JSON-RPC) and translates events into the shared session
     // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
-    const provider = opts.provider ?? 'claude';
+    // An OMITTED provider on a role spawn resolves from config
+    // (supervisor.provider / agents.managerProvider) rather than defaulting
+    // straight to claude — the setting has to land on every entry point, not
+    // just the launcher that remembered to read it. See lib/roleProviders.
+    const provider = resolveSpawnProvider(opts);
     if (provider !== 'claude') {
       // Managed (Tier-2) backend — driven by claudemon's adapter, not a PTY.
       // Shared with the `agents.spawn` hub capability so the two transports

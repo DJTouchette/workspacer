@@ -34,7 +34,12 @@ import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModel } from '../lib/spawnModel';
 import { resolveSupervisorModel } from '../lib/supervisorModel';
-import { resolveManagerModel, resolveSummarizerModel } from '../lib/roleModels';
+import {
+  resolveManagerModel,
+  resolveSummarizerModel,
+  resolveSupervisorEffort,
+  resolveManagerEffort,
+} from '../lib/roleModels';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
@@ -186,6 +191,15 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     skipPermissions ||
     permissionMode === 'bypassPermissions' ||
     (profile?.extraArgs ?? []).includes('--dangerously-skip-permissions');
+  // Reasoning effort. An explicit request wins; otherwise a ROLE spawn takes
+  // the level configured for it on this harness (Settings → Manager &
+  // Supervisor). Resolved here — not at the renderer entry point — so it lands
+  // on every way these roles start, the same rule the model above follows, and
+  // so the recorded spawn meta below names the level the argv actually carries.
+  let effort = opts.effort;
+  if (!effort?.trim() && opts.supervisor) effort = resolveSupervisorEffort('claude');
+  if (!effort?.trim() && opts.manager) effort = resolveManagerEffort('claude');
+
   // Record name/parent before the session registers so adopted cards are
   // enriched from the very first hook event.
   claudeSessionStore.setSpawnMeta(sessionId, {
@@ -196,12 +210,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     ...(resultSchema && { resultSchema }),
     settings: {
       model: opts.model,
-      effort: opts.effort,
+      effort,
       permissionMode,
       bypassAvailable,
       // What an absent `--effort` resolves to, so the pill can name the level
       // instead of the word "Default". The CLI reports it nowhere.
-      ...(!opts.effort?.trim() && {
+      ...(!effort?.trim() && {
         defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
       }),
     },
@@ -313,7 +327,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     extraArgs: profile?.extraArgs,
     resumeSessionId: opts.resumeSessionId,
     model,
-    effort: opts.effort,
+    effort,
     settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
     skipPermissions,
     permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',

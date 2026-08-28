@@ -64,6 +64,7 @@ import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnapshot';
 import { ensureSupervisorHome } from './supervisorSkill';
+import { resolveSpawnProvider } from '../lib/roleProviders';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
 import { appendBriefLine, briefPathFor, parseBriefSection } from './briefService';
@@ -513,7 +514,7 @@ export function registerHubCapabilities(): void {
   // worker-finished wake.
   registerCapability('agents.spawn', async (params: unknown) => {
     const {
-      provider,
+      provider: reqProvider,
       transport: reqTransport,
       cwd,
       profileId,
@@ -814,7 +815,14 @@ export function registerHubCapabilities(): void {
     // handler so this path can't silently fall back to spawning Claude (it did
     // before — `provider` was ignored here, which is why a Codex agent spawned
     // from the web/remote client came up as Claude).
-    if (provider && provider !== 'claude') {
+    // An omitted provider on a ROLE spawn resolves from config
+    // (supervisor.provider / agents.managerProvider) — the bus payload for a
+    // supervisor started from the web client or a hub job carries
+    // `supervisor: true` and no provider, and defaulting that straight to
+    // claude is how Settings could say codex while every non-desktop path
+    // spawned a Claude supervisor. See lib/roleProviders (TWIN: ipc.ts).
+    const provider = resolveSpawnProvider({ provider: reqProvider, supervisor, manager });
+    if (provider !== 'claude') {
       // profileId is a Claude account concept (CLAUDE_CONFIG_DIR) with no
       // equivalent on a managed provider — same 'unsupported' classification
       // as managedSpawnOptions.ts, but ANNOUNCED rather than just never

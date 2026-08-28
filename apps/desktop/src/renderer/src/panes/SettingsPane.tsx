@@ -102,12 +102,20 @@ const SECTIONS: SectionDef[] = [
   },
   {
     key: 'supervisor',
-    label: 'Supervisor',
+    // Two roles live in this pane (Fleet Manager + supervisor) and the label
+    // used to name only one of them, so the manager's settings — the ones most
+    // people are looking for — were findable only by opening "Supervisor".
+    label: 'Manager & Supervisor',
     group: 'Agents & AI',
     keywords: [
       'supervisor',
+      'manager',
       'fleet',
+      'dispatch',
       'agent',
+      'harness',
+      'provider',
+      'effort',
       'summarize',
       'digest',
       'model',
@@ -115,6 +123,7 @@ const SECTIONS: SectionDef[] = [
       'poll',
       'notify',
       'background',
+      'full access',
     ],
   },
   {

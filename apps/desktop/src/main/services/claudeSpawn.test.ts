@@ -69,10 +69,15 @@ let mockConfig: {
     model: string;
     summarizerModel: string;
     summarizerModels?: Record<string, string>;
+    efforts?: Record<string, string>;
     pollSeconds: number;
     fullAccess?: boolean;
   };
-  agents?: { fleetFullAccess?: boolean; managerModels?: Record<string, string> };
+  agents?: {
+    fleetFullAccess?: boolean;
+    managerModels?: Record<string, string>;
+    managerEfforts?: Record<string, string>;
+  };
   projects?: Record<string, { yolo?: boolean }>;
 };
 vi.mock('./configService', () => ({
@@ -652,5 +657,56 @@ describe('spawnClaudeAgent — role models reach the argv', () => {
     await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
     const args = facadeSpawnArgs.mock.calls[0][0] as { summarizerModel?: string };
     expect(args.summarizerModel).toBe('haiku');
+  });
+});
+
+/**
+ * Reasoning effort for the two ROLES, resolved from config on this path too.
+ * The PTY Claude branch is where a supervisor lands whenever claude.transport is
+ * 'pty', so a setting honoured only on the managed path would apply on one
+ * machine and not the next.
+ */
+describe('spawnClaudeAgent — role effort reaches the argv', () => {
+  /** The value of `--effort` on the last spawn, or undefined when absent. */
+  function argvEffort(): string | undefined {
+    const argv = lastSpawn().argv;
+    const i = argv.indexOf('--effort');
+    return i === -1 ? undefined : argv[i + 1];
+  }
+
+  it('a supervisor takes supervisor.efforts.claude', async () => {
+    mockConfig.supervisor.efforts = { claude: 'high', codex: 'xhigh' };
+    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
+    expect(argvEffort()).toBe('high');
+    // Recorded as the session's level, so the pill stops reporting the default
+    // it is not running at.
+    expect(
+      (setSpawnMeta.mock.calls.at(-1)![1] as { settings: { effort?: string } }).settings.effort,
+    ).toBe('high');
+  });
+
+  it('a Fleet Manager takes agents.managerEfforts.claude', async () => {
+    mockConfig.agents = { managerEfforts: { claude: 'max' } };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
+    expect(argvEffort()).toBe('max');
+  });
+
+  it('an explicit effort still wins over the configured one', async () => {
+    mockConfig.supervisor.efforts = { claude: 'high' };
+    await spawnClaudeAgent({ cwd: '/proj', supervisor: true, effort: 'low' });
+    expect(argvEffort()).toBe('low');
+  });
+
+  it('a plain agent is untouched by the role efforts', async () => {
+    mockConfig.supervisor.efforts = { claude: 'high' };
+    mockConfig.agents = { managerEfforts: { claude: 'max' } };
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(argvEffort()).toBeUndefined();
+  });
+
+  it('does not take another harness’s level', async () => {
+    mockConfig.supervisor.efforts = { codex: 'xhigh' };
+    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
+    expect(argvEffort()).toBeUndefined();
   });
 });

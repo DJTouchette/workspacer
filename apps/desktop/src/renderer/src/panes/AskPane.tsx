@@ -7,6 +7,7 @@ import { ASK_PRESETS } from './askPresets';
 import { findSessionRefs } from './askLinks';
 import { useProviderDetection } from '../hooks/useProviderDetection';
 import { visibleProviderOptions, NOT_INSTALLED_SUFFIX } from '../lib/providerAvailability';
+import { SUPERVISOR_PROVIDERS } from '../lib/roleProviders';
 
 export interface AskPaneProps {
   /** The current fleet — used to resolve session:<id> links and to scope. */
@@ -101,14 +102,6 @@ const SupervisorRow: React.FC<{
 
 // ── main pane ─────────────────────────────────────────────────────────────────
 
-const SUP_PROVIDERS: { value: AgentProvider; label: string }[] = [
-  { value: 'claude', label: 'Claude' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'copilot', label: 'GitHub Copilot' },
-  { value: 'opencode', label: 'OpenCode' },
-  { value: 'pi', label: 'Pi' },
-];
-
 const AskPane: React.FC<AskPaneProps> = ({
   agents,
   spawnSupervisor,
@@ -119,14 +112,26 @@ const AskPane: React.FC<AskPaneProps> = ({
   const { config } = useConfig();
 
   const [question, setQuestion] = useState<string>(prefix);
-  const [provider, setProvider] = useState<AgentProvider>(config.supervisor?.provider ?? 'claude');
+  // The harness this launch runs on. It FOLLOWS Settings (supervisor.provider)
+  // until you pick something here, rather than snapshotting it at mount: config
+  // loads asynchronously, so a `useState(config…)` initializer read 'claude'
+  // whenever this pane mounted before the load landed (a pane restored at boot
+  // always did) and then never caught up — Settings said codex and the launcher
+  // silently spawned claude. `picked` is what makes an explicit choice stick.
+  const configProvider: AgentProvider = config.supervisor?.provider ?? 'claude';
+  const [picked, setPicked] = useState<AgentProvider | null>(null);
+  const provider = picked ?? configProvider;
+  const setProvider = setPicked;
   // Offer only harnesses that are installed. The configured supervisor harness
   // and the current pick stay listed even when missing — flagged, not hidden,
   // so "why can't I pick Codex any more" has an answer on screen.
   const { detection } = useProviderDetection();
-  const visibleProviders = visibleProviderOptions(SUP_PROVIDERS, detection, [
+  // One list with Settings (lib/roleProviders) — Pi ships no MCP client, so a
+  // "Pi supervisor" has no way to observe or coordinate the fleet at all; this
+  // picker used to offer it while the settings pane refused to.
+  const visibleProviders = visibleProviderOptions(SUPERVISOR_PROVIDERS, detection, [
     provider,
-    config.supervisor?.provider,
+    configProvider,
   ]);
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string>('');
@@ -335,7 +340,7 @@ const AskPane: React.FC<AskPaneProps> = ({
           }}
         />
 
-        {/* Supervisor agent picker */}
+        {/* Which harness the supervisor runs on — follows Settings until picked. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {/* With a single installed harness there is nothing to pick. */}
           {visibleProviders.length > 1 && (

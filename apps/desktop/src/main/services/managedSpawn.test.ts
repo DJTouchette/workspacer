@@ -843,3 +843,67 @@ describe('spawnManagedAgent — supervisor digest workers follow their superviso
     expect(opts.summarizerModel).toBe('sonnet');
   });
 });
+
+/**
+ * Reasoning effort, per role and per harness. This is the path a codex
+ * supervisor and a (chat-first) Fleet Manager actually spawn on, so a setting
+ * that never reached here would be a picker writing config nobody reads — the
+ * exact shape of the model bug above, one field over.
+ */
+describe('spawnManagedAgent — role effort comes from config when the caller names none', () => {
+  it('applies supervisor.efforts for the harness the supervisor runs on', async () => {
+    mockConfig = { supervisor: { efforts: { codex: 'xhigh', claude: 'high' } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+    expect(lastManaged().effort).toBe('xhigh');
+    // …and it is RECORDED, so the session pill names the level it runs at
+    // rather than showing the harness default it is not using.
+    expect((lastMeta().settings as Payload).effort).toBe('xhigh');
+  });
+
+  it('applies agents.managerEfforts for a manager spawn', async () => {
+    mockConfig = { agents: { managerEfforts: { codex: 'medium' } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged().effort).toBe('medium');
+  });
+
+  it('an explicitly requested effort wins over the configured one', async () => {
+    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+      effort: 'low',
+    });
+    expect(lastManaged().effort).toBe('low');
+  });
+
+  it('leaves a plain worker on the harness default', async () => {
+    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
+    expect(lastManaged().effort).toBeUndefined();
+  });
+
+  it('does not hand one harness’s level to another', async () => {
+    // codex's 'xhigh' is not a claude level; claude has no entry here, so the
+    // spawn must fall through to claude's own default.
+    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+    expect(lastManaged().effort).toBeUndefined();
+  });
+});

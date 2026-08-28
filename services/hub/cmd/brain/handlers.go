@@ -716,10 +716,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
 	// adapter, not a Claude PTY. Same dispatch split as the desktop's
 	// agents.spawn so this path can't silently fall back to spawning Claude.
-	provider := p.Provider
-	if provider == "" {
-		provider = "claude"
-	}
+	provider := r.roleProviderDefault(p)
 	if provider != "claude" {
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
@@ -980,6 +977,44 @@ var transportFallback = map[string]string{"claude": "pty", "codex": "stream"}
 // shipped fallback above. The Go twin of the desktop's resolveTransport
 // (apps/desktop/src/main/lib/spawnTransport.ts) — a headless spawn that never
 // touches the desktop has to land on the same session shape.
+// roleProviderDefault resolves which harness a spawn runs on. An explicit
+// provider always wins; a ROLE spawn that names none takes the harness config
+// says that role runs on (supervisor.provider / agents.managerProvider), and
+// anything else is claude.
+//
+// TWIN: apps/desktop/src/main/lib/roleProviders.ts, and this path needs it for
+// the same reason. The role settings were honoured by ONE desktop launcher
+// each, so a supervisor started headlessly — which is every supervisor in
+// `workspacer serve`, and every one started from the phone or a hub job —
+// arrived here with `provider: ""` and came up on Claude while Settings said
+// codex. A silently-Claude supervisor is indistinguishable from a working one.
+func (r *registry) roleProviderDefault(p spawnParams) string {
+	if p.Provider != "" {
+		return p.Provider
+	}
+	cfg := r.cfg.get()
+	var configured string
+	switch {
+	case p.Manager:
+		// A manager IS a supervisor for wake purposes (isWakeTarget), so a
+		// request carrying both is a manager — and the manager's own setting is
+		// the one the user set for it.
+		agents, _ := cfg["agents"].(map[string]any)
+		configured = str(agents["managerProvider"])
+	case p.Supervisor:
+		sup, _ := cfg["supervisor"].(map[string]any)
+		configured = str(sup["provider"])
+	}
+	switch strings.TrimSpace(configured) {
+	// Listed rather than accepted verbatim: a hand-edited config naming a
+	// harness we do not speak would otherwise reach an adapter with no idea
+	// what it is, where claude at least runs.
+	case "claude", "codex", "copilot", "opencode", "pi":
+		return strings.TrimSpace(configured)
+	}
+	return "claude"
+}
+
 func (r *registry) transportDefault(provider, requested string) string {
 	if requested == "pty" || requested == "stream" {
 		return requested

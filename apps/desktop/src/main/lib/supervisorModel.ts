@@ -2,7 +2,7 @@
  * Which model a SUPERVISOR spawn asks for when the caller named none.
  *
  * `supervisor.model` is a single field, but the supervisor can run on any of
- * three harnesses (Settings → Supervisor → Supervisor agent), and a model id is
+ * three harnesses (Settings → Manager & Supervisor → “Supervisor runs on”), and a model id is
  * never portable between them: `fable` means nothing to codex, `gpt-5-codex`
  * means nothing to Claude. The old reader was `supCfg?.model` inline in the PTY
  * Claude path, which had two bugs waiting in it — a codex supervisor ignored the

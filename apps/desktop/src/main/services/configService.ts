@@ -212,6 +212,11 @@ interface Config {
      *  `managerProvider` must not destroy the other harness's choice. Read
      *  through lib/roleModels, never directly. */
     managerModels?: Record<string, string>;
+    /** Reasoning effort for the Fleet Manager's own conversation, keyed by
+     *  harness. Per-harness because the ladders differ per CLI (claude
+     *  low..max, codex minimal..xhigh, copilot its own seven); '' / absent =
+     *  the harness's own default. Read through lib/roleModels. */
+    managerEfforts?: Record<string, string>;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries: {
       claude: string;
@@ -259,6 +264,11 @@ interface Config {
     /** Per-harness digest-worker models, keyed by provider. Resolved (with
      *  `summarizerModel` as the legacy fallback) by lib/roleModels. */
     summarizerModels?: Record<string, string>;
+    /** Reasoning effort for the supervisor's own coordinator session, keyed by
+     *  harness — the twin of `agents.managerEfforts`, and per-harness for the
+     *  same reason (the ladders are not portable). Read through
+     *  lib/roleModels; '' / absent = the harness's own default. */
+    efforts?: Record<string, string>;
     /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
     pollSeconds: number;
     /** Full access: the supervisor runs with permissions bypassed AND its

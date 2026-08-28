@@ -303,6 +303,10 @@ export interface Config {
      *  `managerProvider` must not destroy the other's choice. Written by the
      *  Settings picker; resolved in main by lib/roleModels. */
     managerModels?: Partial<Record<AgentProvider, string>>;
+    /** The Fleet Manager's reasoning effort, keyed by harness. Per-harness for
+     *  the same reason as the model: the ladders differ per CLI. Absent = that
+     *  harness's own default. Resolved in main by lib/roleModels. */
+    managerEfforts?: Partial<Record<AgentProvider, string>>;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */
@@ -347,11 +351,17 @@ export interface SupervisorConfig {
   /** Per-harness digest-worker models, keyed by provider. The digest worker now
    *  runs on the supervisor's OWN harness, so this has to be per-harness too. */
   summarizerModels?: Partial<Record<AgentProvider, string>>;
+  /** Reasoning effort for the supervisor's own session, keyed by harness.
+   *  Per-harness because the ladders are not portable between CLIs; absent =
+   *  the harness's own default. Resolved by main's lib/roleModels. */
+  efforts?: Partial<Record<AgentProvider, string>>;
   /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
   pollSeconds?: number;
-  /** Coding-agent backend the supervisor runs on. undefined ⇒ 'claude'.
-   *  Non-Claude supervisors run the chosen CLI but the workspacer MCP facade
-   *  (the supervisor's fleet-coordination tools) is currently Claude-only. */
+  /** Coding-agent harness the supervisor runs on. undefined ⇒ 'claude'.
+   *  Claude, Codex, Copilot and OpenCode all attach the workspacer MCP facade
+   *  (the supervisor's fleet-coordination tools); Pi ships no MCP client at
+   *  all, so it is not offered. Honoured by main (lib/roleProviders) on every
+   *  spawn path, so a supervisor started anywhere lands on this harness. */
   provider?: AgentProvider;
   /** Full access: the supervisor runs with permissions bypassed and the
    *  summarizer workers it spawns inherit the bypass (its facade token carries

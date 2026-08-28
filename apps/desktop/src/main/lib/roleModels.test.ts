@@ -15,8 +15,14 @@ vi.mock('../services/configService', () => ({
   configService: { getConfig: () => mockConfig },
 }));
 
-const { perHarnessModel, resolveManagerModel, resolveSummarizerModel, resolveTitleModel } =
-  await import('./roleModels');
+const {
+  perHarnessModel,
+  resolveManagerModel,
+  resolveSummarizerModel,
+  resolveTitleModel,
+  resolveSupervisorEffort,
+  resolveManagerEffort,
+} = await import('./roleModels');
 
 beforeEach(() => {
   mockConfig = {};
@@ -123,5 +129,45 @@ describe('resolveTitleModel', () => {
   it('is undefined with no autoTitle config at all', () => {
     mockConfig = {};
     expect(resolveTitleModel('claude')).toBeUndefined();
+  });
+});
+
+/**
+ * Reasoning EFFORT, the setting neither role had: a supervisor ran on whatever
+ * its CLI defaults to with no way to raise it, and the pane implied otherwise
+ * by showing nothing at all. Per-harness for the same reason as the models —
+ * the ladders don't overlap (claude low..max, codex minimal..xhigh) — but with
+ * NO legacy single field, so there is nothing to guard against here except
+ * reading the wrong harness's entry.
+ */
+describe('resolveSupervisorEffort / resolveManagerEffort', () => {
+  it('reads the entry for the harness being spawned, not another one', () => {
+    mockConfig = {
+      supervisor: { efforts: { codex: 'xhigh', claude: 'high' } },
+      agents: { managerEfforts: { codex: 'medium' } },
+    };
+    expect(resolveSupervisorEffort('codex')).toBe('xhigh');
+    expect(resolveSupervisorEffort('claude')).toBe('high');
+    expect(resolveManagerEffort('codex')).toBe('medium');
+    // Not configured on this harness = the harness's own default, the one
+    // answer that is valid everywhere.
+    expect(resolveManagerEffort('claude')).toBeUndefined();
+  });
+
+  it('treats absent, blank and whitespace as "the harness default"', () => {
+    mockConfig = {};
+    expect(resolveSupervisorEffort('claude')).toBeUndefined();
+    mockConfig = { supervisor: { efforts: { claude: '' } }, agents: { managerEfforts: {} } };
+    expect(resolveSupervisorEffort('claude')).toBeUndefined();
+    expect(resolveManagerEffort('claude')).toBeUndefined();
+    mockConfig = { supervisor: { efforts: { claude: '  high  ' } } };
+    expect(resolveSupervisorEffort('claude')).toBe('high');
+  });
+
+  it('passes through a level the shipped ladder does not list', () => {
+    // The ladders come from live catalogs; refusing an unrecognized level would
+    // discard a deliberate choice on a newer CLI.
+    mockConfig = { supervisor: { efforts: { codex: 'ultra' } } };
+    expect(resolveSupervisorEffort('codex')).toBe('ultra');
   });
 });
