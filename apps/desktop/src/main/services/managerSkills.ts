@@ -33,9 +33,13 @@ import type { AgentProvider } from './agentProviders';
 const STANDUP_NAME = 'standup';
 const CHECKPOINT_NAME = 'checkpoint';
 
-// Superseded firstmate-vocabulary names — removed on install so a session that
-// got the earlier build is not left with orphan /bearings and /stow skills.
-const RETIRED_NAMES = ['bearings', 'stow'];
+// Superseded skill names — removed on install so a session that got an earlier
+// build is not left with orphan skills. 'bearings' and 'stow' are the old
+// firstmate vocabulary; 'supervise' is the retired fleet-supervisor role, whose
+// SKILL.md is already on every existing user's disk and which nothing else
+// would ever delete — left in place it keeps offering a stale /supervise that
+// half-works by talking straight to claudemon's REST API on :7891.
+const RETIRED_NAMES = ['bearings', 'stow', 'supervise'];
 
 const STANDUP_BODY = `---
 name: standup
@@ -356,8 +360,9 @@ export function installManagerSkills(provider: AgentProvider = 'claude'): void {
       fs.mkdirSync(dir, { recursive: true });
       writeIfChanged(path.join(dir, 'SKILL.md'), body);
     }
-    // Sweep the old names so a manager from the earlier build isn't left with
-    // duplicate /bearings + /stow skills alongside the renamed pair.
+    // Sweep the old names so a manager from an earlier build isn't left with
+    // duplicate /bearings + /stow skills alongside the renamed pair, nor with
+    // the retired /supervise.
     for (const old of RETIRED_NAMES) {
       const dir = skillDir(provider, old);
       if (dir) fs.rmSync(dir, { recursive: true, force: true });
