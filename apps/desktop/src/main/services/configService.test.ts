@@ -899,3 +899,65 @@ describe('wholesale config paths — deletion survives the merge', () => {
     expect(merged.supervisor.budgets).toEqual({ a: 9, b: 2 });
   });
 });
+
+// ─── retired config keys are stripped on read ───────────────────────────────
+// The unit-level rules (what a block is, what survives) live in
+// lib/orphanedConfigKeys.test.ts. This is the WIRING: that loadFromDisk
+// actually runs the pruner, that the config it hands out no longer carries the
+// key, and that the file it writes back is the text splice — not a yaml.dump,
+// which would drop the user's comments and re-order every key.
+describe('retired config keys — the orphaned supervisor block', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset();
+    mockedFs.writeFileSync.mockReset();
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockImplementation(() => enoent());
+  });
+
+  afterEach(() => {
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    mockedFs.writeFileSync.mockReset();
+    configService.reloadConfig();
+  });
+
+  /** The bytes atomicWriteFileSync put in its temp file (the config payload). */
+  const writtenConfig = (): string | undefined => {
+    const call = mockedFs.writeFileSync.mock.calls.at(-1);
+    return call ? String(call[1]) : undefined;
+  };
+
+  it('drops the block from the config it hands out, and rewrites the file', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      '# hand written\nui:\n  theme: nord\n\nsupervisor:\n  provider: claude\n  fullAccess: true\n\nclaude:\n  defaultModel: opus\n',
+    );
+    const cfg = configService.reloadConfig() as unknown as Record<string, unknown>;
+
+    expect(cfg.supervisor).toBeUndefined();
+    expect(cfg.ui.theme).toBe('nord');
+    // Byte-for-byte the input minus the block: the leading comment survives,
+    // key order survives, and nothing was re-serialized.
+    expect(writtenConfig()).toBe(
+      '# hand written\nui:\n  theme: nord\n\nclaude:\n  defaultModel: opus\n',
+    );
+  });
+
+  it('writes nothing when the config has no such block (the new-install case)', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+    const cfg = configService.reloadConfig();
+
+    expect(cfg.ui.theme).toBe('nord');
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unknown key that is NOT retired completely alone', () => {
+    // The whole point of the named list: no general unknown-key pruning. A key
+    // the defaults have never heard of (a plugin's, a late-loading feature's)
+    // must round-trip untouched.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\npluginSettings:\n  a: 1\n');
+    const cfg = configService.reloadConfig() as unknown as Record<string, unknown>;
+
+    expect(cfg.pluginSettings).toEqual({ a: 1 });
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+  });
+});
