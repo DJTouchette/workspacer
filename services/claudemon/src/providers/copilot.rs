@@ -97,9 +97,13 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use directories::BaseDirs;
+
 use super::{apply_updates, note_user_send, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::SessionMode;
+use crate::session::state::{
+    Plan, PlanStatus, PlanStep, SessionMode, SubagentStatus, SubagentUpdate,
+};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 
 /// The one `--model` value this adapter can promise works: Copilot's own
@@ -194,6 +198,20 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
     let data = event.get("data").cloned().unwrap_or(Value::Null);
     let mut out = Vec::new();
 
+    // A SUB-agent's own frames ride this same stdout stream, tagged with a
+    // top-level `agentId`. They are not this session's conversation and must
+    // never be folded into it: verified live, a two-subagent turn put the
+    // dispatch prompts on the wire as `user.message` (rendering as messages the
+    // user never typed), and the subagents' `view` calls and their whole reports
+    // as the parent's own text. Claude's subagents are drill-in only for exactly
+    // this reason; this keeps copilot's the same.
+    //
+    // The `subagent.*` lifecycle frames carry an `agentId` too, and those ARE
+    // ours to read — they are the row itself, not the row's conversation.
+    if let Some(agent_id) = child_agent_id(event, ty) {
+        return child_activity(agent_id, ty, &data);
+    }
+
     match ty {
         // The org-policy refusal the scout hit: the CLI reports it as a
         // *warning* on an otherwise clean stream. Surfacing it as an Error is
@@ -283,8 +301,39 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
             }
         }
 
-        // Copilot's native plan / todo list, when the plan tooling is in play.
-        "session.plan_updated" | "session.todos_updated" => {
+        // Copilot's sub-agents. The `task` tool spawns one and the CLI reports
+        // its whole lifecycle on dedicated events carrying a stable `agentId`
+        // — verified live against v1.0.81 (see
+        // `testdata/copilot-subagent-capture.jsonl`), which is why this is a
+        // structural mapping and not a guess at a tool name.
+        //
+        // `subagent.configured` is deliberately absent: it repeats the model
+        // `subagent.started` already carried and names nothing new.
+        "subagent.started" | "subagent.completed" => {
+            if let Some(update) = subagent_from(&data, event, ty) {
+                out.push(AgentUpdate::Subagent(update));
+            }
+        }
+
+        // The second, independent "that agent is no longer running" signal: the
+        // CLI tells the MODEL an agent went idle through a system notification
+        // carrying the same `agentId`. Taken as well as `subagent.completed`
+        // because a row that never closes holds its parent busy forever (the
+        // failure 6d795cc2 fixed on the codex path) — and closing is the
+        // self-healing direction, since a later `started` re-opens the row.
+        "system.notification" => {
+            if let Some(update) = subagent_from_notification(&data) {
+                out.push(AgentUpdate::Subagent(update));
+            }
+        }
+
+        // Copilot's plan is NOT on the wire. `session.todos_changed` is a
+        // content-free ping (`data: {}` on every one of the 6 seen in a live
+        // plan-shaped run) because the todos themselves live in a SQLite table
+        // the `sql` tool writes — see [`session_todos`], which the driver reads
+        // when this fires. The payload probe stays anyway: it costs nothing and
+        // is what would light up if a future version started carrying them.
+        "session.todos_changed" => {
             if let Some(plan) = super::plan_from_value(&data) {
                 out.push(AgentUpdate::Plan(plan));
             }
@@ -294,6 +343,254 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
     }
 
     out
+}
+
+/// The sub-agent a frame belongs to, when it is a sub-agent's *own* activity
+/// rather than this session's.
+///
+/// `subagent.*` frames are excluded: they also carry `agentId`, but they are the
+/// parent telling us about the child's lifecycle, which [`subagent_from`] reads.
+fn child_agent_id<'a>(event: &'a Value, ty: &str) -> Option<&'a str> {
+    if ty.starts_with("subagent.") {
+        return None;
+    }
+    event
+        .get("agentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// What a sub-agent's own frame contributes: at most a "what is it doing right
+/// now" line on its row, and never a conversation item.
+///
+/// Only `tool.execution_start` produces an update, and the reason is the row's
+/// status. [`SubagentUpdate`] carries a status unconditionally, so any update
+/// re-asserts one — and a frame that arrived after the agent's
+/// `subagent.completed` would re-open a closed row and hold the parent busy
+/// forever (the exact failure 6d795cc2 fixed elsewhere). A tool cannot START
+/// after its agent has finished, so that one frame is safe to call `Running`;
+/// the rest are simply suppressed.
+fn child_activity(agent_id: &str, ty: &str, data: &Value) -> Vec<AgentUpdate> {
+    if ty != "tool.execution_start" {
+        return Vec::new();
+    }
+    let name = data
+        .get("toolName")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("toolTitle").and_then(Value::as_str))
+        .unwrap_or("tool")
+        .to_string();
+    vec![AgentUpdate::Subagent(SubagentUpdate {
+        id: agent_id.to_string(),
+        agent_type: None,
+        status: SubagentStatus::Running,
+        description: None,
+        tool_use_id: None,
+        model: None,
+        last_tool_summary: data
+            .get("arguments")
+            .and_then(|a| a.get("description"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        last_tool_name: Some(name),
+    })]
+}
+
+/// A `subagent.started` / `subagent.completed` frame → the subagent row it
+/// describes.
+///
+/// The `agentId` is a TOP-LEVEL field on these frames, not part of `data` —
+/// that asymmetry is the one thing here worth remembering, and it is why this
+/// takes the whole event as well as its data. Without an id there is no row to
+/// key, so an idless frame is dropped rather than invented.
+///
+/// `agentName` is the agent's TYPE (`explore`, or a `.github/agents` name);
+/// `agentDisplayName` is the caller's label for this particular dispatch
+/// (`explore-a.ts`), which is what the row's description should read. Both were
+/// present on every frame in the live capture.
+fn subagent_from(data: &Value, event: &Value, ty: &str) -> Option<SubagentUpdate> {
+    let id = event
+        .get("agentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let status = if ty == "subagent.completed" {
+        SubagentStatus::Complete
+    } else {
+        SubagentStatus::Running
+    };
+    Some(SubagentUpdate {
+        id,
+        // `agentType` and `agentName` are the same value on the wire; take
+        // either, and fall back to the tool that spawns them rather than to the
+        // shared default, which spells a different provider's name.
+        agent_type: Some(
+            data.get("agentType")
+                .and_then(Value::as_str)
+                .or_else(|| data.get("agentName").and_then(Value::as_str))
+                .unwrap_or("task")
+                .to_string(),
+        ),
+        status,
+        description: data
+            .get("agentDescription")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("agentDisplayName").and_then(Value::as_str))
+            .map(str::to_owned),
+        // The id of the `task` tool call that spawned it — this is what nests
+        // the row under its own tool card in the GUI.
+        tool_use_id: data
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        model: data.get("model").and_then(Value::as_str).map(str::to_owned),
+        last_tool_name: None,
+        // Only the completion frame has anything to summarize; a running agent's
+        // inner tool calls are not reported to the parent's stream at all.
+        last_tool_summary: (status == SubagentStatus::Complete)
+            .then(|| completion_summary(data))
+            .flatten(),
+    })
+}
+
+/// The one-line tally on a `subagent.completed` frame ("1 tool call · 11,981
+/// tokens · 4.8s"), or `None` when it carried no numbers.
+fn completion_summary(data: &Value) -> Option<String> {
+    let calls = data.get("totalToolCalls").and_then(Value::as_u64);
+    let tokens = data.get("totalTokens").and_then(Value::as_u64);
+    let secs = data
+        .get("durationMs")
+        .and_then(Value::as_u64)
+        .map(|ms| ms as f64 / 1000.0);
+    let mut parts = Vec::new();
+    if let Some(n) = calls {
+        parts.push(format!("{n} tool call{}", if n == 1 { "" } else { "s" }));
+    }
+    if let Some(n) = tokens {
+        parts.push(format!("{n} tokens"));
+    }
+    if let Some(s) = secs {
+        parts.push(format!("{s:.1}s"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// A `system.notification` whose `kind` says an agent went idle → close that
+/// agent's row. Every other notification kind is ignored.
+fn subagent_from_notification(data: &Value) -> Option<SubagentUpdate> {
+    let kind = data.get("kind")?;
+    if kind.get("type").and_then(Value::as_str) != Some("agent_idle") {
+        return None;
+    }
+    let id = kind
+        .get("agentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    Some(SubagentUpdate {
+        id,
+        agent_type: kind
+            .get("agentType")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        status: SubagentStatus::Complete,
+        description: kind
+            .get("description")
+            .and_then(Value::as_str)
+            .or_else(|| kind.get("displayName").and_then(Value::as_str))
+            .map(str::to_owned),
+        tool_use_id: None,
+        model: None,
+        last_tool_name: None,
+        last_tool_summary: None,
+    })
+}
+
+/// Copilot's todo list — its plan — as of right now, read out of the session's
+/// own SQLite database.
+///
+/// Copilot does not put its plan on the wire. What it has instead is a
+/// per-session SQLite db with a `todos` table already created in it, which the
+/// model mutates through the ordinary `sql` tool; the CLI's system prompt
+/// documents the table by name and tells the agent to track work in it. All the
+/// wire carries is `session.todos_changed`, a ping with an empty `data` (see
+/// [`translate`]). So the plan is read here, from the file, when that ping says
+/// it changed.
+///
+/// The db is `~/.copilot/session-state/<session-id>/session.db`, and the
+/// session id is the uuid *we* pinned with `--session-id` — so no discovery,
+/// no globbing, and no ambiguity about which session's plan this is. Opened
+/// read-only, and every failure (no home dir, no db yet, a schema without the
+/// table) is `None`, which the caller treats as "nothing to say about the
+/// plan" rather than as an error: this is an enrichment path, and a session
+/// whose agent never wrote a todo has no db table rows and must not look broken.
+fn session_todos(session_id: &str) -> Option<Plan> {
+    todos_at(
+        &BaseDirs::new()?
+            .home_dir()
+            .join(".copilot")
+            .join("session-state")
+            .join(session_id)
+            .join("session.db"),
+    )
+}
+
+/// Read the `todos` table out of one copilot session db. Split from
+/// [`session_todos`] so the query — and the assumption that copilot's own
+/// column names are `title` and `status` — is testable against a db built from
+/// the CLI's verbatim schema.
+fn todos_at(path: &std::path::Path) -> Option<Plan> {
+    if !path.exists() {
+        return None;
+    }
+    // read_only is not just hygiene: opening read-write would create/alter the
+    // file the CLI owns, and a `-p` process may be writing it this instant.
+    let conn = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .ok()?;
+    let mut stmt = conn
+        .prepare("SELECT title, status FROM todos ORDER BY rowid")
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            ))
+        })
+        .ok()?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    plan_from_todo_rows(&rows)
+}
+
+/// `(title, status)` rows from the `todos` table → a [`Plan`]. Pure, so the
+/// status vocabulary is testable without a database.
+///
+/// Copilot's statuses are `pending` / `in_progress` / `done` / `blocked` (the
+/// table's own CHECK constraint). The first three land exactly on
+/// [`PlanStatus`] via `from_wire`; `blocked` has no equivalent and falls
+/// through to `Pending`, which is the honest reading — it is not in progress
+/// and it is certainly not done.
+fn plan_from_todo_rows(rows: &[(String, String)]) -> Option<Plan> {
+    let steps: Vec<PlanStep> = rows
+        .iter()
+        .filter(|(title, _)| !title.trim().is_empty())
+        .map(|(title, status)| PlanStep {
+            content: title.clone(),
+            status: PlanStatus::from_wire(status),
+            active_form: None,
+        })
+        .collect();
+    (!steps.is_empty()).then_some(Plan {
+        steps,
+        updated_at: None,
+    })
 }
 
 /// The human-readable text of a `tool.execution_complete`: the result content
@@ -392,6 +689,14 @@ impl TextReconciler {
     /// and `Some(tail)` for a whole message the deltas didn't cover.
     pub fn observe(&mut self, event: &Value) -> Option<String> {
         let ty = event.get("type").and_then(Value::as_str)?;
+        // The SECOND door into the parent's conversation, and it has to be shut
+        // too: a sub-agent's `assistant.message` reaches here with text
+        // `translate` deliberately dropped, and reconciling it would emit the
+        // child's whole report as the parent's — the exact leak the routing in
+        // `translate` exists to stop. See [`child_agent_id`].
+        if child_agent_id(event, ty).is_some() {
+            return None;
+        }
         let data = event.get("data")?;
         match ty {
             "assistant.message_delta" => {
@@ -1082,9 +1387,32 @@ fn handle_event(
                 )));
             }
         }
+        // The plan changed. The event says only that (`data` is empty — see
+        // [`translate`]), so the todos themselves are read out of the session's
+        // own db. Skipped when translation already produced a Plan, so a future
+        // CLI that starts carrying the list on the wire wins over the file.
+        "session.todos_changed" => {
+            if !updates
+                .iter()
+                .any(|u| matches!(u, AgentUpdate::Plan(_)))
+            {
+                if let Some(plan) = session_todos(session_id) {
+                    updates.push(AgentUpdate::Plan(plan));
+                }
+            }
+        }
         // The terminal event: the only place an exit code for the TURN appears.
+        //
+        // Also the plan's backstop. `session.todos_changed` is `ephemeral`, and
+        // an ephemeral event is exactly the kind a process teardown can race, so
+        // the last read is taken here where the turn is definitively over. The
+        // plan is a last-write-wins full replacement, so a redundant re-read is
+        // free and a missed one would leave the card a turn stale forever.
         "result" => {
             report.result_exit_code = event.get("exitCode").and_then(Value::as_i64);
+            if let Some(plan) = session_todos(session_id) {
+                updates.push(AgentUpdate::Plan(plan));
+            }
         }
         _ => {}
     }
@@ -1613,6 +1941,231 @@ mod tests {
             translate(&json!({ "type": "model.captured_assignment_context", "data": {} }))
                 .is_empty()
         );
+    }
+
+    // ── sub-agents (the second live capture) ───────────────────────────────
+
+    /// The two-subagent run, replayed exactly as `handle_event` drives
+    /// translation.
+    ///
+    /// `testdata/copilot-subagent-capture.jsonl` is one real `copilot -p
+    /// --output-format json` run against v1.0.81 (2026-08-28) that dispatched
+    /// two background `explore` agents in parallel. Verbatim except that long
+    /// content strings were clipped and the 13 `session.background_tasks_changed`
+    /// pings were cut to two (they are identical and empty — that IS the point
+    /// of keeping any).
+    fn replay_subagent_capture() -> (Vec<AgentUpdate>, Vec<Value>) {
+        const CAPTURE: &str = include_str!("testdata/copilot-subagent-capture.jsonl");
+        let mut text = TextReconciler::default();
+        let mut updates = Vec::new();
+        let mut events = Vec::new();
+        for line in CAPTURE.lines().filter(|l| !l.trim().is_empty()) {
+            let event: Value = serde_json::from_str(line).expect("fixture line is JSON");
+            updates.extend(translate(&event));
+            if let Some(tail) = text.observe(&event) {
+                updates.push(AgentUpdate::AssistantText(tail));
+            }
+            events.push(event);
+        }
+        (updates, events)
+    }
+
+    fn subagent_updates(updates: &[AgentUpdate]) -> Vec<&SubagentUpdate> {
+        updates
+            .iter()
+            .filter_map(|u| match u {
+                AgentUpdate::Subagent(s) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_capture_opens_and_closes_a_row_for_each_subagent() {
+        let (updates, _) = replay_subagent_capture();
+        let subs = subagent_updates(&updates);
+        let ids: std::collections::BTreeSet<&str> =
+            subs.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "the run dispatched two agents");
+
+        for id in ids {
+            let mine: Vec<&&SubagentUpdate> = subs.iter().filter(|s| s.id == id).collect();
+            let opened = mine
+                .iter()
+                .find(|s| s.status == SubagentStatus::Running)
+                .expect("row opens");
+            assert_eq!(opened.agent_type.as_deref(), Some("explore"));
+            assert!(
+                opened.tool_use_id.as_deref().is_some_and(|t| t.starts_with("toolu_")),
+                "the row must carry the `task` call id that spawned it, so the GUI \
+                 can nest it under its own tool card"
+            );
+            assert!(opened.description.is_some(), "row is labelled");
+            // The row MUST close: a subagent row that never completes derives a
+            // background-task count that holds its parent busy forever.
+            let last = mine.last().expect("at least one update");
+            assert_eq!(
+                last.status,
+                SubagentStatus::Complete,
+                "the last word on agent {id} must be that it finished"
+            );
+        }
+    }
+
+    #[test]
+    fn a_subagents_own_frames_never_become_the_parents_conversation() {
+        let (updates, events) = replay_subagent_capture();
+        // The capture really does carry the children's own traffic.
+        let child_frames = events
+            .iter()
+            .filter(|e| {
+                e.get("agentId").is_some()
+                    && !e["type"].as_str().unwrap_or("").starts_with("subagent.")
+            })
+            .count();
+        assert!(child_frames >= 10, "fixture carries the children's own frames");
+
+        // A subagent's dispatch prompt arrives as `user.message` on this stream.
+        // Rendering it would show a message the user never typed.
+        assert!(
+            !updates
+                .iter()
+                .any(|u| matches!(u, AgentUpdate::UserText(_))),
+            "no subagent prompt may surface as a user message"
+        );
+        // The children ran `view`; the parent ran `task` and `read_agent`.
+        let parent_tools: Vec<&str> = updates
+            .iter()
+            .filter_map(|u| match u {
+                AgentUpdate::ToolUse { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !parent_tools.contains(&"view"),
+            "a subagent's tool call must not render as the parent's: got {parent_tools:?}"
+        );
+        assert!(parent_tools.contains(&"task"), "the dispatch itself is the parent's");
+        // The children's reports must not be spliced into the parent's text.
+        let rendered: String = updates
+            .iter()
+            .filter_map(|u| match u {
+                AgentUpdate::AssistantText(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !rendered.contains("Contents of"),
+            "a subagent's own report leaked into the parent conversation"
+        );
+        // But its activity still shows up where it belongs — on its row.
+        let subs = subagent_updates(&updates);
+        assert!(
+            subs.iter().any(|s| s.last_tool_name.as_deref() == Some("view")),
+            "the child's tool call should light up its row instead"
+        );
+    }
+
+    #[test]
+    fn background_tasks_changed_is_a_content_free_ping() {
+        // Verified against two live captures (13 and 61 occurrences): every
+        // `session.background_tasks_changed` copilot emits has an EMPTY `data`.
+        // There is nothing to translate — no count, no task list, no ids — so
+        // the busy/idle story is derived from the `subagent.*` rows instead.
+        let (_, events) = replay_subagent_capture();
+        let pings: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["type"] == "session.background_tasks_changed")
+            .collect();
+        assert!(!pings.is_empty(), "the fixture keeps some");
+        for ping in pings {
+            assert_eq!(
+                ping["data"],
+                json!({}),
+                "if this ever fails, copilot started carrying background-task \
+                 detail and it should be wired through"
+            );
+            assert!(translate(ping).is_empty());
+        }
+    }
+
+    // ── the plan: a SQLite table, not a wire payload ───────────────────────
+
+    #[test]
+    fn todos_changed_carries_nothing_so_the_plan_is_read_from_the_db() {
+        // The live plan-shaped run emitted six of these, all with `data: {}`.
+        let ping = json!({ "type": "session.todos_changed", "data": {}, "ephemeral": true });
+        assert!(
+            translate(&ping).is_empty(),
+            "nothing to extract from the ping itself — `handle_event` reads the db"
+        );
+        // …but the payload probe is real: a future CLI that filled it in works.
+        let filled = json!({ "type": "session.todos_changed", "data": {
+            "todos": [{ "title": "a", "status": "in_progress" }]
+        }});
+        assert!(matches!(translate(&filled).as_slice(), [AgentUpdate::Plan(_)]));
+    }
+
+    #[test]
+    fn plan_from_todo_rows_maps_copilots_status_vocabulary() {
+        // The four values copilot's `todos` table CHECK constraint allows,
+        // in the row order the table is read in.
+        let rows = vec![
+            ("Creating hello.sh".to_string(), "done".to_string()),
+            ("Making it executable".to_string(), "in_progress".to_string()),
+            ("Running it".to_string(), "pending".to_string()),
+            ("Publishing it".to_string(), "blocked".to_string()),
+        ];
+        let plan = plan_from_todo_rows(&rows).expect("four steps");
+        assert_eq!(plan.steps.len(), 4);
+        assert_eq!(plan.steps[0].content, "Creating hello.sh");
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+        assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+        assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+        // `blocked` has no equivalent: not started is the honest reading, and
+        // it must never read as done.
+        assert_eq!(plan.steps[3].status, PlanStatus::Pending);
+        // An empty table is "no plan", not an empty plan card.
+        assert!(plan_from_todo_rows(&[]).is_none());
+        assert!(plan_from_todo_rows(&[("  ".to_string(), "pending".to_string())]).is_none());
+    }
+
+    #[test]
+    fn session_todos_reads_a_real_copilot_session_db() {
+        // The schema is copilot's own (`CREATE TABLE todos` from the CLI's
+        // session db, verbatim), so this proves the query matches the table the
+        // CLI actually ships — column names included.
+        let dir = std::env::temp_dir().join(format!("wks-copilot-todos-{}", uuid::Uuid::new_v4()));
+        let session = "11111111-2222-3333-4444-555555555555";
+        let state = dir.join(".copilot").join("session-state").join(session);
+        std::fs::create_dir_all(&state).expect("temp session dir");
+        {
+            let conn = rusqlite::Connection::open(state.join("session.db")).expect("open");
+            conn.execute_batch(
+                "CREATE TABLE todos (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'done', 'blocked')),
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+                 INSERT INTO todos (id, title, status) VALUES
+                   ('create-hello-script', 'Creating hello.sh with echo command', 'done'),
+                   ('make-executable', 'Making script executable', 'in_progress'),
+                   ('run-hello-script', 'Running the hello.sh script', 'pending');",
+            )
+            .expect("copilot's own schema");
+        }
+        let plan = todos_at(&state.join("session.db")).expect("plan read back");
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps[0].content, "Creating hello.sh with echo command");
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+        assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+        assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+        // A session that never wrote a todo has no db at all: no plan, no error.
+        assert!(todos_at(&state.join("nope.db")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── turn_outcome: the failure-shape guard ──────────────────────────────
