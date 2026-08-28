@@ -7,6 +7,16 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Removed
+- **The supervisor role.** The `supervisor: true` spawn flag, the `/supervise`
+  skill, and the `supervisor` config block are gone, along with the
+  Settings ▸ Supervisor section (folded into Settings ▸ Fleet Manager). The
+  Fleet Manager is now the only fleet-coordination role. "Ask the fleet"
+  survives: it now spawns a plain agent at the `triage` tool tier instead of a
+  supervisor.
+
 ## [0.150.0] - 2026-08-23
 
 ### Added
