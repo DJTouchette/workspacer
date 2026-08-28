@@ -1154,6 +1154,14 @@ impl SessionStore {
             if !entry.write_pending(mode, write) {
                 return Some(entry.clone());
             }
+            if mode == SessionMode::Input {
+                // Turn boundary. A subagent row still `Running` now is stale by
+                // construction — see `SessionState::close_stale_subagents`. A
+                // dead child that keeps `background_tasks` above zero holds the
+                // parent "working" forever, so this is the one place the parent
+                // and its children get reconciled.
+                entry.close_stale_subagents();
+            }
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
@@ -4051,6 +4059,113 @@ mod tests {
         assert_eq!(row.subagents[0].last_tool_summary.as_deref(), Some("done"));
         assert!(row.subagents[0].completed_at.is_some());
         assert_eq!(row.background_tasks, 0);
+    }
+
+    /// The false-ACTIVE half of the subagent flap, reproduced from a live
+    /// specimen: a codex row sat at `mode: input` with one `Running` subagent
+    /// and `background_tasks: 1` for ten minutes across four further user
+    /// turns, long after the agent itself had said the subagent was done — its
+    /// completion frame simply never arrived. Nothing closed the row, so the
+    /// parent read as working forever and its working→idle edge (the "worker
+    /// finished" wake) never fired.
+    ///
+    /// The parent's own turn ending is the reconciliation point: a subagent row
+    /// is scoped to the tool call that spawned it, and a tool call cannot
+    /// outlive its turn.
+    #[test]
+    fn a_finished_child_cannot_hold_the_parent_active_past_its_turn() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "codex");
+        let running = |id: &str| SubagentUpdate {
+            id: id.into(),
+            agent_type: Some("codex".into()),
+            status: SubagentStatus::Running,
+            description: Some("read-only check".into()),
+            tool_use_id: Some("call-1".into()),
+            model: None,
+            last_tool_name: Some("spawnAgent".into()),
+            last_tool_summary: None,
+        };
+
+        store.apply_subagent_update("m1", running("child-1"));
+        store.set_managed_mode("m1", SessionMode::Responding, PendingWrite::Keep);
+        assert_eq!(
+            store.get("m1").unwrap().background_tasks,
+            1,
+            "mid-turn the child is genuinely live"
+        );
+
+        // Turn ends. The completion frame for child-1 never came.
+        store.set_managed_mode("m1", SessionMode::Input, PendingWrite::Keep);
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.mode, SessionMode::Input);
+        assert_eq!(
+            row.subagents[0].status,
+            SubagentStatus::Complete,
+            "a child still running once the parent's turn is over is stale"
+        );
+        assert!(row.subagents[0].completed_at.is_some());
+        assert_eq!(
+            row.background_tasks, 0,
+            "a dead child must not hold the parent active"
+        );
+
+        // Closing is the self-healing direction: if the provider really does
+        // have more to say about that agent, its next update re-opens the row.
+        store.apply_subagent_update("m1", running("child-1"));
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.subagents[0].status, SubagentStatus::Running);
+        assert!(row.subagents[0].completed_at.is_none());
+        assert_eq!(row.background_tasks, 1);
+    }
+
+    /// The reconciliation is scoped to providers that publish subagent rows.
+    /// A Claude stream session's `background_tasks` counts background SHELLS
+    /// it never has rows for, and zeroing that at every turn end would badge a
+    /// live `npm run dev` as gone.
+    #[test]
+    fn turn_end_leaves_a_row_less_sessions_background_count_alone() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "claude");
+        store.set_background_tasks("m1", 2);
+
+        store.set_managed_mode("m1", SessionMode::Input, PendingWrite::Keep);
+        let row = store.get("m1").unwrap();
+        assert!(row.subagents.is_empty());
+        assert_eq!(row.background_tasks, 2);
+    }
+
+    /// A parked approval refuses the mode write, so the turn is NOT over and
+    /// nothing may be reconciled — the session is blocked on the user with its
+    /// child still genuinely running.
+    #[test]
+    fn a_refused_turn_end_reconciles_nothing() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/repo", "codex");
+        store.apply_subagent_update(
+            "m1",
+            SubagentUpdate {
+                id: "child-1".into(),
+                agent_type: Some("codex".into()),
+                status: SubagentStatus::Running,
+                description: None,
+                tool_use_id: None,
+                model: None,
+                last_tool_name: None,
+                last_tool_summary: None,
+            },
+        );
+        store.set_managed_mode(
+            "m1",
+            SessionMode::Approval,
+            PendingWrite::Park(PendingOwner::Primary, approval("Bash")),
+        );
+
+        store.set_managed_mode("m1", SessionMode::Input, PendingWrite::Keep);
+        let row = store.get("m1").unwrap();
+        assert_eq!(row.mode, SessionMode::Approval, "the block still stands");
+        assert_eq!(row.subagents[0].status, SubagentStatus::Running);
+        assert_eq!(row.background_tasks, 1);
     }
 
     fn approval(tool: &str) -> Pending {

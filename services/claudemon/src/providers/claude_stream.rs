@@ -322,24 +322,51 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
 }
 
 /// If `value` is a `system/background_tasks_changed` frame, report whether any
+/// The `task_type` values that are ANOTHER AGENT doing the parent's work, and
+/// so must hold the parent's turn busy rather than letting its `result` idle
+/// the session mid-subagent.
+///
+/// Enumerated from the Claude Code 2.1.237 bundle, whose full task-type
+/// vocabulary is `local_agent`, `in_process_teammate`, `remote_agent`,
+/// `local_bash` and `local_workflow`:
+/// * `local_agent` — the async Agent/Task tool.
+/// * `in_process_teammate` — the teammate/team feature (it sits beside
+///   `leadAgentId` / `dynamicTeamContext` / `getConcurrentSubagents` in the
+///   bundle). A teammate is a subagent by another name.
+/// * `remote_agent` — cloud agents, including `/code-review ultra`
+///   (`task_remote_agent` / `task_remote_agent_failed` telemetry). The parent
+///   is waiting on it exactly as it waits on a local subagent.
+///
+/// See [`background_tasks_changed`] for why the rest are deliberately absent.
+const AGENT_TASK_TYPES: [&str; 3] = ["local_agent", "in_process_teammate", "remote_agent"];
+
 /// background task is currently running; `None` for every other frame.
 ///
 /// Parse a `background_tasks_changed` frame into `(holds_busy, live_count)`.
 /// The CLI emits the full *live* task set on each change (verified against a
 /// CLI 2.1.204 stream capture).
 ///
-/// Only async SUBAGENT tasks (`task_type: "local_agent"` — the async
-/// Agent/Task tool) mean "the agent is still working": their output lands
-/// back in this conversation, so idling on the dispatch turn's `result` would
-/// show idle mid-subagent. Every other type — `local_bash` (a
-/// `run_in_background` shell: a dev server, a watcher, an agent-authored poll
-/// loop), `local_workflow` (ambient/housekeeping per the CLI's own copy),
-/// teammates — leaves the REPL interactive in Claude Code itself. Treating
-/// those as busy latched sessions "responding" FOREVER once a background
-/// shell outlived its turn (observed live: a poll loop grepping the wrong
-/// file held a session busy for hours after its last turn ended). They ride
-/// the wire as `background_tasks` instead, so clients can badge them without
-/// the mode lying.
+/// Only tasks that are ANOTHER AGENT mean "this agent is still working":
+/// their output lands back in this conversation, so idling on the dispatch
+/// turn's `result` would show idle mid-subagent. That set is
+/// [`AGENT_TASK_TYPES`], and it is deliberately not just `local_agent` —
+/// scoping it to that one spelling was itself a false-idle bug, because a
+/// parent waiting on a teammate or a cloud agent read as done.
+///
+/// `local_bash` (a `run_in_background` shell: a dev server, a watcher, an
+/// agent-authored poll loop) stays ambient on purpose: treating it as busy
+/// latched sessions "responding" FOREVER once a shell outlived its turn
+/// (observed live — a poll loop grepping the wrong file held a session busy
+/// for hours after its last turn ended). `local_workflow` stays ambient too,
+/// for a weaker reason: a Workflow run IS agent work, but it can be paused or
+/// abandoned mid-run, which is the same latch shape, and the desktop already
+/// keeps it honest out of band through the workflow watcher
+/// (`session.workflows` → `sessionHasBackgroundWork`).
+///
+/// Unknown/future types default to ambient, and that default is load-bearing:
+/// a wrong busy is a permanent lie, a wrong idle self-heals on the next frame.
+/// Ambient tasks still ride the wire as `background_tasks` so clients can
+/// badge them without the mode lying.
 fn background_tasks_changed(value: &Value) -> Option<(bool, u32)> {
     if value.get("type").and_then(Value::as_str) != Some("system")
         || value.get("subtype").and_then(Value::as_str) != Some("background_tasks_changed")
@@ -349,8 +376,11 @@ fn background_tasks_changed(value: &Value) -> Option<(bool, u32)> {
     let tasks = value.get("tasks").and_then(Value::as_array);
     let live = tasks.map_or(0, |t| t.len()) as u32;
     let busy = tasks.is_some_and(|t| {
-        t.iter()
-            .any(|task| task.get("task_type").and_then(Value::as_str) == Some("local_agent"))
+        t.iter().any(|task| {
+            task.get("task_type")
+                .and_then(Value::as_str)
+                .is_some_and(|ty| AGENT_TASK_TYPES.contains(&ty))
+        })
     });
     Some((busy, live))
 }
@@ -1934,6 +1964,19 @@ mod tests {
                 "tasks": [{ "task_id": "c", "task_type": "local_workflow" }] })),
             Some((false, 1))
         );
+        assert_eq!(
+            background_tasks_changed(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "z", "task_type": "some_future_type" }] })),
+            Some((false, 1))
+        );
+        // A task with no task_type at all is ambient, not busy.
+        assert_eq!(
+            background_tasks_changed(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "n" }] })),
+            Some((false, 1))
+        );
         // Any other frame is None — it isn't a background-task signal.
         assert_eq!(
             background_tasks_changed(&json!({ "type": "system", "subtype": "init" })),
@@ -1950,6 +1993,40 @@ mod tests {
             "tasks": [{ "task_id": "a" }] })
         )
         .is_empty());
+    }
+
+    /// The false-IDLE direction of the subagent flap: every AGENT kind holds
+    /// the parent busy, not just the `local_agent` spelling. A parent waiting
+    /// on an in-process teammate or a cloud agent (`/code-review ultra`) is
+    /// working, and reading it as done is what made a session say "finished"
+    /// while its subagent was still going.
+    #[test]
+    fn every_agent_task_kind_holds_busy_not_just_local_agent() {
+        // Named literally, not read back out of AGENT_TASK_TYPES: the point of
+        // this test is WHICH types are in the set, so it must fail if one is
+        // dropped from it.
+        for kind in ["local_agent", "in_process_teammate", "remote_agent"] {
+            assert!(
+                AGENT_TASK_TYPES.contains(&kind),
+                "{kind} must be classified as agent work"
+            );
+            assert_eq!(
+                background_tasks_changed(&json!({ "type": "system",
+                    "subtype": "background_tasks_changed",
+                    "tasks": [{ "task_id": "a", "task_type": kind }] })),
+                Some((true, 1)),
+                "{kind} is another agent doing this session's work — it must hold busy"
+            );
+            // …and it still holds busy when an ambient shell shares the set.
+            assert_eq!(
+                background_tasks_changed(&json!({ "type": "system",
+                    "subtype": "background_tasks_changed",
+                    "tasks": [{ "task_id": "sh", "task_type": "local_bash" },
+                              { "task_id": "a", "task_type": kind }] })),
+                Some((true, 2)),
+                "{kind} beside a shell must still hold busy"
+            );
+        }
     }
 
     #[test]
@@ -2972,6 +3049,80 @@ mod tests {
         assert!(!idle_suppressed);
         assert_eq!(store.get(sid).unwrap().background_tasks, 1);
         assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
+    }
+
+    /// The other half of the flap, end to end through `handle_line`: a parent
+    /// that has delegated to an in-process TEAMMATE must not report finished
+    /// on its dispatch turn's `result`. Before `AGENT_TASK_TYPES` this frame
+    /// classified as ambient, so the parent idled mid-subagent — and on the
+    /// desktop that idle is the working→idle edge that fires the "worker
+    /// finished" wake, so the manager was told a still-running worker was done.
+    #[test]
+    fn teammate_dispatch_result_does_not_idle_the_parent() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "sid-teammate";
+        store.register_managed(sid, "/w", "claude");
+
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::default();
+        let mut totals = StreamTotals::default();
+        let yolo = AtomicBool::new(false);
+        let mut pa: VecDeque<ParkedCanUse> = VecDeque::new();
+        let mut pq: Option<ParkedCanUse> = None;
+        let mut pc: HashMap<String, PendingControl> = HashMap::new();
+        let mut bg = false;
+        let mut sup = false;
+        let mut feed = |value: Value,
+                        cur_mode: &mut SessionMode,
+                        bg: &mut bool,
+                        sup: &mut bool,
+                        acc: &mut UsageAcc,
+                        totals: &mut StreamTotals| {
+            handle_line(
+                &value, &store, &conv, sid, &out_tx, cur_mode, acc, totals, &yolo, &mut pa,
+                &mut pq, &mut pc, bg, sup,
+            );
+        };
+
+        feed(
+            json!({ "type": "system", "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "tm", "task_type": "in_process_teammate" }] }),
+            &mut cur_mode,
+            &mut bg,
+            &mut sup,
+            &mut acc,
+            &mut totals,
+        );
+        assert!(bg, "a live teammate holds the parent busy");
+
+        feed(
+            json!({ "type": "result", "subtype": "success", "is_error": false }),
+            &mut cur_mode,
+            &mut bg,
+            &mut sup,
+            &mut acc,
+            &mut totals,
+        );
+        assert_eq!(
+            cur_mode,
+            SessionMode::Responding,
+            "the dispatch result must not idle a parent whose teammate is still working"
+        );
+        assert!(sup, "the swallowed Idle must be remembered for the drain");
+
+        // The teammate drains: the real idle rides in.
+        feed(
+            json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] }),
+            &mut cur_mode,
+            &mut bg,
+            &mut sup,
+            &mut acc,
+            &mut totals,
+        );
+        assert_eq!(cur_mode, SessionMode::Input, "drain pays the suppressed idle");
+        assert_eq!(store.get(sid).unwrap().background_tasks, 0);
     }
 
     /// A scratch directory that removes itself, so a panicking test leaves
