@@ -100,12 +100,14 @@ function routeHookEvent(session: HookFedSession, pending: PendingSlot, event: an
     case 'SessionStart':
       session.status = 'active';
       session.parentTurnEnded = false;
+      closeStaleSubagents(session);
       setAmbient('idle');
       break;
 
     case 'UserPromptSubmit':
       // A fresh user turn supersedes any prior turn's background subagent work.
       session.parentTurnEnded = false;
+      closeStaleSubagents(session);
       setAmbient('streaming');
       break;
 
@@ -336,6 +338,38 @@ function routeHookEvent(session: HookFedSession, pending: PendingSlot, event: an
  *  background_tasks_changed. The count rides the wire in its place, and this
  *  function, the one consumer whose whole job is keeping 'idle' honest, did not
  *  read it. An agent that left `npm run dev` running showed a flat idle. */
+/** Close out subagent rows still marked `running` at a fresh-turn boundary.
+ *
+ *  The daemon's hook state machine already does this — `SessionState::apply`
+ *  zeroes `live_subagents`/`background_tasks` on `SessionStart` and
+ *  `UserPromptSubmit`, "a fresh user turn supersedes any prior turn's
+ *  background work". The desktop keeps its OWN subagent rows (built from
+ *  `SubagentStart`/`SubagentStop`, and they are what `sessionHasBackgroundWork`
+ *  reads), and it was not mirroring that reset — so the two state machines
+ *  disagreed in the one direction that never self-corrects.
+ *
+ *  A `SubagentStop` that never arrives (a dropped hook POST, a subagent killed
+ *  with its parent's turn, an interrupt) leaves a row `running` with nothing
+ *  left to close it. `applyStopEvent` then keeps exactly those rows and drops
+ *  the completed ones, so the phantom is all that survives: the parent pins on
+ *  'background' forever, and because it never reaches 'idle' its working→idle
+ *  edge never fires — the notifier stays silent and a dispatched worker never
+ *  reports finished to its manager. An async background subagent legitimately
+ *  outlives its parent's Stop, but nothing survives the NEXT user turn.
+ *
+ *  Wrongly closing a row self-heals (a later `SubagentStop` is a no-op, and a
+ *  genuinely new subagent arrives with its own `SubagentStart`); wrongly
+ *  holding one open does not. */
+export function closeStaleSubagents(session: PendingReadOnlySession): void {
+  const now = Date.now();
+  for (const sub of session.subagents) {
+    if (sub.status === 'running') {
+      sub.status = 'complete';
+      sub.completedAt ??= now;
+    }
+  }
+}
+
 export function sessionHasBackgroundWork(session: PendingReadOnlySession): boolean {
   return (
     session.subagents.some((s) => s.status === 'running') ||

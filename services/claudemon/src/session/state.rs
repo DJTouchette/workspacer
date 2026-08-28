@@ -914,6 +914,62 @@ impl SessionState {
         let _ = self.write_pending(mode, PendingWrite::Park(PendingOwner::Primary, pending));
     }
 
+    /// Close out subagent rows still marked `Running` once the parent's own
+    /// turn is over, and re-derive `background_tasks` from what survives.
+    /// Returns whether anything changed.
+    ///
+    /// Daemon-tracked subagent rows are scoped to the tool call that spawned
+    /// them (`tool_use_id`; Codex's `spawnAgent` and friends), and a tool call
+    /// cannot outlive the turn it was issued in — so a row still `Running`
+    /// after the parent has gone back to `Input` is stale by construction: its
+    /// completion frame never arrived. Nothing else ever closes it, so left
+    /// alone it is a *permanent* lie — the roll-up that asks "is this agent
+    /// working" (`background_tasks`, and the desktop's
+    /// `sessionHasBackgroundWork`) reads a dead child as live work and the
+    /// parent shows busy forever, which also means its working→idle edge never
+    /// fires and a dispatched worker never reports finished.
+    ///
+    /// Observed live before this existed: a codex session sat at `mode: input`
+    /// with `background_tasks: 1` and one `Running` row for ten minutes across
+    /// four further user turns — long after the agent itself had said in
+    /// conversation that the subagent was done.
+    ///
+    /// Closing is the self-healing direction (the same asymmetry that keeps
+    /// `local_bash` out of the busy-holding set in `claude_stream.rs`): if the
+    /// provider does have more to say about that agent, the next
+    /// `SessionStore::apply_subagent_update` re-opens the row as `Running` and
+    /// clears `completed_at`. A wrong busy never self-corrects; a wrong idle
+    /// does, on the next frame.
+    ///
+    /// No-op for providers that publish no subagent rows — Claude's live
+    /// bookkeeping is `live_subagents`/`background_tasks` and its rows are
+    /// built in the desktop, so `background_tasks` (which for a stream session
+    /// counts background *shells* too) must not be re-derived here.
+    pub fn close_stale_subagents(&mut self) -> bool {
+        if self.subagents.is_empty() {
+            return false;
+        }
+        let completed_at = OffsetDateTime::now_utc().unix_timestamp() * 1000;
+        let mut changed = false;
+        for sub in &mut self.subagents {
+            if sub.status == SubagentStatus::Running {
+                sub.status = SubagentStatus::Complete;
+                sub.completed_at.get_or_insert(completed_at);
+                changed = true;
+            }
+        }
+        if changed {
+            // Same derivation `apply_subagent_update` uses, so the wire count
+            // and the rows can never disagree: nothing is running now.
+            self.background_tasks = self
+                .subagents
+                .iter()
+                .filter(|s| s.status == SubagentStatus::Running)
+                .count() as u32;
+        }
+        changed
+    }
+
     /// The Claude config root serving this session, `""` = the daemon's
     /// default. Derived from the transcript path (every hook carries it, and
     /// the stream tailer records it too) — a profile spawn with its own

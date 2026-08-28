@@ -393,6 +393,99 @@ describe('SubagentStart idempotency (re-delivered hook)', () => {
   });
 });
 
+describe('subagent activity detection — a finished child cannot hold the parent active', () => {
+  const startSub = (s: ClaudeSessionState, id: string) =>
+    applyHookEvent(s, {
+      hook_event_name: 'SubagentStart',
+      agent_id: id,
+      agent_type: 'general-purpose',
+    });
+
+  // The daemon's hook state machine zeroes live_subagents on SessionStart and
+  // UserPromptSubmit ("a fresh user turn supersedes any prior turn's background
+  // work"). The desktop keeps its OWN rows and was not mirroring that, so a
+  // SubagentStop that never arrived pinned the parent on 'background' forever —
+  // and a parent that never reaches 'idle' never fires the working→idle edge
+  // that notifies the user and wakes a fleet manager.
+  it('a fresh user turn closes a subagent row whose SubagentStop never arrived', () => {
+    const s = mkSession('pty');
+    startSub(s, 'agent-lost');
+    applyStopEvent(s); // parent's own turn ends, subagent still "running"
+    expect(s.ambientState).toBe('background');
+
+    // …no SubagentStop ever comes. The next user turn supersedes it.
+    applyHookEvent(s, { hook_event_name: 'UserPromptSubmit' });
+    expect(s.subagents.some((sub) => sub.status === 'running')).toBe(false);
+    expect(s.subagents[0].completedAt).toBeTypeOf('number');
+
+    applyStopEvent(s);
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    expect(s.ambientState).toBe('idle');
+  });
+
+  it('SessionStart closes rows left over from a previous life of the session', () => {
+    const s = mkSession('pty');
+    startSub(s, 'agent-lost');
+    applyHookEvent(s, { hook_event_name: 'SessionStart' });
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    expect(s.ambientState).toBe('idle');
+  });
+
+  // The reset is a TURN boundary, not a blanket sweep: a subagent dispatched in
+  // this turn is real work, and the parent must stay busy for it.
+  it('does not close a subagent that is still running inside the current turn', () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, { hook_event_name: 'UserPromptSubmit' });
+    startSub(s, 'agent-live');
+    applyStopEvent(s); // async background subagent outlives the parent's Stop
+    expect(s.subagents.some((sub) => sub.status === 'running')).toBe(true);
+    expect(sessionHasBackgroundWork(s)).toBe(true);
+    expect(s.ambientState).toBe('background');
+  });
+
+  // A stream session's ambient is daemon-owned, but sessionHasBackgroundWork
+  // still reads these desktop-built rows (applyManagedMode's 'input' arm), so
+  // the stale row would hold a stream parent 'background' just the same.
+  it('mirrors the reset for stream sessions, whose ambient the daemon owns', () => {
+    const s = mkSession('stream');
+    startSub(s, 'agent-lost');
+    expect(sessionHasBackgroundWork(s)).toBe(true);
+    applyHookEvent(s, { hook_event_name: 'UserPromptSubmit' });
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+  });
+
+  // The other flap direction, at this layer: busy must come from the tool
+  // LIFECYCLE, never from how long it has been quiet. A tool call that runs for
+  // an hour with no output (a `gh run watch`, a long build) emits PreToolUse
+  // and nothing else until it returns — the session must stay streaming.
+  it('a session inside a long silent tool call stays busy', () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, { hook_event_name: 'UserPromptSubmit' });
+    applyHookEvent(s, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 'tu-watch',
+      tool_name: 'Bash',
+      tool_input: { command: 'gh run watch' },
+    });
+    expect(s.ambientState).toBe('streaming');
+
+    // Nothing arrives for the whole tool call — no frame, no hook, no output.
+    normalizeBackgroundAmbient(s);
+    expect(s.ambientState).toBe('streaming');
+    expect(s.activeToolCalls).toHaveLength(1);
+
+    // Only the tool actually returning moves it on.
+    applyHookEvent(s, {
+      hook_event_name: 'PostToolUse',
+      tool_use_id: 'tu-watch',
+      tool_name: 'Bash',
+    });
+    expect(s.ambientState).toBe('streaming');
+    applyStopEvent(s);
+    expect(s.ambientState).toBe('idle');
+  });
+});
+
 describe('applyHookEvent — PostToolUse completion + failure', () => {
   it('marks a tool complete on a clean PostToolUse', () => {
     const s = mkSession('pty');
