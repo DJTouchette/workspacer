@@ -517,8 +517,11 @@ type spawnParams struct {
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.
 	Provider string `json:"provider"`
-	// Claude: 'pty' | 'stream' (omitted = the config's claude.transport, then
-	// pty). Codex: 'stream' spawns headless (GUI-only, daemon-owned thread).
+	// Claude: 'pty' | 'stream'. Codex: 'stream' spawns headless (GUI-only,
+	// daemon-owned thread), 'pty' the hybrid (native TUI + GUI on one
+	// app-server thread). Omitted = the harness's configured default,
+	// resolved by transportDefault below (claude.transport → pty,
+	// codex.transport → stream).
 	Transport string `json:"transport"`
 	Cwd       string `json:"cwd"`
 	Model     string `json:"model"`
@@ -723,11 +726,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	// Claude on the 'stream' transport is managed too (claudemon's headless
 	// stream-json adapter, no PTY). Mirror the desktop's default resolution: an
-	// explicit transport wins, else the config's claude.transport, else pty.
-	transport := p.Transport
-	if transport == "" {
-		transport = r.claudeTransportDefault()
-	}
+	// explicit transport wins, else the config's claude.transport, else the
+	// shipped per-harness fallback.
+	transport := r.transportDefault("claude", p.Transport)
 	if transport == "stream" {
 		return r.spawnManagedSession(ctx, "claude", cwd, p)
 	}
@@ -872,7 +873,12 @@ func (r *registry) noteLaunch(sessionID, provider string, p spawnParams) {
 // (yoloGranted), the one case the resolved p.skip survives into `yolo`.
 func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
 	isClaudeStream := provider == "claude"
-	isCodexStream := provider == "codex" && p.Transport == "stream"
+	// Codex's shape is RESOLVED, never inferred from the presence of a key: a
+	// bus spawn that names no transport (which is most of them — the MCP facade
+	// and every dispatched worker) must land on the same shape the desktop
+	// would pick, or the same fleet runs headless locally and as a TUI+viewer
+	// pair headless-side. TWIN: apps/desktop/src/main/lib/spawnTransport.ts.
+	codexTransport := r.transportDefault("codex", p.Transport)
 
 	sessionID := p.ResumeSessionID
 	if sessionID == "" {
@@ -902,11 +908,13 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		// yoloGranted spawn (spawn() zeroes the resolved skip otherwise).
 		Yolo: p.skip,
 	}
-	if isCodexStream {
-		// Codex mirrors Claude's stream transport: 'stream' spawns headless
-		// (GUI-only, daemon-owned thread). Must ride on the wire or a remote
-		// headless spawn silently downgrades to the hybrid PTY session.
-		req.Transport = "stream"
+	if provider == "codex" {
+		// STATED on the wire, both shapes. claudemon reads an absent key as
+		// "hybrid", which is indistinguishable from a dropped field — so a
+		// headless spawn must say 'stream' (or it silently downgrades to the
+		// hybrid PTY session) and a hybrid one must say 'pty' (or the daemon's
+		// own reading of the default would be the only thing deciding).
+		req.Transport = codexTransport
 	}
 	// Resume: codex rejoins the prior life's app-server thread; claude-stream
 	// passes `--resume`. opencode/pi carry no resume on the wire — matching the
@@ -956,15 +964,27 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	return jsonResult(spawnResult(id, p.Message, queued, p))
 }
 
-// claudeTransportDefault reads config.claude.transport — the same default the
-// desktop applies when a spawn names no transport (hubCapabilities.ts:
-// reqTransport ?? config.claude.transport ?? 'pty').
-func (r *registry) claudeTransportDefault() string {
-	claude, _ := r.cfg.get()["claude"].(map[string]any)
-	if t := str(claude["transport"]); t != "" {
+// transportFallback is what a harness runs on when neither the caller nor the
+// config says. Mirrors main/lib/spawnTransport.ts TRANSPORT_FALLBACK: claude's
+// headless transport is opt-in per install, codex's is the default (the
+// app-server path is GUI-only, the twin of Claude's stream transport, and it is
+// what this app is built around).
+var transportFallback = map[string]string{"claude": "pty", "codex": "stream"}
+
+// transportDefault resolves the transport a spawn should run on: what the
+// caller explicitly asked for, else config.<provider>.transport, else the
+// shipped fallback above. The Go twin of the desktop's resolveTransport
+// (apps/desktop/src/main/lib/spawnTransport.ts) — a headless spawn that never
+// touches the desktop has to land on the same session shape.
+func (r *registry) transportDefault(provider, requested string) string {
+	if requested == "pty" || requested == "stream" {
+		return requested
+	}
+	section, _ := r.cfg.get()[provider].(map[string]any)
+	if t := str(section["transport"]); t == "pty" || t == "stream" {
 		return t
 	}
-	return "pty"
+	return transportFallback[provider]
 }
 
 // skipPermissionsConfigDefault resolves what a spawn that OMITTED

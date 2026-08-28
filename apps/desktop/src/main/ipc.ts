@@ -38,6 +38,7 @@ import { agentHandoffBrief } from './services/agentHandoff';
 import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
 import { managedOptionsFromRequest, type AgentSpawnRequest } from './lib/managedSpawnOptions';
+import { resolveTransport } from './lib/spawnTransport';
 import { spawnClaudeAgent } from './services/claudeSpawn';
 import { applyLiveEffort } from './services/liveEffort';
 import { logsDir } from './services/logFile';
@@ -276,7 +277,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // claude_stream adapter runs headless stream-json (no PTY). Same shared
     // dispatch as the other managed providers so the IPC and hub-bus spawn
     // paths can't drift (standing project rule; see managedSpawn.ts).
-    const transport = opts.transport ?? configService.getConfig().claude?.transport ?? 'pty';
+    // The shared default resolver (lib/spawnTransport), not a hand-copied
+    // `?? config.claude.transport ?? 'pty'` — the same call decides codex's
+    // shape inside spawnManagedAgent, so the two harnesses can't drift.
+    const transport = resolveTransport('claude', opts.transport);
     if (transport === 'stream') {
       return spawnManagedAgent({
         provider: 'claude',

@@ -266,6 +266,15 @@ export interface Config {
       dailyAt: string;
     };
   };
+  /** Codex-specific defaults — the twin of `claude` above. */
+  codex?: {
+    /** How new Codex sessions run: 'stream' (headless `codex app-server` over
+     *  ws via claudemon's managed adapter — GUI only, the default and the twin
+     *  of Claude's stream transport) or 'pty' (the hybrid: the native Codex TUI
+     *  in a terminal plus the structured GUI, one shared thread). Per-spawn
+     *  overridable in the spawn dialog. Default 'stream'. */
+    transport?: 'pty' | 'stream';
+  };
   /** Defaults applied when spawning a new agent. */
   agents?: {
     /** Coding-agent backend pre-selected in the spawn dialog. */

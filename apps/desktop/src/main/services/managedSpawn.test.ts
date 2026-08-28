@@ -8,13 +8,18 @@
  *   - codex + transport 'stream' sends `transport: 'stream'` in the
  *     spawn-managed payload AND stamps it in setSpawnMeta (the client's only
  *     way to tell headless from hybrid before the daemon frame arrives);
- *   - hybrid codex (no transport) and opencode/pi carry NO transport key —
- *     their daemon adapters don't accept one;
+ *   - a codex spawn that names NO transport resolves the configured default
+ *     (codex.transport, shipped 'stream') here — this is THE choke point, so
+ *     every entry point that forgets to fill the field still lands headless;
+ *   - opencode/pi carry NO transport key — their daemon adapters don't accept
+ *     one, and they have only one session shape;
  *   - codex resume forwards resumeSessionId (the daemon rejoins the prior
  *     app-server thread), while the claude-stream-only extras
  *     (permissionMode/extraArgs/env) never leak into codex payloads;
- *   - on win32, codex+stream falls back to the rollout hybrid (PTY spawn),
- *     never spawn-managed.
+ *   - on win32, HEADLESS codex goes down the managed app-server path like
+ *     everywhere else (no PTY is involved, so the ConPTY concerns behind the
+ *     old unconditional pin don't apply); only an explicit 'pty' takes the
+ *     rollout hybrid there.
  *
  * Strategy mirrors claudeSpawn.test.ts: mock every collaborator so only
  * spawnManagedAgent runs, and inspect the payload handed to
@@ -170,11 +175,30 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect(lastMeta().transport).toBe('stream');
   });
 
-  it('hybrid codex (no transport) sends NO transport key anywhere', async () => {
+  // THE default. Most of the fleet spawns codex through a path that names no
+  // transport at all (a bus dispatch, a respawn, the Fleet Manager), and this
+  // is the one place that decides what that means.
+  it('codex with NO transport resolves the shipped default (headless) on the wire AND in spawn meta', async () => {
     await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
 
-    expect(lastManaged()).not.toHaveProperty('transport');
-    expect(lastMeta()).not.toHaveProperty('transport');
+    expect(lastManaged().transport).toBe('stream');
+    expect(lastMeta().transport).toBe('stream');
+  });
+
+  it('config codex.transport=pty flips that default to the hybrid', async () => {
+    mockConfig = { codex: { transport: 'pty' } };
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
+
+    expect(lastManaged().transport).toBe('pty');
+    expect(lastMeta().transport).toBe('pty');
+  });
+
+  it('an explicit hybrid request beats a headless config default', async () => {
+    mockConfig = { codex: { transport: 'stream' } };
+    await spawnManagedAgent({ provider: 'codex', transport: 'pty', cwd: '/proj' });
+
+    expect(lastManaged().transport).toBe('pty');
+    expect(lastMeta().transport).toBe('pty');
   });
 
   it.each(['opencode', 'pi'] as const)(
@@ -266,24 +290,76 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
   });
 });
 
-describe('spawnManagedAgent — win32 codex fallback', () => {
-  it('codex + stream on win32 spawns the rollout hybrid (PTY), never spawn-managed', async () => {
+/**
+ * Windows was pinned to the rollout hybrid UNCONDITIONALLY, so `transport:
+ * 'stream'` there was a warning and a downgrade — which is what left the same
+ * user with GUI-only codex on Linux and a TUI+viewer pair on Windows. The ws
+ * app-server was chosen precisely because plain-TCP ws works on Windows
+ * (codex.rs module header), and a headless session spawns no PTY at all, so
+ * none of the ConPTY reasons behind that pin apply to it.
+ *
+ * NOT runtime-verified on Windows from this machine — the safety net is
+ * claudemon's: if `codex app-server` fails to come up, run_session degrades the
+ * session to the rollout hybrid in place, resets the transport stamp to 'pty'
+ * so the pane grows its Term view back, and pushes a ⚠️ notice into the
+ * conversation. Loud and working, rather than a dead pane.
+ */
+describe('spawnManagedAgent — win32 codex', () => {
+  const onWin32 = async (fn: () => Promise<void>) => {
     const realPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
+      await fn();
+    } finally {
+      warn.mockRestore();
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    }
+  };
+
+  it('codex + stream on win32 takes the managed app-server path, like every other platform', async () => {
+    await onWin32(async () => {
       await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(spawnManagedMock).toHaveBeenCalledTimes(1);
+      expect(lastManaged().transport).toBe('stream');
+      expect(lastMeta().transport).toBe('stream');
+    });
+  });
+
+  it('a DEFAULTED codex spawn on win32 is headless too — the default is the whole point', async () => {
+    await onWin32(async () => {
+      await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(lastManaged().transport).toBe('stream');
+    });
+  });
+
+  it('an explicit hybrid on win32 still takes the rollout hybrid (PTY spawn)', async () => {
+    await onWin32(async () => {
+      await spawnManagedAgent({ provider: 'codex', transport: 'pty', cwd: '/proj' });
 
       expect(spawnManagedMock).not.toHaveBeenCalled();
       expect(spawnMock).toHaveBeenCalledTimes(1);
       const payload = spawnMock.mock.calls[0][0] as Payload;
       expect(payload.rolloutProvider).toBe('codex');
-      // The hybrid fallback stamps no stream transport — it IS a PTY session.
-      expect(lastMeta()).not.toHaveProperty('transport');
-    } finally {
-      warn.mockRestore();
-      Object.defineProperty(process, 'platform', { value: realPlatform });
-    }
+      // It IS a PTY session, and now says so rather than leaving the field
+      // absent — with codex defaulting to headless, an absent transport would
+      // read as the default rather than as this.
+      expect(lastMeta().transport).toBe('pty');
+    });
+  });
+
+  it('config codex.transport=pty on win32 also lands on the rollout hybrid', async () => {
+    await onWin32(async () => {
+      mockConfig = { codex: { transport: 'pty' } };
+      await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
+
+      expect(spawnManagedMock).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -540,11 +616,14 @@ describe('spawnManagedAgent — firstMessage', () => {
 
   it('rides the codex PTY-hybrid spawn too — the one path with no instructions channel', async () => {
     const orig = process.platform;
+    // The rollout hybrid is reached by asking for it now, not by being on
+    // Windows: win32 + headless takes the managed app-server path like
+    // everywhere else. Both facts are pinned in the win32 describe above.
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
       await spawnManagedAgent({
         provider: 'codex',
-        transport: 'stream',
+        transport: 'pty',
         cwd: '/proj',
         firstMessage: 'ship the thing',
       });

@@ -258,9 +258,14 @@ func TestSpawnManagedResume(t *testing.T) {
 	if codex["resume"] != "prior-1" || codex["session_id"] != "prior-1" {
 		t.Errorf("codex resume must ride resume + session_id, got %+v", codex)
 	}
-	// A codex resume stays on the default hybrid unless stream is asked for.
-	if _, hasTransport := codex["transport"]; hasTransport {
-		t.Errorf("codex resume without transport param must not send one, got %v", codex["transport"])
+	// A codex spawn always STATES its shape, resolved from config
+	// (codex.transport, shipped 'stream') when the caller named none — an
+	// absent key reads as "hybrid" to claudemon, which is exactly what a
+	// dropped field looks like. Resume is headless on the daemon side anyway
+	// (thread/resume is a thing the native TUI cannot do), so this is also the
+	// only shape that could honour it.
+	if codex["transport"] != "stream" {
+		t.Errorf("codex resume with no transport param must state the configured default 'stream', got %v", codex["transport"])
 	}
 	oc := managed[1].body
 	if _, hasResume := oc["resume"]; hasResume {

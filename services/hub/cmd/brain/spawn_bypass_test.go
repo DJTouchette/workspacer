@@ -136,7 +136,7 @@ func TestManagedStreamSpawnScrubsTheProfileToo(t *testing.T) {
 	}
 	if gotPath != "/sessions/spawn-managed" {
 		t.Fatalf("a spawn with no transport went to %q, not the managed stream path — config_defaults.json claude.transport is %q and this test is no longer exercising the default leg",
-			gotPath, reg.claudeTransportDefault())
+			gotPath, reg.transportDefault("claude", ""))
 	}
 
 	for _, banned := range []string{

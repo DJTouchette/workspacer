@@ -197,8 +197,12 @@ class ClaudemonSessionClient {
     effort?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
     bin?: string;
-    /** Codex only: 'stream' spawns headless (GUI-only, no native TUI PTY). */
-    transport?: 'stream';
+    /** Codex only, and always STATED on a codex spawn: 'stream' spawns headless
+     *  (GUI-only, no native TUI PTY), 'pty' the hybrid (native TUI + GUI on one
+     *  app-server thread). The daemon reads an absent key as hybrid, which is
+     *  indistinguishable from a dropped field — so the desktop resolves the
+     *  default (lib/spawnTransport) and says which shape it means. */
+    transport?: 'pty' | 'stream';
     /** YOLO / skip approvals — auto-approve every command and file change. */
     yolo?: boolean;
     /** Claude (stream) only: the full Claude permission mode
