@@ -16,7 +16,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveAgentBinary, isAgentBinaryInstalled, checkAllProviders } from './agentProviders';
+import {
+  resolveAgentBinary,
+  isAgentBinaryInstalled,
+  checkAllProviders,
+  checkAllProvidersCached,
+} from './agentProviders';
 
 let sandbox: string;
 let bin1: string;
@@ -72,5 +77,44 @@ describe('agentProviders PATH probing matches the Go brain', () => {
     expect(opencode.resolvedPath).toBeNull();
     // resolveAgentBinary falls back to the bare name so a fresh install works.
     expect(resolveAgentBinary('opencode')).toBe('opencode');
+  });
+});
+
+// ── the cache in front of it ────────────────────────────────────────────────
+//
+// Every provider picker now asks on open (renderer hook useProviderDetection)
+// so it can hide harnesses that aren't installed, which turns a PATH walk into
+// a routine UI call. The TTL cache pays for that — but it must not outlive the
+// two things that legitimately change the answer: an explicit re-check, and a
+// changed binary override.
+describe('checkAllProvidersCached', () => {
+  it('serves repeat calls from cache but rescans on force', () => {
+    const first = checkAllProvidersCached({}, true);
+    expect(first.find((p) => p.provider === 'codex')!.found).toBe(true);
+    // Break PATH behind the cache's back: the cached answer must not notice…
+    process.env.PATH = '';
+    expect(checkAllProvidersCached({}).find((p) => p.provider === 'codex')!.found).toBe(true);
+    // …and a forced re-check must.
+    expect(checkAllProvidersCached({}, true).find((p) => p.provider === 'codex')!.found).toBe(
+      false,
+    );
+  });
+
+  it('keys the cache on the binary overrides, so editing one is not stale', () => {
+    const real = path.join(bin2, 'codex');
+    expect(checkAllProvidersCached({}, true).find((p) => p.provider === 'opencode')!.found).toBe(
+      false,
+    );
+    // Same TTL window, different override map → a fresh scan, not the cached
+    // "opencode is missing" from the call above.
+    const withOverride = checkAllProvidersCached({ opencode: real });
+    expect(withOverride.find((p) => p.provider === 'opencode')!.found).toBe(true);
+    expect(withOverride.find((p) => p.provider === 'opencode')!.resolvedPath).toBe(real);
+    // Pointing an override at a path that does not exist reads as not-installed
+    // even though the CLI may be on PATH — the override wins, both ways.
+    const bogus = path.join(sandbox, 'nope', 'codex');
+    expect(
+      checkAllProvidersCached({ codex: bogus }).find((p) => p.provider === 'codex')!.found,
+    ).toBe(false);
   });
 });

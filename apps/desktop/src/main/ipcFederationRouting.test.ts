@@ -91,6 +91,7 @@ vi.mock('./services/agentHandoff', () => ({ agentHandoffBrief: vi.fn() }));
 vi.mock('./services/agentProviders', () => ({
   resolveAgentBinary: vi.fn(),
   checkAllProviders: vi.fn(),
+  checkAllProvidersCached: vi.fn(),
 }));
 vi.mock('./services/liveEffort', () => ({ applyLiveEffort: vi.fn(async () => ({ ok: true })) }));
 vi.mock('./services/logFile', () => ({ logsDir: vi.fn(() => '/logs') }));

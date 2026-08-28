@@ -111,6 +111,10 @@ pub enum AppMsg {
     /// ordinary install and must render as no surface at all rather than an
     /// error. See [`crate::nodes`].
     Nodes(Option<Vec<crate::nodes::NodeView>>),
+    /// Provider ids whose CLI the host reports as installed
+    /// (`providers.checkAll`). Sets the app's list, which starts as `None` =
+    /// "no answer, offer everything". See [`crate::providers`].
+    InstalledProviders(Vec<String>),
     /// The outcome of a confirmed `nodes.wake`. `node` is the hub's answer
     /// (normally `waking`) and arrives BEFORE the machine is up — the rest
     /// follows on `node.state_changed`. `error` is a rendered sentence, and a
@@ -177,11 +181,6 @@ pub enum SplitDir {
     Rows,
 }
 
-/// Providers the spawn modal can launch. `claude` is a PTY session (profile +
-/// argv); the rest are managed (adapter-driven) sessions via
-/// `/sessions/spawn-managed`.
-pub const SPAWN_PROVIDERS: &[&str] = &["claude", "codex", "copilot", "opencode", "pi"];
-
 /// State of the "spawn a new agent" modal. Profile-centric for claude: a working
 /// directory plus a chosen profile (which carries model / skip-permissions in
 /// its args). A non-claude `provider_idx` selects a managed backend instead, for
@@ -190,7 +189,9 @@ pub const SPAWN_PROVIDERS: &[&str] = &["claude", "codex", "copilot", "opencode",
 pub struct SpawnForm {
     pub cwd: String,
     pub profile_idx: usize,
-    /// Index into [`SPAWN_PROVIDERS`]; 0 = claude (the default PTY path).
+    /// Index into `App::spawn_provider_choices()` — the harnesses this machine
+    /// can actually launch, NOT the full vocabulary. 0 is claude whenever
+    /// claude is installed (the default PTY path).
     pub provider_idx: usize,
     /// Candidate directory names from the last `tab` completion, shown under the
     /// field when the path is ambiguous. Cleared on any edit.

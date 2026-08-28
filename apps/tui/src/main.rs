@@ -20,6 +20,7 @@ mod nodes;
 mod notes;
 mod pins;
 mod profiles;
+mod providers;
 mod projects;
 mod render;
 mod runs;

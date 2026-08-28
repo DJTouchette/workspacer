@@ -110,6 +110,9 @@ const checkAllProviders = vi.fn(async () => ({ codex: true }));
 const resolveAgentBinary = vi.fn(() => '/bin/codex');
 vi.mock('./agentProviders', () => ({
   checkAllProviders: (...a: unknown[]) => checkAllProviders(...a),
+  // The bus door goes through the short-TTL wrapper; the test asserts on the
+  // uncached twin, so route it to the same spy.
+  checkAllProvidersCached: (...a: unknown[]) => checkAllProviders(...a),
   resolveAgentBinary: (...a: unknown[]) => resolveAgentBinary(...a),
 }));
 

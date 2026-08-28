@@ -599,8 +599,10 @@ test.describe('mobile client', () => {
     await expect(page.locator('.dirrow[data-dir]')).toHaveCount(4);
     await expect(page.locator('.dirrow[data-dir] .star.on')).toHaveCount(2);
 
-    // providers.checkAll disables what isn't installed.
-    await expect(page.locator('.provbtn[data-prov="pi"]')).toBeDisabled();
+    // providers.checkAll decides which harnesses exist at all: pi is absent
+    // from the fixture's PATH, so its button is not offered (it is not the
+    // selected provider either — that one would stay, disabled and tagged).
+    await expect(page.locator('.provbtn[data-prov="pi"]')).toHaveCount(0);
     await expect(page.locator('.provbtn[data-prov="codex"]')).toBeEnabled();
 
     // Full access is refused for remote spawns, so it can't be selected.

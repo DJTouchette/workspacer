@@ -74,7 +74,11 @@ vi.mock('./configService', () => ({
 vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: {} }));
 vi.mock('./managedSpawn', () => ({ spawnManagedAgent: vi.fn() }));
 vi.mock('./claudeSpawn', () => ({ spawnClaudeAgent: vi.fn() }));
-vi.mock('./agentProviders', () => ({ checkAllProviders: vi.fn(), resolveAgentBinary: vi.fn() }));
+vi.mock('./agentProviders', () => ({
+  checkAllProviders: vi.fn(),
+  checkAllProvidersCached: vi.fn(),
+  resolveAgentBinary: vi.fn(),
+}));
 vi.mock('./agentHandoff', () => ({ agentHandoffBrief: vi.fn() }));
 vi.mock('electron', () => ({
   Notification: Object.assign(

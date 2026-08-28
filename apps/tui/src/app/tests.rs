@@ -1365,11 +1365,12 @@ async fn handoff_picker_lists_target_providers() {
     app.open_handoff_picker();
     let p = app.picker.as_ref().unwrap();
     assert!(matches!(p.kind, PickerKind::Handoff { .. }));
-    // Derived from SPAWN_PROVIDERS rather than a literal: a handoff can target
+    // Derived from ALL_PROVIDERS rather than a literal: a handoff can target
     // any harness this TUI can spawn, so adding a provider is supposed to widen
     // this list — a hardcoded count only ever means "someone added a backend".
-    assert_eq!(p.items.len(), SPAWN_PROVIDERS.len());
-    for want in SPAWN_PROVIDERS {
+    // With no detection answer (this app has no bus) every harness is offered.
+    assert_eq!(p.items.len(), crate::providers::ALL_PROVIDERS.len());
+    for want in crate::providers::ALL_PROVIDERS {
         assert!(
             p.items.iter().any(|i| i.id == *want),
             "handoff picker is missing {want}"
@@ -1383,9 +1384,74 @@ async fn managed_provider_spawn_flow_selects_provider() {
     // managed path (no profile needed).
     let mut app = test_app();
     app.open_spawn();
-    let form = app.spawn_form.as_mut().unwrap();
-    form.provider_idx = 1; // "codex"
-    assert_eq!(SPAWN_PROVIDERS[form.provider_idx], "codex");
+    app.spawn_form.as_mut().unwrap().provider_idx = 1; // "codex"
+    assert_eq!(app.spawn_provider_choices()[1], "codex");
+}
+
+// ── the spawn modal offers only what is installed ───────────────────────────
+//
+// Five harnesses, one or two installed: cycling the other three is cycling
+// spawn failures. `providers.checkAll` is the answer and `provider_idx` indexes
+// the FILTERED list, so these pin both halves — the narrowing, and the
+// fail-open that keeps a harness visible when nothing has answered.
+
+#[tokio::test]
+async fn spawn_modal_offers_only_installed_harnesses() {
+    let mut app = test_app();
+    app.apply_msg(AppMsg::InstalledProviders(vec![
+        "claude".to_string(),
+        "opencode".to_string(),
+    ]));
+    assert_eq!(app.spawn_provider_choices(), vec!["claude", "opencode"]);
+
+    // ← / → cycle within the narrowed list, and submit resolves through it —
+    // index 1 is opencode here, not the codex it would be in the full list.
+    app.open_spawn();
+    app.handle_spawn_key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Right,
+    ));
+    assert_eq!(app.spawn_form.as_ref().unwrap().provider_idx, 1);
+    assert_eq!(app.spawn_provider_choices()[1], "opencode");
+    // And it wraps at the end of the SHORT list rather than walking a hidden one.
+    app.handle_spawn_key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Right,
+    ));
+    assert_eq!(app.spawn_form.as_ref().unwrap().provider_idx, 0);
+}
+
+#[tokio::test]
+async fn an_answer_landing_late_clamps_the_open_modal() {
+    let mut app = test_app();
+    app.open_spawn();
+    app.spawn_form.as_mut().unwrap().provider_idx = 4; // "pi", in the full list
+    // The probe fired on open answers a moment later with a shorter list; the
+    // cursor must not be left pointing past its end.
+    app.apply_msg(AppMsg::InstalledProviders(vec!["claude".to_string()]));
+    assert_eq!(app.spawn_form.as_ref().unwrap().provider_idx, 0);
+    assert_eq!(app.spawn_provider_choices(), vec!["claude"]);
+}
+
+#[tokio::test]
+async fn handoff_picker_keeps_the_source_harness_when_it_is_not_detected() {
+    let mut app = test_app();
+    let mut a = agent_cwd("s1", "/repo", "responding");
+    a.provider = "opencode".to_string();
+    app.set_agents(vec![a]);
+    app.selected = 1;
+    // Detection knows only claude, but this session is demonstrably running on
+    // opencode — dropping it would leave the picker unable to offer the
+    // same-harness handoff that is its most common use.
+    app.apply_msg(AppMsg::InstalledProviders(vec!["claude".to_string()]));
+    app.open_handoff_picker();
+    let ids: Vec<String> = app
+        .picker
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(ids, vec!["claude".to_string(), "opencode".to_string()]);
 }
 
 fn agent_stream(id: &str) -> Agent {
