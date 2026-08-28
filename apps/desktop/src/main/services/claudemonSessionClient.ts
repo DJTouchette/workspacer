@@ -190,7 +190,7 @@ class ClaudemonSessionClient {
     /** Provider backend. 'claude' means the headless stream-json adapter
      *  (`claude --print --input-format stream-json --output-format stream-json`)
      *  — PTY Claude never goes through spawn-managed (it stays on `spawn`). */
-    provider: 'opencode' | 'codex' | 'pi' | 'claude';
+    provider: 'opencode' | 'codex' | 'copilot' | 'pi' | 'claude';
     cwd: string;
     model?: string;
     /** Reasoning-effort level (Claude/Codex); other providers ignore it. */
@@ -272,7 +272,7 @@ class ClaudemonSessionClient {
    *  CLI/server via GET /providers/:provider/models. Returns an empty list on
    *  any failure so the spawn dialog can fall back to free-text entry. */
   async listProviderModels(
-    provider: 'opencode' | 'codex' | 'pi',
+    provider: 'opencode' | 'codex' | 'copilot' | 'pi',
     cwd?: string,
     bin?: string,
   ): Promise<

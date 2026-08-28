@@ -640,7 +640,7 @@ export interface AppConfig {
  *  enriched with the desktop history DB's name/model/cost when known. */
 export interface RecentAgentSession {
   sessionId: string;
-  /** 'claude' | 'codex' | 'opencode' | 'pi' ('' from legacy rows ⇒ 'claude'). */
+  /** 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi' ('' from legacy rows ⇒ 'claude'). */
   provider: string;
   cwd: string;
   /** Daemon SessionMode on the wire ('stopped', 'input', 'responding', …). */

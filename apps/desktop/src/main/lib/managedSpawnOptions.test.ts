@@ -148,4 +148,31 @@ describe('explainUnsupportedManagedOptions', () => {
       explainUnsupportedManagedOptions({ provider: 'pi', toolScope: 'operator' }).join('\n'),
     ).toMatch(/facade/);
   });
+
+  it("says copilot's facade MAY not attach, and that 'ask' is not an approval gate", () => {
+    // Copilot's cliff is the only DYNAMIC one: the CLI has a real MCP client
+    // (servers ride in on a flag), but a GitHub org policy can disable
+    // third-party servers, and the CLI then reports zero of them and carries on
+    // working. So the spawn cannot promise either way — it warns, and the
+    // adapter raises a session error at runtime if they really didn't attach.
+    const facade = explainUnsupportedManagedOptions({
+      provider: 'copilot',
+      toolScope: 'operator',
+      skipPermissions: true,
+    }).join('\n');
+    expect(facade).toMatch(/facade/);
+    expect(facade).toMatch(/org policy/);
+    // Not the pi sentence: copilot is not "ships no MCP client".
+    expect(facade).not.toMatch(/ships no MCP client/);
+
+    // And the permission half: in `-p` mode Copilot cannot ask, so tools run
+    // automatically and 'ask' means path confinement. Announced once at spawn
+    // rather than left for the pill to imply.
+    const asked = explainUnsupportedManagedOptions({ provider: 'copilot' }).join('\n');
+    expect(asked).toMatch(/cannot ask/);
+    // A yolo spawn is not lied to about approvals it never asked for.
+    expect(
+      explainUnsupportedManagedOptions({ provider: 'copilot', skipPermissions: true }).join('\n'),
+    ).not.toMatch(/cannot ask/);
+  });
 });

@@ -76,7 +76,7 @@ impl App {
             self.set_toast("no working directory for a handoff");
             return;
         };
-        let items: Vec<PickerItem> = ["claude", "codex", "opencode", "pi"]
+        let items: Vec<PickerItem> = ["claude", "codex", "copilot", "opencode", "pi"]
             .iter()
             .map(|p| PickerItem {
                 id: (*p).to_string(),

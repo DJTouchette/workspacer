@@ -921,12 +921,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     },
   );
 
-  // Live model catalog for a managed provider (codex/opencode/pi). We resolve
+  // Live model catalog for a managed provider (codex/copilot/opencode/pi). We resolve
   // the launcher binary the same way spawning does, then query the provider's
   // own CLI/server via claudemon so the picker matches the installed version.
   ipcMain.handle(
     IPC.PROVIDER_LIST_MODELS,
-    (_event, provider: 'codex' | 'opencode' | 'pi', cwd?: string) => {
+    (_event, provider: 'codex' | 'copilot' | 'opencode' | 'pi', cwd?: string) => {
       const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
       return claudemonSessionClient.listProviderModels(
         provider,

@@ -513,7 +513,7 @@ func analyticsRecentStub() (json.RawMessage, error) {
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
-	// Provider backend: claude (default) | codex | opencode | pi. Non-claude
+	// Provider backend: claude (default) | codex | copilot | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.
 	Provider string `json:"provider"`
@@ -910,7 +910,11 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	}
 	// Resume: codex rejoins the prior life's app-server thread; claude-stream
 	// passes `--resume`. opencode/pi carry no resume on the wire — matching the
-	// desktop dispatch.
+	// desktop dispatch. Nor does copilot, but for the opposite reason: its
+	// adapter passes the workspacer session id to `copilot --session-id` on
+	// every turn, and that flag resumes an existing session as readily as it
+	// creates one — so a resume that reuses the prior id (which `sessionID`
+	// above already does) rejoins the conversation with no wire field at all.
 	if (provider == "codex" || isClaudeStream) && p.ResumeSessionID != "" {
 		req.Resume = p.ResumeSessionID
 	}

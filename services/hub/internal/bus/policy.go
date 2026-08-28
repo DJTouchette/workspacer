@@ -484,7 +484,7 @@ func traversesGitDir(canonicalTarget string) bool {
 // command+args+env.
 //
 // TWIN: cmd/brain/fsguard.go agentConfigDirs, pathConfinement.ts AGENT_CONFIG_DIRS.
-var agentConfigDirs = map[string]bool{".opencode": true, ".codex": true}
+var agentConfigDirs = map[string]bool{".opencode": true, ".codex": true, ".copilot": true}
 
 // agentConfigBasenames are provider config FILES denied by name wherever they
 // resolve: Claude Code's project `.mcp.json` and per-user `.claude.json` (each
@@ -514,6 +514,22 @@ var claudeConfigChildren = map[string]bool{
 
 const claudeConfigDirName = ".claude"
 
+// githubConfigDirName is the OTHER provider config home, and the one that does
+// not look like one: GitHub Copilot CLI reads `<cwd>/.github/mcp.json` as a
+// workspace MCP-server file, which is a command + args + env it launches. The
+// subtree is not denied wholesale — `.github/workflows`, `.github/skills` and
+// the rest are ordinary repo content a caller may legitimately write.
+//
+// TWIN: cmd/brain/fsguard.go githubConfigDirName, pathConfinement.ts
+// GITHUB_CONFIG_DIR_NAME.
+const githubConfigDirName = ".github"
+
+// githubConfigChildren are the children of `.github` an agent CLI reads as ARGV.
+//
+// TWIN: cmd/brain/fsguard.go githubConfigChildren, pathConfinement.ts
+// GITHUB_CONFIG_CHILDREN.
+var githubConfigChildren = map[string]bool{"mcp.json": true}
+
 // pathIsAgentInterpretedConfig reports whether an ALREADY canonical path is
 // agent-interpreted configuration — a file a provider CLI reads as hooks,
 // permissions, or an MCP command line rather than as project data.
@@ -542,6 +558,12 @@ func pathIsAgentInterpretedConfig(canonicalTarget string) bool {
 		// i+1 ONLY: `.claude/skills/hooks/…` is a skill named `hooks`, not the
 		// hook directory, and denying it would take a library.save target out.
 		if c == claudeConfigDirName && i+1 < len(comps) && claudeConfigChildren[comps[i+1]] {
+			return true
+		}
+		// `<cwd>/.github/mcp.json` — copilot's workspace MCP file. Same i+1 rule
+		// and the same reason: `.github/workflows/mcp.json` is not the file the
+		// CLI opens.
+		if c == githubConfigDirName && i+1 < len(comps) && githubConfigChildren[comps[i+1]] {
 			return true
 		}
 	}

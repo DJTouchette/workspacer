@@ -402,7 +402,7 @@ pub async fn handle_managed(
 ) -> impl IntoResponse {
     if !matches!(
         payload.provider.as_str(),
-        "opencode" | "codex" | "pi" | "claude"
+        "opencode" | "codex" | "copilot" | "pi" | "claude"
     ) {
         return (
             StatusCode::BAD_REQUEST,
@@ -550,6 +550,23 @@ pub async fn handle_managed(
                 facade,
             )
         }
+        // GitHub Copilot CLI. One `copilot -p` process per TURN (not per
+        // session): `--session-id <uuid>` both creates and resumes, so the
+        // conversation survives across processes and across daemon restarts
+        // without a sidecar. See providers/copilot.rs for why `-p` over `--acp`.
+        "copilot" => crate::providers::copilot::spawn_session(
+            store.clone(),
+            conv.clone(),
+            crate::providers::copilot::SpawnConfig {
+                session_id: session_id.clone(),
+                cwd: payload.cwd.clone(),
+                bin,
+                model: payload.model.clone(),
+                effort: payload.effort.clone(),
+                yolo: payload.yolo,
+                facade,
+            },
+        ),
         "pi" => crate::providers::pi::spawn_session(
             store.clone(),
             conv.clone(),
@@ -659,7 +676,7 @@ pub async fn handle_provider_models(
 ) -> impl IntoResponse {
     // Validate the provider *before* resolving anything: the name is a path
     // segment and feeds a PATH probe, so only the three known ids get that far.
-    if !matches!(provider.as_str(), "opencode" | "codex" | "pi") {
+    if !matches!(provider.as_str(), "opencode" | "codex" | "copilot" | "pi") {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported managed provider: {provider}"),
@@ -674,6 +691,7 @@ pub async fn handle_provider_models(
     let result = match provider.as_str() {
         "opencode" => crate::providers::opencode::list_models(&bin, &cwd).await,
         "codex" => crate::providers::codex::list_models(&bin, &cwd).await,
+        "copilot" => crate::providers::copilot::list_models(&bin, &cwd).await,
         _ => crate::providers::pi::list_models(&bin, &cwd).await,
     };
     match result {

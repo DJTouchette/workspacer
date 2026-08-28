@@ -1439,11 +1439,18 @@ export function registerHubCapabilities(): void {
   // stats binaries on PATH), so they carry none of agents.spawn's bypass risk.
   registerCapability('providers.listModels', (params: unknown) => {
     const { provider, cwd } = (params ?? {}) as {
-      provider?: 'codex' | 'opencode' | 'pi';
+      provider?: 'codex' | 'copilot' | 'opencode' | 'pi';
       cwd?: string;
     };
-    if (provider !== 'codex' && provider !== 'opencode' && provider !== 'pi') {
-      throw new Error("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }");
+    if (
+      provider !== 'codex' &&
+      provider !== 'copilot' &&
+      provider !== 'opencode' &&
+      provider !== 'pi'
+    ) {
+      throw new Error(
+        "providers.listModels requires { provider: 'codex'|'copilot'|'opencode'|'pi' }",
+      );
     }
     // `cwd` is not read here, it is EXECUTED IN: claudemon runs the provider CLI
     // with current_dir(cwd), and opencode loads and runs every

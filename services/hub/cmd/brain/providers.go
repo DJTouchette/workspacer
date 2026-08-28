@@ -19,7 +19,7 @@ import (
 
 // managedProviders is the detection set — matches agentProviders.ts's list
 // (Claude included so the dialog shows its dot too).
-var managedProviders = []string{"claude", "codex", "opencode", "pi"}
+var managedProviders = []string{"claude", "codex", "copilot", "opencode", "pi"}
 
 // binNames returns the candidate binary names for a provider, platform-aware
 // (mirrors agentProviders.binNames). The binary name matches the provider id.
@@ -144,8 +144,8 @@ func (r *registry) providersListModels(ctx context.Context, raw json.RawMessage)
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if p.Provider != "codex" && p.Provider != "opencode" && p.Provider != "pi" {
-		return nil, fmt.Errorf("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }")
+	if p.Provider != "codex" && p.Provider != "copilot" && p.Provider != "opencode" && p.Provider != "pi" {
+		return nil, fmt.Errorf("providers.listModels requires { provider: 'codex'|'copilot'|'opencode'|'pi' }")
 	}
 	// `cwd` is not read here, it is EXECUTED IN: claudemon runs the provider CLI
 	// with current_dir(cwd), and opencode loads and runs every

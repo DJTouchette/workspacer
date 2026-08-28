@@ -49,6 +49,7 @@ import { resolveSpawnModel } from '../lib/spawnModel';
 const INSTALL_HINT: Record<AgentProvider, string> = {
   claude: 'Install Claude Code and make sure `claude` is on your PATH.',
   codex: 'Install the Codex CLI and make sure `codex` is on your PATH.',
+  copilot: 'Install the GitHub Copilot CLI and make sure `copilot` is on your PATH.',
   opencode: 'Install OpenCode and make sure `opencode` is on your PATH.',
   pi: 'Install Pi and make sure `pi` is on your PATH.',
 };

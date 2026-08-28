@@ -190,7 +190,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Claude sessions (delegated to claudemon daemon) ──
   spawnClaude: (opts: {
     cwd?: string;
-    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
     /** Claude only: 'pty' (classic TUI) or 'stream' (headless stream-json).
      *  Omitted = the config default (claude.transport). */
     transport?: 'pty' | 'stream';
@@ -252,7 +252,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     userMessage: string;
     assistantReply?: string;
     /** The agent's own backend — titling uses ITS harness, not claude's. */
-    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
   }): Promise<string | null> => ipcRenderer.invoke(IPC.AGENT_SUGGEST_TITLE, req),
   workflowAgentTranscript: (
     sessionId: string,
@@ -267,7 +267,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<unknown[] | null> =>
     ipcRenderer.invoke(IPC.WORKFLOW_AGENT_CONVERSATION, sessionId, runId, agentId),
   providerListModels: (
-    provider: 'codex' | 'opencode' | 'pi',
+    provider: 'codex' | 'copilot' | 'opencode' | 'pi',
     cwd?: string,
   ): Promise<
     Array<{

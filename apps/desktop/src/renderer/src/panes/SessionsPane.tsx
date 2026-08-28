@@ -37,6 +37,7 @@ import { History, X } from '../components/icons';
 const PROVIDER_HUE: Record<AgentProvider, string> = {
   claude: '#e67e80',
   codex: '#7fbbb3',
+  copilot: '#dbbc7f',
   opencode: '#d699b6',
   pi: '#83c092',
 };

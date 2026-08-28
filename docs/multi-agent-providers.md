@@ -1,4 +1,4 @@
-# Multi-agent providers (Claude Code · Codex · OpenCode · Pi)
+# Multi-agent providers (Claude Code · Codex · GitHub Copilot · OpenCode · Pi)
 
 Status: **in progress** — phased. This doc is the architecture of record for making
 workspacer drive coding agents other than Claude Code.
@@ -12,7 +12,7 @@ Workspacer does two things with an agent, and they couple very differently:
    path (`pty.rs` just runs `argv[0]`) is now only one transport: Claude's shipped
    default is the managed `stream` transport (headless `claude --print
    --input-format stream-json` via `POST /sessions/spawn-managed`), and
-   Codex/OpenCode/Pi are adapter-driven managed spawns; classic PTY spawns remain
+   Codex/Copilot/OpenCode/Pi are adapter-driven managed spawns; classic PTY spawns remain
    behind `transport: 'pty'` and the hybrid TUI paths. The only
    Claude-specific bits are binary discovery (`claudeResolver.ts`), the flag
    builder (`buildClaudeArgv`, i.e. Claude's `--session-id/--model/--resume`),
@@ -28,7 +28,7 @@ Workspacer does two things with an agent, and they couple very differently:
    - **statusLine** — Claude pipes context %/cost/rate-limits to claudemon.
 
    The provider abstraction now exists: `AgentWorkspace.provider`
-   (`'claude' | 'codex' | 'opencode' | 'pi'`, undefined ⇒ `'claude'`; `kind` still
+   (`'claude' | 'codex' | 'copilot' | 'opencode' | 'pi'`, undefined ⇒ `'claude'`; `kind` still
    only marks supervisors), a launch registry in `agentProviders.ts`, and
    per-provider adapters in claudemon's `providers/` translating each backend's
    native events into the shared session model. Session IPC channels are still
@@ -110,11 +110,80 @@ forwarding depends on a permission extension being loaded (the core doesn't gate
 the `select` reply guesses an "allow"-ish option, so live-verify against the
 extension in use.
 
+### GitHub Copilot CLI — `copilot -p … --output-format json`
+Shipped 2026-08-28 as `providers/copilot.rs`. Everything here was verified
+against the installed CLI (v1.0.81); the raw capture is
+`.workspacer/reports/2026-08-28-copilot-wire-capture.jsonl`, and a trimmed copy
+is checked in at `providers/testdata/copilot-wire-capture.jsonl` as the
+translate-layer's fixture.
+
+- **One process per TURN, not per session.** `-p/--prompt` is one-shot, but
+  `--session-id <uuid>` both *creates* a session with that id and *resumes* an
+  existing one. So claudemon pins its own session id and every later turn rejoins
+  the same conversation — the thing codex needed the `codex-threads` sidecar to
+  approximate. Copilot is consequently the only managed provider whose
+  `restartPreservesConversation: true` is honest, and its `--model` / `--effort`
+  switches are genuinely live: the next turn is a new argv.
+- **Events:** newline JSON on stdout with a real envelope
+  (`type`, typed `data`, `ephemeral`, `id`, `timestamp`, `parentId`). The ones we
+  read: `assistant.turn_start`, `assistant.message_delta` (text),
+  `assistant.message` (reconciled, so deltas + whole message can't double-render),
+  `tool.execution_start` / `tool.execution_complete`, `model.turn_started` /
+  `model.model_call_success` (real per-call `prompt_tokens`/`completion_tokens`/
+  `cached_tokens` plus Copilot's own `max_context_window_tokens`),
+  `session.mcp_servers_loaded`, `session.warning`, and the terminal `result`
+  (`sessionId`, `exitCode`, `usage`).
+- **MCP: the best facade seam of any provider.** Servers ride in on
+  `--additional-mcp-config @<file>` — no config file written into the project,
+  no boot race, session-scoped by construction. Verified live over both stdio and
+  HTTP transports, and the daemon's own `/mcp/ask/:id` endpoint attaches.
+  ⚠️ But the capability surface is **dynamic**: a GitHub org policy can disable
+  third-party MCP servers, in which case the CLI reports zero of them and carries
+  on working. The adapter reads `session.mcp_servers_loaded` and raises a session
+  error when what we registered didn't attach, so a facade-less supervisor cannot
+  pass for a working one.
+- **Approvals: there are none in `-p` mode.** Contrary to `--help` ("`--allow-all-tools`
+  is required for non-interactive mode"), a `-p` run with no allow flags runs
+  tools anyway; a blocked one returns
+  `"Permission denied and could not request permission from user"`. What the allow
+  flags change is *path/URL confinement*. So `ask` → no allow flags (tools run,
+  confined to the cwd tree) and `yolo` → `--allow-all`, and the pill is labelled
+  "Workspace only" / "Full access" rather than "Ask to approve".
+- **The Idle-collapse trap, worse than codex's.** A hard refusal can print prose
+  to **stderr while exiting 0**, with clean JSONL on stdout carrying no error.
+  `turn_outcome()` therefore proves success rather than assuming it: empty stderr
+  AND a terminal `result` AND `result.exitCode == 0` AND a zero process exit AND
+  some output. Anything else emits `AgentUpdate::Error` before the `Idle`.
+  `translate()` never emits `Idle` at all.
+- **Models: `auto` only.** Copilot exposes no model enumeration (no subcommand, no
+  ACP model list, and its token API 403s a `gh` token), and the ids are
+  *account-gated* — on the probe account every explicit `--model` was refused
+  (`model_picker_enabled: false`), including the two its own router had chosen.
+  `list_models()` returns `auto` and nothing else; free-text entry still works for
+  accounts whose plan enables the picker, and a refused id fails loudly.
+- **Cost: AI credits, not dollars.** `session.usage_checkpoint.totalNanoAiu` and
+  `copilot_usage.token_details` price in nano-AIU; there is no dollar figure on the
+  wire, so cost falls through to `session/pricing.rs::estimate_cost` over the real
+  token totals — an estimate of the underlying vendor list price, not of GitHub's
+  credit charge.
+- **Refusals baked into the argv:** never `--share`/`--share-gist` (a worker
+  gisting a private repo's transcript), always `--no-remote --no-remote-export`
+  (never drivable from github.com) and `--no-auto-update` (never rewrites its own
+  launcher mid-fleet).
+- **Auth** is the best of the five for headless: `COPILOT_GITHUB_TOKEN` →
+  `GH_TOKEN` → `GITHUB_TOKEN`, accepting fine-grained PATs with "Copilot Requests"
+  — an env var is enough, no device-code flow.
+- **Not chosen: `--acp`.** A long-lived ACP session would buy mediated approvals
+  and one process per session instead of per turn. A handshake probe showed
+  `session/new` returns session modes and `configOptions` but **no model list**, so
+  it buys nothing on the picker. Revisit when someone actually needs interactive
+  approvals on Copilot.
+
 ## Target architecture — two seams
 
 ### Seam A — Provider registry (launch side)
 Shipped as `agentProviders.ts`, a registry keyed by
-`'claude' | 'codex' | 'opencode' | 'pi'`:
+`'claude' | 'codex' | 'copilot' | 'opencode' | 'pi'`:
 ```
 resolveAgentBinary(provider) -> argv0 path  (user-configured path → PATH search → bare name)
 buildAgentArgv(opts)         -> string[]    (Claude delegates to the full buildClaudeArgv;
@@ -140,10 +209,15 @@ OpenCodeAdapter  — spawn `opencode serve`; create/drive session over HTTP;
 CodexAdapter     — run `codex app-server --listen ws://` (a WebSocket daemon the
                    native TUI can share; stdio JSON-RPC only for model listing);
                    translate item/turn/token notifications + approval requests.
+CopilotAdapter   — one `copilot -p … --output-format json` process PER TURN;
+                   `--session-id <uuid>` both creates and resumes, so the
+                   conversation survives across processes with no sidecar.
+                   Translate assistant/tool/model events; judge the turn only
+                   after the process exits (see below).
 ```
 
 ### Data-model + plumbing changes
-- `provider: 'claude' | 'codex' | 'opencode' | 'pi'` on `AgentWorkspace`,
+- `provider: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi'` on `AgentWorkspace`,
   `PaneConfig`, and spawn options (undefined ⇒ `'claude'`; existing
   pre-multi-provider data is Claude).
 - IPC kept the `claude:*` names (they now serve every provider), joined by
@@ -153,7 +227,7 @@ CodexAdapter     — run `codex app-server --listen ws://` (a WebSocket daemon t
   (`claude-profiles.json`, `CLAUDE_CONFIG_DIR` + extraArgs) — there is no
   `agent-profiles.json`.
 - Provider picker in the spawn dialog; provider brand marks shipped —
-  `agentLogos.tsx` carries inline SVG logos for Claude, Codex, OpenCode, and Pi
+  `agentLogos.tsx` carries inline SVG logos for Claude, Codex, GitHub Copilot, OpenCode and Pi
   (used in the picker's provider cards), alongside the glyph pack's `agent`
   hexagon.
 
@@ -177,3 +251,9 @@ CodexAdapter     — run `codex app-server --listen ws://` (a WebSocket daemon t
   facade wiring was dropped — Pi has no MCP client, so a Pi supervisor gets role
   instructions and the generated AskUserQuestion extension, but no workspacer
   facade tools. Pi joins as a first-class managed provider.
+- **Phase 6 — Tier-2 GitHub Copilot adapter.** Shipped as `providers/copilot.rs`
+  (2026-08-28): one `copilot -p --output-format json` process per turn, pinned to
+  one `--session-id` for the life of the session. See the Copilot section above
+  for the five things that make it different from the others — one-shot turns,
+  no approval gate, a dynamic MCP capability cliff, an `auto`-only model list, and
+  a failure shape that exits 0.

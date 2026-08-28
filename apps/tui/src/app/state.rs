@@ -180,7 +180,7 @@ pub enum SplitDir {
 /// Providers the spawn modal can launch. `claude` is a PTY session (profile +
 /// argv); the rest are managed (adapter-driven) sessions via
 /// `/sessions/spawn-managed`.
-pub const SPAWN_PROVIDERS: &[&str] = &["claude", "codex", "opencode", "pi"];
+pub const SPAWN_PROVIDERS: &[&str] = &["claude", "codex", "copilot", "opencode", "pi"];
 
 /// State of the "spawn a new agent" modal. Profile-centric for claude: a working
 /// directory plus a chosen profile (which carries model / skip-permissions in

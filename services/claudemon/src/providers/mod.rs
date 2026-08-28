@@ -16,6 +16,7 @@
 pub mod claude_stream;
 pub mod codex;
 pub mod codex_rollout;
+pub mod copilot;
 pub mod opencode;
 pub mod pi;
 
@@ -884,8 +885,15 @@ pub fn apply_updates(
                 // renders known item kinds, so ride it in as assistant text with
                 // a clear marker rather than a bespoke variant it would drop.
                 tracing::warn!(session = %session_id, error = %msg, "managed session error");
+                // The trailing newline is load-bearing, not cosmetic: the
+                // conversation store COALESCES consecutive assistant_text
+                // items, so an error followed by the turn's real reply ran
+                // straight into it — "…no structured questions).OK" was the
+                // live shape on a copilot session whose facade failed to
+                // attach. `errorMarkerReason` (the wake path) reads only the
+                // first line, so it is unaffected either way.
                 items.push(ConversationItem::AssistantText {
-                    text: format!("⚠️ Error: {msg}"),
+                    text: format!("⚠️ Error: {msg}\n"),
                     timestamp: None,
                 });
             }
@@ -1443,9 +1451,18 @@ mod tests {
             ConversationItem::AssistantText { text, .. } => {
                 assert_eq!(
                     text.as_str(),
-                    format!("{marker}Credit balance is too low."),
+                    format!("{marker}Credit balance is too low.\n"),
                     "the error turn must be spelled exactly as the contract's marker + message; \
                      changing it here silently blinds the desktop's finished-vs-failed check"
+                );
+                // The trailing newline is the ONLY thing allowed past the
+                // message, and it must not disturb the reader: the fixture's
+                // own whitespace case pins that a padded turn still matches,
+                // and workerFailure.errorMarkerReason trims and reads one line.
+                assert_eq!(
+                    text.trim_end(),
+                    format!("{marker}Credit balance is too low."),
+                    "nothing but trailing whitespace may follow the message"
                 );
             }
             other => panic!("expected AssistantText, got {other:?}"),

@@ -380,7 +380,7 @@ export const GIT_METADATA_DIR = '.git';
  *  entries are `command` + `args` + `env`.
  *
  *  TWIN: agentConfigDirs in cmd/brain/fsguard.go and internal/bus/policy.go. */
-export const AGENT_CONFIG_DIRS = new Set(['.opencode', '.codex']);
+export const AGENT_CONFIG_DIRS = new Set(['.opencode', '.codex', '.copilot']);
 
 /** Provider config FILES, denied by basename wherever they resolve.
  *
@@ -409,6 +409,19 @@ export const CLAUDE_CONFIG_CHILDREN = new Set(['settings.json', 'settings.local.
 
 /** The provider config-home component `CLAUDE_CONFIG_CHILDREN` hangs off. */
 export const CLAUDE_CONFIG_DIR_NAME = '.claude';
+
+/** The other provider config home, and the one that does not look like one:
+ *  GitHub Copilot CLI reads `<cwd>/.github/mcp.json` as a workspace MCP-server
+ *  file — a `command` + `args` + `env` it launches, the same shape as
+ *  `.mcp.json`, under a directory whose other contents (`workflows`, `skills`,
+ *  `agents`, issue templates) are ordinary repo content nobody should be denied.
+ *  So it is a dir+child rule, not a subtree or a basename: a bare `mcp.json` at
+ *  the project root is still allowed, because no CLI opens that path.
+ *
+ *  TWIN: githubConfigDirName/githubConfigChildren in cmd/brain/fsguard.go and
+ *  internal/bus/policy.go. */
+export const GITHUB_CONFIG_DIR_NAME = '.github';
+export const GITHUB_CONFIG_CHILDREN = new Set(['mcp.json']);
 
 /**
  * True when an ALREADY-canonical path is agent-interpreted configuration: a file
@@ -465,6 +478,15 @@ export function isAgentInterpretedConfigPath(canonicalTarget: string): boolean {
       comps[i] === CLAUDE_CONFIG_DIR_NAME &&
       i + 1 < comps.length &&
       CLAUDE_CONFIG_CHILDREN.has(comps[i + 1])
+    ) {
+      return true;
+    }
+    // `<cwd>/.github/mcp.json` — copilot's workspace MCP file. Same i+1 rule and
+    // the same reason: `.github/workflows/mcp.json` is not the file the CLI opens.
+    if (
+      comps[i] === GITHUB_CONFIG_DIR_NAME &&
+      i + 1 < comps.length &&
+      GITHUB_CONFIG_CHILDREN.has(comps[i + 1])
     ) {
       return true;
     }

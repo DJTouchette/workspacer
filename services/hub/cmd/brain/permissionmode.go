@@ -16,7 +16,7 @@ package main
 //
 // ALLOWLIST, not denylist. The modes in flight across the four providers are
 // default/acceptEdits/plan/bypassPermissions (claude, both transports), ask/yolo
-// (codex, opencode, pi), and auto/dontAsk/manual, which claudemon's stream
+// (codex, copilot, opencode, pi), and auto/dontAsk/manual, which claudemon's stream
 // endpoint also accepts and which show up in live telemetry without appearing in
 // any menu. A denylist has to name every spelling of "stop asking" that any
 // provider will ever ship; an allowlist names the ones checked to mean "keep

@@ -30,8 +30,16 @@ func TestCheckAllProvidersDetectsOnPath(t *testing.T) {
 	for _, s := range got {
 		byName[s.Provider] = s
 	}
-	if len(byName) != 4 {
-		t.Fatalf("expected all four providers reported, got %d: %+v", len(byName), got)
+	// Derived from managedProviders, not a hardcoded count: adding a provider is
+	// supposed to widen this report, and a literal here only ever means "someone
+	// added a backend" — which is exactly the change this test should survive.
+	if len(byName) != len(managedProviders) {
+		t.Fatalf("expected all %d providers reported, got %d: %+v", len(managedProviders), len(byName), got)
+	}
+	for _, want := range managedProviders {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("provider %q missing from the detection report", want)
+		}
 	}
 	if c := byName["codex"]; !c.Found || c.ResolvedPath == nil || *c.ResolvedPath != bin {
 		t.Errorf("codex should be found at %s, got %+v", bin, c)

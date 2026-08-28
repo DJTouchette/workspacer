@@ -63,7 +63,7 @@ pub struct App {
     /// The model / handoff-provider picker modal, when open.
     pub picker: Option<Picker>,
     /// Fallback provider map for managed sessions this TUI spawned (session_id →
-    /// `"codex"`/`"opencode"`/`"pi"`). claudemon's `/sessions` list now carries
+    /// `"codex"`/`"copilot"`/`"opencode"`/`"pi"`). claudemon's `/sessions` list now carries
     /// an authoritative `provider` field ([`Agent::provider`]) that
     /// [`App::provider_for`] prefers; this map only bridges the gap before the
     /// first post-spawn refresh lands (and daemons too old to emit the field).

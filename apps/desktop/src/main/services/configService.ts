@@ -197,6 +197,7 @@ interface Config {
     binaries: {
       claude: string;
       codex: string;
+      copilot: string;
       opencode: string;
       pi: string;
     };

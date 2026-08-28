@@ -221,7 +221,7 @@ impl App {
         self.all_agents.iter().find(|a| a.session_id == sid)
     }
 
-    /// Resolve a session's provider (`"claude"`/`"codex"`/`"opencode"`/`"pi"`).
+    /// Resolve a session's provider (`"claude"`/`"codex"`/`"copilot"`/`"opencode"`/`"pi"`).
     ///
     /// Prefers claudemon's authoritative wire field (present for every session,
     /// however it was spawned), and falls back to the local managed-spawn map

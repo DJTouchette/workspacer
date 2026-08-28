@@ -131,6 +131,26 @@ export const MODEL_RATES: Record<string, ModelRates> = {
   'claude-3-opus': { input: 15, output: 75 },
   'claude-sonnet': { input: 3, output: 15 },
   'claude-haiku': { input: 1, output: 5 },
+  // OpenAI. TWIN of pricing.rs's BUILTIN, which has carried these since Codex
+  // landed; this side did not, so the same model id priced at DEFAULT_RATES
+  // ($3/$15) here and at its real rate in the daemon. GitHub Copilot CLI made
+  // that divergence reachable from a second direction — its catalog is
+  // multi-vendor (see services/claudemon/src/providers/copilot.rs) — so the
+  // two tables are now mirrored and pinned by contracts/model-pricing-cases.json.
+  'gpt-5': { input: 1.25, output: 10, cachedInput: 0.125 },
+  'gpt-5-codex': { input: 1.25, output: 10, cachedInput: 0.125 },
+  'gpt-5-mini': { input: 0.25, output: 2, cachedInput: 0.025 },
+  'gpt-5-nano': { input: 0.05, output: 0.4, cachedInput: 0.005 },
+  'gpt-5-pro': { input: 15, output: 120 },
+  'gpt-4.1': { input: 2, output: 8, cachedInput: 0.5 },
+  'codex-mini': { input: 1.5, output: 6, cachedInput: 0.375 },
+  o3: { input: 2, output: 8, cachedInput: 0.5 },
+  'o4-mini': { input: 1.1, output: 4.4, cachedInput: 0.275 },
+  // Copilot's Google (Gemini) and xAI (Grok) models are deliberately ABSENT
+  // from both tables — see the note beside pricing.rs's BUILTIN. They fall to
+  // DEFAULT_RATES here (this engine only ever sees Claude transcript ids, so
+  // that path is unreachable in practice) and to a blank estimate in the
+  // daemon, which is the readout a managed session gets.
 };
 
 // ── User rate overrides ──────────────────────────────────────────────────────

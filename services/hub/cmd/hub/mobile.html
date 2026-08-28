@@ -1519,7 +1519,7 @@
   const agentPath = (s) => s.liveCwd || s.cwd || '';
   const providerOf = (s) => (s && s.provider) || 'claude';
 
-  const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' };
+  const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex', copilot: 'GitHub Copilot', opencode: 'OpenCode', pi: 'Pi' };
 
   /** The small chip a federated session's cards carry — which hub it lives on. */
   const hubChipHtml = (s) => hubOf(s)
@@ -3741,7 +3741,7 @@
         <span class="star ${i < favs.length ? 'on' : ''}">★</span>
       </button>`).join('');
 
-    const provRows = ['claude', 'codex', 'opencode', 'pi'].map((p) => {
+    const provRows = ['claude', 'codex', 'copilot', 'opencode', 'pi'].map((p) => {
       const probe = providerProbe && providerProbe.find((x) => x.provider === p);
       const tag = probe ? (probe.found ? 'installed' : 'not found') : (p === 'claude' ? 'default' : 'harness');
       return `<button class="provbtn ${S.spawn.provider === p ? 'on' : ''}" data-prov="${p}"${probe && !probe.found ? ' disabled style="opacity:.45"' : ''}>

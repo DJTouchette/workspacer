@@ -9,7 +9,7 @@
     "provider error into an ORDINARY assistant text turn prefixed with the",
     "marker below, deliberately: the renderer only renders known item kinds and",
     "would have dropped a bespoke variant. That makes the prefix a real",
-    "cross-process contract — the Rust side writes it, the desktop's",
+    "cross-process contract \u2014 the Rust side writes it, the desktop's",
     "workerFailure.ts reads it to tell a worker that DIED from one that",
     "FINISHED, and a manager that cannot tell those apart records a crash as a",
     "landed outcome (observed 2026-08-21: an out-of-credits worker woke its",
@@ -17,21 +17,28 @@
     "",
     "The NON-failure cases are the load-bearing half. A reader that fired on",
     "prose merely mentioning an error, or on a marker that trails rather than",
-    "leads, would relabel successful work as a crash — a new bug worse than the",
+    "leads, would relabel successful work as a crash \u2014 a new bug worse than the",
     "one this closes, so the shapes we must NOT match are pinned too."
   ],
   "vocabulary": {
     "_comment": [
       "THE BLOCK REGISTRY. Every array-of-objects block in this file must be",
-      "declared here and everything here must be a block — closure in both",
+      "declared here and everything here must be a block \u2014 closure in both",
       "directions. Held by cmd/brain/corpusvocab_test.go and",
       "apps/desktop/src/main/services/contractsVocabulary.test.ts."
     ],
     "blocks": {
       "cases": {
-        "why": "One worker final message, and whether a reader must call it a failure — plus, when it is one, the exact reason text the reader must extract.",
-        "required": ["name", "finalMessage", "failed", "why"],
-        "optional": ["reason"],
+        "why": "One worker final message, and whether a reader must call it a failure \u2014 plus, when it is one, the exact reason text the reader must extract.",
+        "required": [
+          "name",
+          "finalMessage",
+          "failed",
+          "why"
+        ],
+        "optional": [
+          "reason"
+        ],
         "loaders": [
           "services/claudemon/src/providers/mod.rs::error_marker_matches_the_cross_language_contract",
           "apps/desktop/src/main/shared/workerFailure.test.ts::agent-error marker (cross-language contract)"
@@ -39,39 +46,39 @@
       }
     }
   },
-  "marker": "⚠️ Error: ",
+  "marker": "\u26a0\ufe0f Error: ",
   "cases": [
     {
       "name": "out of credits (the live 2026-08-21 case)",
-      "finalMessage": "⚠️ Error: Credit balance is too low to access the Anthropic API.",
+      "finalMessage": "\u26a0\ufe0f Error: Credit balance is too low to access the Anthropic API.",
       "failed": true,
       "reason": "Credit balance is too low to access the Anthropic API.",
       "why": "The exact shape that woke a Fleet Manager as 'Worker finished' with an API refusal as the worker's summary."
     },
     {
       "name": "model overload",
-      "finalMessage": "⚠️ Error: boom: model overloaded",
+      "finalMessage": "\u26a0\ufe0f Error: boom: model overloaded",
       "failed": true,
       "reason": "boom: model overloaded",
-      "why": "A transient provider failure — retryable, so the manager must see it as an open dispatch rather than a landed one."
+      "why": "A transient provider failure \u2014 retryable, so the manager must see it as an open dispatch rather than a landed one."
     },
     {
       "name": "marker with surrounding whitespace still counts",
-      "finalMessage": "\n  ⚠️ Error: upstream connect error  \n",
+      "finalMessage": "\n  \u26a0\ufe0f Error: upstream connect error  \n",
       "failed": true,
       "reason": "upstream connect error",
       "why": "The conversation turn may arrive padded; leading whitespace must not hide the marker from the reader."
     },
     {
       "name": "multi-line error keeps only its first line as the reason",
-      "finalMessage": "⚠️ Error: request failed\nstack trace line 1\nstack trace line 2",
+      "finalMessage": "\u26a0\ufe0f Error: request failed\nstack trace line 1\nstack trace line 2",
       "failed": true,
       "reason": "request failed",
-      "why": "The reason rides a wake BULLET, whose grammar is one line per entry — a stack trace would break the parser, not just the formatting."
+      "why": "The reason rides a wake BULLET, whose grammar is one line per entry \u2014 a stack trace would break the parser, not just the formatting."
     },
     {
       "name": "bare marker with no message",
-      "finalMessage": "⚠️ Error: ",
+      "finalMessage": "\u26a0\ufe0f Error: ",
       "failed": true,
       "reason": "the provider reported an error with no message",
       "why": "An empty reason must still read as a failure; a blank tail would render as a bullet that says nothing happened."
@@ -84,13 +91,13 @@
     },
     {
       "name": "prose that merely MENTIONS an error is not a failure",
-      "finalMessage": "I hit an error in the parser and fixed it. ⚠️ Error handling is now covered.",
+      "finalMessage": "I hit an error in the parser and fixed it. \u26a0\ufe0f Error handling is now covered.",
       "failed": false,
       "why": "Worker reports discuss errors constantly; the marker is a leading prefix, never a substring match."
     },
     {
       "name": "the marker must lead the message, not trail it",
-      "finalMessage": "Here is what happened:\n⚠️ Error: something broke",
+      "finalMessage": "Here is what happened:\n\u26a0\ufe0f Error: something broke",
       "failed": false,
       "why": "The fold only ever emits the marker as the WHOLE turn, so a marker mid-message is the worker quoting one, not the daemon reporting one."
     },
@@ -98,7 +105,14 @@
       "name": "empty final message is not a failure signal",
       "finalMessage": "",
       "failed": false,
-      "why": "A worker that produced no text is silent, not failed — its emptiness is already handled by the wake's own no-task and genuine-idle gates."
+      "why": "A worker that produced no text is silent, not failed \u2014 its emptiness is already handled by the wake's own no-task and genuine-idle gates."
+    },
+    {
+      "name": "an error turn the store coalesced with the reply that followed it",
+      "finalMessage": "\u26a0\ufe0f Error: workspacer MCP server(s) did not attach to this Copilot session: workspacer.\nOK, I created the file.",
+      "failed": true,
+      "reason": "workspacer MCP server(s) did not attach to this Copilot session: workspacer.",
+      "why": "claudemon's conversation store merges consecutive assistant_text items, so a mid-turn error and the turn's real reply arrive as ONE message. Observed live on a copilot session whose facade could not attach. The writer now ends the error with a newline (providers/mod.rs) and the reader must take only the first line \u2014 without both halves the reason read '...attach: workspacer.OK, I created the file.'"
     }
   ]
 }

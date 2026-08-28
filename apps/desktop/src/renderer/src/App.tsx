@@ -589,9 +589,9 @@ function App() {
   }, [allDaemonSessions, agents, ptyMapping]);
   const handleResumeRecentSession = useCallback(
     (s: RecentAgentSession) => {
-      const provider: AgentProvider = (['claude', 'codex', 'opencode', 'pi'] as const).includes(
-        s.provider as AgentProvider,
-      )
+      const provider: AgentProvider = (
+        ['claude', 'codex', 'copilot', 'opencode', 'pi'] as const
+      ).includes(s.provider as AgentProvider)
         ? (s.provider as AgentProvider)
         : 'claude';
       void spawnAgent({

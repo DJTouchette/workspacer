@@ -102,6 +102,7 @@ const SupervisorRow: React.FC<{
 const SUP_PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
+  { value: 'copilot', label: 'GitHub Copilot' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'pi', label: 'Pi' },
 ];

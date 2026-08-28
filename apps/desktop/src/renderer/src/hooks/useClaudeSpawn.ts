@@ -253,7 +253,8 @@ export function useClaudeSpawn({
         const id = await window.electronAPI.spawnClaude({
           cwd: cwdRef.current,
           profileId: profileRef.current,
-          provider: overrides.provider as 'claude' | 'codex' | 'opencode' | 'pi' | undefined,
+          provider: overrides.provider as
+            'claude' | 'codex' | 'copilot' | 'opencode' | 'pi' | undefined,
           transport: overrides.transport,
           resumeSessionId: old,
           model: overrides.model,
