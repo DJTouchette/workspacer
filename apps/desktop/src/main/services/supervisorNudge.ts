@@ -274,14 +274,14 @@ class SupervisorNudge {
       Pick<
         ClaudeSessionState,
         'sessionId' | 'cwd' | 'label' | 'ambientState' | 'lastActivity' | 'parentSessionId'
-      > & { isSupervisor?: boolean; status?: ClaudeSessionState['status'] } & Partial<
+      > & { isWakeTarget?: boolean; status?: ClaudeSessionState['status'] } & Partial<
           Pick<ClaudeSessionState, 'conversation' | 'statusLine'>
         >
     >,
     now: number,
   ): void {
     const managers = sessions.filter(
-      (s) => s.isSupervisor && s.status !== 'ended' && s.ambientState === 'idle',
+      (s) => s.isWakeTarget && s.status !== 'ended' && s.ambientState === 'idle',
     );
     if (managers.length === 0) return;
     for (const manager of managers) {

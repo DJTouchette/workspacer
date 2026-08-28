@@ -171,7 +171,7 @@ describe('SessionEnd eviction does not reach past its own lifetime', () => {
 
     // ── First life ── ends, scheduling a 30 s eviction.
     hook(sid, 'SessionStart');
-    claudeSessionStore.setSpawnMeta(sid, { label: 'my agent', isSupervisor: true });
+    claudeSessionStore.setSpawnMeta(sid, { label: 'my agent', isWakeTarget: true });
     hook(sid, 'Stop');
     hook(sid, 'SessionEnd');
 

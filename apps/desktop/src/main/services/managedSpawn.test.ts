@@ -570,7 +570,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     mockConfig = { agents: { fleetFullAccess: true } };
   });
 
-  it('marks the session a wake target (isSupervisor)', async () => {
+  it('marks the session a wake target (isWakeTarget)', async () => {
     await spawnManagedAgent({
       provider: 'codex',
       transport: 'stream',
@@ -581,7 +581,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     });
     // nudgeParentOnFinish refuses to wake a parent without this flag — it IS
     // the difference between a manager and a decorative one.
-    expect(lastMeta()).toMatchObject({ isSupervisor: true, provider: 'codex' });
+    expect(lastMeta()).toMatchObject({ isWakeTarget: true, provider: 'codex' });
   });
 
   it('mints its token with the manager role, profile grants and the config yolo grant', async () => {

@@ -5,9 +5,9 @@
  * Why this exists as its own module rather than an object literal inside the
  * IPC handler: the literal silently dropped `manager` and `fleetFullAccess` for
  * every non-Claude provider. Both are load-bearing for the Fleet Manager — no
- * `manager` means the session is never marked `isSupervisor`, so NO
+ * `manager` means the session is never marked `isWakeTarget`, so NO
  * worker-finished wake is ever routed to it (claudeSessionStore.nudgeParentOnFinish
- * requires `parent.isSupervisor`), and no `fleetFullAccess` means its facade
+ * requires `parent.isWakeTarget`), and no `fleetFullAccess` means its facade
  * token is minted without the profilesAllowed / yolo grants, so every worker it
  * dispatches is clamped and prompts on everything. A Fleet Manager on Codex was
  * therefore impossible, and the failure was invisible: the card came up looking
@@ -151,7 +151,7 @@ export function managedOptionsFromRequest(
     permissionMode: req.permissionMode,
     resumeSessionId: req.resumeSessionId,
     // The Fleet Manager flag. Dropping it was the bug this module exists for:
-    // no `manager` = no isSupervisor = no worker-finished wake ever routed here.
+    // no `manager` = no isWakeTarget = no worker-finished wake ever routed here.
     manager: req.manager,
     fleetFullAccess: req.fleetFullAccess,
     mcpFacade: req.mcpFacade,

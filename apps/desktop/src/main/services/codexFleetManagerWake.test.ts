@@ -64,7 +64,7 @@ function mode(sessionId: string, m: 'responding' | 'input' | 'approval'): void {
  *  role/provider are on the card from birth), then the managed session row. */
 function register(
   sessionId: string,
-  meta: { label: string; isSupervisor?: boolean; parentSessionId?: string },
+  meta: { label: string; isWakeTarget?: boolean; parentSessionId?: string },
 ): void {
   claudeSessionStore.setSpawnMeta(sessionId, { ...meta, provider: 'codex', transport: 'stream' });
   claudeSessionStore.ensureManagedSession(sessionId, '/proj');
@@ -80,10 +80,10 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
   it('wakes the codex manager when a codex worker completes a turn', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    // `manager: true` on the spawn is what sets isSupervisor — the flag the IPC
+    // `manager: true` on the spawn is what sets isWakeTarget — the flag the IPC
     // managed branch used to drop. Without it nudgeParentOnFinish bails and no
     // wake is ever routed here, which is the whole bug.
-    register(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    register(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     register(child, { label: 'alpha: fix tests', parentSessionId: mgr });
 
     // The dispatch: the manager sends the task, codex reports the turn started,
@@ -108,7 +108,7 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
   it('routes a BLOCKED codex worker to the codex manager too', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    register(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    register(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     register(child, { label: 'beta: build', parentSessionId: mgr });
 
     say(child, 'user', 'run the release build');
@@ -130,10 +130,10 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
   it('does NOT wake a manager that was spawned without the manager flag', async () => {
     // The pre-fix shape, pinned so it cannot come back silently: the session is
     // there, the parent link is there, the worker finishes — and the manager
-    // hears nothing, because isSupervisor was never set.
+    // hears nothing, because isWakeTarget was never set.
     const mgr = uid('mgr');
     const child = uid('child');
-    register(mgr, { label: 'Fleet Manager' }); // no isSupervisor
+    register(mgr, { label: 'Fleet Manager' }); // no isWakeTarget
     register(child, { label: 'gamma: docs', parentSessionId: mgr });
 
     say(child, 'user', 'update the docs');

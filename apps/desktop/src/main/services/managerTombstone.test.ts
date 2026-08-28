@@ -9,7 +9,7 @@
  * (manager? worker with subagents? which of two?).
  *
  * The tombstone is the missing half: at eviction, a session marked
- * `isSupervisor` leaves behind its id / label / cwd / time of death, so the
+ * `isWakeTarget` leaves behind its id / label / cwd / time of death, so the
  * successor can be TOLD which dangling parents were managers instead of
  * guessing. These tests pin what it must and must not do — most importantly
  * that it is a forensic record and NEVER a wake destination, and that a
@@ -61,7 +61,7 @@ function hook(sessionId: string, hookName: string, cwd = '/proj'): void {
 
 /** A live Fleet Manager — what spawn_agent({manager: true}) records. */
 function manager(id: string, label = 'Fleet Manager', cwd = '/home/me/Work'): string {
-  claudeSessionStore.setSpawnMeta(id, { label, isSupervisor: true });
+  claudeSessionStore.setSpawnMeta(id, { label, isWakeTarget: true });
   hook(id, 'SessionStart', cwd);
   return id;
 }

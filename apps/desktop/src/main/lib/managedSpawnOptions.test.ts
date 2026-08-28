@@ -2,7 +2,7 @@
  * The regression this file exists for: the `claude:spawn` IPC handler's managed
  * branch hand-copied option fields and silently dropped `manager` and
  * `fleetFullAccess`, so a Fleet Manager on Codex came up unflagged — never
- * marked isSupervisor (no worker-finished wake could route to it) and with a
+ * marked isWakeTarget (no worker-finished wake could route to it) and with a
  * facade token minted without the profilesAllowed / yolo grants.
  *
  * The completeness test below is the real guard: it walks EVERY field of the
@@ -53,7 +53,7 @@ describe('managedOptionsFromRequest', () => {
       toolScope: 'operator',
       transport: 'stream',
     });
-    // Without these two a codex manager is decorative: no isSupervisor (so
+    // Without these two a codex manager is decorative: no isWakeTarget (so
     // nudgeParentOnFinish refuses to wake it) and no grants on its token.
     expect(opts.manager).toBe(true);
     expect(opts.fleetFullAccess).toBe(true);

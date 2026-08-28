@@ -275,7 +275,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // lives in lib/managedSpawnOptions so it is TOTAL over the request
       // shape: this branch used to hand-copy fields and silently lost
       // `manager`/`fleetFullAccess`, which is exactly what made a Fleet
-      // Manager on Codex impossible (no isSupervisor = no worker wakes).
+      // Manager on Codex impossible (no isWakeTarget = no worker wakes).
       return spawnManagedAgent(managedOptionsFromRequest(provider, opts));
     }
     // Claude on the 'stream' transport is also managed — claudemon's
