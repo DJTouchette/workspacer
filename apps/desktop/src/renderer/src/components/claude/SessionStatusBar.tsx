@@ -168,7 +168,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     };
   }, [activeCwd, remote]);
   const stats = deriveSessionStats(snapshot);
-  const { model, ctxPct, tokens, costUSD: cost } = stats;
+  const { model, ctxPct, billedTokens, costUSD: cost } = stats;
   // Every window the provider actually reported, in order. Empty for a session
   // whose provider sends none, where the group renders nothing at all.
   const windows = usageWindows(stats);
@@ -199,7 +199,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     plan ||
     snapshot?.compacting ||
     ctxPct !== undefined ||
-    tokens !== undefined ||
+    billedTokens !== undefined ||
     cost !== undefined ||
     windows.length > 0;
   if (!hasAny) return null;
@@ -303,22 +303,34 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           </span>
         </>
       )}
-      {(tokens !== undefined || cost !== undefined) && (
+      {(billedTokens !== undefined || cost !== undefined) && (
         <>
           <Sep />
-          {/* Cost is the glanceable number; tokens ride in its tooltip. When
-              only tokens are known (no pricing yet) they stand in directly. */}
+          {/* Cost is the glanceable number; BILLED tokens ride in its tooltip.
+              This is the cost side, not occupancy — every turn re-sends the
+              whole conversation, so it climbs into the tens of millions on a
+              long worker while the `ctx` meter to its left stays put. The
+              tooltip and the standalone label both say "billed" for that
+              reason; a bare "30M tok" here read as context and was reported as
+              a bug three times over. */}
           {cost !== undefined ? (
             <span
-              title={tokens !== undefined ? `${fmtTokens(tokens)} tokens this session` : undefined}
+              title={
+                billedTokens !== undefined
+                  ? `${fmtTokens(billedTokens)} tokens billed this session (cumulative — every turn re-sends the conversation, so this is not the context window)`
+                  : undefined
+              }
               style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}
             >
               {fmtUSD(cost)}
             </span>
           ) : (
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-              <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens!)}</span>
-              <span style={{ color: 'var(--wks-text-muted)' }}> tok</span>
+            <span
+              title={`${fmtTokens(billedTokens!)} tokens billed this session (cumulative — not the context window)`}
+              style={{ fontVariantNumeric: 'tabular-nums' }}
+            >
+              <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(billedTokens!)}</span>
+              <span style={{ color: 'var(--wks-text-muted)' }}> billed</span>
             </span>
           )}
         </>

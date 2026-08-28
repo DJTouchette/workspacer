@@ -140,12 +140,22 @@ pub fn requested_window_for(model: &str) -> Option<u64> {
 ///   5. `None` — unknown. Never 200_000.
 ///
 /// Then the DRIFT ALARM. `peak_context` is the session's high-water context
-/// occupancy; if it exceeds the window we just resolved (past a 2% tolerance)
-/// then whatever we resolved is demonstrably wrong, and the answer becomes
-/// unknown plus a loud log. This is the retrospective 200k→1M promotion,
-/// demoted from a source of truth to an alarm: it used to silently REWRITE the
-/// window to 1M, which is a guess dressed as a correction, and it could only
-/// ever fire after ~200k tokens of already-wrong readings.
+/// occupancy; a claim it EXCEEDS (past a 2% tolerance) is demonstrably wrong,
+/// so that claim is DISQUALIFIED and the next one down the hierarchy is tried.
+/// Unknown is the answer only once every claim has been disproved. This is the
+/// retrospective 200k→1M promotion, demoted from a source of truth to an alarm:
+/// it used to silently REWRITE the window to 1M, which is a guess dressed as a
+/// correction.
+///
+/// Disqualify-and-CONTINUE, not disqualify-and-stop. Stopping threw away claims
+/// the evidence had never touched, and that cost a real reading: Claude Code's
+/// own statusLine reports `context_window_size: 200000` for a session spawned
+/// `opus[1m]`, so a live 1M worker holding 356k tokens had its REPORTED window
+/// disproved and then resolved to UNKNOWN — instead of falling through to the
+/// `[1m]` marker, which says 1M and which 356k does not contradict. An unknown
+/// window is what made that worker's context bar peg at 100%. Falling through
+/// invents nothing: every candidate below already existed and was already
+/// ranked; the alarm now only removes the ones the session disproved.
 pub fn resolve_window(
     model: Option<&str>,
     requested: Option<&str>,
@@ -153,40 +163,41 @@ pub fn resolve_window(
     override_window: Option<u64>,
     peak_context: u64,
 ) -> Option<u64> {
-    let resolved = resolve_claim(model, requested, reported, override_window)?;
-    if peak_context > resolved.saturating_mul(DRIFT_TOLERANCE_NUM) / DRIFT_TOLERANCE_DEN {
-        tracing::warn!(
-            model = model.unwrap_or("<none>"),
-            requested = requested.unwrap_or("<none>"),
-            claimed_window = resolved,
-            observed_peak = peak_context,
-            "context window drift: this session holds more than the window we resolved for it, \
-             so the window is being reported as UNKNOWN. If this model is real, \
-             contracts/model-context-windows.json is stale for it."
-        );
-        return None;
+    let claims = window_claims(model, requested, reported, override_window);
+    for claim in claims {
+        if peak_context > claim.saturating_mul(DRIFT_TOLERANCE_NUM) / DRIFT_TOLERANCE_DEN {
+            tracing::warn!(
+                model = model.unwrap_or("<none>"),
+                requested = requested.unwrap_or("<none>"),
+                claimed_window = claim,
+                observed_peak = peak_context,
+                "context window drift: this session holds more than a window claimed for it, \
+                 so that claim is disqualified and the next one is tried. If every claim is \
+                 disproved the window is reported as UNKNOWN, and if this model is real, \
+                 contracts/model-context-windows.json is stale for it."
+            );
+            continue;
+        }
+        return Some(claim);
     }
-    Some(resolved)
+    None
 }
 
-/// The hierarchy without the alarm — split out so the alarm has something to
-/// compare against and so tests can name the two halves separately.
-fn resolve_claim(
+/// The hierarchy, in order, as a LIST rather than a single answer — so the
+/// alarm can drop a disproved claim and keep going. Split out so the alarm has
+/// something to compare against and so tests can name the two halves separately.
+fn window_claims(
     model: Option<&str>,
     requested: Option<&str>,
     reported: Option<u64>,
     override_window: Option<u64>,
-) -> Option<u64> {
-    if let Some(w) = reported.filter(|w| *w > 0) {
-        return Some(w);
-    }
-    if let Some(w) = override_window.filter(|w| *w > 0) {
-        return Some(w);
-    }
-    if let Some(w) = requested.and_then(requested_window_for) {
-        return Some(w);
-    }
-    model.and_then(window_for)
+) -> Vec<u64> {
+    let mut out = Vec::with_capacity(4);
+    out.extend(reported.filter(|w| *w > 0));
+    out.extend(override_window.filter(|w| *w > 0));
+    out.extend(requested.and_then(requested_window_for));
+    out.extend(model.and_then(window_for));
+    out
 }
 
 #[cfg(test)]

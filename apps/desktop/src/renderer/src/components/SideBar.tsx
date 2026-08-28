@@ -977,8 +977,11 @@ const SideBar: React.FC<SideBarProps> = ({
                     : hub
                       ? 'Stopped'
                       : 'Stopped — click to respawn';
+            // The tooltip is the roomy surface, so it carries BOTH figures and
+            // names each: occupancy (what the bar draws) and the cumulative
+            // billed total (the cost side, which is not an occupancy at all).
             const usageTip = hasCtx
-              ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
+              ? `\n${Math.round(stats.ctxPct!)}% context${stats.contextTokens !== undefined ? ` (${fmtTokens(stats.contextTokens)} in window)` : ''}${stats.billedTokens !== undefined ? ` · ${fmtTokens(stats.billedTokens)} billed` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
 
             const borderColor = isActive
@@ -1300,7 +1303,18 @@ const SideBar: React.FC<SideBarProps> = ({
                       }
                     />
                   )}
-                  {(stats.tokens !== undefined || stats.costUSD !== undefined) && (
+                  {/* THE OCCUPANCY, not the cumulative billed total. This
+                      slot showed `fmtTokens(stats.tokens)` — cumulative
+                      prompt+completion across every API call — a few
+                      millimetres from this card's own context bar, with no
+                      label but "tok". On a long worker that is honestly 30M
+                      (every turn re-sends ~350k of conversation, 141 times),
+                      and it read as "this agent is holding 30M tokens". The
+                      glanceable number a fleet card owes the reader is what the
+                      agent is holding NOW, which is the same number the bar
+                      draws. The billed figure is still one hover away in
+                      `usageTip`, and spelled out in the Inspector. */}
+                  {(stats.contextTokens !== undefined || stats.costUSD !== undefined) && (
                     <span
                       style={{
                         marginLeft: 'auto',
@@ -1311,8 +1325,12 @@ const SideBar: React.FC<SideBarProps> = ({
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {stats.tokens !== undefined ? `${fmtTokens(stats.tokens)} tok` : ''}
-                      {stats.tokens !== undefined && stats.costUSD !== undefined ? ' · ' : ''}
+                      {stats.contextTokens !== undefined
+                        ? `${fmtTokens(stats.contextTokens)} ctx`
+                        : ''}
+                      {stats.contextTokens !== undefined && stats.costUSD !== undefined
+                        ? ' · '
+                        : ''}
                       {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : ''}
                     </span>
                   )}

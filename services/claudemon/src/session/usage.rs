@@ -1079,7 +1079,9 @@ mod tests {
 
     /// ...but only while the report is consistent with what the session is
     /// observed to hold. A provider claiming 200k for a session sitting on 300k
-    /// is not a fact, it is a contradiction, and the alarm disarms it too.
+    /// is not a fact, it is a contradiction, and the alarm disarms it too —
+    /// leaving, here, nothing else to believe (an unmarked request says
+    /// nothing, and the table's own 200k is disproved by the same observation).
     #[test]
     fn a_reported_window_the_session_has_outgrown_is_disarmed() {
         let t = tx(vec![assistant_msg(
@@ -1091,8 +1093,28 @@ mod tests {
             10,
         )]);
         let mut u = from_transcript(&t).unwrap();
-        u.resolve_window(Some(200_000), Some("opus[1m]"));
+        u.resolve_window(Some(200_000), None);
         assert_eq!(u.context_limit, None);
+    }
+
+    /// THE LIVE 1M WORKER. Same contradiction, but this session was SPAWNED
+    /// `opus[1m]`, and disarming the provider's 200k must not throw that away:
+    /// 300k disproves 200k and says nothing at all about 1M. This case was
+    /// reported as `None` — an unknown window — which is what made a healthy 1M
+    /// worker draw a pegged 100% context bar on every surface in the app.
+    #[test]
+    fn a_disproved_report_falls_through_to_the_1m_marker() {
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-5",
+            300_000,
+            0,
+            0,
+            10,
+        )]);
+        let mut u = from_transcript(&t).unwrap();
+        u.resolve_window(Some(200_000), Some("opus[1m]"));
+        assert_eq!(u.context_limit, Some(1_000_000));
     }
 
     /// The fix must not default everything to 1M: an unmarked request says

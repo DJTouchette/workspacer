@@ -141,34 +141,48 @@ type windowSignals struct {
 //  4. the contract table, by concrete model id.
 //  5. unknown. Never 200000.
 //
-// Then the DRIFT ALARM: if PeakContext exceeds the window we just resolved
-// (past the tolerance) then whatever we resolved is demonstrably wrong, and the
-// answer becomes unknown. This is the retrospective 200k->1M promotion, demoted
-// from a source of truth to an alarm — it used to silently REWRITE the window
-// to 1M, a guess dressed as a correction, and it could only ever fire after
-// ~200k tokens of already-wrong readings.
+// Then the DRIFT ALARM: a claim the session has been observed to EXCEED (past
+// the tolerance) is demonstrably wrong, so it is DISQUALIFIED and the next
+// claim down the hierarchy is tried; unknown is the answer only when every
+// claim has been disproved. This is the retrospective 200k->1M promotion,
+// demoted from a source of truth to an alarm — it used to silently REWRITE the
+// window to 1M, a guess dressed as a correction.
+//
+// Disqualify-and-continue rather than disqualify-and-stop, because stopping
+// discarded claims the evidence never touched. Claude Code's own statusLine
+// reports 200000 for a session spawned `opus[1m]`, so a live 1M worker holding
+// 356k tokens had its REPORTED window disproved and then, instead of falling
+// through to the `[1m]` marker that says 1M and that 356k does not contradict,
+// resolved to unknown — which is how a real 1M worker came to draw a pegged
+// 100% context bar. Falling through is not inventing a replacement: every
+// candidate here already existed and was already ranked.
 func resolveContextWindow(model string, sig windowSignals) (uint64, bool) {
-	resolved, ok := resolveWindowClaim(model, sig)
-	if !ok {
-		return 0, false
+	for _, claim := range windowClaims(model, sig) {
+		if sig.PeakContext > claim*driftToleranceNum/driftToleranceDen {
+			continue // disproved by this session's own occupancy
+		}
+		return claim, true
 	}
-	if sig.PeakContext > resolved*driftToleranceNum/driftToleranceDen {
-		return 0, false
-	}
-	return resolved, true
+	return 0, false
 }
 
-func resolveWindowClaim(model string, sig windowSignals) (uint64, bool) {
+// windowClaims is the hierarchy, in order, as a list rather than a single
+// answer — so the drift alarm can drop a disproved claim and keep going.
+func windowClaims(model string, sig windowSignals) []uint64 {
+	var out []uint64
 	if sig.HasReported && sig.Reported > 0 {
-		return sig.Reported, true
+		out = append(out, sig.Reported)
 	}
 	if sig.HasOverride && sig.Override > 0 {
-		return sig.Override, true
+		out = append(out, sig.Override)
 	}
 	if w, ok := requestedWindowFor(sig.RequestedModel); ok {
-		return w, true
+		out = append(out, w)
 	}
-	return windowForModel(model)
+	if w, ok := windowForModel(model); ok {
+		out = append(out, w)
+	}
+	return out
 }
 
 // formatClaudeAliasWindow renders the model picker's `context` badge for one of

@@ -497,6 +497,36 @@
       "peakContext": 600000,
       "expected": 1000000,
       "note": "the promotion used to be the only way this session ever read correctly; now the marker got it right from the start and the alarm stays quiet"
+    },
+    {
+      "name": "a disproved REPORTED window falls through to the 1M marker",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 356380,
+      "expected": 1000000,
+      "note": "THE LIVE CASE this rule exists for. Claude Code's statusLine reports context_window_size 200000 even for a session spawned `opus[1m]`, and a real worker was observed holding 356380 tokens against it. The reported window is disproved by that occupancy — but the `[1m]` marker is NOT, and 356380 sits comfortably inside 1M. Disarming the disproved claim and STOPPING returned unknown, which is how a healthy 1M worker came to draw a pegged 100% context bar. The alarm disqualifies a claim; it does not discard the claims ranked below it."
+    },
+    {
+      "name": "fall-through stops at the first claim the session does not disprove",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": 200000,
+      "override": 300000,
+      "peakContext": 356380,
+      "expected": 1000000,
+      "note": "Ordering survives the fall-through: reported (200k) and the user's override (300k) are both disproved by a 356380-token peak, so the marker's 1M is the first survivor. The hierarchy is unchanged — only the disproved rungs are skipped, and a claim the peak does NOT exceed still wins from wherever it sits (an override of 400000 would have survived here and been the answer)."
+    },
+    {
+      "name": "every claim disproved is still unknown",
+      "model": "claude-opus-5",
+      "requestedModel": "opus[1m]",
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 1500000,
+      "expected": null,
+      "note": "Fall-through is not a promotion ladder. A session past 1M disproves the marker too, and with the table's 200k also disproved there is nothing left to believe — so the answer is the honest unknown, exactly as before."
     }
   ]
 }

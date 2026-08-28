@@ -372,3 +372,85 @@ describe('SessionUsageAccumulator.applyUsage: prompt-cache split', () => {
     expect(s.usage!.cache).toEqual({ fresh: 5, write: 50, read: 500 });
   });
 });
+
+// ── THE 23M WORKER: is the cumulative figure inflated, or just misread? ──────
+//
+// The standing suspicion was that the accumulator double-counts — that a
+// resume/replay, or the `iterations[]` array Claude now ships inside each usage
+// block, gets summed on top of the message total. It does not, and these hold
+// that verdict in place, because the fix for the reported symptom was
+// PRESENTATIONAL and only stays correct while the number underneath is honest.
+//
+// The numbers are from a live claudemon capture on 2026-08-27 (a dispatched
+// `opus[1m]` worker): the daemon's `/sessions/:id/conversation` carried 236
+// usage frames for 141 distinct message ids. Summed blind: 49,108,681.
+// Deduped by message id: 30,328,545 — which is claudemon's own
+// `fresh 282 + read 29,996,965 + write 331,298`, to the token.
+describe('SessionUsageAccumulator.applyUsage — cumulative totals are not inflated', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  // The live shape: one API call, re-delivered as several conversation frames
+  // (one per content block), every frame carrying the SAME message id and the
+  // SAME usage block. Counting frames instead of messages is what would turn
+  // 30M into 49M.
+  const turn = (read: number) => ({
+    input_tokens: 2,
+    cache_creation_input_tokens: 1_000,
+    cache_read_input_tokens: read,
+    output_tokens: 400,
+    // Claude ships a per-iteration breakdown alongside the totals. It restates
+    // the same numbers — summing it AND the totals would double every turn.
+    iterations: [
+      {
+        input_tokens: 2,
+        cache_creation_input_tokens: 1_000,
+        cache_read_input_tokens: read,
+        output_tokens: 400,
+      },
+    ],
+  });
+
+  it('counts one API call once, however many frames redeliver it', () => {
+    const s = mkSession();
+    for (let i = 0; i < 4; i++) acc.applyUsage(s, 'claude-opus-5', turn(200_000), 'msg_A');
+    expect(s.usage!.totalInputTokens).toBe(201_002);
+    expect(s.usage!.totalOutputTokens).toBe(400);
+    expect(s.usage!.cache).toEqual({ fresh: 2, write: 1_000, read: 200_000 });
+  });
+
+  it('ignores the iterations[] restatement of the same numbers', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-opus-5', turn(200_000), 'msg_A');
+    // 2 + 1_000 + 200_000 — the message total, not the total plus its own
+    // per-iteration copy (which would read 402_004).
+    expect(s.usage!.totalInputTokens).toBe(201_002);
+  });
+
+  it('is idempotent under a full replay (conversation resync)', () => {
+    const s = mkSession();
+    const ids = ['m1', 'm2', 'm3'];
+    for (const id of ids) acc.applyUsage(s, 'claude-opus-5', turn(200_000), id);
+    const afterFirstPass = s.usage!.totalInputTokens;
+    // resyncConversation replays the daemon's whole history through the same
+    // accumulator without resetting usage; the seen-set is what makes that safe.
+    for (const id of ids) acc.applyUsage(s, 'claude-opus-5', turn(200_000), id);
+    expect(s.usage!.totalInputTokens).toBe(afterFirstPass);
+    expect(afterFirstPass).toBe(3 * 201_002);
+  });
+
+  it('a long worker legitimately bills tens of millions — that is arithmetic', () => {
+    const s = mkSession();
+    // 141 distinct calls, each re-reading ~215k of cached conversation, each
+    // delivered twice. The honest total is per-CALL, and it is enormous.
+    for (let i = 0; i < 141; i++) {
+      acc.applyUsage(s, 'claude-opus-5', turn(215_000), `msg_${i}`);
+      acc.applyUsage(s, 'claude-opus-5', turn(215_000), `msg_${i}`);
+    }
+    expect(s.usage!.cache!.read).toBe(141 * 215_000); // 30,315,000 — not 60,630,000
+    // …while occupancy stays a point-in-time reading of ONE turn.
+    expect(s.usage!.contextTokens).toBe(216_002);
+  });
+});

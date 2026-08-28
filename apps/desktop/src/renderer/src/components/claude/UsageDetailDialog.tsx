@@ -194,8 +194,11 @@ export const UsageDetailDialog: React.FC<{
     facts.push({ label: 'Input tokens', value: fmtTokens(sl.totalInputTokens) });
   if (sessionScoped && sl?.totalOutputTokens !== undefined)
     facts.push({ label: 'Output tokens', value: fmtTokens(sl.totalOutputTokens) });
-  if (sessionScoped && stats.tokens !== undefined)
-    facts.push({ label: 'Total tokens', value: fmtTokens(stats.tokens) });
+  // "Total tokens" read as "how full is this session"; it is the cost side —
+  // cumulative prompt+completion across every API call, so a long worker's runs
+  // to tens of millions while `Context used` above stays inside the window.
+  if (sessionScoped && stats.billedTokens !== undefined)
+    facts.push({ label: 'Billed tokens (cumulative)', value: fmtTokens(stats.billedTokens) });
   if (sessionScoped && stats.costUSD !== undefined)
     facts.push({ label: 'Estimated cost', value: fmtUSD(stats.costUSD) });
 

@@ -135,42 +135,58 @@ export interface WindowSignals {
  *   4. the contract table, by concrete model id.
  *   5. `null` — unknown. Never 200_000.
  *
- * Then the DRIFT ALARM. If `peakContext` exceeds the window we just resolved
- * (past `DRIFT_TOLERANCE`) then whatever we resolved is demonstrably wrong, and
- * the answer becomes unknown plus a loud log. This is the retrospective
- * 200k→1M promotion, demoted from a source of truth to an alarm: it used to
- * silently REWRITE the window to 1M, a guess dressed as a correction, and it
- * could only ever fire after ~200k tokens of already-wrong readings.
+ * Then the DRIFT ALARM. A claim `peakContext` EXCEEDS (past `DRIFT_TOLERANCE`)
+ * is demonstrably wrong, so that claim is DISQUALIFIED and the next one down
+ * the hierarchy is tried; unknown is the answer only once every claim has been
+ * disproved. This is the retrospective 200k→1M promotion, demoted from a source
+ * of truth to an alarm: it used to silently REWRITE the window to 1M, a guess
+ * dressed as a correction.
+ *
+ * Disqualify-and-CONTINUE, not disqualify-and-stop. Stopping discarded claims
+ * the evidence had never touched, and that cost a real reading: Claude Code's
+ * own statusLine reports `context_window_size: 200000` for a session spawned
+ * `opus[1m]`, so a live 1M worker holding 356k tokens had its REPORTED window
+ * disproved and then resolved to UNKNOWN — instead of falling through to the
+ * `[1m]` marker, which says 1M and which 356k does not contradict. An unknown
+ * window is what made that worker's context bar peg at 100%. Falling through
+ * invents nothing: every candidate below already existed and was already
+ * ranked; the alarm now only removes the ones the session disproved.
  */
 export function resolveContextWindow(
   model: string | null | undefined,
   signals?: WindowSignals,
 ): number | null {
-  const resolved = resolveClaim(model, signals);
-  if (resolved === null) return null;
   const peak = signals?.peakContext ?? 0;
-  if (peak > resolved * DRIFT_TOLERANCE) {
-    console.warn(
-      `[contextWindow] drift: session on model ${JSON.stringify(model)} ` +
-        `(requested ${JSON.stringify(signals?.requestedModel ?? null)}) holds ${peak} tokens, ` +
-        `past the ${resolved}-token window we resolved for it. Reporting the window as UNKNOWN. ` +
-        `If this model is real, contracts/model-context-windows.json is stale for it.`,
-    );
-    return null;
+  for (const claim of windowClaims(model, signals)) {
+    if (peak > claim * DRIFT_TOLERANCE) {
+      console.warn(
+        `[contextWindow] drift: session on model ${JSON.stringify(model)} ` +
+          `(requested ${JSON.stringify(signals?.requestedModel ?? null)}) holds ${peak} tokens, ` +
+          `past the ${claim}-token window claimed for it. Disqualifying that claim and trying ` +
+          `the next. If every claim is disproved the window is UNKNOWN, and if this model is ` +
+          `real, contracts/model-context-windows.json is stale for it.`,
+      );
+      continue;
+    }
+    return claim;
   }
-  return resolved;
+  return null;
 }
 
-/** The hierarchy without the alarm — split out so the alarm has something to
- *  compare against and so tests can name the two halves separately. */
-function resolveClaim(model: string | null | undefined, signals?: WindowSignals): number | null {
+/** The hierarchy, in order, as a LIST rather than a single answer — so the
+ *  alarm can drop a disproved claim and keep going. Split out so the alarm has
+ *  something to compare against and so tests can name the two halves separately. */
+function windowClaims(model: string | null | undefined, signals?: WindowSignals): number[] {
+  const out: number[] = [];
   const reported = signals?.reportedWindow;
-  if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) return reported;
+  if (typeof reported === 'number' && Number.isFinite(reported) && reported > 0) out.push(reported);
   const override = signals?.overrideWindow;
-  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return override;
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) out.push(override);
   const requested = requestedWindowFor(signals?.requestedModel);
-  if (requested !== null) return requested;
-  return windowFor(model);
+  if (requested !== null) out.push(requested);
+  const table = windowFor(model);
+  if (table !== null) out.push(table);
+  return out;
 }
 
 /**
