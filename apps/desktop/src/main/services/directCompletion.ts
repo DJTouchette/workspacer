@@ -42,6 +42,7 @@ import { spawn } from 'child_process';
 import * as os from 'os';
 
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
+import { servesModel as vocabularyServesModel } from '../shared/modelVocabulary';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { claudeBaseArgv } from './claudeResolver';
 import { configService } from './configService';
@@ -415,16 +416,6 @@ function assertInstalled(provider: CompletionProvider): void {
 // ---------------------------------------------------------------------------
 
 /** Claude's model vocabulary: the CLI aliases plus any `claude-*` id. */
-const CLAUDE_ALIASES = new Set([
-  'default',
-  'haiku',
-  'sonnet',
-  'sonnet[1m]',
-  'opus',
-  'opusplan',
-  'fable',
-]);
-
 /**
  * Claude goes through claudemon's `POST /oneshot`, NOT a local `claude
  * --print`.
@@ -439,8 +430,7 @@ const CLAUDE_ALIASES = new Set([
 const claudeAdapter: CompletionAdapter = {
   provider: 'claude',
   defaultModel: 'haiku',
-  servesModel: (model) =>
-    CLAUDE_ALIASES.has(model.trim().toLowerCase()) || /^claude-/i.test(model.trim()),
+  servesModel: (model) => vocabularyServesModel('claude', model),
   async run({ prompt, model, timeoutMs }) {
     let res: Response;
     try {
@@ -500,7 +490,7 @@ const claudeAdapter: CompletionAdapter = {
 const codexAdapter: CompletionAdapter = {
   provider: 'codex',
   defaultModel: null,
-  servesModel: (model) => /^(gpt-|o\d|codex-|gpt\d)/i.test(model.trim()),
+  servesModel: (model) => vocabularyServesModel('codex', model),
   async run({ prompt, model, timeoutMs, maxOutputChars }) {
     assertInstalled('codex');
     const [bin, ...prefix] = launcherArgv('codex');
@@ -538,7 +528,7 @@ const codexAdapter: CompletionAdapter = {
 const opencodeAdapter: CompletionAdapter = {
   provider: 'opencode',
   defaultModel: null,
-  servesModel: (model) => /^[\w.-]+\/[\w.:-]+$/.test(model.trim()),
+  servesModel: (model) => vocabularyServesModel('opencode', model),
   async run({ prompt, model, timeoutMs, maxOutputChars }) {
     assertInstalled('opencode');
     const [bin, ...prefix] = launcherArgv('opencode');
@@ -563,7 +553,7 @@ const opencodeAdapter: CompletionAdapter = {
 const piAdapter: CompletionAdapter = {
   provider: 'pi',
   defaultModel: null,
-  servesModel: (model) => /^[\w.-]+\/[\w.:-]+$/.test(model.trim()),
+  servesModel: (model) => vocabularyServesModel('pi', model),
   async run({ prompt, model, timeoutMs, maxOutputChars }) {
     assertInstalled('pi');
     const [bin, ...prefix] = launcherArgv('pi');

@@ -84,10 +84,18 @@ acting on it.
 
 ## 0. Settings
 
-Call \`get_config\` once and read \`supervisor.summarizerModel\` (fallback
-\`sonnet\`), \`supervisor.pollSeconds\` (fallback \`45\`) and
-\`supervisor.fullAccess\` (fallback \`false\`). Your system prompt also states
-these as a fallback if the config call fails.
+Your SYSTEM PROMPT is authoritative for the digest worker's \`provider\` and
+\`model\` — it names both, already resolved for the harness you are running on.
+Use exactly what it says and do not substitute a model id from anywhere else: a
+model id is not portable between harnesses, so a \`sonnet\` passed to a codex
+spawn is refused. If it names no model, omit \`model\` entirely so that harness
+uses its own default.
+
+Call \`get_config\` once for \`supervisor.pollSeconds\` (fallback \`45\`) and
+\`supervisor.fullAccess\` (fallback \`false\`). The per-harness digest models live
+at \`supervisor.summarizerModels\` (keyed by provider; \`supervisor.summarizerModel\`
+is the legacy single field and holds a CLAUDE id) — but prefer your system
+prompt, which has already picked the right one for you.
 
 ## 1. Keep one cheap summarizer worker
 
@@ -95,13 +103,18 @@ Spawn a single long-lived digest worker the first time through, then reuse it:
 
 \`\`\`
 spawn_agent({
-  model: <summarizerModel>,
+  provider: <the provider your system prompt names>,  // your OWN harness
+  model: <the model it names — OMIT this key entirely if it names none>,
   toolScope: "view",        // read-only workspacer tools: transcripts, snapshots
   label: "fleet digest",
   parentSessionId: <your session id>,
   cwd: <any active agent's cwd, or the host cwd>
 })
 \`\`\`
+
+Passing \`provider\` matters: \`spawn_agent\` with no provider spawns Claude, so a
+codex or opencode supervisor that omitted it dispatched Claude summarizers while
+handing them its own harness's model id.
 
 \`toolScope: "view"\` gives the worker the read-only workspacer tools (so it can
 call get_transcript / get_conversation itself) and nothing else — it cannot

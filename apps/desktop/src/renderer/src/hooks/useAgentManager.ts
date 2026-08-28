@@ -693,6 +693,7 @@ export function useAgentManager() {
       fullAccess = false,
       grantYolo = false,
       provider: AgentProvider = 'claude',
+      model?: string,
     ): Promise<string | undefined> => {
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
@@ -761,6 +762,14 @@ export function useAgentManager() {
         // grant chain knows codex's 'yolo' spelling, and the worker-finished
         // wake routes on the isSupervisor flag `manager: true` sets.
         provider,
+        // The manager's own coordinator model for THIS harness
+        // (agents.managerModels). Passed explicitly so the model lands on the
+        // agent record — the card, the pill and every later restart read it
+        // there. Main resolves the same value from live config when this is
+        // blank (lib/roleModels), which is what covers the entry points that
+        // never come through here: a respawn of a stopped manager card, a
+        // headless bus spawn. Blank = the harness's own default.
+        ...(model?.trim() && { model: model.trim() }),
         // Chat-first: the manager is a bubbles experience, like the Guide.
         // Claude and Codex both have a headless stream transport; the others
         // ignore it (and spawnManagedAgent says so out loud).

@@ -12,7 +12,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const autoTitle = vi.hoisted(
-  () => ({ enabled: true, model: 'haiku' }) as { enabled?: boolean; model?: string },
+  () =>
+    ({ enabled: true, model: 'haiku' }) as {
+      enabled?: boolean;
+      model?: string;
+      models?: Record<string, string>;
+    },
 );
 vi.mock('./configService', () => ({
   configService: { getConfig: () => ({ agents: { autoTitle } }) },
@@ -41,6 +46,7 @@ beforeEach(() => {
   complete.mockResolvedValue({ ok: true, text: 'Fix flaky sidebar resize test' });
   autoTitle.enabled = true;
   autoTitle.model = 'haiku';
+  autoTitle.models = undefined;
 });
 
 describe('titleModelFor', () => {
@@ -121,5 +127,43 @@ describe('generateAgentTitle dispatches on the agent, not on claude', () => {
   it('does not call out for an empty opener', async () => {
     expect(await generateAgentTitle({ userMessage: '   ' })).toBeNull();
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The per-harness map, which is what lets a codex-primary user actually PICK a
+ * codex title model instead of only being downgraded off the claude default.
+ *
+ * Unlike the supervisor's map this is not a memory of one picker: every agent is
+ * titled by its OWN harness, so several entries have to be live at once.
+ */
+describe('agents.autoTitle.models — a title model per harness', () => {
+  it('uses this harness’s entry over the legacy claude-shaped field', async () => {
+    autoTitle.models = { codex: 'gpt-5' };
+    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: 'gpt-5' });
+  });
+
+  it('keeps every harness’s choice live at the same time', async () => {
+    autoTitle.models = { claude: 'haiku', codex: 'gpt-5' };
+    await generateAgentTitle({ ...EXCHANGE, provider: 'claude' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'claude', model: 'haiku' });
+    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    expect(complete.mock.calls[1][0]).toMatchObject({ provider: 'codex', model: 'gpt-5' });
+  });
+
+  it('a harness with no entry still refuses the claude-shaped legacy default', async () => {
+    autoTitle.models = { claude: 'haiku' };
+    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    // null = "let codex use the model the user already configured in that CLI".
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: null });
+  });
+
+  it('a wrong-harness id typed into the map is still caught by the adapter backstop', async () => {
+    // The map is user-written, so someone can put a claude alias in the codex
+    // row. resolveCompletionModel is the second layer that stops it.
+    autoTitle.models = { codex: 'sonnet' };
+    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: null });
   });
 });

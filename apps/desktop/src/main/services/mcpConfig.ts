@@ -58,40 +58,91 @@ function workerRoleNote(scope: RemoteTokenScope): string {
 }
 
 /**
- * Role instructions prepended to a *managed* (Codex/OpenCode) agent's first
- * turn when it's given the facade. Claude gets this via --append-system-prompt
- * plus the /supervise skill; managed providers don't have those, so we inject
- * the role as system text on the opening message.
+ * Role instructions prepended to a *managed* (headless Claude / Codex /
+ * OpenCode) agent's first turn when it's given the facade. The PTY Claude path
+ * injects the equivalent through --append-system-prompt (facadeSpawnArgs);
+ * managed adapters take no such flag, so the role rides the opening message.
+ *
+ * TWIN of facadeSpawnArgs: the supervisor branch must stay in step with it,
+ * including the loop parameters. It didn't — this path named neither the
+ * summarizer model nor the poll cadence, and never mentioned /supervise, so a
+ * codex supervisor ran on a vaguer doctrine than its Claude twin even though
+ * `installSupervisorSkill(provider)` now writes the identical skill into
+ * $CODEX_HOME/skills for it.
  */
-export function managedFacadeInstructions(
-  supervisor: boolean,
-  scope: RemoteTokenScope = 'operator',
-  sessionId?: string,
+/**
+ * The sentence that tells a supervisor how to spawn its transcript-DIGEST
+ * workers, in ONE place because two prompt builders emit it (this file's
+ * managed twin and `facadeSpawnArgs` below) and they had already drifted once.
+ *
+ * The bug it closes: the digest worker used to be described with a model and no
+ * PROVIDER. `spawn_agent` with no provider spawns Claude, so a codex
+ * supervisor — running on codex, holding a codex-shaped context — dispatched
+ * Claude summarizers, and `supervisor.summarizerModel`'s claude-only `'sonnet'`
+ * default looked correct only by accident. Naming the provider makes the
+ * summarizer follow its supervisor's harness, which is what makes a per-harness
+ * `supervisor.summarizerModels` mean anything.
+ *
+ * The model is omitted entirely when it resolves to nothing (no per-harness
+ * choice, and the legacy claude-shaped field is not servable here) — an absent
+ * `model` is "the harness's own default", the one value valid everywhere, and
+ * strictly better than naming an id that CLI would refuse.
+ */
+export function summarizerSpawnNote(provider: string, model?: string): string {
+  const named = (model ?? '').trim();
+  const modelClause = named ? `model "${named}" and ` : '';
+  return (
+    `Spawn your transcript-summarizer workers with provider "${provider}", ` +
+    `${modelClause}toolScope "view" so they read transcripts without consuming your context.` +
+    (named ? '' : ` Do not name a model for them — omit it so ${provider} uses its own default.`)
+  );
+}
+
+export function managedFacadeInstructions(opts: {
+  supervisor: boolean;
+  scope?: RemoteTokenScope;
+  sessionId?: string;
   /** Supervisor full-access mode — same meaning as facadeSpawnArgs.fullAccess. */
-  fullAccess?: boolean,
-): string {
+  fullAccess?: boolean;
+  /** The cheap model the supervisor's digest workers run on, ALREADY resolved
+   *  for `summarizerProvider` (lib/roleModels `resolveSummarizerModel`).
+   *  Undefined = don't name one, let that harness default. */
+  summarizerModel?: string;
+  /** The harness those digest workers are spawned on — the supervisor's own.
+   *  They used to be spawned with no provider at all, which meant Claude
+   *  regardless of the supervisor's harness (see summarizerSpawnNote). */
+  summarizerProvider?: string;
+  /** config supervisor.pollSeconds — the loop cadence. */
+  pollSeconds?: number;
+  /** This harness has a personal-skills directory we installed /supervise
+   *  into (lib/agentSkills). False for OpenCode/Pi, whose supervisors run on
+   *  this text alone. */
+  superviseSkill?: boolean;
+}): string {
+  const scope = opts.scope ?? 'operator';
   // The PTY path has always told a facade session its own id (facadeSpawnArgs'
   // idNote); this path didn't, so a stream-transport manager had to HUNT for
   // itself via list_agents before it could set parentSessionId on a dispatch.
-  const idNote = sessionId
-    ? ` Your own workspacer session id is ${sessionId} — pass it as parentSessionId when you spawn agents so they nest under you, and never target it with send_message/approve/signal.`
+  const idNote = opts.sessionId
+    ? ` Your own workspacer session id is ${opts.sessionId} — pass it as parentSessionId when you spawn agents so they nest under you, and never target it with send_message/approve/signal.`
     : '';
-  if (!supervisor) {
-    return (
-      workerRoleNote(scope) +
-      idNote +
-      ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
-    );
+  const prefixNote =
+    ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.';
+  if (!opts.supervisor) {
+    return workerRoleNote(scope) + idNote + prefixNote;
   }
+  const poll = opts.pollSeconds && opts.pollSeconds > 0 ? opts.pollSeconds : 45;
   return (
     `${SUPERVISOR_SYSTEM_PROMPT}\n\n` +
-    'Watch the fleet continuously: start with list_agents, then get_snapshot / get_conversation for detail, ' +
-    'and surface anything that needs a human. Spawn cheap summarizer workers (toolScope "view") when you need transcript digests.' +
-    (fullAccess
+    (opts.superviseSkill
+      ? `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). `
+      : `Watch the fleet on a loop (about every ${poll}s): start with list_agents, then get_snapshot / get_conversation for detail, and surface anything that needs a human. `) +
+    summarizerSpawnNote(opts.summarizerProvider ?? 'claude', opts.summarizerModel) +
+    (opts.fullAccess
       ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
       : '') +
     idNote +
-    ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
+    prefixNote
   );
 }
 
@@ -117,7 +168,10 @@ export function facadeSpawnArgs(opts: {
   supervisor?: boolean;
   scope?: RemoteTokenScope;
   token?: string;
+  /** Digest-worker model, already resolved for `summarizerProvider`. */
   summarizerModel?: string;
+  /** Harness the digest workers spawn on — the supervisor's own. */
+  summarizerProvider?: string;
   pollSeconds?: number;
   /** Supervisor full-access mode (config supervisor.fullAccess): the session
    *  token carries the yolo grant, so tell the supervisor to spawn its workers
@@ -135,7 +189,6 @@ export function facadeSpawnArgs(opts: {
       appendSystemPrompt: `${workerRoleNote(opts.scope ?? 'operator')} ${idNote}`,
     };
   }
-  const summarizer = (opts.summarizerModel ?? '').trim() || 'sonnet';
   const poll = opts.pollSeconds && opts.pollSeconds > 0 ? opts.pollSeconds : 45;
   return {
     mcpConfig,
@@ -143,7 +196,7 @@ export function facadeSpawnArgs(opts: {
     appendSystemPrompt:
       `${SUPERVISOR_SYSTEM_PROMPT}\n\n${idNote} When you spawn worker agents with spawn_agent, pass parentSessionId:"${opts.sessionId}" and a short label so they appear nested under you in the UI.\n\n` +
       `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). ` +
-      `Spawn your transcript-summarizer workers with model "${summarizer}" and toolScope "view" so they can read transcripts themselves without consuming your context.` +
+      summarizerSpawnNote(opts.summarizerProvider ?? 'claude', opts.summarizerModel) +
       (opts.fullAccess
         ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
         : ''),
