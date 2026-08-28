@@ -820,6 +820,23 @@ describe('agents.spawn — dispatch', () => {
     expect(createWorktree).not.toHaveBeenCalled();
   });
 
+  // The bus is the path most codex spawns actually take (the MCP facade, a
+  // dispatched worker, /m, the web app), and none of them name a transport. An
+  // explicit 'pty' has to survive it too, or the hybrid becomes unreachable
+  // from everywhere except the local spawn dialog.
+  it('forwards BOTH codex transports and leaves an omitted one to the shared resolver', async () => {
+    await call('agents.spawn', { provider: 'codex', transport: 'stream', cwd: '/proj' });
+    expect((spawnManagedAgent.mock.calls.at(-1)![0] as { transport?: string }).transport).toBe(
+      'stream',
+    );
+    await call('agents.spawn', { provider: 'codex', transport: 'pty', cwd: '/proj' });
+    expect((spawnManagedAgent.mock.calls.at(-1)![0] as { transport?: string }).transport).toBe(
+      'pty',
+    );
+    await call('agents.spawn', { provider: 'codex', cwd: '/proj' });
+    expect(spawnManagedAgent.mock.calls.at(-1)![0]).not.toHaveProperty('transport');
+  });
+
   it('falls back to the config default (claude.transport) when the caller omits transport', async () => {
     getConfig.mockReturnValueOnce({
       agents: { binaries: { codex: '/custom/codex' } },

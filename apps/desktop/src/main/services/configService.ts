@@ -174,6 +174,18 @@ interface Config {
       dailyAt: string;
     };
   };
+  /** Codex-specific defaults. The twin of `claude` above, deliberately its own
+   *  section rather than a key under `agents`: the transport is a per-harness
+   *  fact (each harness has its own two session shapes), and one resolver reads
+   *  `config.<provider>.transport` for both — see main/lib/spawnTransport.ts. */
+  codex: {
+    /** How new Codex sessions run: 'stream' (headless `codex app-server` over
+     *  ws via claudemon's managed adapter — GUI only, the shipped default and
+     *  the twin of Claude's stream transport) or 'pty' (the hybrid: the native
+     *  Codex TUI in a terminal plus the structured GUI on one shared thread).
+     *  Per-spawn overridable in the spawn dialog. */
+    transport: 'pty' | 'stream';
+  };
   /** Defaults applied when spawning a new agent. */
   agents: {
     /** Coding-agent backend pre-selected in the spawn dialog. */

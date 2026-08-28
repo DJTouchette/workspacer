@@ -605,6 +605,14 @@ function App() {
         // is how every legacy row reads (the daemon's Transport default), not
         // a user choice — leave it undefined so the config default decides,
         // and only pin a session that genuinely ran stream.
+        //
+        // Codex is deliberately absent here, and resuming one is headless
+        // either way: claudemon rejoins the prior app-server thread with
+        // `thread/resume`, which the native TUI cannot do (codex.rs) — so
+        // spawn.rs forces the stream transport whenever a thread is found,
+        // whatever this asks for. That is also the direction that WORKS: a
+        // thread created by the TUI-first hybrid has a rollout, and a rollout
+        // is exactly what `thread/resume` needs.
         ...(provider === 'claude' && {
           transport: s.transport === 'stream' ? ('stream' as const) : undefined,
           model: s.model || undefined,
@@ -2960,6 +2968,7 @@ function App() {
                 }
                 defaultProvider={config.agents?.defaultProvider}
                 defaultTransport={config.claude?.transport}
+                defaultCodexTransport={config.codex?.transport}
                 defaultWorktree={config.agents?.spawnInWorktree ?? false}
                 defaultPrompt={spawnDialogPrompt ?? undefined}
                 onSpawn={handleSpawnAgent}

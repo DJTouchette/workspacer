@@ -35,8 +35,10 @@ export interface AgentSpawnRequest {
   cwd?: string;
   provider?: 'claude' | 'codex' | 'opencode' | 'pi';
   /** Claude: 'pty' (classic TUI) or 'stream' (headless stream-json, managed
-   *  adapter); omitted = the config default (claude.transport).
-   *  Codex: 'stream' runs headless (no native TUI PTY). */
+   *  adapter). Codex: 'stream' runs headless (no native TUI PTY), 'pty' the
+   *  hybrid (native TUI + GUI on one app-server thread).
+   *  Omitted = the harness's config default (claude.transport /
+   *  codex.transport) — see main/lib/spawnTransport. */
   transport?: 'pty' | 'stream';
   profileId?: string;
   /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
@@ -123,20 +125,24 @@ export function managedOptionsFromRequest(
   provider: NonNullable<AgentSpawnRequest['provider']>,
   req: AgentSpawnRequest,
 ): ManagedSpawnOptions {
-  if (req.transport === 'stream' && provider !== 'codex') {
+  if (req.transport && provider !== 'codex') {
     console.warn(
-      `[managedSpawn] ${provider}: ignoring transport 'stream' — ` +
-        'only Claude and Codex have a headless transport',
+      `[managedSpawn] ${provider}: ignoring transport '${req.transport}' — ` +
+        'only Claude and Codex have more than one session shape',
     );
   }
   return {
     provider,
     cwd: req.cwd,
-    // Codex mirrors Claude's stream transport: 'stream' spawns headless
-    // (GUI-only, daemon-owned thread). No other managed adapter accepts a
-    // transport at all, so the key stays OFF their payload — but the request is
-    // ANNOUNCED here rather than vanishing, which is this module's whole rule.
-    ...(provider === 'codex' && req.transport === 'stream' && { transport: 'stream' as const }),
+    // Codex mirrors Claude's two transports: 'stream' spawns headless (GUI-only,
+    // daemon-owned thread — the default), 'pty' the hybrid. BOTH values are
+    // forwarded, and that is the whole point: an omitted key now means "resolve
+    // the configured default" inside spawnManagedAgent, so forwarding only
+    // 'stream' (as this did) would have turned an explicit hybrid request into a
+    // headless spawn the moment the default flipped. No other managed adapter
+    // accepts a transport at all, so the key stays OFF their payload — but the
+    // request is ANNOUNCED above rather than vanishing, which is this module's rule.
+    ...(provider === 'codex' && req.transport && { transport: req.transport }),
     model: req.model,
     effort: req.effort,
     // Managed providers have only ask/yolo, so an explicit bypass mode folds

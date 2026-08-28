@@ -45,6 +45,7 @@ import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModel } from '../lib/spawnModel';
+import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveSupervisorModel } from '../lib/supervisorModel';
 import { resolveManagerModel, resolveSummarizerModel } from '../lib/roleModels';
 
@@ -81,9 +82,14 @@ export interface ManagedSpawnOptions {
    *  spawns are dispatched to spawnClaudeAgent by the caller instead. */
   provider: AgentProvider;
   /** Claude: must be 'stream' when provider === 'claude'. Codex: 'stream'
-   *  runs headless (GUI-only, daemon-owned thread, no native TUI PTY) —
-   *  omitted/other means the default hybrid. */
-  transport?: 'stream';
+   *  runs headless (GUI-only, daemon-owned thread, no native TUI PTY), 'pty'
+   *  runs the hybrid (native TUI + GUI on one thread).
+   *
+   *  OMITTED IS NOT "hybrid" — it is "the caller did not say", and it resolves
+   *  through lib/spawnTransport (config `codex.transport`, shipped 'stream').
+   *  A caller that means the hybrid has to spell 'pty', or the configured
+   *  default would silently override it. */
+  transport?: AgentTransport;
   cwd?: string;
   model?: string;
   /** Reasoning-effort level (Claude `--effort`, Codex config); others ignore it. */
@@ -198,21 +204,34 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   for (const why of explainUnsupportedManagedOptions(opts)) {
     console.warn(`[managedSpawn] ${provider}: ignoring ${why}`);
   }
-  // Codex is a hybrid (GUI + Term) on every platform, but the wiring differs:
-  //  - macOS/Linux: the app-server JSON-RPC adapter (the generic managed path
-  //    below) drives the structured GUI *and* spawns the native TUI in a PTY,
-  //    resumed onto the same live app-server thread over `--remote ws://…` — so
+  // THE choke point for the transport default. Every managed spawn — the
+  // `claude:spawn` IPC, the `agents.spawn` hub capability, a respawn, a job, a
+  // supervisor/manager spawn — arrives here, so resolving it once is what makes
+  // "codex is headless unless you say otherwise" a property of the app rather
+  // than of whichever caller remembered to fill the field in. An explicit
+  // request still wins; see lib/spawnTransport.
+  const transport = resolveTransport(provider, opts.transport);
+  // Codex's two session shapes and where each one runs:
+  //  - 'stream' (the default): the app-server JSON-RPC adapter drives a
+  //    daemon-owned thread with NO PTY at all — the exact twin of Claude's
+  //    stream transport, and the shape this app is built around.
+  //  - 'pty' on macOS/Linux: the same app-server adapter, plus the native TUI
+  //    in a PTY rejoined onto that live thread over `--remote ws://…`, so
   //    claudemon owns both surfaces of one session (see providers/codex.rs).
-  //  - Windows: the older rollout-tail hybrid — its own TUI runs in a PTY and
-  //    claudemon tails the rollout transcript for the GUI. Kept until the ws
-  //    app-server path is verified on Windows, at which point this branch (and
-  //    the rollout tailer) can go and all platforms share the managed path.
-  if (provider === 'codex' && process.platform === 'win32') {
-    if (opts.transport === 'stream') {
-      console.warn(
-        '[managedSpawn] codex headless (stream) is not available on Windows yet — spawning the rollout hybrid',
-      );
-    }
+  //  - 'pty' on Windows: the older rollout-tail hybrid — codex's own TUI in a
+  //    PTY with claudemon tailing the rollout transcript for the GUI. The
+  //    `--remote` rejoin was never verified there, so the hybrid stays on this
+  //    path on Windows.
+  //
+  // Windows used to be pinned to the rollout hybrid UNCONDITIONALLY, which is
+  // what made `transport: 'stream'` a warning-and-a-downgrade there. The ws
+  // app-server was chosen precisely because plain-TCP ws works on Windows
+  // (codex.rs:9-11), and headless spawns no PTY at all — so none of the ConPTY
+  // concerns behind that pin apply to it. If the app-server does not come up,
+  // claudemon degrades the session to the rollout hybrid IN PLACE, loudly (a
+  // ⚠️ notice in the conversation + the transport stamp reset to 'pty' so the
+  // pane grows its Term view back) rather than leaving a dead pane.
+  if (provider === 'codex' && transport === 'pty' && process.platform === 'win32') {
     return spawnCodexHybrid(opts);
   }
   // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
@@ -226,7 +245,10 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
 
   const isClaudeStream = provider === 'claude';
   // Codex's stream transport mirrors Claude's: headless, GUI-only, no PTY.
-  const isCodexStream = provider === 'codex' && opts.transport === 'stream';
+  // Read off the RESOLVED transport, not the request: this is what the wire
+  // payload and the spawn meta both key on, so a defaulted spawn and an
+  // explicitly-headless one are indistinguishable from here down.
+  const isCodexStream = provider === 'codex' && transport === 'stream';
   // The model this spawn is actually asking for. An omitted one is RESOLVED
   // from config here rather than left to the CLI's own internal default,
   // because the daemon can only record what it is told — and what it records is
@@ -384,7 +406,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     isSupervisor: opts.supervisor || opts.manager,
     provider,
     ...(resultSchema && { resultSchema }),
-    ...((isClaudeStream || isCodexStream) && { transport: 'stream' as const }),
+    // What the CARD believes before the daemon's first frame arrives. Codex
+    // states both shapes (never just 'stream'-or-absent): 'pty' is now a real
+    // choice a caller can have made, and an absent key would read as "unknown"
+    // to a pane deciding whether to grow a Term view.
+    ...(isClaudeStream && { transport: 'stream' as const }),
+    ...(provider === 'codex' && { transport }),
     settings: {
       model: spawnModel,
       effort: opts.effort,
@@ -440,7 +467,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     bin,
     yolo,
     sessionId: managedId,
-    ...(isCodexStream && { transport: 'stream' as const }),
+    // STATED, not implied. The daemon reads an absent key as "hybrid", which is
+    // the same thing a dropped field looks like — so a codex spawn always says
+    // which of its two shapes it is, and a wire capture is enough to tell a
+    // defaulted headless spawn from a downgraded one.
+    ...(provider === 'codex' && { transport }),
     // Codex resume: claudemon rejoins the prior life's app-server thread and
     // replays its rollout (headless-only; the daemon forces stream transport).
     ...(provider === 'codex' && opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
@@ -527,6 +558,10 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     // reason as the managed path above.
     isSupervisor: opts.supervisor || opts.manager,
     provider: 'codex',
+    // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
+    // it says so rather than leaving the field absent: with codex defaulting to
+    // headless, "no transport recorded" would read as the default, not as this.
+    transport: 'pty' as const,
     settings: {
       model: spawnModel,
       effort: opts.effort,

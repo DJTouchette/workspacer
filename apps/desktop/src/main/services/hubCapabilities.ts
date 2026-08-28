@@ -19,6 +19,7 @@ import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './age
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
+import { resolveTransport } from '../lib/spawnTransport';
 import { createWorktree } from './worktreeService';
 import {
   assertNoPermissionBypass,
@@ -666,7 +667,11 @@ export function registerHubCapabilities(): void {
     // the SAME grant gate as an explicit request: without the hub-stamped
     // yoloGranted it is clamped identically — the operator's default never
     // escalates an ungranted token.
-    const claudeCfg = configService.getConfig().claude;
+    // ONE config snapshot for the whole spawn decision (bypass default below,
+    // transport further down) — a second read could land on the other side of a
+    // concurrent config write and leave one spawn half-decided by each.
+    const spawnCfg = configService.getConfig();
+    const claudeCfg = spawnCfg.claude;
     const skipDefaulted = reqSkip === undefined;
     const wantSkip = skipDefaulted
       ? claudeCfg?.skipPermissionsDefault === true ||
@@ -777,11 +782,15 @@ export function registerHubCapabilities(): void {
       const sessionId = await spawnManagedAgent({
         provider,
         cwd: spawnCwd,
-        // Codex mirrors Claude's stream transport: 'stream' spawns headless
-        // (GUI-only, daemon-owned thread). Must ride through here like on the
-        // IPC branch (ipc.ts) or a remote headless spawn silently downgrades
-        // to the hybrid PTY session.
-        ...(provider === 'codex' && reqTransport === 'stream' && { transport: 'stream' as const }),
+        // Codex mirrors Claude's two transports: 'stream' spawns headless
+        // (GUI-only, daemon-owned thread — the configured default), 'pty' the
+        // hybrid. BOTH values ride through here like on the IPC branch
+        // (ipc.ts): forwarding only 'stream' would turn an explicit hybrid
+        // request into a headless spawn now that the default is headless, and
+        // dropping 'stream' would downgrade a remote headless spawn. An OMITTED
+        // transport is left omitted on purpose — spawnManagedAgent resolves the
+        // configured default there, once, for every entry point.
+        ...(provider === 'codex' && reqTransport && { transport: reqTransport }),
         model,
         effort,
         skipPermissions,
@@ -808,8 +817,10 @@ export function registerHubCapabilities(): void {
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
-    // the two spawn transports can't drift (standing project rule).
-    const transport = reqTransport ?? claudeCfg?.transport ?? 'pty';
+    // the two spawn transports can't drift (standing project rule). The default
+    // resolution is the shared one (lib/spawnTransport) rather than a fourth
+    // hand-written copy of `?? config.claude.transport ?? 'pty'`.
+    const transport = resolveTransport('claude', reqTransport, spawnCfg);
     if (transport === 'stream') {
       const sessionId = await spawnManagedAgent({
         provider: 'claude',

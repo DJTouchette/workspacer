@@ -189,6 +189,9 @@ export const CONFIG_DEFAULTS = {
       dailyAt: '08:00',
     },
   },
+  codex: {
+    transport: 'stream',
+  },
   agents: {
     defaultProvider: 'claude',
     defaultCwd: '',

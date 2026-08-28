@@ -1023,6 +1023,18 @@ its transcript tailed into the GUI. Workspacer MCP tools and role instructions \
 are still attached; approvals happen in the Term view, and text arrives in \
 transcript-sized chunks rather than token deltas.";
 
+/// The same degradation, but for a session that was asked for HEADLESS. It says
+/// the extra thing that matters there: a Term view now exists where the caller
+/// was promised none, so approvals have somewhere to go — and on a client with
+/// no terminal surface (mobile, the web app) they do not.
+const DEGRADED_FROM_HEADLESS_NOTICE: &str = "⚠️ Codex could not start its \
+app-server, so this HEADLESS session degraded to the rollout fallback: a \
+terminal UI with its transcript tailed into the GUI. A Term view has appeared \
+on this pane — approvals happen there, not as structured cards, and clients \
+with no terminal (mobile, web) cannot answer them. Workspacer MCP tools and \
+role instructions are still attached. Check that `codex app-server` runs in \
+this directory.";
+
 /// The `-c mcp_servers.*` config overrides that attach the facade to a codex
 /// process: the workspacer MCP facade (tools at the session's tier, token on the
 /// URL) and the daemon's per-session AskUserQuestion shim.
@@ -1154,6 +1166,10 @@ async fn run_rollout_fallback(
     // store and already instruction-wrapped — deliver them to the fallback TUI
     // instead of silently dropping a message the GUI shows as sent.
     initial_prompts: Vec<String>,
+    // Whether the session that is degrading was asked for HEADLESS. Only the
+    // wording of the ⚠️ notice changes: a headless caller was promised no
+    // terminal, and one has just appeared, which is the part they need told.
+    from_headless: bool,
 ) -> anyhow::Result<()> {
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
     let argv = fallback_tui_argv(
@@ -1173,13 +1189,18 @@ async fn run_rollout_fallback(
         session = %session_id,
         facade = facade.mcp_url.is_some(),
         instructions = pending_instructions.is_some(),
+        from_headless,
         "codex degraded to the rollout fallback (Term + transcript-tailed GUI): \
          structural approvals and token-level streaming are unavailable"
     );
     conv.push(
         session_id,
         vec![ConversationItem::AssistantText {
-            text: DEGRADED_NOTICE.to_string(),
+            text: if from_headless {
+                DEGRADED_FROM_HEADLESS_NOTICE.to_string()
+            } else {
+                DEGRADED_NOTICE.to_string()
+            },
             timestamp: None,
         }],
     );
@@ -1311,10 +1332,25 @@ async fn run_session(
     // for this Codex build (e.g. a version that dropped/renamed `app-server
     // --listen`, or won't bind/handshake) — degrade to the rollout hybrid rather
     // than leave the pane dead. The RPC path is preferred; this is the safety net.
-    // Headless (stream-transport) sessions have no fallback: the rollout hybrid
-    // is built around a TUI PTY, which is exactly what headless promises not to
-    // spawn — so its unavailability is a hard error, like the Claude stream
-    // driver.
+    //
+    // HEADLESS TAKES THE SAME NET, and that changed with the headless default.
+    // It used to be a hard error here on the grounds that headless promises no
+    // PTY — defensible while headless was a deliberate opt-in, and untenable now
+    // that it is what a plain `codex` spawn resolves to (config `codex.transport`
+    // ships 'stream'): the failure mode would be a dead pane for every user
+    // whose codex build cannot serve `app-server --listen`, on the default path.
+    // It is also what makes it safe to send Windows down this path at all — the
+    // ws app-server was chosen because plain-TCP ws works there (see the module
+    // header), but that has never been verified on a real Windows box, so the
+    // unverified leg must degrade rather than fail.
+    //
+    // The degradation is LOUD and it MOVES THE SESSION: the transport stamp goes
+    // back to Pty (the pane's Term view is gated on that stamp — the desktop
+    // reads `session.transport` as the authority, so this is what makes the
+    // terminal actually appear), a ⚠️ notice lands in the conversation, and the
+    // warn log names the error. Nothing about it is silent, and nothing about it
+    // leaves the caller holding a session it cannot talk to.
+    //
     // For headless the app-server is the thread's creator, so the model/effort
     // overrides that hybrid mode sets on the TUI go on the server instead.
     let overrides = headless.then(|| (model.clone(), effort.clone()));
@@ -1324,9 +1360,14 @@ async fn run_session(
     .await
     {
         Ok(t) => t,
-        Err(err) if headless => return Err(err),
         Err(err) => {
-            tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
+            tracing::warn!(?err, session = %session_id, headless, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
+            if headless {
+                // The session is no longer headless. Say so where every client
+                // reads it, BEFORE the PTY exists, so no snapshot ever shows a
+                // stream-stamped session that has a terminal.
+                store.set_transport(session_id, crate::session::state::Transport::Pty);
+            }
             return run_rollout_fallback(
                 store,
                 conv,
@@ -1340,6 +1381,7 @@ async fn run_session(
                 // Nothing has been sent yet, so the whole role brief is still owed.
                 facade.instructions.clone(),
                 Vec::new(),
+                headless,
             )
             .await;
         }
@@ -1634,6 +1676,9 @@ async fn run_session(
             // consumed the brief.
             pending_instructions,
             pending_prompts,
+            // Hybrid-only: `needs_fallback` is set exclusively in the
+            // TUI-thread discovery arm, which is gated on `!headless`.
+            false,
         )
         .await;
     }

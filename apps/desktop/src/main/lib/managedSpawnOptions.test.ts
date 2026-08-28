@@ -72,6 +72,18 @@ describe('managedOptionsFromRequest', () => {
     warn.mockRestore();
   });
 
+  // An explicit 'pty' is a REQUEST for the hybrid, not the absence of one.
+  // Forwarding only 'stream' (what this used to do) was safe while hybrid was
+  // codex's default and became a silent override the moment headless became it:
+  // the key would be dropped here and re-added downstream as 'stream'.
+  it('forwards an explicit codex hybrid request', () => {
+    expect(managedOptionsFromRequest('codex', { transport: 'pty' }).transport).toBe('pty');
+  });
+
+  it('leaves an OMITTED codex transport omitted — the default is resolved downstream', () => {
+    expect(managedOptionsFromRequest('codex', {})).not.toHaveProperty('transport');
+  });
+
   it('folds every bypass spelling into skipPermissions', () => {
     // Managed providers only have ask/yolo, so the Claude spelling has to map
     // too — matching only 'yolo' left a bypassPermissions request unapplied.

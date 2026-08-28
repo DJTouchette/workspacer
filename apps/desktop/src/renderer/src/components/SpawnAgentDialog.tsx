@@ -43,6 +43,10 @@ interface SpawnAgentDialogProps {
   defaultProvider?: AgentProvider;
   /** Claude transport pre-selected in the picker (config.claude.transport). */
   defaultTransport?: 'pty' | 'stream';
+  /** Codex transport pre-selected in the picker (config.codex.transport).
+   *  Its own prop because the two harnesses default differently — codex ships
+   *  headless — and one shared picker value used to inherit Claude's. */
+  defaultCodexTransport?: 'pty' | 'stream';
   /** Pre-check the git-worktree toggle (config.agents.spawnInWorktree). */
   defaultWorktree?: boolean;
   /** First message handed over by the caller (the command palette). Shown as an
@@ -126,6 +130,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCwd,
   defaultProvider,
   defaultTransport,
+  defaultCodexTransport,
   defaultWorktree,
   defaultPrompt,
   onSpawn,
@@ -135,8 +140,24 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState(defaultPrompt ?? '');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
-  // Claude transport override for this spawn — pre-set from config.claude.transport.
-  const [transport, setTransport] = useState<'pty' | 'stream'>(defaultTransport ?? 'pty');
+  // The two harnesses that HAVE a transport choice default differently (claude
+  // 'pty' historically, codex 'stream'), so the picker's default is a function
+  // of the selected provider, not one shared config read. Fallbacks mirror
+  // main/lib/spawnTransport's TRANSPORT_FALLBACK.
+  const transportDefaultFor = (p: AgentProvider): 'pty' | 'stream' =>
+    p === 'codex' ? (defaultCodexTransport ?? 'stream') : (defaultTransport ?? 'pty');
+  // Transport override for this spawn. `touched` is what keeps switching the
+  // provider picker from stomping a choice the user actually made: until they
+  // click a transport button, the value TRACKS the selected harness's default.
+  const [transportTouched, setTransportTouched] = useState(false);
+  const [transportChoice, setTransportChoice] = useState<'pty' | 'stream'>(
+    transportDefaultFor(defaultProvider ?? 'claude'),
+  );
+  const transport = transportTouched ? transportChoice : transportDefaultFor(provider);
+  const setTransport = (t: 'pty' | 'stream') => {
+    setTransportTouched(true);
+    setTransportChoice(t);
+  };
   const [providerDetection, setProviderDetection] = useState<ProviderDetection[]>([]);
   const [customBinPath, setCustomBinPath] = useState('');
   const isClaude = provider === 'claude';
@@ -544,9 +565,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             cwd: cwd.trim(),
             name: name.trim() || undefined,
             provider,
-            // Codex only: 'stream' spawns headless (its default is hybrid, so
-            // only the non-default is worth sending).
-            transport: provider === 'codex' && transport === 'stream' ? transport : undefined,
+            // Codex only, and ALWAYS stated: both shapes are real choices now
+            // (headless is the default, hybrid the opt-in), so sending only the
+            // non-default would leave "hybrid" indistinguishable from "the user
+            // said nothing" — which main resolves to the configured default.
+            transport: provider === 'codex' ? transport : undefined,
             model: resolvedProviderModel || undefined,
             effort: effort || undefined,
             permissionMode: resolvedMode,
@@ -583,7 +606,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const permissionPillLabel = capsFor(provider).permissionModes.find(
     (m) => m.id === permissionMode,
   )?.label;
-  const defaultTransportHere = isClaude ? (defaultTransport ?? 'pty') : 'pty';
+  const defaultTransportHere = transportDefaultFor(provider);
   const deviations: { key: string; label: string; danger?: boolean }[] = [];
   if (targetHub) deviations.push({ key: 'machine', label: `on ${targetHub}` });
   if (pillModel) deviations.push({ key: 'model', label: pillModel });

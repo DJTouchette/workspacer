@@ -1,13 +1,19 @@
 /**
  * The `claude:spawn` IPC gate: `transport` may ride the spawn-managed payload
- * ONLY for codex+stream (the daemon's other managed adapters reject/ignore it),
- * and claude+stream must route through the claude stream branch — never the
+ * ONLY for codex (the daemon's other managed adapters reject/ignore it), and
+ * claude+stream must route through the claude stream branch — never the
  * managed-provider branch.
  *
+ * BOTH codex values forward, and an OMITTED one stays omitted. That triple is
+ * the contract: 'stream' and 'pty' are two real shapes a caller can ask for,
+ * while absence means "resolve the configured default", which spawnManagedAgent
+ * does once for every entry point (main/lib/spawnTransport). Forwarding only
+ * 'stream' — what this used to do — turned an explicit hybrid request into a
+ * headless spawn the moment codex's default became headless.
+ *
  * The gate is a one-line spread condition (see the managed branch in ipc.ts);
- * widening it leaks transport to opencode/pi, dropping it turns the spawn
- * dialog's headless-codex pill into a silent no-op (a hybrid spawns instead,
- * nothing fails loudly). The hub-bus twin path makes drift here easy to miss.
+ * widening it leaks transport to opencode/pi. The hub-bus twin path makes drift
+ * here easy to miss.
  *
  * Strategy (mirrors tests/main/hubCapabilitiesProfiles.test.ts): mock electron's
  * ipcMain to capture every registered handler, stub every service collaborator
@@ -152,8 +158,14 @@ describe('claude:spawn — transport rides spawn-managed only for codex+stream',
     expect(lastManagedOpts().transport).toBe('stream');
   });
 
-  it('codex + pty forwards NO transport key (hybrid default)', async () => {
+  it('codex + pty forwards transport:"pty" (an explicit hybrid request)', async () => {
     await spawn({ provider: 'codex', transport: 'pty', cwd: '/proj' });
+    expect(lastManagedOpts().provider).toBe('codex');
+    expect(lastManagedOpts().transport).toBe('pty');
+  });
+
+  it('codex with NO transport forwards no key — the default is resolved downstream', async () => {
+    await spawn({ provider: 'codex', cwd: '/proj' });
     expect(lastManagedOpts().provider).toBe('codex');
     expect(lastManagedOpts()).not.toHaveProperty('transport');
   });
