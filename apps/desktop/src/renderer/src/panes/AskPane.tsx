@@ -12,9 +12,9 @@ import { SUPERVISOR_PROVIDERS } from '../lib/roleProviders';
 export interface AskPaneProps {
   /** The current fleet — used to resolve session:<id> links and to scope. */
   agents: AgentWorkspace[];
-  /** Spawn a supervisor agent and send it the question (or, with no question,
-   *  a plain fleet agent staged to start its watch loop). Returns new agent id. */
-  spawnSupervisor: (opts: {
+  /** Spawn a triage-tier agent and send it the question (or, with no question,
+   *  stage it to report on the fleet). Returns the new agent id. */
+  spawnAskAgent: (opts: {
     question?: string;
     parentId?: string;
     provider?: AgentProvider;
@@ -104,7 +104,7 @@ const SupervisorRow: React.FC<{
 
 const AskPane: React.FC<AskPaneProps> = ({
   agents,
-  spawnSupervisor,
+  spawnAskAgent,
   onJumpToAgent,
   scopeAgentId,
 }) => {
@@ -112,13 +112,14 @@ const AskPane: React.FC<AskPaneProps> = ({
   const { config } = useConfig();
 
   const [question, setQuestion] = useState<string>(prefix);
-  // The harness this launch runs on. It FOLLOWS Settings (supervisor.provider)
-  // until you pick something here, rather than snapshotting it at mount: config
-  // loads asynchronously, so a `useState(config…)` initializer read 'claude'
-  // whenever this pane mounted before the load landed (a pane restored at boot
-  // always did) and then never caught up — Settings said codex and the launcher
-  // silently spawned claude. `picked` is what makes an explicit choice stick.
-  const configProvider: AgentProvider = config.supervisor?.provider ?? 'claude';
+  // The harness this launch runs on. It FOLLOWS Settings
+  // (agents.managerProvider — the fleet harness) until you pick something here,
+  // rather than snapshotting it at mount: config loads asynchronously, so a
+  // `useState(config…)` initializer read 'claude' whenever this pane mounted
+  // before the load landed (a pane restored at boot always did) and then never
+  // caught up — Settings said codex and the launcher silently spawned claude.
+  // `picked` is what makes an explicit choice stick.
+  const configProvider: AgentProvider = config.agents?.managerProvider ?? 'claude';
   const [picked, setPicked] = useState<AgentProvider | null>(null);
   const provider = picked ?? configProvider;
   const setProvider = setPicked;
@@ -164,7 +165,7 @@ const AskPane: React.FC<AskPaneProps> = ({
       setSpawning(true);
       setError('');
       try {
-        const newId = await spawnSupervisor({
+        const newId = await spawnAskAgent({
           question: trimmed,
           parentId: scopeAgentId,
           provider,
@@ -177,7 +178,7 @@ const AskPane: React.FC<AskPaneProps> = ({
         setSpawning(false);
       }
     },
-    [spawning, spawnSupervisor, scopeAgentId, onJumpToAgent, prefix, provider],
+    [spawning, spawnAskAgent, scopeAgentId, onJumpToAgent, prefix, provider],
   );
 
   // Spawn a fleet agent directly — no question, it just starts its watch loop.
@@ -186,14 +187,14 @@ const AskPane: React.FC<AskPaneProps> = ({
     setSpawning(true);
     setError('');
     try {
-      const newId = await spawnSupervisor({ parentId: scopeAgentId, provider });
+      const newId = await spawnAskAgent({ parentId: scopeAgentId, provider });
       onJumpToAgent(newId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSpawning(false);
     }
-  }, [spawning, spawnSupervisor, scopeAgentId, provider, onJumpToAgent]);
+  }, [spawning, spawnAskAgent, scopeAgentId, provider, onJumpToAgent]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -244,7 +245,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             lineHeight: 1.5,
           }}
         >
-          Dispatch a supervisor agent that inspects your fleet and answers.
+          Dispatch an agent that inspects your fleet and answers.
         </div>
       </div>
 

@@ -602,13 +602,14 @@ export function useAgentManager() {
   );
 
   /**
-   * Convenience wrapper to spawn a supervisor agent: derives a name from the
-   * question, picks a sensible cwd, and calls `spawnAgent` with supervisor=true.
-   * With no question it spawns a plain "fleet agent" — same supervisor wiring,
-   * staged with a generic kick to start its watch loop instead of a question.
+   * Convenience wrapper behind "Ask the fleet": spawns a plain agent holding the
+   * workspacer MCP facade at the 'triage' tier (observe the fleet + navigate the
+   * UI, no spawn or host access) and hands it the question. There is no fleet
+   * role attached — the Fleet Manager is the role; this is a one-shot observer
+   * that answers a question about the agents you already have.
    * Returns the new agent id.
    */
-  const spawnSupervisor = useCallback(
+  const spawnAskAgent = useCallback(
     async (opts: {
       question?: string;
       parentId?: string;
@@ -616,18 +617,14 @@ export function useAgentManager() {
       provider?: AgentProvider;
     }): Promise<string> => {
       const question = opts.question?.trim() || undefined;
-      const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet supervisor';
-      // Claude runs the installed /supervise skill; managed providers have no
-      // skills, so they get a plain-language opener (their facade instructions
-      // already carry the supervisor role).
-      const kick =
-        (opts.provider ?? 'claude') === 'claude'
-          ? '/supervise'
-          : 'Start watching the fleet: call list_agents, then report what each agent is doing.';
-      // A supervisor watches the whole fleet, so unless a cwd is given explicitly
-      // it opens in its dedicated home (~/.workspacer) rather than inheriting some
-      // agent's repo. Resolve it here so the card's cwd matches where the session
-      // actually opens. parentId is kept only for UI nesting.
+      const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet question';
+      // With no question it still needs an opener, or it sits there with tools
+      // and nothing to do.
+      const kick = 'Inspect the fleet: call list_agents, then report what each agent is doing.';
+      // This agent is about the whole fleet, not one repo, so unless a cwd is
+      // given explicitly it opens in the app's own home (~/.workspacer) rather
+      // than inheriting some agent's checkout. Resolve it here so the card's cwd
+      // matches where the session actually opens. parentId is UI nesting only.
       let cwd = opts.cwd;
       if (!cwd) {
         try {
@@ -640,9 +637,8 @@ export function useAgentManager() {
         cwd: cwd || '',
         name,
         provider: opts.provider,
-        kind: 'supervisor',
         parentId: opts.parentId,
-        supervisor: true,
+        toolScope: 'triage',
         initialPrompt: question ?? kick,
       });
     },
@@ -1787,7 +1783,7 @@ export function useAgentManager() {
     activeAgent,
     setActiveAgentId,
     spawnAgent,
-    spawnSupervisor,
+    spawnAskAgent,
     spawnGuide,
     spawnFleetManager,
     adoptAgent,

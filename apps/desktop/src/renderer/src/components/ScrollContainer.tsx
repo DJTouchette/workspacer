@@ -106,7 +106,7 @@ interface ScrollContainerProps {
   /** Full agent list — passed down to the Ask pane so it can display all agents. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor agent from a question — forwarded to AskPane. */
-  spawnSupervisor?: (opts: {
+  spawnAskAgent?: (opts: {
     question?: string;
     parentId?: string;
     provider?: AgentProvider;
@@ -157,7 +157,7 @@ interface PaneCallbacks {
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor — for the Ask pane. */
-  spawnSupervisor?: (opts: {
+  spawnAskAgent?: (opts: {
     question?: string;
     parentId?: string;
     provider?: AgentProvider;
@@ -350,7 +350,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         <Suspense fallback={<PaneFallback />}>
           <AskPane
             agents={callbacks.allAgents ?? []}
-            spawnSupervisor={callbacks.spawnSupervisor ?? (() => Promise.resolve(''))}
+            spawnAskAgent={callbacks.spawnAskAgent ?? (() => Promise.resolve(''))}
             onJumpToAgent={callbacks.onJumpToAgent ?? (() => {})}
             scopeAgentId={pane.scopeAgentId}
           />
@@ -586,7 +586,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       appCwd,
       agentLiveCwd,
       allAgents,
-      spawnSupervisor,
+      spawnAskAgent,
       onJumpToAgent,
       spawnGuide,
       recentSessions,
@@ -756,7 +756,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             appCwd,
             agentLiveCwd,
             allAgents,
-            spawnSupervisor,
+            spawnAskAgent,
             onJumpToAgent,
             spawnGuide,
             ownerAgentId,

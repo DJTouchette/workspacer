@@ -223,7 +223,7 @@ interface AgentViewHandlers {
   ) => void;
   onSplit: (tabId: string, type: PaneType) => void;
   onSplitPlugin: (tabId: string, pane: PluginPane) => void;
-  spawnSupervisor: (opts: {
+  spawnAskAgent: (opts: {
     question?: string;
     parentId?: string;
     provider?: AgentProvider;
@@ -308,7 +308,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           appCwd={appCwd}
           agentLiveCwd={liveCwd}
           allAgents={allAgents}
-          spawnSupervisor={handlers.spawnSupervisor}
+          spawnAskAgent={handlers.spawnAskAgent}
           spawnGuide={handlers.spawnGuide}
           onJumpToAgent={handlers.onJumpToAgent}
           recentSessions={recentSessions}
@@ -344,7 +344,7 @@ function App() {
     activeAgentId,
     activeAgent,
     spawnAgent,
-    spawnSupervisor,
+    spawnAskAgent,
     spawnGuide,
     spawnFleetManager,
     adoptAgent,
@@ -2557,7 +2557,7 @@ function App() {
       onAddTab: handleAddTab,
       onSplit: handlePaneSplit,
       onSplitPlugin: handlePaneSplitPlugin,
-      spawnSupervisor,
+      spawnAskAgent,
       spawnGuide,
       onJumpToAgent: handleJumpToAgent,
       onResumeRecentSession: handleResumeRecentSession,
@@ -2574,7 +2574,7 @@ function App() {
       handleAddTab,
       handlePaneSplit,
       handlePaneSplitPlugin,
-      spawnSupervisor,
+      spawnAskAgent,
       spawnGuide,
       handleJumpToAgent,
       handleResumeRecentSession,

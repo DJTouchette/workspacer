@@ -19,7 +19,7 @@ let configProvider: AgentProvider = 'claude';
 // AskPane is the only component here that reads config from context rather than
 // from a prop; the rest take it as one.
 vi.mock('../../src/hooks/useConfig', () => ({
-  useConfig: () => ({ config: { supervisor: { provider: configProvider } }, save: vi.fn() }),
+  useConfig: () => ({ config: { agents: { managerProvider: configProvider } }, save: vi.fn() }),
 }));
 
 /**
@@ -217,9 +217,9 @@ describe('Handoff target picker', () => {
 
 describe('Ask the Fleet harness picker', () => {
   const renderAsk = () =>
-    render(<AskPane agents={[]} spawnSupervisor={vi.fn()} onJumpToAgent={vi.fn()} />);
+    render(<AskPane agents={[]} spawnAskAgent={vi.fn()} onJumpToAgent={vi.fn()} />);
 
-  it('offers only installed harnesses to run the supervisor on', async () => {
+  it('offers only installed harnesses to run the ask agent on', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_AND_CODEX_ONLY);
     renderAsk();
 
@@ -239,8 +239,8 @@ describe('Ask the Fleet harness picker', () => {
     expect(screen.queryByRole('button', { name: /^Claude$/ })).toBeNull();
   });
 
-  it('keeps the configured supervisor harness listed and flagged when it is gone', async () => {
-    // config.supervisor.provider is what "Ask the Fleet" will actually launch;
+  it('keeps the configured fleet harness listed and flagged when it is gone', async () => {
+    // agents.managerProvider is what "Ask the Fleet" will actually launch;
     // silently offering something else would spawn a harness the user never
     // chose. Flag it instead.
     configProvider = 'opencode';

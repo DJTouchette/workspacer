@@ -24,7 +24,7 @@ let configProvider: AgentProvider | undefined = 'claude';
 
 vi.mock('../../src/hooks/useConfig', () => ({
   useConfig: () => ({
-    config: { supervisor: configProvider ? { provider: configProvider } : {} },
+    config: { agents: configProvider ? { managerProvider: configProvider } : {} },
     save: vi.fn(),
   }),
 }));
@@ -47,49 +47,49 @@ beforeEach(() => {
 });
 
 describe('Ask the Fleet — the launcher runs the configured supervisor harness', () => {
-  it('spawns on config supervisor.provider', async () => {
+  it('spawns on config agents.managerProvider', async () => {
     configProvider = 'codex';
-    const spawnSupervisor = vi.fn().mockResolvedValue('agent-1');
-    render(<AskPane agents={[]} spawnSupervisor={spawnSupervisor} onJumpToAgent={vi.fn()} />);
+    const spawnAskAgent = vi.fn().mockResolvedValue('agent-1');
+    render(<AskPane agents={[]} spawnAskAgent={spawnAskAgent} onJumpToAgent={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /Codex/ })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Start watcher only/i }));
-    await waitFor(() => expect(spawnSupervisor).toHaveBeenCalled());
-    expect(spawnSupervisor.mock.calls.at(-1)![0].provider).toBe('codex');
+    await waitFor(() => expect(spawnAskAgent).toHaveBeenCalled());
+    expect(spawnAskAgent.mock.calls.at(-1)![0].provider).toBe('codex');
   });
 
   it('catches up when config arrives AFTER the pane mounted (the boot-restored pane)', async () => {
     // Mount with the pre-load default…
     configProvider = undefined;
-    const spawnSupervisor = vi.fn().mockResolvedValue('agent-1');
+    const spawnAskAgent = vi.fn().mockResolvedValue('agent-1');
     const { rerender } = render(
-      <AskPane agents={[]} spawnSupervisor={spawnSupervisor} onJumpToAgent={vi.fn()} />,
+      <AskPane agents={[]} spawnAskAgent={spawnAskAgent} onJumpToAgent={vi.fn()} />,
     );
     // …then the real config lands, exactly as ConfigContext's load does.
     configProvider = 'codex';
-    rerender(<AskPane agents={[]} spawnSupervisor={spawnSupervisor} onJumpToAgent={vi.fn()} />);
+    rerender(<AskPane agents={[]} spawnAskAgent={spawnAskAgent} onJumpToAgent={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /Start watcher only/i }));
-    await waitFor(() => expect(spawnSupervisor).toHaveBeenCalled());
-    expect(spawnSupervisor.mock.calls.at(-1)![0].provider).toBe('codex');
+    await waitFor(() => expect(spawnAskAgent).toHaveBeenCalled());
+    expect(spawnAskAgent.mock.calls.at(-1)![0].provider).toBe('codex');
   });
 
   it('an explicit pick in the launcher overrides the configured harness', async () => {
     // The per-launch override is the reason this picker exists at all; a config
     // default must not reclaim it on the next render.
     configProvider = 'codex';
-    const spawnSupervisor = vi.fn().mockResolvedValue('agent-1');
-    render(<AskPane agents={[]} spawnSupervisor={spawnSupervisor} onJumpToAgent={vi.fn()} />);
+    const spawnAskAgent = vi.fn().mockResolvedValue('agent-1');
+    render(<AskPane agents={[]} spawnAskAgent={spawnAskAgent} onJumpToAgent={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /OpenCode/ })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /OpenCode/ }));
     fireEvent.click(screen.getByRole('button', { name: /Start watcher only/i }));
-    await waitFor(() => expect(spawnSupervisor).toHaveBeenCalled());
-    expect(spawnSupervisor.mock.calls.at(-1)![0].provider).toBe('opencode');
+    await waitFor(() => expect(spawnAskAgent).toHaveBeenCalled());
+    expect(spawnAskAgent.mock.calls.at(-1)![0].provider).toBe('opencode');
   });
 
   it('does not offer Pi — it ships no MCP client, so it cannot watch anything', async () => {
     // One list with Settings (lib/roleProviders). This picker used to offer Pi
     // while the settings pane refused to, so the launcher could start a
     // supervisor the settings pane says is impossible.
-    render(<AskPane agents={[]} spawnSupervisor={vi.fn()} onJumpToAgent={vi.fn()} />);
+    render(<AskPane agents={[]} spawnAskAgent={vi.fn()} onJumpToAgent={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /Codex/ })).toBeTruthy());
     expect(screen.queryByRole('button', { name: /^Pi$/ })).toBeNull();
   });
