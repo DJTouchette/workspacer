@@ -125,19 +125,19 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         pulse: false,
       }
     : stateVisual(agent.sessionId ? state : undefined);
-  const usage = snapshot?.usage;
   // Managed providers (codex/opencode) have no transcript-derived `usage` —
   // their telemetry rides the statusLine. deriveSessionStats merges both (same
   // fallback InspectorCard's Usage tab uses), so the tile's model / context
   // meter / cost light up for every provider.
   const stats = deriveSessionStats(snapshot);
   const ctxPct = stats.ctxPct;
-  const ctxTokens =
-    usage && usage.contextTokens > 0
-      ? usage.contextTokens
-      : ctxPct !== undefined && snapshot?.statusLine?.contextWindowSize
-        ? Math.round((ctxPct / 100) * snapshot.statusLine.contextWindowSize)
-        : undefined;
+  // Occupancy comes from deriveSessionStats, which owns the same two-source
+  // rule this used to restate (transcript count first, pct × the provider's
+  // window for a managed provider that has no transcript) PLUS the guard that
+  // restatement was missing: it never multiplies a percentage by a window the
+  // session has already been observed to exceed, which is one of the ways an
+  // absurd token figure gets manufactured.
+  const ctxTokens = stats.contextTokens;
 
   const activeTool = snapshot?.activeToolCalls?.[snapshot.activeToolCalls.length - 1];
   const runningSubs = (snapshot?.subagents ?? []).filter((s) => s.status === 'running').length;

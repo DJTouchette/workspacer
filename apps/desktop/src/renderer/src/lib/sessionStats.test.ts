@@ -23,28 +23,101 @@ const usage = (over: Partial<SessionUsage> = {}): SessionUsage =>
     ...over,
   }) as SessionUsage;
 
-describe('deriveSessionStats — cumulative tokens', () => {
+describe('deriveSessionStats — cumulative BILLED tokens', () => {
   it('uses the statusLine when only totalOutputTokens is present', () => {
     const sl = { totalOutputTokens: 500 } as SessionStatusLine;
     // statusLine is authoritative; even with only output tokens it should win
     // over the transcript-derived usage fallback (which would give 111+222=333).
-    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).tokens).toBe(500);
+    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).billedTokens).toBe(500);
   });
 
   it('uses the statusLine when only totalInputTokens is present', () => {
     const sl = { totalInputTokens: 400 } as SessionStatusLine;
-    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).tokens).toBe(400);
+    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).billedTokens).toBe(400);
   });
 
   it('sums statusLine input+output when both present', () => {
     const sl = { totalInputTokens: 400, totalOutputTokens: 500 } as SessionStatusLine;
-    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).tokens).toBe(900);
+    expect(deriveSessionStats({ statusLine: sl, usage: usage() }).billedTokens).toBe(900);
   });
 
   it('falls back to usage when statusLine carries no token counts', () => {
-    expect(deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).tokens).toBe(
-      333,
-    );
+    expect(
+      deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).billedTokens,
+    ).toBe(333);
+  });
+});
+
+// ── THE 23M WORKER ───────────────────────────────────────────────────────────
+//
+// Pinned to a session captured live from claudemon on 2026-08-27 (a dispatched
+// worker in .../workspacer-copilot-provider-parity-build, spawned `opus[1m]`).
+// Its raw frames, deduped by message id exactly as both accumulators do:
+//
+//   141 assistant messages, 30,328,545 prompt tokens billed, of which
+//   29,996,965 were cache reads — matching claudemon's own
+//   `cache: {fresh: 282, read: 29,996,965, write: 331,298}` to the token.
+//   Occupancy at that instant: 356,380. Claude Code's statusLine, for that same
+//   session: `contextUsedPct: 100, contextWindowSize: 200000`.
+//
+// So the 30M is HONEST — 141 turns each re-sending ~215k of cached conversation
+// — and it was the occupancy readouts that were wrong. These cases hold the two
+// figures apart and hold the bar to the window the session has not disproved.
+const WORKER_23M = {
+  usage: usage({
+    model: 'claude-opus-5',
+    contextTokens: 356_380,
+    // What resolveContextWindow now returns for this session: the reported 200k
+    // is disproved by 356,380, so it falls through to the `opus[1m]` marker.
+    contextLimit: 1_000_000,
+    totalInputTokens: 30_328_545,
+    totalOutputTokens: 120_429,
+    costUSD: 22.58,
+  }),
+  statusLine: { contextUsedPct: 100, contextWindowSize: 200_000 } as SessionStatusLine,
+};
+
+describe('deriveSessionStats — the 23M worker (live specimen)', () => {
+  it('keeps the honest cumulative figure, under a name that says it is the cost side', () => {
+    const stats = deriveSessionStats(WORKER_23M);
+    expect(stats.billedTokens).toBe(30_448_974);
+    // The ambiguous `tokens` is gone: a caller must now choose which it means.
+    expect('tokens' in stats).toBe(false);
+  });
+
+  it('reports occupancy separately, and it is bounded by the window', () => {
+    const stats = deriveSessionStats(WORKER_23M);
+    expect(stats.contextTokens).toBe(356_380);
+    expect(stats.contextTokens!).toBeLessThan(stats.billedTokens!);
+  });
+
+  it('DISBELIEVES a statusLine percentage whose window the session has disproved', () => {
+    // 356,380 tokens cannot fit a 200k window, so `contextUsedPct: 100` is a
+    // reading of a window this session is not on. Before this guard the bar
+    // pegged red at 100% on a worker sitting at 36%.
+    const stats = deriveSessionStats(WORKER_23M);
+    expect(Math.round(stats.ctxPct!)).toBe(36);
+  });
+
+  it('still trusts the statusLine percentage when its window holds up', () => {
+    const stats = deriveSessionStats({
+      usage: usage({ contextTokens: 90_000, contextLimit: 200_000 }),
+      statusLine: { contextUsedPct: 45, contextWindowSize: 200_000 } as SessionStatusLine,
+    });
+    expect(stats.ctxPct).toBe(45);
+  });
+
+  it('never reconstructs occupancy from a disproved window (pct × wrong window)', () => {
+    // The managed-provider path multiplies pct by the reported window. Fed a
+    // disproved window that is how an absurd token count is manufactured, so it
+    // must decline rather than produce one. Here there is no transcript count
+    // to fall back on, so the honest answer is no number at all.
+    const stats = deriveSessionStats({
+      usage: usage({ contextTokens: 356_380, contextLimit: null }),
+      statusLine: { contextUsedPct: 100, contextWindowSize: 200_000 } as SessionStatusLine,
+    });
+    expect(stats.contextTokens).toBe(356_380); // the direct count, never pct × 200k
+    expect(stats.ctxPct).toBeUndefined(); // limit unknown ⇒ omit the meter
   });
 });
 

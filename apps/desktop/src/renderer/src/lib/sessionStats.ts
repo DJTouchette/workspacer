@@ -1,3 +1,4 @@
+import { DRIFT_TOLERANCE } from '../../../main/shared/modelContextWindows';
 import type {
   ClaudeSessionSnapshot,
   FileChange,
@@ -146,8 +147,22 @@ export interface DerivedSessionStats {
   model?: string;
   /** Context window fill, 0–100. */
   ctxPct?: number;
-  /** Cumulative input+output tokens. */
-  tokens?: number;
+  /** CURRENT WINDOW OCCUPANCY — what this session is holding right now, the
+   *  numerator of `ctxPct`. This is what a glanceable agent surface means by
+   *  "how big is this agent", and it is bounded by the window. */
+  contextTokens?: number;
+  /** CUMULATIVE PROMPT+COMPLETION TOKENS BILLED over the whole session — the
+   *  COST-SIDE figure, not an occupancy. Every API call re-sends the entire
+   *  conversation, and on Claude nearly all of it comes back as
+   *  `cache_read_input_tokens`, so this counts the same ~200k of context once
+   *  per turn: a 141-call worker holding 356k tokens has legitimately billed
+   *  30M. That is arithmetic, not a bug (the accumulators dedupe by message id
+   *  and were verified against live frames to the token) — but rendered beside
+   *  a context bar as a bare "30M tok" it reads as occupancy, which is the
+   *  "worker shows 23M tokens" report. It belongs only on surfaces that say
+   *  what it is. Named `billedTokens`, not `tokens`, so no caller can inherit
+   *  the ambiguity by accident. */
+  billedTokens?: number;
   costUSD?: number;
   fiveHourPct?: number;
   /** Unix epoch seconds the 5h rate-limit window resets at. */
@@ -187,15 +202,40 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
   const model =
     sl?.modelDisplay ?? (usage?.model ? usage.model.replace(/^claude-/, '') : undefined);
 
-  // Context %: prefer Claude's own number, else derive from transcript usage.
-  const ctxPct =
-    sl?.contextUsedPct ??
+  // Context %: prefer Claude's own number — UNLESS the window it was computed
+  // against is disproved by what this session is demonstrably holding.
+  //
+  // The DRIFT ALARM already governs the WINDOW (resolveContextWindow): a window
+  // a session has been observed to exceed is not that session's window. The
+  // percentage carries exactly the same claim and had no such guard, so it
+  // sailed past it. Claude Code's statusLine reports `contextWindowSize:
+  // 200000` even for a session spawned `opus[1m]`; a live 1M worker holding
+  // 356380 tokens therefore arrived as `contextUsedPct: 100` (178%, clamped),
+  // and the bar pegged red on a worker that was 36% full. Disbelieving the pair
+  // together is the fix — the transcript's own tokens-over-resolved-window is
+  // the honest reading, and it is available precisely when this happens.
+  const slWindow = sl?.contextWindowSize;
+  const held = usage?.contextTokens ?? 0;
+  const slWindowDisproved = !!slWindow && held > slWindow * DRIFT_TOLERANCE;
+  const derivedPct =
     // A null limit is UNKNOWN, not zero: the meter is omitted rather than drawn
     // against an invented denominator (see SessionUsage.contextLimit).
-    (usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
+    usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined;
+  const ctxPct = slWindowDisproved ? derivedPct : (sl?.contextUsedPct ?? derivedPct);
 
-  // Cumulative tokens: statusLine carries in+out; fall back to usage.
-  const tokens =
+  // Occupancy, in tokens. The transcript counts it directly; a managed provider
+  // that only reports a percentage has it reconstructed from the pair — but
+  // never from a window the line above just disproved, since pct × a wrong
+  // window is how an absurd token count gets manufactured downstream.
+  const contextTokens =
+    usage && usage.contextTokens > 0
+      ? usage.contextTokens
+      : !slWindowDisproved && sl?.contextUsedPct !== undefined && slWindow
+        ? Math.round((sl.contextUsedPct / 100) * slWindow)
+        : undefined;
+
+  // Cumulative BILLED tokens: statusLine carries in+out; fall back to usage.
+  const billedTokens =
     sl?.totalInputTokens !== undefined || sl?.totalOutputTokens !== undefined
       ? (sl.totalInputTokens ?? 0) + (sl.totalOutputTokens ?? 0)
       : usage
@@ -205,7 +245,8 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
   return {
     model,
     ctxPct,
-    tokens,
+    contextTokens,
+    billedTokens,
     costUSD: sl?.costUSD ?? usage?.costUSD,
     fiveHourPct: sl?.fiveHourPct,
     fiveHourResetsAt: sl?.fiveHourResetsAt,

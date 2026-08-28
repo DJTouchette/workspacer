@@ -358,6 +358,62 @@ describe('agents.list — statusLine fallback for managed providers', () => {
     ]);
   });
 
+  // ...WITH ONE EXCEPTION, and it is the whole "worker shows an absurd context
+  // meter" report. Claude Code's statusLine reports `contextWindowSize: 200000`
+  // even for a session spawned `opus[1m]`. A reported window the session has
+  // been SEEN to exceed is not provider truth, it is a contradiction, and
+  // publishing it put `{contextTokens: 356380, contextLimit: 200000}` — a 178%
+  // meter — on /m, /app, wks-tui and every federated peer. Numbers below are a
+  // live claudemon capture of one such worker on 2026-08-27.
+  it('drops a reported window this session has been observed to exceed', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c3',
+        cwd: '/proj',
+        ambientState: 'streaming',
+        usage: { model: 'claude-opus-5', contextTokens: 356_380, contextLimit: 1_000_000 },
+        statusLine: { contextWindowSize: 200_000 },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'c3', contextTokens: 356_380, contextLimit: 1_000_000 }),
+    ]);
+  });
+
+  it('keeps a reported window the session merely sits close to', () => {
+    // The 2% tolerance absorbs provider rounding — 201k against a reported 200k
+    // is not a contradiction, and demoting it would swap a good reading for a
+    // computed one on every nearly-full session in the fleet.
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c4',
+        cwd: '/proj',
+        ambientState: 'idle',
+        usage: { model: 'claude-opus-5', contextTokens: 201_000, contextLimit: 1_000_000 },
+        statusLine: { contextWindowSize: 200_000 },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'c4', contextLimit: 200_000 }),
+    ]);
+  });
+
+  it('still falls back to the reported window for a provider with no usage', () => {
+    // Managed providers (codex/opencode/pi) never populate `usage`; with no
+    // occupancy to contradict anything, the reported window stands.
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'c5',
+        cwd: '/proj',
+        ambientState: 'idle',
+        statusLine: { contextWindowSize: 272_000, contextUsedPct: 10 },
+      },
+    ] as never);
+    expect(call('agents.list')).toEqual([
+      expect.objectContaining({ sessionId: 'c5', contextLimit: 272_000 }),
+    ]);
+  });
+
   it('falls through to usage when the provider reported no window', () => {
     getAllSnapshots.mockReturnValue([
       {

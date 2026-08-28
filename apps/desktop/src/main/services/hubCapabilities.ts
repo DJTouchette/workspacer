@@ -10,6 +10,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
+import { DRIFT_TOLERANCE } from '../shared/modelContextWindows';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
@@ -243,6 +244,39 @@ export async function openExternalUrl(url: string): Promise<{ ok: boolean; error
   }
 }
 
+/** What `agents.list` needs of a snapshot to answer "what window is this on". */
+interface WindowBearingSnapshot {
+  usage?: { contextTokens?: number; contextLimit?: number | null } | null;
+  statusLine?: { contextWindowSize?: number } | null;
+}
+
+/**
+ * The context window to publish on the bus for one session.
+ *
+ * The ranking is the one `agents.list` has always used and the reason is in the
+ * `contextLimit` comment on the row: the PROVIDER-reported window outranks the
+ * desktop's own computed one, because preferring a computed value over a
+ * reported one is backwards on its face and is how two clients came to show
+ * different windows for the same session at the same instant.
+ *
+ * The single exception is a reported window this session has been observed to
+ * EXCEED. That is not provider truth, it is a contradiction — the same one
+ * `resolveContextWindow`'s drift alarm has always caught for the window it
+ * resolves, and which this row skipped by reading the raw statusLine field.
+ * Claude Code reports `context_window_size: 200000` even for a session spawned
+ * `opus[1m]`, so a live 1M worker holding 356,380 tokens published
+ * `{contextTokens: 356380, contextLimit: 200000}` to /m, /app, wks-tui and
+ * every federated peer: a 178% meter. Dropping the disproved claim lands on
+ * `usage.contextLimit`, which is the same resolver's answer once it has fallen
+ * through to the `[1m]` marker the occupancy does not contradict.
+ */
+export function busContextLimit(s: WindowBearingSnapshot): number {
+  const reported = s.statusLine?.contextWindowSize;
+  const held = s.usage?.contextTokens ?? 0;
+  const disproved = !!reported && held > reported * DRIFT_TOLERANCE;
+  return (disproved ? undefined : reported) ?? s.usage?.contextLimit ?? 0;
+}
+
 export function registerHubCapabilities(): void {
   // Adopted-hub note (adopt-don't-kill, see hubDaemon.ts): when the app adopts
   // a `workspacer serve` hub, its FULL-scope brain already provides most of
@@ -409,7 +443,20 @@ export function registerHubCapabilities(): void {
       // truthily (`u.contextLimit ? … : …`) and reads 0 as unknown, which is
       // what a null limit now means here. What matters is that it is never a
       // guessed 200_000.
-      contextLimit: s.statusLine?.contextWindowSize ?? s.usage?.contextLimit ?? 0,
+      //
+      // The order above is UNCHANGED — reported still wins. What is new is the
+      // one case where it must not: a reported window this session has been
+      // observed to EXCEED. That is not provider truth, it is a contradiction,
+      // and `resolveContextWindow`'s drift alarm has always said so about the
+      // window it resolves — but this line read the raw statusLine field and so
+      // sailed straight past the check. Claude Code reports
+      // `context_window_size: 200000` even for a session spawned `opus[1m]`, so
+      // a live worker holding 356380 tokens shipped `{contextTokens: 356380,
+      // contextLimit: 200000}` to /m, /app, wks-tui and every federated peer —
+      // a 178% meter. Dropping the disproved claim lands on `usage.contextLimit`,
+      // which is the same resolver's answer after the fall-through (1M, from the
+      // `[1m]` marker the occupancy does not contradict).
+      contextLimit: busContextLimit(s),
       costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.
