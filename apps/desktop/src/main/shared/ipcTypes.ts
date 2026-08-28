@@ -96,12 +96,12 @@ export interface RemoteTokenRecord {
   provides?: string[];
   /** Role of the session this token was minted for. Written at mint so the
    *  full-access grant reconciler (services/fullAccessGrants) can find exactly
-   *  the manager/supervisor session tokens when agents.fleetFullAccess /
-   *  supervisor.fullAccess flips — the facade re-reads the record per request,
+   *  the manager session tokens when agents.fleetFullAccess flips — the
+   *  facade re-reads the record per request,
    *  so updating yoloAllowed here applies the flip live, both directions.
    *  Absent on plain facade workers and remote pairings.
    *  TWIN: authtoken.Record.Role (preserved by the Go CLI's rewrites). */
-  role?: 'manager' | 'supervisor';
+  role?: 'manager';
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──
@@ -590,18 +590,6 @@ export interface AppConfig {
     /** How new Claude sessions run: classic PTY TUI, or headless stream-json
      *  (managed adapter, GUI only). Default 'pty'. */
     transport?: 'pty' | 'stream';
-  };
-  supervisor: {
-    model: string;
-    /** Per-harness memory of `model` (see configService / lib/supervisorModel). */
-    models?: Record<string, string>;
-    summarizerModel: string;
-    /** Per-harness memory of `summarizerModel` (see configService / lib/roleModels). */
-    summarizerModels?: Record<string, string>;
-    pollSeconds: number;
-    /** Supervisor full-access mode: the supervisor and the workers it spawns
-     *  run with permissions bypassed (see configService). */
-    fullAccess: boolean;
   };
   /** Superseded by `projects` — still read for backwards compatibility, never
    *  written. See renderer lib/projectRegistry. */

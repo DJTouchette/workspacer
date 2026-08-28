@@ -34,15 +34,17 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       transport: 'stream',
       resumeSessionId: 'sess-old',
     });
-    expect(opts.supervisor).toBeUndefined();
   });
 
-  it('re-passes the supervisor flag', () => {
+  it('revives a card saved under the retired supervisor role at the operator tier', () => {
+    // The role is gone, but the saved card still says `supervisor: true` with no
+    // toolScope of its own — the role implied one. Without this healing the
+    // respawn comes back with no workspacer tools at all, silently.
     const opts = buildRespawnSpawnOptions(
-      record({ provider: 'claude', supervisor: true, toolScope: 'operator' }),
+      record({ provider: 'claude', supervisor: true } as never),
       'sess-2',
     );
-    expect(opts.supervisor).toBe(true);
+    expect(opts.toolScope).toBe('operator');
     expect(opts.manager).toBeUndefined();
   });
 

@@ -13,7 +13,7 @@ vi.mock('os', async (importOriginal) => {
   return { ...actual, default: { ...actual, homedir }, homedir };
 });
 
-import { ensureSupervisorHome } from './supervisorSkill';
+import { ensureSupervisorHome } from '../lib/workspacerHome';
 
 /**
  * ~/.workspacer stopped being a scratch space the moment it started holding

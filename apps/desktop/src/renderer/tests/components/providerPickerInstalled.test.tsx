@@ -19,7 +19,7 @@ let configProvider: AgentProvider = 'claude';
 // AskPane is the only component here that reads config from context rather than
 // from a prop; the rest take it as one.
 vi.mock('../../src/hooks/useConfig', () => ({
-  useConfig: () => ({ config: { supervisor: { provider: configProvider } }, save: vi.fn() }),
+  useConfig: () => ({ config: { agents: { managerProvider: configProvider } }, save: vi.fn() }),
 }));
 
 /**
@@ -146,7 +146,7 @@ describe('Spawn dialog provider cards', () => {
   });
 });
 
-describe('Settings -> Supervisor harness picker', () => {
+describe('Settings -> Fleet Manager harness picker', () => {
   const renderSupervisor = (config: Partial<Config>) =>
     render(
       <SupervisorSection
@@ -155,24 +155,23 @@ describe('Settings -> Supervisor harness picker', () => {
       />,
     );
 
-  it('drops uninstalled harnesses from the supervisor picker', async () => {
+  it('drops uninstalled harnesses from the manager picker', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_AND_CODEX_ONLY);
-    renderSupervisor({ supervisor: { provider: 'claude' } } as Partial<Config>);
+    renderSupervisor({ agents: { managerProvider: 'claude' } } as Partial<Config>);
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'OpenCode' })).toBeNull());
-    // Two pickers in this section (supervisor + fleet manager) both offer it.
     expect(screen.getAllByRole('button', { name: 'Claude' }).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: 'GitHub Copilot' })).toBeNull();
   });
 
   it('keeps the CONFIGURED harness listed and warns when its CLI is gone', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_ONLY);
-    renderSupervisor({ supervisor: { provider: 'opencode' } } as Partial<Config>);
+    renderSupervisor({ agents: { managerProvider: 'codex' } } as Partial<Config>);
 
     // Same philosophy as the stale-model warning right below it in this
     // section: say what is wrong instead of quietly changing what is shown.
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'OpenCode (not installed)' })).toBeTruthy(),
+      expect(screen.getByRole('button', { name: 'Codex (not installed)' })).toBeTruthy(),
     );
     expect(screen.getByText(/was not found on this machine/)).toBeTruthy();
   });
@@ -217,9 +216,9 @@ describe('Handoff target picker', () => {
 
 describe('Ask the Fleet harness picker', () => {
   const renderAsk = () =>
-    render(<AskPane agents={[]} spawnSupervisor={vi.fn()} onJumpToAgent={vi.fn()} />);
+    render(<AskPane agents={[]} spawnAskAgent={vi.fn()} onJumpToAgent={vi.fn()} />);
 
-  it('offers only installed harnesses to run the supervisor on', async () => {
+  it('offers only installed harnesses to run the ask agent on', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_AND_CODEX_ONLY);
     renderAsk();
 
@@ -239,8 +238,8 @@ describe('Ask the Fleet harness picker', () => {
     expect(screen.queryByRole('button', { name: /^Claude$/ })).toBeNull();
   });
 
-  it('keeps the configured supervisor harness listed and flagged when it is gone', async () => {
-    // config.supervisor.provider is what "Ask the Fleet" will actually launch;
+  it('keeps the configured fleet harness listed and flagged when it is gone', async () => {
+    // agents.managerProvider is what "Ask the Fleet" will actually launch;
     // silently offering something else would spawn a harness the user never
     // chose. Flag it instead.
     configProvider = 'opencode';

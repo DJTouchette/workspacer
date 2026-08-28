@@ -71,7 +71,7 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     // …and the full-access grant (only the true case is ever stored).
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
     // …and the session-role tag the grant reconciler keys on.
-    ...((r.role === 'manager' || r.role === 'supervisor') && { role: r.role }),
+    ...(r.role === 'manager' && { role: r.role }),
     // …and the provider tier's REGISTER grant. Same preservation rule as the
     // four above, and the one with the sharpest failure: this record belongs to
     // a remote node, the desktop never writes it, and readTokens→mint rewrites
@@ -167,15 +167,15 @@ export function mintSessionFacadeToken(
 }
 
 /** Session roles whose tokens carry a config-governed full-access grant. */
-export type SessionTokenRole = 'manager' | 'supervisor';
+export type SessionTokenRole = 'manager';
 
 /**
  * Bring every role-tagged session token's full-access grant in line with the
- * config that governs it (manager: agents.fleetFullAccess / per-project yolo;
- * supervisor: supervisor.fullAccess — resolved by the caller, this just
- * applies). The MCP facade re-reads the token record per request, so this IS
- * the live apply: flipping a flag re-grants or REVOKES running managers'/
- * supervisors' dispatch bypass immediately, no respawn. Only session tokens
+ * config that governs it (manager: agents.fleetFullAccess / per-project yolo —
+ * resolved by the caller, this just applies). The MCP facade re-reads the token
+ * record per request, so this IS the live apply: flipping a flag re-grants or
+ * REVOKES a running manager's dispatch bypass immediately, no respawn. Only
+ * session tokens
  * with a role are touched — remote pairings and plain facade workers never
  * carried the grant vocabulary and are left alone. Returns one entry per record
  * that actually CHANGED — a live session whose dispatch bypass just appeared or

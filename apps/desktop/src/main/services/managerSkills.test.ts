@@ -113,15 +113,20 @@ describe('installManagerSkills', () => {
     expect(handoff).toContain('Terminate');
   });
 
-  it('sweeps the superseded /bearings and /stow dirs so no orphans linger', () => {
+  it('sweeps the superseded /bearings, /stow and /supervise dirs so no orphans linger', () => {
     // Simulate an earlier build having installed the old-named skills.
-    for (const old of ['bearings', 'stow']) {
+    // /supervise is the retired fleet-supervisor role: its SKILL.md is already
+    // on every existing user's disk and nothing else would ever remove it, so
+    // without this sweep a stale /supervise keeps appearing in the skill picker
+    // and half-works by talking straight to claudemon on :7891.
+    for (const old of ['bearings', 'stow', 'supervise']) {
       fs.mkdirSync(skillDir(old), { recursive: true });
       fs.writeFileSync(skillFile(old), 'old', 'utf8');
     }
     installManagerSkills();
     expect(fs.existsSync(skillDir('bearings'))).toBe(false);
     expect(fs.existsSync(skillDir('stow'))).toBe(false);
+    expect(fs.existsSync(skillDir('supervise'))).toBe(false);
     expect(fs.existsSync(skillFile('standup'))).toBe(true);
     expect(fs.existsSync(skillFile('handoff'))).toBe(true);
   });

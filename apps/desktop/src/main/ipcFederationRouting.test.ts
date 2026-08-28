@@ -95,7 +95,7 @@ vi.mock('./services/agentProviders', () => ({
 }));
 vi.mock('./services/liveEffort', () => ({ applyLiveEffort: vi.fn(async () => ({ ok: true })) }));
 vi.mock('./services/logFile', () => ({ logsDir: vi.fn(() => '/logs') }));
-vi.mock('./services/supervisorSkill', () => ({ ensureSupervisorHome: vi.fn() }));
+vi.mock('./lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn() }));
 vi.mock('./services/chromeCookieImport', () => ({
   importChromeCookies: vi.fn(),
   importChromeCookiesViaCDP: vi.fn(),

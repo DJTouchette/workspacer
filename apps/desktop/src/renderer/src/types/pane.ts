@@ -64,7 +64,7 @@ export interface PaneConfig {
    *  used when spawning an agent from a library prompt/skill. */
   initialPrompt?: string;
   /** Ask panes only: the AgentWorkspace.id this pane is scoped to (limits the
-   *  supervisor question to that agent's context). Undefined = fleet-wide. */
+   *  fleet question to that agent's context). Undefined = fleet-wide. */
   scopeAgentId?: string;
   /** Editor panes only: absolute path of the file being edited. */
   filePath?: string;
@@ -178,15 +178,10 @@ export interface AgentWorkspace {
   toolScope?: 'view' | 'triage' | 'operator';
   /** Plugin ids whose facade tools this agent may use; re-applied on respawn. */
   pluginTools?: string[];
-  /** Spawned as a supervisor (facade + /supervise loop). Re-passed on respawn
-   *  so the revived session re-mints its facade token with the same role —
-   *  without it a respawned supervisor came back as a plain facade worker
-   *  (no config-resolved full-access grant). */
-  supervisor?: boolean;
   /** Spawned as THE Fleet Manager (nudge-eligible parent, profile-dispatch
-   *  grants, manager skills). Re-passed on respawn for the same reason as
-   *  `supervisor`: the re-minted token must carry the manager grants
-   *  (profilesAllowed + the config-resolved yolo grant), not come back bare. */
+   *  grants, manager skills). Re-passed on respawn so the re-minted token
+   *  carries the manager grants (profilesAllowed + the config-resolved yolo
+   *  grant) instead of coming back bare. */
   manager?: boolean;
   /** Manager full-access hint recorded at spawn. Advisory on respawn — the
    *  token's actual yolo grant is config-resolved at mint in main
@@ -201,11 +196,8 @@ export interface AgentWorkspace {
    *  starting blank. Doubles as claude's transcript uuid (we pin `--session-id`
    *  at spawn). Cleared once a fresh, non-resumed session takes over. */
   lastSessionId?: string;
-  /** Marks a supervisor agent — spawned with the workspacer MCP facade so it can
-   *  observe and coordinate the other agents. Rendered nested under its parent. */
-  kind?: 'supervisor';
-  /** For supervisors: the AgentWorkspace.id of the agent this one supervises.
-   *  Used to render it nested in the sidebar. Undefined = fleet-level supervisor.
+  /** The AgentWorkspace.id of the agent this one is nested under in the
+   *  sidebar.
    *  If this card later disappears (the manager was explicitly removed, or a
    *  crashed manager was never adopted here at all) `parentId` on any child that
    *  already resolved it goes dangling — SideBar's `rootOf` falls back to

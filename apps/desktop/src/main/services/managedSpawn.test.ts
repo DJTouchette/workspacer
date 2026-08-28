@@ -75,7 +75,7 @@ vi.mock('./agentProviders', () => ({
   isAgentBinaryInstalled: vi.fn(() => true),
 }));
 
-// Mutable per-test config — reset in beforeEach, mutated by the supervisor
+// Mutable per-test config — reset in beforeEach, mutated by the role
 // full-access tests (the flag is config-resolved inside spawnManagedAgent).
 let mockConfig: Record<string, unknown>;
 vi.mock('./configService', () => ({ configService: { getConfig: () => mockConfig } }));
@@ -107,11 +107,9 @@ vi.mock('./claudemonDaemon', () => ({
   claudeSettingsOverlayEnabled: () => false,
 }));
 
-const installSupervisorSkill = vi.fn();
 const installManagerSkills = vi.fn();
-vi.mock('./supervisorSkill', () => ({
+vi.mock('../lib/workspacerHome', () => ({
   ensureSupervisorHome: vi.fn(() => '/home/super'),
-  installSupervisorSkill: (...a: unknown[]) => installSupervisorSkill(...a),
 }));
 vi.mock('./managerSkills', () => ({
   installManagerSkills: (...a: unknown[]) => installManagerSkills(...a),
@@ -399,7 +397,7 @@ describe('spawnManagedAgent — facade tool tiers', () => {
   });
 
   it('pi gets instructions but no token (it has no MCP client to spend it on)', async () => {
-    await spawnManagedAgent({ provider: 'pi', cwd: '/proj', supervisor: true });
+    await spawnManagedAgent({ provider: 'pi', cwd: '/proj', toolScope: 'operator' });
 
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
     expect(lastManaged().instructions).toBe('FACADE');
@@ -452,81 +450,6 @@ describe('spawnManagedAgent — manager grants (config-resolved, stream path)', 
       toolScope: 'operator',
     });
     expect(mintSessionFacadeToken.mock.calls[1][4]).toBe(true);
-  });
-});
-
-describe('spawnManagedAgent — supervisor full access (config supervisor.fullAccess)', () => {
-  it('setting on: a claude-stream supervisor spawns bypassed, with the yolo token grant and the full-access role note', async () => {
-    mockConfig = { supervisor: { fullAccess: true } };
-
-    await spawnManagedAgent({
-      provider: 'claude',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-
-    expect(lastManaged().yolo).toBe(true);
-    expect(lastManaged().permissionMode).toBe('bypassPermissions');
-    expect(lastMeta().settings.permissionMode).toBe('bypassPermissions');
-    // 5th mint arg = yoloAllowed — the grant the hub verifies before stamping
-    // yoloGranted on the supervisor's own spawn_agent calls, so its workers'
-    // skipPermissions requests are honored instead of clamped.
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
-    // …and the injected role instructions tell it to actually request that.
-    expect(managedFacadeInstructions).toHaveBeenCalledWith(
-      expect.objectContaining({
-        supervisor: true,
-        scope: 'operator',
-        sessionId: expect.any(String),
-        fullAccess: true,
-      }),
-    );
-  });
-
-  it('setting on: a managed-provider supervisor (opencode) runs yolo too', async () => {
-    mockConfig = { supervisor: { fullAccess: true } };
-
-    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', supervisor: true });
-
-    expect(lastManaged().yolo).toBe(true);
-    expect(lastMeta().settings.permissionMode).toBe('yolo');
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
-  });
-
-  it('setting off: the supervisor prompts as today — no bypass, no yolo grant', async () => {
-    await spawnManagedAgent({
-      provider: 'claude',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-
-    expect(lastManaged().yolo).toBe(false);
-    expect(lastManaged().permissionMode).toBe('default');
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
-    expect(managedFacadeInstructions).toHaveBeenCalledWith(
-      expect.objectContaining({
-        supervisor: true,
-        scope: 'operator',
-        sessionId: expect.any(String),
-        fullAccess: false,
-      }),
-    );
-  });
-
-  it('setting on leaves non-supervisor spawns untouched', async () => {
-    mockConfig = { supervisor: { fullAccess: true } };
-
-    await spawnManagedAgent({
-      provider: 'claude',
-      transport: 'stream',
-      cwd: '/proj',
-      toolScope: 'view',
-    });
-
-    expect(lastManaged().yolo).toBe(false);
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 });
 
@@ -794,77 +717,14 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
  * claude-only `'sonnet'` default was right only by accident. Naming the harness
  * is what makes a per-harness summarizer model mean anything.
  */
-describe('spawnManagedAgent — supervisor digest workers follow their supervisor’s harness', () => {
-  it('names the supervisor’s OWN provider and that harness’s summarizer model', async () => {
-    mockConfig = {
-      supervisor: {
-        provider: 'codex',
-        summarizerModel: 'sonnet',
-        summarizerModels: { codex: 'gpt-5' },
-        pollSeconds: 30,
-      },
-    };
-    await spawnManagedAgent({
-      provider: 'codex',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
-    expect(opts.summarizerProvider).toBe('codex');
-    expect(opts.summarizerModel).toBe('gpt-5');
-    expect(opts.pollSeconds).toBe(30);
-  });
-
-  it("withholds the claude-shaped 'sonnet' from a codex supervisor rather than forwarding it", async () => {
-    mockConfig = { supervisor: { provider: 'codex', summarizerModel: 'sonnet' } };
-    await spawnManagedAgent({
-      provider: 'codex',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
-    expect(opts.summarizerProvider).toBe('codex');
-    // Undefined = "omit model, let codex default" — the only value valid here.
-    expect(opts.summarizerModel).toBeUndefined();
-  });
-
-  it("keeps 'sonnet' for a claude-stream supervisor, where it is servable", async () => {
-    mockConfig = { supervisor: { summarizerModel: 'sonnet' } };
-    await spawnManagedAgent({
-      provider: 'claude',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
-    expect(opts.summarizerProvider).toBe('claude');
-    expect(opts.summarizerModel).toBe('sonnet');
-  });
-});
 
 /**
- * Reasoning effort, per role and per harness. This is the path a codex
- * supervisor and a (chat-first) Fleet Manager actually spawn on, so a setting
+ * Reasoning effort, per role and per harness. This is the path a (chat-first)
+ * Fleet Manager actually spawns on, so a setting
  * that never reached here would be a picker writing config nobody reads — the
  * exact shape of the model bug above, one field over.
  */
 describe('spawnManagedAgent — role effort comes from config when the caller names none', () => {
-  it('applies supervisor.efforts for the harness the supervisor runs on', async () => {
-    mockConfig = { supervisor: { efforts: { codex: 'xhigh', claude: 'high' } } };
-    await spawnManagedAgent({
-      provider: 'codex',
-      transport: 'stream',
-      cwd: '/proj',
-      supervisor: true,
-    });
-    expect(lastManaged().effort).toBe('xhigh');
-    // …and it is RECORDED, so the session pill names the level it runs at
-    // rather than showing the harness default it is not using.
-    expect((lastMeta().settings as Payload).effort).toBe('xhigh');
-  });
-
   it('applies agents.managerEfforts for a manager spawn', async () => {
     mockConfig = { agents: { managerEfforts: { codex: 'medium' } } };
     await spawnManagedAgent({
@@ -877,19 +737,19 @@ describe('spawnManagedAgent — role effort comes from config when the caller na
   });
 
   it('an explicitly requested effort wins over the configured one', async () => {
-    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    mockConfig = { agents: { managerEfforts: { codex: 'xhigh' } } };
     await spawnManagedAgent({
       provider: 'codex',
       transport: 'stream',
       cwd: '/proj',
-      supervisor: true,
+      manager: true,
       effort: 'low',
     });
     expect(lastManaged().effort).toBe('low');
   });
 
   it('leaves a plain worker on the harness default', async () => {
-    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    mockConfig = { agents: { managerEfforts: { codex: 'xhigh' } } };
     await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
     expect(lastManaged().effort).toBeUndefined();
   });
@@ -897,12 +757,12 @@ describe('spawnManagedAgent — role effort comes from config when the caller na
   it('does not hand one harness’s level to another', async () => {
     // codex's 'xhigh' is not a claude level; claude has no entry here, so the
     // spawn must fall through to claude's own default.
-    mockConfig = { supervisor: { efforts: { codex: 'xhigh' } } };
+    mockConfig = { agents: { managerEfforts: { codex: 'xhigh' } } };
     await spawnManagedAgent({
       provider: 'claude',
       transport: 'stream',
       cwd: '/proj',
-      supervisor: true,
+      manager: true,
     });
     expect(lastManaged().effort).toBeUndefined();
   });

@@ -213,7 +213,7 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     });
   });
 
-  it('on→off REVOKES live manager/supervisor grants; off→on grants them — other tokens untouched', () => {
+  it('on→off REVOKES a live manager grant; off→on grants it — other tokens untouched', () => {
     const mgr = mintSessionFacadeToken(
       'mgr-1',
       'operator',
@@ -222,30 +222,18 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
       true,
       'manager',
     );
-    const sup = mintSessionFacadeToken(
-      'sup-1',
-      'operator',
-      undefined,
-      undefined,
-      true,
-      'supervisor',
-    );
     const worker = mintSessionFacadeToken('wkr-1', 'view');
     const pairing = getOrCreateRemoteToken('operator', 'Laptop');
 
-    // Both flags flipped OFF: both role tokens lose the grant, one write. The
+    // The flag flipped OFF: the role token loses the grant, one write. The
     // return names each session that MOVED — that set is what the desktop
     // announces to the user, so it must carry the session id and direction,
     // not just a count.
-    expect(reconcileSessionFacadeGrants({ manager: false, supervisor: false })).toEqual(
-      expect.arrayContaining([
-        { sessionId: 'mgr-1', role: 'manager', yoloAllowed: false },
-        { sessionId: 'sup-1', role: 'supervisor', yoloAllowed: false },
-      ]),
-    );
+    expect(reconcileSessionFacadeGrants({ manager: false })).toEqual([
+      { sessionId: 'mgr-1', role: 'manager', yoloAllowed: false },
+    ]);
     let raw = rawTokens();
     expect(raw.find((r) => r.token === mgr.token)).not.toHaveProperty('yoloAllowed');
-    expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
     // …and the manager keeps its OTHER grants (profiles) + role.
     expect(raw.find((r) => r.token === mgr.token)).toMatchObject({
       role: 'manager',
@@ -257,17 +245,16 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
       expect.objectContaining({ label: 'Laptop' }),
     );
 
-    // Manager flag back ON: only the manager token regains the grant.
-    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toEqual([
+    // Manager flag back ON: the manager token regains the grant.
+    expect(reconcileSessionFacadeGrants({ manager: true })).toEqual([
       { sessionId: 'mgr-1', role: 'manager', yoloAllowed: true },
     ]);
     raw = rawTokens();
     expect(raw.find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
-    expect(raw.find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
     expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
 
     // Already in line → no write, nothing to announce.
-    expect(reconcileSessionFacadeGrants({ manager: true, supervisor: false })).toEqual([]);
+    expect(reconcileSessionFacadeGrants({ manager: true })).toEqual([]);
   });
 
   it('reconcileSessionFacadeToken stamps the role onto a legacy token and sets the grant both ways', () => {

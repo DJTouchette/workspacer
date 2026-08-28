@@ -33,7 +33,6 @@ vi.mock('./agentNotifier', () => ({
 import { mintSessionFacadeToken } from './remoteTokens';
 import {
   managerFullAccessFromConfig,
-  supervisorFullAccessFromConfig,
   reconcileFullAccessGrants,
   startFullAccessGrantSync,
 } from './fullAccessGrants';
@@ -66,15 +65,6 @@ describe('full-access grant formulas (single source for mint + reconcile)', () =
     h.config = { agents: { fleetFullAccess: false }, projects: { '/a': { yolo: false } } };
     expect(managerFullAccessFromConfig()).toBe(false);
   });
-
-  it('supervisor: supervisor.fullAccess only', () => {
-    expect(supervisorFullAccessFromConfig()).toBe(false);
-    h.config = { supervisor: { fullAccess: true } };
-    expect(supervisorFullAccessFromConfig()).toBe(true);
-    // The fleet flag does not bleed into the supervisor grant (or vice versa).
-    h.config = { agents: { fleetFullAccess: true } };
-    expect(supervisorFullAccessFromConfig()).toBe(false);
-  });
 });
 
 describe('config flip → live token update', () => {
@@ -87,27 +77,17 @@ describe('config flip → live token update', () => {
       true,
       'manager',
     );
-    const sup = mintSessionFacadeToken(
-      'sup-1',
-      'operator',
-      undefined,
-      undefined,
-      true,
-      'supervisor',
-    );
     const worker = mintSessionFacadeToken('wkr-1', 'view');
 
-    // Flags now OFF (revocation must be live): both role tokens lose the grant.
+    // Flag now OFF (revocation must be live): the role token loses the grant.
     h.config = {};
-    expect(reconcileFullAccessGrants()).toBe(2);
+    expect(reconcileFullAccessGrants()).toBe(1);
     expect(rawTokens().find((r) => r.token === mgr.token)).not.toHaveProperty('yoloAllowed');
-    expect(rawTokens().find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
 
     // Manager flag back ON (off→on is live too); the worker stays untouched.
     h.config = { agents: { fleetFullAccess: true } };
     expect(reconcileFullAccessGrants()).toBe(1);
     expect(rawTokens().find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
-    expect(rawTokens().find((r) => r.token === sup.token)).not.toHaveProperty('yoloAllowed');
     expect(rawTokens().find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
 
     // In line → nothing to do.

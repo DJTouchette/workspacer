@@ -139,7 +139,6 @@ export interface ElectronAPI {
     resumeSessionId?: string;
     cols?: number;
     rows?: number;
-    supervisor?: boolean;
     /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
     manager?: boolean;
     /** Manager full-access hint; the token's yolo grant is config-resolved in
@@ -429,9 +428,9 @@ export interface ElectronAPI {
   remoteTokensList?: () => Promise<RemoteTokenRecord[]>;
   remoteTokenGetOrCreate?: (scope: RemoteTokenScope, label?: string) => Promise<RemoteTokenRecord>;
   remoteTokenRevoke?: (token: string) => Promise<RemoteTokenRecord>;
-  /** Re-align a live manager/supervisor session token's full-access grant with
+  /** Re-align a live manager session token's full-access grant with
    *  current config (used when reusing a running Fleet Manager). Desktop-only. */
-  sessionGrantReconcile?: (sessionId: string, role: 'manager' | 'supervisor') => Promise<boolean>;
+  sessionGrantReconcile?: (sessionId: string, role: 'manager') => Promise<boolean>;
   /** Persist/clear the "connect to remote server" target (client mode). Takes
    *  effect on relaunch — pair with appRelaunch(). Desktop-only. */
   setRemoteServer?: (
@@ -512,7 +511,7 @@ export interface ElectronAPI {
 
   // App info
   getCwd: () => Promise<string>;
-  /** The dedicated supervisor home (~/.workspacer), created on demand. */
+  /** The app's own home (~/.workspacer), created on demand. */
   getSupervisorHome: () => Promise<string>;
 
   // Dialog

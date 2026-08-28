@@ -567,19 +567,18 @@ type spawnParams struct {
 	Rows            int    `json:"rows"`
 	Label           string `json:"label"`
 	ParentSessionID string `json:"parentSessionId"`
-	Supervisor      bool   `json:"supervisor"`
 	// Legacy desktop spelling: request the Workspacer MCP facade with the
 	// default operator scope. Prefer ToolScope for new callers.
 	MCPFacade bool `json:"mcpFacade"`
 	// ToolScope requests a session-scoped facade token at a specific tier
 	// (view/triage/operator). The token is minted locally from config, never from
-	// caller-supplied grants; supervisor always resolves to operator.
+	// caller-supplied grants.
 	ToolScope string `json:"toolScope"`
 	// PluginTools carries plugin tool grants recorded onto the session token.
 	// These are inert unless the facade is requested by ToolScope/MCPFacade.
 	PluginTools []string `json:"pluginTools"`
-	// Manager is the Fleet Manager flag: a nudge-eligible parent WITHOUT the
-	// /supervise watch loop. Headless it means exactly one thing — the session
+	// Manager is the Fleet Manager flag: a nudge-eligible parent. Headless it
+	// means exactly one thing — the session
 	// is recorded as a wake target (spawnMeta.IsSupervisor, surfaced as the
 	// snapshot's isSupervisor), which is what the worker-finished nudge router
 	// and every client's crew nesting key on. Dropping it is the bug 8cabb4a5
@@ -639,14 +638,13 @@ type sessionParam struct {
 	SessionID string `json:"sessionId"`
 }
 
-// isWakeTarget is the one thing Supervisor and Manager mean in common headless:
-// the session is nudge-eligible, so it is recorded with IsSupervisor and shows
-// up as the snapshot's isSupervisor. A manager IS a supervisor for wake
-// purposes — the desktop spells the identical rule `opts.supervisor ||
-// opts.manager` at both of managedSpawn.ts's setSpawnMeta calls. Kept as one
-// method so the two spawn legs below cannot drift the way the desktop's
-// hand-copied option literals did.
-func (p spawnParams) isWakeTarget() bool { return p.Supervisor || p.Manager }
+// isWakeTarget is what Manager means headless: the session is nudge-eligible,
+// so it is recorded with IsSupervisor and shows up as the snapshot's
+// isSupervisor. The manager IS the wake target — the desktop spells the
+// identical rule `opts.manager` at both of managedSpawn.ts's setSpawnMeta
+// calls. Kept as one method so the two spawn legs below cannot drift the way
+// the desktop's hand-copied option literals did.
+func (p spawnParams) isWakeTarget() bool { return p.Manager }
 
 func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p spawnParams
@@ -996,14 +994,8 @@ func (r *registry) roleProviderDefault(p spawnParams) string {
 	var configured string
 	switch {
 	case p.Manager:
-		// A manager IS a supervisor for wake purposes (isWakeTarget), so a
-		// request carrying both is a manager — and the manager's own setting is
-		// the one the user set for it.
 		agents, _ := cfg["agents"].(map[string]any)
 		configured = str(agents["managerProvider"])
-	case p.Supervisor:
-		sup, _ := cfg["supervisor"].(map[string]any)
-		configured = str(sup["provider"])
 	}
 	switch strings.TrimSpace(configured) {
 	// Listed rather than accepted verbatim: a hand-edited config naming a

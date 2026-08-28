@@ -120,7 +120,7 @@ vi.mock('./gitService', () => ({
   push: vi.fn(),
 }));
 vi.mock('./terminalShare', () => ({}));
-vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn() }));
+vi.mock('../lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn() }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
 

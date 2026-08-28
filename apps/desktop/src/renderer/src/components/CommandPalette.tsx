@@ -181,7 +181,7 @@ interface CommandPaletteProps {
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
-  /** Open the Ask pane (fleet supervisor question interface). */
+  /** Open the Ask pane (fleet question interface). */
   onOpenAskPane?: () => void;
   /** Open the Workspacer Guide pane (tour & how-do-I questions, live agent). */
   onOpenGuide?: () => void;
@@ -327,7 +327,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     add(
       'cmd-ask-fleet',
       'Ask the Fleet',
-      'Pose a question to a supervisor agent',
+      'Pose a question about the fleet',
       <Brain size={16} strokeWidth={1.75} />,
       onOpenAskPane,
     );

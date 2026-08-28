@@ -544,7 +544,7 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 	}
 	for _, section := range []string{
 		"ui", "terminal", "browser", "panes", "keybindings", "notifications",
-		"editor", "claude", "agents", "supervisor", "directories", "scripts",
+		"editor", "claude", "agents", "directories", "scripts",
 		"updates", "apps",
 	} {
 		if _, ok := def[section]; !ok {

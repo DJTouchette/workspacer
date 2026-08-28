@@ -71,22 +71,6 @@ export function resolveManagerModel(provider: AgentProvider): string | undefined
 }
 
 /**
- * Model for the supervisor's transcript-DIGEST workers
- * (`supervisor.summarizerModels`, legacy `supervisor.summarizerModel`).
- *
- * `provider` is the harness the digest worker will RUN on, which is now the
- * supervisor's own (see mcpConfig's `summarizerProvider`) — previously those
- * workers were spawned through the facade with no provider named at all, so a
- * codex supervisor dispatched Claude summarizers and the claude-only default
- * looked correct by accident.
- */
-export function resolveSummarizerModel(provider: AgentProvider): string | undefined {
-  const sup = configService.getConfig().supervisor as
-    { summarizerModel?: string; summarizerModels?: Record<string, string> } | undefined;
-  return perHarnessModel(provider, sup?.summarizerModels, sup?.summarizerModel);
-}
-
-/**
  * Model for the AUTO-TITLE one-shot (`agents.autoTitle.models`, legacy
  * `agents.autoTitle.model`), for the harness the titled agent itself runs on.
  *
@@ -103,7 +87,7 @@ export function resolveTitleModel(provider: AgentProvider): string | undefined {
 
 /**
  * Reasoning EFFORT for an internal role, per harness
- * (`supervisor.efforts` / `agents.managerEfforts`).
+ * (`agents.managerEfforts`).
  *
  * Same per-harness shape as the model maps and for the same reason: the effort
  * ladders are not portable either (claude's is low|medium|high|max, codex's is
@@ -113,9 +97,9 @@ export function resolveTitleModel(provider: AgentProvider): string | undefined {
  * through: the ladders come from live catalogs (providerCaps), and refusing an
  * unrecognized id would discard a deliberate choice on a newer CLI.
  *
- * Blank = the harness's own default, which is what these roles ran on before:
- * a supervisor's effort was un-settable, so a codex supervisor coordinated the
- * whole fleet at whatever `codex` defaults to with no way to raise it.
+ * Blank = the harness's own default, which is what the manager ran on before:
+ * its effort was un-settable, so a codex manager coordinated the whole fleet at
+ * whatever `codex` defaults to with no way to raise it.
  */
 function perHarnessEffort(
   provider: AgentProvider,
@@ -123,13 +107,6 @@ function perHarnessEffort(
 ): string | undefined {
   const chosen = map?.[provider];
   return typeof chosen === 'string' && chosen.trim() ? chosen.trim() : undefined;
-}
-
-/** Effort for a SUPERVISOR spawn on `provider` (`supervisor.efforts`). */
-export function resolveSupervisorEffort(provider: AgentProvider): string | undefined {
-  const sup = configService.getConfig().supervisor as
-    { efforts?: Record<string, string> } | undefined;
-  return perHarnessEffort(provider, sup?.efforts);
 }
 
 /** Effort for a FLEET MANAGER spawn on `provider` (`agents.managerEfforts`). */

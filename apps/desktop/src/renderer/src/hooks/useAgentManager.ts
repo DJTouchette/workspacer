@@ -93,7 +93,7 @@ function withAgentContext(
   }
 }
 
-/** Derive a short display name for a supervisor from its seed question.
+/** Derive a short display name for an ask agent from its seed question.
  *  Produces e.g. "🧭 why is the build failing" (truncated to ~40 chars). */
 export function deriveSupervisorName(question: string): string {
   const words = question.trim().split(/\s+/).slice(0, 5).join(' ');
@@ -245,11 +245,9 @@ export function useAgentManager() {
       resumeSessionId?: string;
       /** Spawn into a fresh git worktree of `cwd` (isolated branch) instead of `cwd`. */
       worktree?: boolean;
-      /** When true the spawned session receives the workspacer MCP facade. */
-      supervisor?: boolean;
       /** Fleet Manager: routes worker-finished/blocked nudges to this session
-       *  (isSupervisor spawn meta) WITHOUT the /supervise loop — its role
-       *  rides the kickoff message instead. Implies toolScope operator. */
+       *  (isSupervisor spawn meta) — its role rides the kickoff message.
+       *  Implies toolScope operator. */
       manager?: boolean;
       /** Manager only: grant its token full-access dispatch (config
        *  agents.fleetFullAccess) so its workers run with permissions bypassed. */
@@ -263,9 +261,7 @@ export function useAgentManager() {
        *  user never has to press Enter — use only where clicking the trigger IS
        *  the consent to send (e.g. a guide tour chip, a manager kickoff). */
       kickoffMessage?: string;
-      /** Marks this workspace as a supervisor. */
-      kind?: 'supervisor';
-      /** For supervisors: the id of the agent being supervised. */
+      /** The id of the agent this one nests under in the sidebar. */
       parentId?: string;
       /** Federation: spawn on this peer hub instead of locally. Plumbed to the
        *  spawn IPC as an extra field (main may ignore it until the bus route
@@ -321,7 +317,6 @@ export function useAgentManager() {
           toolScope: opts.toolScope,
           pluginTools: opts.pluginTools,
           resumeSessionId: opts.resumeSessionId,
-          supervisor: opts.supervisor,
           manager: opts.manager,
           fleetFullAccess: opts.fleetFullAccess,
           targetHub: opts.targetHub,
@@ -364,9 +359,8 @@ export function useAgentManager() {
         toolScope: opts.toolScope,
         pluginTools: opts.pluginTools,
         // Persist the role flags so a respawn re-passes them — without these a
-        // revived manager/supervisor re-minted its facade token with NO grants
+        // revived manager re-minted its facade token with NO grants
         // (the respawn-drops-grants regression; see lib/respawnOptions.ts).
-        supervisor: opts.supervisor,
         manager: opts.manager,
         fleetFullAccess: opts.fleetFullAccess,
         sessionId,
@@ -374,7 +368,6 @@ export function useAgentManager() {
         // card so pane gating / pill disabling apply before the first federated
         // snapshot arrives to confirm it.
         hub: opts.targetHub || undefined,
-        kind: opts.kind,
         parentId: opts.parentId,
         tabs: agentTabs,
         activeTabId: agentActiveTab,
@@ -413,7 +406,7 @@ export function useAgentManager() {
       let sessionId: string | undefined;
       try {
         // Everything the record persisted rides along — including the
-        // manager/supervisor role flags, so a revived Fleet Manager re-mints
+        // manager role flags, so a revived Fleet Manager re-mints
         // its facade token with its grants intact (lib/respawnOptions.ts).
         sessionId = await window.electronAPI.spawnClaude(
           buildRespawnSpawnOptions(agent, resumeSessionId),
@@ -602,13 +595,14 @@ export function useAgentManager() {
   );
 
   /**
-   * Convenience wrapper to spawn a supervisor agent: derives a name from the
-   * question, picks a sensible cwd, and calls `spawnAgent` with supervisor=true.
-   * With no question it spawns a plain "fleet agent" — same supervisor wiring,
-   * staged with a generic kick to start its watch loop instead of a question.
+   * Convenience wrapper behind "Ask the fleet": spawns a plain agent holding the
+   * workspacer MCP facade at the 'triage' tier (observe the fleet + navigate the
+   * UI, no spawn or host access) and hands it the question. There is no fleet
+   * role attached — the Fleet Manager is the role; this is a one-shot observer
+   * that answers a question about the agents you already have.
    * Returns the new agent id.
    */
-  const spawnSupervisor = useCallback(
+  const spawnAskAgent = useCallback(
     async (opts: {
       question?: string;
       parentId?: string;
@@ -616,18 +610,14 @@ export function useAgentManager() {
       provider?: AgentProvider;
     }): Promise<string> => {
       const question = opts.question?.trim() || undefined;
-      const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet supervisor';
-      // Claude runs the installed /supervise skill; managed providers have no
-      // skills, so they get a plain-language opener (their facade instructions
-      // already carry the supervisor role).
-      const kick =
-        (opts.provider ?? 'claude') === 'claude'
-          ? '/supervise'
-          : 'Start watching the fleet: call list_agents, then report what each agent is doing.';
-      // A supervisor watches the whole fleet, so unless a cwd is given explicitly
-      // it opens in its dedicated home (~/.workspacer) rather than inheriting some
-      // agent's repo. Resolve it here so the card's cwd matches where the session
-      // actually opens. parentId is kept only for UI nesting.
+      const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet question';
+      // With no question it still needs an opener, or it sits there with tools
+      // and nothing to do.
+      const kick = 'Inspect the fleet: call list_agents, then report what each agent is doing.';
+      // This agent is about the whole fleet, not one repo, so unless a cwd is
+      // given explicitly it opens in the app's own home (~/.workspacer) rather
+      // than inheriting some agent's checkout. Resolve it here so the card's cwd
+      // matches where the session actually opens. parentId is UI nesting only.
       let cwd = opts.cwd;
       if (!cwd) {
         try {
@@ -640,9 +630,8 @@ export function useAgentManager() {
         cwd: cwd || '',
         name,
         provider: opts.provider,
-        kind: 'supervisor',
         parentId: opts.parentId,
-        supervisor: true,
+        toolScope: 'triage',
         initialPrompt: question ?? kick,
       });
     },
@@ -659,7 +648,7 @@ export function useAgentManager() {
    */
   const spawnGuide = useCallback(
     async (question: string): Promise<string> => {
-      // Same dedicated home as supervisors (~/.workspacer) — the guide is about
+      // The app's own home (~/.workspacer) — the guide is about
       // the app, not any one repo, so it shouldn't inherit an agent's cwd.
       let cwd = '';
       try {
@@ -1002,7 +991,7 @@ export function useAgentManager() {
     // card corruption. While the id is guarded, its "death" is scripted.
     if (isRespawning(sessionId)) return;
     setAgents((prev) => {
-      // A nested worker (parentId set — a Fleet Manager's / supervisor's
+      // A nested worker (parentId set — a Fleet Manager's
       // dispatched agent) is EPHEMERAL: when its session ends, drop the card
       // entirely instead of leaving a resumable "Stopped" tombstone. The
       // manager already relayed its result via the [fleet] wake, and its
@@ -1787,7 +1776,7 @@ export function useAgentManager() {
     activeAgent,
     setActiveAgentId,
     spawnAgent,
-    spawnSupervisor,
+    spawnAskAgent,
     spawnGuide,
     spawnFleetManager,
     adoptAgent,

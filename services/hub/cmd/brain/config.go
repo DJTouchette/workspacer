@@ -156,7 +156,7 @@ func (c *configService) loadFromDisk() map[string]any {
 			// is the every-boot case whenever the mount is wrong, and the brain
 			// comes up healthy on a configuration nobody chose: no projects,
 			// agents.binaries empty (so provider resolution silently falls back
-			// to PATH), supervisor.fullAccess off, budgets and keybindings gone.
+			// to PATH), agents.fleetFullAccess off, budgets and keybindings gone.
 			//
 			// WARN AND CONTINUE rather than refuse, unlike `workspacer serve`'s
 			// remote-token. The brain is a SUPERVISED CHILD of the hub: exiting
@@ -175,7 +175,7 @@ func (c *configService) loadFromDisk() map[string]any {
 			if statelost.Suspected(configDir(), "config.yaml") {
 				log.Printf("brain: STATE LOSS: %s is missing, but %s still holds the rest of "+
 					"this install. Reseeding factory defaults — projects, agents.binaries, "+
-					"transport, supervisor.fullAccess, budgets and keybindings are all back to "+
+					"transport, agents.fleetFullAccess, budgets and keybindings are all back to "+
 					"their shipped values, and this process will run on them. If the file is "+
 					"recoverable (a backup, or a volume that failed to mount), restore it and "+
 					"restart before anything writes over the seed.",

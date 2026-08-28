@@ -210,13 +210,6 @@ export const CONFIG_DEFAULTS = {
       model: 'haiku',
     },
   },
-  supervisor: {
-    provider: 'claude',
-    model: '',
-    summarizerModel: 'sonnet',
-    pollSeconds: 45,
-    fullAccess: false,
-  },
   directories: {
     recent: [],
     favourites: [],

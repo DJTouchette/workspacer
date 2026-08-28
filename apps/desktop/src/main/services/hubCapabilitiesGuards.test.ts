@@ -168,7 +168,7 @@ vi.mock('./gitService', () => ({
   push: vi.fn(async () => 'pushed'),
 }));
 vi.mock('./terminalShare', () => ({}));
-vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
+vi.mock('../lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 // Recorded, not just stubbed: replay.open's confinement is one line, and what
 // that line is worth depends on WHICH string reaches the worktree cutter.
 const replayOpenCalls = vi.hoisted(() => [] as string[]);

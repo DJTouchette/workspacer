@@ -3,15 +3,15 @@
  *
  * The grant lives on the per-session token record (tokens.json), but the
  * POLICY lives in config: agents.fleetFullAccess / per-project `yolo` for the
- * Fleet Manager, supervisor.fullAccess for supervisors. This module is the one
+ * Fleet Manager. This module is the one
  * place that formula is spelled, shared by
  *   - the mint paths (claudeSpawn / managedSpawn) — a fresh or RESPAWNED
- *     manager/supervisor mints with the grant config says it should have, so a
+ *     manager mints with the grant config says it should have, so a
  *     flag flipped while the session was stopped never resurrects (or
  *     withholds) a grant via a stale caller flag, and
  *   - the live reconciler below — the MCP facade re-reads the token record per
  *     request, so rewriting yoloAllowed when the flag flips applies the change
- *     to RUNNING managers/supervisors immediately, in both directions
+ *     to RUNNING managers immediately, in both directions
  *     (granting and revoking), no respawn needed.
  */
 import { agentNotifier } from './agentNotifier';
@@ -35,17 +35,9 @@ export function managerFullAccessFromConfig(): boolean {
   return Object.values(cfg.projects ?? {}).some((p) => p?.yolo === true);
 }
 
-/** Whether a supervisor's token should carry the full-access grant. */
-export function supervisorFullAccessFromConfig(): boolean {
-  return configService.getConfig().supervisor?.fullAccess === true;
-}
-
 /** The grant each session role should hold under current config. */
 export function desiredSessionGrants(): Record<SessionTokenRole, boolean> {
-  return {
-    manager: managerFullAccessFromConfig(),
-    supervisor: supervisorFullAccessFromConfig(),
-  };
+  return { manager: managerFullAccessFromConfig() };
 }
 
 /**
@@ -69,7 +61,6 @@ export function reconcileFullAccessGrants(announce = false): number {
 
 const ROLE_LABEL: Record<SessionTokenRole, string> = {
   manager: 'Fleet Manager',
-  supervisor: 'Supervisor',
 };
 
 /**

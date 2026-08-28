@@ -332,41 +332,6 @@ export interface Config {
       models?: Partial<Record<AgentProvider, string>>;
     };
   };
-  /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
-  supervisor?: SupervisorConfig;
-}
-
-export interface SupervisorConfig {
-  /** Coordinator model for supervisor sessions ('' = the harness default).
-   *  Only meaningful for `provider` below — a model id is not portable across
-   *  harnesses (`fable` means nothing to codex). */
-  model?: string;
-  /** Per-harness memory of `model`, so flipping `provider` in Settings doesn't
-   *  destroy the other harness's saved choice. The settings picker writes both
-   *  this and `model`; main resolves them in lib/supervisorModel. */
-  models?: Partial<Record<AgentProvider, string>>;
-  /** Legacy single model the supervisor spawns for transcript digests. Ships
-   *  `'sonnet'`, a claude id; superseded by `summarizerModels`. */
-  summarizerModel?: string;
-  /** Per-harness digest-worker models, keyed by provider. The digest worker now
-   *  runs on the supervisor's OWN harness, so this has to be per-harness too. */
-  summarizerModels?: Partial<Record<AgentProvider, string>>;
-  /** Reasoning effort for the supervisor's own session, keyed by harness.
-   *  Per-harness because the ladders are not portable between CLIs; absent =
-   *  the harness's own default. Resolved by main's lib/roleModels. */
-  efforts?: Partial<Record<AgentProvider, string>>;
-  /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
-  pollSeconds?: number;
-  /** Coding-agent harness the supervisor runs on. undefined ⇒ 'claude'.
-   *  Claude, Codex, Copilot and OpenCode all attach the workspacer MCP facade
-   *  (the supervisor's fleet-coordination tools); Pi ships no MCP client at
-   *  all, so it is not offered. Honoured by main (lib/roleProviders) on every
-   *  spawn path, so a supervisor started anywhere lands on this harness. */
-  provider?: AgentProvider;
-  /** Full access: the supervisor runs with permissions bypassed and the
-   *  summarizer workers it spawns inherit the bypass (its facade token carries
-   *  the yolo grant). The supervisor twin of agents.fleetFullAccess. */
-  fullAccess?: boolean;
 }
 
 /**

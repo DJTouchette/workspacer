@@ -1,12 +1,12 @@
 /**
  * Which harnesses the two FLEET ROLES may run on.
  *
- * Both roles are picked in two places — Settings (the standing default) and the
- * launcher you actually start them from ("Ask the Fleet" for the supervisor) —
- * and the two lists disagreed: Settings deliberately excluded Pi with a reason
- * written out below, while the Ask launcher offered it, so the one picker a user
- * touches at launch time could start a supervisor the settings pane says is
- * impossible. One list, imported by both.
+ * Picked in two places — Settings (the standing default) and the launcher you
+ * actually start an agent from ("Ask the Fleet") — and the two lists disagreed:
+ * Settings deliberately excluded Pi with a reason written out below, while the
+ * Ask launcher offered it, so the one picker a user touches at launch time could
+ * start a harness the settings pane says is impossible. One list, imported by
+ * both.
  *
  * These are role-eligibility lists, not availability: what a machine actually
  * has installed is layered on top by lib/providerAvailability.
