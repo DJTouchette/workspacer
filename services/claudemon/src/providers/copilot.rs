@@ -1392,10 +1392,7 @@ fn handle_event(
         // own db. Skipped when translation already produced a Plan, so a future
         // CLI that starts carrying the list on the wire wins over the file.
         "session.todos_changed" => {
-            if !updates
-                .iter()
-                .any(|u| matches!(u, AgentUpdate::Plan(_)))
-            {
+            if !updates.iter().any(|u| matches!(u, AgentUpdate::Plan(_))) {
                 if let Some(plan) = session_todos(session_id) {
                     updates.push(AgentUpdate::Plan(plan));
                 }
@@ -1984,8 +1981,7 @@ mod tests {
     fn the_capture_opens_and_closes_a_row_for_each_subagent() {
         let (updates, _) = replay_subagent_capture();
         let subs = subagent_updates(&updates);
-        let ids: std::collections::BTreeSet<&str> =
-            subs.iter().map(|s| s.id.as_str()).collect();
+        let ids: std::collections::BTreeSet<&str> = subs.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids.len(), 2, "the run dispatched two agents");
 
         for id in ids {
@@ -1996,7 +1992,10 @@ mod tests {
                 .expect("row opens");
             assert_eq!(opened.agent_type.as_deref(), Some("explore"));
             assert!(
-                opened.tool_use_id.as_deref().is_some_and(|t| t.starts_with("toolu_")),
+                opened
+                    .tool_use_id
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("toolu_")),
                 "the row must carry the `task` call id that spawned it, so the GUI \
                  can nest it under its own tool card"
             );
@@ -2023,7 +2022,10 @@ mod tests {
                     && !e["type"].as_str().unwrap_or("").starts_with("subagent.")
             })
             .count();
-        assert!(child_frames >= 10, "fixture carries the children's own frames");
+        assert!(
+            child_frames >= 10,
+            "fixture carries the children's own frames"
+        );
 
         // A subagent's dispatch prompt arrives as `user.message` on this stream.
         // Rendering it would show a message the user never typed.
@@ -2045,7 +2047,10 @@ mod tests {
             !parent_tools.contains(&"view"),
             "a subagent's tool call must not render as the parent's: got {parent_tools:?}"
         );
-        assert!(parent_tools.contains(&"task"), "the dispatch itself is the parent's");
+        assert!(
+            parent_tools.contains(&"task"),
+            "the dispatch itself is the parent's"
+        );
         // The children's reports must not be spliced into the parent's text.
         let rendered: String = updates
             .iter()
@@ -2061,7 +2066,8 @@ mod tests {
         // But its activity still shows up where it belongs — on its row.
         let subs = subagent_updates(&updates);
         assert!(
-            subs.iter().any(|s| s.last_tool_name.as_deref() == Some("view")),
+            subs.iter()
+                .any(|s| s.last_tool_name.as_deref() == Some("view")),
             "the child's tool call should light up its row instead"
         );
     }
@@ -2103,7 +2109,10 @@ mod tests {
         let filled = json!({ "type": "session.todos_changed", "data": {
             "todos": [{ "title": "a", "status": "in_progress" }]
         }});
-        assert!(matches!(translate(&filled).as_slice(), [AgentUpdate::Plan(_)]));
+        assert!(matches!(
+            translate(&filled).as_slice(),
+            [AgentUpdate::Plan(_)]
+        ));
     }
 
     #[test]
@@ -2112,7 +2121,10 @@ mod tests {
         // in the row order the table is read in.
         let rows = vec![
             ("Creating hello.sh".to_string(), "done".to_string()),
-            ("Making it executable".to_string(), "in_progress".to_string()),
+            (
+                "Making it executable".to_string(),
+                "in_progress".to_string(),
+            ),
             ("Running it".to_string(), "pending".to_string()),
             ("Publishing it".to_string(), "blocked".to_string()),
         ];

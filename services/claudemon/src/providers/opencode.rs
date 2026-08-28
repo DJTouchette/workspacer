@@ -28,7 +28,9 @@ use tokio::sync::mpsc;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, PendingOwner, PendingWrite, SessionMode};
+use crate::session::state::{
+    Pending, PendingOwner, PendingWrite, SessionMode, SubagentStatus, SubagentUpdate,
+};
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 use crate::wrapper::pty;
 
@@ -76,9 +78,144 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     Ok(models)
 }
 
+/// The opencode session an event belongs to, when it says.
+///
+/// `/event` is a SERVER-wide stream, not a session one: every session alive on
+/// that `opencode serve` shares it, and a subagent is a whole session of its
+/// own (the `task` tool creates a child, which is why the TUI has
+/// `sessionParent()` / `childNext()` navigation). So the id has to be read
+/// before an event is folded into anybody's conversation.
+///
+/// The three shapes are opencode's own, read off the shipped binary rather than
+/// guessed: `session.*` carries `properties.sessionID`, `message.updated`
+/// carries it both there and on `properties.info.sessionID`, and
+/// `message.part.updated` carries it only on `properties.part.sessionID`.
+/// opencode's own headless client filters the same way
+/// (`if (L.properties.sessionID !== j.sessionID) return`).
+fn event_session_id(event: &Value) -> Option<&str> {
+    let props = event.get("properties")?;
+    props
+        .get("sessionID")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            ["info", "part", "message"].iter().find_map(|k| {
+                props
+                    .get(*k)
+                    .and_then(|v| v.get("sessionID"))
+                    .and_then(Value::as_str)
+            })
+        })
+        .or_else(|| {
+            // `session.*` events carry the session OBJECT, whose own `id` is
+            // the session id. Read only for those types: a bare `properties.id`
+            // means something else entirely elsewhere — on `permission.updated`
+            // it is the permission's id, and treating that as a foreign session
+            // would silently swallow every approval this adapter exists to
+            // surface.
+            event
+                .get("type")
+                .and_then(Value::as_str)
+                .filter(|t| t.starts_with("session."))
+                .and_then(|_| props.get("info").or(Some(props)))
+                .and_then(|v| v.get("id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// [`translate`], but told which session is OURS.
+///
+/// An event stamped with a DIFFERENT session id is a subagent's own traffic and
+/// must never reach the parent's conversation — its assistant text would render
+/// as the parent's answer and its tool calls as the parent's work. (Copilot's
+/// adapter shuts the same door for the same reason; see `copilot::translate`.)
+/// The child still gets to move its row: [`child_activity`] turns its parts
+/// into "what that agent is doing now".
+///
+/// An event with NO session id at all is kept, deliberately. This filter is a
+/// safety net over a stream that "carries 80+ event types and evolves quickly",
+/// and dropping the unstamped ones would mean a shape we simply haven't seen
+/// goes silently missing — the failure the rest of this adapter is written to
+/// avoid.
+pub fn translate_scoped(event: &Value, own_session: Option<&str>) -> Vec<AgentUpdate> {
+    if let (Some(mine), Some(theirs)) = (own_session, event_session_id(event)) {
+        if mine != theirs {
+            return child_activity(event, theirs);
+        }
+    }
+    translate(event)
+}
+
+/// What a subagent session's own event contributes to the PARENT's snapshot:
+/// a line on that agent's row, and nothing else.
+///
+/// Keyed by the child's session id, which is not the id the `task` tool call
+/// produced a row under — so this is additive detail on a second row rather
+/// than an update to the first. That is honest (both really are the same piece
+/// of delegated work, but nothing on the wire we've verified links them), and
+/// it is the reason `subagentDrillIn` is false for opencode: we can see the
+/// child working without being able to show what it did.
+fn child_activity(event: &Value, child_session: &str) -> Vec<AgentUpdate> {
+    let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
+    // The two ways a child's turn ends, and the row's only chances to close. A
+    // row that never closes is what holds a parent busy forever (6d795cc2).
+    //
+    // The error is kept as the row's last word rather than raised as the
+    // parent's: routing it to `AgentUpdate::Error` would put a message the
+    // PARENT never hit on the parent's card, and a session that is still
+    // working fine would read as failed.
+    if ty == "session.idle" || ty == "session.error" {
+        return vec![AgentUpdate::Subagent(SubagentUpdate {
+            id: child_session.to_string(),
+            agent_type: None,
+            status: SubagentStatus::Complete,
+            description: None,
+            tool_use_id: None,
+            model: None,
+            last_tool_name: (ty == "session.error").then(|| "error".to_string()),
+            last_tool_summary: event
+                .get("properties")
+                .and_then(|p| p.get("error"))
+                .and_then(|e| e.get("message").or_else(|| e.get("data")))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })];
+    }
+    let props = event.get("properties");
+    let part = props.and_then(|p| p.get("part"));
+    // Only a tool part re-asserts Running, and only because a tool cannot start
+    // after its session went idle. Text/usage parts are dropped: re-opening a
+    // closed row on a late frame is exactly the flap that bug fixed.
+    let Some(tool) = part
+        .filter(|p| p.get("type").and_then(Value::as_str) == Some("tool"))
+        .and_then(|p| p.get("tool").and_then(Value::as_str))
+    else {
+        return Vec::new();
+    };
+    vec![AgentUpdate::Subagent(SubagentUpdate {
+        id: child_session.to_string(),
+        // The child session's message names the agent that owns it.
+        agent_type: props
+            .and_then(|p| p.get("info"))
+            .and_then(|i| i.get("agent"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        status: SubagentStatus::Running,
+        description: None,
+        tool_use_id: None,
+        model: None,
+        last_tool_name: Some(tool.to_string()),
+        last_tool_summary: None,
+    })]
+}
+
 /// Translate one OpenCode SSE event into zero or more typed updates. Pure and
 /// total: unknown event types and missing fields yield an empty/partial result
 /// rather than an error.
+///
+/// Session-agnostic: callers driving a real session want
+/// [`translate_scoped`], which also keeps other sessions' traffic out.
 pub fn translate(event: &Value) -> Vec<AgentUpdate> {
     let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
     let props = event.get("properties").cloned().unwrap_or(Value::Null);
@@ -190,6 +327,35 @@ fn translate_part(part: &Value, props: &Value, out: &mut Vec<AgentUpdate>) {
                 .or_else(|| part.get("input"))
                 .cloned()
                 .unwrap_or(Value::Null);
+
+            // OpenCode's plan. `todowrite` (registered as `tool/todowrite`, and
+            // the only todo tool it ships) takes `{ todos: [{ content, status
+            // }] }` — the shape [`super::plan_from_value`] already reads, which
+            // is why this is three lines and not a parser.
+            //
+            // It replaces the tool card rather than joining it, the same
+            // treatment Claude's TodoWrite gets: the plan IS the render, and a
+            // second "todowrite(…)" row beside it is the same list twice.
+            if name == "todowrite" {
+                if let Some(plan) = super::plan_from_value(&input) {
+                    out.push(AgentUpdate::Plan(plan));
+                    return;
+                }
+            }
+
+            // OpenCode's subagents. `task` dispatches one — its call carries
+            // `subagent_type` and `description` (read off the shipped binary's
+            // own renderer for this tool). The child then runs as a separate
+            // opencode session on the same server; see [`child_activity`].
+            //
+            // The row is emitted ALONGSIDE the tool card, not instead of it:
+            // unlike the plan, the `task` call is a real action of the parent's
+            // and belongs in its timeline.
+            if name == "task" {
+                if let Some(update) = subagent_from_task(&id, &input, part) {
+                    out.push(AgentUpdate::Subagent(update));
+                }
+            }
             out.push(AgentUpdate::ToolUse { id, name, input });
         }
         "step-finish" | "step_finish" => {
@@ -199,6 +365,56 @@ fn translate_part(part: &Value, props: &Value, out: &mut Vec<AgentUpdate>) {
         }
         _ => {}
     }
+}
+
+/// A `task` tool part → the subagent row it dispatched.
+///
+/// Keyed by the tool call id, which is what nests the row under its own tool
+/// card in the GUI. Status comes from the part's own state — opencode's tool
+/// states are `pending` / `running` / `completed` / `error` (its
+/// `ToolStatePending`/`Running`/`Completed`/`Error` schema); only the first two
+/// are live, and anything else closes the row. `pending` counts as live because
+/// a call that has been made but not yet run is still work the parent is
+/// waiting on, and because a row that opens late can look like it never opened.
+fn subagent_from_task(id: &str, input: &Value, part: &Value) -> Option<SubagentUpdate> {
+    if id.is_empty() {
+        return None;
+    }
+    let state = part.get("state");
+    let status = match state
+        .and_then(|s| s.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("running")
+    {
+        "pending" | "running" => SubagentStatus::Running,
+        _ => SubagentStatus::Complete,
+    };
+    Some(SubagentUpdate {
+        id: id.to_string(),
+        agent_type: input
+            .get("subagent_type")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        status,
+        description: input
+            .get("description")
+            .and_then(Value::as_str)
+            // The state's `title` is opencode's own fallback label for the call
+            // in exactly this spot, so it is the right second choice.
+            .or_else(|| state.and_then(|s| s.get("title")).and_then(Value::as_str))
+            .map(str::to_owned),
+        tool_use_id: Some(id.to_string()),
+        model: None,
+        last_tool_name: Some("task".to_string()),
+        last_tool_summary: (status == SubagentStatus::Complete)
+            .then(|| {
+                state
+                    .and_then(|s| s.get("error").or_else(|| s.get("output")))
+                    .and_then(Value::as_str)
+                    .map(|s| s.chars().take(160).collect::<String>())
+            })
+            .flatten(),
+    })
 }
 
 /// Extract a `Usage` update from any object carrying `tokens` / `cost` /
@@ -616,7 +832,7 @@ async fn run_session(
                         let data = data.trim();
                         if data.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(data) else { continue };
-                        let mut updates = translate(&value);
+                        let mut updates = translate_scoped(&value, Some(&oc_id));
                         if updates.is_empty() { continue; }
                         // Pull any permission request out: YOLO auto-allows it and
                         // keeps working; otherwise we surface it and remember the id
@@ -775,6 +991,7 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) -> anyhow::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::state::PlanStatus;
     use serde_json::json;
 
     #[test]
@@ -1142,5 +1359,267 @@ mod tests {
         assert!(model_ref("bare-model").is_none());
         assert!(model_ref("/x").is_none());
         assert!(model_ref("x/").is_none());
+    }
+
+    // ── plan: the `todowrite` tool IS the plan ─────────────────────────────
+
+    /// A `message.part.updated` carrying one tool call, in the shape opencode
+    /// actually sends (`properties.part` with `state.input`).
+    fn tool_part(session: &str, call_id: &str, tool: &str, state: Value) -> Value {
+        json!({
+            "type": "message.part.updated",
+            "properties": { "part": {
+                "type": "tool",
+                "sessionID": session,
+                "callID": call_id,
+                "tool": tool,
+                "state": state,
+            }}
+        })
+    }
+
+    #[test]
+    fn todowrite_is_a_plan_and_not_a_tool_card() {
+        // `tool/todowrite` is the only todo tool opencode ships (v1.18.25) and
+        // its input is `{ todos: [{ content, status }] }` — verified against the
+        // shipped binary's own schema and its TUI renderer, which reads
+        // `frame.input.todos[].content`.
+        let ev = tool_part(
+            "ses_parent",
+            "call_1",
+            "todowrite",
+            json!({ "status": "completed", "input": { "todos": [
+                { "content": "Read the adapter", "status": "completed" },
+                { "content": "Wire the plan", "status": "in_progress" },
+                { "content": "Test it", "status": "pending" },
+            ]}}),
+        );
+        let updates = translate(&ev);
+        let plan = updates
+            .iter()
+            .find_map(|u| match u {
+                AgentUpdate::Plan(p) => Some(p),
+                _ => None,
+            })
+            .expect("the todo list is the session's plan");
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps[0].content, "Read the adapter");
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+        assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+        assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+        // The plan REPLACES the tool card: rendering both prints the same list
+        // twice, once as a checklist and once as raw tool arguments.
+        assert!(
+            !updates
+                .iter()
+                .any(|u| matches!(u, AgentUpdate::ToolUse { .. })),
+            "todowrite must not also render as a tool call"
+        );
+    }
+
+    #[test]
+    fn an_empty_todowrite_still_renders_as_a_tool_call() {
+        // Degradation, not silence: if the input is missing or unreadable there
+        // is no plan to show, and swallowing the call as well would lose the
+        // fact that the agent did anything at all.
+        let ev = tool_part(
+            "ses_parent",
+            "call_1",
+            "todowrite",
+            json!({ "status": "running", "input": {} }),
+        );
+        let updates = translate(&ev);
+        assert!(!updates.iter().any(|u| matches!(u, AgentUpdate::Plan(_))));
+        assert!(updates
+            .iter()
+            .any(|u| matches!(u, AgentUpdate::ToolUse { name, .. } if name == "todowrite")));
+    }
+
+    // ── subagents: the `task` tool and the child session it creates ────────
+
+    fn subagent_updates(updates: &[AgentUpdate]) -> Vec<&SubagentUpdate> {
+        updates
+            .iter()
+            .filter_map(|u| match u {
+                AgentUpdate::Subagent(s) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_task_call_opens_a_subagent_row_and_its_own_tool_card() {
+        let running = tool_part(
+            "ses_parent",
+            "call_task_1",
+            "task",
+            json!({ "status": "running", "title": "explore the adapter", "input": {
+                "subagent_type": "explore",
+                "description": "Map the opencode adapter",
+            }}),
+        );
+        let updates = translate(&running);
+        let subs = subagent_updates(&updates);
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].id, "call_task_1");
+        assert_eq!(subs[0].status, SubagentStatus::Running);
+        assert_eq!(subs[0].agent_type.as_deref(), Some("explore"));
+        assert_eq!(
+            subs[0].description.as_deref(),
+            Some("Map the opencode adapter")
+        );
+        // The tool-call id is what nests the row under its own card in the GUI.
+        assert_eq!(subs[0].tool_use_id.as_deref(), Some("call_task_1"));
+        // Unlike todowrite, the dispatch is a real action of the PARENT's and
+        // keeps its place in the timeline.
+        assert!(updates
+            .iter()
+            .any(|u| matches!(u, AgentUpdate::ToolUse { name, .. } if name == "task")));
+    }
+
+    #[test]
+    fn a_task_row_closes_on_every_terminal_state() {
+        // opencode's tool states are pending/running/completed/error. A row
+        // that never closes holds its parent busy forever, so anything that is
+        // not one of the two live states must close it.
+        for (state, expected) in [
+            ("pending", SubagentStatus::Running),
+            ("running", SubagentStatus::Running),
+            ("completed", SubagentStatus::Complete),
+            ("error", SubagentStatus::Complete),
+        ] {
+            let ev = tool_part(
+                "ses_parent",
+                "call_task_1",
+                "task",
+                json!({ "status": state, "input": { "subagent_type": "explore" } }),
+            );
+            let subs = translate(&ev);
+            let subs = subagent_updates(&subs);
+            assert_eq!(subs.len(), 1, "state {state} must still move the row");
+            assert_eq!(subs[0].status, expected, "state {state}");
+        }
+    }
+
+    // ── the server-wide stream: another session's traffic is not ours ──────
+
+    #[test]
+    fn event_session_id_reads_every_shape_opencode_sends() {
+        assert_eq!(
+            event_session_id(
+                &json!({ "type": "session.idle", "properties": { "sessionID": "s1" }})
+            ),
+            Some("s1")
+        );
+        assert_eq!(
+            event_session_id(&json!({ "type": "message.updated", "properties": {
+                "info": { "sessionID": "s1", "id": "msg_1" }
+            }})),
+            Some("s1")
+        );
+        assert_eq!(
+            event_session_id(&tool_part("s1", "c1", "bash", json!({}))),
+            Some("s1")
+        );
+        // `session.updated` carries the session OBJECT; its own id is the id.
+        assert_eq!(
+            event_session_id(&json!({ "type": "session.updated", "properties": {
+                "info": { "id": "s1", "parentID": "s0" }
+            }})),
+            Some("s1")
+        );
+        // A bare `properties.id` on a NON-session event is not a session id.
+        // On `permission.updated` it is the permission's — reading it here would
+        // make every approval look like another session's and drop it.
+        assert_eq!(
+            event_session_id(&json!({ "type": "permission.updated", "properties": {
+                "id": "perm_1", "title": "bash"
+            }})),
+            None
+        );
+    }
+
+    #[test]
+    fn a_child_sessions_traffic_never_becomes_the_parents_conversation() {
+        // `/event` is server-wide and a subagent is a session of its own, so the
+        // child's answer and the child's tool calls both arrive on this stream.
+        let child_text = json!({
+            "type": "message.part.updated",
+            "properties": { "part": {
+                "type": "text", "sessionID": "ses_child", "text": "Here is my report.",
+            }}
+        });
+        assert!(
+            translate_scoped(&child_text, Some("ses_parent")).is_empty(),
+            "a subagent's report must not render as the parent's answer"
+        );
+        // Unscoped, it WOULD have — which is what this guard exists to stop.
+        assert!(translate(&child_text)
+            .iter()
+            .any(|u| matches!(u, AgentUpdate::AssistantText(_))));
+
+        // The child's tool call lights up its row instead of the parent's log.
+        let child_tool = tool_part("ses_child", "c9", "read", json!({ "status": "running" }));
+        let updates = translate_scoped(&child_tool, Some("ses_parent"));
+        assert!(!updates
+            .iter()
+            .any(|u| matches!(u, AgentUpdate::ToolUse { .. })));
+        let subs = subagent_updates(&updates);
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].id, "ses_child");
+        assert_eq!(subs[0].status, SubagentStatus::Running);
+        assert_eq!(subs[0].last_tool_name.as_deref(), Some("read"));
+
+        // The child going idle closes its row — and must NOT be read as the
+        // parent going idle, which would end the parent's turn mid-flight.
+        let child_idle =
+            json!({ "type": "session.idle", "properties": { "sessionID": "ses_child" }});
+        let updates = translate_scoped(&child_idle, Some("ses_parent"));
+        assert!(!updates.iter().any(|u| matches!(u, AgentUpdate::Idle)));
+        assert_eq!(
+            subagent_updates(&updates)[0].status,
+            SubagentStatus::Complete
+        );
+
+        // A child that FAILS also closes, and its message stays on its own row.
+        // Raised as the parent's error it would mark a healthy session failed
+        // with a message it never hit.
+        let child_err = json!({ "type": "session.error", "properties": {
+            "sessionID": "ses_child", "error": { "message": "child blew up" }
+        }});
+        let updates = translate_scoped(&child_err, Some("ses_parent"));
+        assert!(!updates.iter().any(|u| matches!(u, AgentUpdate::Error(_))));
+        let row = subagent_updates(&updates)[0];
+        assert_eq!(row.status, SubagentStatus::Complete);
+        assert_eq!(row.last_tool_summary.as_deref(), Some("child blew up"));
+        // The PARENT's own error is untouched by any of this.
+        let mine = json!({ "type": "session.error", "properties": {
+            "sessionID": "ses_parent", "error": { "message": "mine" }
+        }});
+        assert_eq!(
+            translate_scoped(&mine, Some("ses_parent")),
+            vec![AgentUpdate::Error("mine".to_string())]
+        );
+    }
+
+    #[test]
+    fn our_own_and_unstamped_events_pass_through_untouched() {
+        // The parent's own events are unaffected by the filter.
+        let mine = json!({ "type": "session.idle", "properties": { "sessionID": "ses_parent" }});
+        assert_eq!(
+            translate_scoped(&mine, Some("ses_parent")),
+            vec![AgentUpdate::Idle]
+        );
+        // And an event that names no session at all is KEPT: the filter is a
+        // safety net over a stream that evolves quickly, and a shape we have
+        // not seen must not go silently missing.
+        let unstamped = json!({ "type": "session.error", "properties": {
+            "error": { "message": "boom" }
+        }});
+        assert_eq!(
+            translate_scoped(&unstamped, Some("ses_parent")),
+            translate(&unstamped)
+        );
+        assert!(!translate_scoped(&unstamped, Some("ses_parent")).is_empty());
     }
 }
