@@ -522,18 +522,18 @@ describe('agents.list — statusLine fallback for managed providers', () => {
 
   // The desktop row LAGGED the brain's on both of these: the brain answers
   // agents.list with the same enriched snapshots as sessions.snapshots, so it
-  // has served label and isSupervisor since enrichSnapshot (cmd/brain
+  // has served label and isWakeTarget since enrichSnapshot (cmd/brain
   // parity_test.go pins them, because /m titles and nests the fleet on them).
   // Convergence, not a widening — sessions.snapshots is in the SAME viewMethods
   // allowlist and already ships both through its full-snapshot spread.
-  it('carries label and isSupervisor, matching the brain’s row', () => {
+  it('carries label and isWakeTarget, matching the brain’s row', () => {
     getAllSnapshots.mockReturnValue([
       {
         sessionId: 'mgr',
         cwd: '/work',
         ambientState: 'idle',
         label: 'Fleet Manager',
-        isSupervisor: true,
+        isWakeTarget: true,
       },
       { sessionId: 'w1', cwd: '/proj', ambientState: 'idle', label: 'alpha: parser' },
       { sessionId: 'bare', cwd: '/proj', ambientState: 'idle' },
@@ -541,9 +541,9 @@ describe('agents.list — statusLine fallback for managed providers', () => {
     const rows = call('agents.list') as {
       sessionId: string;
       label: string | null;
-      isSupervisor: boolean;
+      isWakeTarget: boolean;
     }[];
-    expect(rows.map((r) => [r.sessionId, r.label, r.isSupervisor])).toEqual([
+    expect(rows.map((r) => [r.sessionId, r.label, r.isWakeTarget])).toEqual([
       ['mgr', 'Fleet Manager', true],
       ['w1', 'alpha: parser', false],
       // Explicit null / false, never absent — the same rule parentSessionId
@@ -1729,7 +1729,7 @@ describe('agents.reparent', () => {
   // report a successful adoption of workers that had just been silenced.
   it('surfaces the store’s refusal verbatim', () => {
     reparentChildren.mockImplementation(() => {
-      throw new Error('reparent_children: new-mgr is not a manager (isSupervisor)');
+      throw new Error('reparent_children: new-mgr is not a manager (isWakeTarget)');
     });
     expect(() =>
       call('agents.reparent', { fromSessionId: 'old-mgr', toSessionId: 'new-mgr' }),

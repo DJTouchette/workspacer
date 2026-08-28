@@ -5,7 +5,7 @@ package main
 // agents.list matches the desktop's named/nested view.
 //
 // Two sources, mirroring the app + TUI:
-//   - spawn metadata (label / parentSessionId / isSupervisor) recorded when the
+//   - spawn metadata (label / parentSessionId / isWakeTarget) recorded when the
 //     brain spawns an agent — like claudeSessionStore.setSpawnMeta;
 //   - persisted cwd→name renames from ~/.config/workspacer/tui-names.json — the
 //     same file the TUI writes, keyed by cwd so a rename survives respawns.
@@ -22,7 +22,7 @@ import (
 type spawnMeta struct {
 	Label           string
 	ParentSessionID string
-	IsSupervisor    bool
+	IsWakeTarget    bool
 
 	// Live switches this brain confirmed with the daemon (livecontrol.go). No
 	// hook, status line or init frame reports the switch itself, so without
@@ -94,7 +94,7 @@ func namesByCwd() map[string]string {
 	return out
 }
 
-// enrichSnapshot overlays label / parentSessionId / isSupervisor onto a raw
+// enrichSnapshot overlays label / parentSessionId / isWakeTarget onto a raw
 // claudemon snapshot. A spawn label wins over a cwd rename.
 func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 	var m map[string]any
@@ -112,8 +112,8 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 			if sm.ParentSessionID != "" {
 				m["parentSessionId"] = sm.ParentSessionID
 			}
-			if sm.IsSupervisor {
-				m["isSupervisor"] = true
+			if sm.IsWakeTarget {
+				m["isWakeTarget"] = true
 			}
 			// The desktop field names the composer pills read
 			// (ComposerControls.tsx: `snapshot?.livePermissionMode ??
@@ -219,7 +219,7 @@ func toolInputOf(raw any) any {
 }
 
 // enrichAndCompat composes enrichSnapshot + compatSnapshot in the one order
-// callers need: label/parentSessionId/isSupervisor overlaid before the
+// callers need: label/parentSessionId/isWakeTarget overlaid before the
 // desktop-shape fields, since compatSnapshot's own overlay doesn't touch
 // them. The ONE place both applications happen — the live session store
 // (main.go's store.enrich) and the sessions.snapshot fallback for a session

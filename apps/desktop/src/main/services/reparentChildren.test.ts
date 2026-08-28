@@ -63,7 +63,7 @@ function turn(child: string, prompt: string, reply: string): void {
 
 /** A live Fleet Manager — what spawn_agent({manager: true}) records. */
 function manager(id: string, label = 'Fleet Manager'): string {
-  claudeSessionStore.setSpawnMeta(id, { label, isSupervisor: true });
+  claudeSessionStore.setSpawnMeta(id, { label, isWakeTarget: true });
   hook(id, 'SessionStart');
   return id;
 }
@@ -189,7 +189,7 @@ describe('reparentChildren re-points fleet wakes at the successor', () => {
     claudeSessionStore.setSpawnMeta(successor, {
       label: 'Fleet Manager (successor)',
       parentSessionId: outgoing,
-      isSupervisor: true,
+      isWakeTarget: true,
     });
     hook(successor, 'SessionStart');
 
@@ -226,7 +226,7 @@ describe('reparentChildren refuses a successor no wake could reach', () => {
     expect(() => claudeSessionStore.reparentChildren(outgoing, successor)).toThrow(/has ended/);
   });
 
-  it('refuses a successor that is not a manager — wakes need isSupervisor', () => {
+  it('refuses a successor that is not a manager — wakes need isWakeTarget', () => {
     const outgoing = manager(uid('mgr-out'));
     worker(uid('child'), outgoing);
     const plain = worker(uid('plain'), outgoing, 'just a worker');

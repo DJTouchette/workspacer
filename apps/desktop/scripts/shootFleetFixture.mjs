@@ -331,7 +331,7 @@ export const AGENTS = [
     cwd: MANAGER.cwd,
     lines: managerLines,
     settled: true,
-    meta: { label: MANAGER.label, isSupervisor: true },
+    meta: { label: MANAGER.label, isWakeTarget: true },
     edits: [
       {
         id: 'tu_brief',
@@ -512,7 +512,7 @@ export function seedSavedSession(stageHome) {
   const agents = AGENTS.map((a) =>
     cardFor(
       a,
-      a.meta.isSupervisor
+      a.meta.isWakeTarget
         ? { kind: 'supervisor', supervisor: true, manager: true, toolScope: 'operator' }
         : a.meta.parentSessionId
           ? {

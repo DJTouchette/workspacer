@@ -76,7 +76,7 @@ describe('worker-finished wake fires once per turn with something new to report'
 
     // A live Fleet Manager, and a worker dispatched under it — exactly what
     // spawn_agent({parentSessionId: mgr}) records.
-    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     hook(mgr, 'SessionStart');
     claudeSessionStore.setSpawnMeta(child, { label: 'alpha: fix tests', parentSessionId: mgr });
     hook(child, 'SessionStart');
@@ -110,7 +110,7 @@ describe('worker-finished wake fires once per turn with something new to report'
   it('an approval blip (no new prompt, same reply) does NOT re-wake — the fixed 1b case', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     hook(mgr, 'SessionStart');
     claudeSessionStore.setSpawnMeta(child, { label: 'beta: build', parentSessionId: mgr });
     hook(child, 'SessionStart');
@@ -140,7 +140,7 @@ describe('worker-finished wake fires once per turn with something new to report'
   it('a wake that failed to send is retried, not silenced by its own dedup', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isSupervisor: true });
+    claudeSessionStore.setSpawnMeta(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     hook(mgr, 'SessionStart');
     claudeSessionStore.setSpawnMeta(child, { label: 'gamma: migrate', parentSessionId: mgr });
     hook(child, 'SessionStart');

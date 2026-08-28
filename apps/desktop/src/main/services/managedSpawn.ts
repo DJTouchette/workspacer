@@ -374,7 +374,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     parentSessionId: opts.parentSessionId,
     // The nudge router (supervisorSessionIds) is keyed on this flag: the
     // manager is the wake target.
-    isSupervisor: opts.manager,
+    isWakeTarget: opts.manager,
     provider,
     ...(resultSchema && { resultSchema }),
     // What the CARD believes before the daemon's first frame arrives. Codex
@@ -509,7 +509,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     parentSessionId: opts.parentSessionId,
     // The manager is the wake target — same flag, same reason as the managed
     // path above.
-    isSupervisor: opts.manager,
+    isWakeTarget: opts.manager,
     provider: 'codex',
     // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
     // it says so rather than leaving the field absent: with codex defaulting to

@@ -413,11 +413,11 @@ export function registerHubCapabilities(): void {
       // already read by paying for the heavier call; it widens nothing.
       //
       // They are also exactly what succession needs: `label` is the static task
-      // title a manager is recognised by, and `isSupervisor` is the difference
+      // title a manager is recognised by, and `isWakeTarget` is the difference
       // between "a dispatch of mine" and "another manager's". agents.orphans
       // below answers the same two questions about the DEAD.
       label: s.label ?? null,
-      isSupervisor: s.isSupervisor === true,
+      isWakeTarget: s.isWakeTarget === true,
       // Managed providers (codex/opencode/pi) never populate `s.usage` — their
       // numbers live only on `statusLine`. Fall back to it the same way
       // analyticsWriter.ts does, or every non-Claude row reports all-zero.
@@ -510,7 +510,7 @@ export function registerHubCapabilities(): void {
   // managedSpawnOptions.ts documents: all three branches below used to
   // hand-copy their spawn-options object and silently omit both fields,
   // meaning NO Fleet Manager spawned over the bus (codex, opencode, pi, or
-  // even Claude) ever came up as isSupervisor, so it never received a single
+  // even Claude) ever came up as isWakeTarget, so it never received a single
   // worker-finished wake.
   registerCapability('agents.spawn', async (params: unknown) => {
     const {
@@ -849,7 +849,7 @@ export function registerHubCapabilities(): void {
         skipPermissions,
         resumeSessionId,
         // The Fleet Manager flag. This branch used to hand-copy fields and
-        // silently drop it — no `manager` means no isSupervisor, so a
+        // silently drop it — no `manager` means no isWakeTarget, so a
         // codex/opencode/pi Fleet Manager dispatched over the bus (the ONLY
         // path a remote/MCP-facade caller has) never received worker-finished
         // wakes at all. See managedSpawnOptions.ts for the IPC twin of this bug.
@@ -1989,7 +1989,7 @@ export function registerHubCapabilities(): void {
   // ── Manager succession (the wake has to follow the fleet) ──────────────
   //
   // Every fleet wake is PARENT-KEYED: a worker-finished nudge goes to the
-  // worker's own live `isSupervisor` parent, the 15-minute backstop sweeps on
+  // worker's own live `isWakeTarget` parent, the 15-minute backstop sweeps on
   // the same field, and reportProgress above derives its recipient from it. So
   // replacing a Fleet Manager ORPHANED every dispatch it had in flight — the
   // successor could not receive their reports at all, and the workaround in the

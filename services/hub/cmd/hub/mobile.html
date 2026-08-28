@@ -2167,10 +2167,10 @@
     return [...sessions.values()].sort((a, b) =>
       (RANK[agentState(a)] - RANK[agentState(b)]) || ((b.lastActivity || 0) - (a.lastActivity || 0)));
   }
-  /** A manager: a session the host blessed as a supervisor/fleet manager at
-   *  spawn (claudeSpawn/managedSpawn set isSupervisor for both `supervisor` and
-   *  `manager` spawns; the brain's metaStore carries the same flag). */
-  const isManager = (s) => !!(s && s.isSupervisor);
+  /** A manager: a session the host marked wake-eligible at spawn
+   *  (claudeSpawn/managedSpawn set isWakeTarget from `manager`; the brain's
+   *  metaStore carries the same flag). */
+  const isManager = (s) => !!(s && s.isWakeTarget);
 
   /**
    * CHANGE 2 — the fleet is a hierarchy, not a flat list. The hub already

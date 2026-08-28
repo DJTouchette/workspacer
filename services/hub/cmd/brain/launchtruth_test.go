@@ -175,14 +175,14 @@ func TestUnwatchedSessionCarriesNoPermissionClaim(t *testing.T) {
 // for every spawn that named a parent.
 func TestNoteLaunchKeepsLabelAndParent(t *testing.T) {
 	meta := newMetaStore()
-	meta.set("s1", spawnMeta{Label: "Worker", ParentSessionID: "boss", IsSupervisor: true})
+	meta.set("s1", spawnMeta{Label: "Worker", ParentSessionID: "boss", IsWakeTarget: true})
 	meta.noteLaunch("s1", "bypassPermissions", true, nil)
 
 	m, ok := meta.get("s1")
 	if !ok {
 		t.Fatal("metadata vanished")
 	}
-	if m.Label != "Worker" || m.ParentSessionID != "boss" || !m.IsSupervisor {
+	if m.Label != "Worker" || m.ParentSessionID != "boss" || !m.IsWakeTarget {
 		t.Errorf("noteLaunch clobbered the spawn metadata: %+v", m)
 	}
 	if !m.LaunchRecorded || m.LaunchPermissionMode != "bypassPermissions" || !m.LaunchFullAccess {

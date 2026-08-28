@@ -112,7 +112,7 @@ const SESSIONS = [
     sessionId: 'a91c4f20',
     cwd: MANAGER_CWD,
     label: 'Fleet Manager',
-    isSupervisor: true,
+    isWakeTarget: true,
     ambientState: 'idle',
     lastActivity: now - 170_000,
     statusLine: { modelDisplay: 'Opus 4.8', contextUsedPct: 21, costUSD: 1.84 },

@@ -69,7 +69,7 @@ export interface ClaudeSpawnOptions {
   skipPermissions?: boolean;
   /** Re-use this id (resume an existing session). */
   resumeSessionId?: string;
-  /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) — see
+  /** Fleet Manager: nudge-eligible parent (isWakeTarget spawn meta) — see
    *  managedSpawn's twin field. */
   manager?: boolean;
   /** Manager full-access HINT from the caller. The token's actual yolo grant
@@ -183,7 +183,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    isSupervisor: opts.manager,
+    isWakeTarget: opts.manager,
     provider: 'claude',
     ...(resultSchema && { resultSchema }),
     settings: {

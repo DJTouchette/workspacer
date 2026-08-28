@@ -382,9 +382,11 @@ export interface ClaudeSessionState {
   // named and nested under the agent that spawned them.
   label?: string;
   parentSessionId?: string;
-  /** True for fleet-supervisor sessions — they get nudged when another agent
-   *  blocks on a decision (see supervisorNudge). */
-  isSupervisor?: boolean;
+  /** Wake eligibility, NOT a role: true when this session may receive fleet
+   *  wakes — it gets nudged when another agent blocks on a decision or a
+   *  worker finishes (see supervisorNudge). Its only input is `opts.manager`
+   *  at spawn. */
+  isWakeTarget?: boolean;
   /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
   provider?: string;
   /** Claude sessions only: 'stream' when the session runs on the headless
@@ -493,7 +495,7 @@ export interface DeadManagerTombstone {
  * `confirmedManager` is the whole point of the tombstone: false means the id
  * is merely dangling (derived from the children, as before — it could be a
  * dead worker that spawned subagents), true means the store watched a session
- * marked `isSupervisor` die.
+ * marked `isWakeTarget` die.
  */
 export interface OrphanCandidate {
   sessionId: string;
@@ -537,7 +539,7 @@ class ClaudeSessionStore {
     {
       label?: string;
       parentSessionId?: string;
-      isSupervisor?: boolean;
+      isWakeTarget?: boolean;
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
@@ -581,7 +583,7 @@ class ClaudeSessionStore {
     meta: {
       label?: string;
       parentSessionId?: string;
-      isSupervisor?: boolean;
+      isWakeTarget?: boolean;
       provider?: string;
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
@@ -643,7 +645,7 @@ class ClaudeSessionStore {
   /** Session ids currently marked as supervisors (live sessions only). */
   supervisorSessionIds(): string[] {
     const ids: string[] = [];
-    for (const s of this.sessions.values()) if (s.isSupervisor) ids.push(s.sessionId);
+    for (const s of this.sessions.values()) if (s.isWakeTarget) ids.push(s.sessionId);
     return ids;
   }
 
@@ -652,7 +654,7 @@ class ClaudeSessionStore {
    * SUCCESSOR, so the wakes keep arriving.
    *
    * Fleet wakes are PARENT-KEYED: a worker-finished wake routes only to the
-   * worker's own live `isSupervisor` parent (nudgeParentOnFinish below), and the
+   * worker's own live `isWakeTarget` parent (nudgeParentOnFinish below), and the
    * dropped-wake backstop keys off the same field (`sweepMissedFinishes`
    * matches `c.parentSessionId === manager.sessionId`). So replacing a Fleet
    * Manager used to ORPHAN every worker it had dispatched: the successor could
@@ -714,11 +716,11 @@ class ClaudeSessionStore {
       );
     }
     // A parent that isn't a manager is a black hole for wakes: nudgeParentOnFinish
-    // requires `parent.isSupervisor`, so this would silence every dispatch
+    // requires `parent.isWakeTarget`, so this would silence every dispatch
     // instead of rerouting it — and silently, which is the worst shape.
-    if (!(successor?.isSupervisor ?? successorMeta?.isSupervisor)) {
+    if (!(successor?.isWakeTarget ?? successorMeta?.isWakeTarget)) {
       throw new Error(
-        `reparent_children: ${newManagerId} is not a manager (isSupervisor) — worker-finished ` +
+        `reparent_children: ${newManagerId} is not a manager (isWakeTarget) — worker-finished ` +
           `wakes are only ever delivered to a supervisor parent`,
       );
     }
@@ -789,7 +791,7 @@ class ClaudeSessionStore {
    *
    * Candidates come from two sources on purpose:
    *   - a tombstone (`confirmedManager: true`) — the store watched an
-   *     `isSupervisor` session die;
+   *     `isWakeTarget` session die;
    *   - a bare dangling id (`confirmedManager: false`) — children point at a
    *     parent this process has no row and no tombstone for. Unprovable, but
    *     hiding it would lose the orphans that predate the tombstone (a manager
@@ -843,7 +845,7 @@ class ClaudeSessionStore {
         label: tomb?.label ?? row?.label ?? null,
         cwd: tomb?.cwd ?? row?.cwd ?? null,
         endedAt: tomb?.endedAt ?? null,
-        confirmedManager: Boolean(tomb) || row?.isSupervisor === true,
+        confirmedManager: Boolean(tomb) || row?.isWakeTarget === true,
         children,
       });
     }
@@ -911,7 +913,7 @@ class ClaudeSessionStore {
    * the dispatch came home. Called at every ambient-transition site right
    * after notifyOnTransition, which uses the same working→idle edge for the
    * user's own "finished" notification; blocks stay on onBlock's broadcast
-   * path. The parent must be LIVE and marked isSupervisor (managers set the
+   * path. The parent must be LIVE and marked isWakeTarget (managers set the
    * same flag) — a worker whose parent ended just goes quiet.
    */
   private nudgeParentOnFinish(session: ClaudeSessionState, prevAmbient: SessionAmbientState): void {
@@ -921,7 +923,7 @@ class ClaudeSessionStore {
     const parentId = session.parentSessionId;
     if (!parentId) return;
     const parent = this.sessions.get(parentId);
-    if (!parent?.isSupervisor || parent.status === 'ended') return;
+    if (!parent?.isWakeTarget || parent.status === 'ended') return;
     const lastReply =
       [...session.conversation].reverse().find((t) => t.role === 'assistant')?.content ?? '';
     supervisorNudge.onFinished(session, parentId, lastReply);
@@ -1578,7 +1580,7 @@ class ClaudeSessionStore {
       parentSessionId: snap.parentSessionId ?? existing?.parentSessionId,
       provider: snap.provider ?? existing?.provider,
       transport: snap.transport ?? existing?.transport,
-      // isSupervisor deliberately NOT mapped: supervisorSessionIds() feeds the
+      // isWakeTarget deliberately NOT mapped: supervisorSessionIds() feeds the
       // LOCAL supervisorNudge, which can only message local claudemon sessions.
       hub,
       hubOffline: false,
@@ -1789,14 +1791,14 @@ class ClaudeSessionStore {
    * session start fresh instead of reading its first delta as a gap.
    */
   private evictNow(sessionId: string): void {
-    // The row is the ONLY record that this session was a manager (isSupervisor
+    // The row is the ONLY record that this session was a manager (isWakeTarget
     // and label live in this process's memory — claudemon has no such fields),
     // so a manager's identity has to be copied out HERE or it is gone. This is
     // the single teardown path on purpose: the SessionEnd timer and
     // close_session both come through it, and a manager dismissed by hand
     // orphans its workers exactly as a crashed one does.
     const dying = this.sessions.get(sessionId);
-    if (dying?.isSupervisor && !dying.hub) {
+    if (dying?.isWakeTarget && !dying.hub) {
       this.managerTombstones.set(sessionId, {
         sessionId,
         label: dying.label,
@@ -1922,7 +1924,7 @@ class ClaudeSessionStore {
     if (meta) {
       session.label = meta.label;
       session.parentSessionId = meta.parentSessionId;
-      session.isSupervisor = meta.isSupervisor;
+      session.isWakeTarget = meta.isWakeTarget;
       session.provider = meta.provider;
       session.transport = meta.transport;
       session.settings = meta.settings;
@@ -2004,7 +2006,7 @@ class ClaudeSessionStore {
       return;
     }
     const tomb = this.managerTombstones.get(parentId);
-    session.orphan = { confirmedManager: Boolean(tomb) || row?.isSupervisor === true };
+    session.orphan = { confirmedManager: Boolean(tomb) || row?.isWakeTarget === true };
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

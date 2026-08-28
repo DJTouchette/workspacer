@@ -246,7 +246,7 @@ export function useAgentManager() {
       /** Spawn into a fresh git worktree of `cwd` (isolated branch) instead of `cwd`. */
       worktree?: boolean;
       /** Fleet Manager: routes worker-finished/blocked nudges to this session
-       *  (isSupervisor spawn meta) — its role rides the kickoff message.
+       *  (isWakeTarget spawn meta) — its role rides the kickoff message.
        *  Implies toolScope operator. */
       manager?: boolean;
       /** Manager only: grant its token full-access dispatch (config
@@ -751,7 +751,7 @@ export function useAgentManager() {
         // Everything the role needs below this line is provider-blind: the MCP
         // facade attaches at the operator tier for managed providers too, the
         // grant chain knows codex's 'yolo' spelling, and the worker-finished
-        // wake routes on the isSupervisor flag `manager: true` sets.
+        // wake routes on the isWakeTarget flag `manager: true` sets.
         provider,
         // The manager's own coordinator model for THIS harness
         // (agents.managerModels). Passed explicitly so the model lands on the

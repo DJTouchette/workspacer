@@ -534,7 +534,7 @@ func (r *registry) orphans(ctx context.Context, _ json.RawMessage) (json.RawMess
 		if parent, known := byID[parentID]; known {
 			c.Label = parent.Label
 			c.Cwd = parent.Cwd
-			c.ConfirmedManager = parent.IsSupervisor
+			c.ConfirmedManager = parent.IsWakeTarget
 			c.EndedAt = parent.LastActivity
 		}
 		candidates = append(candidates, c)
@@ -606,8 +606,8 @@ func (r *registry) reparent(ctx context.Context, raw json.RawMessage) (json.RawM
 	if to.ended() {
 		return nil, fmt.Errorf("agents.reparent: session %s has ended — re-pointing live workers at it would silence them", p.ToSessionID)
 	}
-	if !to.IsSupervisor {
-		return nil, fmt.Errorf("agents.reparent: session %s is not a manager (isSupervisor is not set) — "+
+	if !to.IsWakeTarget {
+		return nil, fmt.Errorf("agents.reparent: session %s is not a manager (isWakeTarget is not set) — "+
 			"fleet wakes are only delivered to a supervisor, so this would silence every worker moved onto it", p.ToSessionID)
 	}
 

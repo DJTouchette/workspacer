@@ -215,7 +215,7 @@ describe('supervisorNudge.sweepMissedFinishes (dropped-wake backstop)', () => {
   const mgr = (over = {}) =>
     ({
       sessionId: 'mgr',
-      isSupervisor: true,
+      isWakeTarget: true,
       status: 'active',
       ambientState: 'idle',
       lastActivity: 1_000,
@@ -481,7 +481,7 @@ describe('supervisorNudge.onFinished — error vs completion', () => {
           label: 'Fleet Manager',
           ambientState: 'idle',
           lastActivity: 1_000,
-          isSupervisor: true,
+          isWakeTarget: true,
         },
         {
           sessionId: 'w9',

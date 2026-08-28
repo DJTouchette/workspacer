@@ -131,7 +131,7 @@ func (s *sessionStore) remove(id string) {
 
 // restamp re-runs enrichment over a row already in the store, in place.
 //
-// The overlay (label / parentSessionId / isSupervisor) is applied when a
+// The overlay (label / parentSessionId / isWakeTarget) is applied when a
 // snapshot LANDS, so a change to the spawn metadata behind it — the one
 // agents.reparent makes — is invisible until claudemon next pushes that
 // session. A manager that adopts a fleet and immediately lists it would see the
