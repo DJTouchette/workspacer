@@ -11,12 +11,12 @@ import (
 
 func TestEnrichSnapshotSpawnMeta(t *testing.T) {
 	meta := newMetaStore()
-	meta.set("s1", spawnMeta{Label: "My Agent", ParentSessionID: "p1", IsSupervisor: true})
+	meta.set("s1", spawnMeta{Label: "My Agent", ParentSessionID: "p1", IsWakeTarget: true})
 
 	out := enrichSnapshot(json.RawMessage(`{"session_id":"s1","cwd":"/x","mode":"input"}`), meta)
 	var m map[string]any
 	_ = json.Unmarshal(out, &m)
-	if m["label"] != "My Agent" || m["parentSessionId"] != "p1" || m["isSupervisor"] != true {
+	if m["label"] != "My Agent" || m["parentSessionId"] != "p1" || m["isWakeTarget"] != true {
 		t.Fatalf("spawn metadata not overlaid: %v", m)
 	}
 	if m["mode"] != "input" {
@@ -151,7 +151,7 @@ func TestCompatSnapshotFallsBackToTheWholePayload(t *testing.T) {
 }
 
 // sessions.snapshot's fallback (session not in the store) must carry the same
-// label/parentSessionId/isSupervisor nesting fields as the main store-backed
+// label/parentSessionId/isWakeTarget nesting fields as the main store-backed
 // path — that's what enrichAndCompat exists to guarantee for both callers.
 // Before the fix, this fallback applied compatSnapshot alone and silently
 // dropped them.
@@ -166,7 +166,7 @@ func TestSnapshotFallbackEnrichesNestingFields(t *testing.T) {
 
 	reg := newRegistry(newClaudemonClient(srv.URL))
 	reg.meta = newMetaStore()
-	reg.meta.set("w1", spawnMeta{Label: "Worker", ParentSessionID: "boss", IsSupervisor: true})
+	reg.meta.set("w1", spawnMeta{Label: "Worker", ParentSessionID: "boss", IsWakeTarget: true})
 	// reg.store stays nil — exercising the fallback path.
 
 	res, err := reg.handle(context.Background(), "sessions.snapshot", json.RawMessage(`{"sessionId":"w1"}`))
@@ -177,7 +177,7 @@ func TestSnapshotFallbackEnrichesNestingFields(t *testing.T) {
 	if err := json.Unmarshal(res, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if m["label"] != "Worker" || m["parentSessionId"] != "boss" || m["isSupervisor"] != true {
+	if m["label"] != "Worker" || m["parentSessionId"] != "boss" || m["isWakeTarget"] != true {
 		t.Fatalf("fallback snapshot missing nesting fields: %v", m)
 	}
 	// The desktop-shape overlay (compatSnapshot) must still be applied too.

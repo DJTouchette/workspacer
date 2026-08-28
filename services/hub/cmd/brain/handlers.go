@@ -579,8 +579,8 @@ type spawnParams struct {
 	PluginTools []string `json:"pluginTools"`
 	// Manager is the Fleet Manager flag: a nudge-eligible parent. Headless it
 	// means exactly one thing — the session
-	// is recorded as a wake target (spawnMeta.IsSupervisor, surfaced as the
-	// snapshot's isSupervisor), which is what the worker-finished nudge router
+	// is recorded as a wake target (spawnMeta.IsWakeTarget, surfaced as the
+	// snapshot's isWakeTarget), which is what the worker-finished nudge router
 	// and every client's crew nesting key on. Dropping it is the bug 8cabb4a5
 	// fixed on the desktop: a bus-spawned Fleet Manager came up invisible to the
 	// wake router, so its workers finished into the void.
@@ -639,8 +639,8 @@ type sessionParam struct {
 }
 
 // isWakeTarget is what Manager means headless: the session is nudge-eligible,
-// so it is recorded with IsSupervisor and shows up as the snapshot's
-// isSupervisor. The manager IS the wake target — the desktop spells the
+// so it is recorded with IsWakeTarget and shows up as the snapshot's
+// isWakeTarget. The manager IS the wake target — the desktop spells the
 // identical rule `opts.manager` at both of managedSpawn.ts's setSpawnMeta
 // calls. Kept as one method so the two spawn legs below cannot drift the way
 // the desktop's hand-copied option literals did.
@@ -754,7 +754,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget()})
 	}
 	// AFTER the wholesale set above, which would otherwise erase it. Unlike
 	// that one this is unconditional: every session has a permission mode, and
@@ -887,7 +887,7 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		return nil, err
 	}
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.isWakeTarget()})
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget()})
 	}
 	// Same contract as the PTY leg: after the wholesale set, unconditionally.
 	r.noteLaunch(sessionID, provider, p)
@@ -1240,7 +1240,7 @@ func (r *registry) snapshot(ctx context.Context, raw json.RawMessage) (json.RawM
 	// Not in the store (e.g. catalog scope, or a stopped session fetched
 	// explicitly): relay claudemon's row with the same enrich + desktop-shape
 	// overlay the store applies, so the caller sees one consistent snapshot
-	// shape — label/parentSessionId/isSupervisor included, not just the
+	// shape — label/parentSessionId/isWakeTarget included, not just the
 	// desktop field names.
 	snap, err := r.cm.getSession(ctx, p.SessionID)
 	if err != nil {

@@ -270,7 +270,7 @@ func TestReportProgressRoutesOnlyToTheCallersOwnParent(t *testing.T) {
 			"other-mgr": row("other-mgr", "/elsewhere", "input"),
 		},
 		map[string]spawnMeta{
-			"mgr":    {Label: "Fleet Manager", IsSupervisor: true},
+			"mgr":    {Label: "Fleet Manager", IsWakeTarget: true},
 			"worker": {Label: "rust worker", ParentSessionID: "mgr"},
 		})
 
@@ -420,7 +420,7 @@ func TestNotifyWhenArmsAndFires(t *testing.T) {
 	worker := `{"session_id":"worker","cwd":"/w/p","mode":"responding","status_line":{"total_input_tokens":200000,"total_output_tokens":109412,"cost_usd":9.5}}`
 	reg := fleetReg(t, srv.URL,
 		map[string]string{"mgr": row("mgr", "/w", "input"), "worker": worker},
-		map[string]spawnMeta{"mgr": {IsSupervisor: true}, "worker": {Label: "rust worker", ParentSessionID: "mgr"}})
+		map[string]spawnMeta{"mgr": {IsWakeTarget: true}, "worker": {Label: "rust worker", ParentSessionID: "mgr"}})
 	ctx := context.Background()
 
 	// No notifySessionId: the recipient defaults to the target's PARENT.
@@ -605,9 +605,9 @@ func TestOrphansReportsOnlyDeadParentsWithLiveChildren(t *testing.T) {
 			"dead-solo": row("dead-solo", "/c", "stopped"),
 		},
 		map[string]spawnMeta{
-			"live-mgr": {IsSupervisor: true, Label: "live"},
+			"live-mgr": {IsWakeTarget: true, Label: "live"},
 			"live-kid": {ParentSessionID: "live-mgr"},
-			"dead-mgr": {IsSupervisor: true, Label: "predecessor"},
+			"dead-mgr": {IsWakeTarget: true, Label: "predecessor"},
 			"orphan-1": {ParentSessionID: "dead-mgr"},
 			"orphan-2": {ParentSessionID: "dead-mgr"},
 			// A dead child of a dead parent is NOT an orphan: nothing is waiting.
@@ -665,7 +665,7 @@ func TestReparentRefusesADestinationNoWakeCanReach(t *testing.T) {
 				"notmgr":  row("notmgr", "/c", "input"),
 			},
 			map[string]spawnMeta{
-				"new-mgr": {IsSupervisor: true},
+				"new-mgr": {IsWakeTarget: true},
 				"worker":  {ParentSessionID: "old"},
 			})
 	}
@@ -704,7 +704,7 @@ func TestReparentMovesTheFleetAndIsVisibleImmediately(t *testing.T) {
 			"theirs":  row("theirs", "/a/y", "responding"),
 		},
 		map[string]spawnMeta{
-			"new-mgr": {IsSupervisor: true},
+			"new-mgr": {IsWakeTarget: true},
 			"worker":  {ParentSessionID: "old"},
 			// Not yet registered with the daemon — no live row.
 			"pending": {ParentSessionID: "old"},

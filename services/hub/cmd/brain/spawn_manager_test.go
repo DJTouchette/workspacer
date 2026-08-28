@@ -32,7 +32,7 @@ func managerSpawnRig(t *testing.T) (*registry, *spawnManagedReq, *spawnReq) {
 
 // TestManagerSpawnIsRecordedAsAWakeTarget is the behavioural half of the
 // spawnParams mirror: `manager:true` must make the session nudge-eligible
-// (spawnMeta.IsSupervisor, surfaced as the snapshot's isSupervisor), exactly as
+// (spawnMeta.IsWakeTarget, surfaced as the snapshot's isWakeTarget), exactly as
 // `supervisor:true` does. The desktop bug this mirrors (8cabb4a5) was precisely
 // that a bus-spawned Fleet Manager came up WITHOUT this, so the worker-finished
 // wake router never saw it and its workers finished into the void. Both spawn
@@ -62,8 +62,8 @@ func TestManagerSpawnIsRecordedAsAWakeTarget(t *testing.T) {
 			if !ok {
 				t.Fatalf("manager spawn recorded no spawnMeta at all — the wake router has nothing to key on")
 			}
-			if !meta.IsSupervisor {
-				t.Errorf("manager spawn must be recorded IsSupervisor (a manager IS a supervisor for wake purposes), got %+v", meta)
+			if !meta.IsWakeTarget {
+				t.Errorf("manager spawn must be recorded IsWakeTarget (a manager IS wake-eligible), got %+v", meta)
 			}
 		})
 	}

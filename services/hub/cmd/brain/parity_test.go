@@ -615,7 +615,7 @@ func TestCompatSnapshotCoversMobileFields(t *testing.T) {
 // back into an undifferentiated list with no test saying so.
 var nestingFieldsRequired = []string{
 	"parentSessionId", // who dispatched this worker → the crew it renders in
-	"isSupervisor",    // manager/supervisor → the MANAGER chip and the group anchor
+	"isWakeTarget",    // manager/supervisor → the MANAGER chip and the group anchor
 	"label",           // the STATIC card title: the task the worker was dispatched with
 }
 
@@ -624,7 +624,7 @@ func TestEnrichSnapshotCoversMobileNestingFields(t *testing.T) {
 	mobile := string(data)
 
 	meta := newMetaStore()
-	meta.set("w1", spawnMeta{Label: "proj: a task", ParentSessionID: "mgr", IsSupervisor: true})
+	meta.set("w1", spawnMeta{Label: "proj: a task", ParentSessionID: "mgr", IsWakeTarget: true})
 	var m map[string]any
 	enriched := enrichSnapshot(json.RawMessage(`{"session_id":"w1","cwd":"/tmp"}`), meta)
 	if err := json.Unmarshal(enriched, &m); err != nil {

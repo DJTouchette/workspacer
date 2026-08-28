@@ -21,7 +21,7 @@ import (
 // The json tags name the ENRICHED/compat field names (enrich.go), not
 // claudemon's raw ones, because that is what the store holds: `sessionId`,
 // `status`, `ambientState`, `lastActivity`, `parentSessionId`, `label` and
-// `isSupervisor` are all written by enrichAndCompat before a row lands.
+// `isWakeTarget` are all written by enrichAndCompat before a row lands.
 type fleetSession struct {
 	SessionID       string `json:"sessionId"`
 	Cwd             string `json:"cwd"`
@@ -29,7 +29,7 @@ type fleetSession struct {
 	Status          string `json:"status"`
 	AmbientState    string `json:"ambientState"`
 	ParentSessionID string `json:"parentSessionId"`
-	IsSupervisor    bool   `json:"isSupervisor"`
+	IsWakeTarget    bool   `json:"isWakeTarget"`
 	LastActivity    int64  `json:"lastActivity"`
 
 	// Usage is the compat overlay's camelCase block. It carries costUSD but NOT
