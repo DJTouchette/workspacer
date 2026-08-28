@@ -23,6 +23,19 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: 'Unreleased',
+    date: '',
+    unreleased: true,
+    sections: [
+      {
+        title: 'Removed',
+        items: [
+          '**The supervisor role.** The `supervisor: true` spawn flag, the `/supervise` skill, and the `supervisor` config block are gone, along with the Settings ▸ Supervisor section (folded into Settings ▸ Fleet Manager). The Fleet Manager is now the only fleet-coordination role. "Ask the fleet" survives: it now spawns a plain agent at the `triage` tool tier instead of a supervisor.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.150.0',
     date: '2026-08-23',
     unreleased: false,
