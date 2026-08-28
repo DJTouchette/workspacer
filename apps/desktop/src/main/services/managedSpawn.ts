@@ -39,11 +39,13 @@ import { buildResultContract, checkResultSchema } from '../shared/structuredResu
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
+import { agentSkillsRoot } from '../lib/agentSkills';
 import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModel } from '../lib/spawnModel';
+import { resolveSupervisorModel } from '../lib/supervisorModel';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -231,7 +233,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // which on the stream transport is a whole turn away. This is the path most
   // dispatched workers take (`agents.spawn` over the bus names no model), so it
   // is where the spawn-time signal was being lost for most of the fleet.
-  const spawnModel = resolveSpawnModel(provider, opts.model);
+  // Supervisors with no explicit model take the configured coordinator model
+  // for THIS harness (lib/supervisorModel) — parity with the PTY Claude path,
+  // which has always done this. Without it `supervisor.model` was silently
+  // Claude-only: picking a codex supervisor model in Settings changed nothing.
+  const spawnModel = resolveSpawnModel(
+    provider,
+    opts.model?.trim() || (opts.supervisor ? resolveSupervisorModel(provider) : undefined),
+  );
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
   // A supervisor is operator by definition; a plain facade session takes its
@@ -391,7 +400,21 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   });
   const instructions = [
     wantsFacade
-      ? managedFacadeInstructions(!!opts.supervisor, facadeScope, managedId, supervisorFullAccess)
+      ? managedFacadeInstructions({
+          supervisor: !!opts.supervisor,
+          scope: facadeScope,
+          sessionId: managedId,
+          fullAccess: supervisorFullAccess,
+          // The loop parameters the PTY twin (facadeSpawnArgs) has always
+          // passed — a managed supervisor was told neither, so it invented its
+          // own cadence and picked its own digest-worker model.
+          summarizerModel: configService.getConfig().supervisor?.summarizerModel,
+          pollSeconds: configService.getConfig().supervisor?.pollSeconds,
+          // Only harnesses with a personal-skills directory actually got the
+          // /supervise install above; telling the others to run it would send
+          // them looking for a slash command that does not exist.
+          superviseSkill: agentSkillsRoot(provider) !== null,
+        })
       : '',
     resultSchema ? buildResultContract(resultSchema) : '',
   ]
@@ -466,7 +489,10 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // Codex carries no configured default of its own, so this is opts.model
   // trimmed today — the call is here so a future codex.defaultModel lands on
   // both spawn paths at once instead of one.
-  const spawnModel = resolveSpawnModel('codex', opts.model);
+  const spawnModel = resolveSpawnModel(
+    'codex',
+    opts.model?.trim() || (opts.supervisor ? resolveSupervisorModel('codex') : undefined),
+  );
   // Same supervisor full-access resolution as the managed path above.
   const skipPermissions =
     !!opts.skipPermissions ||

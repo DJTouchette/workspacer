@@ -33,6 +33,7 @@ import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModel } from '../lib/spawnModel';
+import { resolveSupervisorModel } from '../lib/supervisorModel';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
@@ -231,11 +232,15 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   }
 
   // Supervisors: install the /supervise skill and default to the configured
-  // supervisor model when none was passed explicitly.
+  // supervisor model when none was passed explicitly. Resolved per HARNESS
+  // (lib/supervisorModel) rather than read straight off `supervisor.model`:
+  // that field belongs to `supervisor.provider`, so a Claude supervisor
+  // launched from "Ask the Fleet" while the configured harness is codex must
+  // not inherit a codex model id — it would 400 at spawn.
   let model = opts.model;
   if (opts.supervisor) {
     installSupervisorSkill();
-    if (!model) model = supCfg?.model || undefined;
+    if (!model) model = resolveSupervisorModel('claude');
   }
   // Then the general default, so an omitted model is RESOLVED rather than left
   // to Claude Code's own internal choice. It goes on the argv AND (below) into

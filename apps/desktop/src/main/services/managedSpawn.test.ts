@@ -399,10 +399,12 @@ describe('spawnManagedAgent — supervisor full access (config supervisor.fullAc
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
     // …and the injected role instructions tell it to actually request that.
     expect(managedFacadeInstructions).toHaveBeenCalledWith(
-      true,
-      'operator',
-      expect.any(String),
-      true,
+      expect.objectContaining({
+        supervisor: true,
+        scope: 'operator',
+        sessionId: expect.any(String),
+        fullAccess: true,
+      }),
     );
   });
 
@@ -428,10 +430,12 @@ describe('spawnManagedAgent — supervisor full access (config supervisor.fullAc
     expect(lastManaged().permissionMode).toBe('default');
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
     expect(managedFacadeInstructions).toHaveBeenCalledWith(
-      true,
-      'operator',
-      expect.any(String),
-      false,
+      expect.objectContaining({
+        supervisor: true,
+        scope: 'operator',
+        sessionId: expect.any(String),
+        fullAccess: false,
+      }),
     );
   });
 

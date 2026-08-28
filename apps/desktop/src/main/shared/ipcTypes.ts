@@ -593,6 +593,8 @@ export interface AppConfig {
   };
   supervisor: {
     model: string;
+    /** Per-harness memory of `model` (see configService / lib/supervisorModel). */
+    models?: Record<string, string>;
     summarizerModel: string;
     pollSeconds: number;
     /** Supervisor full-access mode: the supervisor and the workers it spawns

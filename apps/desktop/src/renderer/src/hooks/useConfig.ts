@@ -314,8 +314,14 @@ export interface Config {
 }
 
 export interface SupervisorConfig {
-  /** Coordinator model for supervisor sessions ('' = the app/Claude default). */
+  /** Coordinator model for supervisor sessions ('' = the harness default).
+   *  Only meaningful for `provider` below — a model id is not portable across
+   *  harnesses (`fable` means nothing to codex). */
   model?: string;
+  /** Per-harness memory of `model`, so flipping `provider` in Settings doesn't
+   *  destroy the other harness's saved choice. The settings picker writes both
+   *  this and `model`; main resolves them in lib/supervisorModel. */
+  models?: Partial<Record<AgentProvider, string>>;
   /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet'). */
   summarizerModel?: string;
   /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
