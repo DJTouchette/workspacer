@@ -194,12 +194,18 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
     // against an invented denominator (see SessionUsage.contextLimit).
     (usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
 
-  // Cumulative tokens: statusLine carries in+out; fall back to usage.
+  // Cumulative tokens: statusLine carries in+out; fall back to usage. The
+  // brain's compat overlay (services/hub/cmd/brain/enrich.go) never sets
+  // usage.totalInputTokens/totalOutputTokens — claudemon's raw `usage` block
+  // (unlike `status_line`) doesn't carry cumulative counters at all — so a
+  // web/mobile session with no live statusLine yet must not read them off
+  // `usage` as if they were guaranteed numbers: `undefined + undefined` is
+  // `NaN`, which fmtTokens then rendered as the literal string "NaN".
   const tokens =
     sl?.totalInputTokens !== undefined || sl?.totalOutputTokens !== undefined
       ? (sl.totalInputTokens ?? 0) + (sl.totalOutputTokens ?? 0)
-      : usage
-        ? usage.totalInputTokens + usage.totalOutputTokens
+      : usage?.totalInputTokens !== undefined || usage?.totalOutputTokens !== undefined
+        ? (usage!.totalInputTokens ?? 0) + (usage!.totalOutputTokens ?? 0)
         : undefined;
 
   return {

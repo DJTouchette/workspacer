@@ -199,6 +199,37 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 // webBackend.ts foldSparse). TestCompatSnapshotCoversMobileFields guards the
 // field list against mobile.html drift.
 
+// statusLineOverlay converts claudemon's snake_case StatusLine map into the
+// desktop's camelCase SessionStatusLine shape. Shared by compatSnapshot (the
+// full enrich pass) and sessionStore.updateStatusLine (the high-frequency
+// merge that must NOT re-run the rest of compatSnapshot — see that function's
+// comment) so the two never drift into different field sets.
+func statusLineOverlay(sl map[string]any) map[string]any {
+	return map[string]any{
+		"modelDisplay":        sl["model_display"],
+		"effort":              sl["effort"],
+		"contextUsedPct":      sl["context_used_pct"],
+		"contextWindowSize":   sl["context_window_size"],
+		"totalInputTokens":    sl["total_input_tokens"],
+		"totalOutputTokens":   sl["total_output_tokens"],
+		"cachedInputTokens":   sl["cached_input_tokens"],
+		"costUSD":             sl["cost_usd"],
+		"fiveHourPct":         sl["five_hour_pct"],
+		"fiveHourResetsAt":    sl["five_hour_resets_at"],
+		"fiveHourWindowMins":  sl["five_hour_window_minutes"],
+		"sevenDayPct":         sl["seven_day_pct"],
+		"sevenDayResetsAt":    sl["seven_day_resets_at"],
+		"sevenDayWindowMins":  sl["seven_day_window_minutes"],
+		"monthlyPct":          sl["monthly_pct"],
+		"monthlyResetsAt":     sl["monthly_resets_at"],
+		"monthlyWindowMins":   sl["monthly_window_minutes"],
+		"rateLimitWarning":    sl["rate_limit_warning"],
+		"overageOutOfCredits": sl["overage_out_of_credits"],
+		"capabilities":        sl["capabilities"],
+		"receivedAt":          sl["received_at"],
+	}
+}
+
 // compatSnapshot overlays the desktop snapshot field names onto a raw
 // claudemon session row. Snake_case originals are kept alongside.
 // toolInputOf unwraps a PermissionRequest hook payload down to the tool's own
@@ -309,29 +340,7 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	// stats/progressFingerprint/statusLineAlive read 0/undefined for the phone's
 	// strongest fingerprint signal — see .rivet/learnings 2026-08-23.
 	if sl, ok := m["status_line"].(map[string]any); ok {
-		m["statusLine"] = map[string]any{
-			"modelDisplay":        sl["model_display"],
-			"effort":              sl["effort"],
-			"contextUsedPct":      sl["context_used_pct"],
-			"contextWindowSize":   sl["context_window_size"],
-			"totalInputTokens":    sl["total_input_tokens"],
-			"totalOutputTokens":   sl["total_output_tokens"],
-			"cachedInputTokens":   sl["cached_input_tokens"],
-			"costUSD":             sl["cost_usd"],
-			"fiveHourPct":         sl["five_hour_pct"],
-			"fiveHourResetsAt":    sl["five_hour_resets_at"],
-			"fiveHourWindowMins":  sl["five_hour_window_minutes"],
-			"sevenDayPct":         sl["seven_day_pct"],
-			"sevenDayResetsAt":    sl["seven_day_resets_at"],
-			"sevenDayWindowMins":  sl["seven_day_window_minutes"],
-			"monthlyPct":          sl["monthly_pct"],
-			"monthlyResetsAt":     sl["monthly_resets_at"],
-			"monthlyWindowMins":   sl["monthly_window_minutes"],
-			"rateLimitWarning":    sl["rate_limit_warning"],
-			"overageOutOfCredits": sl["overage_out_of_credits"],
-			"capabilities":        sl["capabilities"],
-			"receivedAt":          sl["received_at"],
-		}
+		m["statusLine"] = statusLineOverlay(sl)
 	}
 	// pending → pendingApproval / pendingQuestions. Set both explicitly (null
 	// when absent) so a sparse merge clears a stale decision on the client.

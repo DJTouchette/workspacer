@@ -63,6 +63,18 @@ func (s *sessionStore) set(id string, snap json.RawMessage) {
 // the store for polls/next-snapshot but are pushed on the lighter
 // `agent.statusline` event, not by re-publishing the whole snapshot. Unknown
 // sessions are skipped (nothing to merge into yet).
+//
+// It also refreshes the camelCase `statusLine` compat overlay (statusLineOverlay,
+// enrich.go), not just the raw `status_line`. Without this, a session with no
+// tool calls yet in its turn — nothing to trigger claudemon's /events
+// session.update, the only thing that re-runs the full enrich pass — served the
+// web/mobile UI a snapshot with `status_line` current but `statusLine` stale or
+// entirely absent for the whole of a running turn: the model name and every
+// other camelCase-only reader (sessionStats.ts's deriveSessionStats, ClaudePane)
+// went blank until the turn ended and a real snapshot event caught it up. The
+// agent-facing fleet view (fleetview.go) already worked around this by reading
+// both spellings and preferring the raw one; this fixes it at the source
+// instead, for every camelCase-only reader.
 func (s *sessionStore) updateStatusLine(id string, statusLine json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,11 +86,12 @@ func (s *sessionStore) updateStatusLine(id string, statusLine json.RawMessage) {
 	if json.Unmarshal(snap, &m) != nil {
 		return
 	}
-	var sl any
+	var sl map[string]any
 	if json.Unmarshal(statusLine, &sl) != nil {
 		return
 	}
 	m["status_line"] = sl
+	m["statusLine"] = statusLineOverlay(sl)
 	if out, err := json.Marshal(m); err == nil {
 		s.m[id] = out
 	}

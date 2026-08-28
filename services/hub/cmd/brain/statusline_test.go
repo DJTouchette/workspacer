@@ -30,6 +30,47 @@ func TestUpdateStatusLineMergesKnownSkipsUnknown(t *testing.T) {
 	}
 }
 
+// The web/mobile UI reads ONLY the camelCase `statusLine` overlay
+// (sessionStats.ts's deriveSessionStats), never the raw `status_line`. Before
+// this fix, a high-frequency statusline tick (the only thing that arrives
+// during a turn with no tool calls, since that is what would otherwise trigger
+// claudemon's /events session.update and a full re-enrich) refreshed
+// `status_line` but left `statusLine` stale or entirely missing — so the model
+// name and every other camelCase-only reader went blank for the whole running
+// turn and only caught up once the turn ended.
+func TestUpdateStatusLineRefreshesTheCamelOverlay(t *testing.T) {
+	s := newSessionStore()
+	// Seeded with no status line at all yet, mirroring a freshly spawned
+	// session's first snapshot.
+	s.seed(map[string]json.RawMessage{"s1": json.RawMessage(`{"session_id":"s1","mode":"responding"}`)})
+
+	snap, _ := s.get("s1")
+	var before map[string]any
+	_ = json.Unmarshal(snap, &before)
+	if _, present := before["statusLine"]; present {
+		t.Fatalf("test setup: expected no statusLine overlay before any tick, got %v", before["statusLine"])
+	}
+
+	s.updateStatusLine("s1", json.RawMessage(`{"model_display":"Opus 4.8","cost_usd":1.5,"context_used_pct":12.5}`))
+
+	snap, _ = s.get("s1")
+	var after map[string]any
+	_ = json.Unmarshal(snap, &after)
+	sl, ok := after["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine overlay was not created by updateStatusLine: %v", after)
+	}
+	if sl["modelDisplay"] != "Opus 4.8" {
+		t.Errorf("statusLine.modelDisplay = %v, want %q", sl["modelDisplay"], "Opus 4.8")
+	}
+	if sl["costUSD"] != 1.5 {
+		t.Errorf("statusLine.costUSD = %v, want 1.5", sl["costUSD"])
+	}
+	if sl["contextUsedPct"] != 12.5 {
+		t.Errorf("statusLine.contextUsedPct = %v, want 12.5", sl["contextUsedPct"])
+	}
+}
+
 func TestRunStatusLines(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/statusline/stream", func(w http.ResponseWriter, r *http.Request) {

@@ -46,6 +46,20 @@ describe('deriveSessionStats — cumulative tokens', () => {
       333,
     );
   });
+
+  it('is undefined, not NaN, when neither statusLine nor usage carries token counts', () => {
+    // This is the shape the hub brain's compat overlay actually sends a web/
+    // mobile client mid-turn (services/hub/cmd/brain/enrich.go): `usage` is
+    // present (model/contextTokens/costUSD) but never carries cumulative
+    // totalInputTokens/totalOutputTokens — those live only on statusLine,
+    // which a running turn with no tool calls yet may not have received. The
+    // old `usage.totalInputTokens + usage.totalOutputTokens` fallback summed
+    // two `undefined`s into `NaN`, which fmtTokens then rendered as "NaN tok".
+    const sparseUsage = { model: 'claude-sonnet-4-6', contextTokens: 0, costUSD: 0 } as SessionUsage;
+    const stats = deriveSessionStats({ usage: sparseUsage });
+    expect(stats.tokens).toBeUndefined();
+    expect(Number.isNaN(stats.tokens)).toBe(false);
+  });
 });
 
 describe('fmtTokens', () => {
