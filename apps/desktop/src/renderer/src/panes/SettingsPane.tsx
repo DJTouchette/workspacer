@@ -101,11 +101,10 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   {
+    // The key stays 'supervisor' — it is what saved layouts and deep links
+    // address this pane by. Only the role it configures narrowed.
     key: 'supervisor',
-    // Two roles live in this pane (Fleet Manager + supervisor) and the label
-    // used to name only one of them, so the manager's settings — the ones most
-    // people are looking for — were findable only by opening "Supervisor".
-    label: 'Manager & Supervisor',
+    label: 'Fleet Manager',
     group: 'Agents & AI',
     keywords: [
       'supervisor',
@@ -116,11 +115,8 @@ const SECTIONS: SectionDef[] = [
       'harness',
       'provider',
       'effort',
-      'summarize',
-      'digest',
       'model',
       'coordinator',
-      'poll',
       'notify',
       'background',
       'full access',
