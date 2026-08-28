@@ -170,4 +170,72 @@ describe('InspectorCard', () => {
       window.removeEventListener('agentwatch:open', handler);
     }
   });
+
+  // ── the tabs a harness cannot fill ──────────────────────────────────────
+
+  it('hides Plan, Flows and Agents on a harness that has none of them', () => {
+    // pi ships bash/edit/find/grep/ls/powershell/read/write and nothing else —
+    // no todo tool, no task tool. "No plan yet" on a pi session reads as "not
+    // yet" when the truth is "never", and nothing anywhere would say so.
+    render(<InspectorCard snapshot={makeSnapshot({ provider: 'pi' })} />);
+    expect(screen.queryByRole('button', { name: /Plan/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Flows/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Agents/ })).not.toBeInTheDocument();
+    // Files and Usage are universal and stay.
+    expect(screen.getByRole('button', { name: /Files/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Usage/ })).toBeInTheDocument();
+    expect(screen.getByText('No files changed yet')).toBeInTheDocument();
+  });
+
+  it('keeps Plan and Agents for a managed harness that has them', () => {
+    // copilot: a `todos` table in its own session db, and `subagent.*` frames.
+    // Only Flows is dropped — workflow runs are Claude Code artifacts.
+    render(<InspectorCard snapshot={makeSnapshot({ provider: 'copilot' })} />);
+    expect(screen.getByRole('button', { name: /Plan/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Agents/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Flows/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a section anyway when data for it actually arrived', () => {
+    // The caps table is a belief; a row that arrived is proof. If a provider
+    // ever reports something we did not expect, the failure must be a visible
+    // tab and a stale comment — never dropped data.
+    render(
+      <InspectorCard
+        snapshot={makeSnapshot({
+          provider: 'pi',
+          plan: { steps: [{ content: 'Surprise', status: 'pending' }], updatedAt: 1 },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    expect(screen.getByText('Surprise')).toBeInTheDocument();
+  });
+
+  it('falls back to Files when initialTab names a section this harness lacks', () => {
+    // The rail and the Fleet Deck both pass an initialTab, and a card can be
+    // handed a different provider's snapshot without remounting. Neither may
+    // leave the strip with nothing selected and a blank body.
+    render(<InspectorCard snapshot={makeSnapshot({ provider: 'pi' })} initialTab="plan" />);
+    expect(screen.getByText('No files changed yet')).toBeInTheDocument();
+  });
+
+  it('does not offer to open a copilot subagent row it cannot show', () => {
+    // The row is real — copilot reports the child's whole lifecycle. What does
+    // not exist is a transcript: the child's frames are dropped so they cannot
+    // leak into the parent's conversation, and nothing persists them. A click
+    // target here would land on "Transcript unavailable".
+    render(
+      <InspectorCard
+        snapshot={makeSnapshot({
+          provider: 'copilot',
+          subagents: [{ id: 'agent-1', type: 'explore', status: 'running', startedAt: 1 }],
+        })}
+        initialTab="agents"
+      />,
+    );
+    expect(screen.getByText('explore')).toBeInTheDocument();
+    expect(screen.queryByTitle('Watch this agent in a pane')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Monitor/ })).not.toBeInTheDocument();
+  });
 });

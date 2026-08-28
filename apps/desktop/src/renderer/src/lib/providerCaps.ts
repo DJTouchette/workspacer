@@ -48,6 +48,37 @@ export interface PermissionModeOption {
   label: string;
 }
 
+/**
+ * What a harness can tell us about work it delegates or plans — the three
+ * Inspector sections that are NOT universal.
+ *
+ * These exist because an always-present tab is a promise. "No plan yet" reads
+ * as "not yet" to a user, so a harness with no plan tooling at all displays as
+ * one that simply hasn't got round to it; the tab never fills in and there is
+ * nothing anywhere that says why. Each flag below is the answer to "can this
+ * ever be non-empty", and a `false` removes the tab rather than leaving it to
+ * lie quietly.
+ *
+ * Every value is pinned to a verified fact about the harness — see the
+ * per-provider comments, and `providerCaps.delegation.test.ts` for what each
+ * claim rests on.
+ */
+export interface DelegationCaps {
+  /** The harness has plan/todo tooling whose list reaches `session.plan`. */
+  plan: boolean;
+  /** The harness dispatches subagents AND our adapter turns them into
+   *  `session.subagents` rows. */
+  subagents: boolean;
+  /** A subagent row can be opened on its own live transcript. Strictly
+   *  narrower than `subagents`: a provider can report that a child ran without
+   *  our having any way to read what it did. */
+  subagentDrillIn: boolean;
+  /** The harness runs multi-agent workflow scripts we can watch
+   *  (`session.workflows`). Claude-only today — the runs are read off Claude
+   *  Code's own on-disk run artifacts, which no other harness writes. */
+  workflows: boolean;
+}
+
 export interface ProviderCaps {
   /** How a model change is applied mid-session. */
   modelSwitch: 'live' | 'restart';
@@ -67,6 +98,8 @@ export interface ProviderCaps {
   permissionSwitch: 'live' | 'restart';
   /** Whether a restart re-opens the same conversation (drives confirm copy). */
   restartPreservesConversation: boolean;
+  /** Plan / subagents / workflows — see {@link DelegationCaps}. */
+  delegation: DelegationCaps;
 }
 
 const MANAGED_PERMISSION_MODES: PermissionModeOption[] = [
@@ -111,6 +144,11 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // Live via claudemon's verified shift+tab cycle (`/permission-mode`).
     permissionSwitch: 'live',
     restartPreservesConversation: true,
+    // The reference implementation: all three, and the only harness that has
+    // workflows at all. TodoWrite → `session.plan`; SubagentStart/Stop hooks +
+    // the on-disk `subagents/agent-<id>.jsonl` tail → rows you can open;
+    // `workflows/wf_<runId>.json` → run cards.
+    delegation: { plan: true, subagents: true, subagentDrillIn: true, workflows: true },
   },
   codex: {
     // Live via claudemon's `/sessions/:id/model` → `thread/settings/update` on
@@ -134,6 +172,12 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // when codex wasn't spawned in bypass mode — the daemon reports which).
     permissionSwitch: 'live',
     restartPreservesConversation: false,
+    // Plan: codex's native `update_plan` → `AgentUpdate::Plan`. Subagents: the
+    // collab/`spawnAgent` items and child threads (`parentThreadId`), which the
+    // adapter turns into rows. Drill-in works because a codex child thread is a
+    // durable rollout file under `$CODEX_HOME/sessions` that the daemon replays
+    // (`GET /sessions/:id/subagents/:agent_id/conversation`). No workflows.
+    delegation: { plan: true, subagents: true, subagentDrillIn: true, workflows: false },
   },
   copilot: {
     // Live, and for a reason no other provider has: claudemon runs ONE
@@ -182,6 +226,18 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // (verified live: a codeword set in turn 1 was recalled after the process
     // had exited and a new one was launched).
     restartPreservesConversation: true,
+    // Plan: copilot keeps its todo list in the session's OWN SQLite db
+    // (`~/.copilot/session-state/<id>/session.db`, table `todos`), not on the
+    // wire — the adapter reads it when `session.todos_changed` pings. Subagents:
+    // `subagent.started` / `subagent.completed` frames carry a stable `agentId`
+    // (verified live, testdata/copilot-subagent-capture.jsonl).
+    //
+    // Drill-in is FALSE, and that is the honest reading rather than a shrug: a
+    // copilot child's frames do ride the parent's stdout stream, but nothing
+    // persists them and the adapter deliberately drops them so they can't leak
+    // into the parent's conversation. There is no transcript to open, so the
+    // row must not offer to open one.
+    delegation: { plan: true, subagents: true, subagentDrillIn: false, workflows: false },
   },
   opencode: {
     // Live: `opencode serve` applies the model per message, so claudemon's
@@ -197,6 +253,16 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // in a bypass mode, so yolo→ask works too).
     permissionSwitch: 'live',
     restartPreservesConversation: false,
+    // Plan: the `todowrite` tool (registered as `tool/todowrite` in the shipped
+    // binary, v1.18.25) carries `{ todos: [{ content, status }] }` — the exact
+    // shape `plan_from_value` reads. Subagents: the `task` tool, whose call
+    // carries `subagent_type` + `description`; the child runs as its own
+    // opencode session. Both are wired in the adapter.
+    //
+    // Drill-in is FALSE: the child IS a real opencode session with its own
+    // events, but the adapter only counts it, and there is no read path from a
+    // row to that child's messages. Costed as a follow-up, not guessed at here.
+    delegation: { plan: true, subagents: true, subagentDrillIn: false, workflows: false },
   },
   pi: {
     // Restart, deliberately: the default (non-supervisor) Pi session is the
@@ -213,6 +279,17 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     // Pi relaunches with the same `--session-id`, which *may* pick its session
     // file back up — unverified, so the copy promises the safer thing.
     restartPreservesConversation: false,
+    // All three off, and this is a fact about the harness rather than a gap in
+    // our adapter: pi's entire built-in tool set is bash, edit, find, grep, ls,
+    // powershell, read, write (`dist/core/tools/`, v0.84.3 — and its own
+    // `--help` banner says "read, bash, edit, write tools"). There is no todo
+    // tool to build a plan from and no task tool to dispatch anything, so a
+    // Plan or Agents tab on a pi session could never be anything but empty.
+    //
+    // The one caveat, and the reason this is a capability and not an assertion:
+    // a pi EXTENSION can register arbitrary tools. If one ever registers a todo
+    // list, this flag is the single place that has to change.
+    delegation: { plan: false, subagents: false, subagentDrillIn: false, workflows: false },
   },
 };
 
@@ -235,6 +312,12 @@ const CLAUDE_STREAM_CAPS: ProviderCaps = {
   permissionSwitch: 'live',
   // Restart resumes the same pinned session id (`--resume`), like PTY Claude.
   restartPreservesConversation: true,
+  // Unchanged from PTY claude, and deliberately so: all three arrive OUT OF
+  // BAND of the transport. Plan, subagent rows and workflow runs are read from
+  // Claude Code's hooks and its on-disk transcript/run artifacts, which the
+  // stream adapter writes exactly like the TUI does — none of it rides the
+  // stream-json wire, so swapping the transport cannot take them away.
+  delegation: PROVIDER_CAPS.claude.delegation,
 };
 
 export function capsFor(

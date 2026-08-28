@@ -27,6 +27,8 @@ import { UsageDetailDialog } from './UsageDetailDialog';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
 import { ConfigContext } from '../../contexts/ConfigContext';
+import { capsFor } from '../../lib/providerCaps';
+import type { AgentProvider } from '../../types/pane';
 
 export type RailTab = 'files' | 'plan' | 'workflows' | 'agents' | 'usage';
 
@@ -437,6 +439,20 @@ export const InspectorCard: React.FC<{
   const liveSubagents = subagents.filter((s) => s.status === 'running').length;
   const planStats = planProgress(plan);
 
+  // What this session's harness can actually delegate or plan. Files and Usage
+  // are universal; Plan / Flows / Agents are not, and a tab the harness can
+  // never fill is a promise it can't keep — see DelegationCaps.
+  //
+  // Data present in the snapshot OVERRIDES a `false`, always. The caps table is
+  // our belief about a harness, and a row that actually arrived is proof; if a
+  // future provider version starts reporting something we don't expect, the
+  // right failure is a visible tab and a stale comment, never dropped data.
+  const provider = (session?.provider ?? 'claude') as AgentProvider;
+  const delegation = capsFor(provider, session?.transport).delegation;
+  const showPlan = delegation.plan || !!planStats;
+  const showWorkflows = delegation.workflows || workflows.length > 0;
+  const showAgents = delegation.subagents || subagents.length > 0;
+
   // Open on whatever's actively happening: a running workflow wins, then a
   // running subagent. A plan that's actively in progress opens next — but only
   // when no diffs are competing for attention, so we don't steal from Files on
@@ -460,9 +476,14 @@ export const InspectorCard: React.FC<{
   // Click-through: open a dedicated live watch pane for one subagent /
   // workflow run (handled by App, which owns the tab manager).
   const sessionId = session?.sessionId;
-  const provider = session?.provider ?? 'claude';
-  const subagentWatchEnabled = provider === 'claude' || provider === 'codex';
-  const agentMonitorEnabled = provider === 'claude';
+  // Opening a row is a SEPARATE capability from having rows: copilot and
+  // opencode both report that a child ran, and neither keeps anything we could
+  // show if you clicked it. A row with no `onOpen` renders as a plain row
+  // rather than a link into "Transcript unavailable".
+  const subagentWatchEnabled = delegation.subagentDrillIn;
+  // The Monitor button folds this session's plain subagents onto the workflow
+  // timeline, which reads their on-disk transcripts — same requirement.
+  const agentMonitorEnabled = delegation.subagentDrillIn && delegation.workflows;
   const watchSubagent = (sub: (typeof subagents)[number]) => {
     if (!sessionId || !subagentWatchEnabled) return;
     requestAgentWatch({
@@ -503,28 +524,46 @@ export const InspectorCard: React.FC<{
     live?: boolean;
   }[] = [
     { id: 'files', label: 'Files', icon: FileDiff, badge: files.length || undefined },
-    {
-      id: 'plan',
-      label: 'Plan',
-      icon: ListChecks,
-      badge: planStats ? `${planStats.done}/${planStats.total}` : undefined,
-    },
-    {
-      id: 'workflows',
-      label: 'Flows',
-      icon: Workflow,
-      badge: workflows.length || undefined,
-      live: liveWorkflows > 0,
-    },
-    {
-      id: 'agents',
-      label: 'Agents',
-      icon: Bot,
-      badge: subagents.length || undefined,
-      live: liveSubagents > 0,
-    },
+    ...(showPlan
+      ? [
+          {
+            id: 'plan' as const,
+            label: 'Plan',
+            icon: ListChecks,
+            badge: planStats ? `${planStats.done}/${planStats.total}` : undefined,
+          },
+        ]
+      : []),
+    ...(showWorkflows
+      ? [
+          {
+            id: 'workflows' as const,
+            label: 'Flows',
+            icon: Workflow,
+            badge: workflows.length || undefined,
+            live: liveWorkflows > 0,
+          },
+        ]
+      : []),
+    ...(showAgents
+      ? [
+          {
+            id: 'agents' as const,
+            label: 'Agents',
+            icon: Bot,
+            badge: subagents.length || undefined,
+            live: liveSubagents > 0,
+          },
+        ]
+      : []),
     { id: 'usage', label: 'Usage', icon: Gauge },
   ];
+
+  // A tab can vanish under the selection: an `initialTab` may name a section
+  // this harness doesn't have, and a caller can swap the snapshot for a
+  // different provider's without remounting. Fall back to Files rather than
+  // rendering a strip with nothing highlighted and a blank body.
+  const activeTab: RailTab = tabs.some((t) => t.id === tab) ? tab : 'files';
 
   const bodyPad = compact ? '8px 10px' : '10px 12px';
   const ambient = session?.ambientState;
@@ -616,7 +655,7 @@ export const InspectorCard: React.FC<{
         }}
       >
         {tabs.map((t) => {
-          const selected = tab === t.id;
+          const selected = activeTab === t.id;
           const TabIcon = t.icon;
           return (
             <button
@@ -696,7 +735,7 @@ export const InspectorCard: React.FC<{
           animation: 'claudeFadeIn 0.15s ease-out',
         }}
       >
-        {tab === 'files' &&
+        {activeTab === 'files' &&
           (files.length === 0 ? (
             <EmptyState icon={FileDiff} text="No files changed yet" />
           ) : (
@@ -807,7 +846,7 @@ export const InspectorCard: React.FC<{
             </>
           ))}
 
-        {tab === 'plan' &&
+        {activeTab === 'plan' &&
           (!planStats ? (
             <EmptyState icon={ListChecks} text="No plan yet" />
           ) : (
@@ -868,7 +907,7 @@ export const InspectorCard: React.FC<{
             </>
           ))}
 
-        {tab === 'workflows' &&
+        {activeTab === 'workflows' &&
           (workflows.length === 0 ? (
             <EmptyState icon={Workflow} text="No workflows running" />
           ) : (
@@ -888,7 +927,7 @@ export const InspectorCard: React.FC<{
             </>
           ))}
 
-        {tab === 'agents' &&
+        {activeTab === 'agents' &&
           (subagents.length === 0 ? (
             <EmptyState icon={Bot} text="No subagents yet" />
           ) : (
@@ -940,7 +979,7 @@ export const InspectorCard: React.FC<{
             </>
           ))}
 
-        {tab === 'usage' &&
+        {activeTab === 'usage' &&
           (!sl && !usage ? (
             <EmptyState icon={Gauge} text="No usage data yet" />
           ) : (
