@@ -29,7 +29,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Spawn agent | Pick cwd / backend (Claude, Codex, OpenCode, Pi) / model / profile / permission mode / transport, plus resume-in-cwd and git-worktree isolation; initial prompts are seeded by the flows that need them (Ask, library items, handoff) | 🔵 Working |
 | Worktree setup hooks | Fresh agent worktrees auto-symlink the source checkout's `node_modules`, then run the project's `projects[<dir>].worktreeSetup` commands in order (cwd = worktree; `$SOURCE`/`$WORKTREE` substituted + exported; `script:<name>` runs a project script; 5 min/command; first failure logged + skips the rest, spawn proceeds). Edited per project in Settings → Projects | 🔵 Working |
 | Auto-adopt | Sessions spawned externally (MCP, another agent) appear as cards automatically | 🔵 Working |
-| Supervisor agents | Spawn a supervisor with the workspacer MCP facade attached — any backend (Claude runs the `/supervise` skill; managed providers get a plain-language watch opener); rendered nested under its parent | 🔵 Working |
+| Fleet Manager | Dispatch a Fleet Manager (Claude or Codex) with the workspacer MCP facade attached to hand work out and coordinate the rest of the fleet; rendered nested under its parent | 🔵 Working |
 | Respawn / terminate | Restart a stopped agent (re-points its Claude panes); kill an agent's session | 🔵 Working |
 | Rename / reorder agents | Per-agent display name, sidebar ordering | 🔵 Working |
 | Deterministic agent identity | Cards keyed by a stable id derived from the session, deduped on layout sync — prevents cross-client duplication | 🟢 Solid |
@@ -62,7 +62,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Library | CRUD for reusable prompts / skills / agents | 🔵 Working |
 | Analytics | Cost/token totals, by-project/by-model, recent sessions | 🔵 Working |
 | Overview | Cross-agent stats + rate-limit card + recent/favourite dirs to spawn | 🔵 Working |
-| Ask ("Ask the fleet") | Spawn a supervisor from a question, with preset chips | 🔵 Working |
+| Ask ("Ask the fleet") | Spawn a plain agent at the triage tool tier from a question, with preset chips | 🔵 Working |
 | Editor | Sandboxed CodeMirror plugin (default) or a configured terminal editor in a PTY (`editor.engine`; `editor.terminalCommand`, default `nvim`) | 🔵 Working |
 | Agents / agent watch | Fleet monitor of a session's subagents; click-through watch panes for live subagents & workflow runs; pinnable inspector pane | 🔵 Working |
 | Markdown preview | Read-only rendered markdown (`mdpreview`), opened from file links in chat | 🔵 Working |
@@ -159,7 +159,7 @@ remote/web/phone clients all view and drive the same fleet.
 
 | Feature | What it does | Maturity |
 |---|---|---|
-| MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` supervisors | 🟢 Solid |
+| MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` MCP clients | 🟢 Solid |
 | MCP tools (~50, tiered) | The driving set (list_agents, get_transcript, spawn_agent, create_terminal, send_message, approve, answer, signal, terminal_input, notify) plus snapshots/conversations, config/profiles, saved sessions/layouts, library, analytics, path-scoped fs/search, a per-tier `help` tool, and UI navigation (focus_agent/open_pane/open_browser/open_plugin/open_spawn_dialog, triage+) | 🟢 Solid |
 | Tool tiers (toolScope) | Spawn-time view/triage/operator tiers: the desktop mints a per-session scoped token (tokens.json), the facade filters tools/list + calls per request token, revokes at session end + boot sweep. Untokened loopback stays operator (back-compat) | 🟢 Solid |
 | Plugin-contributed tools | Manifest `tools` (bound to consent-pinned `provides`) → hub-local `plugins.tools` → facade polls + grafts per-token; strictly opt-in per session (`pluginTools`, spawn-dialog pills) | 🟢 Solid |

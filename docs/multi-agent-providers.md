@@ -70,7 +70,7 @@ integration is *cleaner*, not hackier:
   messages/function_calls plus `event_msg` `task_started`/`task_complete`/
   `token_count`) via `providers/codex_rollout.rs`.
 
-### Pi — hybrid (TUI + session-file tail); `--mode rpc` for supervisors
+### Pi — hybrid (TUI + session-file tail); `--mode rpc` for the manager role
 - **Hybrid (default since 2026-07):** the native Pi TUI runs in a PTY pinned to
   our canonical id (`pi --session-id <uuid>` — creates it if missing), and the
   GUI is driven by tailing the session JSONL Pi writes to
@@ -81,7 +81,7 @@ integration is *cleaner*, not hackier:
   `stopReason` ("toolUse" → more coming). GUI prompts are bracketed-pasted into
   the TUI; approvals happen in the Term. Context tokens follow Pi's own formula:
   `usage.totalTokens || input+output+cacheRead+cacheWrite`.
-- **RPC mode (supervisors only):** headless `pi --mode rpc`, kept because role
+- **RPC mode (manager role only):** headless `pi --mode rpc`, kept because role
   instructions must be prepended programmatically and dialogs must surface as
   GUI approvals. RPC speaks strict **LF-delimited JSONL over stdio** (split on
   `\n` only — its own warning).
@@ -100,8 +100,8 @@ integration is *cleaner*, not hackier:
 - MCP: none — Pi has no MCP client at all (its README: "No MCP." — extensions
   are the extension point), so nothing is registered via `.mcp.json`. Workspacer's
   AskUserQuestion rides a generated per-session `-e` extension that POSTs to the
-  daemon's `/mcp/ask/:session_id` endpoint; the full supervisor facade toolset is
-  currently unavailable to Pi — a Pi supervisor runs on role instructions alone.
+  daemon's `/mcp/ask/:session_id` endpoint; the full manager facade toolset is
+  currently unavailable to Pi — a Pi manager runs on role instructions alone.
 
 Caveat: these CLIs move fast; pin/verify schemas at build time. Known Codex bug:
 `--json` can be silently dropped when MCP servers are active (openai/codex#15451),
@@ -140,7 +140,7 @@ translate-layer's fixture.
   ⚠️ But the capability surface is **dynamic**: a GitHub org policy can disable
   third-party MCP servers, in which case the CLI reports zero of them and carries
   on working. The adapter reads `session.mcp_servers_loaded` and raises a session
-  error when what we registered didn't attach, so a facade-less supervisor cannot
+  error when what we registered didn't attach, so a facade-less manager cannot
   pass for a working one.
 - **Approvals: there are none in `-p` mode.** Contrary to `--help` ("`--allow-all-tools`
   is required for non-interactive mode"), a `-p` run with no allow flags runs
@@ -247,8 +247,8 @@ CopilotAdapter   — one `copilot -p … --output-format json` process PER TURN;
 - **Phase 5 — Tier-2 Pi adapter.** Shipped as `providers/pi.rs` in two shapes:
   the default is the hybrid (native Pi TUI in a PTY pinned via `--session-id`,
   GUI from the session-JSONL tail); `pi --mode rpc` JSONL stdio is used for
-  supervisors, with Extension-UI approval forwarding. The planned `.mcp.json`
-  facade wiring was dropped — Pi has no MCP client, so a Pi supervisor gets role
+  the manager role, with Extension-UI approval forwarding. The planned `.mcp.json`
+  facade wiring was dropped — Pi has no MCP client, so a Pi manager gets role
   instructions and the generated AskUserQuestion extension, but no workspacer
   facade tools. Pi joins as a first-class managed provider.
 - **Phase 6 — Tier-2 GitHub Copilot adapter.** Shipped as `providers/copilot.rs`

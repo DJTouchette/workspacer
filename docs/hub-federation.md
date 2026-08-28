@@ -11,7 +11,7 @@ where the build deviated from this proposal and why.
 One workspacer client can only see one hub. This document proposes letting a
 local hub link *upstream* to remote hubs and republish their events and
 capabilities, so that a single client sees a single fleet spanning several
-machines — without any client, plugin, or the supervisor learning to hold N
+machines — without any client, plugin, or the Fleet Manager learning to hold N
 connections.
 
 **Scope and audience.** This is a personal / small-team tool. Federation here
@@ -39,7 +39,7 @@ Relevant code:
 ## The idea
 
 Every client talks to exactly one bus. That invariant is why the renderer, the
-`/m` PWA, the plugins, the supervisor, and the MCP facade all work over the same
+`/m` PWA, the plugins, the Fleet Manager, and the MCP facade all work over the same
 wire without knowing where anything runs. Federation keeps it.
 
 The local hub opens an outbound bus connection to each configured peer, using
@@ -53,7 +53,7 @@ sessions have a hub label.
    desktop ─┐
    /m PWA  ─┼─► local hub ──(busclient, outbound)──► work hub ──► claudemon
    plugins ─┘        │                                    (+ its own plugins)
-   supervisor        └──(busclient, outbound)──► sprite hub ──► claudemon
+   fleet manager     └──(busclient, outbound)──► sprite hub ──► claudemon
 ```
 
 ### Why not teach clients to hold N connections
@@ -62,8 +62,8 @@ It looks cheaper and isn't. Every consumer of the bus would need connection
 state, per-connection auth, per-connection reconnect, and a merge policy — the
 renderer, the PWA, the TUI, the MCP facade, and every plugin, each solving it
 slightly differently. Federating in the hub solves it once, in Go, in the
-process that already owns a broker and a router. The supervisor gains the
-ability to drive remote agents as a side effect, with no supervisor changes.
+process that already owns a broker and a router. The Fleet Manager gains the
+ability to drive remote agents as a side effect, with no Fleet Manager changes.
 
 ### Why it stands alone
 
