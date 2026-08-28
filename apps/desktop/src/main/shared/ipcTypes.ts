@@ -596,6 +596,8 @@ export interface AppConfig {
     /** Per-harness memory of `model` (see configService / lib/supervisorModel). */
     models?: Record<string, string>;
     summarizerModel: string;
+    /** Per-harness memory of `summarizerModel` (see configService / lib/roleModels). */
+    summarizerModels?: Record<string, string>;
     pollSeconds: number;
     /** Supervisor full-access mode: the supervisor and the workers it spawns
      *  run with permissions bypassed (see configService). */
@@ -632,9 +634,13 @@ export interface AppConfig {
     autoTitle?: {
       /** Absent/true = on. */
       enabled?: boolean;
-      /** Model for the one-shot title call (a cheap one; '' = claude default). */
+      /** Legacy single model for the one-shot title call (a cheap one). */
       model?: string;
+      /** Per-harness title models, keyed by provider (see lib/roleModels). */
+      models?: Record<string, string>;
     };
+    /** Per-harness Fleet Manager coordinator models (see lib/roleModels). */
+    managerModels?: Record<string, string>;
   };
 }
 

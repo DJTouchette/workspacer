@@ -1672,7 +1672,18 @@ function App() {
         // Fleet Manager). Everything the role needs is provider-blind below
         // this call; only the entry point ever hardcoded 'claude'.
         const provider = config.agents?.managerProvider ?? 'claude';
-        await spawnFleetManager(ask, root, fullAccess, fullAccess || anyProjectYolo, provider);
+        // …and the model it runs on, for THAT harness. Per-harness because a
+        // model id is not portable between them; blank = the harness's own
+        // default, which main re-resolves anyway (lib/roleModels).
+        const model = config.agents?.managerModels?.[provider];
+        await spawnFleetManager(
+          ask,
+          root,
+          fullAccess,
+          fullAccess || anyProjectYolo,
+          provider,
+          model,
+        );
       })();
     };
     window.addEventListener('fleet-manager:ask', handler);
@@ -1681,6 +1692,7 @@ function App() {
     config.agents?.fleetRoot,
     config.agents?.fleetFullAccess,
     config.agents?.managerProvider,
+    config.agents?.managerModels,
     config.projects,
     spawnFleetManager,
   ]);

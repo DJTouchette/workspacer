@@ -46,6 +46,7 @@ import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModel } from '../lib/spawnModel';
 import { resolveSupervisorModel } from '../lib/supervisorModel';
+import { resolveManagerModel, resolveSummarizerModel } from '../lib/roleModels';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -237,9 +238,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // for THIS harness (lib/supervisorModel) — parity with the PTY Claude path,
   // which has always done this. Without it `supervisor.model` was silently
   // Claude-only: picking a codex supervisor model in Settings changed nothing.
+  // The Fleet Manager takes `agents.managerModels[provider]` the same way — and
+  // this is the path it actually spawns on (chat-first `transport: 'stream'`),
+  // so a manager model that never reached here would be a picker writing config
+  // nobody reads.
   const spawnModel = resolveSpawnModel(
     provider,
-    opts.model?.trim() || (opts.supervisor ? resolveSupervisorModel(provider) : undefined),
+    opts.model?.trim() ||
+      (opts.supervisor ? resolveSupervisorModel(provider) : undefined) ||
+      (opts.manager ? resolveManagerModel(provider) : undefined),
   );
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
@@ -408,7 +415,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           // The loop parameters the PTY twin (facadeSpawnArgs) has always
           // passed — a managed supervisor was told neither, so it invented its
           // own cadence and picked its own digest-worker model.
-          summarizerModel: configService.getConfig().supervisor?.summarizerModel,
+          // Resolved for the harness the supervisor is running on, and that
+          // harness is NAMED — this is the path a codex supervisor takes, and
+          // it is exactly where its digest workers were falling back to Claude
+          // (spawn_agent with no provider spawns Claude). See roleModels.
+          summarizerProvider: provider,
+          summarizerModel: resolveSummarizerModel(provider),
           pollSeconds: configService.getConfig().supervisor?.pollSeconds,
           // Only harnesses with a personal-skills directory actually got the
           // /supervise install above; telling the others to run it would send
@@ -491,7 +503,9 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // both spawn paths at once instead of one.
   const spawnModel = resolveSpawnModel(
     'codex',
-    opts.model?.trim() || (opts.supervisor ? resolveSupervisorModel('codex') : undefined),
+    opts.model?.trim() ||
+      (opts.supervisor ? resolveSupervisorModel('codex') : undefined) ||
+      (opts.manager ? resolveManagerModel('codex') : undefined),
   );
   // Same supervisor full-access resolution as the managed path above.
   const skipPermissions =

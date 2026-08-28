@@ -637,3 +637,130 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     expect(call[5]).toBe('manager');
   });
 });
+
+/**
+ * THE TRAP THIS BLOCK EXISTS FOR. The bug behind the supervisor model picker
+ * was never the dropdown: `supervisor.model` was never READ on the managed spawn
+ * path at all, so the setting looked correct in the UI and did nothing. Every
+ * model setting added since has to be traced to the actual spawn call, which is
+ * the payload handed to claudemonSessionClient.spawnManaged — so that is what
+ * these assert, not the resolver in isolation.
+ *
+ * `transport: 'stream'` throughout because that is how the Fleet Manager
+ * actually spawns (chat-first); a manager model that only arrived on some other
+ * transport would be a picker writing config nobody reads.
+ */
+describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spawn', () => {
+  it('takes agents.managerModels for the harness the manager runs on', async () => {
+    mockConfig = {
+      agents: { managerProvider: 'codex', managerModels: { claude: 'opus', codex: 'gpt-5' } },
+    };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged().model).toBe('gpt-5');
+    // …and it is recorded, not just passed: the daemon can only report what it
+    // was told, and the card/pill read it from there.
+    expect((lastMeta().settings as Payload).model).toBe('gpt-5');
+  });
+
+  it('never crosses harnesses — a claude manager takes the claude entry', async () => {
+    mockConfig = { agents: { managerModels: { claude: 'opus', codex: 'gpt-5' } } };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged().model).toBe('opus');
+  });
+
+  it('an explicit model from the caller still wins over the configured one', async () => {
+    mockConfig = { agents: { managerModels: { codex: 'gpt-5' } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      model: 'gpt-5.1-codex-max',
+    });
+    expect(lastManaged().model).toBe('gpt-5.1-codex-max');
+  });
+
+  it('unset leaves the model undefined — the harness picks its own default', async () => {
+    mockConfig = { agents: { managerProvider: 'codex' } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged().model).toBeUndefined();
+  });
+
+  it('a NON-manager spawn is unaffected by the manager model', async () => {
+    mockConfig = { agents: { managerModels: { codex: 'gpt-5' } } };
+    await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
+    expect(lastManaged().model).toBeUndefined();
+  });
+});
+
+/**
+ * The digest workers a supervisor spawns used to be described to it with a model
+ * and no PROVIDER — and `spawn_agent` with no provider spawns Claude. So a codex
+ * supervisor dispatched Claude summarizers, and `supervisor.summarizerModel`'s
+ * claude-only `'sonnet'` default was right only by accident. Naming the harness
+ * is what makes a per-harness summarizer model mean anything.
+ */
+describe('spawnManagedAgent — supervisor digest workers follow their supervisor’s harness', () => {
+  it('names the supervisor’s OWN provider and that harness’s summarizer model', async () => {
+    mockConfig = {
+      supervisor: {
+        provider: 'codex',
+        summarizerModel: 'sonnet',
+        summarizerModels: { codex: 'gpt-5' },
+        pollSeconds: 30,
+      },
+    };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
+    expect(opts.summarizerProvider).toBe('codex');
+    expect(opts.summarizerModel).toBe('gpt-5');
+    expect(opts.pollSeconds).toBe(30);
+  });
+
+  it("withholds the claude-shaped 'sonnet' from a codex supervisor rather than forwarding it", async () => {
+    mockConfig = { supervisor: { provider: 'codex', summarizerModel: 'sonnet' } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
+    expect(opts.summarizerProvider).toBe('codex');
+    // Undefined = "omit model, let codex default" — the only value valid here.
+    expect(opts.summarizerModel).toBeUndefined();
+  });
+
+  it("keeps 'sonnet' for a claude-stream supervisor, where it is servable", async () => {
+    mockConfig = { supervisor: { summarizerModel: 'sonnet' } };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      supervisor: true,
+    });
+    const opts = managedFacadeInstructions.mock.calls.at(-1)![0] as Payload;
+    expect(opts.summarizerProvider).toBe('claude');
+    expect(opts.summarizerModel).toBe('sonnet');
+  });
+});

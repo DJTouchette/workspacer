@@ -14,30 +14,24 @@ import {
   SearchableSelect,
   type SelectOption,
 } from './primitives';
-
-/** Models offered for the auto-title call. Same source as the spawn dialog and
- *  the supervisor's summarizer picker, so the three pickers can't disagree
- *  about what exists. */
-function useTitleModelOptions(): SelectOption[] {
-  const [opts, setOpts] = useState<SelectOption[]>([{ value: '', label: 'Claude default' }]);
-  useEffect(() => {
-    window.electronAPI
-      .claudeListModels?.()
-      .then((res) => {
-        if (!res) return;
-        const aliases = (res.aliases ?? []).map((a) => ({ value: a.value, label: a.label }));
-        const seen = (res.seen ?? []).map((m) => ({ value: m, label: m }));
-        setOpts([{ value: '', label: 'Claude default' }, ...aliases, ...seen]);
-      })
-      .catch(() => {});
-  }, []);
-  return opts;
-}
+import HarnessModelSelect from './HarnessModelSelect';
+import { isForeignModel } from '../../../../main/shared/modelVocabulary';
+import type { AgentProvider } from '../../types/pane';
 
 interface SessionSectionProps {
   config: Config;
   save: (partial: Partial<Config>) => Promise<Config>;
 }
+
+/** Harnesses that can answer a one-shot title call — every provider with a
+ *  `directCompletion` adapter (services/directCompletion). One row each,
+ *  because the titler uses the AGENT's harness, not a configured one. */
+const TITLE_PROVIDERS: { label: string; value: AgentProvider }[] = [
+  { label: 'Claude', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'Pi', value: 'pi' },
+];
 
 const AGENT_PROVIDERS: {
   label: string;
@@ -242,7 +236,33 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   };
   // Worktree root: local state for smooth typing, persisted on blur/Enter.
   const [worktreeRoot, setWorktreeRoot] = React.useState(config.agents?.worktreeRoot ?? '');
-  const titleModelOptions = useTitleModelOptions();
+  // Which harness's title model is being edited. Auto-titling is not tied to
+  // ONE harness the way the supervisor is — every agent is titled by its own —
+  // so this selects a row to edit rather than choosing a backend, and all of
+  // them stay live at once in `autoTitle.models`.
+  const [titleHarness, setTitleHarness] = useState<AgentProvider>(
+    config.agents?.defaultProvider ?? 'claude',
+  );
+  const autoTitle = config.agents?.autoTitle;
+  // Same resolution main uses (lib/roleModels): this harness's entry, then the
+  // legacy single field but only where it is servable — `'haiku'` is a claude
+  // alias and must not be shown as codex's configured title model.
+  const titleModel =
+    autoTitle?.models?.[titleHarness] ??
+    (isForeignModel(titleHarness, autoTitle?.model) ? '' : (autoTitle?.model ?? ''));
+  const setTitleModel = (v: string) =>
+    save({
+      agents: {
+        ...config.agents,
+        autoTitle: {
+          ...autoTitle,
+          models: { ...(autoTitle?.models ?? {}), [titleHarness]: v },
+          // Keep the legacy field in step only while it means the same thing on
+          // this harness, so an old config and a new one never disagree.
+          ...(!isForeignModel(titleHarness, v) && { model: v }),
+        },
+      },
+    });
   React.useEffect(() => {
     setWorktreeRoot(config.agents?.worktreeRoot ?? '');
   }, [config.agents?.worktreeRoot]);
@@ -381,21 +401,34 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         the agent falls back to the first line of what you asked.
       </div>
 
-      <Row label="Title model">
-        <SearchableSelect
-          value={config.agents?.autoTitle?.model ?? 'haiku'}
-          options={titleModelOptions}
-          onChange={(v) =>
-            save({
-              agents: { ...config.agents, autoTitle: { ...config.agents?.autoTitle, model: v } },
-            })
-          }
-        />
+      <Row label="Title model for">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {TITLE_PROVIDERS.map((p) => (
+            <ModeButton
+              key={p.value}
+              label={p.label}
+              active={titleHarness === p.value}
+              onClick={() => setTitleHarness(p.value)}
+            />
+          ))}
+        </div>
       </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Writing a title is a trivial task — keep this cheap. It runs as a headless{' '}
-        <code>claude --print</code> call whichever backend the agent itself uses.
-      </div>
+      <HarnessModelSelect
+        provider={titleHarness}
+        label={`${TITLE_PROVIDERS.find((p) => p.value === titleHarness)?.label} title model`}
+        value={titleModel}
+        onChange={setTitleModel}
+        defaultLabel={`${titleHarness} default`}
+        hint={
+          <>
+            Writing a title is a trivial task — keep this cheap. The call runs on the harness{' '}
+            <strong>the agent itself uses</strong>, not a fixed one, so each harness gets its own
+            choice and a mixed fleet doesn’t have to share a model none of them agree on. Leave it
+            on the default to let that CLI pick.
+          </>
+        }
+        warningSuffix="Titling falls back to the first line of your own message when the call can’t run."
+      />
 
       <Row label="Claude transport">
         <div style={{ display: 'flex', gap: 4 }}>

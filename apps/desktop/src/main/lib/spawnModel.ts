@@ -20,16 +20,38 @@
  * Only `claude` has a configured default (`config.claude.defaultModel`); the
  * other providers carry their own and are returned unchanged. An unset default
  * still resolves to undefined — this fills a blank, it never overrides a caller.
+ *
+ * THE SECOND DROP THIS CLOSES: a model that belongs to a DIFFERENT harness.
+ * Every spawn path funnels through here, so this is the last place a `sonnet`
+ * can be stopped before it reaches a codex argv. The caller's explicit value
+ * used to be trusted absolutely — correct for a picker sourced from the
+ * provider's own catalog, wrong for the callers that are NOT pickers: the MCP
+ * facade's `spawn_agent` (a supervisor relaying a configured summarizer id), a
+ * hub job's hand-written spec, a respawn replaying a record written before the
+ * agent's provider changed. A foreign id is dropped to undefined rather than
+ * forwarded, because the harness's own default is the one value valid
+ * everywhere; an id NOBODY claims is still passed through untouched, since
+ * these vocabularies are patterns over live catalogs and refusing an
+ * unrecognized model would discard a deliberate choice (see modelVocabulary).
  */
 import { configService } from '../services/configService';
+import { isForeignModel } from '../shared/modelVocabulary';
 
 export function resolveSpawnModel(
   provider: string,
   requested: string | null | undefined,
 ): string | undefined {
   const explicit = requested?.trim();
-  if (explicit) return explicit;
+  if (explicit) {
+    if (!isForeignModel(provider, explicit)) return explicit;
+    console.log(
+      `[spawnModel] dropping model '${explicit}' from a ${provider} spawn — it belongs to ` +
+        `another harness; using ${provider}'s own default instead`,
+    );
+    return undefined;
+  }
   if (provider !== 'claude') return undefined;
   const configured = configService.getConfig().claude?.defaultModel;
-  return typeof configured === 'string' && configured.trim() ? configured.trim() : undefined;
+  if (typeof configured !== 'string' || !configured.trim()) return undefined;
+  return configured.trim();
 }

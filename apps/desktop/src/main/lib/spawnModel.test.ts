@@ -52,3 +52,45 @@ describe('resolveSpawnModel', () => {
     expect(resolveSpawnModel('claude', undefined)).toBeUndefined();
   });
 });
+
+/**
+ * The second drop resolveSpawnModel closes: a model belonging to a DIFFERENT
+ * harness. Every spawn funnels through here, so this is the last place a
+ * `sonnet` can be stopped before it lands on a codex argv.
+ *
+ * The callers that make this necessary are the ones that are NOT pickers — the
+ * MCP facade's `spawn_agent` (a supervisor relaying a configured summarizer id),
+ * a hub job's hand-written spec, a respawn replaying a record written before the
+ * agent's provider changed. A picker sourced from the provider's own catalog
+ * cannot produce one of these, which is exactly why the bug was invisible.
+ */
+describe('resolveSpawnModel — cross-harness model ids', () => {
+  it('drops a claude id from a codex spawn and uses codex’s own default', () => {
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    expect(resolveSpawnModel('codex', 'sonnet')).toBeUndefined();
+    expect(resolveSpawnModel('codex', 'haiku')).toBeUndefined();
+    expect(resolveSpawnModel('opencode', 'fable')).toBeUndefined();
+  });
+
+  it('drops a codex id from a claude spawn — and does NOT substitute claude.defaultModel', () => {
+    // Substituting the config default here would be worse than the harness's
+    // own: it would silently run a DIFFERENT model than the caller named while
+    // reporting success. Undefined means "the CLI's default", which is honest.
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    expect(resolveSpawnModel('claude', 'gpt-5.1-codex-max')).toBeUndefined();
+  });
+
+  it('still forwards a model the provider DOES serve', () => {
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    expect(resolveSpawnModel('claude', 'sonnet')).toBe('sonnet');
+    expect(resolveSpawnModel('codex', 'gpt-5.1-codex-max')).toBe('gpt-5.1-codex-max');
+    expect(resolveSpawnModel('opencode', 'anthropic/claude-sonnet-4')).toBe(
+      'anthropic/claude-sonnet-4',
+    );
+  });
+
+  it('still forwards an id no harness claims — a private deployment is a real choice', () => {
+    getConfig.mockReturnValue({ claude: {} });
+    expect(resolveSpawnModel('codex', 'my-finetune-v3')).toBe('my-finetune-v3');
+  });
+});

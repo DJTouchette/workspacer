@@ -289,6 +289,11 @@ export interface Config {
      *  a running/stopped manager keeps its own harness (its conversation cannot
      *  move between them). */
     managerProvider?: AgentProvider;
+    /** The Fleet Manager's own coordinator model, keyed by harness. Per-harness
+     *  because a model id is not portable between them, so switching
+     *  `managerProvider` must not destroy the other's choice. Written by the
+     *  Settings picker; resolved in main by lib/roleModels. */
+    managerModels?: Partial<Record<AgentProvider, string>>;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */
@@ -305,8 +310,12 @@ export interface Config {
     autoTitle?: {
       /** Absent/true = on. */
       enabled?: boolean;
-      /** Model for the one-shot title call (a cheap one; '' = claude default). */
+      /** Legacy single model for the one-shot title call. Ships `'haiku'`, a
+       *  claude alias, honoured only where it is servable. */
       model?: string;
+      /** Per-harness title models, keyed by provider — every agent is titled by
+       *  its OWN harness, so a mixed fleet needs several live at once. */
+      models?: Partial<Record<AgentProvider, string>>;
     };
   };
   /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
@@ -322,8 +331,12 @@ export interface SupervisorConfig {
    *  destroy the other harness's saved choice. The settings picker writes both
    *  this and `model`; main resolves them in lib/supervisorModel. */
   models?: Partial<Record<AgentProvider, string>>;
-  /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet'). */
+  /** Legacy single model the supervisor spawns for transcript digests. Ships
+   *  `'sonnet'`, a claude id; superseded by `summarizerModels`. */
   summarizerModel?: string;
+  /** Per-harness digest-worker models, keyed by provider. The digest worker now
+   *  runs on the supervisor's OWN harness, so this has to be per-harness too. */
+  summarizerModels?: Partial<Record<AgentProvider, string>>;
   /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
   pollSeconds?: number;
   /** Coding-agent backend the supervisor runs on. undefined ⇒ 'claude'.

@@ -34,6 +34,7 @@ import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModel } from '../lib/spawnModel';
 import { resolveSupervisorModel } from '../lib/supervisorModel';
+import { resolveManagerModel, resolveSummarizerModel } from '../lib/roleModels';
 import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
@@ -242,6 +243,13 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     installSupervisorSkill();
     if (!model) model = resolveSupervisorModel('claude');
   }
+  // The Fleet Manager's own coordinator model, same shape and same reason:
+  // `agents.managerProvider` shipped with no model twin at all, so the manager
+  // always ran on its harness's default with no way to choose. Resolved HERE
+  // rather than at the renderer entry point so it lands on every way a manager
+  // starts — the Overview hero, the palette, a respawn of a stopped card, a
+  // headless bus spawn — instead of only the one that remembered to read it.
+  if (opts.manager && !model) model = resolveManagerModel('claude');
   // Then the general default, so an omitted model is RESOLVED rather than left
   // to Claude Code's own internal choice. It goes on the argv AND (below) into
   // the spawn payload, which is what lets the daemon know this session's window
@@ -287,7 +295,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
         opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
       ).token,
-      summarizerModel: supCfg?.summarizerModel,
+      // Per-harness, and the harness is named: the digest workers a supervisor
+      // spawns now run on the supervisor's OWN harness (claude here, this being
+      // the PTY Claude path) instead of falling through spawn_agent's
+      // no-provider default. See mcpConfig's summarizerSpawnNote.
+      summarizerProvider: 'claude',
+      summarizerModel: resolveSummarizerModel('claude'),
       pollSeconds: supCfg?.pollSeconds,
       fullAccess: supervisorFullAccess,
     });

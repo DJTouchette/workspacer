@@ -193,6 +193,13 @@ interface Config {
      *  The manager needs an MCP client to dispatch at all, so this is
      *  claude/codex/opencode — see SupervisorSection. */
     managerProvider: string;
+    /** Coordinator model for the Fleet Manager's OWN conversation, keyed by
+     *  harness — `managerProvider` shipped with no model twin, so the manager
+     *  always ran on its harness's default. Per-harness because a model id is
+     *  not portable (`fable` means nothing to codex), and because switching
+     *  `managerProvider` must not destroy the other harness's choice. Read
+     *  through lib/roleModels, never directly. */
+    managerModels?: Record<string, string>;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries: {
       claude: string;
@@ -203,8 +210,15 @@ interface Config {
     /** Name new agents after their first exchange (see services/agentTitler). */
     autoTitle?: {
       enabled?: boolean;
-      /** Model for the one-shot title call ('' = claude's default). */
+      /** Legacy single model for the one-shot title call. Ships `'haiku'`, a
+       *  CLAUDE alias, so it is honoured only for harnesses that can serve it
+       *  ('' = the harness's own default). Superseded by `models`. */
       model?: string;
+      /** Per-harness title models, keyed by provider. Unlike the supervisor's
+       *  map this is not a MEMORY of one picker: every agent is titled by its
+       *  OWN harness, so a mixed fleet needs several of these live at once.
+       *  Resolved by lib/roleModels `resolveTitleModel`. */
+      models?: Record<string, string>;
     };
   };
   /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
@@ -221,11 +235,17 @@ interface Config {
      *  other harness's choice. Written by the settings picker; resolved (with
      *  `model` as the legacy fallback) by lib/supervisorModel. */
     models?: Record<string, string>;
-    /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet').
-     *  Always a CLAUDE model: the /supervise skill spawns its digest worker
-     *  through the facade without naming a provider, and that path spawns
-     *  Claude regardless of which harness the supervisor itself runs on. */
+    /** Legacy single model the supervisor spawns for transcript digests. Ships
+     *  `'sonnet'`, a CLAUDE id — which used to be right by accident, because
+     *  the /supervise skill spawned its digest worker with no provider and that
+     *  path spawns Claude whatever harness the supervisor runs on. The digest
+     *  worker now follows its supervisor's harness (mcpConfig
+     *  `summarizerSpawnNote`), so this is honoured only where it is servable
+     *  and is superseded by `summarizerModels`. */
     summarizerModel: string;
+    /** Per-harness digest-worker models, keyed by provider. Resolved (with
+     *  `summarizerModel` as the legacy fallback) by lib/roleModels. */
+    summarizerModels?: Record<string, string>;
     /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
     pollSeconds: number;
     /** Full access: the supervisor runs with permissions bypassed AND its

@@ -239,6 +239,45 @@ describe('spawnFleetManager', () => {
     hook.unmount();
   });
 
+  it('carries the configured manager model through to the spawn payload', async () => {
+    // `agents.managerProvider` shipped with no model twin, so the manager
+    // always ran on its harness's default. The renderer passes the resolved
+    // per-harness value so it lands on the AGENT RECORD (the card, the pill and
+    // every later restart read it there); main re-resolves the same value from
+    // live config for the entry points that never come through here.
+    const hook = renderHook(() => useAgentManager());
+    await act(async () => {
+      await hook.result.current.spawnFleetManager(
+        'status',
+        '/home/u/Work',
+        false,
+        false,
+        'codex',
+        'gpt-5-codex',
+      );
+    });
+    expect(spawnClaude.mock.calls[0][0]).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5-codex',
+      manager: true,
+    });
+    hook.unmount();
+  });
+
+  it('sends no model at all when none is configured — the harness defaults', async () => {
+    // Undefined, NOT an empty string: main's resolveSpawnModel treats a blank
+    // as "no model named" and falls through to the harness's own default, which
+    // is the one value valid on every harness. An '' would be indistinguishable
+    // from a real choice at a glance and is the kind of value that ends up on
+    // an argv.
+    const hook = renderHook(() => useAgentManager());
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('status', '/home/u/Work', false, false, 'codex');
+    });
+    expect(spawnClaude.mock.calls[0][0].model).toBeUndefined();
+    hook.unmount();
+  });
+
   it('does not resurrect a stopped manager from a DIFFERENT harness', async () => {
     // A conversation cannot move between harnesses, so after switching
     // agents.managerProvider the stopped claude card is left alone and a fresh

@@ -65,8 +65,14 @@ vi.mock('./libraryService', () => ({
 // Mutable per-test config — reset in beforeEach, mutated by the supervisor
 // full-access tests (the flag is config-resolved inside spawnClaudeAgent).
 let mockConfig: {
-  supervisor: { model: string; summarizerModel: string; pollSeconds: number; fullAccess?: boolean };
-  agents?: { fleetFullAccess?: boolean };
+  supervisor: {
+    model: string;
+    summarizerModel: string;
+    summarizerModels?: Record<string, string>;
+    pollSeconds: number;
+    fullAccess?: boolean;
+  };
+  agents?: { fleetFullAccess?: boolean; managerModels?: Record<string, string> };
   projects?: Record<string, { yolo?: boolean }>;
 };
 vi.mock('./configService', () => ({
@@ -587,5 +593,64 @@ describe('spawnClaudeAgent — firstMessage', () => {
   it('sends no firstMessage key when none was asked for', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
     expect(lastSpawn().firstMessage).toBeUndefined();
+  });
+});
+
+/**
+ * The PTY Claude twin of the managed-path assertions: the model a role spawn
+ * asks for has to land on the ARGV, which is the only thing that actually runs.
+ * A picker writing config nobody reads is the failure mode this whole area has
+ * already produced once (`supervisor.model` was never read on the managed path
+ * at all), so each setting is traced to the process arguments rather than to its
+ * resolver.
+ */
+describe('spawnClaudeAgent — role models reach the argv', () => {
+  /** The value of `--model` on the last spawn, or undefined when absent. */
+  function argvModel(): string | undefined {
+    const argv = lastSpawn().argv;
+    const i = argv.indexOf('--model');
+    return i === -1 ? undefined : argv[i + 1];
+  }
+
+  it('a Fleet Manager takes agents.managerModels.claude', async () => {
+    mockConfig.agents = { managerModels: { claude: 'opus[1m]', codex: 'gpt-5' } };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
+    expect(argvModel()).toBe('opus[1m]');
+  });
+
+  it('a manager with no configured model falls back to claude.defaultModel, then nothing', async () => {
+    mockConfig.agents = {};
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
+    // No claude.defaultModel in this fixture either, so the CLI's own default.
+    expect(argvModel()).toBeUndefined();
+  });
+
+  it('an explicit model still wins over the configured manager model', async () => {
+    mockConfig.agents = { managerModels: { claude: 'opus[1m]' } };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true, model: 'sonnet' });
+    expect(argvModel()).toBe('sonnet');
+  });
+
+  it('a plain agent is untouched by the manager model', async () => {
+    mockConfig.agents = { managerModels: { claude: 'opus[1m]' } };
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(argvModel()).toBeUndefined();
+  });
+
+  it('names claude as the digest workers’ harness, with the claude summarizer model', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
+    const args = facadeSpawnArgs.mock.calls[0][0] as {
+      summarizerProvider?: string;
+      summarizerModel?: string;
+    };
+    expect(args.summarizerProvider).toBe('claude');
+    expect(args.summarizerModel).toBe('sonnet');
+  });
+
+  it('prefers the per-harness summarizer entry when one is set', async () => {
+    mockConfig.supervisor.summarizerModels = { claude: 'haiku', codex: 'gpt-5' };
+    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
+    const args = facadeSpawnArgs.mock.calls[0][0] as { summarizerModel?: string };
+    expect(args.summarizerModel).toBe('haiku');
   });
 });

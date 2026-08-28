@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Config } from '../../hooks/useConfig';
 import type { AgentProvider } from '../../types/pane';
-import { capsFor } from '../../lib/providerCaps';
-import { loadModelOptions } from '../../lib/modelOptions';
+import HarnessModelSelect, { useModelOptions } from './HarnessModelSelect';
+import { isForeignModel } from '../../../../main/shared/modelVocabulary';
 import {
   Section,
   Row,
@@ -48,44 +48,17 @@ interface SupervisorSectionProps {
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
-/**
- * The model dropdown's options FOR ONE HARNESS.
- *
- * The bug this closes: this used to call `claudeListModels()` unconditionally,
- * so picking Codex as the supervisor agent left the picker offering Claude
- * aliases (`fable`, `opus`, …). Saving one of those wrote a model id the codex
- * CLI rejects — the field looked configured and the spawn 400'd.
- *
- * `loadModelOptions` is the same source the spawn dialog and the composer pill
- * read, keyed on the provider's `modelSource`: Claude's curated aliases + the
- * ids seen across sessions, or the daemon's live per-provider catalog (which
- * boots that CLI to ask it). Never throws — a provider that isn't installed or
- * authed resolves to an empty list, which renders as "harness default only".
- */
-function useModelOptions(provider: AgentProvider): { options: SelectOption[]; loaded: boolean } {
-  const [options, setOptions] = useState<SelectOption[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    setLoaded(false);
-    setOptions([]);
-    void loadModelOptions(provider, capsFor(provider).modelSource).then((list) => {
-      if (cancelled) return;
-      setOptions(list.map((m) => ({ value: m.id, label: m.label })));
-      setLoaded(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [provider]);
-  return { options, loaded };
-}
-
 const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) => {
   const sup = config.supervisor ?? {};
   const supProvider: AgentProvider = sup.provider ?? 'claude';
   const model = sup.model ?? '';
-  const summarizerModel = sup.summarizerModel ?? 'sonnet';
+  // Per-harness, resolved the same way main does (lib/roleModels): this
+  // harness's own entry first, then the legacy single field but ONLY where this
+  // harness could serve it — `'sonnet'` is a claude id and must not show up as
+  // codex's configured summarizer.
+  const summarizerModel =
+    sup.summarizerModels?.[supProvider] ??
+    (isForeignModel(supProvider, sup.summarizerModel) ? '' : (sup.summarizerModel ?? ''));
   const pollSeconds = sup.pollSeconds ?? 45;
 
   const { options: harnessModels, loaded: harnessModelsLoaded } = useModelOptions(supProvider);
@@ -102,13 +75,6 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   ];
   const modelUnknown =
     !!model && harnessModelsLoaded && !harnessModels.some((o) => o.value === model);
-
-  // The summarizer list stays CLAUDE's whatever harness the supervisor runs on:
-  // the /supervise skill spawns its digest worker via spawn_agent without
-  // naming a provider, and that path spawns Claude. A codex supervisor still
-  // dispatches Claude summarizers.
-  const { options: claudeModels } = useModelOptions('claude');
-  const summarizerOptions: SelectOption[] = claudeModels.filter((o) => o.value !== '');
 
   const patch = (p: Partial<NonNullable<Config['supervisor']>>) =>
     save({ supervisor: { ...sup, ...p } });
@@ -130,9 +96,19 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   const setModel = (v: string) =>
     patch({ model: v, models: { ...(sup.models ?? {}), [supProvider]: v } });
 
+  /** Same per-harness memory as setModel, for the digest-worker model. The
+   *  legacy single field is kept in step only while it is servable here, so a
+   *  claude-shaped `'sonnet'` is never rewritten to mean codex. */
+  const setSummarizerModel = (v: string) =>
+    patch({
+      summarizerModels: { ...(sup.summarizerModels ?? {}), [supProvider]: v },
+      ...(!isForeignModel(supProvider, v) && { summarizerModel: v }),
+    });
+
   const agents = config.agents ?? {};
   const fleetRoot = agents.fleetRoot ?? '';
   const fleetFullAccess = agents.fleetFullAccess === true;
+  const managerProvider: AgentProvider = agents.managerProvider ?? 'claude';
   const patchAgents = (p: Partial<NonNullable<Config['agents']>>) =>
     save({ agents: { ...agents, ...p } });
 
@@ -183,18 +159,22 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         </div>
       )}
 
-      <Row label="Summarizer model">
-        <SearchableSelect
-          value={summarizerModel}
-          options={summarizerOptions}
-          onChange={(v) => patch({ summarizerModel: v })}
-          placeholder="sonnet"
-        />
-      </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        The cheap model the supervisor spawns to read transcripts and write digests. Sonnet by
-        default; Haiku is cheaper.
-      </div>
+      <HarnessModelSelect
+        provider={supProvider}
+        label="Summarizer model"
+        value={summarizerModel}
+        onChange={setSummarizerModel}
+        defaultLabel={`${supProvider} default`}
+        hint={
+          <>
+            The cheap model the supervisor spawns to read transcripts and write digests. Those
+            digest workers now run on the <strong>same harness as the supervisor</strong> — they
+            used to be spawned with no harness named at all, which meant Claude however the
+            supervisor itself was configured — so this list follows the harness above and each one
+            remembers its own choice. Keep it cheap; leave it on the default to let that CLI pick.
+          </>
+        }
+      />
 
       <Row label="Poll interval (seconds)">
         <input
@@ -239,7 +219,7 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
             <ModeButton
               key={p.value}
               label={p.label}
-              active={(agents.managerProvider ?? 'claude') === p.value}
+              active={managerProvider === p.value}
               onClick={() => patchAgents({ managerProvider: p.value })}
             />
           ))}
@@ -252,6 +232,24 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         harnesses, so an existing Fleet Manager card keeps the one it was started on; terminate it
         (right-click → Terminate) to start a fresh manager here.
       </div>
+
+      <HarnessModelSelect
+        provider={managerProvider}
+        label="Manager model"
+        value={agents.managerModels?.[managerProvider] ?? ''}
+        onChange={(v) =>
+          patchAgents({ managerModels: { ...(agents.managerModels ?? {}), [managerProvider]: v } })
+        }
+        defaultLabel={`${managerProvider} default`}
+        hint={
+          <>
+            The model the manager’s own conversation runs on, from the models the harness above
+            actually offers. Keep this strong — it reasons about your whole fleet and writes the
+            dispatches. Each harness remembers its own choice, so switching back and forth doesn’t
+            lose it. <strong>Applies to the next manager you start.</strong>
+          </>
+        }
+      />
 
       <Row label="Projects root">
         <input
