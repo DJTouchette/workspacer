@@ -1,6 +1,6 @@
 // Brand logos for the agent providers shown in the spawn dialog. Inline SVGs
 // (no network/asset dependency) sourced from each project's official mark.
-// All four marks fill with `currentColor` so they read on both light and dark
+// All five marks fill with `currentColor` so they read on both light and dark
 // themes. Claude keeps its brand clay (set as the svg's own `color`); dropping
 // the tint is an explicit opt-in via `neutral`, never a side effect of passing
 // `style.color`. Use `neutral` in dense, repeated rows and let the clay stand
@@ -87,6 +87,23 @@ export const OpenCodeLogo: React.FC<LogoProps> = ({ size = 14, className, style 
   </svg>
 );
 
+/** GitHub Copilot mark (the Copilot CLI harness). Tints with currentColor. */
+export const CopilotLogo: React.FC<LogoProps> = ({ size = 14, className, style }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={style}
+    aria-hidden="true"
+  >
+    <path d="M11.9998 3c-2.2 0-3.6.63-4.49 1.4-.7-.28-1.5-.46-2.4-.5a.75.75 0 0 0-.74.5c-.32.9-.44 1.86-.4 2.8-.6.83-.93 1.83-.93 2.9v.53c-.62.37-1.04 1.05-1.04 1.83v2.1c0 .5.17.97.46 1.34C3.9 18.4 7.3 21 11.9998 21c4.7 0 8.1-2.6 9.54-5.1.29-.37.46-.84.46-1.34v-2.1c0-.78-.42-1.46-1.04-1.83v-.53c0-1.07-.33-2.07-.93-2.9.04-.94-.08-1.9-.4-2.8a.75.75 0 0 0-.74-.5c-.9.04-1.7.22-2.4.5C15.5998 3.63 14.1998 3 11.9998 3Zm0 1.5c1.96 0 2.94.56 3.53 1.2.2.22.51.3.79.2.5-.18 1.03-.32 1.6-.38.13.6.16 1.2.09 1.79a.75.75 0 0 0 .18.58c.47.55.74 1.24.74 2.01v.35c-.3-.06-.61-.1-.93-.1h-1.72c-1.03 0-1.99.4-2.7 1.06a2.9 2.9 0 0 0-1.58-.46c-.58 0-1.13.17-1.58.46a3.93 3.93 0 0 0-2.7-1.06H5.9998c-.32 0-.63.04-.93.1v-.35c0-.77.27-1.46.74-2.01a.75.75 0 0 0 .18-.58 5.4 5.4 0 0 1 .09-1.79c.57.06 1.1.2 1.6.38.28.1.59.02.79-.2.59-.64 1.57-1.2 3.53-1.2ZM3.9998 12.72c0-.4.33-.72.73-.72h1.72c1.3 0 2.35 1.05 2.35 2.35v2.36c0 .4-.33.72-.73.72H6.3498c-1.3 0-2.35-1.05-2.35-2.35v-2.36Zm11.2 -.72h1.72c.4 0 .73.32.73.72v2.36c0 1.3-1.05 2.35-2.35 2.35h-1.72a.73.73 0 0 1-.73-.72v-2.36c0-1.3 1.05-2.35 2.35-2.35Z" />
+    <path d="M9.2498 14.25a.75.75 0 0 1 .75.75v1.25a.75.75 0 0 1-1.5 0V15a.75.75 0 0 1 .75-.75Zm5.5 0a.75.75 0 0 1 .75.75v1.25a.75.75 0 0 1-1.5 0V15a.75.75 0 0 1 .75-.75Z" />
+  </svg>
+);
+
 /** Pi mark (the pi-coding-agent harness) — a geometric π. Tints with currentColor. */
 export const PiLogo: React.FC<LogoProps> = ({ size = 14, className, style }) => (
   <svg
@@ -117,6 +134,8 @@ export const AgentLogo: React.FC<{ provider: AgentProvider } & LogoProps> = ({
       return <ClaudeLogo {...rest} />;
     case 'codex':
       return <OpenAILogo {...rest} />;
+    case 'copilot':
+      return <CopilotLogo {...rest} />;
     case 'opencode':
       return <OpenCodeLogo {...rest} />;
     case 'pi':

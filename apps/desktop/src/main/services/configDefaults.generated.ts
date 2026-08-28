@@ -201,6 +201,7 @@ export const CONFIG_DEFAULTS = {
     binaries: {
       claude: '',
       codex: '',
+      copilot: '',
       opencode: '',
       pi: '',
     },

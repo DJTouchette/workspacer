@@ -196,7 +196,7 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
   "cwd": "/home/you/project",
   "mode": "responding",               // the state machine — see below
   "pending": null,                    // what it's waiting on, when paused
-  "provider": "claude",               // claude | codex | opencode | pi
+  "provider": "claude",               // claude | codex | copilot | opencode | pi
   "transport": "stream",              // pty | stream
   "started_at": "2026-07-26T10:02:11Z",
   "updated_at": "2026-07-26T10:19:40Z",
@@ -238,7 +238,7 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
   "raw": { … } }</code></pre>
 <p>Answer the first with <a href="#rest"><code>/approve</code></a>, the second with <a href="#rest"><code>/answer</code></a>. <code>raw</code> is the untouched upstream payload; reach for it when you need a field the daemon didn't normalize.</p>
 <h3>provider and transport</h3>
-<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>. <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless, with no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
+<p><code>provider</code> is which agent backend drives the session: <code>claude</code>, <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>. <code>transport</code> is <em>how</em>: <code>pty</code> (there's a real terminal you can attach to and stream bytes from) or <code>stream</code> (headless, with no PTY, so don't offer a terminal view). Gate your UI on <code>transport</code>, not on <code>provider</code>: Claude runs both ways.</p>
     </section>
 
     <section id="rest" class="doc">
@@ -278,12 +278,12 @@ curl -s http://127.0.0.1:7891/sessions | jq</code></pre>
 <table>
 <tr><th>route</th><th>body</th></tr>
 <tr><td><span class="verb post">POST</span> <code>/sessions/spawn</code></td><td>A PTY session. <code>{ "argv": ["claude", …], "cwd": "/path", "cols": 120, "rows": 40, "env": {…}, "session_id": "…" }</code>. <code>argv</code> and <code>cwd</code> are required.</td></tr>
-<tr><td><span class="verb post">POST</span> <code>/sessions/spawn-managed</code></td><td>A managed (daemon-driven) session, the modern path. <code>provider</code> must be <code>claude</code>, <code>codex</code>, <code>opencode</code>, or <code>pi</code>; anything else is a <code>400</code>. Returns the session id <em>immediately</em> and boots the adapter in the background, so you can render the card while the process starts.</td></tr>
-<tr><td><span class="verb">GET</span> <code>/providers/:provider/models</code></td><td>Models available for <code>codex</code>, <code>opencode</code>, or <code>pi</code>. <code>?bin=</code> and <code>?cwd=</code> override the binary and working dir.</td></tr>
+<tr><td><span class="verb post">POST</span> <code>/sessions/spawn-managed</code></td><td>A managed (daemon-driven) session, the modern path. <code>provider</code> must be <code>claude</code>, <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>; anything else is a <code>400</code>. Returns the session id <em>immediately</em> and boots the adapter in the background, so you can render the card while the process starts.</td></tr>
+<tr><td><span class="verb">GET</span> <code>/providers/:provider/models</code></td><td>Models available for <code>codex</code>, <code>copilot</code>, <code>opencode</code>, or <code>pi</code>. <code>?bin=</code> and <code>?cwd=</code> override the binary and working dir.</td></tr>
 </table>
 <p>The managed spawn body in full. Everything but <code>provider</code> and <code>cwd</code> is optional:</p>
 <pre><code>{
-  "provider": "codex",           // required: claude | codex | opencode | pi
+  "provider": "codex",           // required: claude | codex | copilot | opencode | pi
   "cwd": "/home/you/project",    // required
   "model": "gpt-5-codex",
   "effort": "high",

@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 
-export type ToolId = 'git' | 'claude' | 'codex' | 'opencode' | 'pi' | 'tailscale';
+export type ToolId = 'git' | 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi' | 'tailscale';
 
 export interface ToolSpec {
   id: ToolId;
@@ -72,6 +72,13 @@ export const TOOL_REGISTRY: ToolSpec[] = [
     bin: 'codex',
     features: ['Codex agents'],
     install: 'Install with `npm install -g @openai/codex`',
+  },
+  {
+    id: 'copilot',
+    label: 'GitHub Copilot CLI',
+    bin: 'copilot',
+    features: ['GitHub Copilot agents'],
+    install: 'Install with `npm install -g @github/copilot`',
   },
   {
     id: 'opencode',

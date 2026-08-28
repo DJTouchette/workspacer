@@ -564,9 +564,59 @@ const piAdapter: CompletionAdapter = {
   },
 };
 
+/**
+ * `copilot -p` — GitHub Copilot CLI's non-interactive mode, verified against
+ * the installed CLI (v1.0.81).
+ *
+ * `-s/--silent` prints the agent's answer and nothing else (its own words:
+ * "useful for scripting with -p"), and `--available-tools=` with an empty list
+ * is what makes this a completion rather than an agent — no tools at all, which
+ * is the `--no-tools` / `--sandbox read-only` role the other adapters fill.
+ * `--no-custom-instructions` keeps the repo's AGENTS.md out of a titler prompt.
+ * `--no-remote --no-remote-export` and `--no-auto-update` are the same three
+ * refusals the session adapter makes (see providers/copilot.rs): a one-shot must
+ * not become drivable from github.com, and must not rewrite its own launcher.
+ *
+ * `servesModel` is deliberately the NARROWEST of the five. Copilot's `--model`
+ * catalog is account-gated: on the probe account every explicit id was rejected
+ * ("Model … is not available", `model_picker_enabled: false`) including the two
+ * its own router had just chosen. `auto` is the only value that always works, so
+ * a configured model this adapter cannot honestly promise falls to another
+ * provider instead of failing at run time.
+ *
+ * Unlike codex (`--ephemeral`) and pi (`--no-session`), Copilot has no flag to
+ * skip persisting the session — a one-shot leaves a row in
+ * `~/.copilot/session-state`. Cosmetic, but it is why this adapter is not a
+ * drop-in for a high-volume summarizer loop.
+ */
+const copilotAdapter: CompletionAdapter = {
+  provider: 'copilot',
+  defaultModel: null,
+  servesModel: (model) => model.trim().toLowerCase() === 'auto',
+  async run({ prompt, model, timeoutMs, maxOutputChars }) {
+    assertInstalled('copilot');
+    const [bin, ...prefix] = launcherArgv('copilot');
+    const args = [
+      ...prefix,
+      '--silent',
+      '--no-auto-update',
+      '--no-remote',
+      '--no-remote-export',
+      '--no-ask-user',
+      '--no-color',
+      '--no-custom-instructions',
+      '--available-tools=',
+    ];
+    if (model) args.push('--model', model);
+    args.push('--prompt', prompt);
+    return stripAnsi(await runCli({ bin, args, stdin: '', timeoutMs, maxOutputChars }));
+  },
+};
+
 const ADAPTERS: Record<CompletionProvider, CompletionAdapter> = {
   claude: claudeAdapter,
   codex: codexAdapter,
+  copilot: copilotAdapter,
   opencode: opencodeAdapter,
   pi: piAdapter,
 };

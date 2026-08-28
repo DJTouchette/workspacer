@@ -529,7 +529,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"List the Claude models available to spawn_agent (ids + display names).",
 		"claude.listModels")
 	addTool[listAgentsIn](b, "list_providers",
-		"List the coding-agent HARNESSES spawn_agent can use (claude, codex, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
+		"List the coding-agent HARNESSES spawn_agent can use (claude, codex, copilot, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
 		"providers.checkAll")
 	addProjectStatusTool(b)
 	addTool[listAgentsIn](b, "get_host_cwd",
@@ -555,7 +555,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
 	addSpawnTool(b, "spawn_agent",
-		"Start a new coding-agent session in a directory (claude by default; codex/opencode/pi via provider) and return its sessionId — plus renderedMessage, the first message actually sent, whenever the spawn rendered a dispatch template. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
+		"Start a new coding-agent session in a directory (claude by default; codex/copilot/opencode/pi via provider) and return its sessionId — plus renderedMessage, the first message actually sent, whenever the spawn rendered a dispatch template. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
 		"agents.spawn")
 	addRespawnTool(b)
 	addTool[createTerminalIn](b, "create_terminal",
@@ -1293,7 +1293,7 @@ type spawnAgentIn struct {
 	// description: a remote spawn's meaning differs from "this session lives
 	// there", and the peer's clamp is worth stating where the model reads it.
 	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine. The peer clamps remote spawns itself — permission bypass (skipPermissions) is refused on a peer spawn unless the peer's own hub trusts the federation link with the full-access grant"`
-	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
+	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, copilot, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (structured GUI only, no terminal view), 'pty' runs the terminal UI (claude: the classic TUI; codex: the hybrid TUI+GUI). Omit for the workspacer config default for that harness — codex defaults to 'stream'"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). For a CLAUDE spawn, omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on; a bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one, so append '[1m]' to request the larger window explicitly. For codex/opencode/pi, omit to get THAT provider's own configured default — the claude config default is never applied to them, since a Claude model id is not a model those providers can run"`

@@ -24,9 +24,16 @@ import {
  * anything — the same failure mode MANAGER_PROVIDERS below already excludes
  * Pi (and OpenCode) to avoid.
  */
-const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode'; label: string }[] = [
+const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'copilot' | 'opencode'; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
+  // Copilot CLI has a first-class MCP client (servers ride in on
+  // `--additional-mcp-config`, no config file to write), so the facade attaches
+  // and a supervisor can observe and coordinate. The one caveat is that its
+  // capability surface is DYNAMIC: a GitHub org policy can disable third-party
+  // MCP servers, and the adapter raises a session error when that happens
+  // rather than letting a toolless supervisor pass for a working one.
+  { value: 'copilot', label: 'GitHub Copilot' },
   { value: 'opencode', label: 'OpenCode' },
 ];
 

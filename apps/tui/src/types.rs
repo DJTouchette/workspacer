@@ -268,7 +268,7 @@ pub struct Agent {
     #[serde(default)]
     pub cwd: Option<String>,
     /// Which agent backend owns this session, straight from claudemon's session
-    /// list (`"claude"` | `"codex"` | `"opencode"` | `"pi"`). Authoritative over
+    /// list (`"claude"` | `"codex"` | `"copilot"` | `"opencode"` | `"pi"`). Authoritative over
     /// the TUI's local managed-spawn map — see [`App::provider_for`]. Serde
     /// defaults to `"claude"` so older daemons deserialize unchanged.
     #[serde(default = "default_provider")]

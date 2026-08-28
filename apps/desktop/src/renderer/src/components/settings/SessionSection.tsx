@@ -35,12 +35,13 @@ const TITLE_PROVIDERS: { label: string; value: AgentProvider }[] = [
 
 const AGENT_PROVIDERS: {
   label: string;
-  value: 'claude' | 'codex' | 'opencode' | 'pi';
+  value: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
   beta?: boolean;
 }[] = [
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   // Not yet thoroughly tested — flagged Beta so expectations are set.
+  { label: 'GitHub Copilot', value: 'copilot', beta: true },
   { label: 'OpenCode', value: 'opencode', beta: true },
   { label: 'Pi', value: 'pi', beta: true },
 ];
@@ -59,7 +60,7 @@ interface ProviderDetection {
 /** One editable binary-path row for a provider in the settings panel. */
 const BinaryRow: React.FC<{
   label: string;
-  providerId: 'claude' | 'codex' | 'opencode' | 'pi';
+  providerId: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
   detection: ProviderDetection | undefined;
   config: Config;
   save: (partial: Partial<Config>) => Promise<Config>;

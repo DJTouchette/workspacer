@@ -135,6 +135,54 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     permissionSwitch: 'live',
     restartPreservesConversation: false,
   },
+  copilot: {
+    // Live, and for a reason no other provider has: claudemon runs ONE
+    // `copilot -p` process per TURN (`--session-id <uuid>` both creates and
+    // resumes, so the conversation survives across processes). The next turn is
+    // a whole new argv, so a model or effort switch simply changes what it is
+    // launched with — nothing has to be applied to a running process.
+    modelSwitch: 'live',
+    modelSource: 'managed',
+    // Copilot's own ladder (`copilot --effort`, v1.0.81) — the full seven, a
+    // superset of Claude's five. Applied to the next turn, same as the model.
+    effort: {
+      levels: [
+        { id: 'none', label: 'None' },
+        { id: 'minimal', label: 'Minimal' },
+        { id: 'low', label: 'Low' },
+        { id: 'medium', label: 'Medium' },
+        { id: 'high', label: 'High' },
+        { id: 'xhigh', label: 'Extra high' },
+        { id: 'max', label: 'Max' },
+      ],
+      switch: 'live',
+    },
+    // The ids are the shared managed pair (the whole bypass chain — the bus
+    // clamp, the brain, the facade — speaks ask/yolo), but the LABELS are
+    // copilot's own, because "Ask to approve" would be a lie here.
+    //
+    // Verified against the CLI: in non-interactive `-p` mode Copilot cannot ask
+    // the user anything — a blocked tool comes back "Permission denied and could
+    // not request permission from user" — and tools run automatically whether or
+    // not `--allow-all-tools` is passed. What the allow flags actually change is
+    // path/URL confinement: with none, writes outside the session's cwd are
+    // refused; `--allow-all` lifts that. So those are the two tiers on offer,
+    // and the pill names them for what they are.
+    permissionModes: [
+      { id: 'ask', label: 'Workspace only' },
+      { id: 'yolo', label: 'Full access' },
+    ],
+    // Live: the adapter reads the flag when it builds each turn's argv, so
+    // both directions take effect on the next message (nothing was baked into a
+    // long-lived process, which is why yolo→ask works too).
+    permissionSwitch: 'live',
+    // TRUE, and honestly so — the only managed provider that can say it.
+    // `copilot --session-id <uuid>` resumes an existing session, so a restart
+    // that reuses the workspacer session id rejoins the same conversation
+    // (verified live: a codeword set in turn 1 was recalled after the process
+    // had exited and a new one was launched).
+    restartPreservesConversation: true,
+  },
   opencode: {
     // Live: `opencode serve` applies the model per message, so claudemon's
     // `/sessions/:id/model` just restamps subsequent turns (and sets it

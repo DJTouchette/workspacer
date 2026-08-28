@@ -91,7 +91,7 @@ func (s fleetSession) tokens() float64 {
 // costUSD is the session's cumulative cost. `usage.costUSD` is the compat
 // overlay's own field and is checked first for parity with the desktop, which
 // reads `usage?.costUSD ?? statusLine?.costUSD`; the status-line fallback is
-// what covers the managed providers (codex/opencode/pi), which never populate
+// what covers the managed providers (codex/copilot/opencode/pi), which never populate
 // usage at all.
 func (s fleetSession) costUSD() float64 {
 	if s.Usage != nil && s.Usage.CostUSD != nil {

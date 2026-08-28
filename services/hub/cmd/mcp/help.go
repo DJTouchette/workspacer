@@ -170,7 +170,7 @@ the problem, so the constraints below are hard, not style.
     {"kind":"spawn","spawn":{"cwd","prompt","provider","model","effort",
                              "permissionMode","context"}}
         cwd and prompt are both REQUIRED and both refused when blank. cwd is
-        an absolute path. provider is claude | codex | opencode | pi; blank
+        an absolute path. provider is claude | codex | copilot | opencode | pi; blank
         model or effort means the provider's default. permissionMode is
         clamped for jobs whatever you ask for: an unattended agent gets no
         permission bypass, no pre-approved MCP servers and no account-profile

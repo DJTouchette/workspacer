@@ -33,7 +33,7 @@ import { permissionModeMeansBypass } from './permissionBypass';
 /** The options the `claude:spawn` IPC accepts (every provider/transport). */
 export interface AgentSpawnRequest {
   cwd?: string;
-  provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+  provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
   /** Claude: 'pty' (classic TUI) or 'stream' (headless stream-json, managed
    *  adapter). Codex: 'stream' runs headless (no native TUI PTY), 'pty' the
    *  hybrid (native TUI + GUI on one app-server thread).
@@ -199,6 +199,28 @@ export function explainUnsupportedManagedOptions(opts: ManagedSpawnOptions): str
   }
   if (opts.provider === 'pi' && (opts.supervisor || opts.mcpFacade || opts.toolScope)) {
     out.push('the workspacer MCP facade — pi ships no MCP client, so its tools cannot attach');
+  }
+  if (opts.provider === 'copilot') {
+    // Copilot's capability surface is the only DYNAMIC one in the fleet: the
+    // CLI takes MCP servers as a flag (a better seam than any other provider),
+    // but a GitHub org policy can disable third-party MCP servers entirely, and
+    // when it does the CLI reports zero servers and carries on working. So we
+    // cannot say at spawn time whether the facade will attach — only warn that
+    // it might not. The adapter checks `session.mcp_servers_loaded` at runtime
+    // and raises a session error if it didn't (providers/copilot.rs).
+    if (opts.supervisor || opts.mcpFacade || opts.toolScope) {
+      out.push(
+        'the workspacer MCP facade — copilot supports MCP, but a GitHub org policy can disable third-party servers; if it is on, this agent starts with no workspacer tools and says so in its pane',
+      );
+    }
+    // The mode ids are ask/yolo like every managed provider, but ask does NOT
+    // mean approvals here — see providerCaps.ts. Say so at spawn, once, rather
+    // than letting the pill imply a gate that does not exist.
+    if (!opts.skipPermissions) {
+      out.push(
+        "approval prompts — copilot's non-interactive mode cannot ask, so tools run automatically; 'ask' confines them to the session's directory instead",
+      );
+    }
   }
   return out;
 }

@@ -1365,8 +1365,16 @@ async fn handoff_picker_lists_target_providers() {
     app.open_handoff_picker();
     let p = app.picker.as_ref().unwrap();
     assert!(matches!(p.kind, PickerKind::Handoff { .. }));
-    assert_eq!(p.items.len(), 4);
-    assert!(p.items.iter().any(|i| i.id == "codex"));
+    // Derived from SPAWN_PROVIDERS rather than a literal: a handoff can target
+    // any harness this TUI can spawn, so adding a provider is supposed to widen
+    // this list — a hardcoded count only ever means "someone added a backend".
+    assert_eq!(p.items.len(), SPAWN_PROVIDERS.len());
+    for want in SPAWN_PROVIDERS {
+        assert!(
+            p.items.iter().any(|i| i.id == *want),
+            "handoff picker is missing {want}"
+        );
+    }
 }
 
 #[tokio::test]

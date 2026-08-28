@@ -87,6 +87,7 @@ const PROVIDERS: { value: AgentProvider; label: string; beta?: boolean }[] = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
   // Not yet thoroughly tested — surfaced with a Beta badge so expectations are set.
+  { value: 'copilot', label: 'GitHub Copilot', beta: true },
   { value: 'opencode', label: 'OpenCode', beta: true },
   { value: 'pi', label: 'Pi', beta: true },
 ];
@@ -96,6 +97,11 @@ function modelPlaceholder(provider: AgentProvider): string {
   switch (provider) {
     case 'codex':
       return 'gpt-5.4  (blank = Codex default)';
+    // Copilot's picker is account-gated: on a plan with `model_picker_enabled:
+    // false` every explicit id is refused and only `auto` works, so that is
+    // what the daemon's model list offers and what this hint names.
+    case 'copilot':
+      return 'auto  (blank = Copilot picks the model)';
     case 'pi':
       return 'claude-sonnet-4 / gpt-5  (blank = Pi default)';
     default:
@@ -403,7 +409,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     setProviderModelsLoading(true);
     let cancelled = false;
     window.electronAPI
-      .providerListModels?.(provider as 'codex' | 'opencode' | 'pi', cwd.trim() || undefined)
+      .providerListModels?.(
+        provider as 'codex' | 'copilot' | 'opencode' | 'pi',
+        cwd.trim() || undefined,
+      )
       .then((list) => {
         if (!cancelled) setProviderModels(list ?? []);
       })

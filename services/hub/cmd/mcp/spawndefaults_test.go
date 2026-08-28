@@ -226,7 +226,14 @@ func TestSpawnAgentOmittedModelWithNoConfigDefaultStaysEmpty(t *testing.T) {
 
 // The config default is CLAUDE'S, and it must not ride a managed provider's
 // spawn. `claude.defaultModel` holds a Claude model id ("opus[1m]"); codex,
-// opencode and pi have their own model vocabularies. Handing one of them this
+// copilot, opencode and pi have their own model vocabularies.
+//
+// COPILOT is the case that makes the "positive test for claude" design in
+// providerIsClaude load-bearing rather than tidy: its catalog is multi-vendor
+// and INCLUDES `claude-*` ids, so a substring check anywhere on this path would
+// route a copilot spawn down the Claude branch and hand it "opus[1m]" — an id
+// Copilot rejects outright ("Model … from --model flag is not available"), for
+// a session that would open, answer nothing and end. Handing one of them this
 // value does not fail at spawn — the session opens, the dispatch is delivered
 // verbatim, the provider starts a turn, and the API rejects THE TURN ("The
 // 'opus[1m]' model is not supported when using Codex with a ChatGPT account").
@@ -235,7 +242,7 @@ func TestSpawnAgentOmittedModelWithNoConfigDefaultStaysEmpty(t *testing.T) {
 // never the problem. The desktop spawn dialog already clears the model when a
 // managed provider is picked; this pins the facade to the same rule.
 func TestSpawnAgentConfigDefaultModelIsNotAppliedToManagedProviders(t *testing.T) {
-	for _, provider := range []string{"codex", "opencode", "pi"} {
+	for _, provider := range []string{"codex", "copilot", "opencode", "pi"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

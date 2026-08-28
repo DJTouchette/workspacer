@@ -300,7 +300,7 @@ pub(super) fn transcript_tail_lines(app: &App, width: usize) -> Vec<Line<'static
 }
 
 /// The `▍ you` / `▍ <agent>` turn header, where `<agent>` is the session's
-/// actual provider (claude / codex / opencode / pi).
+/// actual provider (claude / codex / copilot / opencode / pi).
 pub(super) fn push_role_label(out: &mut Vec<Line<'static>>, t: &Theme, role: Role, agent: &str) {
     let (label, color) = match role {
         Role::User => ("▍ you".to_string(), t.accent),

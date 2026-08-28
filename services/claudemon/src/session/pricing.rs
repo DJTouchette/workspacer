@@ -94,6 +94,18 @@ const BUILTIN: &[(&str, ModelRates)] = &[
     ("codex-mini", rates(1.5, 6.0, Some(0.375))),
     ("o3", rates(2.0, 8.0, Some(0.5))),
     ("o4-mini", rates(1.1, 4.4, Some(0.275))),
+    // Also reachable through GitHub Copilot CLI, whose catalog is multi-vendor
+    // (see providers/copilot.rs). Copilot bills in AI credits, not dollars, so
+    // a copilot session's cost is an ESTIMATE of the underlying vendor list
+    // price from these rows — not what GitHub charges your credit balance.
+    ("gpt-4.1", rates(2.0, 8.0, Some(0.5))),
+    // NOT PRICED, deliberately: Copilot also offers Google Gemini and xAI Grok
+    // models. Their current list prices are not something this build can state
+    // as fact, and `estimate_cost` returning None (a blank cost readout) is the
+    // house rule for an unknown model — an invented rate reads as authoritative.
+    // A user who wants them costed writes them into
+    // ~/.workspacer/model-rates.json, which participates in the same match.
+    // See `copilot_catalog_pricing_coverage_is_explicit` below.
 ];
 
 /// The user's editable overrides file.
@@ -444,6 +456,40 @@ mod tests {
                 .unwrap_or_else(|| panic!("no built-in rate for contract model {}", case.model));
             assert_eq!(r.input, case.input, "input rate for {}", case.model);
             assert_eq!(r.output, case.output, "output rate for {}", case.model);
+        }
+    }
+
+    /// The Copilot catalog spans four vendors, and this build prices two of
+    /// them. That split is a decision, not an oversight, so it is pinned: a
+    /// blank cost for a Gemini/Grok session is the intended behaviour (an
+    /// invented rate would read as authoritative), and if someone later adds
+    /// real figures this test is where they say so.
+    #[test]
+    fn copilot_catalog_pricing_coverage_is_explicit() {
+        // Priced: the Anthropic and OpenAI families Copilot exposes, in
+        // Copilot's own dotted id spelling (`claude-sonnet-4.6`, not
+        // `claude-sonnet-4-6`) — the prefix match must survive that.
+        for model in [
+            "claude-opus-4.6",
+            "claude-sonnet-4.6",
+            "claude-haiku-4.5",
+            "gpt-5.3-codex",
+            "gpt-5-mini",
+            "gpt-4.1",
+        ] {
+            assert!(
+                rates_for_in(model, BUILTIN, &HashMap::new()).is_some(),
+                "{model} is reachable through copilot and must have a rate"
+            );
+        }
+        // Not priced, on purpose — blank beats invented.
+        for model in ["gemini-3-pro", "gemini-3.5-flash", "grok-4.6"] {
+            assert!(
+                rates_for_in(model, BUILTIN, &HashMap::new()).is_none(),
+                "{model} has no defensible list price in this build; if you are \
+                 adding one, update modelUsage.ts and contracts/model-pricing-cases.json \
+                 in the same commit"
+            );
         }
     }
 

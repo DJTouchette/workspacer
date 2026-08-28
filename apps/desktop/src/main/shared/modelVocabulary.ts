@@ -38,7 +38,7 @@
  * to grey out a model its picker knows the selected harness cannot serve.
  * Structurally identical to `AgentProvider` — widening one means widening both.
  */
-export type Harness = 'claude' | 'codex' | 'opencode' | 'pi';
+export type Harness = 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
 
 /**
  * Claude's curated aliases. Concrete ids (`claude-opus-4-5-20251101`) are matched
@@ -68,6 +68,10 @@ const VOCABULARY: Record<Harness, (model: string) => boolean> = {
   claude: (m) => CLAUDE_ALIASES.has(m.toLowerCase()) || /^claude-/i.test(m),
   // `gpt-5.1-codex-max`, `o3`, `codex-mini`, `gpt4` — codex's own families.
   codex: (m) => /^(gpt-|o\d|codex-|gpt\d)/i.test(m),
+  // Copilot's catalog is account-gated (`model_picker_enabled: false` refuses
+  // every explicit id, including the router's own picks), so `auto` is the one
+  // value the CLI accepts everywhere.
+  copilot: (m) => m.trim().toLowerCase() === 'auto',
   // OpenCode's `--model` is always `provider/model` (`anthropic/claude-sonnet-4`).
   opencode: (m) => /^[\w.-]+\/[\w.:-]+$/.test(m),
   // Pi uses the same `provider/model` form.

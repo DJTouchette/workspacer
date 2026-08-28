@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { buildClaudeArgv, ClaudeArgvOptions } from './claudeResolver';
 
-export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'pi';
+export type AgentProvider = 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
 
 /** Detection result for one provider. */
 export interface ProviderStatus {
@@ -64,7 +64,7 @@ function binNames(base: string): string[] {
  */
 export function resolveAgentBinary(provider: AgentProvider, customBin?: string): string {
   if (customBin?.trim()) return customBin.trim();
-  // Binary name matches the provider id for every CLI (claude/codex/opencode/pi).
+  // Binary name matches the provider id for every CLI (claude/codex/copilot/opencode/pi).
   return findOnPath(binNames(provider)) ?? provider;
 }
 
@@ -83,7 +83,7 @@ export function isAgentBinaryInstalled(provider: AgentProvider, customBin?: stri
 export function checkAllProviders(
   binaries: Partial<Record<AgentProvider, string>> = {},
 ): ProviderStatus[] {
-  const all: AgentProvider[] = ['claude', 'codex', 'opencode', 'pi'];
+  const all: AgentProvider[] = ['claude', 'codex', 'copilot', 'opencode', 'pi'];
   return all.map((provider) => {
     const customBin = (binaries[provider] ?? '').trim();
     if (customBin) {

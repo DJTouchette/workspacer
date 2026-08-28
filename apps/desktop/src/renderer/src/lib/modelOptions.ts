@@ -59,7 +59,7 @@ export async function loadModelOptions(
       ];
     }
     const res = await window.electronAPI.providerListModels(
-      provider as 'codex' | 'opencode' | 'pi',
+      provider as 'codex' | 'copilot' | 'opencode' | 'pi',
       cwd,
     );
     return res.map((m) => ({

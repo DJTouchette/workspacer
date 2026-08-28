@@ -29,7 +29,7 @@ import type {
 
 /** One entry of the external-tool registry (main/services/toolCheck.ts). */
 export interface ExternalToolStatus {
-  id: 'git' | 'claude' | 'codex' | 'opencode' | 'pi' | 'tailscale';
+  id: 'git' | 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi' | 'tailscale';
   label: string;
   bin: string;
   features: string[];
@@ -127,7 +127,7 @@ export interface ElectronAPI {
   // Claude sessions (delegated to claudemon daemon)
   spawnClaude: (opts: {
     cwd?: string;
-    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
     /** Claude only: 'pty' (classic TUI) or 'stream' (headless stream-json).
      *  Omitted = the config default (claude.transport). */
     transport?: 'pty' | 'stream';
@@ -172,7 +172,7 @@ export interface ElectronAPI {
     userMessage: string;
     assistantReply?: string;
     /** The agent's own backend — titling uses ITS harness, not claude's. */
-    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
   }) => Promise<string | null>;
   /** Push: config changed in main (own write or an external one). Unsubscribe. */
   onConfigChanged: (cb: (config: unknown) => void) => () => void;
@@ -194,7 +194,7 @@ export interface ElectronAPI {
     agentId: string,
   ) => Promise<import('./claudeSession').ConversationTurn[] | null>;
   providerListModels: (
-    provider: 'codex' | 'opencode' | 'pi',
+    provider: 'codex' | 'copilot' | 'opencode' | 'pi',
     cwd?: string,
   ) => Promise<
     Array<{

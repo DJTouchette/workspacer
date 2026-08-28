@@ -302,7 +302,7 @@ export interface ClaudeSessionSnapshot {
    *  Undefined while the parent is alive, unset, or this is a federated
    *  remote session. */
   orphan?: { confirmedManager: boolean };
-  /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
+  /** Coding-agent backend ('claude' | 'codex' | 'copilot' | 'opencode' | 'pi'). Set at spawn
    *  time; lets an adopted card render the right provider label/logo. */
   provider?: string;
   /** Federation: the peer hub this session lives on. Absent = local session.
