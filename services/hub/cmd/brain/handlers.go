@@ -512,6 +512,39 @@ func analyticsRecentStub() (json.RawMessage, error) {
 
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
+// rejectDeclinedTemplateParams refuses a spawn that asks for dispatch-template
+// rendering. `template`/`templateParams` are declined by DESIGN — see
+// spawnParamsDeclined in parity_test.go: rendering a template means both
+// filling its placeholders AND compiling its default resultSchema, and the
+// resultSchema half is itself desktop-owned machinery this brain also
+// declines, so a brain-rendered template would silently drop half the
+// contract. spawnParams therefore carries no Template/TemplateParams field at
+// all, and unmarshal above silently drops whichever of those two keys the
+// caller sent — which used to mean the spawn just proceeded with an EMPTY
+// first message: the new session started, got no task, and exited immediately
+// while this capability still answered a normal-looking success (a
+// sessionId, no error) with no `messageQueued` in it. A caller has no way to
+// tell that apart from an ordinary quiet worker until it never reports back.
+// This is that decline, made loud: read straight off the raw params (before
+// they were parsed into a struct that has nowhere to put them) so the two
+// keys are still visible to check for.
+func rejectDeclinedTemplateParams(raw json.RawMessage) error {
+	var probe struct {
+		Template       *string         `json:"template"`
+		TemplateParams json.RawMessage `json:"templateParams"`
+	}
+	if err := unmarshal(raw, &probe); err != nil {
+		return err
+	}
+	if probe.Template != nil && *probe.Template != "" {
+		return fmt.Errorf("agents.spawn: template is desktop-only — the headless brain does not render dispatch templates, so it refuses the spawn instead of starting an agent with no task. Render the message yourself and pass it as 'message'")
+	}
+	if len(probe.TemplateParams) > 0 && string(probe.TemplateParams) != "null" {
+		return fmt.Errorf("agents.spawn: templateParams is desktop-only (a companion to 'template', which is also desktop-only) — the headless brain does not render dispatch templates. Render the message yourself and pass it as 'message'")
+	}
+	return nil
+}
+
 type spawnParams struct {
 	// Provider backend: claude (default) | codex | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
@@ -648,6 +681,9 @@ func (p spawnParams) isWakeTarget() bool { return p.Supervisor || p.Manager }
 func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p spawnParams
 	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if err := rejectDeclinedTemplateParams(raw); err != nil {
 		return nil, err
 	}
 
