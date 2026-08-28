@@ -77,9 +77,7 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   // diagnosis).
   const { detection } = useProviderDetection();
   const visibleSupProviders = visibleProviderOptions(SUP_PROVIDERS, detection, [supProvider]);
-  const supProviderMissing = visibleSupProviders.some(
-    (p) => p.value === supProvider && p.missing,
-  );
+  const supProviderMissing = visibleSupProviders.some((p) => p.value === supProvider && p.missing);
 
   const { options: harnessModels, loaded: harnessModelsLoaded } = useModelOptions(supProvider);
   // The current value is always offered even when the harness's catalog doesn't

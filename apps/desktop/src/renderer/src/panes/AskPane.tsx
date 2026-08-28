@@ -339,44 +339,44 @@ const AskPane: React.FC<AskPaneProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {/* With a single installed harness there is nothing to pick. */}
           {visibleProviders.length > 1 && (
-          <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)' }}>Run on</span>
+            <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)' }}>Run on</span>
           )}
           {visibleProviders.length > 1 && (
-          <div style={{ display: 'flex', gap: 4 }}>
-            {visibleProviders.map((p) => {
-              const active = provider === p.value;
-              return (
-                <button
-                  key={p.value}
-                  onClick={() => setProvider(p.value)}
-                  disabled={spawning}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    padding: '4px 9px',
-                    borderRadius: 6,
-                    cursor: spawning ? 'default' : 'pointer',
-                    fontSize: '0.7rem',
-                    fontFamily: 'inherit',
-                    fontWeight: 600,
-                    border: active
-                      ? '1px solid var(--wks-accent)'
-                      : '1px solid var(--wks-border-input)',
-                    background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
-                  }}
-                >
-                  <AgentLogo
-                    provider={p.value}
-                    size={13}
-                    style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
-                  />
-                  {p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
-                </button>
-              );
-            })}
-          </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {visibleProviders.map((p) => {
+                const active = provider === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    onClick={() => setProvider(p.value)}
+                    disabled={spawning}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      padding: '4px 9px',
+                      borderRadius: 6,
+                      cursor: spawning ? 'default' : 'pointer',
+                      fontSize: '0.7rem',
+                      fontFamily: 'inherit',
+                      fontWeight: 600,
+                      border: active
+                        ? '1px solid var(--wks-accent)'
+                        : '1px solid var(--wks-border-input)',
+                      background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                      color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                    }}
+                  >
+                    <AgentLogo
+                      provider={p.value}
+                      size={13}
+                      style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
+                    />
+                    {p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
+                  </button>
+                );
+              })}
+            </div>
           )}
           {provider !== 'claude' && (
             <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>

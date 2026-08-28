@@ -1424,8 +1424,8 @@ async fn an_answer_landing_late_clamps_the_open_modal() {
     let mut app = test_app();
     app.open_spawn();
     app.spawn_form.as_mut().unwrap().provider_idx = 4; // "pi", in the full list
-    // The probe fired on open answers a moment later with a shorter list; the
-    // cursor must not be left pointing past its end.
+                                                       // The probe fired on open answers a moment later with a shorter list; the
+                                                       // cursor must not be left pointing past its end.
     app.apply_msg(AppMsg::InstalledProviders(vec!["claude".to_string()]));
     assert_eq!(app.spawn_form.as_ref().unwrap().provider_idx, 0);
     assert_eq!(app.spawn_provider_choices(), vec!["claude"]);

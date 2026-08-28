@@ -217,9 +217,7 @@ describe('Handoff target picker', () => {
 
 describe('Ask the Fleet harness picker', () => {
   const renderAsk = () =>
-    render(
-      <AskPane agents={[]} spawnSupervisor={vi.fn()} onJumpToAgent={vi.fn()} />,
-    );
+    render(<AskPane agents={[]} spawnSupervisor={vi.fn()} onJumpToAgent={vi.fn()} />);
 
   it('offers only installed harnesses to run the supervisor on', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_AND_CODEX_ONLY);

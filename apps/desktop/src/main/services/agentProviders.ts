@@ -122,7 +122,12 @@ export function checkAllProvidersCached(
       .sort(([a], [b]) => a.localeCompare(b)),
   );
   const now = Date.now();
-  if (!force && detectionCache && detectionCache.key === key && now - detectionCache.at < DETECTION_TTL_MS) {
+  if (
+    !force &&
+    detectionCache &&
+    detectionCache.key === key &&
+    now - detectionCache.at < DETECTION_TTL_MS
+  ) {
     return detectionCache.value;
   }
   const value = checkAllProviders(binaries);

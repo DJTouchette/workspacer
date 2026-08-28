@@ -16,11 +16,7 @@ import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
-import {
-  resolveAgentBinary,
-  checkAllProvidersCached,
-  type AgentProvider,
-} from './agentProviders';
+import { resolveAgentBinary, checkAllProvidersCached, type AgentProvider } from './agentProviders';
 import { byteCompare } from '../lib/providerParity';
 import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';

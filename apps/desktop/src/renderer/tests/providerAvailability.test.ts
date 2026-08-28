@@ -104,11 +104,7 @@ describe('visibleProviderOptions', () => {
   });
 
   it('ignores undefined keep entries so optional config values pass straight through', () => {
-    const visible = visibleProviderOptions(OPTIONS, det([['codex', false]]), [
-      undefined,
-      null,
-      '',
-    ]);
+    const visible = visibleProviderOptions(OPTIONS, det([['codex', false]]), [undefined, null, '']);
     expect(visible.map((o) => o.value)).not.toContain('codex');
   });
 

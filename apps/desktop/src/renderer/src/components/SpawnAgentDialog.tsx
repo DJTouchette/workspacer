@@ -11,10 +11,7 @@ import type { AgentProvider } from '../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
 import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
 import { useProviderDetection } from '../hooks/useProviderDetection';
-import {
-  visibleProviderOptions,
-  type ProviderDetection,
-} from '../lib/providerAvailability';
+import { visibleProviderOptions, type ProviderDetection } from '../lib/providerAvailability';
 
 /** Bypass-everything mode id per provider family (claude vs managed). */
 const bypassModeFor = (provider: AgentProvider): string =>
@@ -529,7 +526,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // Only harnesses whose CLI is actually on this machine — plus whatever this
   // dialog is already pointed at (the picked provider, the configured default),
   // which stays listed and flagged rather than vanishing under the selection.
-  const visibleProviders = visibleProviderOptions(PROVIDERS, detection, [provider, defaultProvider]);
+  const visibleProviders = visibleProviderOptions(PROVIDERS, detection, [
+    provider,
+    defaultProvider,
+  ]);
 
   const submit = () => {
     if (!cwd.trim()) return;
@@ -1277,130 +1277,130 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           {/* One card is not a choice: on a machine with only Claude installed
               the row is a decoration, so it collapses entirely. */}
           {visibleProviders.length > 1 && (
-          <div
-            style={{
-              display: 'flex',
-              gap: 8,
-              marginTop: 34,
-              width: '100%',
-              maxWidth: 560,
-              justifyContent: 'center',
-            }}
-          >
-            {visibleProviders.map((p) => {
-              const active = provider === p.value;
-              const det = providerDetection.find((d) => d.provider === p.value);
-              const dotColor =
-                det === undefined
-                  ? 'var(--wks-text-disabled)'
-                  : det.found
-                    ? 'var(--wks-success)'
-                    : 'var(--wks-error)';
-              return (
-                <button
-                  key={p.value}
-                  onClick={() => setProvider(p.value)}
-                  title={
-                    (det
-                      ? det.found
-                        ? `Found: ${det.resolvedPath}`
-                        : 'Not found on PATH'
-                      : 'Checking…') +
-                    (p.value !== 'claude'
-                      ? ` — runs via claudemon's ${p.label} adapter; conversation and usage stream into the agent view.`
-                      : '')
-                  }
-                  style={{
-                    flex: 1,
-                    maxWidth: 136,
-                    position: 'relative',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 7,
-                    padding: '14px 8px 11px',
-                    borderRadius: 'var(--wks-radius-md)',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    border: active
-                      ? '1px solid var(--wks-accent)'
-                      : '1px solid var(--wks-border-input)',
-                    background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    transition: 'border-color 0.15s, background-color 0.15s',
-                  }}
-                >
-                  <span
-                    aria-hidden
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                marginTop: 34,
+                width: '100%',
+                maxWidth: 560,
+                justifyContent: 'center',
+              }}
+            >
+              {visibleProviders.map((p) => {
+                const active = provider === p.value;
+                const det = providerDetection.find((d) => d.provider === p.value);
+                const dotColor =
+                  det === undefined
+                    ? 'var(--wks-text-disabled)'
+                    : det.found
+                      ? 'var(--wks-success)'
+                      : 'var(--wks-error)';
+                return (
+                  <button
+                    key={p.value}
+                    onClick={() => setProvider(p.value)}
+                    title={
+                      (det
+                        ? det.found
+                          ? `Found: ${det.resolvedPath}`
+                          : 'Not found on PATH'
+                        : 'Checking…') +
+                      (p.value !== 'claude'
+                        ? ` — runs via claudemon's ${p.label} adapter; conversation and usage stream into the agent view.`
+                        : '')
+                    }
                     style={{
-                      position: 'absolute',
-                      top: 8,
-                      right: 8,
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: dotColor,
-                    }}
-                  />
-                  <AgentLogo
-                    provider={p.value}
-                    size={20}
-                    style={{
-                      color: 'var(--wks-text-primary)',
-                      opacity: active ? 1 : 0.65,
-                      transition: 'opacity 0.15s',
-                    }}
-                  />
-                  <span
-                    style={{
-                      display: 'inline-flex',
+                      flex: 1,
+                      maxWidth: 136,
+                      position: 'relative',
+                      display: 'flex',
+                      flexDirection: 'column',
                       alignItems: 'center',
-                      gap: 5,
-                      fontSize: '0.7rem',
-                      fontWeight: 600,
-                      color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                      gap: 7,
+                      padding: '14px 8px 11px',
+                      borderRadius: 'var(--wks-radius-md)',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      border: active
+                        ? '1px solid var(--wks-accent)'
+                        : '1px solid var(--wks-border-input)',
+                      background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                      transition: 'border-color 0.15s, background-color 0.15s',
                     }}
                   >
-                    {p.label}
-                    {p.missing && (
-                      <span
-                        title="This CLI was not found — the card is only here because it is the current selection"
-                        style={{
-                          fontSize: '0.55rem',
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          lineHeight: 1,
-                          padding: '2px 3px',
-                          borderRadius: 3,
-                          color: 'var(--wks-error)',
-                          border: '1px solid var(--wks-error)',
-                        }}
-                      >
-                        NOT INSTALLED
-                      </span>
-                    )}
-                    {!p.missing && p.beta && (
-                      <span
-                        title="Beta — not yet thoroughly tested"
-                        style={{
-                          fontSize: '0.55rem',
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          lineHeight: 1,
-                          padding: '2px 3px',
-                          borderRadius: 3,
-                          color: 'var(--wks-warning)',
-                          border: '1px solid var(--wks-warning)',
-                          opacity: active ? 1 : 0.7,
-                        }}
-                      >
-                        BETA
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                    <span
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: dotColor,
+                      }}
+                    />
+                    <AgentLogo
+                      provider={p.value}
+                      size={20}
+                      style={{
+                        color: 'var(--wks-text-primary)',
+                        opacity: active ? 1 : 0.65,
+                        transition: 'opacity 0.15s',
+                      }}
+                    />
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                      }}
+                    >
+                      {p.label}
+                      {p.missing && (
+                        <span
+                          title="This CLI was not found — the card is only here because it is the current selection"
+                          style={{
+                            fontSize: '0.55rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                            lineHeight: 1,
+                            padding: '2px 3px',
+                            borderRadius: 3,
+                            color: 'var(--wks-error)',
+                            border: '1px solid var(--wks-error)',
+                          }}
+                        >
+                          NOT INSTALLED
+                        </span>
+                      )}
+                      {!p.missing && p.beta && (
+                        <span
+                          title="Beta — not yet thoroughly tested"
+                          style={{
+                            fontSize: '0.55rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                            lineHeight: 1,
+                            padding: '2px 3px',
+                            borderRadius: 3,
+                            color: 'var(--wks-warning)',
+                            border: '1px solid var(--wks-warning)',
+                            opacity: active ? 1 : 0.7,
+                          }}
+                        >
+                          BETA
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
 
           {/* Diagnostics are failure-only: a healthy provider says nothing here

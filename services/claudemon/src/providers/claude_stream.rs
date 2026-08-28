@@ -3121,7 +3121,11 @@ mod tests {
             &mut acc,
             &mut totals,
         );
-        assert_eq!(cur_mode, SessionMode::Input, "drain pays the suppressed idle");
+        assert_eq!(
+            cur_mode,
+            SessionMode::Input,
+            "drain pays the suppressed idle"
+        );
         assert_eq!(store.get(sid).unwrap().background_tasks, 0);
     }
 

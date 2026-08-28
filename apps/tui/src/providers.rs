@@ -99,7 +99,10 @@ mod tests {
     #[test]
     fn keeps_the_pinned_provider_even_when_missing() {
         let found = vec!["claude".to_string()];
-        assert_eq!(offered(Some(&found), Some("opencode")), vec!["claude", "opencode"]);
+        assert_eq!(
+            offered(Some(&found), Some("opencode")),
+            vec!["claude", "opencode"]
+        );
     }
 
     #[test]

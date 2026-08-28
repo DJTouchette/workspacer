@@ -317,8 +317,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       </Row>
       {defaultProviderMissing && (
         <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
-          The <strong>{defaultProvider}</strong> CLI was not found on this machine — new agents
-          will fail to launch until you install it or set its path under Tool paths below.
+          The <strong>{defaultProvider}</strong> CLI was not found on this machine — new agents will
+          fail to launch until you install it or set its path under Tool paths below.
         </div>
       )}
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
@@ -479,26 +479,27 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
       {codexOffered && (
         <>
-      <Row label="Codex transport">
-        <div style={{ display: 'flex', gap: 4 }}>
-          <ModeButton
-            label="Hybrid (TUI + GUI)"
-            active={codexTransport === 'pty'}
-            onClick={() => save({ codex: { ...config.codex, transport: 'pty' } })}
-          />
-          <ModeButton
-            label="Headless (stream)"
-            active={codexTransport === 'stream'}
-            onClick={() => save({ codex: { ...config.codex, transport: 'stream' } })}
-          />
-        </div>
-      </Row>
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        How new Codex sessions run. Headless (stream) is the default: claudemon drives{' '}
-        <code>codex app-server</code> over a websocket and the structured GUI is the only surface —
-        the exact twin of Claude's headless transport. Hybrid also runs the native Codex TUI in a
-        terminal, rejoined onto the same thread, so you get a Term view too. Overridable per spawn.
-      </div>
+          <Row label="Codex transport">
+            <div style={{ display: 'flex', gap: 4 }}>
+              <ModeButton
+                label="Hybrid (TUI + GUI)"
+                active={codexTransport === 'pty'}
+                onClick={() => save({ codex: { ...config.codex, transport: 'pty' } })}
+              />
+              <ModeButton
+                label="Headless (stream)"
+                active={codexTransport === 'stream'}
+                onClick={() => save({ codex: { ...config.codex, transport: 'stream' } })}
+              />
+            </div>
+          </Row>
+          <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+            How new Codex sessions run. Headless (stream) is the default: claudemon drives{' '}
+            <code>codex app-server</code> over a websocket and the structured GUI is the only
+            surface — the exact twin of Claude's headless transport. Hybrid also runs the native
+            Codex TUI in a terminal, rejoined onto the same thread, so you get a Term view too.
+            Overridable per spawn.
+          </div>
         </>
       )}
 
