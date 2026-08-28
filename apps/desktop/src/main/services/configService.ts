@@ -5,6 +5,7 @@ import * as yaml from 'js-yaml';
 import { CONFIG_DEFAULTS } from './configDefaults.generated';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withConfigLock } from '../lib/configLock';
+import { pruneOrphanedConfigKeys } from '../lib/orphanedConfigKeys';
 import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
 import type { ProjectIdentity } from '../shared/ipcTypes';
 
@@ -639,6 +640,11 @@ export class ConfigService {
         );
         return defaults;
       }
+      // Retire config blocks whose feature is gone before the merge sees them:
+      // deepMerge copies every source key, so an orphan would otherwise be
+      // re-serialized by the next save forever. Strictly one key at a time —
+      // see ORPHANED_CONFIG_KEYS; this is NOT unknown-key pruning.
+      this.pruneOrphanedKeys(parsed as Record<string, unknown>, data, configPath);
       const merged = deepMerge(defaults, parsed) as Config;
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
       // to the flat defaults, after which migrateFlatChords is a no-op. A modern
@@ -668,6 +674,45 @@ export class ConfigService {
         }
       }
       return defaults;
+    }
+  }
+
+  /**
+   * Delete retired top-level blocks (ORPHANED_CONFIG_KEYS) from the just-parsed
+   * config, and persist the tidied file when — and only when — the rewrite is
+   * provably nothing but that deletion.
+   *
+   * The write is a byte-level splice of the text we just read, NOT `yaml.dump`
+   * of the parsed object, because dump loses every comment and re-orders keys.
+   * The in-memory config is cleaned either way; a file we cannot rewrite safely
+   * is simply left alone (the key just stays on disk, harmlessly, as it does
+   * today).
+   *
+   * Like the keybindings migrations above this writes outside the cross-process
+   * config lock, and for the same reason: it runs INSIDE loadFromDisk, which
+   * saveConfigLocked calls while already holding it. saveConfigLocked's CAS is
+   * what covers the resulting window — see its comment.
+   */
+  private pruneOrphanedKeys(
+    parsed: Record<string, unknown>,
+    raw: string,
+    configPath: string,
+  ): void {
+    const { removed, text } = pruneOrphanedConfigKeys(parsed, raw);
+    if (removed.length === 0) return;
+    if (text == null) {
+      console.warn(
+        `[ConfigService] retired config key(s) ${removed.join(', ')} ignored in memory, but ` +
+          `${configPath} was left untouched — the block could not be removed without ` +
+          'changing something else in the file.',
+      );
+      return;
+    }
+    try {
+      atomicWriteFileSync(configPath, text);
+      console.log(`[ConfigService] removed retired config key(s): ${removed.join(', ')}`);
+    } catch (err) {
+      console.error('[ConfigService] retired-key prune write failed:', err);
     }
   }
 

@@ -220,6 +220,29 @@ func (c *configService) loadFromDisk() map[string]any {
 		return defaults
 	}
 	c.lastBrokenBackup = ""
+	// Retire config blocks whose feature is gone BEFORE the merge sees them:
+	// deepMerge copies every source key, so an orphan would otherwise be
+	// re-serialized by the next save forever. Strictly one key at a time — see
+	// orphanedConfigKeys; this is NOT unknown-key pruning.
+	//
+	// The rewrite is a byte-level splice of the text we just read, never
+	// writeConfigYAML (which marshals the map and would drop every comment and
+	// re-order every key). Like the three migrations below it this writes
+	// outside the cross-process lock — saveLocked's CAS covers that window.
+	if removed, text := pruneOrphanedConfigKeys(parsed, data); len(removed) > 0 {
+		switch {
+		case text == nil:
+			log.Printf("brain: retired config key(s) %s ignored in memory, but %s was left "+
+				"untouched — the block could not be removed without changing something else "+
+				"in the file", strings.Join(removed, ", "), configPath())
+		default:
+			if err := writeFileAtomic(configPath(), text, 0o644); err != nil {
+				log.Printf("brain: retired-key prune write failed: %v", err)
+			} else {
+				log.Printf("brain: removed retired config key(s): %s", strings.Join(removed, ", "))
+			}
+		}
+	}
 	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(deepMerge(defaults, parsed))))
 }
 

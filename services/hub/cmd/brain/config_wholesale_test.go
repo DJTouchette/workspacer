@@ -93,23 +93,30 @@ func TestConfigSaveReplacesProjectsWholesale(t *testing.T) {
 // MCP facade's addObjectTool forwards a save_config call through (see
 // cmd/mcp/main_test.go's TestFacadeRoutesToolToHub for the facade half of
 // this — this is the brain half the facade forwards to).
+//
+// `pluginSettings` is deliberately a key the shipped defaults have never heard
+// of, so this doubles as the guard on the OTHER half of config_orphans.go:
+// retirement is a named one-key list, NOT general unknown-key pruning. A key
+// absent from the defaults because its feature loads late or lives in a plugin
+// must round-trip untouched. (It used to be spelled `supervisor` here, which is
+// now on that named list and would be pruned on read.)
 func TestConfigSaveObjectValueRoundTripsAsAnObject(t *testing.T) {
 	tempConfigHome(t)
 
 	c := newConfigService()
 	merged := c.save(map[string]any{
-		"supervisor": map[string]any{"fullAccess": true, "provider": "claude"},
+		"pluginSettings": map[string]any{"fullAccess": true, "provider": "claude"},
 		"projects": map[string]any{
 			"/home/u/proj": map[string]any{"label": "Proj", "yolo": true},
 		},
 	})
 
-	supervisor, ok := merged["supervisor"].(map[string]any)
+	pluginSettings, ok := merged["pluginSettings"].(map[string]any)
 	if !ok {
-		t.Fatalf("supervisor did not round-trip as an object: %#v", merged["supervisor"])
+		t.Fatalf("pluginSettings did not round-trip as an object: %#v", merged["pluginSettings"])
 	}
-	if supervisor["fullAccess"] != true {
-		t.Errorf("supervisor.fullAccess = %v, want true", supervisor["fullAccess"])
+	if pluginSettings["fullAccess"] != true {
+		t.Errorf("pluginSettings.fullAccess = %v, want true", pluginSettings["fullAccess"])
 	}
 
 	projects, ok := merged["projects"].(map[string]any)
@@ -127,8 +134,8 @@ func TestConfigSaveObjectValueRoundTripsAsAnObject(t *testing.T) {
 	// And reading it back fresh (a separate config.get, the way a second bus
 	// caller would see it) must show the same shape, not a JSON-encoded string.
 	fresh := newConfigService().get()
-	if _, ok := fresh["supervisor"].(map[string]any); !ok {
-		t.Fatalf("supervisor on disk is not an object after reload: %#v", fresh["supervisor"])
+	if _, ok := fresh["pluginSettings"].(map[string]any); !ok {
+		t.Fatalf("pluginSettings on disk is not an object after reload: %#v", fresh["pluginSettings"])
 	}
 	if _, ok := fresh["projects"].(map[string]any); !ok {
 		t.Fatalf("projects on disk is not an object after reload: %#v", fresh["projects"])
