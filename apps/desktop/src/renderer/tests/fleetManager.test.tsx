@@ -221,7 +221,7 @@ describe('spawnFleetManager', () => {
   it('runs the manager on the configured harness, role flags intact', async () => {
     // The Overview entry point used to hardcode provider 'claude', so a Fleet
     // Manager on codex was impossible. The role flags matter more than the
-    // provider: without `manager` the session is never marked isSupervisor and
+    // provider: without `manager` the session is never marked isWakeTarget and
     // NO worker-finished wake is routed to it, and without `fleetFullAccess`
     // its token is minted with no dispatch grants.
     const hook = renderHook(() => useAgentManager());
