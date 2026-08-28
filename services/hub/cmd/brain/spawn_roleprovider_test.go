@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-// A ROLE spawn that names no provider must land on the harness config says that
-// role runs on — supervisor.provider / agents.managerProvider.
+// A MANAGER spawn that names no provider must land on the harness config says
+// the role runs on — agents.managerProvider.
 //
-// The reported bug: Settings said the supervisor runs on codex and the session
-// came up on Claude. Both settings were read by ONE desktop launcher each and by
-// nothing in either backend, so every headless start — which is every supervisor
+// The reported bug: Settings said the manager runs on codex and the session
+// came up on Claude. The setting was read by ONE desktop launcher and by
+// nothing in either backend, so every headless start — which is every manager
 // in `workspacer serve`, plus anything launched from the phone, the web client
 // or a hub job — arrived with `provider: ""` and fell through to claude. A
-// silently-Claude supervisor is indistinguishable from a working one, which is
+// silently-Claude manager is indistinguishable from a working one, which is
 // why this is pinned on the wire rather than in the resolver alone.
 //
 // TWIN: apps/desktop/src/main/lib/roleProviders.test.ts.
@@ -39,8 +39,8 @@ func roleProviderRig(t *testing.T, cfg map[string]any) (*registry, func(string) 
 	t.Setenv("WKS_CLAUDE_BIN", "")
 	reg := newRegistry(newClaudemonClient(srv.URL))
 	reg.meta = newMetaStore()
-	// A supervisor always wants the workspacer MCP facade; without a URL the
-	// spawn is refused before it ever reaches the provider split.
+	// A facade spawn needs the facade URL; without one the spawn is refused
+	// before it ever reaches the provider split.
 	reg.mcpFacadeURL = srv.URL + "/mcp"
 	return reg, func(path string) []recordedCall {
 		var out []recordedCall
@@ -66,26 +66,9 @@ func TestRoleSpawnWithNoProviderTakesTheConfiguredHarness(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "supervisor",
-			cfg:    map[string]any{"supervisor": map[string]any{"provider": "codex"}},
-			params: `{"cwd":"/tmp","supervisor":true}`,
-			want:   "codex",
-		},
-		{
 			name:   "fleet manager",
 			cfg:    map[string]any{"agents": map[string]any{"managerProvider": "codex"}},
 			params: `{"cwd":"/tmp","manager":true}`,
-			want:   "codex",
-		},
-		{
-			// Both flags = the Fleet Manager (a manager IS a wake target like a
-			// supervisor), so the manager's own setting decides.
-			name: "both flags read as the manager",
-			cfg: map[string]any{
-				"supervisor": map[string]any{"provider": "opencode"},
-				"agents":     map[string]any{"managerProvider": "codex"},
-			},
-			params: `{"cwd":"/tmp","supervisor":true,"manager":true}`,
 			want:   "codex",
 		},
 	} {
@@ -109,10 +92,10 @@ func TestExplicitProviderBeatsTheConfiguredRoleHarness(t *testing.T) {
 	// The launcher offers a per-launch harness override; a config default must
 	// not quietly reclaim it.
 	reg, calls := roleProviderRig(t, map[string]any{
-		"supervisor": map[string]any{"provider": "codex"},
+		"agents": map[string]any{"managerProvider": "codex"},
 	})
 	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp","supervisor":true,"provider":"claude","transport":"pty"}`)); err != nil {
+		[]byte(`{"cwd":"/tmp","manager":true,"provider":"claude","transport":"pty"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(calls("/sessions/spawn-managed")); n != 0 {
@@ -127,10 +110,10 @@ func TestUnknownConfiguredHarnessFallsBackToClaude(t *testing.T) {
 	// A hand-edited config naming a harness we do not speak would otherwise
 	// reach an adapter with no idea what it is; claude at least runs.
 	reg, calls := roleProviderRig(t, map[string]any{
-		"supervisor": map[string]any{"provider": "gpt6"},
+		"agents": map[string]any{"managerProvider": "gpt6"},
 	})
 	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp","supervisor":true,"transport":"pty"}`)); err != nil {
+		[]byte(`{"cwd":"/tmp","manager":true,"transport":"pty"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(calls("/sessions/spawn")); n != 1 {
@@ -139,11 +122,10 @@ func TestUnknownConfiguredHarnessFallsBackToClaude(t *testing.T) {
 }
 
 func TestPlainWorkerIgnoresTheRoleHarnessSettings(t *testing.T) {
-	// These settings are for the two roles; they are not a global default
-	// provider (that is agents.defaultProvider, applied by the spawn dialog).
+	// This setting is for the manager; it is not a global default provider
+	// (that is agents.defaultProvider, applied by the spawn dialog).
 	reg, calls := roleProviderRig(t, map[string]any{
-		"supervisor": map[string]any{"provider": "codex"},
-		"agents":     map[string]any{"managerProvider": "codex"},
+		"agents": map[string]any{"managerProvider": "codex"},
 	})
 	if _, err := reg.handle(context.Background(), "agents.spawn",
 		[]byte(`{"cwd":"/tmp","transport":"pty"}`)); err != nil {

@@ -28,13 +28,10 @@ type sessionFacade struct {
 }
 
 func (p spawnParams) wantsFacade() bool {
-	return p.Supervisor || p.MCPFacade || strings.TrimSpace(p.ToolScope) != ""
+	return p.MCPFacade || strings.TrimSpace(p.ToolScope) != ""
 }
 
 func (p spawnParams) facadeScope() (authtoken.Scope, error) {
-	if p.Supervisor {
-		return authtoken.ScopeOperator, nil
-	}
 	if strings.TrimSpace(p.ToolScope) == "" {
 		return authtoken.ScopeOperator, nil
 	}
@@ -72,9 +69,6 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 		role = "manager"
 		yoloAllowed = r.managerFullAccessFromConfig()
 		profilesAllowed = localProfileIDs()
-	case p.Supervisor:
-		role = "supervisor"
-		yoloAllowed = r.supervisorFullAccessFromConfig()
 	}
 
 	rec, err := mintSessionFacadeToken(sessionID, scope, p.PluginTools, profilesAllowed, yoloAllowed, role)
@@ -249,9 +243,6 @@ func writeFileAtomic0600(path string, data []byte) error {
 
 func sessionFacadeInstructions(sessionID string, p spawnParams) string {
 	scope := strings.TrimSpace(p.ToolScope)
-	if p.Supervisor {
-		scope = string(authtoken.ScopeOperator)
-	}
 	if scope == "" {
 		scope = string(authtoken.ScopeOperator)
 	}
@@ -264,9 +255,6 @@ func sessionFacadeInstructions(sessionID string, p spawnParams) string {
 	}
 	if p.Manager {
 		parts = append(parts, "You are the session manager; use workspacer tools to coordinate child sessions and report their status when needed.")
-	}
-	if p.Supervisor {
-		parts = append(parts, "You are the session supervisor; use workspacer tools to inspect and manage the session only when it serves the user's request.")
 	}
 	return strings.Join(parts, "\n")
 }
@@ -319,10 +307,6 @@ func (r *registry) managerFullAccessFromConfig() bool {
 		}
 	}
 	return false
-}
-
-func (r *registry) supervisorFullAccessFromConfig() bool {
-	return configBool(r.cfg.get(), "supervisor", "fullAccess")
 }
 
 func configBool(cfg map[string]any, section string, key string) bool {

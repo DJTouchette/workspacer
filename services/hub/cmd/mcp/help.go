@@ -67,7 +67,7 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   also approve/reply/interrupt, "operator" for everything (spawning included).
   mcpFacade:true is the legacy spelling of operator.
 - skipPermissions omitted = bypass if your session carries the full-access
-  grant (the operator turned on full access for the fleet/supervisor, which
+  grant (the operator turned on full access for the fleet, which
   means the agents you dispatch skip approvals), else the workspacer config
   default (the same one the desktop spawn dialog pre-selects:
   claude.skipPermissionsDefault, or a bypass defaultPermissionMode). An
