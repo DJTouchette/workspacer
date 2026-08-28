@@ -38,21 +38,13 @@ import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
-import { ensureSupervisorHome, installSupervisorSkill } from './supervisorSkill';
-import { agentSkillsRoot } from '../lib/agentSkills';
 import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModel } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
-import { resolveSupervisorModel } from '../lib/supervisorModel';
-import {
-  resolveManagerModel,
-  resolveSummarizerModel,
-  resolveSupervisorEffort,
-  resolveManagerEffort,
-} from '../lib/roleModels';
+import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -125,28 +117,24 @@ export interface ManagedSpawnOptions {
   mcpItemIds?: string[];
   /** Re-use this id (matches the desktop's pinned-session contract). */
   resumeSessionId?: string;
-  /** Wire the workspacer MCP facade + run the /supervise loop. */
-  supervisor?: boolean;
   /** Fleet Manager: a nudge-eligible parent (worker finished/blocked wakes
-   *  route to it) WITHOUT the /supervise loop or supervisor role text — its
-   *  doctrine rides its kickoff message. Callers pair it with
-   *  toolScope 'operator'. */
+   *  route to it) — its doctrine rides its kickoff message. Callers pair it
+   *  with toolScope 'operator'. */
   manager?: boolean;
   /** Manager full-access HINT from the caller. The token's actual yolo grant
-   *  is config-resolved at mint (services/fullAccessGrants — same doctrine as
-   *  supervisor.fullAccess), so this flag no longer decides anything here; it
+   *  is config-resolved at mint (services/fullAccessGrants), so this flag no
+   *  longer decides anything here; it
    *  is kept on the wire for record fidelity (the renderer persists it on the
    *  agent card and re-passes it on respawn). */
   fleetFullAccess?: boolean;
-  /** Wire the facade tools without the supervisor loop (legacy operator tier —
-   *  prefer `toolScope`). */
+  /** Wire the facade tools at the legacy operator tier — prefer `toolScope`. */
   mcpFacade?: boolean;
   /**
    * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
    * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
    * 'operator' (everything). Mints a per-session scoped token the facade
    * enforces, so the agent sees (and pays context for) only its tier's tools.
-   * Implies the facade; `supervisor`/`mcpFacade` without it mean 'operator'.
+   * Implies the facade; `mcpFacade` without it means 'operator'.
    */
   toolScope?: RemoteTokenScope;
   /** Plugin ids whose contributed facade tools this session may use (opt-in;
@@ -212,7 +200,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   }
   // THE choke point for the transport default. Every managed spawn — the
   // `claude:spawn` IPC, the `agents.spawn` hub capability, a respawn, a job, a
-  // supervisor/manager spawn — arrives here, so resolving it once is what makes
+  // manager spawn — arrives here, so resolving it once is what makes
   // "codex is headless unless you say otherwise" a property of the app rather
   // than of whichever caller remembered to fill the field in. An explicit
   // request still wins; see lib/spawnTransport.
@@ -240,10 +228,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   if (provider === 'codex' && transport === 'pty' && process.platform === 'win32') {
     return spawnCodexHybrid(opts);
   }
-  // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
-  // rather than inheriting some repo; everything else uses the given cwd.
   let cwd = normalizeSpawnCwd(opts.cwd);
-  if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
   // Refused here, before a session id exists: this path's 200 arrives BEFORE
   // the adapter's child launches, so an unusable cwd otherwise surfaces as a
   // live-looking card whose session is already stopped (see spawnCwd.ts).
@@ -262,36 +247,26 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // which on the stream transport is a whole turn away. This is the path most
   // dispatched workers take (`agents.spawn` over the bus names no model), so it
   // is where the spawn-time signal was being lost for most of the fleet.
-  // Supervisors with no explicit model take the configured coordinator model
-  // for THIS harness (lib/supervisorModel) — parity with the PTY Claude path,
-  // which has always done this. Without it `supervisor.model` was silently
-  // Claude-only: picking a codex supervisor model in Settings changed nothing.
-  // The Fleet Manager takes `agents.managerModels[provider]` the same way — and
+  // The Fleet Manager takes `agents.managerModels[provider]` — and
   // this is the path it actually spawns on (chat-first `transport: 'stream'`),
   // so a manager model that never reached here would be a picker writing config
   // nobody reads.
   const spawnModel = resolveSpawnModel(
     provider,
-    opts.model?.trim() ||
-      (opts.supervisor ? resolveSupervisorModel(provider) : undefined) ||
-      (opts.manager ? resolveManagerModel(provider) : undefined),
+    opts.model?.trim() || (opts.manager ? resolveManagerModel(provider) : undefined),
   );
   // Reasoning effort, same rule as the model above: an explicit request wins,
-  // otherwise a ROLE spawn takes the level configured for it on THIS harness
-  // (supervisor.efforts / agents.managerEfforts). Per-harness because the
+  // otherwise a MANAGER spawn takes the level configured for it on THIS
+  // harness (agents.managerEfforts). Per-harness because the
   // ladders are not portable — codex's 'xhigh' means nothing to claude — and
   // resolved here so it reaches every entry point, not just a launcher.
   const spawnEffort =
-    opts.effort?.trim() ||
-    (opts.supervisor ? resolveSupervisorEffort(provider) : undefined) ||
-    (opts.manager ? resolveManagerEffort(provider) : undefined);
+    opts.effort?.trim() || (opts.manager ? resolveManagerEffort(provider) : undefined);
   const bin = resolveAgentBinary(provider, configuredBin(provider));
-  const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
-  // A supervisor is operator by definition; a plain facade session takes its
-  // requested tier, defaulting to operator (the legacy mcpFacade meaning).
-  const facadeScope: RemoteTokenScope = opts.supervisor
-    ? 'operator'
-    : (opts.toolScope ?? 'operator');
+  const wantsFacade = opts.mcpFacade || !!opts.toolScope;
+  // A facade session takes its requested tier, defaulting to operator (the
+  // legacy mcpFacade meaning).
+  const facadeScope: RemoteTokenScope = opts.toolScope ?? 'operator';
   const managedId = opts.resumeSessionId || randomUUID();
   // Refused out loud rather than dropped — see claudeSpawn's twin.
   const resultSchema = opts.resultSchema;
@@ -299,22 +274,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
-  // twin of agents.fleetFullAccess): the supervisor itself runs bypassed, and
-  // its facade token below carries the yolo grant so the workers it spawns may
-  // run bypassed too. Config-resolved — not a caller flag — so every entry
-  // point (IPC, hub bus, jobs) applies the local user's setting identically.
-  // TWIN: claudeSpawn.ts resolves the same setting on the PTY path.
-  const supervisorFullAccess =
-    !!opts.supervisor && configService.getConfig().supervisor?.fullAccess === true;
-  const skipPermissions = !!opts.skipPermissions || supervisorFullAccess;
+  const skipPermissions = !!opts.skipPermissions;
   // Per-session scoped facade token. Pi ships no MCP client, so minting one
   // for it would only leave a dangling live secret.
   // A host-blessed Fleet Manager's token carries a dispatch grant for every
   // local profile — the hub verifies it and stamps profileGranted on the
-  // worker spawn. Only `manager` gets this; a plain supervisor or facade
-  // worker has no business spawning as other accounts.
-  // The yolo grant is CONFIG-RESOLVED for both roles (never a caller flag —
+  // worker spawn. Only `manager` gets this; a plain facade worker has no
+  // business spawning as other accounts.
+  // The yolo grant is CONFIG-RESOLVED (never a caller flag —
   // a respawn's frozen fleetFullAccess must not resurrect a revoked grant),
   // and the role tag lets a later config flip update it LIVE. TWIN:
   // claudeSpawn.ts mints identically on the PTY path.
@@ -325,18 +292,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           facadeScope,
           opts.pluginTools,
           opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
-          opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
+          opts.manager ? managerFullAccessFromConfig() : undefined,
+          opts.manager ? 'manager' : undefined,
         ).token
       : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
-  // set (an explicit mode wins; the legacy boolean maps to bypass, and
-  // supervisor full access forces it — same resolution as the PTY path),
-  // managed providers are just ask/yolo.
+  // set (an explicit mode wins; the legacy boolean maps to bypass — same
+  // resolution as the PTY path), managed providers are just ask/yolo.
   const permissionMode = isClaudeStream
-    ? supervisorFullAccess
-      ? 'bypassPermissions'
-      : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
+    ? (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
     : skipPermissions
       ? 'yolo'
       : 'ask';
@@ -373,18 +337,10 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   if (isClaudeStream && claudeSettingsOverlayEnabled()) {
     extraArgs.push('--settings', claudemonOverlayPath());
   }
-  // Transport parity (FLEET_MANAGER_SPIKE.md finding #3): the PTY path has
-  // always installed the /supervise skill for supervisors; the stream path
-  // never did, so a stream-transport supervisor got role text but no skill.
-  // PROVIDER parity too: the install is routed to the directory THIS harness
-  // reads (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format),
-  // rather than being gated on Claude and leaving a codex manager with no
-  // slash commands at all. Same doctrine text everywhere by design.
-  if (opts.supervisor) {
-    installSupervisorSkill(provider);
-  }
   // The Fleet Manager gets its own invocable skills (/standup, /checkpoint,
   // /handoff) — the considered counterpart to its reactive brief doctrine.
+  // The install is routed to the directory THIS harness reads
+  // (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format).
   if (opts.manager) {
     installManagerSkills(provider);
   }
@@ -416,9 +372,9 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   claudeSessionStore.setSpawnMeta(managedId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    // Managers count: the nudge router (supervisorSessionIds) is keyed on
-    // this flag, and a manager IS a supervisor for wake purposes.
-    isSupervisor: opts.supervisor || opts.manager,
+    // The nudge router (supervisorSessionIds) is keyed on this flag: the
+    // manager is the wake target.
+    isSupervisor: opts.manager,
     provider,
     ...(resultSchema && { resultSchema }),
     // What the CARD believes before the daemon's first frame arrives. Codex
@@ -450,24 +406,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const instructions = [
     wantsFacade
       ? managedFacadeInstructions({
-          supervisor: !!opts.supervisor,
           scope: facadeScope,
           sessionId: managedId,
-          fullAccess: supervisorFullAccess,
-          // The loop parameters the PTY twin (facadeSpawnArgs) has always
-          // passed — a managed supervisor was told neither, so it invented its
-          // own cadence and picked its own digest-worker model.
-          // Resolved for the harness the supervisor is running on, and that
-          // harness is NAMED — this is the path a codex supervisor takes, and
-          // it is exactly where its digest workers were falling back to Claude
-          // (spawn_agent with no provider spawns Claude). See roleModels.
-          summarizerProvider: provider,
-          summarizerModel: resolveSummarizerModel(provider),
-          pollSeconds: configService.getConfig().supervisor?.pollSeconds,
-          // Only harnesses with a personal-skills directory actually got the
-          // /supervise install above; telling the others to run it would send
-          // them looking for a slash command that does not exist.
-          superviseSkill: agentSkillsRoot(provider) !== null,
         })
       : '',
     resultSchema ? buildResultContract(resultSchema) : '',
@@ -539,7 +479,6 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
  */
 async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
-  if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
   assertSpawnCwd(cwd);
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
@@ -549,24 +488,17 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // both spawn paths at once instead of one.
   const spawnModel = resolveSpawnModel(
     'codex',
-    opts.model?.trim() ||
-      (opts.supervisor ? resolveSupervisorModel('codex') : undefined) ||
-      (opts.manager ? resolveManagerModel('codex') : undefined),
+    opts.model?.trim() || (opts.manager ? resolveManagerModel('codex') : undefined),
   );
-  // …and the same for effort: a role spawn with none requested takes the level
-  // configured for it on codex (supervisor.efforts / agents.managerEfforts).
+  // …and the same for effort: a manager spawn with none requested takes the
+  // level configured for it on codex (agents.managerEfforts).
   const spawnEffort =
-    opts.effort?.trim() ||
-    (opts.supervisor ? resolveSupervisorEffort('codex') : undefined) ||
-    (opts.manager ? resolveManagerEffort('codex') : undefined);
-  // Same supervisor full-access resolution as the managed path above.
-  const skipPermissions =
-    !!opts.skipPermissions ||
-    (!!opts.supervisor && configService.getConfig().supervisor?.fullAccess === true);
+    opts.effort?.trim() || (opts.manager ? resolveManagerEffort('codex') : undefined);
+  const skipPermissions = !!opts.skipPermissions;
   // The Windows rollout hybrid predates the facade wiring: it spawns a bare TUI
   // and tails the transcript, so a manager/facade session asked for here comes
   // up WITHOUT its tools. Said out loud rather than discovered later.
-  if (opts.manager || opts.supervisor || opts.mcpFacade || opts.toolScope) {
+  if (opts.manager || opts.mcpFacade || opts.toolScope) {
     console.warn(
       '[managedSpawn] codex (Windows rollout hybrid): the workspacer MCP facade is not wired on this path — ' +
         'this session gets no workspacer tools (wake routing still applies)',
@@ -575,9 +507,9 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    // Managers are wake targets exactly like supervisors — same flag, same
-    // reason as the managed path above.
-    isSupervisor: opts.supervisor || opts.manager,
+    // The manager is the wake target — same flag, same reason as the managed
+    // path above.
+    isSupervisor: opts.manager,
     provider: 'codex',
     // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
     // it says so rather than leaving the field absent: with codex defaulting to

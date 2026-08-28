@@ -181,11 +181,11 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
   });
 
   it('preserves unrelated top-level sections when saving a partial', () => {
-    configService.saveConfig({ supervisor: { pollSeconds: 99 } as any });
+    configService.saveConfig({ scripts: { '/repo': [{ name: 'x', command: 'y' }] } as any });
     const cfg = configService.getConfig();
 
-    // supervisor changed
-    expect(cfg.supervisor.pollSeconds).toBe(99);
+    // scripts changed
+    expect((cfg.scripts as any)['/repo'][0].name).toBe('x');
     // browser defaults untouched
     expect(cfg.browser.homepage).toBe('https://google.com');
     expect(cfg.browser.hibernateAfter).toBe(300);
@@ -368,9 +368,8 @@ describe('default-config single source — generated TS matches the canonical br
     // left); the editor block itself must still be present on the brain side.
     expect(brainDefaults).toHaveProperty('editor.terminalCommand');
     expect(brainDefaults).not.toHaveProperty('editor.vim');
-    // supervisor.provider joined the canonical defaults (it was UI-written but
-    // schema-absent before).
-    expect(brainDefaults).toHaveProperty('supervisor.provider', 'claude');
+    // The retired fleet-supervisor block is gone from the canonical defaults.
+    expect(brainDefaults).not.toHaveProperty('supervisor');
   });
 });
 
@@ -537,20 +536,20 @@ describe('save_config: an object-valued setting round-trips as an object', () =>
 
   it('a nested object survives saveConfig -> getConfig as an object, not a string', () => {
     const cfg = configService.saveConfig({
-      supervisor: { fullAccess: true, provider: 'claude' } as any,
+      agents: { fleetFullAccess: true, managerProvider: 'claude' } as any,
       projects: { '/home/u/proj': { label: 'Proj', yolo: true } } as any,
     });
 
-    expect(typeof cfg.supervisor).toBe('object');
-    expect((cfg.supervisor as any).fullAccess).toBe(true);
+    expect(typeof cfg.agents).toBe('object');
+    expect((cfg.agents as any).fleetFullAccess).toBe(true);
     expect(typeof (cfg.projects as any)['/home/u/proj']).toBe('object');
     expect((cfg.projects as any)['/home/u/proj'].yolo).toBe(true);
 
     // And the bytes actually written to disk are YAML, never a JSON-encoded
     // string masquerading as the value of a key.
     const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
-    expect(written).not.toMatch(/fullAccess:\s*['"]/); // not quoted-as-string
-    expect(written).toContain('fullAccess: true');
+    expect(written).not.toMatch(/fleetFullAccess:\s*['"]/); // not quoted-as-string
+    expect(written).toContain('fleetFullAccess: true');
     expect(written).toContain('yolo: true');
   });
 });

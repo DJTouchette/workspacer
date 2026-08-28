@@ -8,7 +8,7 @@
  * spawn is verified by capturing the argv handed to claudemonSessionClient.spawn.
  *
  * Strategy: mock every collaborator (session store, claudemon client, library,
- * config, supervisor skill, mcpConfig) so only spawnClaudeAgent + the real
+ * config, mcpConfig) so only spawnClaudeAgent + the real
  * buildClaudeArgv run. 'fs' is mocked so buildClaudeArgv's base argv resolves to
  * the ['claude'] fallback on Linux (and cwd falls back to home).
  */
@@ -62,17 +62,9 @@ vi.mock('./libraryService', () => ({
   libraryService: { listWithSecrets: (...a: unknown[]) => libraryList(...a) },
 }));
 
-// Mutable per-test config — reset in beforeEach, mutated by the supervisor
-// full-access tests (the flag is config-resolved inside spawnClaudeAgent).
+// Mutable per-test config — reset in beforeEach, mutated by the role tests
+// (these settings are config-resolved inside spawnClaudeAgent).
 let mockConfig: {
-  supervisor: {
-    model: string;
-    summarizerModel: string;
-    summarizerModels?: Record<string, string>;
-    efforts?: Record<string, string>;
-    pollSeconds: number;
-    fullAccess?: boolean;
-  };
   agents?: {
     fleetFullAccess?: boolean;
     managerModels?: Record<string, string>;
@@ -87,10 +79,8 @@ vi.mock('./configService', () => ({
   getConfigDir: () => '/tmp/wks-test-config',
 }));
 
-const installSupervisorSkill = vi.fn();
 const ensureSupervisorHome = vi.fn(() => '/home/super');
-vi.mock('./supervisorSkill', () => ({
-  installSupervisorSkill: (...a: unknown[]) => installSupervisorSkill(...a),
+vi.mock('../lib/workspacerHome', () => ({
   ensureSupervisorHome: (...a: unknown[]) => ensureSupervisorHome(...a),
 }));
 vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
@@ -143,9 +133,7 @@ function lastSpawn(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockConfig = {
-    supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 },
-  };
+  mockConfig = {};
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
   buildSessionMcpConfig.mockReturnValue({
@@ -260,24 +248,6 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
     expect(argv).toContain('--append-system-prompt');
   });
 
-  it('a supervisor installs the /supervise skill and uses the facade config', async () => {
-    await spawnClaudeAgent({ supervisor: true, mcpItemIds: ['srv1'] });
-
-    expect(installSupervisorSkill).toHaveBeenCalledTimes(1);
-    expect(buildSessionMcpConfig).not.toHaveBeenCalled();
-    expect(facadeSpawnArgs).toHaveBeenCalledTimes(1);
-  });
-
-  it('mints an operator session token for supervisor/mcpFacade and passes it to facadeSpawnArgs', async () => {
-    await spawnClaudeAgent({ supervisor: true });
-
-    expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
-    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
-    const args = facadeSpawnArgs.mock.calls[0][0] as { token?: string; scope?: string };
-    expect(args.token).toBe('tok-123');
-    expect(args.scope).toBe('operator');
-  });
-
   it('toolScope alone implies the facade and mints at that tier', async () => {
     await spawnClaudeAgent({ cwd: '/proj', toolScope: 'view', pluginTools: ['djtouchette.jira'] });
 
@@ -295,12 +265,6 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
     // The facade config rides argv exactly like the legacy facade path.
     const argv = lastArgv();
     expect(argv[argv.indexOf('--mcp-config') + 1]).toBe('/cfg/facade.json');
-  });
-
-  it('a supervisor stays operator even if a narrower toolScope is passed', async () => {
-    await spawnClaudeAgent({ supervisor: true, toolScope: 'view' });
-
-    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
   });
 
   it('a plain spawn (no facade flags) mints no token', async () => {
@@ -350,68 +314,6 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
     });
 
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
-  });
-
-  it('a non-manager facade spawn mints NO profile or yolo grant', async () => {
-    getProfiles.mockReturnValue([{ id: 'default' }]);
-    // fleetFullAccess is ignored without manager — a plain facade worker never
-    // gets the grant even if the flag leaks in.
-    await spawnClaudeAgent({ supervisor: true, fleetFullAccess: true });
-
-    expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
-    // A supervisor is still role-tagged so the reconciler can find its token.
-    expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('supervisor');
-  });
-});
-
-describe('spawnClaudeAgent — supervisor full access (config supervisor.fullAccess)', () => {
-  it('setting on: the supervisor itself spawns with permissions bypassed', async () => {
-    mockConfig.supervisor.fullAccess = true;
-
-    await spawnClaudeAgent({ supervisor: true });
-
-    expect(lastArgv()).toContain('--dangerously-skip-permissions');
-    const meta = setSpawnMeta.mock.calls[0][1] as {
-      settings: { permissionMode: string; bypassAvailable?: boolean };
-    };
-    expect(meta.settings.permissionMode).toBe('bypassPermissions');
-    expect(meta.settings.bypassAvailable).toBe(true);
-  });
-
-  it("setting on: the supervisor's token carries the yolo grant, so its child spawns may run bypassed", async () => {
-    mockConfig.supervisor.fullAccess = true;
-
-    await spawnClaudeAgent({ supervisor: true });
-
-    // 5th mint arg = yoloAllowed: the hub verifies it and stamps yoloGranted on
-    // the supervisor's spawn_agent calls, which is what lets a worker's
-    // skipPermissions request through instead of being clamped.
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
-    // …and the role prompt tells the supervisor to actually request it.
-    const args = facadeSpawnArgs.mock.calls[0][0] as { fullAccess?: boolean };
-    expect(args.fullAccess).toBe(true);
-  });
-
-  it('setting off: the supervisor prompts as today — no bypass, no yolo grant', async () => {
-    await spawnClaudeAgent({ supervisor: true });
-
-    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
-    const meta = setSpawnMeta.mock.calls[0][1] as { settings: { permissionMode: string } };
-    expect(meta.settings.permissionMode).toBe('default');
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
-    expect((facadeSpawnArgs.mock.calls[0][0] as { fullAccess?: boolean }).fullAccess).toBe(false);
-  });
-
-  it('setting on touches neither plain spawns nor non-supervisor facade workers', async () => {
-    mockConfig.supervisor.fullAccess = true;
-
-    await spawnClaudeAgent({ cwd: '/proj' });
-    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
-
-    await spawnClaudeAgent({ cwd: '/proj', toolScope: 'view' });
-    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
-    expect(mintSessionFacadeToken.mock.calls.at(-1)![4]).toBeUndefined();
   });
 });
 
@@ -605,8 +507,8 @@ describe('spawnClaudeAgent — firstMessage', () => {
  * The PTY Claude twin of the managed-path assertions: the model a role spawn
  * asks for has to land on the ARGV, which is the only thing that actually runs.
  * A picker writing config nobody reads is the failure mode this whole area has
- * already produced once (`supervisor.model` was never read on the managed path
- * at all), so each setting is traced to the process arguments rather than to its
+ * already produced once (the role model was never read on the managed path at
+ * all), so each setting is traced to the process arguments rather than to its
  * resolver.
  */
 describe('spawnClaudeAgent — role models reach the argv', () => {
@@ -641,28 +543,11 @@ describe('spawnClaudeAgent — role models reach the argv', () => {
     await spawnClaudeAgent({ cwd: '/proj' });
     expect(argvModel()).toBeUndefined();
   });
-
-  it('names claude as the digest workers’ harness, with the claude summarizer model', async () => {
-    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
-    const args = facadeSpawnArgs.mock.calls[0][0] as {
-      summarizerProvider?: string;
-      summarizerModel?: string;
-    };
-    expect(args.summarizerProvider).toBe('claude');
-    expect(args.summarizerModel).toBe('sonnet');
-  });
-
-  it('prefers the per-harness summarizer entry when one is set', async () => {
-    mockConfig.supervisor.summarizerModels = { claude: 'haiku', codex: 'gpt-5' };
-    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
-    const args = facadeSpawnArgs.mock.calls[0][0] as { summarizerModel?: string };
-    expect(args.summarizerModel).toBe('haiku');
-  });
 });
 
 /**
- * Reasoning effort for the two ROLES, resolved from config on this path too.
- * The PTY Claude branch is where a supervisor lands whenever claude.transport is
+ * Reasoning effort for the manager, resolved from config on this path too.
+ * The PTY Claude branch is where a manager lands whenever claude.transport is
  * 'pty', so a setting honoured only on the managed path would apply on one
  * machine and not the next.
  */
@@ -674,17 +559,6 @@ describe('spawnClaudeAgent — role effort reaches the argv', () => {
     return i === -1 ? undefined : argv[i + 1];
   }
 
-  it('a supervisor takes supervisor.efforts.claude', async () => {
-    mockConfig.supervisor.efforts = { claude: 'high', codex: 'xhigh' };
-    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
-    expect(argvEffort()).toBe('high');
-    // Recorded as the session's level, so the pill stops reporting the default
-    // it is not running at.
-    expect(
-      (setSpawnMeta.mock.calls.at(-1)![1] as { settings: { effort?: string } }).settings.effort,
-    ).toBe('high');
-  });
-
   it('a Fleet Manager takes agents.managerEfforts.claude', async () => {
     mockConfig.agents = { managerEfforts: { claude: 'max' } };
     await spawnClaudeAgent({ cwd: '/proj', manager: true });
@@ -692,21 +566,20 @@ describe('spawnClaudeAgent — role effort reaches the argv', () => {
   });
 
   it('an explicit effort still wins over the configured one', async () => {
-    mockConfig.supervisor.efforts = { claude: 'high' };
-    await spawnClaudeAgent({ cwd: '/proj', supervisor: true, effort: 'low' });
+    mockConfig.agents = { managerEfforts: { claude: 'high' } };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true, effort: 'low' });
     expect(argvEffort()).toBe('low');
   });
 
   it('a plain agent is untouched by the role efforts', async () => {
-    mockConfig.supervisor.efforts = { claude: 'high' };
     mockConfig.agents = { managerEfforts: { claude: 'max' } };
     await spawnClaudeAgent({ cwd: '/proj' });
     expect(argvEffort()).toBeUndefined();
   });
 
   it('does not take another harness’s level', async () => {
-    mockConfig.supervisor.efforts = { codex: 'xhigh' };
-    await spawnClaudeAgent({ cwd: '/proj', supervisor: true });
+    mockConfig.agents = { managerEfforts: { codex: 'xhigh' } };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
     expect(argvEffort()).toBeUndefined();
   });
 });

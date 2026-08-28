@@ -1676,7 +1676,7 @@ function App() {
         // project opts into per-project yolo — else rule 7's per-project
         // skipPermissions would be clamped for want of the grant.
         const anyProjectYolo = Object.values(config.projects ?? {}).some((p) => p?.yolo === true);
-        // Which harness the manager itself runs on (Settings → Supervisor →
+        // Which harness the manager itself runs on (Settings → Fleet Manager →
         // Fleet Manager). Everything the role needs is provider-blind below
         // this call; only the entry point ever hardcoded 'claude'.
         const provider = config.agents?.managerProvider ?? 'claude';

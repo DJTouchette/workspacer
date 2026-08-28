@@ -1,21 +1,20 @@
 /**
  * Which HARNESS an internal-role spawn runs on when the caller named none.
  *
- * `supervisor.provider` and `agents.managerProvider` are the two settings that
- * say "the supervisor runs on codex" / "the manager runs on claude". Both were
- * read in exactly ONE place each — a renderer component at the entry point that
- * happened to remember them (AskPane for the supervisor, App's fleet-manager:ask
- * listener for the manager) — and nowhere in main. Every other way those roles
- * start therefore fell through to `provider ?? 'claude'` at the two spawn
- * funnels (`claude:spawn` in ipc.ts, `agents.spawn` in hubCapabilities.ts):
+ * `agents.managerProvider` is the setting that says "the manager runs on
+ * claude". It was read in exactly ONE place — a renderer component at the entry
+ * point that happened to remember it (App's fleet-manager:ask listener) — and
+ * nowhere in main. Every other way the role starts therefore fell through to
+ * `provider ?? 'claude'` at the two spawn funnels (`claude:spawn` in ipc.ts,
+ * `agents.spawn` in hubCapabilities.ts):
  *
- *   - a supervisor or manager spawned over the hub bus (the web /app client,
- *     the /m PWA, a hub job, a federated peer) — the bus payload carries
- *     `supervisor: true` with no provider,
+ *   - a manager spawned over the hub bus (the web /app client, the /m PWA, a
+ *     hub job, a federated peer) — the bus payload carries `manager: true`
+ *     with no provider,
  *   - a respawn whose stored card predates the provider field,
  *   - the next entry point somebody adds.
  *
- * All of them silently produced a CLAUDE role agent while Settings said codex,
+ * All of them silently produced a CLAUDE manager while Settings said codex,
  * and a silently-wrong harness looks exactly like a working one. This is the
  * same class of bug — and the same fix — as lib/roleModels: resolve the role's
  * config in MAIN, once, so it lands on every path instead of only the one that
@@ -55,12 +54,6 @@ function parseProvider(value: unknown): AgentProvider | undefined {
     : undefined;
 }
 
-/** The harness a SUPERVISOR spawn runs on (`supervisor.provider`). */
-export function resolveSupervisorProvider(): AgentProvider {
-  const sup = configService.getConfig().supervisor as { provider?: string } | undefined;
-  return parseProvider(sup?.provider?.trim()) ?? 'claude';
-}
-
 /** The harness the FLEET MANAGER runs on (`agents.managerProvider`). */
 export function resolveManagerProvider(): AgentProvider {
   const agents = configService.getConfig().agents as { managerProvider?: string } | undefined;
@@ -70,20 +63,11 @@ export function resolveManagerProvider(): AgentProvider {
 /**
  * The provider a spawn request resolves to, given its role flags. Called by
  * both spawn funnels so the IPC and hub-bus paths cannot disagree about which
- * CLI a supervisor runs on — the standing rule for anything spawn-shaped here.
- *
- * `manager` is checked first only because a request that somehow sets both is a
- * manager with supervisor wiring (that is what the Fleet Manager is), and the
- * manager's own setting is the one the user set for it.
+ * CLI the manager runs on — the standing rule for anything spawn-shaped here.
  */
-export function resolveSpawnProvider(req: {
-  provider?: string;
-  supervisor?: boolean;
-  manager?: boolean;
-}): AgentProvider {
+export function resolveSpawnProvider(req: { provider?: string; manager?: boolean }): AgentProvider {
   const explicit = parseProvider(req.provider?.trim());
   if (explicit) return explicit;
   if (req.manager) return resolveManagerProvider();
-  if (req.supervisor) return resolveSupervisorProvider();
   return 'claude';
 }

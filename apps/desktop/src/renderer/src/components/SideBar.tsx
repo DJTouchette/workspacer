@@ -405,7 +405,7 @@ const SideBar: React.FC<SideBarProps> = ({
     const railTile = (agent: AgentWorkspace) => {
       const isActive = agent.id === activeAgentId;
       const isGlobal = !!agent.global;
-      const isSupervisor = agent.kind === 'supervisor';
+      const isManager = agent.manager === true;
       const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
       const base = statusVisual(state);
       const top: AttentionItem | undefined = topByAgent.get(agent.id);
@@ -449,7 +449,7 @@ const SideBar: React.FC<SideBarProps> = ({
               strokeWidth={1.75}
               style={{ color: 'var(--wks-text-tertiary)' }}
             />
-          ) : isSupervisor ? (
+          ) : isManager ? (
             <Compass size={16} strokeWidth={1.75} style={{ color: 'var(--wks-text-primary)' }} />
           ) : (
             // Provider logo — same vocabulary as the expanded panel, so an agent
@@ -877,7 +877,7 @@ const SideBar: React.FC<SideBarProps> = ({
 
           const renderAgentCard = (agent: (typeof agents)[0], indent?: boolean) => {
             const isActive = agent.id === activeAgentId;
-            const isSupervisor = agent.kind === 'supervisor';
+            const isManager = agent.manager === true;
             const provider = agent.provider ?? 'claude';
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
             const top: AttentionItem | undefined = topByAgent.get(agent.id);
@@ -1084,7 +1084,7 @@ const SideBar: React.FC<SideBarProps> = ({
                       {agent.sessionId ? '✓' : '○'}
                     </span>
                   )}
-                  {isSupervisor && (
+                  {isManager && (
                     <Compass
                       size={12}
                       strokeWidth={2}

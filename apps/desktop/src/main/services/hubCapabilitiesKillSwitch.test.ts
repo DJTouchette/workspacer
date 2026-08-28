@@ -219,7 +219,7 @@ vi.mock('./gitService', () => ({
   push: vi.fn(async () => 'pushed'),
 }));
 vi.mock('./terminalShare', () => ({}));
-vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
+vi.mock('../lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
 const { readTextFile, writeTextFile, listDir } = await import('./fileService');

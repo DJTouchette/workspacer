@@ -44,7 +44,7 @@ import { spawnClaudeAgent } from './services/claudeSpawn';
 import { applyLiveEffort } from './services/liveEffort';
 import { logsDir } from './services/logFile';
 import { installWorkspacerCli } from './services/cliInstall';
-import { ensureSupervisorHome } from './services/supervisorSkill';
+import { ensureSupervisorHome } from './lib/workspacerHome';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { createAccountConfigDir, accountLoginStatus } from './services/claudeAccountSetup';
@@ -263,8 +263,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
     // / `codex app-server` JSON-RPC) and translates events into the shared session
     // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
-    // An OMITTED provider on a role spawn resolves from config
-    // (supervisor.provider / agents.managerProvider) rather than defaulting
+    // An OMITTED provider on a manager spawn resolves from config
+    // (agents.managerProvider) rather than defaulting
     // straight to claude — the setting has to land on every entry point, not
     // just the launcher that remembered to read it. See lib/roleProviders.
     const provider = resolveSpawnProvider(opts);
@@ -297,7 +297,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         permissionMode: opts.permissionMode,
         skipPermissions: opts.skipPermissions,
         resumeSessionId: opts.resumeSessionId,
-        supervisor: opts.supervisor,
         manager: opts.manager,
         fleetFullAccess: opts.fleetFullAccess,
         mcpFacade: opts.mcpFacade,
@@ -319,7 +318,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       permissionMode: opts.permissionMode,
       skipPermissions: opts.skipPermissions,
       resumeSessionId: opts.resumeSessionId,
-      supervisor: opts.supervisor,
       manager: opts.manager,
       fleetFullAccess: opts.fleetFullAccess,
       mcpFacade: opts.mcpFacade,
@@ -494,19 +492,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     (_event, scope: RemoteTokenScope, label?: string) => getOrCreateRemoteToken(scope, label),
   );
   ipcMain.handle(IPC.HUB_REMOTE_TOKEN_REVOKE, (_event, token: string) => revokeRemoteToken(token));
-  // Re-align one live manager/supervisor session token's full-access grant
+  // Re-align one live manager session token's full-access grant
   // (and its role tag — tokens minted before roles existed adopt it here)
   // with current config. Called when the renderer REUSES a running Fleet
   // Manager instead of spawning one, so a flag flipped since its spawn isn't
   // frozen into its token; the config-change sync (fullAccessGrants) covers
   // flips while it keeps running.
-  ipcMain.handle(
-    IPC.HUB_SESSION_GRANT_RECONCILE,
-    (_event, sessionId: string, role: 'manager' | 'supervisor') => {
-      if ((role !== 'manager' && role !== 'supervisor') || !sessionId?.trim()) return false;
-      return reconcileSessionFacadeToken(sessionId, role, desiredSessionGrants()[role]);
-    },
-  );
+  ipcMain.handle(IPC.HUB_SESSION_GRANT_RECONCILE, (_event, sessionId: string, role: 'manager') => {
+    if (role !== 'manager' || !sessionId?.trim()) return false;
+    return reconcileSessionFacadeToken(sessionId, role, desiredSessionGrants()[role]);
+  });
   // "Connect to remote server" (client mode): persist/clear the target. Takes
   // effect on relaunch — the local-vs-remote decision is made once at startup
   // (index.ts), so the UI calls APP_RELAUNCH after a successful set/clear.

@@ -33,14 +33,7 @@ import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModel } from '../lib/spawnModel';
-import { resolveSupervisorModel } from '../lib/supervisorModel';
-import {
-  resolveManagerModel,
-  resolveSummarizerModel,
-  resolveSupervisorEffort,
-  resolveManagerEffort,
-} from '../lib/roleModels';
-import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
+import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
@@ -76,26 +69,23 @@ export interface ClaudeSpawnOptions {
   skipPermissions?: boolean;
   /** Re-use this id (resume an existing session). */
   resumeSessionId?: string;
-  /** Wire the workspacer MCP facade + run the /supervise loop. */
-  supervisor?: boolean;
-  /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) without
-   *  the /supervise loop — see managedSpawn's twin field. */
+  /** Fleet Manager: nudge-eligible parent (isSupervisor spawn meta) — see
+   *  managedSpawn's twin field. */
   manager?: boolean;
   /** Manager full-access HINT from the caller. The token's actual yolo grant
-   *  is config-resolved at mint (services/fullAccessGrants — same doctrine as
-   *  supervisor.fullAccess), so this flag no longer decides anything here; it
+   *  is config-resolved at mint (services/fullAccessGrants), so this flag no
+   *  longer decides anything here; it
    *  is kept on the wire for record fidelity (the renderer persists it on the
    *  agent card and re-passes it on respawn). */
   fleetFullAccess?: boolean;
-  /** Wire the facade tools without the supervisor loop (legacy operator tier —
-   *  prefer `toolScope`). */
+  /** Wire the facade tools at the legacy operator tier — prefer `toolScope`. */
   mcpFacade?: boolean;
   /**
    * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
    * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
    * 'operator' (everything). Mints a per-session scoped token the facade
    * enforces, so the agent sees (and pays context for) only its tier's tools.
-   * Implies the facade; `supervisor`/`mcpFacade` without it mean 'operator'.
+   * Implies the facade; `mcpFacade` without it means 'operator'.
    */
   toolScope?: RemoteTokenScope;
   /** Plugin ids whose contributed facade tools this session may use (opt-in;
@@ -108,7 +98,7 @@ export interface ClaudeSpawnOptions {
   /**
    * Library item ids (kind 'mcp') selected for this spawn. Resolved to a
    * session-scoped `--mcp-config` with `--strict-mcp-config` + pre-allowed
-   * tools. Ignored for facade/supervisor sessions (they take the facade config).
+   * tools. Ignored for facade sessions (they take the facade config).
    */
   mcpItemIds?: string[];
   /**
@@ -168,21 +158,10 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  // Supervisor full-access mode (config supervisor.fullAccess, the supervisor
-  // twin of agents.fleetFullAccess): the supervisor itself runs with
-  // permissions bypassed, and its facade token below is minted with the yolo
-  // grant so the workers it spawns may run bypassed too. Read from config —
-  // not a caller flag — so every entry point (IPC, hub bus, jobs) resolves the
-  // local user's setting identically.
-  const supCfg = configService.getConfig().supervisor;
-  const supervisorFullAccess = !!opts.supervisor && supCfg?.fullAccess === true;
-  const skipPermissions = !!opts.skipPermissions || supervisorFullAccess;
-  // An explicit mode wins; the legacy boolean maps to bypass (and supervisor
-  // full access forces it). Recorded on the snapshot so the composer pill
-  // shows truth.
-  const permissionMode = supervisorFullAccess
-    ? 'bypassPermissions'
-    : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'));
+  const skipPermissions = !!opts.skipPermissions;
+  // An explicit mode wins; the legacy boolean maps to bypass. Recorded on the
+  // snapshot so the composer pill shows truth.
+  const permissionMode = opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default');
   // Whether this process will carry `--dangerously-skip-permissions` — the same
   // three inputs buildClaudeArgv resolves it from below. Recorded because Claude
   // gates *switching to* bypassPermissions on the flag, so it's what tells the
@@ -191,13 +170,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     skipPermissions ||
     permissionMode === 'bypassPermissions' ||
     (profile?.extraArgs ?? []).includes('--dangerously-skip-permissions');
-  // Reasoning effort. An explicit request wins; otherwise a ROLE spawn takes
-  // the level configured for it on this harness (Settings → Manager &
-  // Supervisor). Resolved here — not at the renderer entry point — so it lands
-  // on every way these roles start, the same rule the model above follows, and
-  // so the recorded spawn meta below names the level the argv actually carries.
+  // Reasoning effort. An explicit request wins; otherwise a MANAGER spawn takes
+  // the level configured for it on this harness (Settings → Fleet Manager).
+  // Resolved here — not at the renderer entry point — so it lands on every way
+  // the manager starts, the same rule the model above follows, and so the
+  // recorded spawn meta below names the level the argv actually carries.
   let effort = opts.effort;
-  if (!effort?.trim() && opts.supervisor) effort = resolveSupervisorEffort('claude');
   if (!effort?.trim() && opts.manager) effort = resolveManagerEffort('claude');
 
   // Record name/parent before the session registers so adopted cards are
@@ -205,7 +183,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    isSupervisor: opts.supervisor || opts.manager,
+    isSupervisor: opts.manager,
     provider: 'claude',
     ...(resultSchema && { resultSchema }),
     settings: {
@@ -225,14 +203,11 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // chosen item ids to their configs, write a session-scoped --mcp-config, and
   // pre-allow their tools. `--strict-mcp-config` so the session sees exactly
   // these servers, not the user's global ones. Sessions with the workspacer MCP
-  // facade (full supervisors, or plain facade workers a supervisor spawns) take
-  // the facade config instead of the user's library MCP servers.
-  const wantsFacade = opts.supervisor || opts.mcpFacade || !!opts.toolScope;
-  // A supervisor is operator by definition; a plain facade session takes its
-  // requested tier, defaulting to operator (the legacy mcpFacade meaning).
-  const facadeScope: RemoteTokenScope = opts.supervisor
-    ? 'operator'
-    : (opts.toolScope ?? 'operator');
+  // facade take the facade config instead of the user's library MCP servers.
+  const wantsFacade = opts.mcpFacade || !!opts.toolScope;
+  // A facade session takes its requested tier, defaulting to operator (the
+  // legacy mcpFacade meaning).
+  const facadeScope: RemoteTokenScope = opts.toolScope ?? 'operator';
   let userMcp: { path: string; toolNames: string[] } | null = null;
   if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
@@ -246,18 +221,9 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     userMcp = buildSessionMcpConfig(sessionId, servers);
   }
 
-  // Supervisors: install the /supervise skill and default to the configured
-  // supervisor model when none was passed explicitly. Resolved per HARNESS
-  // (lib/supervisorModel) rather than read straight off `supervisor.model`:
-  // that field belongs to `supervisor.provider`, so a Claude supervisor
-  // launched from "Ask the Fleet" while the configured harness is codex must
-  // not inherit a codex model id — it would 400 at spawn.
   let model = opts.model;
-  if (opts.supervisor) {
-    installSupervisorSkill();
-    if (!model) model = resolveSupervisorModel('claude');
-  }
-  // The Fleet Manager's own coordinator model, same shape and same reason:
+  // The Fleet Manager's own coordinator model. Resolved per HARNESS
+  // (lib/roleModels) rather than read straight off one flat field:
   // `agents.managerProvider` shipped with no model twin at all, so the manager
   // always ran on its harness's default with no way to choose. Resolved HERE
   // rather than at the renderer entry point so it lands on every way a manager
@@ -286,15 +252,13 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     wantsFacade &&
     facadeSpawnArgs({
       sessionId,
-      supervisor: opts.supervisor,
       scope: facadeScope,
       // A host-blessed Fleet Manager's token carries a dispatch grant for
       // every local profile — the hub verifies it and stamps profileGranted
-      // on the worker spawn. Only `manager` gets this; a plain supervisor
-      // or facade worker has no business spawning as other accounts.
-      // The yolo grant is CONFIG-RESOLVED for both roles (fleet full access /
-      // per-project yolo for the manager, supervisor.fullAccess for a
-      // supervisor — services/fullAccessGrants is the single formula), never
+      // on the worker spawn. Only `manager` gets this; a plain facade worker
+      // has no business spawning as other accounts.
+      // The yolo grant is CONFIG-RESOLVED (fleet full access / per-project
+      // yolo — services/fullAccessGrants is the single formula), never
       // a caller flag: a respawn re-passing a value frozen at the original
       // spawn must not resurrect a grant the user has since revoked, nor
       // withhold one they granted. The hub then stamps yoloGranted on the
@@ -306,17 +270,9 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         facadeScope,
         opts.pluginTools,
         opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-        opts.manager ? managerFullAccessFromConfig() : supervisorFullAccess || undefined,
-        opts.manager ? 'manager' : opts.supervisor ? 'supervisor' : undefined,
+        opts.manager ? managerFullAccessFromConfig() : undefined,
+        opts.manager ? 'manager' : undefined,
       ).token,
-      // Per-harness, and the harness is named: the digest workers a supervisor
-      // spawns now run on the supervisor's OWN harness (claude here, this being
-      // the PTY Claude path) instead of falling through spawn_agent's
-      // no-provider default. See mcpConfig's summarizerSpawnNote.
-      summarizerProvider: 'claude',
-      summarizerModel: resolveSummarizerModel('claude'),
-      pollSeconds: supCfg?.pollSeconds,
-      fullAccess: supervisorFullAccess,
     });
   const contract = resultSchema ? buildResultContract(resultSchema) : '';
   const appendSystemPrompt = [facadeArgs ? facadeArgs.appendSystemPrompt : '', contract]
@@ -333,8 +289,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
     sessionId,
     // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
-    // A supervisor also learns its session id and is kicked into /supervise;
-    // a plain facade worker just gets the tools. The per-session token pins
+    // The per-session token pins
     // the tier server-side — the facade refuses calls outside it even if the
     // agent guesses tool names. Built above so the structured-result contract
     // can share the one --append-system-prompt.
@@ -347,15 +302,13 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
       allowedTools: userMcp.toolNames,
     }),
   });
-  // Fleet supervisors with no explicit cwd open in their dedicated home
-  // (~/.workspacer); everything else uses the given cwd exactly as written —
-  // normalizeSpawnCwd trims and nothing more, deliberately (BINDING DECISION 1:
+  // The cwd is used exactly as written — normalizeSpawnCwd trims and nothing
+  // more, deliberately (BINDING DECISION 1:
   // no layer on a caller's path expands '~'). Which is why the pre-flight below
   // has to exist: a path that cannot be a working directory must fail HERE,
   // where the user is told, rather than as a session claudemon registers and
   // then stops the instant the child fails to launch.
   let cwd = normalizeSpawnCwd(opts.cwd);
-  if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
   assertSpawnCwd(cwd);
   // A profile spawn inherits the primary login's trust for this folder, or a
   // PTY parks on the invisible trust dialog (mode "unknown", dead pane).

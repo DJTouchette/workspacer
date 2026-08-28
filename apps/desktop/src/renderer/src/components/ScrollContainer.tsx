@@ -105,7 +105,7 @@ interface ScrollContainerProps {
   appCwd?: string;
   /** Full agent list — passed down to the Ask pane so it can display all agents. */
   allAgents?: AgentWorkspace[];
-  /** Spawn a supervisor agent from a question — forwarded to AskPane. */
+  /** Spawn an ask agent from a question — forwarded to AskPane. */
   spawnAskAgent?: (opts: {
     question?: string;
     parentId?: string;
@@ -156,7 +156,7 @@ interface PaneCallbacks {
   agentLiveCwd?: string;
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];
-  /** Spawn a supervisor — for the Ask pane. */
+  /** Spawn an ask agent — for the Ask pane. */
   spawnAskAgent?: (opts: {
     question?: string;
     parentId?: string;

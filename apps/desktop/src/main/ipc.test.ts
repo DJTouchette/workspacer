@@ -96,7 +96,7 @@ vi.mock('./services/agentProviders', () => ({
   checkAllProvidersCached: vi.fn(),
 }));
 vi.mock('./services/logFile', () => ({ logsDir: vi.fn(() => '/logs') }));
-vi.mock('./services/supervisorSkill', () => ({ ensureSupervisorHome: vi.fn() }));
+vi.mock('./lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn() }));
 vi.mock('./services/chromeCookieImport', () => ({
   importChromeCookies: vi.fn(),
   importChromeCookiesViaCDP: vi.fn(),
@@ -221,26 +221,18 @@ describe('cli:install — delegates to installWorkspacerCli and returns its resu
 });
 
 /**
- * The reported bug: Settings said the supervisor runs on codex, and launching
- * one produced a Claude session.
+ * The reported bug: Settings said the Fleet Manager runs on codex, and
+ * launching one produced a Claude session.
  *
- * `supervisor.provider` / `agents.managerProvider` were read in ONE renderer
- * component each, so every other way a role starts — the hub bus (web client,
- * phone, a hub job), a respawn of a card that predates the field, the next
- * entry point somebody adds — arrived here with no provider and fell through
- * `opts.provider ?? 'claude'`. A silently-Claude supervisor is indistinguishable
- * from a working one. The resolution now lives in main (lib/roleProviders), so
- * this handler honours the setting whoever calls it.
+ * `agents.managerProvider` was read in ONE renderer component, so every other
+ * way the role starts — the hub bus (web client, phone, a hub job), a respawn
+ * of a card that predates the field, the next entry point somebody adds —
+ * arrived here with no provider and fell through `opts.provider ?? 'claude'`.
+ * A silently-Claude manager is indistinguishable from a working one. The
+ * resolution now lives in main (lib/roleProviders), so this handler honours
+ * the setting whoever calls it.
  */
 describe('claude:spawn — a role spawn with no provider resolves the configured harness', () => {
-  it('spawns the supervisor on config supervisor.provider', async () => {
-    cfg.value = { supervisor: { provider: 'codex' } };
-    await spawn({ supervisor: true, cwd: '/proj' });
-    expect(spawnClaudeAgent).not.toHaveBeenCalled();
-    expect(lastManagedOpts().provider).toBe('codex');
-    expect(lastManagedOpts().supervisor).toBe(true);
-  });
-
   it('spawns the Fleet Manager on config agents.managerProvider', async () => {
     cfg.value = { agents: { managerProvider: 'codex' } };
     await spawn({ manager: true, cwd: '/proj' });
@@ -251,8 +243,8 @@ describe('claude:spawn — a role spawn with no provider resolves the configured
   it('an EXPLICIT provider still wins — the launcher can override Settings', async () => {
     // "Ask the Fleet" offers a per-launch harness pick; a config default must
     // not quietly reclaim it.
-    cfg.value = { supervisor: { provider: 'codex' } };
-    await spawn({ supervisor: true, provider: 'claude', transport: 'pty', cwd: '/proj' });
+    cfg.value = { agents: { managerProvider: 'codex' } };
+    await spawn({ manager: true, provider: 'claude', transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
   });
@@ -260,13 +252,13 @@ describe('claude:spawn — a role spawn with no provider resolves the configured
   it('ignores an unknown configured harness rather than passing it on', async () => {
     // A hand-edited config naming a harness we do not speak would otherwise
     // reach an adapter that has no idea what it is; claude at least runs.
-    cfg.value = { supervisor: { provider: 'nonesuch' } };
-    await spawn({ supervisor: true, transport: 'pty', cwd: '/proj' });
+    cfg.value = { agents: { managerProvider: 'nonesuch' } };
+    await spawn({ manager: true, transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
   });
 
   it('leaves a plain worker alone — no role flags means claude, as before', async () => {
-    cfg.value = { supervisor: { provider: 'codex' }, agents: { managerProvider: 'codex' } };
+    cfg.value = { agents: { managerProvider: 'codex' } };
     await spawn({ cwd: '/proj', transport: 'pty' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();

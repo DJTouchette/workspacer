@@ -63,7 +63,7 @@ import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnapshot';
-import { ensureSupervisorHome } from './supervisorSkill';
+import { ensureSupervisorHome } from '../lib/workspacerHome';
 import { resolveSpawnProvider } from '../lib/roleProviders';
 import { scrubBootDocumentAgents } from '../lib/bootDocumentScrub';
 import { isAsciiBlank } from '../lib/asciiWhitespace';
@@ -525,7 +525,6 @@ export function registerHubCapabilities(): void {
       resumeSessionId,
       cols,
       rows,
-      supervisor,
       manager,
       fleetFullAccess,
       mcpFacade,
@@ -555,8 +554,7 @@ export function registerHubCapabilities(): void {
       resumeSessionId?: string;
       cols?: number;
       rows?: number;
-      supervisor?: boolean;
-      /** Fleet Manager: nudge-eligible parent without the /supervise loop —
+      /** Fleet Manager: nudge-eligible parent —
        *  see managedSpawnOptions.ts for why dropping this is the load-bearing
        *  bug class this capability must not repeat. */
       manager?: boolean;
@@ -815,13 +813,13 @@ export function registerHubCapabilities(): void {
     // handler so this path can't silently fall back to spawning Claude (it did
     // before — `provider` was ignored here, which is why a Codex agent spawned
     // from the web/remote client came up as Claude).
-    // An omitted provider on a ROLE spawn resolves from config
-    // (supervisor.provider / agents.managerProvider) — the bus payload for a
-    // supervisor started from the web client or a hub job carries
-    // `supervisor: true` and no provider, and defaulting that straight to
-    // claude is how Settings could say codex while every non-desktop path
-    // spawned a Claude supervisor. See lib/roleProviders (TWIN: ipc.ts).
-    const provider = resolveSpawnProvider({ provider: reqProvider, supervisor, manager });
+    // An omitted provider on a MANAGER spawn resolves from config
+    // (agents.managerProvider) — the bus payload for a manager started from the
+    // web client or a hub job carries `manager: true` and no provider, and
+    // defaulting that straight to claude is how Settings could say codex while
+    // every non-desktop path spawned a Claude manager. See lib/roleProviders
+    // (TWIN: ipc.ts).
+    const provider = resolveSpawnProvider({ provider: reqProvider, manager });
     if (provider !== 'claude') {
       // profileId is a Claude account concept (CLAUDE_CONFIG_DIR) with no
       // equivalent on a managed provider — same 'unsupported' classification
@@ -850,9 +848,8 @@ export function registerHubCapabilities(): void {
         effort,
         skipPermissions,
         resumeSessionId,
-        supervisor,
-        // The Fleet Manager pair. This branch used to hand-copy fields and
-        // silently drop both — no `manager` means no isSupervisor, so a
+        // The Fleet Manager flag. This branch used to hand-copy fields and
+        // silently drop it — no `manager` means no isSupervisor, so a
         // codex/opencode/pi Fleet Manager dispatched over the bus (the ONLY
         // path a remote/MCP-facade caller has) never received worker-finished
         // wakes at all. See managedSpawnOptions.ts for the IPC twin of this bug.
@@ -890,8 +887,7 @@ export function registerHubCapabilities(): void {
         permissionMode,
         skipPermissions,
         resumeSessionId,
-        supervisor,
-        // Same pair, same reason as the managed-provider branch above — a
+        // Same flag, same reason as the managed-provider branch above — a
         // Claude Fleet Manager spawned over the bus with transport 'stream'
         // must not silently come up unsupervised either.
         manager,
@@ -919,7 +915,6 @@ export function registerHubCapabilities(): void {
       permissionMode,
       skipPermissions,
       resumeSessionId,
-      supervisor,
       manager,
       fleetFullAccess,
       mcpFacade,

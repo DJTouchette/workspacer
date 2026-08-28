@@ -18,11 +18,6 @@ import * as fs from 'fs';
 import type { McpServerConfig } from './libraryService';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
-/** System prompt injected into every supervisor session. Kept to the role and
- *  the load-bearing habits; the tool catalog and workflows live in the
- *  facade's `help` tool, which cannot drift from the real tool registry. */
-export const SUPERVISOR_SYSTEM_PROMPT = `You are the Workspacer fleet supervisor. Your workspacer MCP tools (prefixed mcp__workspacer__) observe and drive the user's other coding-agent sessions — the same control the desktop app has. Call the workspacer "help" tool before first using the others; it documents every tool group (observe, spawn, drive, …) and the intended workflows. Start by calling list_agents to discover the fleet, then get_snapshot or get_conversation for detail. The fleet may span machines: a list_agents row with a "hub" field lives on that federated peer hub, and you must pass that hub value through to the per-session tools (get_snapshot, send_message, approve, …) when acting on it. You coordinate; you don't write the code yourself. Whenever you reference a session in your answer, write its id in the form session:<sessionId> so the UI can turn it into a clickable link. Be concise and direct — you are briefing a busy senior engineer.`;
-
 /** The workspacer MCP facade — an HTTP MCP server started at app launch
  *  (mcpFacadeDaemon). Claude points at it via --mcp-config; managed providers
  *  (Codex/OpenCode) register it through their own MCP config. */
@@ -34,7 +29,7 @@ const MCP_CONFIG_CONTENTS = JSON.stringify(
   2,
 );
 
-/** Per-scope role note for non-supervisor facade sessions. One or two
+/** Per-scope role note for facade sessions. One or two
  *  sentences on purpose — the tier's own `help` tool carries the detail. */
 function workerRoleNote(scope: RemoteTokenScope): string {
   switch (scope) {
@@ -63,61 +58,11 @@ function workerRoleNote(scope: RemoteTokenScope): string {
  * injects the equivalent through --append-system-prompt (facadeSpawnArgs);
  * managed adapters take no such flag, so the role rides the opening message.
  *
- * TWIN of facadeSpawnArgs: the supervisor branch must stay in step with it,
- * including the loop parameters. It didn't — this path named neither the
- * summarizer model nor the poll cadence, and never mentioned /supervise, so a
- * codex supervisor ran on a vaguer doctrine than its Claude twin even though
- * `installSupervisorSkill(provider)` now writes the identical skill into
- * $CODEX_HOME/skills for it.
+ * TWIN of facadeSpawnArgs: keep the two in step.
  */
-/**
- * The sentence that tells a supervisor how to spawn its transcript-DIGEST
- * workers, in ONE place because two prompt builders emit it (this file's
- * managed twin and `facadeSpawnArgs` below) and they had already drifted once.
- *
- * The bug it closes: the digest worker used to be described with a model and no
- * PROVIDER. `spawn_agent` with no provider spawns Claude, so a codex
- * supervisor — running on codex, holding a codex-shaped context — dispatched
- * Claude summarizers, and `supervisor.summarizerModel`'s claude-only `'sonnet'`
- * default looked correct only by accident. Naming the provider makes the
- * summarizer follow its supervisor's harness, which is what makes a per-harness
- * `supervisor.summarizerModels` mean anything.
- *
- * The model is omitted entirely when it resolves to nothing (no per-harness
- * choice, and the legacy claude-shaped field is not servable here) — an absent
- * `model` is "the harness's own default", the one value valid everywhere, and
- * strictly better than naming an id that CLI would refuse.
- */
-export function summarizerSpawnNote(provider: string, model?: string): string {
-  const named = (model ?? '').trim();
-  const modelClause = named ? `model "${named}" and ` : '';
-  return (
-    `Spawn your transcript-summarizer workers with provider "${provider}", ` +
-    `${modelClause}toolScope "view" so they read transcripts without consuming your context.` +
-    (named ? '' : ` Do not name a model for them — omit it so ${provider} uses its own default.`)
-  );
-}
-
 export function managedFacadeInstructions(opts: {
-  supervisor: boolean;
   scope?: RemoteTokenScope;
   sessionId?: string;
-  /** Supervisor full-access mode — same meaning as facadeSpawnArgs.fullAccess. */
-  fullAccess?: boolean;
-  /** The cheap model the supervisor's digest workers run on, ALREADY resolved
-   *  for `summarizerProvider` (lib/roleModels `resolveSummarizerModel`).
-   *  Undefined = don't name one, let that harness default. */
-  summarizerModel?: string;
-  /** The harness those digest workers are spawned on — the supervisor's own.
-   *  They used to be spawned with no provider at all, which meant Claude
-   *  regardless of the supervisor's harness (see summarizerSpawnNote). */
-  summarizerProvider?: string;
-  /** config supervisor.pollSeconds — the loop cadence. */
-  pollSeconds?: number;
-  /** This harness has a personal-skills directory we installed /supervise
-   *  into (lib/agentSkills). False for OpenCode/Pi, whose supervisors run on
-   *  this text alone. */
-  superviseSkill?: boolean;
 }): string {
   const scope = opts.scope ?? 'operator';
   // The PTY path has always told a facade session its own id (facadeSpawnArgs'
@@ -128,33 +73,14 @@ export function managedFacadeInstructions(opts: {
     : '';
   const prefixNote =
     ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.';
-  if (!opts.supervisor) {
-    return workerRoleNote(scope) + idNote + prefixNote;
-  }
-  const poll = opts.pollSeconds && opts.pollSeconds > 0 ? opts.pollSeconds : 45;
-  return (
-    `${SUPERVISOR_SYSTEM_PROMPT}\n\n` +
-    (opts.superviseSkill
-      ? `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). `
-      : `Watch the fleet on a loop (about every ${poll}s): start with list_agents, then get_snapshot / get_conversation for detail, and surface anything that needs a human. `) +
-    summarizerSpawnNote(opts.summarizerProvider ?? 'claude', opts.summarizerModel) +
-    (opts.fullAccess
-      ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
-      : '') +
-    idNote +
-    prefixNote
-  );
+  return workerRoleNote(scope) + idNote + prefixNote;
 }
 
 /**
  * Build the argv fragment that grants a spawned session the workspacer MCP
  * facade (--mcp-config + pre-allowed tools + an --append-system-prompt note).
  *
- * Two flavours:
- *  - supervisor: the full fleet-coordination role + a kick to run /supervise on
- *    a loop, parameterised with the configured summarizer model + cadence.
- *  - plain facade worker (supervisor:false): a short scope-appropriate role
- *    note — used for the workers a supervisor spawns.
+ * The session gets a short scope-appropriate role note for its tier.
  *
  * When `token` is set the config is a per-session file carrying it as an
  * Authorization header, so the facade serves the session its tier; without a
@@ -165,41 +91,17 @@ export function managedFacadeInstructions(opts: {
  */
 export function facadeSpawnArgs(opts: {
   sessionId: string;
-  supervisor?: boolean;
   scope?: RemoteTokenScope;
   token?: string;
-  /** Digest-worker model, already resolved for `summarizerProvider`. */
-  summarizerModel?: string;
-  /** Harness the digest workers spawn on — the supervisor's own. */
-  summarizerProvider?: string;
-  pollSeconds?: number;
-  /** Supervisor full-access mode (config supervisor.fullAccess): the session
-   *  token carries the yolo grant, so tell the supervisor to spawn its workers
-   *  with skipPermissions — without the grant that request is clamped off. */
-  fullAccess?: boolean;
 }): { mcpConfig: string; allowedTools: string[]; appendSystemPrompt: string } {
   const mcpConfig = opts.token
     ? facadeSessionMcpConfig(opts.sessionId, opts.token)
     : supervisorMcpConfigPath();
   const idNote = `Your own workspacer session id is ${opts.sessionId}.`;
-  if (!opts.supervisor) {
-    return {
-      mcpConfig,
-      allowedTools: ['mcp__workspacer'],
-      appendSystemPrompt: `${workerRoleNote(opts.scope ?? 'operator')} ${idNote}`,
-    };
-  }
-  const poll = opts.pollSeconds && opts.pollSeconds > 0 ? opts.pollSeconds : 45;
   return {
     mcpConfig,
     allowedTools: ['mcp__workspacer'],
-    appendSystemPrompt:
-      `${SUPERVISOR_SYSTEM_PROMPT}\n\n${idNote} When you spawn worker agents with spawn_agent, pass parentSessionId:"${opts.sessionId}" and a short label so they appear nested under you in the UI.\n\n` +
-      `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). ` +
-      summarizerSpawnNote(opts.summarizerProvider ?? 'claude', opts.summarizerModel) +
-      (opts.fullAccess
-        ? ' Full-access mode is ON (supervisor.fullAccess): you run with permissions bypassed, and every worker you spawn should too — always pass skipPermissions: true to spawn_agent so your workers never stall on an approval prompt.'
-        : ''),
+    appendSystemPrompt: `${workerRoleNote(opts.scope ?? 'operator')} ${idNote}`,
   };
 }
 

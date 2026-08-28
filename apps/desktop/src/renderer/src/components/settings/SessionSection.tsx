@@ -252,7 +252,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   // Worktree root: local state for smooth typing, persisted on blur/Enter.
   const [worktreeRoot, setWorktreeRoot] = React.useState(config.agents?.worktreeRoot ?? '');
   // Which harness's title model is being edited. Auto-titling is not tied to
-  // ONE harness the way the supervisor is — every agent is titled by its own —
+  // ONE harness the way the manager is — every agent is titled by its own —
   // so this selects a row to edit rather than choosing a backend, and all of
   // them stay live at once in `autoTitle.models`.
   const [titleHarness, setTitleHarness] = useState<AgentProvider>(
@@ -517,7 +517,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         What a NEW agent starts in — the spawn dialog pre-selects it, and agents dispatched by the
-        Fleet Manager or the supervisor inherit it when they do not ask for a mode themselves.{' '}
+        Fleet Manager inherits it when it does not ask for a mode itself.{' '}
         <strong>Full access</strong> means no per-action approval prompts at all: fast and
         hands-off, with no human gate on each command. Applies to newly spawned sessions only —
         running agents keep the mode they were started with (switch a live one from its pane’s

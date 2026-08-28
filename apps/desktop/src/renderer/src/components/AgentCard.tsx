@@ -239,7 +239,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             whiteSpace: 'nowrap',
           }}
         >
-          {agent.kind === 'supervisor' ? (
+          {agent.manager ? (
             <Compass size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
           ) : (
             <AgentLogo

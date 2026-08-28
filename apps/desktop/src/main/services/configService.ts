@@ -232,49 +232,12 @@ interface Config {
        *  CLAUDE alias, so it is honoured only for harnesses that can serve it
        *  ('' = the harness's own default). Superseded by `models`. */
       model?: string;
-      /** Per-harness title models, keyed by provider. Unlike the supervisor's
+      /** Per-harness title models, keyed by provider. Unlike the manager’s
        *  map this is not a MEMORY of one picker: every agent is titled by its
        *  OWN harness, so a mixed fleet needs several of these live at once.
        *  Resolved by lib/roleModels `resolveTitleModel`. */
       models?: Record<string, string>;
     };
-  };
-  /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
-   *  "Ask the Fleet"); nothing here is assumed present by the rest of the app. */
-  supervisor: {
-    /** Coding-agent backend the supervisor runs on (default 'claude'). */
-    provider: string;
-    /** Coordinator model for supervisor sessions ('' = the app/Claude default).
-     *  Only meaningful for `provider` above — a model id is not portable across
-     *  harnesses. Read through lib/supervisorModel, never directly. */
-    model: string;
-    /** Per-harness memory of the coordinator model, keyed by provider, so
-     *  switching `provider` back and forth in Settings doesn't destroy the
-     *  other harness's choice. Written by the settings picker; resolved (with
-     *  `model` as the legacy fallback) by lib/supervisorModel. */
-    models?: Record<string, string>;
-    /** Legacy single model the supervisor spawns for transcript digests. Ships
-     *  `'sonnet'`, a CLAUDE id — which used to be right by accident, because
-     *  the /supervise skill spawned its digest worker with no provider and that
-     *  path spawns Claude whatever harness the supervisor runs on. The digest
-     *  worker now follows its supervisor's harness (mcpConfig
-     *  `summarizerSpawnNote`), so this is honoured only where it is servable
-     *  and is superseded by `summarizerModels`. */
-    summarizerModel: string;
-    /** Per-harness digest-worker models, keyed by provider. Resolved (with
-     *  `summarizerModel` as the legacy fallback) by lib/roleModels. */
-    summarizerModels?: Record<string, string>;
-    /** Reasoning effort for the supervisor's own coordinator session, keyed by
-     *  harness — the twin of `agents.managerEfforts`, and per-harness for the
-     *  same reason (the ladders are not portable). Read through
-     *  lib/roleModels; '' / absent = the harness's own default. */
-    efforts?: Record<string, string>;
-    /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
-    pollSeconds: number;
-    /** Full access: the supervisor runs with permissions bypassed AND its
-     *  facade token carries the yolo grant, so the workers it spawns may run
-     *  bypassed too — the supervisor twin of agents.fleetFullAccess. */
-    fullAccess: boolean;
   };
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories: {

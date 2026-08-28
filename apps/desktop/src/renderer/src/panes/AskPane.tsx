@@ -4,7 +4,6 @@ import { useConfig } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
 import { ArrowRight } from '../components/icons';
 import { ASK_PRESETS } from './askPresets';
-import { findSessionRefs } from './askLinks';
 import { useProviderDetection } from '../hooks/useProviderDetection';
 import { visibleProviderOptions, NOT_INSTALLED_SUFFIX } from '../lib/providerAvailability';
 import { SUPERVISOR_PROVIDERS } from '../lib/roleProviders';
@@ -36,70 +35,6 @@ function scopePrefix(scopeAgentId: string | undefined, agents: AgentWorkspace[])
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
-const SupervisorRow: React.FC<{
-  agent: AgentWorkspace;
-  onJump: () => void;
-}> = ({ agent, onJump }) => (
-  <div
-    onClick={onJump}
-    title={`Open supervisor: ${agent.name}`}
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      padding: '7px 10px',
-      borderRadius: 7,
-      cursor: 'pointer',
-      fontSize: '0.78rem',
-      color: 'var(--wks-text-primary)',
-      transition: 'background 0.1s ease',
-    }}
-    onMouseEnter={(e) => {
-      (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-selected)';
-    }}
-    onMouseLeave={(e) => {
-      (e.currentTarget as HTMLElement).style.background = 'transparent';
-    }}
-  >
-    {/* Supervisor indicator dot */}
-    <span
-      style={{
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        background: 'var(--wks-accent)',
-        flexShrink: 0,
-        opacity: agent.sessionId ? 1 : 0.35,
-      }}
-    />
-    <span
-      style={{
-        flex: 1,
-        minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        fontWeight: 500,
-      }}
-    >
-      {agent.name}
-    </span>
-    <span
-      style={{
-        fontSize: '0.66rem',
-        color: 'var(--wks-accent)',
-        fontWeight: 600,
-        flexShrink: 0,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 3,
-      }}
-    >
-      open <ArrowRight size={11} strokeWidth={2.25} />
-    </span>
-  </div>
-);
-
 // ── main pane ─────────────────────────────────────────────────────────────────
 
 const AskPane: React.FC<AskPaneProps> = ({
@@ -123,13 +58,13 @@ const AskPane: React.FC<AskPaneProps> = ({
   const [picked, setPicked] = useState<AgentProvider | null>(null);
   const provider = picked ?? configProvider;
   const setProvider = setPicked;
-  // Offer only harnesses that are installed. The configured supervisor harness
-  // and the current pick stay listed even when missing — flagged, not hidden,
-  // so "why can't I pick Codex any more" has an answer on screen.
+  // Offer only harnesses that are installed. The configured fleet harness and
+  // the current pick stay listed even when missing — flagged, not hidden, so
+  // "why can't I pick Codex any more" has an answer on screen.
   const { detection } = useProviderDetection();
-  // One list with Settings (lib/roleProviders) — Pi ships no MCP client, so a
-  // "Pi supervisor" has no way to observe or coordinate the fleet at all; this
-  // picker used to offer it while the settings pane refused to.
+  // One list with Settings (lib/roleProviders) — Pi ships no MCP client, so it
+  // has no way to observe the fleet at all; this picker used to offer it while
+  // the settings pane refused to.
   const visibleProviders = visibleProviderOptions(SUPERVISOR_PROVIDERS, detection, [
     provider,
     configProvider,
@@ -147,16 +82,6 @@ const AskPane: React.FC<AskPaneProps> = ({
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
-
-  const supervisors = useMemo(() => agents.filter((a) => a.kind === 'supervisor'), [agents]);
-
-  // Resolve session refs in supervisor names for potential future rendering use.
-  // (kept here so the import of findSessionRefs is exercised)
-  const _sessionRefs = useMemo(
-    () => supervisors.flatMap((s) => findSessionRefs(s.name, agents)),
-    [supervisors, agents],
-  );
-  void _sessionRefs; // intentionally unused in current minimal UI
 
   const submit = useCallback(
     async (q: string) => {
@@ -341,7 +266,7 @@ const AskPane: React.FC<AskPaneProps> = ({
           }}
         />
 
-        {/* Which harness the supervisor runs on — follows Settings until picked. */}
+        {/* Which harness this launch runs on — follows Settings until picked. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {/* With a single installed harness there is nothing to pick. */}
           {visibleProviders.length > 1 && (
@@ -423,7 +348,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             <button
               onClick={() => void spawnDirect()}
               disabled={spawning}
-              title="Start a supervisor with no question"
+              title="Start an agent with no question"
               style={{
                 position: 'absolute',
                 right: 0,
@@ -464,57 +389,6 @@ const AskPane: React.FC<AskPaneProps> = ({
             {spawning ? 'Dispatching…' : 'Ask'}
           </button>
         </div>
-      </div>
-
-      {/* ── Supervisors list ── */}
-      <div
-        style={{
-          flex: 1,
-          padding: '0 20px 20px',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-        }}
-      >
-        <div
-          style={{
-            fontSize: '0.62rem',
-            color: 'var(--wks-text-disabled)',
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            padding: '0 10px 4px',
-            marginBottom: 2,
-          }}
-        >
-          Supervisors {supervisors.length > 0 && `(${supervisors.length})`}
-        </div>
-
-        {supervisors.length === 0 ? (
-          <div
-            style={{
-              padding: '12px 10px',
-              fontSize: '0.74rem',
-              color: 'var(--wks-text-faint)',
-              lineHeight: 1.5,
-            }}
-          >
-            No supervisor agents yet. Ask a question to dispatch one.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {supervisors
-              .slice()
-              .reverse() // newest-ish first (assuming agents are appended in order)
-              .map((agent) => (
-                <SupervisorRow
-                  key={agent.id}
-                  agent={agent}
-                  onJump={() => onJumpToAgent(agent.id)}
-                />
-              ))}
-          </div>
-        )}
       </div>
     </div>
   );

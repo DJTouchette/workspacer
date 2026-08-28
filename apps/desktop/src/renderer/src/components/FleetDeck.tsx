@@ -145,7 +145,7 @@ const ExpandedAgentCard: React.FC<{
         flexShrink: 0,
       }}
     >
-      {agent.kind === 'supervisor' ? (
+      {agent.manager ? (
         <Compass size={13} strokeWidth={2} style={{ flexShrink: 0 }} />
       ) : (
         <AgentLogo
@@ -979,7 +979,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {agent.kind === 'supervisor' && (
+                          {agent.manager && (
                             <Compass
                               size={11}
                               strokeWidth={2}

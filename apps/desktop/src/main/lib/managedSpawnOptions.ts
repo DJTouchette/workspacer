@@ -53,7 +53,6 @@ export interface AgentSpawnRequest {
   resumeSessionId?: string;
   cols?: number;
   rows?: number;
-  supervisor?: boolean;
   mcpFacade?: boolean;
   /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade). */
   toolScope?: RemoteTokenScope;
@@ -93,7 +92,6 @@ export const SPAWN_REQUEST_FIELDS = {
   resumeSessionId: { kind: 'forward' },
   cols: { kind: 'forward' },
   rows: { kind: 'forward' },
-  supervisor: { kind: 'forward' },
   mcpFacade: { kind: 'forward' },
   toolScope: { kind: 'forward' },
   pluginTools: { kind: 'forward' },
@@ -152,8 +150,7 @@ export function managedOptionsFromRequest(
     skipPermissions: !!req.skipPermissions || permissionModeMeansBypass(req.permissionMode),
     permissionMode: req.permissionMode,
     resumeSessionId: req.resumeSessionId,
-    supervisor: req.supervisor,
-    // The Fleet Manager pair. Dropping these was the bug this module exists for:
+    // The Fleet Manager flag. Dropping it was the bug this module exists for:
     // no `manager` = no isSupervisor = no worker-finished wake ever routed here.
     manager: req.manager,
     fleetFullAccess: req.fleetFullAccess,
@@ -197,7 +194,7 @@ export function explainUnsupportedManagedOptions(opts: ManagedSpawnOptions): str
       `permissionMode '${opts.permissionMode}' — managed providers only have ask/yolo (spawning in ask)`,
     );
   }
-  if (opts.provider === 'pi' && (opts.supervisor || opts.mcpFacade || opts.toolScope)) {
+  if (opts.provider === 'pi' && (opts.mcpFacade || opts.toolScope)) {
     out.push('the workspacer MCP facade — pi ships no MCP client, so its tools cannot attach');
   }
   if (opts.provider === 'copilot') {
@@ -208,7 +205,7 @@ export function explainUnsupportedManagedOptions(opts: ManagedSpawnOptions): str
     // cannot say at spawn time whether the facade will attach — only warn that
     // it might not. The adapter checks `session.mcp_servers_loaded` at runtime
     // and raises a session error if it didn't (providers/copilot.rs).
-    if (opts.supervisor || opts.mcpFacade || opts.toolScope) {
+    if (opts.mcpFacade || opts.toolScope) {
       out.push(
         'the workspacer MCP facade — copilot supports MCP, but a GitHub org policy can disable third-party servers; if it is on, this agent starts with no workspacer tools and says so in its pane',
       );

@@ -15,14 +15,8 @@ vi.mock('../services/configService', () => ({
   configService: { getConfig: () => mockConfig },
 }));
 
-const {
-  perHarnessModel,
-  resolveManagerModel,
-  resolveSummarizerModel,
-  resolveTitleModel,
-  resolveSupervisorEffort,
-  resolveManagerEffort,
-} = await import('./roleModels');
+const { perHarnessModel, resolveManagerModel, resolveTitleModel, resolveManagerEffort } =
+  await import('./roleModels');
 
 beforeEach(() => {
   mockConfig = {};
@@ -86,27 +80,6 @@ describe('resolveManagerModel', () => {
   });
 });
 
-describe('resolveSummarizerModel', () => {
-  it("honours the shipped 'sonnet' default for claude", () => {
-    mockConfig = { supervisor: { summarizerModel: 'sonnet' } };
-    expect(resolveSummarizerModel('claude')).toBe('sonnet');
-  });
-
-  it("refuses to hand that same 'sonnet' to a codex supervisor's digest workers", () => {
-    mockConfig = { supervisor: { summarizerModel: 'sonnet' } };
-    expect(resolveSummarizerModel('codex')).toBeUndefined();
-    expect(resolveSummarizerModel('opencode')).toBeUndefined();
-  });
-
-  it('uses the per-harness entry when the user has picked one', () => {
-    mockConfig = {
-      supervisor: { summarizerModel: 'sonnet', summarizerModels: { codex: 'gpt-5' } },
-    };
-    expect(resolveSummarizerModel('codex')).toBe('gpt-5');
-    expect(resolveSummarizerModel('claude')).toBe('sonnet');
-  });
-});
-
 describe('resolveTitleModel', () => {
   it("honours the shipped 'haiku' default for claude and drops it for codex", () => {
     mockConfig = { agents: { autoTitle: { model: 'haiku' } } };
@@ -133,21 +106,16 @@ describe('resolveTitleModel', () => {
 });
 
 /**
- * Reasoning EFFORT, the setting neither role had: a supervisor ran on whatever
+ * Reasoning EFFORT, the setting the manager did not have: it ran on whatever
  * its CLI defaults to with no way to raise it, and the pane implied otherwise
  * by showing nothing at all. Per-harness for the same reason as the models —
  * the ladders don't overlap (claude low..max, codex minimal..xhigh) — but with
  * NO legacy single field, so there is nothing to guard against here except
  * reading the wrong harness's entry.
  */
-describe('resolveSupervisorEffort / resolveManagerEffort', () => {
+describe('resolveManagerEffort', () => {
   it('reads the entry for the harness being spawned, not another one', () => {
-    mockConfig = {
-      supervisor: { efforts: { codex: 'xhigh', claude: 'high' } },
-      agents: { managerEfforts: { codex: 'medium' } },
-    };
-    expect(resolveSupervisorEffort('codex')).toBe('xhigh');
-    expect(resolveSupervisorEffort('claude')).toBe('high');
+    mockConfig = { agents: { managerEfforts: { codex: 'medium' } } };
     expect(resolveManagerEffort('codex')).toBe('medium');
     // Not configured on this harness = the harness's own default, the one
     // answer that is valid everywhere.
@@ -156,18 +124,17 @@ describe('resolveSupervisorEffort / resolveManagerEffort', () => {
 
   it('treats absent, blank and whitespace as "the harness default"', () => {
     mockConfig = {};
-    expect(resolveSupervisorEffort('claude')).toBeUndefined();
-    mockConfig = { supervisor: { efforts: { claude: '' } }, agents: { managerEfforts: {} } };
-    expect(resolveSupervisorEffort('claude')).toBeUndefined();
     expect(resolveManagerEffort('claude')).toBeUndefined();
-    mockConfig = { supervisor: { efforts: { claude: '  high  ' } } };
-    expect(resolveSupervisorEffort('claude')).toBe('high');
+    mockConfig = { agents: { managerEfforts: { claude: '' } } };
+    expect(resolveManagerEffort('claude')).toBeUndefined();
+    mockConfig = { agents: { managerEfforts: { claude: '  high  ' } } };
+    expect(resolveManagerEffort('claude')).toBe('high');
   });
 
   it('passes through a level the shipped ladder does not list', () => {
     // The ladders come from live catalogs; refusing an unrecognized level would
     // discard a deliberate choice on a newer CLI.
-    mockConfig = { supervisor: { efforts: { codex: 'ultra' } } };
-    expect(resolveSupervisorEffort('codex')).toBe('ultra');
+    mockConfig = { agents: { managerEfforts: { codex: 'ultra' } } };
+    expect(resolveManagerEffort('codex')).toBe('ultra');
   });
 });
