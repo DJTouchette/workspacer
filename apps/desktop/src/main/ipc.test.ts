@@ -240,6 +240,16 @@ describe('claude:spawn — a role spawn with no provider resolves the configured
     expect(lastManagedOpts().manager).toBe(true);
   });
 
+  it('spawns a COPILOT manager when that is what Settings says', async () => {
+    // The third manager harness. Copilot has no PTY leg at all, so the only
+    // proof that the setting arrived is that it reached the managed funnel
+    // naming copilot — a fall-through to claude would still have "worked".
+    cfg.value = { agents: { managerProvider: 'copilot' } };
+    await spawn({ manager: true, cwd: '/proj' });
+    expect(lastManagedOpts().provider).toBe('copilot');
+    expect(lastManagedOpts().manager).toBe(true);
+  });
+
   it('an EXPLICIT provider still wins — the launcher can override Settings', async () => {
     // "Ask the Fleet" offers a per-launch harness pick; a config default must
     // not quietly reclaim it.

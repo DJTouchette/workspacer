@@ -41,6 +41,16 @@ describe('resolveManagerProvider', () => {
     mockConfig = { agents: { managerProvider: ' opencode ' } };
     expect(resolveManagerProvider()).toBe('opencode');
   });
+
+  // Copilot joined MANAGER_PROVIDERS (renderer/src/lib/roleProviders) once its
+  // facade + skills legs were verified. The picker writing a value this
+  // resolver silently rewrote to 'claude' is exactly the bug this module was
+  // built to end, so the two lists are pinned against each other here.
+  it('honours copilot — the third harness the manager picker offers', () => {
+    mockConfig = { agents: { managerProvider: 'copilot' } };
+    expect(resolveManagerProvider()).toBe('copilot');
+    expect(resolveSpawnProvider({ manager: true })).toBe('copilot');
+  });
 });
 
 describe('resolveSpawnProvider — what the two spawn funnels call', () => {

@@ -641,6 +641,82 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
 });
 
 /**
+ * The SAME role on copilot, the third harness MANAGER_PROVIDERS offers. Nothing
+ * in this funnel forks on provider, which is exactly why it is worth pinning:
+ * "provider-blind" is a claim, and the way it fails is one `provider ===
+ * 'claude'` guard added later that quietly drops the token, the wake flag or
+ * the skills for everyone else. Each of the three legs a manager needs —
+ * facade, skills, wake-eligibility — is asserted here for copilot.
+ *
+ * The fourth leg lives in the daemon and cannot be seen from here: copilot
+ * additionally needs `--allow-tool <server>` or every facade call is DENIED
+ * (`-p` cannot prompt). That is pinned in providers/copilot.rs.
+ */
+describe('spawnManagedAgent — a Fleet Manager on copilot', () => {
+  beforeEach(() => {
+    mockConfig = { agents: { fleetFullAccess: true } };
+  });
+
+  const spawnCopilotManager = () =>
+    spawnManagedAgent({
+      provider: 'copilot',
+      transport: 'stream',
+      cwd: '/home/u/Work',
+      manager: true,
+      toolScope: 'operator',
+      fleetFullAccess: true,
+    });
+
+  it('is wake-eligible, tokened at operator tier, and holds the manager grants', async () => {
+    await spawnCopilotManager();
+    expect(lastMeta()).toMatchObject({ isWakeTarget: true, provider: 'copilot' });
+    const [, scope, , profiles, yolo, role] = mintSessionFacadeToken.mock.calls.at(
+      -1,
+    )! as unknown[];
+    expect(scope).toBe('operator');
+    expect(profiles).toEqual(['default']);
+    expect(yolo).toBe(true);
+    expect(role).toBe('manager');
+    // The facade URL carries the token: copilot registers servers by URL in its
+    // --additional-mcp-config document, same as codex's -c override.
+    expect(String(lastManaged().mcp)).toContain('t=tok-abc');
+  });
+
+  it('installs its slash commands into copilot’s skills dir', async () => {
+    await spawnCopilotManager();
+    expect(installManagerSkills).toHaveBeenCalledWith('copilot');
+  });
+
+  it('takes agents.managerModels/managerEfforts for copilot, never another harness’s', async () => {
+    mockConfig = {
+      agents: {
+        managerProvider: 'copilot',
+        managerModels: { claude: 'opus', copilot: 'auto' },
+        managerEfforts: { codex: 'xhigh', copilot: 'high' },
+      },
+    };
+    await spawnCopilotManager();
+    expect(lastManaged().model).toBe('auto');
+    expect(lastManaged().effort).toBe('high');
+  });
+
+  /**
+   * Copilot's catalog is ACCOUNT-GATED, so `auto` is the only id the CLI
+   * accepts everywhere (shared/modelVocabulary). A claude id that leaked into
+   * `managerModels.copilot` — by a hand-edit, or by a picker bug — must resolve
+   * to the harness's own default rather than reaching `--model` and failing the
+   * turn. This is the standing guard doing its job for the manager role, not a
+   * copilot-specific rule; asserted because it is the one place a copilot
+   * manager's model differs from a codex one's.
+   */
+  it('drops a foreign model id rather than putting it on copilot’s argv', async () => {
+    mockConfig = { agents: { managerModels: { copilot: 'claude-sonnet-4.5' } } };
+    await spawnCopilotManager();
+    expect(lastManaged().model).toBeUndefined();
+  });
+});
+
+/**
  * THE TRAP THIS BLOCK EXISTS FOR. The bug behind the supervisor model picker
  * was never the dropdown: `supervisor.model` was never READ on the managed spawn
  * path at all, so the setting looked correct in the UI and did nothing. Every

@@ -71,6 +71,17 @@ func TestRoleSpawnWithNoProviderTakesTheConfiguredHarness(t *testing.T) {
 			params: `{"cwd":"/tmp","manager":true}`,
 			want:   "codex",
 		},
+		{
+			// The third harness the manager picker offers. Headless is where
+			// this resolver is the ONLY reader of the setting — there is no
+			// renderer here to remember it — so a copilot manager started from
+			// `workspacer serve`, the phone or a hub job hangs entirely on
+			// "copilot" being in roleProviderDefault's accept list.
+			name:   "fleet manager on copilot",
+			cfg:    map[string]any{"agents": map[string]any{"managerProvider": "copilot"}},
+			params: `{"cwd":"/tmp","manager":true}`,
+			want:   "copilot",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reg, calls := roleProviderRig(t, tc.cfg)

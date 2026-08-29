@@ -85,10 +85,18 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
           paths, or pick another above.
         </div>
       )}
+      {managerProvider === 'copilot' && (
+        <div style={hintStyle}>
+          Copilot is the one harness whose tool access isn’t settled until the session starts: a
+          GitHub org policy can disable third-party MCP servers, and a manager without them can’t
+          dispatch anything. It won’t fail quietly — the session raises an error naming the servers
+          that didn’t attach.
+        </div>
+      )}
       <div style={hintStyle}>
         The CLI hosting the manager’s own conversation. It dispatches workers on any harness either
-        way. Only Claude and Codex are offered: the manager needs both an MCP client (to dispatch at
-        all) and a skills folder for its own commands.{' '}
+        way. Only Claude, Codex and GitHub Copilot are offered: the manager needs both an MCP client
+        (to dispatch at all) and a skills folder for its own commands.{' '}
         <strong>Applies to the next manager you start.</strong> A conversation cannot move between
         CLIs, so an existing Fleet Manager card keeps the one it was started on; terminate it
         (right-click → Terminate) to start a fresh manager here.
