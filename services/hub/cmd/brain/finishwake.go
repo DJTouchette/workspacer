@@ -26,12 +26,13 @@ package main
 //     watcher only sees a transition it was RUNNING for, so the brain's own
 //     restart, a claudemon /events reconnect that drops an edge, or a wake whose
 //     delivery threw all leave a manager dark with no other recovery.
-//   - blocked ❌ — the approval/question broadcast. Deliberately out: it is the
-//     one wake that is not parent-keyed (every live wake target receives it), it
-//     needs its own 20s survive-this-long debounce with a matching clear edge,
-//     and it answers a different question. A headless manager therefore still
-//     does not learn that one of its workers is stuck on an approval; it learns
-//     only when that worker eventually finishes.
+//   - blocked ✅ — the approval/question broadcast, now in blockwake.go. It is
+//     shaped differently enough to live in its own file (not parent-keyed, a
+//     survive-this-long window rather than a coalesce one, a clear edge that
+//     un-does it), but it is fed from THIS watcher's transition — see observe,
+//     which hands every ambient edge to blocks.onEdge before applying the finish
+//     rule. Sharing prevAmbient is the point: one transition, one memory of the
+//     state before it.
 //   - the structured-result half of a finish ❌ — `resultSchema` is declined by
 //     the headless spawn (parity_test.go's spawnParamsDeclined), so there is no
 //     contract to validate against. The prose report is delivered in full.
@@ -109,6 +110,12 @@ type finishWatcher struct {
 	// noise, not a new report. TWIN: lastReportedReply, and
 	// apps/desktop/PER_TURN_WAKE_FINDING.md for the observed duplicate.
 	lastReported map[string]string
+
+	// blocks is the sibling watcher (blockwake.go), fed from the SAME ambient
+	// transition this one reads. It deliberately keeps no prevAmbient of its
+	// own: a second per-session map would be a second thing to prune, and this
+	// one is already the process's single memory of the state before an edge.
+	blocks *blockWatcher
 }
 
 func newFinishWatcher(reg *registry) *finishWatcher {
@@ -120,6 +127,7 @@ func newFinishWatcher(reg *registry) *finishWatcher {
 		pending:      map[string][]string{},
 		timers:       map[string]*time.Timer{},
 		lastReported: map[string]string{},
+		blocks:       newBlockWatcher(reg),
 	}
 }
 
@@ -183,6 +191,14 @@ func (w *finishWatcher) observe(ctx context.Context, snap json.RawMessage) {
 	w.prevAmbient[s.SessionID] = s.AmbientState
 	w.mu.Unlock()
 
+	// The blocked broadcast reads the SAME edge, and it must see it BEFORE the
+	// finish rule below returns: the two care about opposite transitions (into a
+	// waiting state versus out of a working one), so every early return here
+	// would be a block edge silently dropped. It is given `prev` unseen-or-not —
+	// unlike a finish, a session sighted already blocked genuinely IS blocked
+	// (blockwake.go's onEdge says why).
+	w.blocks.onEdge(ctx, s, prev)
+
 	// A first sighting is not a transition. Priming covers the sessions that
 	// existed at boot; anything appearing later appears at its own start.
 	if !seen || !wasWorking(prev) || s.AmbientState != "idle" {
@@ -234,14 +250,21 @@ func (w *finishWatcher) flush(ctx context.Context, parentID string) {
 }
 
 // forgetWorker drops a worker's dedup signature and its remembered ambient
-// state. Called when a row is forgotten (agents.close), so neither map retains
-// an entry per session for the process lifetime — the same concern the desktop's
-// forgetWorker has. A respawn onto a reused id starts fresh.
+// state, and cancels anything the blocked broadcast still holds for it. Called
+// when a row is forgotten (agents.close), so no map retains an entry per session
+// for the process lifetime — the same concern the desktop's forgetWorker has. A
+// respawn onto a reused id starts fresh.
+//
+// The block half matters most for a session dismissed WHILE blocked: without it
+// an armed debounce would sit there until it expired. It would broadcast
+// nothing (the re-verification finds no row), but a timer for a session that no
+// longer exists should go with the row, not outlive it.
 func (w *finishWatcher) forgetWorker(sessionID string) {
 	w.mu.Lock()
 	delete(w.lastReported, sessionID)
 	delete(w.prevAmbient, sessionID)
 	w.mu.Unlock()
+	w.blocks.forget(sessionID)
 }
 
 // sendFinished composes and delivers one coalesced wake, re-verifying BOTH ends
