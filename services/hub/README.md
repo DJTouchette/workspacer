@@ -106,15 +106,56 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 # (pass --token / $HUB_TOKEN when the hub requires auth)
 ```
 
-Attach it to Claude Code via `--mcp-config`:
+Attach it to Claude Code via `--mcp-config`. A caller presenting no credential
+is refused with 401, so mint the client a token first:
+
+```sh
+workspacer token create --scope operator --label "my mcp client"
+```
 
 ```json
 {
   "mcpServers": {
-    "workspacer": { "type": "http", "url": "http://127.0.0.1:7897/mcp" }
+    "workspacer": {
+      "type": "http",
+      "url": "http://127.0.0.1:7897/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
   }
 }
 ```
+
+Clients whose MCP registration is a bare URL and cannot send headers (codex `-c`
+overrides, `opencode.json`) append the token as `?t=<token>` instead.
+
+### Untokened access
+
+The facade drives the whole fleet over plain HTTP on loopback, and loopback is
+reachable by every local process and every local user account — including a
+container sharing the host network namespace. So a request carrying **no**
+credential gets nothing by default. The dial is `-untokened` (env
+`WKS_MCP_UNTOKENED`; desktop config key `facade.untokenedAccess`):
+
+| Value | Credential-less request gets |
+| --- | --- |
+| `deny` (**default**) | 401 on `/mcp` and `/sse`. `/health` stays open. |
+| `view` | the read-only tier — no spawning or writing, but every agent list and every transcript |
+| `operator` | everything: spawn agents, write files, rewrite config. The pre-0.151 default, kept as an explicit opt-in |
+
+A *present but unknown* token is always 401, under every setting — a revoked
+session token never falls through to the untokened tier.
+
+None of this affects sessions workspacer spawns: the desktop
+(`claudeSpawn.ts` / `managedSpawn.ts`) and the headless brain
+(`cmd/brain/facade.go`) mint a per-session scoped token for every facade session
+and hand it over as part of the spawn, so their tier is unchanged under all
+three values. `deny` breaks exactly one shape of client: a hand-configured one
+that sends no token.
+
+Two guards sit in front of all of it and are independent of the dial: a
+`Host`-header check (`requireHost`) that refuses DNS-rebinding requests from a
+browser, and `checkBindPolicy`, which refuses at startup to bind a non-loopback
+address without either a static token or `-untokened deny`.
 
 Tools (each maps 1:1 to a hub capability provided by Electron main):
 

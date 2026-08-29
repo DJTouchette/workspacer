@@ -472,13 +472,27 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 go run ./cmd/hub --addr 127.0.0.1:7895
 go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 # pass --token / $HUB_TOKEN when the hub requires auth</code></pre>
-<p>Attach it to Claude Code via <code>--mcp-config</code>:</p>
+<p>Attach it to Claude Code via <code>--mcp-config</code>. Mint the client a token first — a credential-less caller is refused (see below):</p>
+<pre><code>workspacer token create --scope operator --label "my mcp client"</code></pre>
 <pre><code>{
   "mcpServers": {
-    "workspacer": { "type": "http", "url": "http://127.0.0.1:7897/mcp" }
+    "workspacer": {
+      "type": "http",
+      "url": "http://127.0.0.1:7897/mcp",
+      "headers": { "Authorization": "Bearer &lt;token&gt;" }
+    }
   }
 }</code></pre>
-<p>The facade serves <strong>tiered tool sets</strong>. A request's bearer token (an <code>Authorization</code> header, or <code>?t=</code> for URL-only clients) resolves to a tier, one of <code>view</code> (read-only observation), <code>triage</code> (view + approve/reply/interrupt + UI navigation), or <code>operator</code> (everything). <code>tools/list</code> returns only that tier's tools. Tiers are derived from the same authtoken scope allowlists the hub bus enforces, so the two planes can't disagree. The desktop mints a per-session scoped token when you spawn an agent with <strong>Workspacer tools</strong> (or <code>toolScope</code> on <code>agents.spawn</code> / <code>spawn_agent</code>), and revokes it when the session ends. No token on a loopback connection gets the full operator set, which is the pre-tier default, unchanged.</p>
+<p>Clients whose MCP registration is a bare URL and can't send headers (codex's <code>-c</code> overrides, <code>opencode.json</code>) append the token as <code>?t=&lt;token&gt;</code> instead.</p>
+<p>The facade serves <strong>tiered tool sets</strong>. A request's bearer token (an <code>Authorization</code> header, or <code>?t=</code> for URL-only clients) resolves to a tier, one of <code>view</code> (read-only observation), <code>triage</code> (view + approve/reply/interrupt + UI navigation), or <code>operator</code> (everything). <code>tools/list</code> returns only that tier's tools. Tiers are derived from the same authtoken scope allowlists the hub bus enforces, so the two planes can't disagree. The desktop mints a per-session scoped token when you spawn an agent with <strong>Workspacer tools</strong> (or <code>toolScope</code> on <code>agents.spawn</code> / <code>spawn_agent</code>), and revokes it when the session ends.</p>
+<p><strong>A request with no credential at all is refused with <code>401</code>.</strong> The facade speaks plain HTTP on loopback, and loopback is reachable by every process and every user account on the machine (and by a container sharing the host network namespace), so "whoever reached the port" is not an identity and gets no tools. Up to 0.150 it got the whole operator set; that is what changed. A DNS-rebinding <code>Host</code> guard and a fail-closed non-loopback bind policy were already in place and are unchanged.</p>
+<p>The dial is <code>facade.untokenedAccess</code> in <code>config.yaml</code> (the binary's <code>-untokened</code> flag / <code>WKS_MCP_UNTOKENED</code>), with three positions:</p>
+<ul>
+<li><code>deny</code> — the default. Credential-less requests get <code>401</code> on <code>/mcp</code> and <code>/sse</code>; <code>/health</code> stays open so liveness probes need no secret.</li>
+<li><code>view</code> — credential-less requests get the read-only tier. No spawning or writing, but every agent list and every transcript, to anything on the machine.</li>
+<li><code>operator</code> — credential-less requests get everything. The pre-0.151 behaviour, kept as an explicit opt-in for a hand-configured local client that cannot carry a token.</li>
+</ul>
+<p>Nothing work{spacer} spawns is affected by any of the three: every facade session carries its own per-session token, presented as an <code>Authorization</code> header on the generated <code>--mcp-config</code> file (Claude PTY and stream) or as <code>?t=</code> on the URL (codex, opencode, copilot). The setting only governs callers that present nothing.</p>
 <p>Every tier includes a <code>help</code> tool rendered from the live tool registry (grouped overview, per-topic usage guidance), and installed plugins can contribute tools of their own via their manifest's <code>tools</code> array, granted per session token and forwarded to the plugin's sidecar over the bus (see <a href="build-plugin.html#capabilities">the plugin guide</a>). The operator tier registers around 50 core tools, each 1:1 with a hub capability (plus the event-backed UI-navigation set). The core driving set:</p>
 <ul>
 <li><code>list_agents</code>, running agents + state/usage/pending asks.</li>
