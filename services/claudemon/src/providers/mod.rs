@@ -16,7 +16,9 @@
 pub mod claude_stream;
 pub mod codex;
 pub mod codex_rollout;
+pub mod codex_usage;
 pub mod copilot;
+pub mod copilot_usage;
 pub mod opencode;
 pub mod pi;
 
@@ -255,6 +257,42 @@ pub enum AgentUpdate {
 /// [`AgentUpdate::RateLimits`]. Each window is bucketed by its duration (≤12h →
 /// the 5h slot, longer → the 7d slot), falling back to primary→5h /
 /// secondary→7d when the duration is absent.
+/// Open ANOTHER tool's SQLite database for reading — Codex's `state_5.sqlite`,
+/// Copilot's `session-store.db`. Never ours; `store::Db` owns that one.
+///
+/// Read-only and WAL-aware FIRST, `immutable=1` only as a fallback, and the
+/// order is load-bearing rather than a preference. `immutable=1` tells SQLite
+/// to ignore the write-ahead log entirely, which is attractive (no locking, no
+/// contention with the running CLI) and quietly catastrophic: measured
+/// 2026-08-28, an immutable read of Copilot's `session-store.db` returned
+/// **zero** `assistant_usage_events` rows while a WAL-aware read of the same
+/// file returned all 56 — its 167 KB main file had last checkpointed two days
+/// earlier and every event lived in a 3.3 MB uncheckpointed WAL. A UI shown
+/// that zero would have reported "you have used nothing", which is the exact
+/// class of lie this whole data layer exists to stop.
+///
+/// So: take the WAL. Concurrent readers are what WAL mode is for and they do
+/// not block the writing CLI. The immutable fallback stays for the case that
+/// genuinely needs it — a database on a read-only mount, where the `-shm` file
+/// cannot be created — and a caller that gets it should treat missing rows as
+/// unknown rather than as zero.
+pub(crate) fn open_foreign_sqlite_readonly(path: &std::path::Path) -> Option<rusqlite::Connection> {
+    if !path.is_file() {
+        return None;
+    }
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    let display = path.display();
+    rusqlite::Connection::open_with_flags(format!("file:{display}?mode=ro"), flags)
+        .or_else(|_| {
+            rusqlite::Connection::open_with_flags(
+                format!("file:{display}?mode=ro&immutable=1"),
+                flags,
+            )
+        })
+        .ok()
+}
+
 pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
     fn window(w: &Value) -> (Option<f64>, Option<i64>, Option<u64>) {
         let pick = |keys: [&str; 2]| keys.iter().find_map(|k| w.get(*k));
@@ -930,6 +968,31 @@ pub fn apply_updates(
         store.apply_status_line(session_id, acc.status_line());
     }
 }
+/// The profile half of a managed spawn: the harness's config-root environment
+/// and the extra argv that go with it.
+///
+/// One type for every harness because it IS one primitive wearing three names.
+/// `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `COPILOT_HOME` all say "read your
+/// config from here", and `codex -p <preset>` rides the same argv channel as
+/// Claude's `--settings`. The desktop resolves which name applies (see
+/// `PROFILE_CAPS` in apps/desktop/src/main/shared/agentProfiles.ts) and sends
+/// the resolved pair; the daemon does not need to know which harness it is
+/// looking at in order to pass it on.
+///
+/// It exists because passing it on is exactly what the daemon was NOT doing.
+/// `/sessions/spawn-managed` forwarded `env`/`extra_args` into the claude_stream
+/// arm only, so a Codex or Copilot profile changed the Settings form, the spawn
+/// picker and the payload on the wire — and nothing about the process that
+/// actually ran. Threading one value through every arm is what makes a dropped
+/// field a compile error instead of a silent no-op.
+#[derive(Debug, Clone, Default)]
+pub struct SpawnExtras {
+    /// Merged on top of the daemon's own environment, never replacing it.
+    pub env: HashMap<String, String>,
+    /// Appended verbatim after the argv the daemon builds.
+    pub extra_args: Vec<String>,
+}
+
 
 /// Spawn a PTY child and wire it into an already-registered session's byte
 /// stream + input channel — the **Term half** of a hybrid managed agent. Output
@@ -946,6 +1009,7 @@ pub(crate) fn spawn_attach_pty(
     session_id: &str,
     argv: &[String],
     cwd: &str,
+    env: &HashMap<String, String>,
 ) -> anyhow::Result<Arc<pty::PtyHandle>> {
     let handle = Arc::new(pty::spawn(
         argv,
@@ -956,7 +1020,7 @@ pub(crate) fn spawn_attach_pty(
             pixel_width: 0,
             pixel_height: 0,
         },
-        &HashMap::new(),
+        env,
     )?);
 
     // input pump: WrapperMessage (from POST /sessions/:id/input) -> PTY

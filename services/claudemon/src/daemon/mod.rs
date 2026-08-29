@@ -460,11 +460,22 @@ fn spawn_persistence_task(
                     // and a daemon restart would revert a 1M session to the
                     // table's guess for its marker-stripped transcript id.
                     let requested_model = store.requested_model(&event.session_id);
+                    // …and WHICH ACCOUNT it bills against, for the same reason
+                    // and through the same statement. `None` here is a real
+                    // answer — a session the daemon did not spawn genuinely has
+                    // no attribution, and NULL says so rather than defaulting
+                    // it onto the primary account.
+                    let config_root = store.config_root(&event.session_id);
                     // Run the synchronous sqlite write on the blocking pool so
                     // we don't tie up an async worker on file I/O.
                     let result = tokio::task::spawn_blocking(move || {
-                        db_inner
-                            .record_event_with_requested_model(&event, requested_model.as_deref())
+                        db_inner.record_event_with_spawn_facts(
+                            &event,
+                            crate::store::SpawnFacts {
+                                requested_model: requested_model.as_deref(),
+                                config_root: config_root.as_deref(),
+                            },
+                        )
                     })
                     .await
                     .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));

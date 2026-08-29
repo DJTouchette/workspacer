@@ -268,6 +268,16 @@ pub async fn handle(
 
     store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
+    // Which ACCOUNT this session bills against, recorded from the spawn env at
+    // the one moment it is known for certain. Deriving it later from the
+    // transcript path works only while nothing has resolved that path, and a
+    // profile's `projects` is a symlink at the shared one — so a `realpath`
+    // anywhere upstream would silently merge two logins' usage. See
+    // `account_usage::root_from_spawn_env`.
+    store.set_config_root(
+        &session_id,
+        &crate::session::account_usage::root_from_spawn_env(&payload.env),
+    );
     // The caller's own answer first, argv only as a fallback — see
     // `SpawnPayload::model`. Recorded unconditionally when either is present:
     // the guard used to be "a model appeared on argv", which is empty for every
@@ -369,13 +379,22 @@ pub struct SpawnManagedPayload {
     /// starting fresh with a pinned id.
     #[serde(default)]
     pub resume: Option<String>,
-    /// Claude only: extra argv appended verbatim (escape hatch for CLI flags
-    /// the payload doesn't model).
+    /// Extra argv appended verbatim, for EVERY harness that takes profiles —
+    /// Claude's `--settings`, `codex -p <preset>`, and any hand-written
+    /// `extraArgs` a profile carries.
     #[serde(default)]
     pub extra_args: Vec<String>,
-    /// Claude only: extra env vars merged on top of the daemon's environment
-    /// (e.g. a Claude profile's `CLAUDE_CONFIG_DIR`) — same semantics as
-    /// `/sessions/spawn`'s `env`.
+    /// Extra env vars merged on top of the daemon's environment: a profile's
+    /// config root under whichever name its harness uses (`CLAUDE_CONFIG_DIR`
+    /// / `CODEX_HOME` / `COPILOT_HOME`), plus Copilot's resolved auth token.
+    /// Same semantics as `/sessions/spawn`'s `env`.
+    ///
+    /// BOTH FIELDS WERE CLAUDE-ONLY, and only by omission. They were forwarded
+    /// into the `"claude"` arm below and nowhere else, so a Codex or Copilot
+    /// profile configured the Settings form, the spawn picker and this payload
+    /// — and changed nothing about the process that ran. The desktop half was
+    /// correct and pinned by managedSpawn.test.ts the whole time; this is the
+    /// half that was missing.
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// The agent's FIRST PROMPT, delivered as part of the spawn rather than by
@@ -438,6 +457,15 @@ pub async fn handle_managed(
     crate::session::transcript::allow_spawn_env(&payload.env);
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
+    // Same attribution stamp as the PTY path, and for the same reason. Only
+    // Claude has per-config-root accounts, so recording it for a codex/copilot
+    // session would assert something that has no meaning there.
+    if payload.provider == "claude" {
+        store.set_config_root(
+            &session_id,
+            &crate::session::account_usage::root_from_spawn_env(&payload.env),
+        );
+    }
     // Queued BEFORE the driver task starts and before the 200 below, so it is
     // waiting when `register_managed_input` drains it. Doing it here rather
     // than leaving it to the caller is the whole point: `register_managed`
@@ -548,6 +576,10 @@ pub async fn handle_managed(
                 headless,
                 resume_thread,
                 facade,
+                crate::providers::SpawnExtras {
+                    env: payload.env.clone(),
+                    extra_args: payload.extra_args.clone(),
+                },
             )
         }
         // GitHub Copilot CLI. One `copilot -p` process per TURN (not per
@@ -565,6 +597,10 @@ pub async fn handle_managed(
                 effort: payload.effort.clone(),
                 yolo: payload.yolo,
                 facade,
+                extras: crate::providers::SpawnExtras {
+                    env: payload.env.clone(),
+                    extra_args: payload.extra_args.clone(),
+                },
             },
         ),
         "pi" => crate::providers::pi::spawn_session(

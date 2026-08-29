@@ -48,6 +48,7 @@ use crate::session::state::{
 };
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
+use super::SpawnExtras;
 
 /// Translate one Codex app-server message (`method` + `params`) into typed
 /// updates. Pure and total: unknown methods / missing fields yield an
@@ -981,6 +982,10 @@ pub fn spawn_session(
     headless: bool,
     resume_thread: Option<String>,
     facade: Facade,
+    // The profile's CODEX_HOME and its extra argv (`codex -p <preset>`).
+    // Carried, not interpreted: the daemon does not decide what a Codex
+    // profile means, it only stops dropping it. See `SpawnExtras`.
+    extras: SpawnExtras,
 ) {
     // Claimed before the task starts: on a restart this driver's tail can
     // outlive its own lifetime, and must not tear down a successor.
@@ -998,6 +1003,7 @@ pub fn spawn_session(
             headless,
             resume_thread,
             &facade,
+            &extras,
         )
         .await
         {
@@ -1084,6 +1090,7 @@ async fn start_appserver(
     // thread's creator there, so what hybrid mode sets on the TUI process goes
     // on the server instead. `None` in hybrid mode — the TUI owns the config.
     overrides: Option<(Option<String>, Option<String>)>,
+    extras: &SpawnExtras,
 ) -> anyhow::Result<(tokio::process::Child, CodexWs, String)> {
     // Each managed session gets its own app-server, so threads/approvals are
     // isolated per pane.
@@ -1110,6 +1117,12 @@ async fn start_appserver(
     for (key, value) in facade_mcp_overrides(session_id, facade) {
         cmd.arg("-c").arg(format!("{key}={value}"));
     }
+    // The profile's own argv, LAST, so a preset can override what we set above.
+    cmd.args(&extras.extra_args);
+    // …and its config root. `envs` MERGES onto the inherited environment rather
+    // than replacing it, which is what a profile means: read your config from
+    // here, keep everything else.
+    cmd.envs(&extras.env);
     let child = cmd
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -1156,6 +1169,7 @@ async fn run_rollout_fallback(
     bin: &str,
     yolo: bool,
     facade: &Facade,
+    extras: &SpawnExtras,
     // Role instructions not yet delivered to the agent. Distinct from
     // `facade.instructions` because the ws path may already have consumed them:
     // `initial_prompts` below are ALREADY instruction-wrapped, so re-prepending
@@ -1179,8 +1193,11 @@ async fn run_rollout_fallback(
         yolo,
         session_id,
         facade,
+        &extras.extra_args,
     );
-    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
+    // The degraded path is where a dropped profile would hide longest — the
+    // pane works, so nothing looks wrong — so it carries CODEX_HOME too.
+    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd, &extras.env)
         .context("spawning fallback codex TUI")?;
     // Make the degradation visible. It is not a failure — the pane works — but
     // it is a different, thinner session than the one that was asked for, and
@@ -1264,6 +1281,7 @@ fn fallback_tui_argv(
     yolo: bool,
     session_id: &str,
     facade: &Facade,
+    extra_args: &[String],
 ) -> Vec<String> {
     let mut argv = vec![bin.to_string()];
     if let Some(m) = model {
@@ -1287,6 +1305,9 @@ fn fallback_tui_argv(
         argv.push("-c".to_string());
         argv.push(format!("{key}={value}"));
     }
+    // The profile's own argv last, so `codex -p <preset>` wins over the
+    // defaults above rather than being shadowed by them.
+    argv.extend(extra_args.iter().cloned());
     argv
 }
 
@@ -1327,6 +1348,7 @@ async fn run_session(
     // fresh — headless only (the TUI can't rejoin an arbitrary thread).
     resume_thread: Option<String>,
     facade: &Facade,
+    extras: &SpawnExtras,
 ) -> anyhow::Result<()> {
     // Start the app-server + ws client. If that fails, the ws path is unavailable
     // for this Codex build (e.g. a version that dropped/renamed `app-server
@@ -1355,7 +1377,7 @@ async fn run_session(
     // overrides that hybrid mode sets on the TUI go on the server instead.
     let overrides = headless.then(|| (model.clone(), effort.clone()));
     let (mut child, ws_stream, ws_url) = match start_appserver(
-        session_id, cwd, bin, facade, overrides,
+        session_id, cwd, bin, facade, overrides, extras,
     )
     .await
     {
@@ -1378,6 +1400,7 @@ async fn run_session(
                 bin,
                 yolo,
                 facade,
+                extras,
                 // Nothing has been sent yet, so the whole role brief is still owed.
                 facade.instructions.clone(),
                 Vec::new(),
@@ -1458,6 +1481,7 @@ async fn run_session(
             model.as_deref(),
             effort.as_deref(),
             yolo,
+            extras,
         )
     };
 
@@ -1671,6 +1695,7 @@ async fn run_session(
             bin,
             yolo,
             facade,
+            extras,
             // Whatever the ws path had not yet delivered. `pending_prompts` are
             // already instruction-wrapped, so this is `None` once the first one
             // consumed the brief.
@@ -1700,6 +1725,7 @@ fn spawn_codex_tui(
     model: Option<&str>,
     effort: Option<&str>,
     yolo: bool,
+    extras: &SpawnExtras,
 ) -> Option<Arc<pty::PtyHandle>> {
     let mut argv = vec![bin.to_string(), "--remote".to_string(), ws_url.to_string()];
     // Model / reasoning effort are config overrides on the thread's creator;
@@ -1719,7 +1745,8 @@ fn spawn_codex_tui(
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
     }
-    match super::spawn_attach_pty(store, session_id, &argv, cwd) {
+    argv.extend(extras.extra_args.iter().cloned());
+    match super::spawn_attach_pty(store, session_id, &argv, cwd, &extras.env) {
         Ok(h) => Some(h),
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex TUI (--remote) failed; Term view unavailable");
@@ -2301,7 +2328,7 @@ mod tests {
             mcp_url: Some("http://127.0.0.1:9/mcp?t=tok".into()),
             instructions: None,
         };
-        let argv = fallback_tui_argv("codex", Some("gpt-5.5"), None, true, "s1", &facade);
+        let argv = fallback_tui_argv("codex", Some("gpt-5.5"), None, true, "s1", &facade, &[]);
         assert!(
             argv.iter()
                 .any(|a| a == "mcp_servers.workspacer.url=\"http://127.0.0.1:9/mcp?t=tok\""),
@@ -2314,7 +2341,7 @@ mod tests {
 
     #[test]
     fn a_facade_less_session_registers_no_workspacer_server() {
-        let argv = fallback_tui_argv("codex", None, None, false, "s1", &Facade::default());
+        let argv = fallback_tui_argv("codex", None, None, false, "s1", &Facade::default(), &[]);
         assert!(!argv
             .iter()
             .any(|a| a.starts_with("mcp_servers.workspacer.url")));

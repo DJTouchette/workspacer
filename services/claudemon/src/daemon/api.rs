@@ -300,6 +300,7 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
         .route("/usage", get(get_usage))
+        .route("/usage/report", get(get_usage_report))
         .route("/heartbeat", post(crate::daemon::heartbeat::handle))
         .route("/heartbeats", get(crate::daemon::heartbeat::list))
         .route("/oneshot", post(crate::daemon::oneshot::handle))
@@ -368,6 +369,29 @@ async fn get_usage(State(store): State<SessionStore>) -> Response {
         "fetched_at": usage.fetched_at.unix_timestamp(),
     }))
     .into_response()
+}
+
+/// The whole usage picture: all three providers, per account, with no live
+/// session and no network request.
+///
+/// Deliberately separate from `/usage` rather than an extension of it. `/usage`
+/// answers one narrow question — "what are the DEFAULT Claude account's window
+/// percentages right now" — and its callers (keep-warm, plugins) depend on that
+/// flat shape and on its willingness to make a blocking fetch. This one is a
+/// report: it reads what the daemon already knows plus what the other CLIs left
+/// on disk, so it always answers immediately, and it says UNKNOWN where the
+/// other would have blocked.
+///
+/// Always 200. There is no failure mode that should become an HTTP error here,
+/// because "we could not read Copilot's store" is *data* in this shape, not a
+/// transport problem — a 503 would collapse a per-provider unavailability into
+/// a whole-document one and hand the client back exactly the ambiguity the
+/// three-state encoding exists to remove.
+///
+/// See `session::usage_report` for the shape and for why each field is
+/// three-valued.
+async fn get_usage_report(State(store): State<SessionStore>) -> Response {
+    Json(crate::session::usage_report::build(&store)).into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1513,6 +1537,172 @@ mod tests {
         let (status, body) = request(test_state(), get("/health")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"ok");
+    }
+
+    /// The endpoint answers a COLD daemon — no sessions, no poller run — with
+    /// the whole document rather than a 503. That is the requirement the whole
+    /// data layer exists for: a desktop that has just launched can render every
+    /// provider without spawning anything first.
+    #[tokio::test]
+    async fn usage_report_answers_a_cold_daemon_for_every_provider() {
+        let (status, body) = request(test_state(), get("/usage/report")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        let providers: Vec<&str> = v["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["provider"].as_str().unwrap())
+            .collect();
+        assert_eq!(providers, vec!["claude", "codex", "copilot"]);
+        assert!(v["generated_at"].as_i64().unwrap() > 0);
+    }
+
+    /// The three-state encoding, asserted on the WIRE and not just on the Rust
+    /// type — a client codes against this JSON. An unpolled Claude window must
+    /// be `unknown` with a reason, never `{"state":"ok","value":0}`.
+    #[tokio::test]
+    async fn usage_report_never_spells_an_unread_window_as_zero() {
+        let (_, body) = request(test_state(), get("/usage/report")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        let claude = &v["providers"][0];
+        let default = claude["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["is_default"] == true)
+            .expect("the default account always has a row");
+        let five = &default["windows"]["five_hour"]["used_percent"];
+        assert_eq!(five["state"], "unknown", "{five}");
+        assert!(
+            five["reason"].as_str().is_some_and(|r| !r.is_empty()),
+            "an unknown must carry a reason: {five}",
+        );
+        assert!(five.get("value").is_none(), "unknown carries no value: {five}");
+        // `""` is the default account and is a real answer; `null` would be
+        // "we cannot say", and the two must not be spelled the same way.
+        assert_eq!(default["account"], "");
+    }
+
+    /// A stand-in for a provider binary that records the ARGV and ENVIRONMENT
+    /// it was actually launched with, then exits. Returns (script path, output
+    /// path).
+    ///
+    /// This is the point of the two tests below. Asserting that
+    /// `SpawnConfig` has an `env` field, or that the payload deserializes one,
+    /// would pass while the field sat in a struct nobody read — which is
+    /// precisely the bug being fixed. Only a real child process can say the
+    /// env arrived.
+    #[cfg(unix)]
+    fn recording_bin(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = crate::testtmp::dir();
+        let out = dir.join(format!("spawnrec-{tag}-{}.txt", uuid::Uuid::new_v4()));
+        let script = dir.join(format!("spawnrec-{tag}-{}.sh", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n{{ echo \"ARGV: $*\"; env; }} > '{}'\nexit 1\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, out)
+    }
+
+    /// Poll for the recording, since the spawn is fire-and-forget: the handler
+    /// returns 200 before the provider's driver task has started its child.
+    #[cfg(unix)]
+    async fn await_recording(out: &std::path::Path) -> String {
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(out) {
+                if !text.is_empty() {
+                    return text;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("provider binary was never launched (no {})", out.display());
+    }
+
+    /// CODEX_HOME and `codex -p <preset>` reach the CODEX PROCESS.
+    ///
+    /// `/sessions/spawn-managed` forwarded `env`/`extra_args` into the claude
+    /// arm only, so a Codex profile configured the Settings form, the spawn
+    /// picker and the payload — and changed nothing about what ran. This fails
+    /// if that forwarding is removed again, because the assertion is on the
+    /// child's own `env` output and not on any daemon-side struct.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_codex_profile_reaches_the_spawned_process() {
+        let (script, out) = recording_bin("codex");
+        let state = test_state();
+        let req = post_json(
+            "/sessions/spawn-managed",
+            json!({
+                "provider": "codex",
+                "cwd": std::env::temp_dir().to_string_lossy(),
+                "bin": script.to_string_lossy(),
+                "env": { "CODEX_HOME": "/tmp/codex-work-profile" },
+                "extra_args": ["-p", "work"],
+            }),
+        );
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let rec = await_recording(&out).await;
+        assert!(
+            rec.contains("CODEX_HOME=/tmp/codex-work-profile"),
+            "the profile's config root never reached the process:\n{rec}",
+        );
+        assert!(
+            rec.lines().next().unwrap().contains("-p work"),
+            "the profile's preset never reached the argv:\n{rec}",
+        );
+    }
+
+    /// The same, for Copilot — where the env matters MORE, not less. Its
+    /// config root is not its account (`copilot login` stores the token in the
+    /// OS credential store), so a second identity exists only as
+    /// `COPILOT_GITHUB_TOKEN` in the environment. Dropping the env there does
+    /// not misconfigure the session, it runs it as the wrong user.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_copilot_profile_reaches_the_spawned_process() {
+        let (script, out) = recording_bin("copilot");
+        let state = test_state();
+        let req = post_json(
+            "/sessions/spawn-managed",
+            json!({
+                "provider": "copilot",
+                "cwd": std::env::temp_dir().to_string_lossy(),
+                "bin": script.to_string_lossy(),
+                "env": {
+                    "COPILOT_HOME": "/tmp/copilot-work-profile",
+                    "COPILOT_GITHUB_TOKEN": "tok-from-profile",
+                },
+                "extra_args": ["--banner"],
+                "first_message": "hello",
+            }),
+        );
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let rec = await_recording(&out).await;
+        assert!(
+            rec.contains("COPILOT_HOME=/tmp/copilot-work-profile"),
+            "the profile's config root never reached the process:\n{rec}",
+        );
+        assert!(
+            rec.contains("COPILOT_GITHUB_TOKEN=tok-from-profile"),
+            "the profile's referenced token never reached the process — this \
+             session would run as the DEFAULT github identity:\n{rec}",
+        );
+        assert!(
+            rec.lines().next().unwrap().contains("--banner"),
+            "the profile's extra argv never reached the argv:\n{rec}",
+        );
     }
 
     #[tokio::test]

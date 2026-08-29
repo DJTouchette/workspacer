@@ -693,6 +693,23 @@ pub struct SessionState {
     /// we expose (a spawn UUID) differs from Claude's own id that names the file.
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// The Claude config root this session was SPAWNED with — the value of
+    /// `CLAUDE_CONFIG_DIR` in its spawn env, or the daemon's own default when
+    /// the spawn set none. Absolute and un-normalized; `None` means the daemon
+    /// did not spawn this session and genuinely does not know.
+    ///
+    /// This is the ATTRIBUTION KEY, and it exists because deriving it from the
+    /// transcript path is a correctness hazard rather than a shortcut.
+    /// `~/.claude/accounts/<name>/projects` is a SYMLINK to the shared
+    /// `~/.claude/projects` (workspacer's "share memories, separate login"
+    /// profile design), so both accounts write into ONE physical directory and
+    /// the only thing that tells them apart is the *un-resolved* path string
+    /// the CLI happened to use. One `realpath`/`canonicalize` anywhere upstream
+    /// — ours or someone else's — collapses both logins onto the default
+    /// account, silently and with no error, and the two accounts' usage merges.
+    /// Recording the root at the source makes attribution independent of that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_root: Option<String>,
     /// Latest statusLine telemetry, fed by the `/statusline` forwarder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_line: Option<StatusLine>,
@@ -788,6 +805,7 @@ impl SessionState {
             user_prompts: 0,
             last_event: None,
             transcript_path: None,
+            config_root: None,
             status_line: None,
             provider: default_provider(),
             transport: Transport::default(),
@@ -971,18 +989,70 @@ impl SessionState {
     }
 
     /// The Claude config root serving this session, `""` = the daemon's
-    /// default. Derived from the transcript path (every hook carries it, and
-    /// the stream tailer records it too) — a profile spawn with its own
-    /// `CLAUDE_CONFIG_DIR` writes transcripts under that root, which is what
-    /// keys its account-usage reading. A session that hasn't produced a
-    /// transcript yet reads as the default root; it also has no status line
-    /// yet, so nothing wrong gets patched in the interim.
+    /// default. This is what keys the account-usage reading, so getting it
+    /// wrong merges two logins' rate-limit gauges.
+    ///
+    /// Two sources, in this order, and the order is the whole point:
+    ///
+    /// 1. [`config_root`](Self::config_root) — what the session was actually
+    ///    SPAWNED with. Robust: no amount of path canonicalization downstream
+    ///    can change it, because it never came from a path.
+    /// 2. the transcript path, as a fallback for sessions the daemon did not
+    ///    spawn (`claudemon wrap` in a terminal that exported
+    ///    `CLAUDE_CONFIG_DIR`, or a child orphaned by a restart).
+    ///
+    /// Source 2 is only correct while the path is un-resolved, and that is a
+    /// property of the string, not something we can enforce: profile roots
+    /// symlink `projects` at the shared `~/.claude/projects`, so a canonicalized
+    /// path names the default account no matter which login wrote it. It used
+    /// to be the ONLY source, which made every account's attribution one stray
+    /// `realpath` away from silently merging. Source 1 is why it no longer is.
+    ///
+    /// A session with neither reads as the default root; it also has no status
+    /// line yet, so nothing wrong gets patched in the interim.
     pub fn claude_config_root(&self) -> String {
+        if let Some(root) = self.config_root.as_deref() {
+            return super::account_usage::normalize_root(root);
+        }
         self.transcript_path
             .as_deref()
             .and_then(super::account_usage::root_from_transcript)
             .map(|r| super::account_usage::normalize_root(&r))
             .unwrap_or_default()
+    }
+
+    /// Which account this session billed against, WITH its uncertainty.
+    ///
+    /// [`Self::claude_config_root`] must return a single `String` because it is
+    /// a map key (one usage reading per account, one poll target per account),
+    /// and a key cannot say "I don't know" — so it falls back to the default
+    /// account, which is the right thing for a poll target and the wrong thing
+    /// for a report. This is the reporting answer:
+    ///
+    ///   - spawn-recorded `config_root` → `Certain`, always. It came from the
+    ///     spawn env, not from a path, so no amount of path resolution
+    ///     downstream can change what it says.
+    ///   - no stamp, a transcript path → whatever
+    ///     [`account_usage::attribute_transcript`] can honestly conclude, which
+    ///     is `Ambiguous` exactly when a profile shares this root's `projects`
+    ///     directory.
+    ///   - no stamp and no transcript → `Unknown`. A pre-v8 row or a session
+    ///     the daemon did not spawn; NOT the default account.
+    ///
+    /// [`account_usage::attribute_transcript`]: super::account_usage::attribute_transcript
+    pub fn claude_account_attribution(
+        &self,
+        roots: &[String],
+    ) -> super::account_usage::RootAttribution {
+        if let Some(root) = self.config_root.as_deref() {
+            return super::account_usage::RootAttribution::Certain {
+                account: super::account_usage::normalize_root(root),
+            };
+        }
+        match self.transcript_path.as_deref() {
+            Some(path) => super::account_usage::attribute_transcript(path, roots),
+            None => super::account_usage::RootAttribution::Unknown,
+        }
     }
 
     /// Whether this session should be hidden from the default session list. A
@@ -2038,5 +2108,120 @@ mod tests {
             .get("multi_select")
             .and_then(serde_json::Value::as_bool)
             .unwrap());
+    }
+
+    /// THE SYMLINK ATTRIBUTION HAZARD, proved rather than asserted.
+    ///
+    /// Workspacer's "Add Claude Account" gives a second login its own config
+    /// root but shares memories and transcripts by symlinking
+    /// `<root>/projects` at the primary `~/.claude/projects`. So both accounts
+    /// write their JSONL into ONE physical directory, and the ONLY thing that
+    /// distinguishes them is the un-resolved path string the CLI happened to
+    /// use. This test builds that exact layout on disk — a real symlink, not a
+    /// mocked one — and shows both halves:
+    ///
+    ///   1. the fallback source IS lossy under canonicalization. A resolved
+    ///      path from the `work` account names the PRIMARY root. No error, no
+    ///      signal: the two accounts' usage merges and nothing says so.
+    ///   2. attribution nevertheless survives, because the spawn-recorded
+    ///      `config_root` never came from a path.
+    ///
+    /// Assertion (2) is the regression guard, and it FAILS on the previous
+    /// implementation: `claude_config_root` read only `transcript_path`, so
+    /// handed the canonicalized path it returned the primary root — silently
+    /// billing the `work` account's tokens to the default account.
+    #[cfg(unix)]
+    #[test]
+    fn account_attribution_survives_a_canonicalized_transcript_path() {
+        let base = std::env::temp_dir().join(format!(
+            "wks-symlink-attr-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let primary = base.join(".claude");
+        let shared_projects = primary.join("projects").join("-home-u-work");
+        let work_root = primary.join("accounts").join("work");
+        std::fs::create_dir_all(&shared_projects).unwrap();
+        std::fs::create_dir_all(&work_root).unwrap();
+        // The hazard itself: the profile's `projects` IS the primary's.
+        std::os::unix::fs::symlink(primary.join("projects"), work_root.join("projects")).unwrap();
+        let transcript = work_root
+            .join("projects")
+            .join("-home-u-work")
+            .join("abc.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+
+        let as_spelled = transcript.to_string_lossy().into_owned();
+        let resolved = std::fs::canonicalize(&transcript)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // The symlink really did collapse the two roots into one directory.
+        assert_ne!(
+            as_spelled, resolved,
+            "fixture must actually traverse a symlink"
+        );
+
+        // (1) The fallback source, on each spelling of the SAME file.
+        let root_of = |p: &str| {
+            super::super::account_usage::normalize_root(
+                &super::super::account_usage::root_from_transcript(p).unwrap(),
+            )
+        };
+        assert_eq!(
+            root_of(&as_spelled),
+            work_root.to_string_lossy(),
+            "un-resolved, the path still names the account that wrote it",
+        );
+        assert_eq!(
+            root_of(&resolved),
+            primary.to_string_lossy(),
+            "RESOLVED, the same file names the PRIMARY account — this is the \
+             silent merge, and it is why the transcript path cannot be the \
+             only source of attribution",
+        );
+
+        // (2) The regression guard. Same canonicalized path, but the session
+        // remembers what it was spawned with.
+        let mut merged = SessionState::new("s-merged".into(), None);
+        merged.transcript_path = Some(resolved.clone());
+        assert_eq!(
+            merged.claude_config_root(),
+            primary.to_string_lossy(),
+            "without the spawn stamp there is nothing left to attribute with",
+        );
+
+        let mut stamped = SessionState::new("s-stamped".into(), None);
+        stamped.transcript_path = Some(resolved);
+        stamped.config_root = Some(work_root.to_string_lossy().into_owned());
+        assert_eq!(
+            stamped.claude_config_root(),
+            work_root.to_string_lossy(),
+            "the spawn-recorded root wins over any path, resolved or not",
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The spawn env is the attribution source, and "no CLAUDE_CONFIG_DIR" is
+    /// a real answer (the default account) rather than an absent one.
+    #[test]
+    fn spawn_env_names_the_account() {
+        use std::collections::HashMap;
+        let root_from_spawn_env = super::super::account_usage::root_from_spawn_env;
+        assert_eq!(root_from_spawn_env(&HashMap::new()), "");
+        let mut env = HashMap::new();
+        env.insert("CLAUDE_CONFIG_DIR".to_string(), "  ".to_string());
+        assert_eq!(root_from_spawn_env(&env), "", "blank is not a root");
+        env.insert(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            "/home/u/.claude/accounts/work/".to_string(),
+        );
+        assert_eq!(
+            root_from_spawn_env(&env),
+            "/home/u/.claude/accounts/work",
+            "trailing separator trimmed, so it keys the same as the poller's",
+        );
     }
 }

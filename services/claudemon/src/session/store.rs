@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use time::OffsetDateTime;
 
-use super::account_usage::AccountUsage;
+use super::account_usage::{AccountUsage, UsageError, UsageFailure};
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
@@ -173,6 +173,17 @@ pub struct WrapperHandle {
     pub tx: mpsc::UnboundedSender<WrapperMessage>,
 }
 
+/// A classified account-usage poll failure, with when it happened. `kind` is
+/// what a surface must branch on: `NeedsReauth` is actionable, `NoCredentials`
+/// means this account was never a source, `Unreachable` is transient. None of
+/// them is zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountUsageFailure {
+    pub kind: UsageFailure,
+    pub detail: String,
+    pub at: OffsetDateTime,
+}
+
 #[derive(Clone)]
 pub struct SessionStore {
     states: Arc<DashMap<String, SessionState>>,
@@ -297,6 +308,16 @@ pub struct SessionStore {
     /// `rate_limit_event` rarely carries `utilization`, so without this a
     /// stream session never shows a usage percentage.
     account_usage: Arc<std::sync::RwLock<std::collections::HashMap<String, AccountUsage>>>,
+    /// Why a root's last poll FAILED, keyed the same way. Kept beside the
+    /// readings rather than folded into them because the two answer different
+    /// questions and a consumer needs both: a root can have a stale reading
+    /// AND a current failure, and "we asked and were refused" is not the same
+    /// answer as "we never asked". Without this, a failed poll was silent, and
+    /// silence at the surface is indistinguishable from 0% — which reads as
+    /// "plenty of headroom" and is the one thing the gauge must never lie
+    /// about. Cleared on the next success.
+    account_usage_errors:
+        Arc<std::sync::RwLock<std::collections::HashMap<String, AccountUsageFailure>>>,
     /// Session ids for daemon-owned keep-warm pings (see `daemon::heartbeat`).
     /// A warm ping runs a real headless `claude`, whose Claude Code hooks would
     /// otherwise register a stray session and surface it in the sidebar / recent
@@ -413,6 +434,9 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            account_usage_errors: Arc::new(
+                std::sync::RwLock::new(std::collections::HashMap::new()),
+            ),
             heartbeat_ids: Arc::new(DashSet::new()),
         }
     }
@@ -544,6 +568,21 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_model = s.requested_model.clone();
+                // The transcript path, which is what `usage::usage_for_session`
+                // folds cost and tokens out of. `hydrate` could not restore it
+                // before v6 — the column did not exist — so EVERY rehydrated
+                // row folded from `None` and reported $0.00 / 0 tokens / no
+                // model for the rest of the daemon's life. It also carries the
+                // account attribution (`claude_config_root`), which likewise
+                // went blank across a restart.
+                st.transcript_path = s.transcript_path.clone();
+                // The ACCOUNT this session billed against, as recorded at
+                // spawn. Restored rather than re-derived: re-deriving it from
+                // the transcript path is exactly the thing that merges two
+                // logins the moment anything resolves that path (see
+                // `SessionState::config_root`). `None` here is honest — a row
+                // written before v8, or a session the daemon did not spawn.
+                st.config_root = s.config_root.clone();
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -863,6 +902,9 @@ impl SessionStore {
             .write()
             .unwrap()
             .insert(root.to_string(), usage);
+        // A success retires the last failure: keeping it would leave a root
+        // permanently flagged needs-reauth after the CLI rotated its token.
+        self.account_usage_errors.write().unwrap().remove(root);
         let targets: Vec<(String, Option<String>, StatusLine)> = self
             .states
             .iter()
@@ -897,6 +939,44 @@ impl SessionStore {
     /// [`AccountUsage::is_fresh`] themselves.
     pub fn account_usage_for(&self, root: &str) -> Option<AccountUsage> {
         self.account_usage.read().unwrap().get(root).cloned()
+    }
+
+    /// Record a classified poll failure for one config root. Deliberately does
+    /// NOT drop the previous reading: a stale-but-real number plus "and the
+    /// last refresh failed because the token expired" is strictly more
+    /// information than either alone, and dropping the reading would make an
+    /// expired account look like a brand-new one.
+    pub fn set_account_usage_error(&self, root: &str, err: UsageError) {
+        self.account_usage_errors.write().unwrap().insert(
+            root.to_string(),
+            AccountUsageFailure {
+                kind: err.kind,
+                detail: err.detail,
+                at: OffsetDateTime::now_utc(),
+            },
+        );
+    }
+
+    /// The last recorded failure for one config root, if the most recent poll
+    /// did not succeed.
+    pub fn account_usage_error_for(&self, root: &str) -> Option<AccountUsageFailure> {
+        self.account_usage_errors.read().unwrap().get(root).cloned()
+    }
+
+    /// Every config root the store has an opinion about — a reading, a
+    /// failure, or both. Union, sorted, deduped.
+    pub fn known_account_roots(&self) -> Vec<String> {
+        let mut roots: Vec<String> = self
+            .account_usage
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .chain(self.account_usage_errors.read().unwrap().keys().cloned())
+            .collect();
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     /// Whether any non-stopped Claude session exists — the account-usage
@@ -1200,10 +1280,50 @@ impl SessionStore {
         }
     }
 
+    /// Record the Claude config root this session was SPAWNED with — the
+    /// spawn env's `CLAUDE_CONFIG_DIR`, or the daemon's own default when the
+    /// spawn set none. Stored normalized (`""` = the default account).
+    ///
+    /// This is the ATTRIBUTION KEY, and it is recorded here rather than
+    /// derived later because deriving it is a correctness hazard. See
+    /// [`SessionState::config_root`] — a profile's `projects` dir is a SYMLINK
+    /// at the shared `~/.claude/projects`, so the transcript path only tells
+    /// the two logins apart while nothing has resolved it.
+    ///
+    /// [`SessionState::config_root`]: super::state::SessionState::config_root
+    pub fn set_config_root(&self, session_id: &str, root: &str) {
+        let root = super::account_usage::normalize_root(root);
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            entry.config_root = Some(root);
+        }
+    }
+
+    /// The config root recorded for a session, if the daemon spawned it.
+    ///
+    /// Three-valued on purpose, and the values must stay apart all the way to
+    /// the wire: `Some("")` is the DEFAULT account (a known answer), `Some(p)`
+    /// is a named profile, and `None` means the daemon genuinely does not know
+    /// — a session it did not spawn. Collapsing `None` into `Some("")` would
+    /// bill every unattributable session to the default account.
+    ///
+    /// Alias-aware: hook events arrive under Claude's own session id, which is
+    /// the spawn id only because the daemon pins `--session-id`. A session the
+    /// daemon adopted rather than pinned is reachable only through the alias.
+    pub fn config_root(&self, session_id: &str) -> Option<String> {
+        let canonical = self
+            .aliases
+            .get(session_id)
+            .map(|e| e.clone())
+            .unwrap_or_else(|| session_id.to_string());
+        self.states
+            .get(&canonical)
+            .and_then(|s| s.config_root.clone())
+    }
+
     /// The model a session was ASKED for, if anything recorded one.
     ///
     /// Read by the persistence task so the row SQLite creates for this session
-    /// carries it — see `Db::record_event_with_requested_model` for why it
+    /// carries it — see `Db::record_event_with_spawn_facts` for why it
     /// cannot simply be UPDATEd at spawn time.
     pub fn requested_model(&self, session_id: &str) -> Option<String> {
         self.states
@@ -3000,6 +3120,8 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -3010,6 +3132,8 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -3020,6 +3144,8 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -3030,6 +3156,8 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
+                config_root: None,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -3059,6 +3187,69 @@ mod tests {
         assert!(store.get("live").is_some(), "live row survives");
     }
 
+    /// THE $0.00 BUG, end to end.
+    ///
+    /// A session restored from SQLite must fold its real cost and tokens out of
+    /// its transcript. Before `transcript_path` was persisted and rehydrated,
+    /// `usage_for_session` folded from `None` — `Usage::default()`, every field
+    /// zero — so on a fresh daemon 94 of 102 listed sessions reported $0.00, 0
+    /// context tokens and no model however much they had actually cost. This
+    /// test fails against that behaviour: drop the `st.transcript_path` line in
+    /// `hydrate` and the cost goes back to 0.0.
+    #[test]
+    fn a_rehydrated_session_folds_real_usage_from_its_transcript() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "wks-hydrate-usage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::session::transcript::allow_root(&dir);
+
+        // 1M output tokens of opus — a real, non-zero bill.
+        let row = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-4-8",
+                "usage": {
+                    "input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1_000_000
+                }
+            }
+        });
+        let path = dir.join("restored.jsonl");
+        std::fs::write(&path, format!("{}\n", serde_json::to_string(&row).unwrap())).unwrap();
+
+        let store = SessionStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "restored".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: None,
+            transcript_path: Some(path.to_str().unwrap().to_string()),
+            config_root: None,
+        }]);
+
+        let state = store.get("restored").expect("hydrated");
+        let u = crate::session::usage::usage_for_session(&state);
+        assert!(
+            u.cost_usd > 0.0,
+            "a restored session must bill what its transcript says, got {u:?}",
+        );
+        assert_eq!(u.model.as_deref(), Some("claude-opus-4-8"));
+    }
+
     #[test]
     fn hydrate_restores_sessions_as_stopped_without_clobbering_live() {
         let store = SessionStore::new();
@@ -3078,6 +3269,8 @@ mod tests {
                 // this restored, a resumed 1M session reverts to the table's
                 // 200k answer for its stripped id and reads 5x too full.
                 requested_model: Some("opus[1m]".into()),
+                transcript_path: Some("/home/u/.claude/projects/-work/restored.jsonl".into()),
+                config_root: None,
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -3089,6 +3282,8 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                transcript_path: None,
+                config_root: None,
             },
         ]);
 
@@ -3099,6 +3294,11 @@ mod tests {
         assert_eq!(
             restored.user_prompts, 3,
             "prompt count restored from the persisted event log"
+        );
+        assert_eq!(
+            restored.transcript_path.as_deref(),
+            Some("/home/u/.claude/projects/-work/restored.jsonl"),
+            "the path the usage fold and the account attribution both read"
         );
         assert!(
             !restored.is_empty_stopped(),

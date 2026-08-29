@@ -774,7 +774,9 @@ async fn run_tui_session(
     ask_ext: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     let argv = tui_argv(bin, session_id, model.as_deref(), ask_ext);
-    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd).context("spawning pi TUI")?;
+    // No env: pi is not a profile harness — see the opencode note.
+    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd, &std::collections::HashMap::new())
+        .context("spawning pi TUI")?;
 
     // Ready for input as soon as the TUI is up (mode-gates the GUI composer).
     store.set_managed_mode(

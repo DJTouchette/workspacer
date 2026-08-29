@@ -788,7 +788,9 @@ async fn run_session(
         oc_id.clone(),
     ];
     let attach_pty = AttachGuard(
-        match super::spawn_attach_pty(store, session_id, &attach_argv, cwd) {
+        // No env: opencode is not a profile harness (PROFILE_CAPS lists
+        // claude/codex/copilot only), so there is no config root to point.
+        match super::spawn_attach_pty(store, session_id, &attach_argv, cwd, &std::collections::HashMap::new()) {
             Ok(h) => Some(h),
             Err(err) => {
                 tracing::warn!(?err, session = %session_id, "opencode attach TUI failed; Term view unavailable");

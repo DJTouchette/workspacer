@@ -7,6 +7,7 @@ pub mod state;
 pub mod store;
 pub mod transcript;
 pub mod usage;
+pub mod usage_report;
 pub mod windows;
 
 #[allow(unused_imports)]
