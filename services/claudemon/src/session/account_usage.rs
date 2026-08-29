@@ -194,6 +194,139 @@ pub fn root_from_spawn_env(env: &std::collections::HashMap<String, String>) -> S
     }
 }
 
+/// What a transcript path can honestly say about which account wrote it.
+///
+/// Three values, because the question has three answers and a `String` has
+/// room for only two of them. [`Self::Ambiguous`] is the one that did not
+/// exist before, and it is the whole point of this type — see
+/// [`attribute_transcript`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RootAttribution {
+    /// Exactly one configured account can have written this path.
+    Certain { account: String },
+    /// More than one can. The path resolves into a `projects` directory that
+    /// several logins share, so which one wrote the file is not recoverable
+    /// from the path — the candidates are listed rather than one being picked.
+    Ambiguous {
+        candidates: Vec<String>,
+        reason: String,
+    },
+    /// The path is not a Claude transcript path at all (no `projects`
+    /// component), so it names no account.
+    Unknown,
+}
+
+impl RootAttribution {
+    /// The account when there is exactly one, else `None`. Callers that must
+    /// have a single key (a poll target, a cache key) use this and treat
+    /// `None` as "the default account"; callers that REPORT attribution must
+    /// match on the enum instead, or they re-introduce the merge.
+    pub fn certain(&self) -> Option<&str> {
+        match self {
+            Self::Certain { account } => Some(account),
+            _ => None,
+        }
+    }
+}
+
+/// The `projects` directory a normalized root key points at. `""` is the
+/// daemon's default root.
+fn root_projects_dir(key: &str) -> std::path::PathBuf {
+    let root = if key.is_empty() {
+        default_config_root()
+    } else {
+        key.to_string()
+    };
+    std::path::PathBuf::from(root).join("projects")
+}
+
+/// Whether two `projects` directories are the SAME physical directory.
+///
+/// This is the one place canonicalization belongs. Resolving a *transcript*
+/// path destroys attribution ([`root_from_transcript`]); resolving the *roots*
+/// is how we discover that the destruction is possible, which is the opposite
+/// operation. A path we cannot resolve (a root that does not exist on this
+/// machine) is not shared with anything, so a failed canonicalize is `false`.
+fn same_physical_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Attribute a transcript path to an account, HONESTLY.
+///
+/// [`root_from_transcript`] answers this question by reading the path string,
+/// which is correct exactly while nothing has resolved it. Workspacer's second
+/// Claude accounts symlink `<root>/projects` at the primary's, so one
+/// `realpath` anywhere upstream rewrites a profile's transcript path into one
+/// that names the PRIMARY root — and the old answer was a confident, wrong
+/// `String` with no way to tell it from a right one.
+///
+/// This does not try to undo that (it cannot: the information is gone from the
+/// path). It makes the loss VISIBLE, which is the difference between a bug and
+/// a reading:
+///
+///   - the derived root's `projects` dir is shared with no other configured
+///     root → [`RootAttribution::Certain`]. This is every machine with a
+///     single login, so nothing gets noisier for the common case.
+///   - it IS shared, but the derived root's own `projects` is a symlink → still
+///     `Certain`. A canonicalized path can never spell a root whose `projects`
+///     is a symlink (canonicalizing is what replaces that component), so a path
+///     that does spell it proves the writer used that config dir.
+///   - it is shared and the derived root's `projects` is the real directory →
+///     [`RootAttribution::Ambiguous`], listing every root that shares it. This
+///     is precisely the canonicalized-profile-transcript case, and it is also
+///     an honest description of a genuine primary-account transcript: from the
+///     path alone the two are indistinguishable once the symlink exists.
+///
+/// `roots` is the configured account list ([`configured_config_roots`]),
+/// normalized. Taken as a parameter so the behaviour can be tested against a
+/// fixture tree rather than the machine's real `~/.claude`.
+pub fn attribute_transcript(path: &str, roots: &[String]) -> RootAttribution {
+    let Some(derived) = root_from_transcript(path) else {
+        return RootAttribution::Unknown;
+    };
+    let key = normalize_root(&derived);
+    let projects = root_projects_dir(&key);
+
+    let mut candidates: Vec<String> = roots
+        .iter()
+        .map(|r| normalize_root(r))
+        .filter(|r| *r != key && same_physical_dir(&root_projects_dir(r), &projects))
+        .collect();
+    if candidates.is_empty() {
+        return RootAttribution::Certain { account: key };
+    }
+    // Spelling a root whose own `projects` is a symlink is proof the path was
+    // never resolved, so it still names its writer.
+    if std::fs::symlink_metadata(&projects)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return RootAttribution::Certain { account: key };
+    }
+    candidates.push(key);
+    candidates.sort();
+    candidates.dedup();
+    RootAttribution::Ambiguous {
+        reason: format!(
+            "{} is shared by {} logged-in Claude accounts (a profile symlinks \
+             its projects dir at this one), so a transcript path that resolves \
+             here names all of them equally",
+            projects.display(),
+            candidates.len(),
+        ),
+        candidates,
+    }
+}
+
+/// [`attribute_transcript`] against the accounts this machine actually has.
+pub fn attribute_transcript_here(path: &str) -> RootAttribution {
+    attribute_transcript(path, &configured_config_roots())
+}
+
 /// Why an account's usage could not be read. The distinction is load-bearing:
 /// a UI that renders any of these as `0%` tells the user they have a full
 /// window when the truth is that we do not know, and `NeedsReauth` is
@@ -661,6 +794,116 @@ mod tests {
             Some("C:\\Users\\u\\.claude\\accounts\\work"),
         );
         assert_eq!(root_from_transcript("/tmp/nothing-here.jsonl"), None);
+    }
+
+    /// A fixture of the real hazard: `<base>/.claude/projects` is a real
+    /// directory and `<base>/.claude/accounts/work/projects` is a SYMLINK at
+    /// it, which is exactly what workspacer's "Add Claude Account" builds so
+    /// the two logins share memories and transcripts.
+    #[cfg(unix)]
+    fn shared_projects_fixture(tag: &str) -> (std::path::PathBuf, String, String) {
+        let base = crate::testtmp::dir().join(format!(
+            "attr-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let primary = base.join(".claude");
+        let work = primary.join("accounts").join("work");
+        std::fs::create_dir_all(primary.join("projects").join("-home-u-p")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::os::unix::fs::symlink(primary.join("projects"), work.join("projects")).unwrap();
+        std::fs::write(
+            work.join("projects").join("-home-u-p").join("abc.jsonl"),
+            "",
+        )
+        .unwrap();
+        (
+            base,
+            primary.to_string_lossy().into_owned(),
+            work.to_string_lossy().into_owned(),
+        )
+    }
+
+    /// THE REGRESSION GUARD for the symlink merge, on the fallback source.
+    ///
+    /// `root_from_transcript` handed a canonicalized profile transcript returns
+    /// the PRIMARY root — a confident `String` indistinguishable from a right
+    /// answer. This asserts the new attribution refuses to make that claim, so
+    /// it FAILS against the old behaviour: the old code had exactly one answer
+    /// for this input and it was `Certain(primary)`.
+    #[cfg(unix)]
+    #[test]
+    fn a_canonicalized_profile_transcript_is_ambiguous_not_the_primary_account() {
+        let (base, primary, work) = shared_projects_fixture("canon");
+        let roots = vec![primary.clone(), work.clone()];
+        let spelled = format!("{work}/projects/-home-u-p/abc.jsonl");
+        let resolved = std::fs::canonicalize(&spelled)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_ne!(spelled, resolved, "the fixture must traverse the symlink");
+
+        // What the OLD, string-only source says about the resolved path: the
+        // primary. This is the silent merge, reproduced.
+        assert_eq!(
+            normalize_root(&root_from_transcript(&resolved).unwrap()),
+            primary,
+            "the old derivation still says primary — that is the hazard",
+        );
+
+        // What attribution says now. Not primary, not a guess: the two logins
+        // that could equally have written it, and why.
+        match attribute_transcript(&resolved, &roots) {
+            RootAttribution::Ambiguous { candidates, reason } => {
+                assert_eq!(candidates, {
+                    let mut v = vec![primary.clone(), work.clone()];
+                    v.sort();
+                    v
+                });
+                assert!(reason.contains("shared"), "{reason}");
+            }
+            other => panic!(
+                "a resolved profile transcript must not be attributed to one \
+                 account; got {other:?}",
+            ),
+        }
+
+        // And the un-resolved spelling is STILL certain — the guard must not
+        // buy honesty by making the working case useless.
+        assert_eq!(
+            attribute_transcript(&spelled, &roots).certain(),
+            Some(work.as_str()),
+            "a path that spells the profile root was never resolved, so it \
+             still names its writer",
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The common machine — one login, no profile — must not become ambiguous.
+    #[cfg(unix)]
+    #[test]
+    fn a_single_account_machine_stays_certain() {
+        let base = crate::testtmp::dir().join(format!("attr-solo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let primary = base.join(".claude");
+        std::fs::create_dir_all(primary.join("projects").join("-p")).unwrap();
+        let root = primary.to_string_lossy().into_owned();
+        assert_eq!(
+            attribute_transcript(&format!("{root}/projects/-p/a.jsonl"), &[root.clone()]).certain(),
+            Some(root.as_str()),
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A path with no `projects` component names no account, and that is its
+    /// own value — not the default account.
+    #[test]
+    fn a_non_transcript_path_attributes_to_unknown_not_to_the_default() {
+        assert_eq!(
+            attribute_transcript("/tmp/nothing-here.jsonl", &[String::new()]),
+            RootAttribution::Unknown,
+        );
     }
 
     #[test]
