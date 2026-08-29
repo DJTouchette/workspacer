@@ -14,22 +14,50 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('mergeRecentSessions', () => {
-  it('joins history names/model/cost by session id', () => {
-    const out = mergeRecentSessions(
-      [row()],
-      [{ sessionId: 's1', agentName: 'api-fix', model: 'claude-opus-4-8', costUSD: 1.25 }],
-    );
+  const hist = (over: Record<string, unknown> = {}) => ({
+    sessionId: 's1',
+    agentName: 'api-fix',
+    model: 'claude-opus-4-8',
+    costUSD: 1.25,
+    inputTokens: 900,
+    outputTokens: 100,
+    ...over,
+  });
+
+  it('joins history names/model/cost/tokens by session id', () => {
+    const out = mergeRecentSessions([row()], [hist()]);
     expect(out).toHaveLength(1);
     expect(out[0].name).toBe('api-fix');
     expect(out[0].model).toBe('claude-opus-4-8');
     expect(out[0].costUSD).toBe(1.25);
+    expect(out[0].billedTokens).toBe(1000);
   });
 
-  it('leaves name/model empty for sessions the history DB never saw', () => {
+  it('leaves name/model empty for sessions the history DB never saw, and reports cost/tokens as UNKNOWN rather than zero', () => {
     const out = mergeRecentSessions([row()], []);
     expect(out[0].name).toBe('');
     expect(out[0].model).toBe('');
-    expect(out[0].costUSD).toBe(0);
+    // Not 0: no row was found, so nothing was measured. A 0 here renders as a
+    // confident "$0.00" on every surface downstream.
+    expect(out[0].costUSD).toBeUndefined();
+    expect(out[0].billedTokens).toBeUndefined();
+  });
+
+  it('reports an all-zero history row as unknown — cost_usd is DEFAULT 0 and never NULL, so a stored 0 is indistinguishable from never-written', () => {
+    const out = mergeRecentSessions(
+      [row()],
+      [hist({ costUSD: 0, inputTokens: 0, outputTokens: 0 })],
+    );
+    expect(out[0].costUSD).toBeUndefined();
+    expect(out[0].billedTokens).toBeUndefined();
+    // The row itself is still known — only its usage is absent.
+    expect(out[0].name).toBe('api-fix');
+  });
+
+  it('keeps tokens when only the cost is missing (a managed provider that reports tokens but no dollars)', () => {
+    const out = mergeRecentSessions([row()], [hist({ costUSD: 0 })]);
+    expect(out[0].costUSD).toBeUndefined();
+    expect(out[0].billedTokens).toBe(1000);
   });
 
   it("treats a legacy empty provider as 'claude'", () => {

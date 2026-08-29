@@ -185,6 +185,10 @@ export interface DerivedSessionStats {
   rateLimitWarning?: string;
   /** Monthly overage disabled for lack of credits (stream only). */
   overageOutOfCredits?: boolean;
+  /** At least one of `costUSD` / `billedTokens` came from the history DB's last
+   *  recorded snapshot rather than a live one — see {@link withRecordedUsage}.
+   *  Surfaces use it to say "last recorded" instead of implying live. */
+  recorded?: boolean;
 }
 
 /**
@@ -259,6 +263,55 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
     monthlyWindowMins: sl?.monthlyWindowMins,
     rateLimitWarning: sl?.rateLimitWarning,
     overageOutOfCredits: sl?.overageOutOfCredits,
+  };
+}
+
+// ── Recorded (last-known) usage ──────────────────────────────────────────────
+//
+// Everything above derives from a LIVE session snapshot. At a cold start there
+// are no live snapshots: claudemon reports a restored agent's session as a
+// stopped/ended row, `promoteSessionSnapshots` deliberately drops those, and
+// every cost/token slot on every agent surface therefore renders a dash — even
+// though the desktop's own history DB has the figures and the recent-sessions
+// join already carries them across IPC.
+//
+// This is the seam that puts them back: a surface merges the recorded figures
+// UNDER the live ones, so a live reading always wins and a cold one is filled
+// from what was last recorded. Absence stays absence — nothing here invents a
+// zero, and a session with no recorded usage merges to exactly what it was.
+
+/** What the history DB recorded for a session, as it crosses IPC. Each field is
+ *  undefined when nothing was recorded — never 0 (see RecentAgentSession). */
+export interface RecordedSessionUsage {
+  costUSD?: number;
+  billedTokens?: number;
+}
+
+/**
+ * Fill a session's missing cost/token figures from what was last recorded.
+ *
+ * Only fields the live snapshot left UNDEFINED are filled: a live $0.03 is
+ * never overwritten by a stale record, and a recorded absence never erases a
+ * live reading. `recorded` is set when at least one figure came from the record
+ * rather than from a live snapshot, so a surface can label it as last-known
+ * instead of implying it is current.
+ *
+ * Returns the SAME object when there is nothing to fill — that identity is
+ * load-bearing for SideBar's per-snapshot stats cache.
+ */
+export function withRecordedUsage(
+  stats: DerivedSessionStats,
+  recorded: RecordedSessionUsage | undefined,
+): DerivedSessionStats {
+  if (!recorded) return stats;
+  const cost = stats.costUSD === undefined ? recorded.costUSD : undefined;
+  const tokens = stats.billedTokens === undefined ? recorded.billedTokens : undefined;
+  if (cost === undefined && tokens === undefined) return stats;
+  return {
+    ...stats,
+    ...(cost !== undefined && { costUSD: cost }),
+    ...(tokens !== undefined && { billedTokens: tokens }),
+    recorded: true,
   };
 }
 

@@ -20,7 +20,9 @@ import {
   isSnapshotStale,
   planProgress,
   summarizeFileChanges,
+  withRecordedUsage,
 } from '../lib/sessionStats';
+import { useRecordedUsage } from '../contexts/RecordedUsageContext';
 import { useGitBranch } from '../hooks/useGitBranch';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
@@ -129,7 +131,10 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   // their telemetry rides the statusLine. deriveSessionStats merges both (same
   // fallback InspectorCard's Usage tab uses), so the tile's model / context
   // meter / cost light up for every provider.
-  const stats = deriveSessionStats(snapshot);
+  // At a cold start there is no snapshot at all (a restored agent's session is
+  // a stopped daemon row), so every figure below would be absent even though
+  // the history DB recorded them. Merge the recorded ones UNDER the live ones.
+  const stats = withRecordedUsage(deriveSessionStats(snapshot), useRecordedUsage(agent.sessionId));
   const ctxPct = stats.ctxPct;
   // Occupancy comes from deriveSessionStats, which owns the same two-source
   // rule this used to restate (transcript count first, pct × the provider's
@@ -450,11 +455,31 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             </span>
             {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
             {stats.costUSD !== undefined && (
-              <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
+              <span
+                title={
+                  stats.recorded ? 'Last recorded for this session — not a live reading' : undefined
+                }
+                style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}
+              >
                 {fmtUSD(stats.costUSD)}
               </span>
             )}
           </>
+        ) : stats.costUSD !== undefined || stats.billedTokens !== undefined ? (
+          // No live context reading, but this session HAS recorded figures.
+          // Labelled as last-recorded so it can't be read as live spend.
+          <span
+            title="Last recorded for this session — not a live reading"
+            style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
+          >
+            {[
+              stats.billedTokens !== undefined ? `${fmtTokens(stats.billedTokens)} billed` : '',
+              stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}{' '}
+            <span style={{ color: 'var(--wks-text-disabled)' }}>last recorded</span>
+          </span>
         ) : (
           <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
             {agent.sessionId ? 'No usage yet' : ''}

@@ -10,7 +10,9 @@ import {
   fmtResetIn,
   fmtWindowLength,
   ctxColor,
+  withRecordedUsage,
 } from '../../lib/sessionStats';
+import { useRecordedUsage } from '../../contexts/RecordedUsageContext';
 import { IconModel } from '../wksIcons';
 import { HubChip } from '../HubChip';
 import { ConfigContext } from '../../contexts/ConfigContext';
@@ -118,6 +120,11 @@ const Track: React.FC<{ pct: number; color: string; width?: number }> = ({
 
 interface Props {
   snapshot?: ClaudeSessionSnapshot | null;
+  /** The session this bar belongs to, for surfaces that render it BEFORE a live
+   *  snapshot exists (a cold-start pane). Without it the bar has no key to look
+   *  up the history DB's recorded cost/tokens with, because the only id it
+   *  otherwise has lives inside the snapshot it doesn't have. */
+  sessionId?: string;
   cwd?: string;
   /** Render the model segment. Off by default: in the agent pane the model is
    *  already shown by ComposerControls sitting right beside/above this bar, so
@@ -126,7 +133,12 @@ interface Props {
   showModel?: boolean;
 }
 
-export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = false }) => {
+export const SessionStatusBar: React.FC<Props> = ({
+  snapshot,
+  sessionId,
+  cwd,
+  showModel = false,
+}) => {
   // Follow the agent: liveCwd is set only while it works somewhere other than
   // the spawn dir (a git worktree), so its presence doubles as the indicator.
   const activeCwd = snapshot?.liveCwd || cwd || snapshot?.cwd;
@@ -167,7 +179,10 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       clearInterval(t);
     };
   }, [activeCwd, remote]);
-  const stats = deriveSessionStats(snapshot);
+  // Live figures first; the history DB's last-recorded ones fill the gaps a
+  // cold start leaves (no snapshot ⇒ no cost, no tokens, no bar at all).
+  const recorded = useRecordedUsage(snapshot?.sessionId ?? sessionId);
+  const stats = withRecordedUsage(deriveSessionStats(snapshot), recorded);
   const { model, ctxPct, billedTokens, costUSD: cost } = stats;
   // Every window the provider actually reported, in order. Empty for a session
   // whose provider sends none, where the group renders nothing at all.
@@ -189,6 +204,11 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   // Hidden when there's no plan (simplest rule — a finished plan still reads as
   // a useful "all done" until the next turn clears it).
   const plan = planProgress(snapshot?.plan);
+  /** Appended to the cost/token tooltips when the figure is the last RECORDED
+   *  one rather than a live reading (see withRecordedUsage). */
+  const recordedSuffix = stats.recorded
+    ? '\n\nLast recorded for this session — not a live reading.'
+    : '';
 
   // (The live-subagent count lives in the ClaudePane toolbar alongside this
   // bar — kept there so the number isn't shown twice.)
@@ -316,9 +336,9 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           {cost !== undefined ? (
             <span
               title={
-                billedTokens !== undefined
+                (billedTokens !== undefined
                   ? `${fmtTokens(billedTokens)} tokens billed this session (cumulative — every turn re-sends the conversation, so this is not the context window)`
-                  : undefined
+                  : '') + recordedSuffix
               }
               style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}
             >
@@ -326,11 +346,19 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             </span>
           ) : (
             <span
-              title={`${fmtTokens(billedTokens!)} tokens billed this session (cumulative — not the context window)`}
+              title={`${fmtTokens(billedTokens!)} tokens billed this session (cumulative — not the context window)${recordedSuffix}`}
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >
               <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(billedTokens!)}</span>
               <span style={{ color: 'var(--wks-text-muted)' }}> billed</span>
+            </span>
+          )}
+          {/* Cold start: the figures came from the history DB's last snapshot,
+              not from a live session. Say so inline — a bare number here would
+              read as this session spending right now. */}
+          {stats.recorded && (
+            <span style={{ color: 'var(--wks-text-disabled)', fontSize: '0.9em' }}>
+              last recorded
             </span>
           )}
         </>

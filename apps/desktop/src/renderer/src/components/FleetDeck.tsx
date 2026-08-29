@@ -31,7 +31,9 @@ import {
   fmtUSD,
   ctxColor,
   isSnapshotStale,
+  withRecordedUsage,
 } from '../lib/sessionStats';
+import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
 import { useConfig } from '../hooks/useConfig';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 import {
@@ -200,7 +202,7 @@ const ExpandedAgentCard: React.FC<{
       </button>
     </div>
     <div style={{ flex: 1, minHeight: 0 }}>
-      <InspectorCard snapshot={snapshot} />
+      <InspectorCard snapshot={snapshot} sessionId={agent.sessionId} />
     </div>
   </Surface>
 );
@@ -280,6 +282,9 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     }
   };
   const listScrollRef = useRef<HTMLDivElement>(null);
+  // Last-recorded cost/tokens per session — the only figures a cold-start fleet
+  // has, since every restored agent's session is a stopped row with no snapshot.
+  const recordedUsage = useRecordedUsageMap();
 
   // Type-to-filter by name or provider. Applied before sort, so cards, list, and
   // keyboard nav all operate on the filtered set; header counts stay whole-fleet.
@@ -326,7 +331,10 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     if (listSort.key === 'attn') return sorted;
     const keyOf = (a: (typeof sorted)[number]): number | string => {
       const snap = a.sessionId ? snapshotBySession[a.sessionId] : undefined;
-      const st = deriveSessionStats(snap);
+      const st = withRecordedUsage(
+        deriveSessionStats(snap),
+        a.sessionId ? recordedUsage[a.sessionId] : undefined,
+      );
       switch (listSort.key) {
         case 'name':
           return a.name.toLowerCase();
@@ -920,7 +928,10 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
               {displayOrder.map((agent) => {
                 const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
                 const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
-                const stats = deriveSessionStats(snap);
+                const stats = withRecordedUsage(
+                  deriveSessionStats(snap),
+                  agent.sessionId ? recordedUsage[agent.sessionId] : undefined,
+                );
                 const plan = planProgress(snap?.plan);
                 const sel = selectedId === agent.id;
                 return (
@@ -1032,7 +1043,18 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                         '—'
                       )}
                     </td>
-                    <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>
+                    <td
+                      style={{ ...ltdNum, color: 'var(--wks-accent)' }}
+                      // Dash = no figure at all, not $0.00. A recorded figure
+                      // says it is the last one written, not a live reading.
+                      title={
+                        stats.costUSD === undefined
+                          ? 'No cost recorded for this session'
+                          : stats.recorded
+                            ? 'Last recorded for this session — not a live reading'
+                            : undefined
+                      }
+                    >
                       {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}
                     </td>
                     <td style={ltdNum}>

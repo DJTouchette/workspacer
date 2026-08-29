@@ -13,7 +13,15 @@ import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
-import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor, planProgress } from '../lib/sessionStats';
+import {
+  deriveSessionStats,
+  fmtTokens,
+  fmtUSD,
+  ctxColor,
+  planProgress,
+  withRecordedUsage,
+} from '../lib/sessionStats';
+import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
 import { ensureKeyframes } from './claude-shared';
 import { collectRecentActivity, type ActivityLine } from '../lib/agentActivityLog';
 import { shortModelLabel } from '../lib/modelLabel';
@@ -355,6 +363,10 @@ const SideBar: React.FC<SideBarProps> = ({
   // other row. The snapshotBySession map is replaced wholesale on each update,
   // but the unchanged sessions keep their prior snapshot object references, so
   // we reuse the cached stats for those and only recompute the one that moved.
+  // Last-recorded cost/tokens, for the cold-start case this cache can't help
+  // with: a restored agent has NO snapshot, so there is nothing to key on and
+  // nothing live to derive. Merged per card below, under the live figures.
+  const recordedUsage = useRecordedUsageMap();
   const statsCacheRef = useRef<
     WeakMap<ClaudeSessionSnapshot, ReturnType<typeof deriveSessionStats>>
   >(new WeakMap());
@@ -894,8 +906,10 @@ const SideBar: React.FC<SideBarProps> = ({
             // `!!agent.parentId` excludes the ordinary case (no parent at all).
             const isOrphaned = !!agent.parentId && !agentIds.has(agent.parentId);
             const cardState = hubOffline ? ('done' as const) : cardStateOf(agent);
-            const stats =
-              (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap);
+            const stats = withRecordedUsage(
+              (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap),
+              agent.sessionId ? recordedUsage[agent.sessionId] : undefined,
+            );
             const model = shortModelLabel(stats.model) || shortModelLabel(agent.model);
             const isRenaming = renamingId === agent.id;
             const hasCtx = stats.ctxPct !== undefined;
@@ -981,8 +995,17 @@ const SideBar: React.FC<SideBarProps> = ({
             // names each: occupancy (what the bar draws) and the cumulative
             // billed total (the cost side, which is not an occupancy at all).
             const usageTip = hasCtx
-              ? `\n${Math.round(stats.ctxPct!)}% context${stats.contextTokens !== undefined ? ` (${fmtTokens(stats.contextTokens)} in window)` : ''}${stats.billedTokens !== undefined ? ` · ${fmtTokens(stats.billedTokens)} billed` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
-              : '';
+              ? `\n${Math.round(stats.ctxPct!)}% context${stats.contextTokens !== undefined ? ` (${fmtTokens(stats.contextTokens)} in window)` : ''}${stats.billedTokens !== undefined ? ` · ${fmtTokens(stats.billedTokens)} billed` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}${stats.recorded ? ' (last recorded)' : ''}`
+              : stats.costUSD !== undefined || stats.billedTokens !== undefined
+                ? `\n${[
+                    stats.billedTokens !== undefined
+                      ? `${fmtTokens(stats.billedTokens)} billed`
+                      : '',
+                    stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}${stats.recorded ? ' (last recorded)' : ''}`
+                : '';
 
             const borderColor = isActive
               ? 'var(--wks-accent-glow)'
@@ -1316,6 +1339,14 @@ const SideBar: React.FC<SideBarProps> = ({
                       `usageTip`, and spelled out in the Inspector. */}
                   {(stats.contextTokens !== undefined || stats.costUSD !== undefined) && (
                     <span
+                      // A cold-start card's figures are the LAST RECORDED ones,
+                      // not a live reading. Say so rather than let the number
+                      // imply this agent is spending right now.
+                      title={
+                        stats.recorded
+                          ? 'Last recorded for this session — not a live reading'
+                          : undefined
+                      }
                       style={{
                         marginLeft: 'auto',
                         flexShrink: 0,

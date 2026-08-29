@@ -57,7 +57,13 @@ type recentSession struct {
 	Name      string  `json:"name"`
 	Title     string  `json:"title"`
 	Model     string  `json:"model"`
-	CostUSD   float64 `json:"costUSD"`
+	// A POINTER, and omitted when nil. The TS twin reads a missing costUSD as
+	// "not recorded" and renders a dash; a plain float64 would serialize the
+	// headless join's ignorance as a confident "$0.00" on every remote client.
+	CostUSD *float64 `json:"costUSD,omitempty"`
+	// Cumulative billed tokens, same absence rule. The headless join has no
+	// history DB, so this is always nil here.
+	BilledTokens *int64 `json:"billedTokens,omitempty"`
 }
 
 // daemonSessionRow is claudemon's `GET /sessions` row, narrowed to what the
@@ -112,11 +118,14 @@ func mergeRecentSessions(rows []daemonSessionRow, name func(row daemonSessionRow
 			UpdatedAt: parseUnixMillis(r.UpdatedAt),
 			StartedAt: parseUnixMillis(r.StartedAt),
 			Name:      label,
-			// The three the headless join cannot answer. Empty, not absent: the
-			// client reads "not known" from the shape it already handles.
-			Title:   "",
-			Model:   "",
-			CostUSD: 0,
+			// Title and Model the headless join cannot answer. Empty, not
+			// absent: the client reads "not known" from the shape it already
+			// handles. Cost and tokens are genuinely ABSENT — there is no
+			// history DB here — and a zero would read as a measured $0.00.
+			Title:        "",
+			Model:        "",
+			CostUSD:      nil,
+			BilledTokens: nil,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })

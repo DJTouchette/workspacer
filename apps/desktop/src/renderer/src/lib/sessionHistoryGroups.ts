@@ -29,6 +29,12 @@ export interface HistoryRow {
   updatedAt: number;
   archived: boolean;
   model: string;
+  /** Cost recorded for this session, or UNDEFINED when nothing was recorded.
+   *  Never 0 — see RecentAgentSession.costUSD for why a stored zero counts as
+   *  an absence here. Transcript-only rows (no daemon row) always have none. */
+  costUSD?: number;
+  /** Cumulative billed tokens recorded for this session; same absence rule. */
+  billedTokens?: number;
   /** The daemon's row, when it has one — resumed as-is to keep transport/model. */
   daemon?: RecentAgentSession;
 }
@@ -82,6 +88,8 @@ export function buildHistoryGroups(
         updatedAt: Math.max(Date.parse(t.timestamp) || 0, d?.updatedAt ?? 0),
         archived: d?.archived ?? false,
         model: d?.model || '',
+        costUSD: d?.costUSD,
+        billedTokens: d?.billedTokens,
         daemon: d,
       });
     }
@@ -98,6 +106,8 @@ export function buildHistoryGroups(
         updatedAt: d.updatedAt,
         archived: d.archived,
         model: d.model,
+        costUSD: d.costUSD,
+        billedTokens: d.billedTokens,
         daemon: d,
       });
     }
@@ -121,6 +131,8 @@ export function buildHistoryGroups(
         updatedAt: d.updatedAt,
         archived: d.archived,
         model: d.model,
+        costUSD: d.costUSD,
+        billedTokens: d.billedTokens,
         daemon: d,
       });
     }
@@ -147,6 +159,10 @@ export function syntheticDaemonRow(row: HistoryRow): RecentAgentSession {
     name: '',
     title: row.label,
     model: '',
-    costUSD: 0,
+    // Deliberately absent, not 0: this row exists because a transcript does,
+    // and the history DB was never asked about it. A 0 would render as a
+    // measured "$0.00" on every surface that takes this shape.
+    costUSD: undefined,
+    billedTokens: undefined,
   };
 }

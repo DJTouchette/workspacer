@@ -12,6 +12,7 @@ import {
 } from '../lib/sessionHistoryGroups';
 import { ProjectMark } from '../components/ProjectMark';
 import { fuzzyScoreAny } from '../lib/fuzzy';
+import { fmtTokens, fmtUSD } from '../lib/sessionStats';
 import { History, X } from '../components/icons';
 
 /**
@@ -349,6 +350,34 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
                       </span>
                     )}
                   </span>
+                  {/* What this session actually cost, from the history DB's
+                      join. A row with nothing recorded renders NOTHING here —
+                      not "$0.00", which would claim a measurement that was
+                      never taken (a third of the rows on a real machine are
+                      un-costed placeholders). */}
+                  {(s.costUSD !== undefined || s.billedTokens !== undefined) && (
+                    <span
+                      title={
+                        s.billedTokens !== undefined
+                          ? `${fmtTokens(s.billedTokens)} tokens billed (cumulative)`
+                          : undefined
+                      }
+                      style={{
+                        flexShrink: 0,
+                        fontSize: '0.66rem',
+                        fontFamily: 'var(--wks-font-mono)',
+                        color: 'var(--wks-text-muted)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {[
+                        s.costUSD !== undefined ? fmtUSD(s.costUSD) : '',
+                        s.billedTokens !== undefined ? fmtTokens(s.billedTokens) : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  )}
                   {s.archived && (
                     <span
                       style={{

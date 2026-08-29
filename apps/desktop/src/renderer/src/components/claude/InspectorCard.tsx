@@ -27,6 +27,7 @@ import { UsageDetailDialog } from './UsageDetailDialog';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
 import { ConfigContext } from '../../contexts/ConfigContext';
+import { useRecordedUsage } from '../../contexts/RecordedUsageContext';
 import { capsFor } from '../../lib/providerCaps';
 import type { AgentProvider } from '../../types/pane';
 
@@ -426,7 +427,19 @@ export const InspectorCard: React.FC<{
   headerAccessory?: React.ReactNode;
   /** Extra styles for the outer flex column (height caps for the peek, etc.). */
   style?: React.CSSProperties;
-}> = ({ snapshot, agentName, compact, initialTab, headerAccessory, style }) => {
+  /** The session this card is bound to, for callers that render it before a
+   *  live snapshot exists. Only used to look up the history DB's recorded
+   *  cost/tokens — everything else here still comes from the snapshot. */
+  sessionId?: string;
+}> = ({
+  snapshot,
+  agentName,
+  compact,
+  initialTab,
+  headerAccessory,
+  style,
+  sessionId: boundSessionId,
+}) => {
   useEffect(() => {
     ensureKeyframes();
   }, []);
@@ -513,7 +526,17 @@ export const InspectorCard: React.FC<{
     (usage?.contextLimit ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
   const inTok = sl?.totalInputTokens ?? usage?.totalInputTokens;
   const outTok = sl?.totalOutputTokens ?? usage?.totalOutputTokens;
-  const cost = sl?.costUSD ?? usage?.costUSD;
+  // At a cold start there is no snapshot, so the live pair above is empty and
+  // the whole Usage tab read blank on a session the history DB has figures for.
+  // The record fills the COST and a combined BILLED total only: it stores one
+  // input/output sum per session, not the in/out split, so those two tiles stay
+  // honestly absent rather than being handed a made-up division.
+  const recordedUsage = useRecordedUsage(session?.sessionId ?? boundSessionId);
+  const liveCost = sl?.costUSD ?? usage?.costUSD;
+  const cost = liveCost ?? recordedUsage?.costUSD;
+  const costIsRecorded = liveCost === undefined && cost !== undefined;
+  const recordedBilled =
+    inTok === undefined && outTok === undefined ? recordedUsage?.billedTokens : undefined;
   const model = sl?.modelDisplay ?? usage?.model ?? undefined;
 
   const tabs: {
@@ -1151,7 +1174,11 @@ export const InspectorCard: React.FC<{
               )}
 
               {/* Session totals: 2×2 stat tiles, then the row-level extras. */}
-              {(inTok !== undefined || outTok !== undefined || cost !== undefined || session) && (
+              {(inTok !== undefined ||
+                outTok !== undefined ||
+                cost !== undefined ||
+                recordedBilled !== undefined ||
+                session) && (
                 <div
                   style={{
                     display: 'grid',
@@ -1166,8 +1193,17 @@ export const InspectorCard: React.FC<{
                   {outTok !== undefined && (
                     <StatTile label="Output tokens" value={fmtTokens(outTok) || '0'} />
                   )}
+                  {recordedBilled !== undefined && (
+                    <StatTile
+                      label="Billed tokens · last recorded"
+                      value={fmtTokens(recordedBilled)}
+                    />
+                  )}
                   {cost !== undefined && Number.isFinite(cost) && (
-                    <StatTile label="Cost" value={`$${cost.toFixed(2)}`} />
+                    <StatTile
+                      label={costIsRecorded ? 'Cost · last recorded' : 'Cost'}
+                      value={`$${cost.toFixed(2)}`}
+                    />
                   )}
                   {session && (
                     <StatTile label="Tool calls" value={String(session.totalToolCalls)} />
