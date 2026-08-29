@@ -121,6 +121,7 @@ import {
   ConfigService,
   deepMerge,
   applyWholesale,
+  WholesaleValueError,
   setPreWriteHookForTest,
 } from './configService';
 
@@ -897,6 +898,91 @@ describe('wholesale config paths — deletion survives the merge', () => {
     );
     applyWholesale(merged, { supervisor: { budgets: { a: 9 } } }, 'claude.budgets');
     expect(merged.supervisor.budgets).toEqual({ a: 9, b: 2 });
+  });
+});
+
+// ─── the wholesale VALUE contract (shared with the Go brain) ────────────────
+// contracts/wholesale-config-paths.json's `valueCases` block is the SHARED
+// fixture: services/hub/cmd/brain/config_wholesale_test.go's
+// TestWholesaleValueContractCases runs the exact same rows through the Go
+// applyWholesale.
+//
+// It exists because the two writers disagreed here, in opposite and equally
+// wrong directions, on the one input that matters most. A wholesale path is
+// REPLACED rather than merged, so the value's type is load-bearing: the Go
+// brain coerced any non-object to `{}` — deleting the user's whole projects /
+// customThemes / budgets map and reporting a SUCCESSFUL save, with no backup
+// taken on a successful write — while this side wrote the bad value through
+// verbatim (`dst[leaf] = src[leaf] ?? {}`), leaving a string where every reader
+// indexes a map. Both refuse now, and the fixture is what stops them drifting
+// apart again.
+describe('wholesale VALUE contract — shared with the Go brain', () => {
+  interface ValueCase {
+    name: string;
+    path: string;
+    current: Record<string, unknown>;
+    value: unknown;
+    expect: 'accept' | 'refuse';
+    expected?: Record<string, unknown>;
+    refusedBy?: string;
+  }
+  const valueCases = (wholesaleFixture as unknown as { valueCases: ValueCase[] }).valueCases;
+
+  const at = (obj: unknown, p: string): any =>
+    p.split('.').reduce<any>((o, k) => o?.[k], obj as any);
+  const nest = (p: string, v: unknown): any =>
+    p
+      .split('.')
+      .reverse()
+      .reduce<unknown>((acc, k) => ({ [k]: acc }), v);
+
+  it('the fixture loads and carries refusals', () => {
+    expect(Array.isArray(valueCases)).toBe(true);
+    // The floor, and the SHAPE of the floor. A corpus that kept only its accept
+    // cases would pass against the exact coercion this block exists to kill.
+    expect(valueCases.length).toBeGreaterThanOrEqual(11);
+    expect(valueCases.filter((c) => c.expect === 'refuse').length).toBeGreaterThan(0);
+  });
+
+  it('exercises every path main replaces wholesale', () => {
+    const covered = new Set(valueCases.map((c) => c.path));
+    for (const p of WHOLESALE_CONFIG_PATHS) expect(covered.has(p)).toBe(true);
+  });
+
+  // A local counter, not tests/support/sweepTally: that module probes the real
+  // fs at import time and this file mocks fs module-wide. Same job — prove every
+  // row ASSERTED, so a loader that silently enumerated nothing goes red.
+  let executed = 0;
+  for (const c of valueCases) {
+    it(c.name, () => {
+      executed++;
+      const merged = nest(c.path, structuredClone(c.current));
+      const partial = nest(c.path, structuredClone(c.value));
+      if (c.expect === 'accept') {
+        applyWholesale(merged, partial, c.path);
+        expect(at(merged, c.path)).toEqual(c.expected);
+        return;
+      }
+      expect(() => applyWholesale(merged, partial, c.path)).toThrow(WholesaleValueError);
+      // A refusal must leave the document ALONE. Refusing and then emptying the
+      // map anyway is the defect wearing an error.
+      expect(at(merged, c.path)).toEqual(c.current);
+    });
+  }
+  it('ran every row of the corpus', () => {
+    expect(executed).toBe(valueCases.length);
+    expect(executed).toBeGreaterThanOrEqual(11);
+  });
+
+  // TS-ONLY, and deliberately not in the fixture: JSON cannot carry `undefined`,
+  // so the Go twin never sees one. In JavaScript it is how "I did not provide
+  // this" is spelled — `{ projects: undefined }` is a caller not touching the
+  // map, not a caller asking to empty it — so it is treated as absent rather
+  // than refused. (It used to be `?? {}`, i.e. emptied.)
+  it('treats an explicit undefined as absent, not as a refusal or a wipe', () => {
+    const merged = { projects: { '/w/a': { label: 'A' } } };
+    applyWholesale(merged, { projects: undefined }, 'projects');
+    expect(merged.projects).toEqual({ '/w/a': { label: 'A' } });
   });
 });
 

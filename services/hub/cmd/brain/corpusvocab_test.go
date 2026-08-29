@@ -446,11 +446,14 @@ func TestEveryFixtureBlockIsDeclaredAndClosed(t *testing.T) {
 // vocabExempt names the files in contracts/ that are not case corpora. It is an
 // allow-list and not a heuristic: "has no blocks, so skip it" is how a fixture
 // whose cases were deleted would pass.
+//
+// wholesale-config-paths.json came OFF this list when it grew `valueCases` (the
+// guard forbids being on it while declaring a vocabulary, which is what made
+// that a required edit rather than an optional one).
 var vocabExempt = map[string]bool{
-	"session-schema.json":         true,
-	"config-lock.json":            true,
-	"wholesale-config-paths.json": true,
-	"job-preset-power-down.json":  true,
+	"session-schema.json":        true,
+	"config-lock.json":           true,
+	"job-preset-power-down.json": true,
 }
 
 // contractsFixtureFloor is how many case-carrying fixtures contracts/ holds.

@@ -334,7 +334,16 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		if err := unmarshal(params, &partial); err != nil {
 			return nil, err
 		}
-		return jsonResult(r.cfg.save(partial))
+		saved, err := r.cfg.save(partial)
+		if err != nil {
+			// A REFUSED save is a bus error, not a success carrying the old
+			// value. The one refusal that reaches here — a non-object at a
+			// wholesale path — used to be answered by emptying that map and
+			// reporting success, so "the caller can see it did not land" is the
+			// whole point of the error existing.
+			return nil, err
+		}
+		return jsonResult(saved)
 	case "layouts.list":
 		return jsonResult(listLayouts())
 	case "layouts.save":

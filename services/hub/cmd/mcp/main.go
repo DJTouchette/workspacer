@@ -678,8 +678,10 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[listAgentsIn](b, "reload_config",
 		"Re-read the config file from disk and return it.",
 		"config.reload")
-	addObjectTool(b, "save_config",
-		"Persist a partial config patch (deep-merged into the current config). Pass only the keys to change, e.g. {\"ui\":{\"guiFontScale\":1.3}}.",
+	addConfigSaveTool(b, "save_config",
+		"Persist a partial config patch (deep-merged into the current config). Pass only the keys to change, e.g. {\"ui\":{\"guiFontScale\":1.3}}. "+
+			"The user-owned MAPS projects, ui.customThemes and claude.budgets are REPLACED, not merged: whatever object you send at one of those is the whole truth, "+
+			"so send every entry you want kept (or {} to empty it). Each must be a real JSON object — a stringified one is refused, not applied.",
 		"config.save")
 
 	// ── Claude profiles ────────────────────────────────────────────────────
@@ -1208,6 +1210,132 @@ func configDefaultModel(ctx context.Context, b *build) string {
 // CONFIG_BYPASS_PERMISSION_MODES.
 func permissionModeMeansBypass(mode string) bool {
 	return mode == "bypassPermissions" || mode == "yolo"
+}
+
+// wholesaleConfigPaths are the config subtrees config.save REPLACES instead of
+// deep-merging. Held equal to contracts/wholesale-config-paths.json (and so to
+// the brain's list and the desktop's) by TestSaveConfigSchemaMatchesTheContract.
+//
+// The facade needs its own copy because it is the DOOR, and the door is where a
+// malformed value has to be refused: these three paths are the ones where a
+// wrong TYPE is destructive rather than merely wrong, since the value replaces
+// a whole user-owned map instead of being folded into it.
+var wholesaleConfigPaths = []string{"ui.customThemes", "claude.budgets", "projects"}
+
+// saveConfigInputSchema is save_config's input schema, built from
+// wholesaleConfigPaths.
+//
+// save_config used to be an addObjectTool: a bare `map[string]any` handler, whose
+// inferred schema is exactly {"type":"object","additionalProperties":true}. That
+// constrains NOTHING below the top level, so a client that serialised its
+// argument — `{"projects": "{\"/w/a\":{...}}"}` — was accepted here, forwarded
+// verbatim to the bus, and answered by the brain COERCING the non-map to `{}`,
+// which deleted every project the user had and reported success. The brain now
+// refuses that (errWholesaleNotAMap, and the fixture that pins it), which is the
+// layer that has to hold for every non-MCP caller. This is the other half: the
+// bad call should not arrive in the first place, and a tool that declares the
+// shape it takes is also a tool the model is far less likely to call wrongly.
+//
+// The document stays open (`additionalProperties: true`, no `required`): a
+// config patch is free-form by design and a new key must not need a facade
+// release. Only the paths where a wrong type DESTROYS something are pinned.
+func saveConfigInputSchema() json.RawMessage {
+	root := map[string]any{
+		"type":                 "object",
+		"description":          "A partial workspacer config. Send only the keys you are changing.",
+		"additionalProperties": true,
+		"properties":           map[string]any{},
+	}
+	for _, dotted := range wholesaleConfigPaths {
+		keys := strings.Split(dotted, ".")
+		node := root
+		for i, k := range keys {
+			props := node["properties"].(map[string]any)
+			child, ok := props[k].(map[string]any)
+			if !ok {
+				child = map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+					"properties":           map[string]any{},
+				}
+				props[k] = child
+			}
+			if i == len(keys)-1 {
+				child["description"] = "REPLACED wholesale, not merged: this object is the whole truth for " +
+					dotted + ". Send every entry you want kept, or {} to empty it. Must be a JSON object — " +
+					"a stringified one used to be accepted here and silently deleted the map."
+			}
+			node = child
+		}
+	}
+	raw, err := json.Marshal(root)
+	if err != nil {
+		// Unreachable: the value above is plain maps and strings. Panicking beats
+		// serving a tool with a schema that constrains nothing, which is the exact
+		// state this function exists to leave behind.
+		panic("mcp: save_config schema: " + err.Error())
+	}
+	return raw
+}
+
+// invalidWholesaleValue reports the first wholesale path in a save_config
+// argument whose value is present but is not an object, or "" when there is
+// none.
+//
+// This duplicates what the declared schema already rejects, deliberately. The
+// SDK validates arguments against the resolved schema before the handler runs,
+// so in the normal path this never fires — but "the schema is doing it" is a
+// claim about a dependency's behaviour, and the thing being guarded is silent
+// deletion of the user's project list. A second, local check costs one map walk
+// and does not depend on the SDK resolving, or continuing to resolve, an
+// overridden schema.
+func invalidWholesaleValue(args map[string]any) (string, any, bool) {
+	for _, dotted := range wholesaleConfigPaths {
+		keys := strings.Split(dotted, ".")
+		node := args
+		for i, k := range keys {
+			v, present := node[k]
+			if !present {
+				break
+			}
+			if i == len(keys)-1 {
+				if _, ok := v.(map[string]any); !ok {
+					return dotted, v, true
+				}
+				break
+			}
+			next, ok := v.(map[string]any)
+			if !ok {
+				break // a non-object parent cannot reach the leaf
+			}
+			node = next
+		}
+	}
+	return "", nil, false
+}
+
+// addConfigSaveTool is addObjectTool specialized to save_config: the same
+// free-form forwarding, plus the declared shape and the entry-point check that
+// the wholesale maps are actually maps.
+func addConfigSaveTool(b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc, InputSchema: saveConfigInputSchema()},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in map[string]any) (*mcp.CallToolResult, any, error) {
+			if path, got, bad := invalidWholesaleValue(in); bad {
+				return &mcp.CallToolResult{
+					IsError: true,
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+						"save_config refused: %s is REPLACED wholesale on save, so it must be a JSON object, not %T (%v). "+
+							"Nothing was written. Send the full map you want kept — e.g. {\"%s\": {\"<key>\": {...}}} — or {} to empty it. "+
+							"Do not JSON-encode the value into a string.",
+						path, got, got, path)}},
+				}, nil, nil
+			}
+			return forward(ctx, b.c, method, in)
+		})
 }
 
 // addObjectTool registers a tool whose entire arguments object is forwarded

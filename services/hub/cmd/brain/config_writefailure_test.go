@@ -52,7 +52,7 @@ func TestSaveWhoseWriteFailsReportsTheOldValueAndDoesNotAdoptIt(t *testing.T) {
 	writeConfig = func(map[string]any) error { return errors.New("write /…/config.yaml: no space left on device") }
 	t.Cleanup(func() { writeConfig = restore })
 
-	got := c.save(map[string]any{"ui": map[string]any{"theme": "nord"}})
+	got := mustSave(t, c, map[string]any{"ui": map[string]any{"theme": "nord"}})
 
 	if themeOf(got) != "everforest" {
 		t.Errorf("save() RETURNED the value it failed to write (%q): the client renders the setting as applied and it reverts on the next read",
@@ -148,7 +148,7 @@ func TestSaveFoldsInAnExternalWriteThatLandedInTheSameTimestampTick(t *testing.T
 	}
 
 	// An UNRELATED partial from us (exactly what usageAccumulator sends).
-	got := c.save(map[string]any{"claude": map[string]any{"seenModels": []any{"sonnet", "opus"}}})
+	got := mustSave(t, c, map[string]any{"claude": map[string]any{"seenModels": []any{"sonnet", "opus"}}})
 
 	if themeOf(got) != "nord" {
 		t.Errorf("save() returned theme %q: it merged onto a stale cache instead of re-reading", themeOf(got))
@@ -222,7 +222,7 @@ func TestSaveFoldsInAnExternalWriteTheStampCannotSee(t *testing.T) {
 		t.Skipf("the stamp changed anyway (%q vs %q); this case needs an indistinguishable file", got, c.loadedAt)
 	}
 
-	got := c.save(map[string]any{"claude": map[string]any{"seenModels": []any{"sonnet", "opus"}}})
+	got := mustSave(t, c, map[string]any{"claude": map[string]any{"seenModels": []any{"sonnet", "opus"}}})
 	if themeOf(got) != "nord" {
 		t.Errorf("save() returned theme %q: it trusted the stamp gate instead of re-reading under the lock", themeOf(got))
 	}

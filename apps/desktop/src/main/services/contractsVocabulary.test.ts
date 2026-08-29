@@ -51,7 +51,7 @@ const VOCAB_CHECK_IDS = [
 const NO_BLOCK_FIXTURES = new Set([
   'session-schema.json',
   'config-lock.json',
-  'wholesale-config-paths.json',
+  // wholesale-config-paths.json came OFF this list when it grew `valueCases`.
   'job-preset-power-down.json',
 ]);
 

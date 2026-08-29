@@ -120,7 +120,7 @@ func TestConfigSaveFoldsInExternalChange(t *testing.T) {
 
 	// The brain saves an unrelated partial. It must fold the external theme in,
 	// not overwrite it from the stale cache.
-	merged := c.save(map[string]any{"editor": map[string]any{"vim": true}})
+	merged := mustSave(t, c, map[string]any{"editor": map[string]any{"vim": true}})
 
 	if ui := merged["ui"].(map[string]any); ui["theme"] != "external" {
 		t.Errorf("save clobbered the external theme: got %v, want external", ui["theme"])
@@ -280,7 +280,7 @@ func TestConfigSaveReplacesCustomThemesWholesale(t *testing.T) {
 	}}})
 
 	// The theme maker deletes custom:one by sending the full map minus that entry.
-	merged := c.save(map[string]any{"ui": map[string]any{"customThemes": map[string]any{
+	merged := mustSave(t, c, map[string]any{"ui": map[string]any{"customThemes": map[string]any{
 		"custom:two": map[string]any{"name": "Two"},
 	}}})
 
@@ -321,7 +321,7 @@ func TestConfigSaveReplacesBudgetsWholesale(t *testing.T) {
 	}}})
 
 	// A remote client clears sessB by sending the full budgets map minus that entry.
-	merged := c.save(map[string]any{"claude": map[string]any{"budgets": map[string]any{
+	merged := mustSave(t, c, map[string]any{"claude": map[string]any{"budgets": map[string]any{
 		"sessA": float64(5),
 	}}})
 
@@ -344,7 +344,7 @@ func TestConfigSaveReplacesBudgetsWholesale(t *testing.T) {
 	}
 
 	// Clearing ALL budgets (empty map) must also stick.
-	merged2 := c.save(map[string]any{"claude": map[string]any{"budgets": map[string]any{}}})
+	merged2 := mustSave(t, c, map[string]any{"claude": map[string]any{"budgets": map[string]any{}}})
 	b2 := merged2["claude"].(map[string]any)["budgets"].(map[string]any)
 	if len(b2) != 0 {
 		t.Errorf("clearing all budgets should leave an empty map, got %v", b2)

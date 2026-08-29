@@ -128,7 +128,7 @@ func TestSaveRecoversAfterALockTimeout(t *testing.T) {
 	if err := os.WriteFile(lock, []byte("9999 held\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := c.save(map[string]any{"ui": map[string]any{"theme": "two"}})
+	got := mustSave(t, c, map[string]any{"ui": map[string]any{"theme": "two"}})
 	if theme := themeOf(got); theme != "one" {
 		t.Errorf("a refused save must report the UNCHANGED value, got %q", theme)
 	}
@@ -137,7 +137,7 @@ func TestSaveRecoversAfterALockTimeout(t *testing.T) {
 	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
-	got = c.save(map[string]any{"ui": map[string]any{"theme": "three"}})
+	got = mustSave(t, c, map[string]any{"ui": map[string]any{"theme": "three"}})
 	if theme := themeOf(got); theme != "three" {
 		t.Fatalf("the next save must work again, got %q — the daemon latched write-only", theme)
 	}
