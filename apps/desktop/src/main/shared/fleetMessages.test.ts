@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildFleetMessage,
   buildReplyPrefix,
+  buildSenderHeader,
   excerptReply,
   parseFleetMessage,
   FULL_REPLY_MAX,
@@ -367,5 +368,28 @@ describe('structured results round-trip', () => {
   it('leaves a wake with no result exactly as it parsed before', () => {
     const text = buildFleetMessage('worker-finished', [entry]);
     expect(parseFleetMessage(text)).toEqual({ kind: 'worker-finished', entries: [entry] });
+  });
+});
+
+// The sender-attribution header (agents.sendMessage's fromSessionId). Not a
+// wake kind — deliberately not round-tripped — but the bytes are wire format
+// shared with the brain's twin (fleetSenderHeaderText, cmd/brain/fleetmsg.go),
+// so they are pinned here in the same file that owns the rest of the grammar.
+describe('buildSenderHeader (attribution for send_message)', () => {
+  it('names a labelled sender exactly as the brain twin does', () => {
+    expect(buildSenderHeader({ sessionId: 'worker1', label: 'Rust Worker' })).toBe(
+      '[fleet] session:worker1 (Rust Worker) says:\n',
+    );
+  });
+
+  it('falls back to the id alone rather than inventing a label', () => {
+    expect(buildSenderHeader({ sessionId: 'worker2' })).toBe('[fleet] session:worker2 says:\n');
+    expect(buildSenderHeader({ sessionId: 'worker2', label: '' })).toBe(
+      '[fleet] session:worker2 says:\n',
+    );
+  });
+
+  it('is not a wake: parseFleetMessage does not claim it as a card', () => {
+    expect(parseFleetMessage(`${buildSenderHeader({ sessionId: 'w1' })}some free text`)).toBeNull();
   });
 });

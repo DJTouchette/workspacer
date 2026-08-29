@@ -68,7 +68,9 @@ func (s *metaStore) get(id string) (spawnMeta, bool) {
 // registry.sendMessage stamps onto a message whose caller named itself (see
 // handlers.go). Label comes from the same spawn-metadata source enrichSnapshot
 // reads; a session enrichment never recorded a label for is still named by id
-// alone rather than going unattributed.
+// alone rather than going unattributed. The FORMAT itself lives in
+// fleetSenderHeaderText (fleetmsg.go), where the twin test pins it against the
+// desktop's shared/fleetMessages.ts — this function is only the lookup.
 func fleetSenderHeader(meta *metaStore, sessionID string) string {
 	label := ""
 	if meta != nil {
@@ -76,10 +78,7 @@ func fleetSenderHeader(meta *metaStore, sessionID string) string {
 			label = sm.Label
 		}
 	}
-	if label != "" {
-		return "[fleet] session:" + sessionID + " (" + label + ") says:\n"
-	}
-	return "[fleet] session:" + sessionID + " says:\n"
+	return fleetSenderHeaderText(sessionID, label)
 }
 
 // namesByCwd reads the persisted cwd→name renames. Empty on any problem (names

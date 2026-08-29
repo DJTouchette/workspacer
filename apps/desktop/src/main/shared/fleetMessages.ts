@@ -212,6 +212,43 @@ const STOPPED_NOTE =
  *  message — so a second Reply click replaces rather than stacks. */
 export const REPLY_PREFIX_RE = /^Re: session:\S+ \([^)]*\) — /;
 
+/** The two fixed halves of the sender-attribution header (see
+ *  buildSenderHeader). Split out so the Go twin can be pinned to these exact
+ *  literals by TestFleetMessageTwinMatchesTheDesktop, which compares against
+ *  this file's source text and so cannot see through a template literal. */
+export const SENDER_HEADER_PREFIX = '[fleet] session:';
+export const SENDER_HEADER_SUFFIX = ' says:';
+
+/**
+ * Attribution for `agents.sendMessage` — the one fleet-chat message class with
+ * no header of its own.
+ *
+ * Every other message a manager receives names its subject (a finish, a
+ * threshold, a progress line all carry `session:<id>` in their bullets), but a
+ * worker answering its manager with send_message arrived as bare text: the
+ * manager could not tell WHICH worker was speaking, or that an agent was
+ * speaking at all. `fromSessionId` is the caller saying who it is, and this is
+ * what the recipient then reads.
+ *
+ * NOT a FleetMessageKind, deliberately: the text that follows is arbitrary, so
+ * there is no entry grammar to parse and `parseFleetMessage` neither does nor
+ * should round-trip it. It borrows `[fleet]` and `session:<id>` from the wake
+ * vocabulary above so the tokens read the same to the manager agent and to a
+ * human skimming the transcript.
+ *
+ * The label is the sender's spawn label when the host has one; a sender it
+ * never recorded a label for is still named by id rather than going
+ * unattributed. There is deliberately NO cwd-basename fallback here (unlike a
+ * wake bullet's `agentLabel`) — the brain's twin has none either, and an
+ * invented label would read as a name the sender never had.
+ *
+ * TWIN: fleetSenderHeaderText in services/hub/cmd/brain/fleetmsg.go.
+ */
+export function buildSenderHeader(sender: { sessionId: string; label?: string }): string {
+  const named = sender.label ? `${sender.sessionId} (${sender.label})` : sender.sessionId;
+  return `${SENDER_HEADER_PREFIX}${named}${SENDER_HEADER_SUFFIX}\n`;
+}
+
 /**
  * The composer-side half of threading's cheap 80% (see
  * .workspacer/threads-research-2026-08-22.md, §6): a pointer prepended to the
