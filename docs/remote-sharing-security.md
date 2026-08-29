@@ -42,6 +42,35 @@ loopback-only and is *not* affected by the remote-sharing toggle. It is intended
 for a local MCP client (e.g. Claude Code via `--mcp-config`) on the same
 machine.
 
+Loopback is not an identity, though: every local process and every local user
+account can reach it, as can a container sharing the host network namespace. So
+the facade **refuses credential-less callers** — `-untokened deny` is the
+shipped default, and `/mcp` and `/sse` answer 401 to a request presenting no
+token (`/health` stays open). Sessions workspacer spawns are unaffected: each
+carries a per-session scoped token minted at spawn (`remoteTokens.ts` /
+`cmd/brain/facade.go`), presented as an `Authorization` header on its generated
+`--mcp-config` or as `?t=` on the URL. A hand-configured client mints its own
+with `workspacer token create --scope operator`.
+
+The `facade.untokenedAccess` config key (`operator` | `view` | `deny`) dials
+this. `operator` restores the pre-0.151 behaviour — an uncredentialed local
+process gets the full fleet-driving tool set — and is an explicit opt-in for
+clients that cannot carry a token. `view` is the halfway house: read-only tools,
+but that still includes every agent list and every transcript.
+
+Two guards are independent of the dial and were always on: a `Host`-header check
+refusing DNS-rebinding requests from a browser, and a bind policy that refuses
+at startup to bind a non-loopback address without a token or `-untokened deny`.
+
+**claudemon's session API (`127.0.0.1:7891`) has no such credential check.** It
+is loopback-bound with the same `Host` guard, so a web page cannot reach it, but
+any local process can `POST /sessions/:id/message` or `/sessions/spawn` with no
+token. That is a known gap, tracked separately from the facade: closing it means
+distributing a credential to clients in three languages (the desktop, the hub
+brain, `wks-tui --direct`, the PTY wrapper inside every agent process), which
+the facade did not need because every one of its clients already carries a
+token.
+
 ---
 
 ## 2. What enabling remote sharing does

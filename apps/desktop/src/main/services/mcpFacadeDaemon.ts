@@ -10,12 +10,16 @@
  * executes. So this must start AFTER the hub is up; it connects to the bus and
  * retries on its own if the hub is briefly unavailable.
  *
- * The facade's OWN inbound surface defaults to unauthenticated-on-loopback
- * (credential-less requests get operator) — see getMcpFacadeToken below for
- * what that costs and what has to land before it can be closed wholesale. The
- * optional config key `facade.untokenedAccess` (operator | view | deny) is the
- * deliberate dial on that default, passed through as the binary's --untokened
- * flag; per-session scoped tokens keep their tiers under every setting.
+ * The facade's OWN inbound surface REFUSES credential-less callers by default:
+ * cmd/mcp ships `-untokened deny`, so a local process presenting nothing gets
+ * 401 rather than the whole operator tool surface. Nothing here has to pass a
+ * flag for that — the binary's own default is the source of truth, and every
+ * session this app spawns with the facade already carries a per-session scoped
+ * token (see mcpConfig.ts / remoteTokens.ts). The optional config key
+ * `facade.untokenedAccess` (operator | view | deny) is the dial on that
+ * default, passed through as --untokened; `operator` is the explicit opt-in for
+ * a hand-configured local MCP client that cannot carry a token. Per-session
+ * scoped tokens keep their tiers under every setting.
  *
  * Mirrors hubDaemon.ts (binary resolution, health poll, restart backoff). Fully
  * optional from the rest of the app's point of view: if it fails to start, only
@@ -81,36 +85,23 @@ export function startMcpFacade(): Promise<void> {
 }
 
 /**
- * The bearer token the facade WOULD demand on its own inbound surface (/mcp,
- * /sse) — the hub bus token, deliberately, since holding it already grants the
- * same capabilities directly over the bus, so reusing it adds no authority
- * while keeping one secret to mint, persist (0600) and rotate.
+ * The STATIC bearer token the facade would accept on its own inbound surface
+ * (/mcp, /sse) — the hub bus token, deliberately, since holding it already
+ * grants the same capabilities directly over the bus, so reusing it adds no
+ * authority while keeping one secret to mint, persist (0600) and rotate.
  *
- * It is not handed to the facade yet, and that is a knowing gap rather than an
- * oversight: while it stays unset, 127.0.0.1:7897/mcp is by default an
- * unauthenticated capability gateway — spawn agents, read and write host files,
- * rewrite config, reachable by any local process or by any page that can be
- * talked into a request to loopback.
+ * It is still not handed to the facade, and that is now a shrug rather than a
+ * gap. A facade-wide static secret was only ever one way to answer "who may
+ * call this". The per-session scoped tokens answer it better (a tier per
+ * session, revoked when the session ends) and the binary's `-untokened deny`
+ * default answers the rest — a caller with no credential gets 401 — so there is
+ * nothing left for a static token to close. Setting it would only ADD a shared,
+ * long-lived operator credential in a file, which is strictly weaker than what
+ * is there now.
  *
- * Setting WKS_MCP_TOKEN is what turns cmd/mcp's bearer check on, and turning it
- * on alone breaks the supervisor and every mcpFacade worker, because neither
- * client can send a header today: mcpConfig.ts writes the supervisor's
- * `{ type:'http', url }` entry with no `headers` (and only when the file is
- * absent, so upgrades keep the old one), and managedSpawn hands claudemon the
- * facade as a bare URL string with nowhere to attach one. Closing the gap means
- * landing those two together with the flip; doing the flip first would trade a
- * local-reachability risk for a certain loss of the whole control plane.
- *
- * The `facade.untokenedAccess` config dial (--untokened operator|view|deny) is
- * the opt-in endgame for users who accept the cost today: `view` downgrades
- * credential-less requests to the read-only tier, `deny` 401s them outright.
- * Both break exactly the legacy untokened clients described above (the shared
- * supervisor-mcp.json path); sessions spawned with a per-session scoped token
- * (every toolScope/mcpFacade spawn since the tier work) keep working under
- * every setting, because they present a tokens.json bearer, not the untokened
- * default. `deny` also satisfies cmd/mcp's non-loopback bind policy on its own
- * — refusing credential-less requests is strictly stronger than requiring the
- * static token.
+ * Kept exported because it is the value to pass as WKS_MCP_TOKEN if the facade
+ * is ever bound to a non-loopback address with untokened access dialled back
+ * open (cmd/mcp's checkBindPolicy refuses that combination outright).
  */
 export function getMcpFacadeToken(): string {
   return getHubToken();
@@ -120,7 +111,11 @@ export function getMcpFacadeToken(): string {
  * The untokened-access dial from config: `facade.untokenedAccess`, an OPTIONAL
  * key read leniently off the config object (it is deliberately not part of the
  * defaults pipeline — absent means "pass no flag" and the facade keeps its own
- * operator default). Only the three values the binary accepts pass through;
+ * default, which is `deny`). Setting it to `operator` is the OPT-IN that
+ * restores the pre-lockdown behaviour for a hand-configured local MCP client
+ * that cannot carry a token; `view` is the halfway house — read-only tools, but
+ * still every transcript, to anyone who reaches the port. Only the three values
+ * the binary accepts pass through;
  * anything else is ignored with a warning rather than forwarded, because
  * cmd/mcp fails startup on an unknown -untokened value and a config typo must
  * not take down the whole control plane.
@@ -155,9 +150,14 @@ function launch(bin: string): Promise<void> {
   // user. The facade's --token flag already defaults to os.Getenv("HUB_TOKEN")
   // (cmd/mcp/main.go), so dropping the flag changes nothing else.
   //
-  // WKS_MCP_TOKEN is deliberately NOT set — it would arm the facade's own bearer
-  // check against clients that cannot yet send the header. See
-  // getMcpFacadeToken.
+  // WKS_MCP_TOKEN is deliberately NOT set: credential-less callers are already
+  // refused by the binary's `-untokened deny` default, and every session this
+  // app spawns presents its own scoped token, so a shared static secret would
+  // add authority without closing anything. See getMcpFacadeToken.
+  //
+  // No --untokened flag either, unless the user set facade.untokenedAccess: the
+  // binary's default IS the shipped policy, and passing it from here too would
+  // only make two places to change it.
   const token = getHubToken();
   const env = token ? { HUB_TOKEN: token } : undefined;
 

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
@@ -89,11 +91,13 @@ func resolveReq(gate *authGate, target string, header string) (authtoken.Scope, 
 func TestAuthGateResolve(t *testing.T) {
 	store, viewTok := mintTestToken(t, authtoken.ScopeView)
 
-	t.Run("no credential, no static token → operator (loopback-open default)", func(t *testing.T) {
+	t.Run("no credential, no static token → refused (the zero value fails closed)", func(t *testing.T) {
+		// This used to be operator. It is deny now, and the zero value is what
+		// a future authGate built without the field would carry — so the
+		// unconfigured shape must be the SAFE one, not the open one.
 		gate := &authGate{store: store}
-		scope, ok := resolveReq(gate, "/mcp", "")
-		if !ok || scope != authtoken.ScopeOperator {
-			t.Fatalf("resolve = (%q, %v), want (operator, true)", scope, ok)
+		if scope, ok := resolveReq(gate, "/mcp", ""); ok {
+			t.Fatalf("resolve = (%q, true), want refusal: an authGate with no dial set must not grant %s", scope, scope)
 		}
 	})
 
@@ -128,10 +132,12 @@ func TestAuthGateResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown token → refused even with the open default", func(t *testing.T) {
+	t.Run("unknown token → refused even with the open dial", func(t *testing.T) {
 		// A PRESENT-but-unknown credential (e.g. a revoked session token) must
-		// 401, never quietly escalate to the untokened operator default.
-		gate := &authGate{store: store}
+		// 401, never quietly escalate to the untokened tier. Dialled explicitly
+		// to operator so this still tests the escalation and not merely the
+		// shipped deny.
+		gate := &authGate{store: store, untokened: untokenedOperator}
 		if _, ok := resolveReq(gate, "/mcp", "Bearer nope-nope"); ok {
 			t.Fatal("unknown bearer resolved; want refusal")
 		}
@@ -173,7 +179,7 @@ func TestAuthGateResolve(t *testing.T) {
 func TestAuthGateUntokenedDial(t *testing.T) {
 	store, viewTok := mintTestToken(t, authtoken.ScopeView)
 
-	t.Run("operator (explicit) → operator, like the zero-value default", func(t *testing.T) {
+	t.Run("operator (explicit, opt-in) → operator", func(t *testing.T) {
 		gate := &authGate{store: store, untokened: untokenedOperator}
 		scope, ok := resolveReq(gate, "/mcp", "")
 		if !ok || scope != authtoken.ScopeOperator {
@@ -359,9 +365,112 @@ func TestRequireScopeStampsTokenLabel(t *testing.T) {
 		t.Fatalf("token label from context = %q, want the record's label", got)
 	}
 
+	// The credential-less fallback label is exercised through a gate that
+	// deliberately admits such callers (-untokened operator); under the shipped
+	// deny they never reach a handler at all, which the next assertion pins.
 	got = ""
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	open := &authGate{store: authtoken.NewStore(path), untokened: untokenedOperator}
+	requireScope(open, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = tokenLabelFrom(r.Context())
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mcp", nil))
 	if got != "untokened" {
 		t.Fatalf("credential-less request label = %q, want the untokened fallback", got)
+	}
+
+	reached := false
+	h = requireScope(gate, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { reached = true }))
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	if reached || rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("credential-less request reached=%v status=%d, want refused with 401 under the shipped default", reached, rec2.Code)
+	}
+}
+
+// TestUntokenedDefaultDeniesFleetControl is the release blocker's regression
+// pin: the facade must not hand fleet control to a caller that presents no
+// credential at all.
+//
+// It fails if anyone restores the old untokened-operator default — whether by
+// flipping the constant, by rewriting the dial's default resolution, by making
+// the authGate zero value permissive again, or by relaxing the HTTP gate. Each
+// of those four is asserted separately so the failure names the mistake.
+//
+// The reason this can be strict: NOTHING legitimate is credential-less. Every
+// facade session the desktop (claudeSpawn.ts / managedSpawn.ts) or the brain
+// (cmd/brain/facade.go) spawns mints a per-session tokens.json record and
+// presents it — as an Authorization header on the --mcp-config file for
+// PTY/claude-stream, as a ?t= query param for the URL-only codex/opencode/
+// copilot registrations. Only a hand-configured client was ever untokened, and
+// it can mint its own with `workspacer token create`.
+func TestUntokenedDefaultDeniesFleetControl(t *testing.T) {
+	// 1. The shipped constant.
+	if defaultUntokened == untokenedOperator {
+		t.Fatal("defaultUntokened is operator: a local process with no credential can spawn agents, write files and rewrite config. It must be deny.")
+	}
+	if defaultUntokened != untokenedDeny {
+		t.Fatalf("defaultUntokened = %q, want %q — view still serves tools (and every transcript) to an uncredentialed caller", defaultUntokened, untokenedDeny)
+	}
+
+	// 2. The default resolution the flag actually uses, env unset.
+	t.Setenv("WKS_MCP_UNTOKENED", "")
+	if got := untokenedDefault(); got != untokenedDeny {
+		t.Fatalf("untokenedDefault() = %q with WKS_MCP_UNTOKENED unset, want %q", got, untokenedDeny)
+	}
+	// The env override still works — the lockdown is a default, not a wall.
+	t.Setenv("WKS_MCP_UNTOKENED", untokenedOperator)
+	if got := untokenedDefault(); got != untokenedOperator {
+		t.Fatalf("untokenedDefault() = %q with WKS_MCP_UNTOKENED=operator, want the override to win", got)
+	}
+
+	// 3. The gate, both at the shipped default and at the zero value.
+	store, sessionTok := mintTestToken(t, authtoken.ScopeOperator)
+	for name, gate := range map[string]*authGate{
+		"shipped default": {store: store, untokened: defaultUntokened},
+		"zero value":      {store: store},
+	} {
+		if scope, ok := resolveReq(gate, "/mcp", ""); ok {
+			t.Fatalf("%s: a credential-less request resolved to %q; want refusal", name, scope)
+		}
+		// …and the session tokens the desktop mints still work, which is the
+		// whole reason denying is affordable.
+		if scope, ok := resolveReq(gate, "/mcp", "Bearer "+sessionTok); !ok || scope != authtoken.ScopeOperator {
+			t.Fatalf("%s: per-session token resolve = (%q, %v), want (operator, true)", name, scope, ok)
+		}
+	}
+
+	// 4. The HTTP boundary, wired exactly as main() wires it: no tools reach an
+	// uncredentialed caller, and /health stays open.
+	client := busclient.New("ws://127.0.0.1:0/bus", "")
+	// defaultUntokened directly, not untokenedDefault(): this step tests the
+	// SHIPPED configuration, not whatever WKS_MCP_UNTOKENED the subtest above
+	// left installed.
+	gate := &authGate{store: store, untokened: defaultUntokened}
+	mux := newMux(newServerCache(client, newPluginCatalog(client), tierServers(client)), client, gate)
+	srv := httptest.NewServer(servedHandler("127.0.0.1:7897", mux))
+	defer srv.Close()
+
+	for _, path := range []string{"/mcp", "/sse"} {
+		resp, err := http.Post(srv.URL+path, "application/json",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("POST %s uncredentialed = %d, want 401. Body: %s", path, resp.StatusCode, body)
+		}
+		if strings.Contains(string(body), "spawn_agent") {
+			t.Fatalf("POST %s uncredentialed leaked the operator tool surface: %s", path, body)
+		}
+	}
+
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatalf("health GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/health = %d, want 200 — liveness probes must not need a secret", resp.StatusCode)
 	}
 }

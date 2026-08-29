@@ -46,7 +46,7 @@ func main() {
 	// mcpToken guards the facade's OWN inbound HTTP surface (/mcp, /sse) — distinct
 	// from -token, which authenticates the facade's OUTBOUND connection to the hub
 	// bus. Env mirrors the hub's HUB_TOKEN convention (flag/env, no token file).
-	mcpToken := flag.String("mcp-token", os.Getenv("WKS_MCP_TOKEN"), "bearer token required on /mcp and /sse (empty = no auth; REQUIRED to bind a non-loopback -addr)")
+	mcpToken := flag.String("mcp-token", os.Getenv("WKS_MCP_TOKEN"), "static bearer token accepted on /mcp and /sse in addition to tokens.json records (empty = scoped tokens only; see -untokened for credential-less callers)")
 	// tokensPath is the same tokens.json the hub bus reads for its scoped
 	// capability tokens. The desktop mints a per-session record here at spawn
 	// (label `session:<id>`) so a spawned agent can present a bearer that
@@ -55,19 +55,20 @@ func main() {
 	// whole surface. The store is mtime-gated, so mint/revoke take effect on the
 	// next request without restarting the facade.
 	tokensPath := flag.String("tokens", authtoken.DefaultPath(), "scoped capability-token file (tokens.json) for per-session facade tiers")
-	// untokened is the deliberate dial on the credential-less loopback default:
-	// operator keeps the historical open-on-loopback behavior, view serves the
-	// read-only tier to bare requests, deny 401s them (every request must then
-	// present the static token or a tokens.json scoped token).
-	untokened := flag.String("untokened", envOr("WKS_MCP_UNTOKENED", untokenedOperator), "access tier for credential-less requests: operator (back-compat default), view (read-only tier), or deny (401)")
+	// untokened is the dial on credential-less requests, and it SHIPS AT deny:
+	// a caller with no credential at all gets 401, not the fleet. operator
+	// restores the historical open-on-loopback behavior for a hand-configured
+	// local MCP client that cannot carry a token, view serves such a client the
+	// read-only tier. See defaultUntokened for why deny is the default.
+	untokened := flag.String("untokened", untokenedDefault(), "access tier for credential-less requests: deny (401, the default), view (read-only tier), or operator (loopback-open, opt-in)")
 	flag.Parse()
 
 	if err := checkUntokenedMode(*untokened); err != nil {
 		log.Fatalf("mcp: %v", err)
 	}
-	// Fail closed: a non-loopback bind with no token lets anyone who reaches the
-	// port drive the whole agent fleet. Loopback-with-no-token stays open (the
-	// default the desktop relies on).
+	// Fail closed: a non-loopback bind that ALSO has untokened access dialed
+	// back open lets anyone who reaches the port drive the whole agent fleet.
+	// (With the shipped -untokened deny this is already satisfied.)
 	if err := checkBindPolicy(*addr, *mcpToken, *untokened); err != nil {
 		log.Fatalf("mcp: %v", err)
 	}
@@ -85,10 +86,13 @@ func main() {
 
 	gate := &authGate{static: *mcpToken, store: authtoken.NewStore(*tokensPath), untokened: *untokened}
 	if *mcpToken != "" {
-		log.Printf("mcp auth enabled (bearer token required on /mcp and /sse)")
+		log.Printf("mcp static bearer token configured for /mcp and /sse")
 	}
-	if *untokened != untokenedOperator {
-		log.Printf("mcp untokened access dialed to %q", *untokened)
+	// Loosening the dial is the interesting event, so it is the one that logs:
+	// a credential-less local client is being handed tools, and the line is the
+	// only place that says so.
+	if *untokened != untokenedDeny {
+		log.Printf("mcp untokened access dialed to %q — any local process with no credential gets the %s tier", *untokened, *untokened)
 	}
 	// Plugin-contributed tools: poll the hub's consented surface and graft it
 	// onto per-token servers (opt-in via each session token's plugin grants).
@@ -226,19 +230,20 @@ func hostIsLoopback(name string) bool {
 //     both the tool list the client sees and the calls it may make.
 //
 // No credential at all is governed by the untokened dial (-untokened /
-// WKS_MCP_UNTOKENED) — operator by default, the loopback-open back-compat every
-// existing client (and the desktop's own supervisor spawns) relies on; view
-// serves only the read-only tier; deny refuses. The static token, when set,
-// still overrides the dial as it always has: setting it means "credentials
-// required", so a credential-less request is refused regardless of the dial. A
-// credential that is PRESENT but unknown is 401, never open access: presenting
-// a revoked session token must not quietly escalate to the untokened default.
+// WKS_MCP_UNTOKENED) — DENY by default: a caller presenting nothing gets 401,
+// not the fleet. operator restores the historical loopback-open behavior and
+// view serves such a caller the read-only tier; both are opt-in. The static
+// token, when set, still overrides the dial as it always has: setting it means
+// "credentials required", so a credential-less request is refused regardless of
+// the dial. A credential that is PRESENT but unknown is 401, never open access:
+// presenting a revoked session token must not quietly escalate to the untokened
+// default.
 type authGate struct {
 	static string
 	store  *authtoken.Store
-	// untokened is one of untokenedOperator/View/Deny. The zero value behaves
-	// as operator, so an authGate built without the field keeps the historical
-	// default.
+	// untokened is one of untokenedOperator/View/Deny. The ZERO VALUE FAILS
+	// CLOSED (deny): an authGate built without the field must not hand out
+	// operator, because that is exactly the shape the default used to have.
 	untokened string
 }
 
@@ -248,6 +253,35 @@ const (
 	untokenedView     = "view"
 	untokenedDeny     = "deny"
 )
+
+// defaultUntokened is the SHIPPED position of the dial, and it is deny on
+// purpose: the facade drives the whole agent fleet (spawn_agent, write_file,
+// save_config, send_message), it listens on plain HTTP, and loopback is
+// reachable by every local user, by a container sharing the host network
+// namespace, and by anything running inside a sandbox that has the network but
+// not the user's home. "Whoever reaches the port" is not an identity, so it
+// gets no tools.
+//
+// Nothing legitimate regresses, because nothing legitimate is credential-less:
+// every session the desktop or the brain spawns with the facade carries a
+// per-session scoped token (an Authorization header on the PTY/claude-stream
+// --mcp-config file, a ?t= query param for the URL-only codex/opencode/copilot
+// registrations). A hand-configured local MCP client — the one shape that WAS
+// credential-less — mints its own with `workspacer token create --scope
+// operator`, or the user opts the whole facade back open with
+// `facade.untokenedAccess: operator` in config.yaml.
+//
+// TEST: TestUntokenedDefaultDeniesFleetControl pins this. Do not relax it back
+// to untokenedOperator.
+const defaultUntokened = untokenedDeny
+
+// untokenedDefault resolves the dial's default: WKS_MCP_UNTOKENED when set,
+// otherwise the shipped deny. Split out of the flag declaration so a test can
+// prove BOTH halves — the shipped default and the env override — without
+// running main.
+func untokenedDefault() string {
+	return envOr("WKS_MCP_UNTOKENED", defaultUntokened)
+}
 
 // checkUntokenedMode refuses an unrecognized dial value at startup — a typo in
 // a lockdown flag must not silently fall back to the open default.
@@ -298,15 +332,20 @@ func (g *authGate) resolveRecord(r *http.Request) (authtoken.Record, bool) {
 		if g.static != "" {
 			return authtoken.Record{}, false
 		}
+		// Allowlisted, not denylisted: only the two dial positions that
+		// deliberately open the door say yes. deny, the zero value, and any
+		// value that slipped past checkUntokenedMode all fall through to the
+		// refusal — the failure mode of a bug here has to be "no tools", never
+		// "the whole fleet".
 		switch g.untokened {
-		case untokenedDeny:
-			return authtoken.Record{}, false
+		case untokenedOperator:
+			return authtoken.Record{Scope: authtoken.ScopeOperator}, true
 		case untokenedView:
 			// Read-only tier, and — like every synthesized record — NO plugin
 			// grants; plugin tools stay strictly opt-in per session token.
 			return authtoken.Record{Scope: authtoken.ScopeView}, true
-		default: // operator, or the zero value (back-compat)
-			return authtoken.Record{Scope: authtoken.ScopeOperator}, true
+		default: // deny, or the zero value — fail closed
+			return authtoken.Record{}, false
 		}
 	}
 	if g.static != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(g.static)) == 1 {
@@ -364,9 +403,12 @@ func requireScope(gate *authGate, h http.Handler) http.Handler {
 }
 
 // checkBindPolicy fails closed when the facade would expose its fleet-driving
-// surface beyond the local host without a token. Loopback binds may stay open
-// (the desktop default); anything reachable from the network must carry a
-// token — OR run with `-untokened deny`, which is strictly stronger than the
+// surface beyond the local host without a token. It is a BACKSTOP now rather
+// than the front line: the dial's shipped default is already deny, so the case
+// this rejects only arises when someone has explicitly dialed untokened access
+// back open AND bound a non-loopback address. Loopback binds may stay open;
+// anything reachable from the network must carry a token — OR run with
+// `-untokened deny` (the default), which is strictly stronger than the
 // static-token requirement it substitutes for: every request must then present
 // a resolvable credential (the static token merely being one way to have one),
 // and credential-less requests 401 outright. `view` does NOT satisfy the
