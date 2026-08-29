@@ -191,6 +191,39 @@ describe('useSessionAnalytics — unreachable is not empty', () => {
     expect(result.current.unrecordedComplete).toBe(false);
   });
 
+  it('prefers the store’s own un-costed count over the capped row-derived floor', async () => {
+    // Same capped read as above, but the store reported the exact figure. It
+    // is counted over EVERY row, so it shares a denominator with the session
+    // count beside it and the "at least" hedge is no longer warranted.
+    const rows = Array.from({ length: RECENT_LIMIT }, (_, i) =>
+      rec({ sessionId: `s${i}`, costUSD: 0, inputTokens: 0, outputTokens: 0 }),
+    );
+    const sum = summary(14892.67, 5000) as any;
+    sum.totals.unrecordedSessions = 231;
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue(sum);
+    (window.electronAPI.analyticsRecent as any).mockResolvedValue(rows);
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.unrecordedSessions).toBe(231);
+    expect(result.current.unrecordedComplete).toBe(true);
+  });
+
+  it('does not read a missing un-costed count as zero un-costed rows', async () => {
+    // A source that omits the field (the headless stub, an older main) says
+    // nothing about un-costed rows. Falling through to the rows actually read
+    // is the honest answer; treating undefined as 0 would claim every one of
+    // the 5000 sessions was costed.
+    const rows = Array.from({ length: RECENT_LIMIT }, (_, i) =>
+      rec({ sessionId: `s${i}`, costUSD: 0, inputTokens: 0, outputTokens: 0 }),
+    );
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue(summary(14892.67, 5000));
+    (window.electronAPI.analyticsRecent as any).mockResolvedValue(rows);
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.unrecordedSessions).toBe(RECENT_LIMIT);
+    expect(result.current.unrecordedComplete).toBe(false);
+  });
+
   it('a genuine zero total from a reachable store is kept as a measurement', async () => {
     // A brand-new install: the store answers, and it truly has nothing. That
     // IS $0.00 across 0 sessions, and must not be reported as unavailable.

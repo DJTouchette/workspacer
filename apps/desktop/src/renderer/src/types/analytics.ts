@@ -8,6 +8,23 @@ export interface AnalyticsTotals {
   toolCalls: number;
   durationMs: number;
   workflowRuns: number;
+  /**
+   * How many of `sessions` carry no usage at all — `cost_usd`, `input_tokens`
+   * and `output_tokens` all zero.
+   *
+   * The columns are `REAL/INTEGER DEFAULT 0` and never NULL, so a row that was
+   * created and never had usage written to it is indistinguishable from one
+   * measured at zero; ~31% of the rows on a real machine are that. Counting
+   * them is the only honest way to say what the lifetime total covers — the
+   * figure is a sum over `sessions - unrecordedSessions` rows, not over all of
+   * them.
+   *
+   * OPTIONAL because a source that does not compute it must not be read as
+   * "zero un-costed rows": the headless brain stub and any older desktop main
+   * both answer without it, and undefined sends the consumer back to counting
+   * the rows it actually read (a floor, labelled as one).
+   */
+  unrecordedSessions?: number;
 }
 
 export interface AnalyticsBucket {

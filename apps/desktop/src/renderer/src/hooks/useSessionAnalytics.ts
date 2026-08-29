@@ -45,14 +45,19 @@ export interface SessionAnalytics {
    *  (transcript-only sessions the daemon forgot). Empty until loaded. */
   bySessionId: Record<string, RecordedRow>;
   /** How many history rows carry no usage at all — the honest denominator for
-   *  "this total covers N of M sessions". Counted over the rows actually READ
-   *  (see {@link RECENT_LIMIT}), which is why {@link unrecordedComplete} rides
-   *  beside it. */
+   *  "this total covers N of M sessions".
+   *
+   *  Preferred from `summary.totals.unrecordedSessions`, which the store counts
+   *  over EVERY row and therefore shares a denominator with
+   *  `summary.totals.sessions`. A source that does not report it (the headless
+   *  stub, an older main) falls back to counting the rows actually READ, which
+   *  is a floor once the read hits {@link RECENT_LIMIT} — hence
+   *  {@link unrecordedComplete}. */
   unrecordedSessions: number;
-  /** False when the row read hit its cap, so `unrecordedSessions` is a floor
-   *  rather than a count. `summary.totals.sessions` is the whole store; the
-   *  two have different denominators the moment this goes false, and a surface
-   *  that prints them side by side has to say so. */
+  /** False when `unrecordedSessions` is a FLOOR rather than a count: the store
+   *  gave no exact figure and the row read hit its cap. `summary.totals.
+   *  sessions` is the whole store, so the two then have different denominators
+   *  and a surface that prints them side by side has to say so. */
   unrecordedComplete: boolean;
   loading: boolean;
   /** Why the store could not be read, or null when it could. */
@@ -151,8 +156,18 @@ export function useSessionAnalytics(enabled = true): SessionAnalytics {
           const list = Array.isArray(rows) ? rows : [];
           const idx = indexHistoryRows(list);
           setBySessionId(idx.bySessionId);
-          setUnrecorded(idx.unrecordedSessions);
-          setUnrecordedComplete(list.length < RECENT_LIMIT);
+          // The store's own count is over every row and shares a denominator
+          // with `totals.sessions`; the row-derived one is only over what was
+          // read. Prefer the exact figure, and note that a source omitting it
+          // must not be read as "zero un-costed rows" — hence the typeof.
+          const exact = sum.totals.unrecordedSessions;
+          if (typeof exact === 'number') {
+            setUnrecorded(exact);
+            setUnrecordedComplete(true);
+          } else {
+            setUnrecorded(idx.unrecordedSessions);
+            setUnrecordedComplete(list.length < RECENT_LIMIT);
+          }
           setUnavailable(null);
         }
         setLoading(false);

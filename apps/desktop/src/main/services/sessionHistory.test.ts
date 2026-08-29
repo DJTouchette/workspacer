@@ -62,6 +62,46 @@ describe('sessionHistory.summary — unreadable is not empty', () => {
   });
 });
 
+describe('sessionHistory.summary — how much of the total is actually measured', () => {
+  it('counts the rows that recorded no usage at all, over the WHOLE store', () => {
+    // `cost_usd` / `input_tokens` / `output_tokens` are DEFAULT 0 and never
+    // NULL, so a row created and never written to looks exactly like one
+    // measured at zero. Only the store can count them across every row; a
+    // consumer counting the rows it READ gets a floor, not a figure.
+    let sql = '';
+    state.db = {
+      prepare: (q: string) => {
+        sql = sql || q;
+        return {
+          get: () => ({
+            sessions: 747,
+            costUSD: 14892.67,
+            inputTokens: 0,
+            outputTokens: 0,
+            toolCalls: 0,
+            durationMs: 0,
+            workflowRuns: 0,
+            unrecordedSessions: 231,
+          }),
+          all: () => [],
+        };
+      },
+    };
+    const out = sessionHistory.summary();
+    expect(out.totals.unrecordedSessions).toBe(231);
+    // The count must share `totals`' denominator — same table, same filter.
+    expect(sql).toMatch(/FROM session_history/);
+    expect(sql).toMatch(/unrecordedSessions/);
+  });
+
+  it('leaves it undefined when the store does not report one', () => {
+    // Undefined is not zero: a consumer must fall back to its own count
+    // rather than claim every row was costed.
+    state.db = emptyStore();
+    expect(sessionHistory.summary().totals.unrecordedSessions).toBeUndefined();
+  });
+});
+
 describe('sessionHistory.recent — an unreadable store rejects, it does not answer []', () => {
   beforeEach(() => {
     state.db = null;
