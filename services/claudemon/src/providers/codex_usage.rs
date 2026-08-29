@@ -260,25 +260,17 @@ fn read_tail(path: &Path, budget: u64) -> Option<String> {
 /// means the total is UNKNOWN, and reporting 0 would claim the account had
 /// spent nothing.
 ///
-/// Opened read-only and `immutable=1`. Read-only alone is not enough: attaching
-/// to a WAL database requires creating/locking its `-shm` file, which a
-/// read-only handle cannot do. `immutable` skips the WAL entirely — so the
-/// figure is as of the last checkpoint rather than the last write. Measured on
-/// the live DB, 2026-08-28: this read returned 221 939 543 tokens over 53
-/// threads where a WAL-inclusive `sqlite3` read of the same file returned
-/// 222 588 411 over 54 — one uncheckpointed session, 0.3%. That is the price,
-/// and it buys never contending with the running CLI for a lifetime total
-/// nobody bills against.
+/// Read WAL-aware via [`super::open_foreign_sqlite_readonly`], which explains
+/// why `immutable=1` is the fallback and not the default. Measured here on
+/// 2026-08-28: the WAL-aware read returns 222 588 411 tokens over 54 threads,
+/// the immutable one 221 939 543 over 53 — one uncheckpointed session. Codex's
+/// gap is small; Copilot's is everything, which is why the helper is shared.
 fn all_thread_tokens(codex_home: &Path) -> (Option<u64>, Option<u64>) {
     let db = codex_home.join("state_5.sqlite");
     if !db.is_file() {
         return (None, None);
     }
-    let uri = format!("file:{}?mode=ro&immutable=1", db.display());
-    let Ok(conn) = rusqlite::Connection::open_with_flags(
-        &uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    ) else {
+    let Some(conn) = super::open_foreign_sqlite_readonly(&db) else {
         return (None, None);
     };
     conn.query_row(
