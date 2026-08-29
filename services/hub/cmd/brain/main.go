@@ -71,7 +71,16 @@ func main() {
 			return bus.call(ctx, "layout.get", map[string]any{})
 		}, 5*time.Second)
 		reg.vis = vis
+		// The worker-finished wake (finishwake.go): the ONE thing that makes a
+		// headless Fleet Manager work, because its doctrine is never to poll.
+		// It is fed BEFORE the visibility filter on purpose — a session the
+		// shared layout hides is still a dispatch that came home, and hiding a
+		// row from a sidebar is not a reason to deny its manager the report.
+		fin := newFinishWatcher(reg)
+		reg.fin = fin
+		store.onSeed = fin.prime
 		store.onChange = func(_ string, snap json.RawMessage) {
+			fin.observe(ctx, snap)
 			if !vis.visible(context.Background(), snap) {
 				return
 			}
@@ -107,6 +116,10 @@ func main() {
 		// than on every snapshot push — a threshold on spend is not a real-time
 		// signal, and a sweep cannot be starved by a chatty session.
 		go reg.runThresholdSweeps(ctx)
+		// The catch-up backstop for a wake that never landed — a brain restart,
+		// a dropped /events edge, a delivery that threw. Without it a manager
+		// that misses one wake stays dark until a human notices.
+		go fin.runBackstop(ctx)
 	}
 
 	facade := "disabled"

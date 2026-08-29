@@ -449,6 +449,13 @@ func (r *registry) closeAgent(ctx context.Context, raw json.RawMessage) (json.Ra
 	}
 	wasLive := !before.ended()
 	r.store.remove(p.SessionID)
+	// The wake watcher keeps two per-session entries (a dedup signature and the
+	// remembered ambient state). The row is gone, so drop them with it rather
+	// than retaining one per session for the process lifetime — the same concern
+	// supervisorNudge.forgetWorker answers on the desktop.
+	if r.fin != nil {
+		r.fin.forgetWorker(p.SessionID)
+	}
 
 	// Tear the daemon side down too, but only for a row that had not already
 	// ended: a dismissal that left a live-but-idle wrapper attached would be a
