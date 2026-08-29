@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-const USER_VERSION: i32 = 7;
+const USER_VERSION: i32 = 8;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -73,6 +73,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // whoever reads it next, so the column goes rather than acquiring a
         // writer that would then have to be kept in agreement.
         step(conn, 7, drop_session_total_cost_usd)?;
+    }
+    if current < 8 {
+        // v8: sessions remember WHICH ACCOUNT they billed against. Deliberately
+        // NOT backfilled — see `add_session_config_root`.
+        step(conn, 8, add_session_config_root)?;
     }
     Ok(())
 }
@@ -179,6 +184,37 @@ fn drop_session_total_cost_usd(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_V7)
 }
 
+/// v8's body: `sessions.config_root` — which Claude account a session billed
+/// against, recorded at write time from the value the session was SPAWNED with.
+///
+/// THREE-VALUED, and the three values have to stay apart. `''` is the default
+/// account, a real answer. A path is a named profile. `NULL` is "we do not
+/// know", which is what every row written before this column, and every session
+/// the daemon did not spawn, honestly is.
+///
+/// DELIBERATELY NOT BACKFILLED, unlike v6. v6 could recover transcript paths
+/// because the event log had been storing them verbatim all along — that was
+/// recovering data, not inventing it. There is no equivalent here. The only
+/// candidate source is the transcript path, and resolving an account out of it
+/// is precisely the operation that silently merges a profile into the default
+/// account whenever a symlinked `projects` dir is involved (see
+/// `session::account_usage::root_from_transcript`). A backfill would therefore
+/// manufacture confident, wrong attributions for exactly the rows most likely
+/// to belong to a second account. `NULL` says "unknown", every consumer must
+/// treat it as unknown, and going forward the column is populated for real.
+///
+/// Catalog-checked and therefore replay-safe, for the reason spelled out on
+/// [`add_heartbeat_provider`].
+fn add_session_config_root(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let present = stmt.exists(["config_root"])?;
+    drop(stmt);
+    if present {
+        return Ok(());
+    }
+    conn.execute_batch(SCHEMA_V8)
+}
+
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -268,6 +304,13 @@ UPDATE sessions SET transcript_path = (
 /// v7 migration: retire the never-written, never-read `total_cost_usd`.
 const SCHEMA_V7: &str = r#"
 ALTER TABLE sessions DROP COLUMN total_cost_usd;
+"#;
+
+/// v8 migration: the account a session billed against. Nullable and NOT
+/// defaulted — a `DEFAULT ''` would silently claim every pre-existing row for
+/// the primary account, which is the exact lie this column exists to prevent.
+const SCHEMA_V8: &str = r#"
+ALTER TABLE sessions ADD COLUMN config_root TEXT;
 "#;
 
 #[cfg(test)]

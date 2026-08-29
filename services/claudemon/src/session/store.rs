@@ -576,6 +576,13 @@ impl SessionStore {
                 // account attribution (`claude_config_root`), which likewise
                 // went blank across a restart.
                 st.transcript_path = s.transcript_path.clone();
+                // The ACCOUNT this session billed against, as recorded at
+                // spawn. Restored rather than re-derived: re-deriving it from
+                // the transcript path is exactly the thing that merges two
+                // logins the moment anything resolves that path (see
+                // `SessionState::config_root`). `None` here is honest — a row
+                // written before v8, or a session the daemon did not spawn.
+                st.config_root = s.config_root.clone();
                 if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
                     st.started_at = t;
                 }
@@ -1292,17 +1299,31 @@ impl SessionStore {
     }
 
     /// The config root recorded for a session, if the daemon spawned it.
-    /// `None` means the daemon genuinely does not know — never "the default".
+    ///
+    /// Three-valued on purpose, and the values must stay apart all the way to
+    /// the wire: `Some("")` is the DEFAULT account (a known answer), `Some(p)`
+    /// is a named profile, and `None` means the daemon genuinely does not know
+    /// — a session it did not spawn. Collapsing `None` into `Some("")` would
+    /// bill every unattributable session to the default account.
+    ///
+    /// Alias-aware: hook events arrive under Claude's own session id, which is
+    /// the spawn id only because the daemon pins `--session-id`. A session the
+    /// daemon adopted rather than pinned is reachable only through the alias.
     pub fn config_root(&self, session_id: &str) -> Option<String> {
-        self.states
+        let canonical = self
+            .aliases
             .get(session_id)
+            .map(|e| e.clone())
+            .unwrap_or_else(|| session_id.to_string());
+        self.states
+            .get(&canonical)
             .and_then(|s| s.config_root.clone())
     }
 
     /// The model a session was ASKED for, if anything recorded one.
     ///
     /// Read by the persistence task so the row SQLite creates for this session
-    /// carries it — see `Db::record_event_with_requested_model` for why it
+    /// carries it — see `Db::record_event_with_spawn_facts` for why it
     /// cannot simply be UPDATEd at spawn time.
     pub fn requested_model(&self, session_id: &str) -> Option<String> {
         self.states
@@ -3100,6 +3121,7 @@ mod tests {
                 model: None,
                 requested_model: None,
                 transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "old2".into(),
@@ -3111,6 +3133,7 @@ mod tests {
                 model: None,
                 requested_model: None,
                 transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "old3".into(),
@@ -3122,6 +3145,7 @@ mod tests {
                 model: None,
                 requested_model: None,
                 transcript_path: None,
+                config_root: None,
             },
             crate::store::RestoredSession {
                 id: "fresh".into(),
@@ -3133,6 +3157,7 @@ mod tests {
                 model: None,
                 requested_model: None,
                 transcript_path: None,
+                config_root: None,
             },
         ]);
         // A live session must always survive, however old the clock says it is.
@@ -3213,6 +3238,7 @@ mod tests {
             model: None,
             requested_model: None,
             transcript_path: Some(path.to_str().unwrap().to_string()),
+            config_root: None,
         }]);
 
         let state = store.get("restored").expect("hydrated");
@@ -3244,6 +3270,7 @@ mod tests {
                 // 200k answer for its stripped id and reads 5x too full.
                 requested_model: Some("opus[1m]".into()),
                 transcript_path: Some("/home/u/.claude/projects/-work/restored.jsonl".into()),
+                config_root: None,
             },
             // Same id as the live one — must NOT overwrite it back to stopped.
             crate::store::RestoredSession {
@@ -3256,6 +3283,7 @@ mod tests {
                 model: None,
                 requested_model: None,
                 transcript_path: None,
+                config_root: None,
             },
         ]);
 

@@ -69,27 +69,27 @@ impl Db {
     /// Persist one hook event plus a session upsert. Both happen in a single
     /// transaction so the events row never references a missing session.
     pub fn record_event(&self, event: &HookEvent) -> Result<i64> {
-        self.record_event_with_requested_model(event, None)
+        self.record_event_with_spawn_facts(event, SpawnFacts::default())
     }
 
-    /// [`record_event`](Self::record_event), plus the model this session was
-    /// ASKED for, when the in-memory store knows one.
+    /// [`record_event`](Self::record_event), plus the facts only the SPAWN
+    /// knows — the model this session was asked for and the account it bills
+    /// against. Neither can be recovered from the event itself.
     ///
-    /// It is threaded through here rather than written by a second statement
-    /// because of an ordering hole: a spawn calls
-    /// [`note_requested_model`](Self::note_requested_model) BEFORE the session
-    /// has a row (rows are created by the first hook event), so that `UPDATE`
-    /// matches nothing and the very next `INSERT` would leave the column NULL.
-    /// Stamping it onto the row being created closes that, at no extra query —
-    /// exactly how the neighbouring `model` column is handled.
-    pub fn record_event_with_requested_model(
+    /// They are threaded through here rather than written by a second statement
+    /// because of an ordering hole: a spawn records them in memory BEFORE the
+    /// session has a row (rows are created by the first hook event), so an
+    /// `UPDATE` would match nothing and the very next `INSERT` would leave the
+    /// columns NULL. Stamping them onto the row being created closes that, at
+    /// no extra query — exactly how the neighbouring `model` column is handled.
+    pub fn record_event_with_spawn_facts(
         &self,
         event: &HookEvent,
-        requested_model: Option<&str>,
+        facts: SpawnFacts<'_>,
     ) -> Result<i64> {
         let mut guard = self.conn.lock().expect("db mutex poisoned");
         let tx = guard.transaction()?;
-        upsert_session_tx(&tx, event, requested_model)?;
+        upsert_session_tx(&tx, event, facts)?;
         let row_id = insert_event_tx(&tx, event)?;
         tx.commit()?;
         Ok(row_id)
@@ -158,7 +158,7 @@ impl Db {
             "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
                     (SELECT COUNT(*) FROM events e
                        WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit'),
-                    s.model, s.requested_model, s.transcript_path
+                    s.model, s.requested_model, s.transcript_path, s.config_root
              FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
@@ -173,6 +173,9 @@ impl Db {
                 model: r.get::<_, Option<String>>(6)?.filter(|m| !m.is_empty()),
                 requested_model: r.get::<_, Option<String>>(7)?.filter(|m| !m.is_empty()),
                 transcript_path: r.get::<_, Option<String>>(8)?.filter(|p| !p.is_empty()),
+                // No `filter(!is_empty)`: `Some("")` is the default account,
+                // which is a different fact from `None` (unknown).
+                config_root: r.get::<_, Option<String>>(9)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -286,12 +289,28 @@ pub struct RestoredSession {
     /// the session actually cost. `None` only for a session whose event log
     /// never carried a `transcript_path` — which is honestly unknown, not zero.
     pub transcript_path: Option<String>,
+    /// The Claude account this session billed against, as recorded at spawn.
+    /// `Some("")` is the DEFAULT account — a real answer. `None` is genuinely
+    /// unknown: a row written before schema v8, or a session the daemon did
+    /// not spawn. The two must not be conflated; see `schema::SCHEMA_V8`.
+    pub config_root: Option<String>,
+}
+
+/// The facts about a session that only its SPAWN knows, carried into the
+/// statement that creates its row. Both are `Option` because "the daemon did
+/// not spawn this session" is a real state and must not be written as a value.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpawnFacts<'a> {
+    /// The model asked for, `[1m]` marker intact.
+    pub requested_model: Option<&'a str>,
+    /// The Claude config root, normalized — `Some("")` = the default account.
+    pub config_root: Option<&'a str>,
 }
 
 fn upsert_session_tx(
     tx: &rusqlite::Transaction<'_>,
     event: &HookEvent,
-    requested_model: Option<&str>,
+    facts: SpawnFacts<'_>,
 ) -> Result<()> {
     let now = event_timestamp_unix(event);
     let session_id = &event.session_id;
@@ -316,7 +335,14 @@ fn upsert_session_tx(
     let model = payload.get("model").and_then(Value::as_str);
     // The model the session was ASKED for, which the transcript can never
     // report: Claude Code strips the `[1m]` marker from the id it writes.
-    let requested_model = requested_model.map(str::trim).filter(|m| !m.is_empty());
+    let requested_model = facts
+        .requested_model
+        .map(str::trim)
+        .filter(|m| !m.is_empty());
+    // The account this session bills against. NOT `filter(!is_empty)` — the
+    // empty string is the DEFAULT account, a known answer, and dropping it to
+    // NULL would relabel every default-account session "unknown".
+    let config_root = facts.config_root.map(str::trim);
     let branch = payload.get("branch").and_then(Value::as_str);
     // The transcript this session's usage folds from. Every Claude Code hook
     // carries it; persisting it here is what lets a rehydrated row report real
@@ -337,8 +363,8 @@ fn upsert_session_tx(
         "INSERT INTO sessions (
             id, name, project, cwd, worktree_path, branch, base_branch, model,
             state, pid, created_at, last_event_at, tool_call_count,
-            requested_model, transcript_path
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, ?9, ?10)
+            requested_model, transcript_path, config_root
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, ?9, ?10, ?11)
          ON CONFLICT(id) DO UPDATE SET
             last_event_at = excluded.last_event_at,
             cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
@@ -346,7 +372,11 @@ fn upsert_session_tx(
             branch = COALESCE(sessions.branch, excluded.branch),
             requested_model = COALESCE(sessions.requested_model, excluded.requested_model),
             transcript_path =
-                COALESCE(excluded.transcript_path, sessions.transcript_path)",
+                COALESCE(excluded.transcript_path, sessions.transcript_path),
+            -- First non-NULL wins and then sticks. A session cannot change
+            -- account mid-life, and later events carry no attribution at all,
+            -- so a plain assignment would blank the spawn's answer on event 2.
+            config_root = COALESCE(sessions.config_root, excluded.config_root)",
         params![
             session_id,
             name,
@@ -357,7 +387,8 @@ fn upsert_session_tx(
             model,
             now,
             requested_model,
-            transcript_path
+            transcript_path,
+            config_root
         ],
     )?;
 
@@ -458,6 +489,84 @@ mod tests {
         );
     }
 
+    /// Account attribution is written at spawn time and survives a restart —
+    /// and, critically, its THREE states stay three states.
+    ///
+    /// `Some("")` is the default account (a real answer), `Some(path)` is a
+    /// named profile, and `None` is genuinely unknown: a session the daemon
+    /// did not spawn. A UI that cannot tell the third from the first will bill
+    /// unattributable sessions to the primary account, which is the specific
+    /// lie this column exists to prevent — so it is asserted here, at the
+    /// boundary where an over-eager `filter(|s| !s.is_empty())` would erase it.
+    #[test]
+    fn the_account_survives_a_restart_and_unknown_stays_unknown() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "profile"),
+            SpawnFacts {
+                config_root: Some("/home/u/.claude/accounts/work"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "default"),
+            SpawnFacts {
+                config_root: Some(""),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Not spawned by the daemon: no attribution exists to record.
+        db.record_event(&ev("SessionStart", "adopted-elsewhere"))
+            .unwrap();
+
+        let by_id: std::collections::HashMap<String, Option<String>> = db
+            .load_recent_sessions(10)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.id, s.config_root))
+            .collect();
+        assert_eq!(
+            by_id["profile"].as_deref(),
+            Some("/home/u/.claude/accounts/work"),
+        );
+        assert_eq!(
+            by_id["default"].as_deref(),
+            Some(""),
+            "the default account is a KNOWN answer and must not read as unknown",
+        );
+        assert_eq!(
+            by_id["adopted-elsewhere"], None,
+            "a session the daemon did not spawn is unknown, not default —              NULL is the only honest value and nothing may backfill it",
+        );
+    }
+
+    /// The spawn knows the account; the hooks that follow do not. A plain
+    /// assignment on conflict would therefore blank it on the second event.
+    #[test]
+    fn the_account_is_stamped_once_and_never_blanked() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "s1"),
+            SpawnFacts {
+                config_root: Some("/home/u/.claude/accounts/work"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Every later event carries no attribution at all.
+        db.record_event(&ev("PreToolUse", "s1")).unwrap();
+        db.record_event(&ev("Stop", "s1")).unwrap();
+        assert_eq!(
+            db.load_recent_sessions(10).unwrap()[0]
+                .config_root
+                .as_deref(),
+            Some("/home/u/.claude/accounts/work"),
+        );
+    }
+
+    /// A later hook naming a DIFFERENT transcript wins; a later hook naming
     /// A later hook naming a DIFFERENT transcript wins; a later hook naming
     /// none must not blank the column (most hooks carry it, but the upsert has
     /// to survive one that does not).
@@ -578,7 +687,7 @@ mod tests {
     /// The ORDERING is the substance of this test: the spawn records the model
     /// before the session has a row at all (rows are born from the first hook
     /// event), so the plain `UPDATE` matches nothing. It is
-    /// `record_event_with_requested_model` stamping the value onto the row it
+    /// `record_event_with_spawn_facts` stamping the value onto the row it
     /// creates that saves it.
     #[test]
     fn requested_model_survives_a_daemon_restart() {
@@ -595,8 +704,14 @@ mod tests {
         );
 
         // 2. The first hook event creates the row, carrying the model with it.
-        db.record_event_with_requested_model(&ev("SessionStart", "s1"), Some("opus[1m]"))
-            .unwrap();
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "s1"),
+            SpawnFacts {
+                requested_model: Some("opus[1m]"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         // 3. Restart: this is what `hydrate` gets handed.
         let restored = db.load_recent_sessions(10).unwrap();
@@ -628,8 +743,14 @@ mod tests {
     fn a_later_event_without_a_request_does_not_blank_it() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
-        db.record_event_with_requested_model(&ev("SessionStart", "s1"), Some("sonnet[1m]"))
-            .unwrap();
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "s1"),
+            SpawnFacts {
+                requested_model: Some("sonnet[1m]"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         db.record_event(&ev("PreToolUse", "s1")).unwrap();
         let restored = db.load_recent_sessions(10).unwrap();
         assert_eq!(restored[0].requested_model.as_deref(), Some("sonnet[1m]"));
