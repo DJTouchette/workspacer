@@ -336,7 +336,7 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
 /// this works on Windows (USERPROFILE/known folders), where `$HOME` is normally
 /// unset. Reading `$HOME` directly here meant Codex's GUI transcript never
 /// populated on Windows (the rollout was never discovered).
-fn codex_home() -> Option<PathBuf> {
+pub(crate) fn codex_home() -> Option<PathBuf> {
     if let Some(h) = std::env::var_os("CODEX_HOME") {
         return Some(PathBuf::from(h));
     }
@@ -446,7 +446,7 @@ pub fn replay_conversation(path: &Path) -> Vec<ConversationItem> {
 
 /// Collect every `rollout-*.jsonl` under `sessions_root` (recurses the
 /// YYYY/MM/DD layout), with its modified time. Bounded, best-effort.
-fn collect_rollouts(sessions_root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
+pub(crate) fn collect_rollouts(sessions_root: &Path) -> Vec<(PathBuf, std::time::SystemTime)> {
     let mut out = Vec::new();
     let mut stack = vec![sessions_root.to_path_buf()];
     while let Some(dir) = stack.pop() {

@@ -16,6 +16,7 @@
 pub mod claude_stream;
 pub mod codex;
 pub mod codex_rollout;
+pub mod codex_usage;
 pub mod copilot;
 pub mod opencode;
 pub mod pi;
