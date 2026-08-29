@@ -25,6 +25,9 @@ type registry struct {
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
 	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
 	term  *terminalHub  // PTY-over-bus forwarders (full scope only)
+	// fin is the worker-finished wake watcher (finishwake.go), full scope only.
+	// Nil-safe at every call site: catalog scope has no live store to watch.
+	fin *finishWatcher
 	// publish puts an event on the bus. Set in full scope only; terminals.open
 	// REFUSES rather than reporting success when it is nil, because the whole
 	// request is that a client make something visible.

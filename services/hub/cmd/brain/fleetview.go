@@ -53,12 +53,32 @@ type fleetSession struct {
 		TotalInputTokens  *float64 `json:"totalInputTokens"`
 		TotalOutputTokens *float64 `json:"totalOutputTokens"`
 		CostUSD           *float64 `json:"costUSD"`
+		// OverageOutOfCredits is the daemon's structured out-of-credits bit,
+		// read by the finish wake's failure check (workerfailure.go). Standing
+		// ACCOUNT state, not a per-turn event — it only ever enriches a failure
+		// the error marker already established.
+		OverageOutOfCredits *bool `json:"overageOutOfCredits"`
 	} `json:"statusLine"`
 	RawStatusLine *struct {
-		TotalInputTokens  *float64 `json:"total_input_tokens"`
-		TotalOutputTokens *float64 `json:"total_output_tokens"`
-		CostUSD           *float64 `json:"cost_usd"`
+		TotalInputTokens    *float64 `json:"total_input_tokens"`
+		TotalOutputTokens   *float64 `json:"total_output_tokens"`
+		CostUSD             *float64 `json:"cost_usd"`
+		OverageOutOfCredits *bool    `json:"overage_out_of_credits"`
 	} `json:"status_line"`
+}
+
+// outOfCredits reads the daemon's out-of-credits bit, preferring the RAW block
+// over the compat overlay for the same reason `pick` does: updateStatusLine
+// merges a fresh status line into `status_line` only, so the camelCase copy goes
+// stale between full snapshots.
+func (s fleetSession) outOfCredits() bool {
+	if s.RawStatusLine != nil && s.RawStatusLine.OverageOutOfCredits != nil {
+		return *s.RawStatusLine.OverageOutOfCredits
+	}
+	if s.StatusLine != nil && s.StatusLine.OverageOutOfCredits != nil {
+		return *s.StatusLine.OverageOutOfCredits
+	}
+	return false
 }
 
 // ended reports whether this row is finished. TWIN: the `status === 'ended'`

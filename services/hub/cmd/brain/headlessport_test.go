@@ -176,10 +176,18 @@ func portedMethodStanding() map[string]bool {
 func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 	ts := joinTSStringLiterals(string(mustReadRepoFile(t, "apps", "desktop", "src", "main", "shared", "fleetMessages.ts")))
 	for name, want := range map[string]string{
-		"progress header":  fleetProgressHeader,
-		"threshold header": fleetThresholdHeader,
-		"progress tail":    fleetProgressTail,
-		"threshold tail":   fleetThresholdTail,
+		"progress header":         fleetProgressHeader,
+		"threshold header":        fleetThresholdHeader,
+		"progress tail":           fleetProgressTail,
+		"threshold tail":          fleetThresholdTail,
+		"worker-finished header":  fleetWorkerFinishedHeader,
+		"worker-FAILED header":    fleetWorkerFailedHeader,
+		"catch-up header":         fleetCatchUpHeader,
+		"worker-finished tail":    fleetWorkerFinishedTail,
+		"catch-up tail":           fleetCatchUpTail,
+		"failed note":             fleetFailedNote,
+		"stopped note":            fleetStoppedNote,
+		"full-reply block prefix": "Full final message — ",
 		// agents.sendMessage's attribution header. Split into its two fixed
 		// halves on both sides precisely so it can be pinned here: the
 		// TypeScript composes it with a template literal, which this

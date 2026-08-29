@@ -21,6 +21,12 @@ type sessionStore struct {
 	onChange func(id string, snap json.RawMessage)
 	// enrich, if set, overlays name/parent/etc. onto each snapshot as it lands.
 	enrich func(json.RawMessage) json.RawMessage
+	// onSeed is invoked (outside the lock) with the whole seeded set, which
+	// onChange deliberately never sees. The finish watcher needs it: a
+	// transition has two halves, and without the BEFORE state of every session
+	// that already existed at boot, the first finish after startup looks like a
+	// first sighting and wakes nobody. See finishWatcher.prime.
+	onSeed func(map[string]json.RawMessage)
 }
 
 func (s *sessionStore) applyEnrich(snap json.RawMessage) json.RawMessage {
@@ -43,7 +49,11 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 	}
 	s.mu.Lock()
 	s.m = enriched
+	cb := s.onSeed
 	s.mu.Unlock()
+	if cb != nil {
+		cb(enriched)
+	}
 }
 
 // set upserts one session and notifies (publishes) the change.
