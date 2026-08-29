@@ -838,7 +838,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                     : lifetime
                       ? `${lifetime.sessions} session${lifetime.sessions === 1 ? '' : 's'}${
                           analytics.unrecordedSessions > 0
-                            ? ` · ${analytics.unrecordedSessions} un-costed`
+                            ? ` · ${analytics.unrecordedComplete ? '' : '≥'}${
+                                analytics.unrecordedSessions
+                              } un-costed`
                             : ''
                         }`
                       : 'no sessions recorded'

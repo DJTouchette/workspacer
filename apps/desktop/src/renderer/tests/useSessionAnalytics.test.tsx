@@ -13,7 +13,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import { useSessionAnalytics, indexHistoryRows } from '../src/hooks/useSessionAnalytics';
+import {
+  useSessionAnalytics,
+  indexHistoryRows,
+  RECENT_LIMIT,
+} from '../src/hooks/useSessionAnalytics';
 import type { SessionHistoryRecord } from '../src/types/analytics';
 
 const rec = (over: Partial<SessionHistoryRecord> = {}): SessionHistoryRecord => ({
@@ -133,6 +137,21 @@ describe('useSessionAnalytics — unreachable is not empty', () => {
     expect(result.current.unavailable).toMatch(/no provider/);
   });
 
+  it('flags the un-costed count as a floor when the row read hits its cap', async () => {
+    // The un-costed count is derived from the rows READ; the session count
+    // comes from the whole store. Once the read is capped those denominators
+    // differ, and a surface printing them side by side has to say so.
+    const rows = Array.from({ length: RECENT_LIMIT }, (_, i) =>
+      rec({ sessionId: `s${i}`, costUSD: 0, inputTokens: 0, outputTokens: 0 }),
+    );
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue(summary(14892.67, 5000));
+    (window.electronAPI.analyticsRecent as any).mockResolvedValue(rows);
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.unrecordedSessions).toBe(RECENT_LIMIT);
+    expect(result.current.unrecordedComplete).toBe(false);
+  });
+
   it('a genuine zero total from a reachable store is kept as a measurement', async () => {
     // A brand-new install: the store answers, and it truly has nothing. That
     // IS $0.00 across 0 sessions, and must not be reported as unavailable.
@@ -142,5 +161,7 @@ describe('useSessionAnalytics — unreachable is not empty', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.summary?.totals.costUSD).toBe(0);
     expect(result.current.unavailable).toBeNull();
+    // An uncapped read: the un-costed count is a count, not a floor.
+    expect(result.current.unrecordedComplete).toBe(true);
   });
 });

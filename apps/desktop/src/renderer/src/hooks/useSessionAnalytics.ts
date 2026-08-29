@@ -12,7 +12,7 @@
  *
  * THREE STATES, NOT TWO. Every caller has to be able to tell apart:
  *   - a figure we have          → `summary.totals`
- *   - a figure nobody recorded  → an absent per-row value (see `costOf`)
+ *   - a figure nobody recorded  → an absent per-row value (see `recorded`)
  *   - a store we cannot reach   → `unavailable`
  * A headless hub answers these methods with a well-formed ALL-ZERO stub
  * carrying `unavailable: "headless"` (see brain/handlers.go), so "$0.00 across
@@ -25,7 +25,7 @@ import { useHubReconnect } from './useHubReconnect';
 
 /** How many history rows the History pane pulls. Comfortably past the ~750
  *  rows a heavy machine has accumulated; the read is one local SQLite query. */
-const RECENT_LIMIT = 2000;
+export const RECENT_LIMIT = 2000;
 
 /** One session's recorded figures, with zero read as absence. */
 export interface RecordedRow {
@@ -43,8 +43,15 @@ export interface SessionAnalytics {
    *  (transcript-only sessions the daemon forgot). Empty until loaded. */
   bySessionId: Record<string, RecordedRow>;
   /** How many history rows carry no usage at all — the honest denominator for
-   *  "this total covers N of M sessions". */
+   *  "this total covers N of M sessions". Counted over the rows actually READ
+   *  (see {@link RECENT_LIMIT}), which is why {@link unrecordedComplete} rides
+   *  beside it. */
   unrecordedSessions: number;
+  /** False when the row read hit its cap, so `unrecordedSessions` is a floor
+   *  rather than a count. `summary.totals.sessions` is the whole store; the
+   *  two have different denominators the moment this goes false, and a surface
+   *  that prints them side by side has to say so. */
+  unrecordedComplete: boolean;
   loading: boolean;
   /** Why the store could not be read, or null when it could. */
   unavailable: string | null;
@@ -91,6 +98,7 @@ export function useSessionAnalytics(enabled = true): SessionAnalytics {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [bySessionId, setBySessionId] = useState<Record<string, RecordedRow>>({});
   const [unrecordedSessions, setUnrecorded] = useState(0);
+  const [unrecordedComplete, setUnrecordedComplete] = useState(true);
   const [loading, setLoading] = useState(enabled);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -119,19 +127,28 @@ export function useSessionAnalytics(enabled = true): SessionAnalytics {
           setSummary(null);
           setBySessionId({});
           setUnrecorded(0);
+          setUnrecordedComplete(true);
           setUnavailable(marker);
         } else {
           setSummary(sum ?? null);
-          const idx = indexHistoryRows(Array.isArray(rows) ? rows : []);
+          const list = Array.isArray(rows) ? rows : [];
+          const idx = indexHistoryRows(list);
           setBySessionId(idx.bySessionId);
           setUnrecorded(idx.unrecordedSessions);
+          setUnrecordedComplete(list.length < RECENT_LIMIT);
           setUnavailable(null);
         }
         setLoading(false);
       })
       .catch((err: unknown) => {
         if (!alive) return;
+        // Drop the rows too. A failed REFRESH would otherwise leave per-row
+        // figures on screen under a header that says the store is unreachable
+        // — two surfaces disagreeing about whether we know anything.
         setSummary(null);
+        setBySessionId({});
+        setUnrecorded(0);
+        setUnrecordedComplete(true);
         setUnavailable(err instanceof Error ? err.message : String(err));
         setLoading(false);
       });
@@ -140,5 +157,13 @@ export function useSessionAnalytics(enabled = true): SessionAnalytics {
     };
   }, [enabled, nonce]);
 
-  return { summary, bySessionId, unrecordedSessions, loading, unavailable, refresh };
+  return {
+    summary,
+    bySessionId,
+    unrecordedSessions,
+    unrecordedComplete,
+    loading,
+    unavailable,
+    refresh,
+  };
 }

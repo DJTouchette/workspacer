@@ -198,8 +198,8 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
             <span style={{ color: 'var(--wks-text-faint)' }}>Reading recorded usage…</span>
           ) : analytics.unavailable ? (
             <span style={{ color: 'var(--wks-text-faint)' }}>
-              Recorded usage is unavailable here ({analytics.unavailable}) — that is what could
-              not be read, not a total of zero.
+              Recorded usage is unavailable here ({analytics.unavailable}) — that is what could not
+              be read, not a total of zero.
             </span>
           ) : analytics.summary ? (
             <>
@@ -218,9 +218,14 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
               />
               {analytics.unrecordedSessions > 0 && (
                 <span
-                  title="These sessions were recorded, but no usage was ever written for them. They are not $0.00 — they are unmeasured."
+                  title={
+                    analytics.unrecordedComplete
+                      ? 'These sessions were recorded, but no usage was ever written for them. They are not $0.00 — they are unmeasured.'
+                      : 'Counted over the most recent rows only, so the real number is at least this. The session count beside it is the whole store.'
+                  }
                   style={{ color: 'var(--wks-text-faint)' }}
                 >
+                  {analytics.unrecordedComplete ? '' : 'at least '}
                   {analytics.unrecordedSessions} with no usage recorded
                 </span>
               )}
