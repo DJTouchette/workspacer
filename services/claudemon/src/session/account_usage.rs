@@ -358,6 +358,14 @@ pub struct UsageError {
 }
 
 impl UsageError {
+    /// Build a classified failure without a failing fetch, so the shapes that
+    /// consume one () can be tested against every kind rather
+    /// than only against whichever the machine happens to produce.
+    #[cfg(test)]
+    pub fn for_test(kind: UsageFailure, detail: impl std::fmt::Display) -> Self {
+        Self::new(kind, detail)
+    }
+
     fn new(kind: UsageFailure, detail: impl std::fmt::Display) -> Self {
         Self {
             kind,

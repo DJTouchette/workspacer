@@ -1021,6 +1021,40 @@ impl SessionState {
             .unwrap_or_default()
     }
 
+    /// Which account this session billed against, WITH its uncertainty.
+    ///
+    /// [`Self::claude_config_root`] must return a single `String` because it is
+    /// a map key (one usage reading per account, one poll target per account),
+    /// and a key cannot say "I don't know" — so it falls back to the default
+    /// account, which is the right thing for a poll target and the wrong thing
+    /// for a report. This is the reporting answer:
+    ///
+    ///   - spawn-recorded `config_root` → `Certain`, always. It came from the
+    ///     spawn env, not from a path, so no amount of path resolution
+    ///     downstream can change what it says.
+    ///   - no stamp, a transcript path → whatever
+    ///     [`account_usage::attribute_transcript`] can honestly conclude, which
+    ///     is `Ambiguous` exactly when a profile shares this root's `projects`
+    ///     directory.
+    ///   - no stamp and no transcript → `Unknown`. A pre-v8 row or a session
+    ///     the daemon did not spawn; NOT the default account.
+    ///
+    /// [`account_usage::attribute_transcript`]: super::account_usage::attribute_transcript
+    pub fn claude_account_attribution(
+        &self,
+        roots: &[String],
+    ) -> super::account_usage::RootAttribution {
+        if let Some(root) = self.config_root.as_deref() {
+            return super::account_usage::RootAttribution::Certain {
+                account: super::account_usage::normalize_root(root),
+            };
+        }
+        match self.transcript_path.as_deref() {
+            Some(path) => super::account_usage::attribute_transcript(path, roots),
+            None => super::account_usage::RootAttribution::Unknown,
+        }
+    }
+
     /// Whether this session should be hidden from the default session list. A
     /// session is archived once it's stopped (no process attached) and has sat
     /// idle past [`ARCHIVE_AFTER_SECONDS`]. Live or recently-active sessions are
