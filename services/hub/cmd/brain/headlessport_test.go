@@ -176,15 +176,21 @@ func portedMethodStanding() map[string]bool {
 func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 	ts := joinTSStringLiterals(string(mustReadRepoFile(t, "apps", "desktop", "src", "main", "shared", "fleetMessages.ts")))
 	for name, want := range map[string]string{
-		"progress header":         fleetProgressHeader,
-		"threshold header":        fleetThresholdHeader,
-		"progress tail":           fleetProgressTail,
-		"threshold tail":          fleetThresholdTail,
-		"worker-finished header":  fleetWorkerFinishedHeader,
-		"worker-FAILED header":    fleetWorkerFailedHeader,
-		"catch-up header":         fleetCatchUpHeader,
-		"worker-finished tail":    fleetWorkerFinishedTail,
-		"catch-up tail":           fleetCatchUpTail,
+		"progress header":        fleetProgressHeader,
+		"threshold header":       fleetThresholdHeader,
+		"progress tail":          fleetProgressTail,
+		"threshold tail":         fleetThresholdTail,
+		"worker-finished header": fleetWorkerFinishedHeader,
+		"worker-FAILED header":   fleetWorkerFailedHeader,
+		"catch-up header":        fleetCatchUpHeader,
+		"worker-finished tail":   fleetWorkerFinishedTail,
+		"catch-up tail":          fleetCatchUpTail,
+		// The blocked broadcast (blockwake.go). Its header is the ONE that opens
+		// `[supervisor]` rather than `[fleet]`, which is exactly the kind of
+		// detail a re-spelling would "tidy" — and every client's card parser
+		// keys off the literal.
+		"blocked header":          fleetBlockedHeader,
+		"blocked tail":            fleetBlockedTail,
 		"failed note":             fleetFailedNote,
 		"stopped note":            fleetStoppedNote,
 		"full-reply block prefix": "Full final message — ",
@@ -232,6 +238,20 @@ func TestFleetEntryBulletGrammar(t *testing.T) {
 	want = "worker (session:s1, cwd ?) — crossed: tokens 1,000 ≥ 500"
 	if got != want {
 		t.Errorf("threshold bullet\n got %q\nwant %q", got, want)
+	}
+	// A blocked bullet spends the `where` slot on the block kind INSTEAD of a
+	// cwd — ENTRY_RE's `(?:cwd (.+?)|(approval|question))` is an alternation,
+	// so emitting both (or defaulting to "cwd ?") makes the bullet unparseable
+	// and the card degrades to a text blob on every client.
+	got = formatFleetEntry(fleetEntry{Label: "worker", SessionID: "s1", Cwd: "/p", BlockedOn: "approval"})
+	want = "worker (session:s1, approval)"
+	if got != want {
+		t.Errorf("blocked bullet\n got %q\nwant %q", got, want)
+	}
+	got = formatFleetEntry(fleetEntry{Label: "worker", SessionID: "s1", BlockedOn: "question"})
+	want = "worker (session:s1, question)"
+	if got != want {
+		t.Errorf("blocked bullet (question)\n got %q\nwant %q", got, want)
 	}
 }
 

@@ -12,12 +12,12 @@ package main
 // text blob on every client, while the manager AGENT reads a header that no
 // longer says what the doctrine trained it on.
 //
-// So this port is byte-exact for the two kinds the brain can produce, and it is
+// So this port is byte-exact for every kind the brain can produce, and it is
 // PINNED to the TypeScript source by TestFleetMessageTwinMatchesTheDesktop
-// (fleetmsg_test.go), which reads fleetMessages.ts and compares the strings
+// (headlessport_test.go), which reads fleetMessages.ts and compares the strings
 // rather than trusting this comment.
 //
-// FOUR OF THE FIVE KINDS ARE PORTED:
+// ALL FIVE KINDS ARE PORTED:
 //
 //   - progress        — agents.reportProgress, a worker's own mid-task line.
 //   - threshold       — agents.notifyWhen, a watch the manager armed firing once.
@@ -25,13 +25,11 @@ package main
 //                       transition watcher over claudemon's /events stream.
 //   - catch-up        — the same wake under an honest header, re-sent by the
 //                       backstop sweep when the live one never landed.
-//
-// `blocked` is NOT ported. It is the one wake that is not parent-keyed (it
-// broadcasts to every live wake target), it carries its own 20s survive-this-long
-// debounce and a matching clear edge, and nothing headless produces it — so its
-// header here would be a format with no writer, which is exactly the dead-code
-// drift this file's two-kinds era was avoiding. See finishwake.go's header for
-// what a headless manager still does not receive.
+//   - blocked         — a worker STUCK on an approval or a question, broadcast
+//                       to every live wake target by blockwake.go. The only
+//                       kind that is not parent-keyed, and the only one whose
+//                       bullet spends the `where` slot on the block kind
+//                       instead of a cwd.
 //
 // The `result` / `resultError` entry fields are not ported either, for the same
 // has-no-writer reason: `resultSchema` is declined by the headless spawn
@@ -67,6 +65,12 @@ const (
 	// fleetCatchUpHeader is HEADERS['catch-up'] — the backstop's spelling, which
 	// says out loud that the manager may already have seen this.
 	fleetCatchUpHeader = "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:"
+
+	// fleetBlockedHeader is HEADERS['blocked'] — the one header in this file
+	// that opens `[supervisor]` rather than `[fleet]`. That is not a typo to be
+	// tidied: the prefix is WIRE FORMAT, parseFleetMessage keys the card off it
+	// on every client, and the manager doctrine was trained on this exact line.
+	fleetBlockedHeader = "[supervisor] An agent is now blocked on a decision:"
 )
 
 // fleetProgressTail / fleetThresholdTail are TAILS['progress'] and
@@ -108,6 +112,12 @@ const (
 
 	fleetCatchUpTail = "Review each (get_conversation with sinceSeq), update the project brief's \"## Recently\", " +
 		"and report the outcome with session:<id> references. Then STOP again."
+
+	// fleetBlockedTail is TAILS['blocked']. A single sentence where the others
+	// are paragraphs, and it stays that way: it is the desktop's byte-exact
+	// string, and the manager agent has to read the same instruction whichever
+	// host composed the wake.
+	fleetBlockedTail = "Run a /supervise pass: gather the context and notify me with a recommendation."
 )
 
 // fleetFailedNote / fleetStoppedNote are the plain (non-bullet) blocks a wake
@@ -203,12 +213,16 @@ func fleetWorkerFinishedHeaderFor(entries []fleetEntry) string {
 // The two it does NOT have are `result` / `resultError`: those carry a
 // VALIDATED structured result, and validation needs a resultSchema the headless
 // spawn declines to accept (parity_test.go's spawnParamsDeclined), so a field
-// here would have no writer. `blockedOn` is absent for the same reason — the
-// brain sends no `blocked` wake.
+// here would have no writer.
 type fleetEntry struct {
 	Label     string
 	SessionID string
 	Cwd       string
+	// BlockedOn is "approval" or "question", on 'blocked' entries only. It
+	// REPLACES the cwd in the bullet's parenthesised slot rather than adding to
+	// it — the desktop's grammar has one `where`, spelled either `cwd <path>` or
+	// the block kind, and emitting both makes the bullet unparseable.
+	BlockedOn string
 	// Stopped says the worker's SESSION ended (killed or exited) rather than
 	// going idle at its prompt: the bullet reads "stopped/killed" instead of as
 	// a clean finish. On 'worker-finished' / 'catch-up' entries only.
@@ -245,15 +259,19 @@ type fleetEntry struct {
 // TWIN: formatFleetEntry in fleetMessages.ts, and the ORDER of the optional
 // tails is load-bearing — ENTRY_RE on the parse side matches them in exactly
 // this sequence, so swapping two makes the bullet unparseable rather than
-// merely differently worded. The brain never emits the stopped/failed segments,
-// which sit between `where` and `crossed`; leaving them out is the same string
-// the desktop produces for an entry that has neither.
+// merely differently worded.
 func formatFleetEntry(e fleetEntry) string {
-	cwd := e.Cwd
-	if cwd == "" {
-		cwd = "?"
+	// The `where` slot: the block kind on a 'blocked' entry, the cwd on every
+	// other kind. TWIN: `const where = e.blockedOn ? e.blockedOn : \`cwd ${e.cwd || '?'}\``.
+	where := e.BlockedOn
+	if where == "" {
+		cwd := e.Cwd
+		if cwd == "" {
+			cwd = "?"
+		}
+		where = "cwd " + cwd
 	}
-	out := fmt.Sprintf("%s (session:%s, cwd %s)", e.Label, e.SessionID, cwd)
+	out := fmt.Sprintf("%s (session:%s, %s)", e.Label, e.SessionID, where)
 	if e.Stopped {
 		out += " — stopped/killed"
 	}

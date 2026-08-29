@@ -119,7 +119,17 @@ type wakeRig struct {
 	d     *wakeDaemon
 
 	mu      sync.Mutex
-	pending []func()
+	pending []pendingTimer
+}
+
+// pendingTimer is one armed timer the rig holds instead of a real clock, tagged
+// with which watcher armed it and for how long — the blocked broadcast has TWO
+// layers (a 20s survive-this-long debounce and a 1.5s per-recipient coalesce
+// window) and a test that cannot tell them apart cannot pin the difference
+// between them.
+type pendingTimer struct {
+	kind string // "finish" | "block-debounce" | "block-coalesce"
+	fn   func()
 }
 
 func newWakeRig(t *testing.T) *wakeRig {
@@ -137,14 +147,16 @@ func newWakeRig(t *testing.T) *wakeRig {
 
 	rig := &wakeRig{t: t, reg: reg, store: store, meta: meta, d: d}
 	fin := newFinishWatcher(reg)
-	fin.after = func(_ time.Duration, fn func()) *time.Timer {
-		rig.mu.Lock()
-		rig.pending = append(rig.pending, fn)
-		rig.mu.Unlock()
-		// A timer that will not fire on its own: the test closes the window.
-		t := time.NewTimer(time.Hour)
-		t.Stop()
-		return t
+	fin.after = rig.arm("finish")
+	// The blocked broadcast's two layers, told apart by duration. Its coalesce
+	// window happens to be the same 1.5s as the finish path's, so tagging by
+	// watcher AND duration is what keeps them distinguishable.
+	fin.blocks.after = func(d time.Duration, fn func()) *time.Timer {
+		kind := "block-coalesce"
+		if d == fin.blocks.debounce {
+			kind = "block-debounce"
+		}
+		return rig.arm(kind)(d, fn)
 	}
 	rig.fin = fin
 	reg.fin = fin
@@ -163,22 +175,74 @@ func (r *wakeRig) update(id, cwd, mode string) {
 	r.store.set(id, json.RawMessage(`{"session_id":"`+id+`","cwd":"`+cwd+`","mode":"`+mode+`"}`))
 }
 
-// closeWindows runs every coalesce timer that is open, which is what the 1.5s
-// wall clock does in production.
-func (r *wakeRig) closeWindows() {
-	r.mu.Lock()
-	fns := r.pending
-	r.pending = nil
-	r.mu.Unlock()
-	for _, fn := range fns {
-		fn()
+// arm returns a fake time.AfterFunc that records the callback under `kind`
+// instead of scheduling it.
+//
+// It deliberately IGNORES Stop(): the returned timer is already stopped, so
+// nothing the production code does to it can un-schedule the recorded closure.
+// That is the point — a cancellation that only worked because Stop() worked
+// would be a cancellation Go does not actually guarantee (Stop returns false
+// for a func already in flight). Every "this must not fire" case below therefore
+// fires the stale closure anyway and asserts that the watcher's own state
+// refused it.
+func (r *wakeRig) arm(kind string) func(time.Duration, func()) *time.Timer {
+	return func(_ time.Duration, fn func()) *time.Timer {
+		r.mu.Lock()
+		r.pending = append(r.pending, pendingTimer{kind: kind, fn: fn})
+		r.mu.Unlock()
+		t := time.NewTimer(time.Hour)
+		t.Stop()
+		return t
 	}
 }
 
-func (r *wakeRig) openWindows() int {
+// updateUnobserved changes a row WITHOUT the watcher seeing the edge — the SSE
+// gap: claudemon's /events stream reconnects, and a transition across the gap is
+// simply never delivered. Nothing in production detaches onChange; this is how a
+// test reproduces an edge that was lost.
+func (r *wakeRig) updateUnobserved(id, cwd, mode string) {
+	saved := r.store.onChange
+	r.store.onChange = nil
+	r.update(id, cwd, mode)
+	r.store.onChange = saved
+}
+
+// closeWindows runs every timer that is open, which is what the wall clock does
+// in production. A timer that arms another (the block debounce arms a coalesce
+// window) leaves the new one pending: the caller runs closeWindows again, which
+// is what makes the two-stage shape visible in the tests.
+func (r *wakeRig) closeWindows() { r.fire("") }
+
+// fire runs only the timers of one kind, leaving the rest armed.
+func (r *wakeRig) fire(kind string) {
+	r.mu.Lock()
+	var run, kept []pendingTimer
+	for _, p := range r.pending {
+		if kind == "" || p.kind == kind {
+			run = append(run, p)
+		} else {
+			kept = append(kept, p)
+		}
+	}
+	r.pending = kept
+	r.mu.Unlock()
+	for _, p := range run {
+		p.fn()
+	}
+}
+
+func (r *wakeRig) openWindows() int { return r.count("") }
+
+func (r *wakeRig) count(kind string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.pending)
+	n := 0
+	for _, p := range r.pending {
+		if kind == "" || p.kind == kind {
+			n++
+		}
+	}
+	return n
 }
 
 // manager + worker is the shape every case below starts from.
@@ -266,8 +330,11 @@ func TestOnlyAWorkingToIdleEdgeIsAFinish(t *testing.T) {
 	r.fleet()
 	r.update("w1", "/work/proj", "approval") // streaming → waiting_approval
 	r.update("w1", "/work/proj", "input")    // waiting_approval → idle
-	if r.openWindows() != 0 {
-		t.Fatalf("a block clearing was treated as a finish (%d windows opened)", r.openWindows())
+	// Counted by KIND: that same pair of edges legitimately arms and then
+	// cancels a blocked-broadcast debounce (blockwake.go), and this test is
+	// about the FINISH path not claiming the second edge.
+	if n := r.count("finish"); n != 0 {
+		t.Fatalf("a block clearing was treated as a finish (%d windows opened)", n)
 	}
 	// …and the real finish, once it comes, still fires.
 	r.update("w1", "/work/proj", "responding")
