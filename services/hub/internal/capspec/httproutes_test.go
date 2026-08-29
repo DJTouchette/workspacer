@@ -25,7 +25,7 @@ import (
 // mode this family of tests keeps re-learning. Raise them when routes are added.
 const (
 	hubRouteFloor       = 29 // 27 AddRoute + /bus + /health
-	claudemonRouteFloor = 35
+	claudemonRouteFloor = 36
 	mcpRouteFloor       = 3
 )
 
