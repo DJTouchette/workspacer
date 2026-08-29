@@ -300,6 +300,7 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
         .route("/usage", get(get_usage))
+        .route("/usage/report", get(get_usage_report))
         .route("/heartbeat", post(crate::daemon::heartbeat::handle))
         .route("/heartbeats", get(crate::daemon::heartbeat::list))
         .route("/oneshot", post(crate::daemon::oneshot::handle))
@@ -368,6 +369,29 @@ async fn get_usage(State(store): State<SessionStore>) -> Response {
         "fetched_at": usage.fetched_at.unix_timestamp(),
     }))
     .into_response()
+}
+
+/// The whole usage picture: all three providers, per account, with no live
+/// session and no network request.
+///
+/// Deliberately separate from `/usage` rather than an extension of it. `/usage`
+/// answers one narrow question — "what are the DEFAULT Claude account's window
+/// percentages right now" — and its callers (keep-warm, plugins) depend on that
+/// flat shape and on its willingness to make a blocking fetch. This one is a
+/// report: it reads what the daemon already knows plus what the other CLIs left
+/// on disk, so it always answers immediately, and it says UNKNOWN where the
+/// other would have blocked.
+///
+/// Always 200. There is no failure mode that should become an HTTP error here,
+/// because "we could not read Copilot's store" is *data* in this shape, not a
+/// transport problem — a 503 would collapse a per-provider unavailability into
+/// a whole-document one and hand the client back exactly the ambiguity the
+/// three-state encoding exists to remove.
+///
+/// See `session::usage_report` for the shape and for why each field is
+/// three-valued.
+async fn get_usage_report(State(store): State<SessionStore>) -> Response {
+    Json(crate::session::usage_report::build(&store)).into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1513,6 +1537,51 @@ mod tests {
         let (status, body) = request(test_state(), get("/health")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"ok");
+    }
+
+    /// The endpoint answers a COLD daemon — no sessions, no poller run — with
+    /// the whole document rather than a 503. That is the requirement the whole
+    /// data layer exists for: a desktop that has just launched can render every
+    /// provider without spawning anything first.
+    #[tokio::test]
+    async fn usage_report_answers_a_cold_daemon_for_every_provider() {
+        let (status, body) = request(test_state(), get("/usage/report")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        let providers: Vec<&str> = v["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["provider"].as_str().unwrap())
+            .collect();
+        assert_eq!(providers, vec!["claude", "codex", "copilot"]);
+        assert!(v["generated_at"].as_i64().unwrap() > 0);
+    }
+
+    /// The three-state encoding, asserted on the WIRE and not just on the Rust
+    /// type — a client codes against this JSON. An unpolled Claude window must
+    /// be `unknown` with a reason, never `{"state":"ok","value":0}`.
+    #[tokio::test]
+    async fn usage_report_never_spells_an_unread_window_as_zero() {
+        let (_, body) = request(test_state(), get("/usage/report")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        let claude = &v["providers"][0];
+        let default = claude["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["is_default"] == true)
+            .expect("the default account always has a row");
+        let five = &default["windows"]["five_hour"]["used_percent"];
+        assert_eq!(five["state"], "unknown", "{five}");
+        assert!(
+            five["reason"].as_str().is_some_and(|r| !r.is_empty()),
+            "an unknown must carry a reason: {five}",
+        );
+        assert!(five.get("value").is_none(), "unknown carries no value: {five}");
+        // `""` is the default account and is a real answer; `null` would be
+        // "we cannot say", and the two must not be spelled the same way.
+        assert_eq!(default["account"], "");
     }
 
     #[tokio::test]
