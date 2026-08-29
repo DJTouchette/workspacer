@@ -19,9 +19,11 @@
  *   - `SPAWN_REQUEST_FIELDS` is `satisfies Record<keyof AgentSpawnRequest, …>`,
  *     so a new request field fails to compile until it is classified.
  *   - Every field is classified as 'forward' (reaches the managed spawn),
- *     'derived' (folded into another option — e.g. permissionMode → yolo), or
- *     'unsupported' WITH A REASON, which spawnManagedAgent logs when a caller
- *     actually set it (see explainUnsupportedManagedOptions).
+ *     'derived' (folded into another option — e.g. permissionMode → yolo),
+ *     'conditional' (reaches SOME harnesses, with the reason the rest can't
+ *     take it), or 'unsupported' WITH A REASON. Both reason strings are what
+ *     spawnManagedAgent logs when a caller actually set the field (see
+ *     explainUnsupportedManagedOptions).
  *
  * TWIN: the Claude PTY / claude-stream branches of the same IPC handler pass
  * their own fields directly; they carry everything, so they need no table.
@@ -29,6 +31,7 @@
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import type { ManagedSpawnOptions } from '../services/managedSpawn';
 import { permissionModeMeansBypass } from './permissionBypass';
+import { providerTakesProfiles } from '../shared/agentProfiles';
 
 /** The options the `claude:spawn` IPC accepts (every provider/transport). */
 export interface AgentSpawnRequest {
@@ -40,6 +43,9 @@ export interface AgentSpawnRequest {
    *  Omitted = the harness's config default (claude.transport /
    *  codex.transport) — see main/lib/spawnTransport. */
   transport?: 'pty' | 'stream';
+  /** A profile of the CHOSEN harness: its config root, extra argv and native
+   *  preset. Carried by claude, codex and copilot; OpenCode and Pi have no
+   *  config-root override, so it is announced and dropped for them. */
   profileId?: string;
   /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
   manager?: boolean;
@@ -79,9 +85,15 @@ export const SPAWN_REQUEST_FIELDS = {
   cwd: { kind: 'forward' },
   provider: { kind: 'forward' },
   transport: { kind: 'forward' },
+  // WAS 'unsupported: Claude accounts have no equivalent on this provider',
+  // which was never true and is now false in the code as well as in the prose.
+  // A profile is a CONFIG ROOT, and three harnesses have one — CLAUDE_CONFIG_DIR,
+  // CODEX_HOME, COPILOT_HOME (shared/agentProfiles PROFILE_CAPS). The two that
+  // genuinely don't are OpenCode and Pi, and that is what the reason now says.
   profileId: {
-    kind: 'unsupported',
-    why: 'Claude accounts (CLAUDE_CONFIG_DIR) have no equivalent on this provider',
+    kind: 'conditional',
+    on: 'harnesses with a config root — claude, codex, copilot',
+    why: 'OpenCode and Pi have no config-root override, so a profile picked for them would set nothing',
   },
   manager: { kind: 'forward' },
   fleetFullAccess: { kind: 'forward' },
@@ -105,7 +117,11 @@ export const SPAWN_REQUEST_FIELDS = {
   message: { kind: 'derived', into: 'firstMessage (the daemon queues it as the first prompt)' },
 } satisfies Record<
   keyof AgentSpawnRequest,
-  { kind: 'forward' } | { kind: 'derived'; into: string } | { kind: 'unsupported'; why: string }
+  | { kind: 'forward' }
+  | { kind: 'derived'; into: string }
+  // Carried to the harnesses named in `on`, announced to the rest.
+  | { kind: 'conditional'; on: string; why: string }
+  | { kind: 'unsupported'; why: string }
 >;
 
 /** Permission modes a managed provider expresses natively (ask/yolo pair). */
@@ -161,8 +177,10 @@ export function managedOptionsFromRequest(
     parentSessionId: req.parentSessionId,
     cols: req.cols,
     rows: req.rows,
-    // Carried so spawnManagedAgent can SAY it is ignoring them rather than
-    // dropping them behind an isClaudeStream guard (both are Claude-only).
+    // profileId is APPLIED by spawnManagedAgent for every harness with a config
+    // root (claude/codex/copilot) and announced for the two without one.
+    // mcpItemIds stays Claude-only and is carried so the spawn can SAY it is
+    // ignoring it rather than dropping it behind a guard.
     profileId: req.profileId,
     mcpItemIds: req.mcpItemIds,
     // The request calls it `message` (the vocabulary a dispatcher uses); the
@@ -183,7 +201,13 @@ export function explainUnsupportedManagedOptions(opts: ManagedSpawnOptions): str
   const out: string[] = [];
   // Claude-stream is a managed provider too, and it carries everything.
   if (opts.provider === 'claude') return out;
-  if (opts.profileId) out.push(`profileId — ${SPAWN_REQUEST_FIELDS.profileId.why}`);
+  // Only the harnesses that genuinely cannot take one. A codex/copilot spawn
+  // now APPLIES its profile (config root + argv +, for copilot, the referenced
+  // token), so warning here would have been the mirror image of the old bug:
+  // announcing a drop that no longer happens.
+  if (opts.profileId && !providerTakesProfiles(opts.provider)) {
+    out.push(`profileId — ${SPAWN_REQUEST_FIELDS.profileId.why}`);
+  }
   if (opts.mcpItemIds?.length) out.push(`mcpItemIds — ${SPAWN_REQUEST_FIELDS.mcpItemIds.why}`);
   if (
     opts.permissionMode &&
