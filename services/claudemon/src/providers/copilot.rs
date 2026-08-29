@@ -99,13 +99,13 @@ use tokio::sync::mpsc;
 
 use directories::BaseDirs;
 
+use super::SpawnExtras;
 use super::{apply_updates, note_user_send, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
     Plan, PlanStatus, PlanStep, SessionMode, SubagentStatus, SubagentUpdate,
 };
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
-use super::SpawnExtras;
 
 /// The one `--model` value this adapter can promise works: Copilot's own
 /// router. See [`list_models`].

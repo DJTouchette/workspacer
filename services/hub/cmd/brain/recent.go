@@ -46,17 +46,17 @@ import (
 // shared/ipcTypes.ts, field for field — the renderer decodes this list without
 // knowing which provider answered.
 type recentSession struct {
-	SessionID string  `json:"sessionId"`
-	Provider  string  `json:"provider"`
-	Cwd       string  `json:"cwd"`
-	Mode      string  `json:"mode"`
-	Transport string  `json:"transport"`
-	Archived  bool    `json:"archived"`
-	UpdatedAt int64   `json:"updatedAt"`
-	StartedAt int64   `json:"startedAt"`
-	Name      string  `json:"name"`
-	Title     string  `json:"title"`
-	Model     string  `json:"model"`
+	SessionID string `json:"sessionId"`
+	Provider  string `json:"provider"`
+	Cwd       string `json:"cwd"`
+	Mode      string `json:"mode"`
+	Transport string `json:"transport"`
+	Archived  bool   `json:"archived"`
+	UpdatedAt int64  `json:"updatedAt"`
+	StartedAt int64  `json:"startedAt"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+	Model     string `json:"model"`
 	// A POINTER, and omitted when nil. The TS twin reads a missing costUSD as
 	// "not recorded" and renders a dash; a plain float64 would serialize the
 	// headless join's ignorance as a confident "$0.00" on every remote client.

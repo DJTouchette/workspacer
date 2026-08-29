@@ -1578,7 +1578,10 @@ mod tests {
             five["reason"].as_str().is_some_and(|r| !r.is_empty()),
             "an unknown must carry a reason: {five}",
         );
-        assert!(five.get("value").is_none(), "unknown carries no value: {five}");
+        assert!(
+            five.get("value").is_none(),
+            "unknown carries no value: {five}"
+        );
         // `""` is the default account and is a real answer; `null` would be
         // "we cannot say", and the two must not be spelled the same way.
         assert_eq!(default["account"], "");

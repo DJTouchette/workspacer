@@ -40,6 +40,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::SpawnExtras;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
@@ -48,7 +49,6 @@ use crate::session::state::{
 };
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
-use super::SpawnExtras;
 
 /// Translate one Codex app-server message (`method` + `params`) into typed
 /// updates. Pure and total: unknown methods / missing fields yield an

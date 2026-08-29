@@ -363,13 +363,11 @@ fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderRep
         .map(|root| {
             let bucket = spend.remove(&Some(root.clone())).unwrap_or_default();
             let reading = store.account_usage_for(root);
-            let failure = store
-                .account_usage_error_for(root)
-                .map(|f| FailureReport {
-                    kind: f.kind,
-                    detail: f.detail,
-                    at: f.at.unix_timestamp(),
-                });
+            let failure = store.account_usage_error_for(root).map(|f| FailureReport {
+                kind: f.kind,
+                detail: f.detail,
+                at: f.at.unix_timestamp(),
+            });
             // Why a window is missing, phrased for whichever reason applies.
             // A classified failure is strictly better than "no reading yet",
             // and NeedsReauth in particular is actionable.
@@ -672,7 +670,8 @@ fn copilot_report(store: &SessionStore) -> ProviderReport {
     // All three windows are the SAME structural refusal, and it is a refusal
     // rather than a gap: no local record exists and the endpoint that would
     // answer 403s our credential. Zero here would say "your plan is spent".
-    let unavailable = || WindowReport::missing(Measured::unavailable(copilot_usage::QUOTA_UNAVAILABLE));
+    let unavailable =
+        || WindowReport::missing(Measured::unavailable(copilot_usage::QUOTA_UNAVAILABLE));
     let tokens = |m: &copilot_usage::CopilotModelUsage| TokensReport {
         input: Measured::from_option(
             m.fresh_input_tokens,
@@ -867,7 +866,10 @@ mod tests {
         // …and its windows must be UNKNOWN, never a zero gauge.
         let default = claude.accounts.iter().find(|a| a.is_default).unwrap();
         assert!(
-            matches!(default.windows.five_hour.used_percent, Measured::Unknown { .. }),
+            matches!(
+                default.windows.five_hour.used_percent,
+                Measured::Unknown { .. }
+            ),
             "an unpolled window is unknown, not 0%: {:?}",
             default.windows.five_hour,
         );

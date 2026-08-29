@@ -183,10 +183,12 @@ pub fn read_store(path: &Path) -> Result<CopilotUsage, CopilotUsageError> {
 
     let mut by_model: BTreeMap<String, CopilotModelUsage> = BTreeMap::new();
     for row in rows {
-        let e = by_model.entry(row.model.clone()).or_insert_with(|| CopilotModelUsage {
-            model: row.model.clone(),
-            ..Default::default()
-        });
+        let e = by_model
+            .entry(row.model.clone())
+            .or_insert_with(|| CopilotModelUsage {
+                model: row.model.clone(),
+                ..Default::default()
+            });
         e.requests += 1;
         e.input_tokens += row.input_tokens;
         e.cache_read_tokens += row.cache_read_tokens;
@@ -450,14 +452,20 @@ mod tests {
         assert_eq!(m.nano_aiu, ROW_56_NANO_AIU + 1_000_000);
         assert!((m.cost_usd - 0.002_956_45).abs() < 1e-9, "{}", m.cost_usd);
         assert_eq!(u.totals.nano_aiu, m.nano_aiu);
-        assert_eq!(u.first_event_at.as_deref(), Some("2026-08-28T16:44:19.713Z"));
+        assert_eq!(
+            u.first_event_at.as_deref(),
+            Some("2026-08-28T16:44:19.713Z")
+        );
         assert_eq!(u.last_event_at.as_deref(), Some("2026-08-28T17:00:00.000Z"));
     }
 
     #[test]
     fn a_missing_store_is_no_store_not_an_empty_reading() {
         let missing = crate::testtmp::dir().join("definitely-not-here.db");
-        assert_eq!(read_store(&missing).unwrap_err(), CopilotUsageError::Unreadable);
+        assert_eq!(
+            read_store(&missing).unwrap_err(),
+            CopilotUsageError::Unreadable
+        );
     }
 
     /// Live smoke test against this machine's real `~/.copilot`:

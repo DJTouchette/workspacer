@@ -280,8 +280,7 @@ pub(crate) fn open_foreign_sqlite_readonly(path: &std::path::Path) -> Option<rus
     if !path.is_file() {
         return None;
     }
-    let flags =
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
     let display = path.display();
     rusqlite::Connection::open_with_flags(format!("file:{display}?mode=ro"), flags)
         .or_else(|_| {
@@ -992,7 +991,6 @@ pub struct SpawnExtras {
     /// Appended verbatim after the argv the daemon builds.
     pub extra_args: Vec<String>,
 }
-
 
 /// Spawn a PTY child and wire it into an already-registered session's byte
 /// stream + input channel — the **Term half** of a hybrid managed agent. Output
