@@ -8,6 +8,8 @@ import { ProjectMark } from '../components/ProjectMark';
 import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
 import { claudeAccountOf } from '../lib/claudeAccount';
 import { usageWindows, fmtWindowLength } from '../lib/sessionStats';
+import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
+import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
 import { UsageDetailDialog } from '../components/claude/UsageDetailDialog';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import { AgentLogo } from '../components/agentLogos';
@@ -487,6 +489,11 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   // "Need you" comes from the single attention feed (the spine), not a parallel
   // ambient-state count, so this stat matches the SideBar / Inbox / Fleet exactly.
   const { counts, setViewLevel, openInbox } = useAttention();
+  // The desktop's own session-history store — the five figures of recorded
+  // spend this pane used to render as "$0.00 this session".
+  const analytics = useSessionAnalytics();
+  // Per-session recorded cost, for workspace agents with no live snapshot.
+  const recordedUsage = useRecordedUsageMap();
   const { plugins } = usePlugins();
   const pluginStates = usePluginStates();
   const updateStatus = useUpdateStatus();
@@ -552,7 +559,33 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   // Claude's own statusLine cost is authoritative, transcript-derived usage
   // is the fallback — summing usage alone reads $0.00 while every card
   // shows a statusLine cost.
-  const totalCost = own.reduce((n, s) => n + (s.statusLine?.costUSD ?? s.usage?.costUSD ?? 0), 0);
+  //
+  // The reduce below used to `?? 0` its way to a confident "$0.00 this session"
+  // at every cold start: a restored agent's session is a stopped daemon row,
+  // `promoteSessionSnapshots` drops it, so `own` is EMPTY and the sum of an
+  // empty list is zero — displayed beside a database holding five figures.
+  //
+  // Now each agent contributes its live figure, or the history DB's last
+  // recorded one, or NOTHING. `contributing` counts the agents that actually
+  // had a figure, so the tile can say what the total covers, and a total
+  // covering nothing renders as a dash rather than as a measured zero.
+  const costBySession = new Map(
+    own.map((s) => [s.sessionId, s.statusLine?.costUSD ?? s.usage?.costUSD]),
+  );
+  let totalCost = 0;
+  let contributing = 0;
+  for (const sid of ownSessionIds) {
+    const cost = costBySession.get(sid) ?? recordedUsage[sid]?.costUSD;
+    if (cost === undefined) continue;
+    totalCost += cost;
+    contributing++;
+  }
+  // Lifetime spend across every session the desktop ever recorded — the answer
+  // to "the tile says $0.00 and the database says otherwise". Deliberately a
+  // SECOND tile: the workspace figure above is about what is running now, and
+  // silently swapping it for a lifetime number would answer a question nobody
+  // asked while losing the one they did.
+  const lifetime = analytics.summary?.totals;
 
   // Directory rows open the new-agent view pre-filled with this cwd (and the
   // last harness/provider used, restored from config in the dialog) rather than
@@ -776,7 +809,41 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               onClick={openInbox}
               clickTitle="Open the Inbox"
             />
-            <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
+            <Stat
+              label="Workspace cost"
+              // A dash, not $0.00: no agent in this workspace has a figure —
+              // live or recorded — so nothing was measured to be zero.
+              value={contributing > 0 ? fmtUSD(totalCost) : '—'}
+              sub={
+                contributing === 0
+                  ? agents === 0
+                    ? 'no agents'
+                    : 'no usage recorded'
+                  : contributing === agents
+                    ? 'this workspace'
+                    : `${contributing} of ${agents} agents`
+              }
+            />
+            <Stat
+              label="All time"
+              value={lifetime ? fmtUSD(lifetime.costUSD) : '—'}
+              sub={
+                analytics.loading
+                  ? 'reading history…'
+                  : analytics.unavailable
+                    ? // Unreachable is not empty. A headless hub answers these
+                      // methods with an all-zero stub, and rendering that as
+                      // "$0.00 across 0 sessions" would invent a measurement.
+                      'history unavailable'
+                    : lifetime
+                      ? `${lifetime.sessions} session${lifetime.sessions === 1 ? '' : 's'}${
+                          analytics.unrecordedSessions > 0
+                            ? ` · ${analytics.unrecordedSessions} un-costed`
+                            : ''
+                        }`
+                      : 'no sessions recorded'
+              }
+            />
             {/* Account-wide 5h/7d rate-limit windows, one card per ACCOUNT
                 (scanned across all sessions, not just workspacer's — they're
                 global to each account). For Claude that means one card per
