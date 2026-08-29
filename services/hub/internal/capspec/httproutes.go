@@ -444,6 +444,12 @@ var httpRoutes = []HTTPRoute{
 		TwinKind: TwinNone,
 	},
 	{
+		Server: "claudemon-api", Pattern: "/usage/report", Disposition: RouteLoopbackConfined,
+		Reason:   "the WHOLE usage picture, and the widest DISCLOSURE on this router: every provider and every configured login in one document — the account key (which IS the profile's absolute configDir path), its label and default flag, 5h/7d/monthly window percentages with reset times, cumulative spend in USD and nano-AIU, the input/cache-read/cache-write/output/reasoning token split, a per-model breakdown, per-account live-session counts, and a failure object that can carry needs_reauth. It answers from the store and from what the provider CLIs left on disk, so a just-booted daemon with no live session serves all of it. THE OTHER TWO PLANES AGREE ABOUT THESE BYTES, and both withhold them from every scoped tier: no bus capability returns account-level usage at any tier (the /usage row's sentence still holds — the usage-at-boot work added no method and no topic), the nearest account-IDENTITY read claude.profiles.list hands back the same configDir strings and is in NEITHER viewMethods nor triageMethods, and the nearest event twin agent.statusline — five_hour_pct and cost_usd for ONE session — is TopicGuardedBy sessions.snapshot and fleet-visibility filtered before publication. So this route grants strictly more than any bus tier and strictly more than its own sibling /usage (the default login's three percentages), and 127.0.0.1 + host_guard + origin_guard are the whole of what stands between an unauthenticated caller and every login's identity, spend and quota headroom on this machine",
+		Twin:     "",
+		TwinKind: TwinNone,
+	},
+	{
 		Server: "claudemon-api", Pattern: "/heartbeat", Disposition: RouteLoopbackConfined,
 		Reason: "records a wrapper heartbeat: liveness bookkeeping for a process that already holds the session's PTY",
 	},
