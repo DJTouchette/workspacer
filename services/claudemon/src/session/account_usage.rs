@@ -643,4 +643,100 @@ mod tests {
         // Missing token → Err.
         assert!(token_from_credentials(&json!({})).is_err());
     }
+
+    /// The three failure kinds are distinguished at the point they are
+    /// created, not guessed at later. An expired token is specifically
+    /// actionable — the user has to let that account's CLI run once — and it
+    /// must never collapse into the same bucket as "offline".
+    #[test]
+    fn failures_are_classified_not_merged() {
+        let expired = json!({ "claudeAiOauth": { "accessToken": "tok", "expiresAt": 1000 } });
+        assert_eq!(
+            token_from_credentials(&expired).unwrap_err().kind,
+            UsageFailure::NeedsReauth,
+        );
+        assert_eq!(
+            token_from_credentials(&json!({})).unwrap_err().kind,
+            UsageFailure::NoCredentials,
+        );
+        // A root that has no credentials file at all reads the same way.
+        let missing = read_access_token("/nonexistent-root-for-tests").unwrap_err();
+        assert_eq!(missing.kind, UsageFailure::NoCredentials);
+    }
+
+    /// The cadence that replaces the old live-sessions gate. An idle daemon
+    /// still polls — a boot readout is exactly what it is asked for — just far
+    /// less often, and a root that keeps failing settles at one attempt an
+    /// hour rather than retrying every minute forever.
+    #[test]
+    fn poll_cadence_backs_off_and_is_capped() {
+        assert_eq!(
+            next_poll_delay(true, 0).as_secs(),
+            LIVE_INTERVAL_SECS,
+            "a live account is polled at the original interval",
+        );
+        assert_eq!(
+            next_poll_delay(false, 0).as_secs(),
+            IDLE_INTERVAL_SECS,
+            "an idle daemon polls, but 15x less often",
+        );
+        assert_eq!(next_poll_delay(true, 1).as_secs(), LIVE_INTERVAL_SECS * 2);
+        assert_eq!(next_poll_delay(true, 2).as_secs(), LIVE_INTERVAL_SECS * 4);
+        // The expired-profile case: failing forever must not mean requesting
+        // forever. Both live and idle settle at the ceiling.
+        assert_eq!(next_poll_delay(true, 30).as_secs(), MAX_BACKOFF_SECS);
+        assert_eq!(next_poll_delay(false, 30).as_secs(), MAX_BACKOFF_SECS);
+        // …and no arithmetic overflow on the way there.
+        assert!(next_poll_delay(false, u32::MAX).as_secs() <= MAX_BACKOFF_SECS);
+    }
+
+    /// Root discovery, against a synthetic HOME laid out the way workspacer's
+    /// "Add Claude Account" does it. The point of the test is that the list is
+    /// non-empty and complete WITHOUT any session existing — that is the whole
+    /// deliverable.
+    #[test]
+    fn configured_roots_are_found_with_no_sessions_at_all() {
+        let mut home = std::env::temp_dir();
+        home.push(format!(
+            "wks-roots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let claude = home.join(".claude");
+        let work = claude.join("accounts").join("work");
+        let logged_out = claude.join("accounts").join("never-logged-in");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&logged_out).unwrap();
+        std::fs::write(work.join(".credentials.json"), "{}").unwrap();
+
+        // `default_config_root` reads CLAUDE_CONFIG_DIR, which is also what
+        // scopes the accounts scan — so pointing it at the fixture is enough.
+        let restore = std::env::var("CLAUDE_CONFIG_DIR").ok();
+        std::env::set_var("CLAUDE_CONFIG_DIR", &claude);
+        let roots = configured_config_roots();
+        match restore {
+            Some(v) => std::env::set_var("CLAUDE_CONFIG_DIR", v),
+            None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+        }
+
+        assert_eq!(
+            roots[0], "",
+            "the default account is always polled, first",
+        );
+        assert!(
+            roots.contains(&work.to_string_lossy().into_owned()),
+            "a second login on disk is discovered without the desktop's help: {roots:?}",
+        );
+        assert!(
+            !roots
+                .iter()
+                .any(|r| r == &logged_out.to_string_lossy().into_owned()),
+            "a profile dir with no credentials is skipped rather than \
+             manufacturing a failure every tick: {roots:?}",
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
