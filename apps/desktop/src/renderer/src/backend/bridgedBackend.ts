@@ -124,6 +124,13 @@ export const HOST_ONLY = [
   //                    has its own window.open fallback for browser tabs)
   'claudeProfilesAddAccount', // builds a linked CLAUDE_CONFIG_DIR on the host fs
   'claudeProfilesLoginStatus', // probes host credential files
+  // Reads each harness's own credential file ($CLAUDE_CONFIG_DIR/.credentials.json,
+  // $CODEX_HOME/auth.json) and resolves the Copilot token variable against THIS
+  // process's environment. All three are host-local facts, and its PRESENCE is
+  // also what gates the per-harness profile UI: the bus twin of
+  // claude.profiles.add models only the four Claude positionals, so a
+  // codex/copilot profile created on the web mirror would come back Claude.
+  'claudeProfilesAccounts',
   // The brief board. Main resolves every path itself from the host's config and
   // writes the host's .workspacer/brief.md files under an advisory lock; there
   // is no bus capability for it and the web backend has no stub, so leaving
