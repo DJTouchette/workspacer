@@ -24,6 +24,11 @@ export interface AnalyticsSummary {
   byModel: AnalyticsBucket[];
   /** Split by coding-agent backend (claude/codex/opencode); always all rows. */
   byProvider: AnalyticsBucket[];
+  /** Set only when the store could NOT be read — by main when the SQLite read
+   *  throws, and by the headless brain stub (`"headless"`). The zeros beside
+   *  it are filler; see useSessionAnalytics, which turns this into an absence
+   *  rather than letting it render as a measured $0.00. */
+  unavailable?: string;
 }
 
 export interface SessionHistoryRecord {

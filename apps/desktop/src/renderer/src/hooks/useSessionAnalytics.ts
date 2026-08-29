@@ -17,7 +17,9 @@
  * A headless hub answers these methods with a well-formed ALL-ZERO stub
  * carrying `unavailable: "headless"` (see brain/handlers.go), so "$0.00 across
  * 0 sessions" is a shape this hook receives routinely and must never render as
- * a measurement. `summary` is null whenever that marker is present.
+ * a measurement. `summary` is null whenever that marker is present. Main's own
+ * SQLite reader sets the same field when the query throws, so one check covers
+ * both an unreachable desktop store and an adopted headless hub.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { AnalyticsSummary, SessionHistoryRecord } from '../types/analytics';
@@ -94,6 +96,15 @@ function stubMarker(summary: unknown): string | null {
   return typeof marker === 'string' && marker ? marker : null;
 }
 
+/** True only for a payload that actually carries totals. A federated peer or a
+ *  stubbed transport can answer `{}` — well-formed JSON, no measurement in it —
+ *  and reading `.totals.costUSD` off that is both a crash and, once guarded
+ *  with `?? 0`, a fabricated zero. Neither: it is a store that did not answer. */
+function hasTotals(summary: unknown): summary is AnalyticsSummary {
+  const totals = (summary as AnalyticsSummary | null)?.totals;
+  return !!totals && typeof totals.costUSD === 'number' && typeof totals.sessions === 'number';
+}
+
 export function useSessionAnalytics(enabled = true): SessionAnalytics {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [bySessionId, setBySessionId] = useState<Record<string, RecordedRow>>({});
@@ -129,8 +140,14 @@ export function useSessionAnalytics(enabled = true): SessionAnalytics {
           setUnrecorded(0);
           setUnrecordedComplete(true);
           setUnavailable(marker);
+        } else if (!hasTotals(sum)) {
+          setSummary(null);
+          setBySessionId({});
+          setUnrecorded(0);
+          setUnrecordedComplete(true);
+          setUnavailable('no totals in response');
         } else {
-          setSummary(sum ?? null);
+          setSummary(sum);
           const list = Array.isArray(rows) ? rows : [];
           const idx = indexHistoryRows(list);
           setBySessionId(idx.bySessionId);

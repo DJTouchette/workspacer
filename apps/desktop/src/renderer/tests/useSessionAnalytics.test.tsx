@@ -137,6 +137,45 @@ describe('useSessionAnalytics — unreachable is not empty', () => {
     expect(result.current.unavailable).toMatch(/no provider/);
   });
 
+  it("treats main's own read failure marker exactly like the headless stub's", async () => {
+    // sessionHistory.summary() sets `unavailable` on the all-zero fallback it
+    // returns when the SQLite read throws — same field, same contract.
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue(
+      summary(0, 0, { unavailable: 'database unavailable' }),
+    );
+    (window.electronAPI.analyticsRecent as any).mockResolvedValue([]);
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.summary).toBeNull();
+    expect(result.current.unavailable).toBe('database unavailable');
+  });
+
+  it('reports a rejected ROW read as unavailable — sessionHistory.recent now throws rather than answering []', async () => {
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue(summary(14892.67, 747));
+    (window.electronAPI.analyticsRecent as any).mockRejectedValue(
+      new Error('database unavailable'),
+    );
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // The totals were readable, but the rows were not, and per-row absences
+    // built from a failed read would each read as "nothing was recorded".
+    expect(result.current.unavailable).toMatch(/database unavailable/);
+    expect(result.current.bySessionId).toEqual({});
+    expect(result.current.summary).toBeNull();
+  });
+
+  it('treats a payload with no totals as unavailable rather than reading zeros off it', async () => {
+    // A peer or a stubbed transport can answer `{}` — well-formed JSON with no
+    // measurement in it. Reading `.totals.costUSD` off that throws, and
+    // guarding it with `?? 0` would invent a $0.00 nobody reported.
+    (window.electronAPI.analyticsSummary as any).mockResolvedValue({});
+    (window.electronAPI.analyticsRecent as any).mockResolvedValue([]);
+    const { result } = renderHook(() => useSessionAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.summary).toBeNull();
+    expect(result.current.unavailable).toBe('no totals in response');
+  });
+
   it('flags the un-costed count as a floor when the row read hits its cap', async () => {
     // The un-costed count is derived from the rows READ; the session count
     // comes from the whole store. Once the read is capped those denominators

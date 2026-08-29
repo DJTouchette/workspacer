@@ -52,6 +52,11 @@ export interface AnalyticsSummary {
   byProject: AnalyticsBucket[]; // top spenders
   byModel: AnalyticsBucket[];
   byProvider: AnalyticsBucket[]; // split by coding-agent backend (always all)
+  /** Set only when the store could NOT be read. The zeros beside it are then
+   *  filler, not a measurement, and no surface may render them as one. The
+   *  headless brain stub uses the same field (`"headless"`, see
+   *  services/hub/cmd/brain/handlers.go) so every consumer needs one check. */
+  unavailable?: string;
 }
 
 /** SQL fragment + bind params for the optional provider / time-range filters.
@@ -253,7 +258,10 @@ class SessionHistoryStore {
       return { totals, byDay: byDay.reverse(), byProject, byModel, byProvider };
     } catch (err) {
       console.error('[SessionHistory] summary failed:', err);
-      return empty;
+      // The zeros in `empty` are a placeholder shape, not a reading. Returning
+      // them bare made an unreadable store indistinguishable from an idle one:
+      // "$0.00 across 0 sessions" beside a database holding five figures.
+      return { ...empty, unavailable: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -278,7 +286,11 @@ class SessionHistoryStore {
       return rows;
     } catch (err) {
       console.error('[SessionHistory] recent failed:', err);
-      return [];
+      // An empty array here would claim "this store holds no sessions", which
+      // is a different fact from "this store could not be read" — and an empty
+      // table genuinely returns [] without ever reaching this branch. Rejecting
+      // is the only way the caller can tell the two apart.
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 }
