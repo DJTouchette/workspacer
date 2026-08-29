@@ -12,6 +12,8 @@ import {
 } from '../lib/sessionHistoryGroups';
 import { ProjectMark } from '../components/ProjectMark';
 import { fuzzyScoreAny } from '../lib/fuzzy';
+import { fmtTokens, fmtUSD } from '../lib/sessionStats';
+import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
 import { History, X } from '../components/icons';
 
 /**
@@ -53,6 +55,23 @@ function relTime(ms: number): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/** One figure in the History header strip: dim label, bright value. */
+const HistoryTotal: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
+    <span
+      style={{
+        fontSize: '0.62rem',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        color: 'var(--wks-text-faint)',
+      }}
+    >
+      {label}
+    </span>
+    <span style={{ color: 'var(--wks-text-primary)', fontWeight: 650 }}>{value}</span>
+  </span>
+);
+
 interface SessionsPaneProps {
   /** Resumable daemon sessions (already filtered against the live layout). */
   sessions: RecentAgentSession[];
@@ -75,6 +94,11 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const { config } = useConfigContext();
+  // The history DB itself, not the daemon's list. It is the only source for
+  // TRANSCRIPT-ONLY rows — sessions claudemon has long forgotten but that the
+  // desktop still recorded cost and tokens for — and the only source of a
+  // lifetime total for this pane's header.
+  const analytics = useSessionAnalytics();
 
   const projects = useMemo(() => listProjects(config), [config]);
   const projectDirs = useMemo(() => projects.map((p) => p.dir), [projects]);
@@ -149,6 +173,66 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
         </div>
         <div style={{ marginTop: 4, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
           Past conversations in each of your projects. Click one to bring it back as an agent.
+        </div>
+
+        {/* What this history actually cost, straight from the desktop's own
+            session-history store. Three states, kept apart: figures we have,
+            rows nobody recorded a figure for (counted, not hidden), and a
+            store we cannot reach (said out loud, never rendered as zeros). */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 14,
+            flexWrap: 'wrap',
+            marginTop: 12,
+            padding: '10px 12px',
+            borderRadius: 'var(--wks-radius-md)',
+            border: '1px solid var(--wks-border-subtle)',
+            background: 'var(--wks-bg-raised)',
+            fontSize: '0.72rem',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {analytics.loading ? (
+            <span style={{ color: 'var(--wks-text-faint)' }}>Reading recorded usage…</span>
+          ) : analytics.unavailable ? (
+            <span style={{ color: 'var(--wks-text-faint)' }}>
+              Recorded usage is unavailable here ({analytics.unavailable}) — that is what could not
+              be read, not a total of zero.
+            </span>
+          ) : analytics.summary ? (
+            <>
+              <HistoryTotal label="All time" value={fmtUSD(analytics.summary.totals.costUSD)} />
+              <HistoryTotal
+                label="Tokens"
+                value={fmtTokens(
+                  analytics.summary.totals.inputTokens + analytics.summary.totals.outputTokens,
+                )}
+              />
+              <HistoryTotal
+                label="Recorded"
+                value={`${analytics.summary.totals.sessions} session${
+                  analytics.summary.totals.sessions === 1 ? '' : 's'
+                }`}
+              />
+              {analytics.unrecordedSessions > 0 && (
+                <span
+                  title={
+                    analytics.unrecordedComplete
+                      ? 'These sessions were recorded, but no usage was ever written for them. They are not $0.00 — they are unmeasured.'
+                      : 'Counted over the most recent rows only, so the real number is at least this. The session count beside it is the whole store.'
+                  }
+                  style={{ color: 'var(--wks-text-faint)' }}
+                >
+                  {analytics.unrecordedComplete ? '' : 'at least '}
+                  {analytics.unrecordedSessions} with no usage recorded
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: 'var(--wks-text-faint)' }}>No usage recorded yet.</span>
+          )}
         </div>
 
         {/* Search */}
@@ -279,6 +363,12 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
               // Inside a project section the header already names the dir;
               // the sub-line is only needed for catch-all rows and models.
               const subline = [g.dir ? '' : s.cwd, s.model].filter(Boolean).join(' · ');
+              // The daemon-joined figures first (same store, already on the
+              // row); the direct history read covers transcript-only rows the
+              // daemon has forgotten, which is most of a long history.
+              const fromHistory = analytics.bySessionId[s.sessionId];
+              const cost = s.costUSD ?? fromHistory?.costUSD;
+              const billed = s.billedTokens ?? fromHistory?.billedTokens;
               return (
                 <div
                   key={s.sessionId}
@@ -349,6 +439,34 @@ const SessionsPane: React.FC<SessionsPaneProps> = ({
                       </span>
                     )}
                   </span>
+                  {/* What this session actually cost, from the history DB's
+                      join. A row with nothing recorded renders NOTHING here —
+                      not "$0.00", which would claim a measurement that was
+                      never taken (a third of the rows on a real machine are
+                      un-costed placeholders). */}
+                  {(cost !== undefined || billed !== undefined) && (
+                    <span
+                      title={
+                        billed !== undefined
+                          ? `${fmtTokens(billed)} tokens billed (cumulative)`
+                          : undefined
+                      }
+                      style={{
+                        flexShrink: 0,
+                        fontSize: '0.66rem',
+                        fontFamily: 'var(--wks-font-mono)',
+                        color: 'var(--wks-text-muted)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {[
+                        cost !== undefined ? fmtUSD(cost) : '',
+                        billed !== undefined ? fmtTokens(billed) : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  )}
                   {s.archived && (
                     <span
                       style={{

@@ -831,8 +831,10 @@ func TestMergeRecentSessionsMatchesTheDesktopRules(t *testing.T) {
 	if got[0].Name != "name-new" {
 		t.Errorf("name = %q; a headless list must still be named wherever this machine knows a name", got[0].Name)
 	}
-	// The three the headless join cannot answer are EMPTY, not absent.
-	if got[0].Title != "" || got[0].Model != "" || got[0].CostUSD != 0 {
+	// Title/Model the headless join cannot answer are EMPTY; cost and tokens
+	// are ABSENT (nil), because a zero would render as a measured $0.00.
+	if got[0].Title != "" || got[0].Model != "" || got[0].CostUSD != nil ||
+		got[0].BilledTokens != nil {
 		t.Errorf("headless enrichment invented values: %+v", got[0])
 	}
 }

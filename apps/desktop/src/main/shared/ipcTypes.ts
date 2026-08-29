@@ -653,7 +653,21 @@ export interface RecentAgentSession {
    *  (or first user message), codex's rollout first message. '' when unknown. */
   title: string;
   model: string;
-  costUSD: number;
+  /**
+   * Cost recorded for this session in the desktop history DB.
+   *
+   * UNDEFINED means "not recorded", which is NOT zero. Two cases collapse into
+   * it and both are absences: the history DB has no row for this session at
+   * all, and a row whose `cost_usd` is 0. The column is `REAL DEFAULT 0` with
+   * no NULL, so a stored 0 cannot be told apart from "never written" — and on
+   * this machine ~31% of rows are all-zero placeholders. Rendering those as
+   * `$0.00` states a measurement we never took, so the join reports absence and
+   * every surface renders a dash.
+   */
+  costUSD?: number;
+  /** Cumulative billed tokens (input + output) recorded for this session.
+   *  Undefined on the same "not recorded" terms as {@link costUSD}. */
+  billedTokens?: number;
 }
 
 // ── Session persistence (session:save) ──

@@ -37,6 +37,23 @@ export interface AnalyticsTotals {
   toolCalls: number;
   durationMs: number;
   workflowRuns: number;
+  /**
+   * How many of `sessions` carry no usage at all — `cost_usd`, `input_tokens`
+   * and `output_tokens` all zero.
+   *
+   * The columns are `REAL/INTEGER DEFAULT 0` and never NULL, so a row that was
+   * created and never had usage written to it is indistinguishable from one
+   * measured at zero; ~31% of the rows on a real machine are that. Counting
+   * them is the only honest way to say what the lifetime total covers — the
+   * figure is a sum over `sessions - unrecordedSessions` rows, not over all of
+   * them.
+   *
+   * OPTIONAL because a source that does not compute it must not be read as
+   * "zero un-costed rows": the headless brain stub and any older desktop main
+   * both answer without it, and undefined sends the consumer back to counting
+   * the rows it actually read (a floor, labelled as one).
+   */
+  unrecordedSessions?: number;
 }
 
 export interface AnalyticsBucket {
@@ -52,6 +69,11 @@ export interface AnalyticsSummary {
   byProject: AnalyticsBucket[]; // top spenders
   byModel: AnalyticsBucket[];
   byProvider: AnalyticsBucket[]; // split by coding-agent backend (always all)
+  /** Set only when the store could NOT be read. The zeros beside it are then
+   *  filler, not a measurement, and no surface may render them as one. The
+   *  headless brain stub uses the same field (`"headless"`, see
+   *  services/hub/cmd/brain/handlers.go) so every consumer needs one check. */
+  unavailable?: string;
 }
 
 /** SQL fragment + bind params for the optional provider / time-range filters.
@@ -183,7 +205,11 @@ class SessionHistoryStore {
           `SELECT COUNT(*) AS sessions, COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens,
                 COALESCE(SUM(tool_calls),0) AS toolCalls, COALESCE(SUM(duration_ms),0) AS durationMs,
-                COALESCE(SUM(workflow_runs),0) AS workflowRuns
+                COALESCE(SUM(workflow_runs),0) AS workflowRuns,
+                COALESCE(SUM(CASE WHEN COALESCE(cost_usd,0) = 0
+                                   AND COALESCE(input_tokens,0) = 0
+                                   AND COALESCE(output_tokens,0) = 0
+                              THEN 1 ELSE 0 END),0) AS unrecordedSessions
          FROM session_history ${where}`,
         )
         .get(params) as AnalyticsTotals;
@@ -253,7 +279,10 @@ class SessionHistoryStore {
       return { totals, byDay: byDay.reverse(), byProject, byModel, byProvider };
     } catch (err) {
       console.error('[SessionHistory] summary failed:', err);
-      return empty;
+      // The zeros in `empty` are a placeholder shape, not a reading. Returning
+      // them bare made an unreadable store indistinguishable from an idle one:
+      // "$0.00 across 0 sessions" beside a database holding five figures.
+      return { ...empty, unavailable: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -278,7 +307,11 @@ class SessionHistoryStore {
       return rows;
     } catch (err) {
       console.error('[SessionHistory] recent failed:', err);
-      return [];
+      // An empty array here would claim "this store holds no sessions", which
+      // is a different fact from "this store could not be read" — and an empty
+      // table genuinely returns [] without ever reaching this branch. Rejecting
+      // is the only way the caller can tell the two apart.
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 }

@@ -2658,7 +2658,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 {/* In-app status line — telemetry only (dir/branch · plan · ctx ·
             tok/cost · quota meters). Controls (model/effort/permissions) live
             in the ComposerControls pills, never here. */}
-                <SessionStatusBar snapshot={session} cwd={cwd} />
+                <SessionStatusBar snapshot={session} sessionId={sessionId ?? undefined} cwd={cwd} />
 
                 {(() => {
                   const liveAgents =
@@ -2849,7 +2849,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           usage) plus this project's widget board. Sibling of the content area,
           so it persists in both GUI and Terminal mode. effectiveCwd is what the
           board is keyed by, so it works before a session attaches. */}
-          {railOpen && <InspectorRail session={session} cwd={effectiveCwd} onClose={toggleRail} />}
+          {railOpen && (
+            <InspectorRail
+              session={session}
+              sessionId={sessionId ?? undefined}
+              cwd={effectiveCwd}
+              onClose={toggleRail}
+            />
+          )}
         </div>
       </div>
     </SkillInventoryProvider>

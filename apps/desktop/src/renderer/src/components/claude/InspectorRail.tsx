@@ -28,6 +28,9 @@ import { WidgetBoard } from '../widgets/WidgetBoard';
  */
 export const InspectorRail: React.FC<{
   session: ClaudeSessionSnapshot | null;
+  /** The bound session id — carried so the card can still show the history DB's
+   *  recorded cost/tokens on a cold start, when `session` is null. */
+  sessionId?: string;
   onClose: () => void;
   /**
    * The directory the board belongs to — the pane's `effectiveCwd`, which is
@@ -36,7 +39,7 @@ export const InspectorRail: React.FC<{
    * before a session exists (and keeps working if one never attaches).
    */
   cwd?: string;
-}> = ({ session, onClose, cwd: cwdProp }) => {
+}> = ({ session, sessionId, onClose, cwd: cwdProp }) => {
   const [view, setView] = useState<'session' | 'project'>('session');
   const { widgets } = usePluginsContext();
   const cwd = cwdProp || session?.liveCwd || session?.cwd || '';
@@ -108,7 +111,7 @@ export const InspectorRail: React.FC<{
           tearing down its plugin guests is how they stay affordable, and the
           hibernation sweep never sees them (it only walks panes inside tabs). */}
       {view === 'session' ? (
-        <InspectorCard snapshot={session} />
+        <InspectorCard snapshot={session} sessionId={sessionId} />
       ) : (
         <WidgetBoard cwd={cwd} snapshot={session} available={widgets} />
       )}

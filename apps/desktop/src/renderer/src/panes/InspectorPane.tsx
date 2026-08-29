@@ -50,7 +50,11 @@ const InspectorPane: React.FC<InspectorPaneProps> = ({
 
   return (
     <div style={{ width: '100%', height: '100%', background: 'var(--wks-bg-base)' }}>
-      <InspectorCard snapshot={session} agentName={inspectorAgentName} />
+      <InspectorCard
+        snapshot={session}
+        sessionId={inspectorSessionId}
+        agentName={inspectorAgentName}
+      />
     </div>
   );
 };

@@ -36,6 +36,22 @@ interface HistoryName {
   agentName: string;
   model: string | null;
   costUSD: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * A history figure the DB cannot vouch for, reported as absent.
+ *
+ * `session_history.cost_usd` / `input_tokens` / `output_tokens` are all
+ * `DEFAULT 0` and never NULL, so a stored 0 is indistinguishable from a row
+ * that was created but never had usage written to it — and a third of the rows
+ * on a real machine are exactly that. Zero is therefore reported as UNKNOWN
+ * rather than as a measured $0.00 / 0 tokens: an honest dash beats a confident
+ * wrong zero, and no surface can un-invent a number it was handed.
+ */
+function recorded(n: number | undefined): number | undefined {
+  return n ? n : undefined;
 }
 
 /** Join daemon rows with history names into the wire summaries, newest first. */
@@ -61,7 +77,8 @@ export function mergeRecentSessions(
         name: h?.agentName || '',
         title: '',
         model: h?.model || '',
-        costUSD: h?.costUSD ?? 0,
+        costUSD: recorded(h?.costUSD),
+        billedTokens: h ? recorded(h.inputTokens + h.outputTokens) : undefined,
         // Internal: carried so the title enrichment can find the transcript;
         // stripped before the list crosses IPC.
         transcriptPath: r.transcript_path,
@@ -100,6 +117,8 @@ export async function listRecentSessions(): Promise<RecentAgentSession[]> {
       agentName: rec.agentName,
       model: rec.model,
       costUSD: rec.costUSD,
+      inputTokens: rec.inputTokens,
+      outputTokens: rec.outputTokens,
     }));
     const merged = mergeRecentSessions(rows, names);
     // Provider auto-titles (claude ai-title / first user message) for the rows
