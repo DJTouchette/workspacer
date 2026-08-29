@@ -2075,4 +2075,119 @@ mod tests {
             .and_then(serde_json::Value::as_bool)
             .unwrap());
     }
+
+    /// THE SYMLINK ATTRIBUTION HAZARD, proved rather than asserted.
+    ///
+    /// Workspacer's "Add Claude Account" gives a second login its own config
+    /// root but shares memories and transcripts by symlinking
+    /// `<root>/projects` at the primary `~/.claude/projects`. So both accounts
+    /// write their JSONL into ONE physical directory, and the ONLY thing that
+    /// distinguishes them is the un-resolved path string the CLI happened to
+    /// use. This test builds that exact layout on disk — a real symlink, not a
+    /// mocked one — and shows both halves:
+    ///
+    ///   1. the fallback source IS lossy under canonicalization. A resolved
+    ///      path from the `work` account names the PRIMARY root. No error, no
+    ///      signal: the two accounts' usage merges and nothing says so.
+    ///   2. attribution nevertheless survives, because the spawn-recorded
+    ///      `config_root` never came from a path.
+    ///
+    /// Assertion (2) is the regression guard, and it FAILS on the previous
+    /// implementation: `claude_config_root` read only `transcript_path`, so
+    /// handed the canonicalized path it returned the primary root — silently
+    /// billing the `work` account's tokens to the default account.
+    #[cfg(unix)]
+    #[test]
+    fn account_attribution_survives_a_canonicalized_transcript_path() {
+        let base = std::env::temp_dir().join(format!(
+            "wks-symlink-attr-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let primary = base.join(".claude");
+        let shared_projects = primary.join("projects").join("-home-u-work");
+        let work_root = primary.join("accounts").join("work");
+        std::fs::create_dir_all(&shared_projects).unwrap();
+        std::fs::create_dir_all(&work_root).unwrap();
+        // The hazard itself: the profile's `projects` IS the primary's.
+        std::os::unix::fs::symlink(primary.join("projects"), work_root.join("projects")).unwrap();
+        let transcript = work_root
+            .join("projects")
+            .join("-home-u-work")
+            .join("abc.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+
+        let as_spelled = transcript.to_string_lossy().into_owned();
+        let resolved = std::fs::canonicalize(&transcript)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // The symlink really did collapse the two roots into one directory.
+        assert_ne!(
+            as_spelled, resolved,
+            "fixture must actually traverse a symlink"
+        );
+
+        // (1) The fallback source, on each spelling of the SAME file.
+        let root_of = |p: &str| {
+            super::super::account_usage::normalize_root(
+                &super::super::account_usage::root_from_transcript(p).unwrap(),
+            )
+        };
+        assert_eq!(
+            root_of(&as_spelled),
+            work_root.to_string_lossy(),
+            "un-resolved, the path still names the account that wrote it",
+        );
+        assert_eq!(
+            root_of(&resolved),
+            primary.to_string_lossy(),
+            "RESOLVED, the same file names the PRIMARY account — this is the \
+             silent merge, and it is why the transcript path cannot be the \
+             only source of attribution",
+        );
+
+        // (2) The regression guard. Same canonicalized path, but the session
+        // remembers what it was spawned with.
+        let mut merged = SessionState::new("s-merged".into(), None);
+        merged.transcript_path = Some(resolved.clone());
+        assert_eq!(
+            merged.claude_config_root(),
+            primary.to_string_lossy(),
+            "without the spawn stamp there is nothing left to attribute with",
+        );
+
+        let mut stamped = SessionState::new("s-stamped".into(), None);
+        stamped.transcript_path = Some(resolved);
+        stamped.config_root = Some(work_root.to_string_lossy().into_owned());
+        assert_eq!(
+            stamped.claude_config_root(),
+            work_root.to_string_lossy(),
+            "the spawn-recorded root wins over any path, resolved or not",
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The spawn env is the attribution source, and "no CLAUDE_CONFIG_DIR" is
+    /// a real answer (the default account) rather than an absent one.
+    #[test]
+    fn spawn_env_names_the_account() {
+        use std::collections::HashMap;
+        let root_from_spawn_env = super::super::account_usage::root_from_spawn_env;
+        assert_eq!(root_from_spawn_env(&HashMap::new()), "");
+        let mut env = HashMap::new();
+        env.insert("CLAUDE_CONFIG_DIR".to_string(), "  ".to_string());
+        assert_eq!(root_from_spawn_env(&env), "", "blank is not a root");
+        env.insert(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            "/home/u/.claude/accounts/work/".to_string(),
+        );
+        assert_eq!(
+            root_from_spawn_env(&env),
+            "/home/u/.claude/accounts/work",
+            "trailing separator trimmed, so it keys the same as the poller's",
+        );
+    }
 }

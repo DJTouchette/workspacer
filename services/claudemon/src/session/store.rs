@@ -434,9 +434,9 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
-            account_usage_errors: Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
+            account_usage_errors: Arc::new(
+                std::sync::RwLock::new(std::collections::HashMap::new()),
+            ),
             heartbeat_ids: Arc::new(DashSet::new()),
         }
     }
@@ -1271,6 +1271,32 @@ impl SessionStore {
         if let Some(mut entry) = self.states.get_mut(session_id) {
             entry.requested_model = Some(model.to_string());
         }
+    }
+
+    /// Record the Claude config root this session was SPAWNED with — the
+    /// spawn env's `CLAUDE_CONFIG_DIR`, or the daemon's own default when the
+    /// spawn set none. Stored normalized (`""` = the default account).
+    ///
+    /// This is the ATTRIBUTION KEY, and it is recorded here rather than
+    /// derived later because deriving it is a correctness hazard. See
+    /// [`SessionState::config_root`] — a profile's `projects` dir is a SYMLINK
+    /// at the shared `~/.claude/projects`, so the transcript path only tells
+    /// the two logins apart while nothing has resolved it.
+    ///
+    /// [`SessionState::config_root`]: super::state::SessionState::config_root
+    pub fn set_config_root(&self, session_id: &str, root: &str) {
+        let root = super::account_usage::normalize_root(root);
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            entry.config_root = Some(root);
+        }
+    }
+
+    /// The config root recorded for a session, if the daemon spawned it.
+    /// `None` means the daemon genuinely does not know — never "the default".
+    pub fn config_root(&self, session_id: &str) -> Option<String> {
+        self.states
+            .get(session_id)
+            .and_then(|s| s.config_root.clone())
     }
 
     /// The model a session was ASKED for, if anything recorded one.

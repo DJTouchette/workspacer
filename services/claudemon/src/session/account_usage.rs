@@ -139,6 +139,20 @@ pub fn default_config_root() -> String {
 /// is everything before the last `/projects/` component (the slug is a single
 /// dash-flattened component and can never contain a separator). `None` when
 /// the path has no `projects` component.
+///
+/// LOSSY ON PURPOSE-RESOLVED PATHS. Workspacer's "Add Claude Account" profiles
+/// share memories and transcripts by symlinking `<root>/projects` at the
+/// primary `~/.claude/projects`, so both logins write into ONE physical
+/// directory. This function reads the string it is given, which is the only
+/// reason it can tell them apart: a canonicalized path names the primary
+/// account no matter which login wrote it, and it does so silently — there is
+/// no error to notice and no way to detect it after the fact.
+///
+/// So this is the FALLBACK source, for sessions the daemon did not spawn.
+/// [`root_from_spawn_env`] is the primary one, and it cannot be defeated this
+/// way because it never looks at a path. Never make this the sole source
+/// again, and never `canonicalize`/`realpath` a transcript path before handing
+/// it here.
 pub fn root_from_transcript(path: &str) -> Option<String> {
     // Match either separator; byte offsets are shared because the replacement
     // is 1:1, so we can slice the ORIGINAL string (Windows paths keep their
@@ -161,6 +175,22 @@ pub fn normalize_root(root: &str) -> String {
         String::new()
     } else {
         trimmed.to_string()
+    }
+}
+
+/// The config root a SPAWN env selects: its `CLAUDE_CONFIG_DIR` if it set one,
+/// otherwise the daemon's own default. Normalized, so `""` means "the default
+/// account" whichever way the env spelled it.
+///
+/// This is the robust half of account attribution. The env var is a
+/// *declaration*, not a path we later have to re-derive, so no amount of path
+/// resolution downstream can change what it says. Contrast
+/// [`root_from_transcript`], which is only correct while the path it is handed
+/// is un-resolved — see its own note.
+pub fn root_from_spawn_env(env: &std::collections::HashMap<String, String>) -> String {
+    match env.get("CLAUDE_CONFIG_DIR").map(|d| d.trim()) {
+        Some(dir) if !dir.is_empty() => normalize_root(dir),
+        _ => String::new(),
     }
 }
 
@@ -246,7 +276,10 @@ fn read_access_token(root: &str) -> std::result::Result<String, UsageError> {
                     }
                 }
             }
-            Err(UsageError::new(UsageFailure::NoCredentials, format!("{file_err:#}")))
+            Err(UsageError::new(
+                UsageFailure::NoCredentials,
+                format!("{file_err:#}"),
+            ))
         }
     }
 }
@@ -295,7 +328,9 @@ fn token_from_credentials(creds: &Value) -> std::result::Result<String, UsageErr
         .and_then(Value::as_str)
         .filter(|t| !t.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| UsageError::new(UsageFailure::NoCredentials, "no accessToken in credentials"))
+        .ok_or_else(|| {
+            UsageError::new(UsageFailure::NoCredentials, "no accessToken in credentials")
+        })
 }
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -313,7 +348,12 @@ pub async fn fetch_account_usage(
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .map_err(|err| UsageError::new(UsageFailure::Unreachable, format!("usage request failed: {err}")))?;
+        .map_err(|err| {
+            UsageError::new(
+                UsageFailure::Unreachable,
+                format!("usage request failed: {err}"),
+            )
+        })?;
     if !resp.status().is_success() {
         let status = resp.status();
         // A 401/403 after our local expiry check passed still means the token
@@ -388,7 +428,10 @@ pub fn configured_config_roots() -> Vec<String> {
         if key.is_empty() {
             return; // already covered by the default entry
         }
-        if !std::path::Path::new(&key).join(".credentials.json").is_file() {
+        if !std::path::Path::new(&key)
+            .join(".credentials.json")
+            .is_file()
+        {
             return;
         }
         if !roots.contains(&key) {
@@ -481,8 +524,7 @@ pub fn next_poll_delay(live: bool, consecutive_failures: u32) -> std::time::Dura
 pub fn spawn_poller(store: super::store::SessionStore) {
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let mut tick =
-            tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // root → (next attempt, consecutive failures). A root absent from the
         // map has never been attempted and is due immediately, which is what
@@ -722,10 +764,7 @@ mod tests {
             None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
         }
 
-        assert_eq!(
-            roots[0], "",
-            "the default account is always polled, first",
-        );
+        assert_eq!(roots[0], "", "the default account is always polled, first",);
         assert!(
             roots.contains(&work.to_string_lossy().into_owned()),
             "a second login on disk is discovered without the desktop's help: {roots:?}",

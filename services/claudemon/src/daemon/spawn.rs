@@ -268,6 +268,16 @@ pub async fn handle(
 
     store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
+    // Which ACCOUNT this session bills against, recorded from the spawn env at
+    // the one moment it is known for certain. Deriving it later from the
+    // transcript path works only while nothing has resolved that path, and a
+    // profile's `projects` is a symlink at the shared one — so a `realpath`
+    // anywhere upstream would silently merge two logins' usage. See
+    // `account_usage::root_from_spawn_env`.
+    store.set_config_root(
+        &session_id,
+        &crate::session::account_usage::root_from_spawn_env(&payload.env),
+    );
     // The caller's own answer first, argv only as a fallback — see
     // `SpawnPayload::model`. Recorded unconditionally when either is present:
     // the guard used to be "a model appeared on argv", which is empty for every
@@ -438,6 +448,15 @@ pub async fn handle_managed(
     crate::session::transcript::allow_spawn_env(&payload.env);
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
+    // Same attribution stamp as the PTY path, and for the same reason. Only
+    // Claude has per-config-root accounts, so recording it for a codex/copilot
+    // session would assert something that has no meaning there.
+    if payload.provider == "claude" {
+        store.set_config_root(
+            &session_id,
+            &crate::session::account_usage::root_from_spawn_env(&payload.env),
+        );
+    }
     // Queued BEFORE the driver task starts and before the 200 below, so it is
     // waiting when `register_managed_input` drains it. Doing it here rather
     // than leaving it to the caller is the whole point: `register_managed`

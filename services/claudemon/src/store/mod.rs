@@ -465,9 +465,10 @@ mod tests {
     fn transcript_path_takes_the_newest_and_is_never_blanked() {
         let db = Db::open(tempfile_path()).unwrap();
         let mut first = ev("SessionStart", "s1");
-        first
-            .payload
-            .insert("transcript_path".into(), json!("/home/u/.claude/projects/p/a.jsonl"));
+        first.payload.insert(
+            "transcript_path".into(),
+            json!("/home/u/.claude/projects/p/a.jsonl"),
+        );
         db.record_event(&first).unwrap();
 
         let mut moved = ev("PreToolUse", "s1");
