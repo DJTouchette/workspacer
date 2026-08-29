@@ -19,10 +19,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 // TestWholesaleConfigPathsMatchesContract is the cross-language guard: the
@@ -61,7 +65,7 @@ func TestConfigSaveReplacesProjectsWholesale(t *testing.T) {
 	// The caller (e.g. the desktop's project settings, or an agent replaying
 	// the same wholesale contract via MCP save_config) deletes project b by
 	// resending the surviving map.
-	merged := c.save(map[string]any{"projects": map[string]any{
+	merged := mustSave(t, c, map[string]any{"projects": map[string]any{
 		"/home/u/a": map[string]any{"label": "A", "yolo": true},
 	}})
 
@@ -104,7 +108,7 @@ func TestConfigSaveObjectValueRoundTripsAsAnObject(t *testing.T) {
 	tempConfigHome(t)
 
 	c := newConfigService()
-	merged := c.save(map[string]any{
+	merged := mustSave(t, c, map[string]any{
 		"pluginSettings": map[string]any{"fullAccess": true, "provider": "claude"},
 		"projects": map[string]any{
 			"/home/u/proj": map[string]any{"label": "Proj", "yolo": true},
@@ -193,7 +197,7 @@ func TestConfigSaveCASRetriesAgainstAConcurrentWriter(t *testing.T) {
 	t.Cleanup(func() { preWriteHook = func() {} })
 
 	// Our own save never mentions "projects" at all.
-	merged := c.save(map[string]any{"claude": map[string]any{"defaultModel": "opus"}})
+	merged := mustSave(t, c, map[string]any{"claude": map[string]any{"defaultModel": "opus"}})
 
 	if !fired {
 		t.Fatal("preWriteHook never fired — the test did not exercise the CAS path")
@@ -246,7 +250,7 @@ func TestConfigSaveGivesUpWhenAnOutsiderNeverStops(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := c.save(map[string]any{"ui": map[string]any{"theme": "nord"}})
+	got := mustSave(t, c, map[string]any{"ui": map[string]any{"theme": "nord"}})
 	if themeOf(got) == "nord" {
 		t.Error("save() reported success while an outsider was churning the file on every attempt")
 	}
@@ -260,4 +264,135 @@ func TestConfigSaveGivesUpWhenAnOutsiderNeverStops(t *testing.T) {
 	if string(before) == string(after) {
 		t.Fatal("the outsider's churn never actually landed — test setup is broken")
 	}
+}
+
+// nestAt builds the nested document a dotted path names, with `leaf` at the
+// bottom: nestAt("ui.customThemes", v) is {"ui": {"customThemes": v}}. Nothing
+// in applyWholesale's contract is about the OTHER keys, so a case's document is
+// exactly its one path.
+func nestAt(dotted string, leaf any) map[string]any {
+	keys := strings.Split(dotted, ".")
+	cur := leaf
+	for i := len(keys) - 1; i >= 0; i-- {
+		cur = map[string]any{keys[i]: cur}
+	}
+	return cur.(map[string]any)
+}
+
+// valueAt reads a dotted path back out of a document.
+func valueAt(doc map[string]any, dotted string) any {
+	keys := strings.Split(dotted, ".")
+	var cur any = doc
+	for _, k := range keys {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[k]
+	}
+	return cur
+}
+
+// TestWholesaleValueContractCases is the cross-language guard on what a
+// wholesale path's VALUE may be — the half of this contract that used to be
+// answered differently by each writer, and destructively by this one.
+//
+// The Go brain coerced any non-object to an empty map, so a save_config whose
+// `projects` arrived as a string DELETED every project and reported success;
+// the TS twin wrote the same value through verbatim. contracts/
+// wholesale-config-paths.json's `valueCases` is what stops them drifting again
+// — the SAME block is consumed by configService.test.ts.
+func TestWholesaleValueContractCases(t *testing.T) {
+	data := mustReadRepoFile(t, "contracts", "wholesale-config-paths.json")
+	var fixture struct {
+		Paths      []string `json:"paths"`
+		ValueCases []struct {
+			Name      string          `json:"name"`
+			Path      string          `json:"path"`
+			Current   json.RawMessage `json:"current"`
+			Value     json.RawMessage `json:"value"`
+			Expect    string          `json:"expect"`
+			Expected  json.RawMessage `json:"expected"`
+			RefusedBy string          `json:"refusedBy"`
+		} `json:"valueCases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse contract fixture: %v", err)
+	}
+	// wholesaleValueFloor is the corpus's size today. "not zero" is met by a
+	// fixture that lost every case but one, and one surviving accept case would
+	// leave every refusal — the entire point of the block — unexercised.
+	const wholesaleValueFloor = 11
+	var tally sweepguard.Tally
+	// Every path on the wholesale list must be exercised by at least one case:
+	// the incident hit `projects`, and a corpus that covered only `projects`
+	// would say nothing about the nested walk the other two need.
+	covered := map[string]bool{}
+	refusals := 0
+	for _, c := range fixture.ValueCases {
+		t.Run(c.Name, func(t *testing.T) {
+			tally.Ran("other")
+			// Inside the body, past every gate: a count taken where the subtests
+			// are REGISTERED reports a full house for a run in which every one of
+			// them skipped. (Held by TestSweepCountersAreIncrementedFromTheBody.)
+			covered[c.Path] = true
+			if c.Expect == "refuse" {
+				refusals++
+			}
+			var current, value any
+			if err := json.Unmarshal(c.Current, &current); err != nil {
+				t.Fatalf("unmarshal current: %v", err)
+			}
+			if err := json.Unmarshal(c.Value, &value); err != nil {
+				t.Fatalf("unmarshal value: %v", err)
+			}
+			merged := nestAt(c.Path, current)
+			partial := nestAt(c.Path, value)
+			err := applyWholesale(merged, partial, c.Path)
+			switch c.Expect {
+			case "accept":
+				if err != nil {
+					t.Fatalf("applyWholesale refused a legal value: %v", err)
+				}
+				var expected any
+				if err := json.Unmarshal(c.Expected, &expected); err != nil {
+					t.Fatalf("unmarshal expected: %v", err)
+				}
+				if got := valueAt(merged, c.Path); !reflect.DeepEqual(got, expected) {
+					t.Errorf("value at %s = %#v, want %#v", c.Path, got, expected)
+				}
+			case "refuse":
+				if err == nil {
+					t.Fatalf("applyWholesale ACCEPTED %s at %s — the value at that path is now %#v",
+						c.RefusedBy, c.Path, valueAt(merged, c.Path))
+				}
+				if !errors.Is(err, errWholesaleNotAMap) {
+					t.Errorf("refused with %v, want errWholesaleNotAMap", err)
+				}
+				// A refusal must leave the document ALONE. Refusing and then
+				// emptying the map anyway is the defect wearing an error.
+				var before any
+				if err := json.Unmarshal(c.Current, &before); err != nil {
+					t.Fatalf("unmarshal current: %v", err)
+				}
+				if got := valueAt(merged, c.Path); !reflect.DeepEqual(got, before) {
+					t.Errorf("a REFUSED apply still changed %s: %#v, want %#v", c.Path, got, before)
+				}
+			default:
+				t.Fatalf("unknown expect %q", c.Expect)
+			}
+		})
+	}
+	for _, p := range fixture.Paths {
+		if !covered[p] {
+			t.Errorf("no valueCases case exercises the wholesale path %q — a path nothing sends a value at is one this contract says nothing about", p)
+		}
+	}
+	if refusals == 0 {
+		t.Error("the corpus contains no refusal case — it would pass against the shipped coercion that emptied the map")
+	}
+	if err := tally.RequireEvery("the wholesale value corpus", wholesaleValueFloor); err != nil {
+		t.Fatal(err)
+	}
+	t.Log(tally.String())
 }

@@ -67,3 +67,16 @@ func absTestPath(parts ...string) string {
 	}
 	return root + strings.Join(parts, sep)
 }
+
+// mustSave runs a config save and fails the test if it was REFUSED. save now
+// returns an error for the one case it used to answer by deleting the caller's
+// map (a non-object at a wholesale path — see errWholesaleNotAMap), so a test
+// that wants the merged value must say it expected the save to land.
+func mustSave(t *testing.T, c *configService, partial map[string]any) map[string]any {
+	t.Helper()
+	merged, err := c.save(partial)
+	if err != nil {
+		t.Fatalf("config.save was refused: %v", err)
+	}
+	return merged
+}

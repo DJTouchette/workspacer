@@ -363,13 +363,56 @@ function getConfigFilePath(): string {
 }
 
 /**
+ * Thrown instead of writing anything when a save names a wholesale path with a
+ * value that is not an object.
+ *
+ * The two writers used to DISAGREE on this exact input, and both answers were
+ * wrong. The Go brain coerced it to `{}` — deleting the user's entire projects /
+ * customThemes / budgets map and reporting a successful save, with no backup
+ * taken on a successful write. This side wrote the bad value through VERBATIM
+ * (`dst[leaf] = src[leaf] ?? {}`), leaving a string where a map belongs, so
+ * `config.projects[cwd]` came back undefined for every project the user had.
+ * Both refuse now, held together by contracts/wholesale-config-paths.json's
+ * `valueCases` block.
+ */
+export class WholesaleValueError extends Error {
+  readonly dottedPath: string;
+  constructor(dottedPath: string, got: string) {
+    super(
+      `${dottedPath} is replaced wholesale on save, so it must be sent as an object (got ${got}). ` +
+        `Nothing was written — send the full map you want kept, or {} to empty it`,
+    );
+    this.name = 'WholesaleValueError';
+    this.dottedPath = dottedPath;
+  }
+}
+
+/** What the caller actually sent, for the refusal message. */
+function describeWholesaleValue(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  if (typeof v === 'string') return 'a string';
+  if (typeof v === 'number') return 'a number';
+  if (typeof v === 'boolean') return 'a boolean';
+  return typeof v;
+}
+
+/**
  * Undo the deep merge at one dotted path, so the caller's map replaces the
  * merged one outright.
  *
  * A no-op unless the leaf key is actually PRESENT in `partial` — absence means
- * "I'm not touching this map", which must leave the merged value alone. Present
- * but null/undefined means "empty it", which is the deletion case deep-merge
- * cannot express (it skips nullish values entirely).
+ * "I'm not touching this map", which must leave the merged value alone. An
+ * explicit `undefined` counts as absent: JavaScript spells "I did not provide
+ * this" that way, JSON cannot carry it at all, and the Go twin therefore never
+ * sees it.
+ *
+ * Anything else that is not a plain object is REFUSED (see WholesaleValueError),
+ * `null` included. `{}` already says "empty this map", unambiguously and in both
+ * languages, so `null` adds no expressive power and is overwhelmingly likelier
+ * to be an accident — a serialiser's undefined, a lookup that missed — than an
+ * intent to delete everything the user owns. (It used to mean "empty it", via
+ * the `?? {}`; nothing in this repo ever sent it.)
  */
 export function applyWholesale(
   merged: Record<string, unknown>,
@@ -390,7 +433,12 @@ export function applyWholesale(
     dst = nextDst as Record<string, unknown>;
   }
   if (!src || !Object.prototype.hasOwnProperty.call(src, leaf)) return;
-  dst[leaf] = src[leaf] ?? {};
+  const value = src[leaf];
+  if (value === undefined) return;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new WholesaleValueError(dottedPath, describeWholesaleValue(value));
+  }
+  dst[leaf] = value;
 }
 
 // Deep merge source into target, preserving target defaults for missing keys.
@@ -748,6 +796,13 @@ export class ConfigService {
     try {
       return withConfigLock(getConfigFilePath(), () => this.saveConfigLocked(partial));
     } catch (err) {
+      // A malformed wholesale value is REFUSED OUT LOUD, not swallowed into a
+      // success carrying the old config. That refusal replaces the branch that
+      // used to write the bad value through (and, on the Go twin, empty the
+      // map), so the caller learning about it is the entire point — the bus
+      // handler in hubCapabilities turns it into an error reply, and the IPC
+      // handler rejects the renderer's promise.
+      if (err instanceof WholesaleValueError) throw err;
       // Could not take the lock: the other writer is mid-write (or wedged).
       // Writing anyway is the bug this exists to prevent, so refuse — and say
       // so, because the setting the user just changed did not land.
@@ -792,6 +847,12 @@ export class ConfigService {
       // user just deleted comes straight back. Undo the merge for those paths
       // and take the caller's map verbatim. The renderer reads the same list
       // to know not to trim them on the way out — see main/shared/configWholesale.
+      // A throw here aborts the WHOLE save, above the CAS and above the write:
+      // nothing has touched disk yet, so config.yaml is untouched and
+      // this.config still describes it. Deliberately not "skip this path and
+      // write the rest" — the merge already folded the caller's other keys in,
+      // and a partial apply is how a caller learns its save "worked" while one
+      // map silently did not move.
       for (const path of WHOLESALE_CONFIG_PATHS) {
         applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
       }

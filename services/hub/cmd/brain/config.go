@@ -395,7 +395,19 @@ func dropHostTrusted(partial map[string]any) map[string]any {
 	return out
 }
 
-func (c *configService) save(partial map[string]any) map[string]any {
+// save returns the config as it now stands, plus an error when the save was
+// REFUSED. A refusal is not a rare protocol nicety here: config.save's whole
+// failure history is "reported success for a write that did not land", and the
+// one refusal that carries an error — a non-object at a wholesale path — used
+// to be answered by DELETING the map instead. The caller (handlers.go
+// config.save) turns it into a bus error, so a malformed save is a visible
+// failure rather than a silently emptied projects list.
+//
+// The lock-timeout branch below deliberately keeps returning a nil error and
+// the previous value, unchanged: that path is transient and already documented
+// as "the caller sees the value it did not get", and the TS twin behaves the
+// same way.
+func (c *configService) save(partial map[string]any) (map[string]any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// The mutex above only serialises US. config.yaml has a second writer in
@@ -404,8 +416,9 @@ func (c *configService) save(partial map[string]any) map[string]any {
 	// refresh, nothing spans the three. Hold the cross-process lock across all
 	// of it. See contracts/config-lock.json.
 	var result map[string]any
+	var refused error
 	if err := withConfigLock(configPath(), func() error {
-		result = c.saveLocked(partial)
+		result, refused = c.saveLocked(partial)
 		return nil
 	}); err != nil {
 		// Could not take the lock: the other writer is mid-write (or wedged).
@@ -422,9 +435,9 @@ func (c *configService) save(partial map[string]any) map[string]any {
 		// write-only daemon that still reported every save as applied. The TS
 		// twin does not latch here either.
 		log.Printf("brain: config.save skipped: %v", err)
-		return c.current
+		return c.current, nil
 	}
-	return result
+	return result, refused
 }
 
 // wholesaleConfigPaths are the config subtrees replaced WHOLESALE on save
@@ -445,12 +458,63 @@ func (c *configService) save(partial map[string]any) map[string]any {
 // (commit c4963a73) fixed on only one side.
 var wholesaleConfigPaths = []string{"ui.customThemes", "claude.budgets", "projects"}
 
+// errWholesaleNotAMap is returned instead of writing anything when a save names
+// a wholesale path with a value that is not an object.
+//
+// It replaces a one-line `else { dst[leaf] = map[string]any{} }`, and that line
+// was the worst possible answer to malformed input: a wholesale path is REPLACED
+// rather than merged, so coercing to {} DELETED the user's whole map — every
+// project's label, colour, icon, favourite flag, delivery mode, yolo flag and
+// worktreeSetup hooks; every custom theme; every budget — and then returned the
+// emptied config as a SUCCESSFUL save. Nothing is backed up on a successful
+// write (writeConfigYAML backs up only an UNPARSEABLE file), so there was
+// nothing to recover from either.
+//
+// It was reachable, not theoretical: every agent's config write answers here
+// (contracts/wholesale-config-paths.json — "an agent's writes ALWAYS go through
+// the brain, never the desktop's in-process path"), and the MCP facade's
+// save_config took a bare free-form object, so a client that serialised its
+// argument sent `projects` as a STRING and was coerced rather than refused.
+// The facade now declares a schema that rejects that at the door
+// (cmd/mcp/main.go addConfigSaveTool); this is the layer that has to hold for
+// every OTHER caller — web, mobile, TUI, plugins, a hand-written bus client.
+//
+// Pinned across both writers by contracts/wholesale-config-paths.json's
+// `valueCases`, because the TS twin used to disagree here: it wrote the
+// non-map value through VERBATIM (`dst[leaf] = src[leaf] ?? {}`), leaving a
+// string where a map belongs. Both refuse now.
+var errWholesaleNotAMap = errors.New("wholesale config path must be an object")
+
+// jsonTypeName names a decoded JSON value's type for a refusal message, so the
+// caller is told what it actually sent rather than just that it was wrong.
+func jsonTypeName(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "a string"
+	case bool:
+		return "a boolean"
+	case float64, int, int64:
+		return "a number"
+	case []any:
+		return "an array"
+	}
+	return fmt.Sprintf("%T", v)
+}
+
 // applyWholesale replaces merged's value at dottedPath with partial's value at
 // the same path, when partial actually names it — undoing whatever deepMerge
 // did there. Mirrors configService.ts's applyWholesale exactly (including its
-// "absent means untouched, present-but-not-a-map means empty" rule), so the
-// two languages cannot answer "was this key touched?" differently.
-func applyWholesale(merged map[string]any, partial map[string]any, dottedPath string) {
+// "absent means untouched" rule), so the two languages cannot answer "was this
+// key touched?" differently.
+//
+// Present-but-not-an-object is REFUSED, not coerced — see errWholesaleNotAMap.
+// `null` is refused with the rest: an empty object already says "empty this
+// map", unambiguously and in both languages, so null adds no expressive power
+// and is overwhelmingly likelier to be an accident (a serialiser's undefined, a
+// lookup that missed) than an intent to delete everything the user owns.
+func applyWholesale(merged map[string]any, partial map[string]any, dottedPath string) error {
 	keys := strings.Split(dottedPath, ".")
 	leaf := keys[len(keys)-1]
 	parents := keys[:len(keys)-1]
@@ -460,24 +524,27 @@ func applyWholesale(merged map[string]any, partial map[string]any, dottedPath st
 	for _, k := range parents {
 		nextSrc, ok := src[k].(map[string]any)
 		if !ok {
-			return // partial doesn't reach this path — not touched
+			return nil // partial doesn't reach this path — not touched
 		}
 		src = nextSrc
 		nextDst, ok := dst[k].(map[string]any)
 		if !ok {
-			return // the merge never created this parent as an object
+			return nil // the merge never created this parent as an object
 		}
 		dst = nextDst
 	}
 	v, present := src[leaf]
 	if !present {
-		return
+		return nil
 	}
-	if vMap, ok := v.(map[string]any); ok {
-		dst[leaf] = vMap
-	} else {
-		dst[leaf] = map[string]any{}
+	vMap, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%w: %s is replaced wholesale on save, so it must be sent as an object "+
+			"(got %s). Nothing was written — send the full map you want kept, or {} to empty it",
+			errWholesaleNotAMap, dottedPath, jsonTypeName(v))
 	}
+	dst[leaf] = vMap
+	return nil
 }
 
 // preWriteHook runs once per saveLocked attempt, immediately after the merge
@@ -507,7 +574,7 @@ const saveCASAttempts = 5
 // closes the equivalent one for brief.md: re-check immediately before
 // publishing, and if the file moved under us, recompute against what is
 // actually there instead of overwriting it.
-func (c *configService) saveLocked(partial map[string]any) map[string]any {
+func (c *configService) saveLocked(partial map[string]any) (map[string]any, error) {
 	dropped := dropHostTrusted(partial)
 	var merged map[string]any
 	for attempt := 0; attempt < saveCASAttempts; attempt++ {
@@ -522,14 +589,23 @@ func (c *configService) saveLocked(partial map[string]any) map[string]any {
 		c.loadedAt = configStamp()
 		merged = deepMerge(c.current, dropped)
 		for _, dotted := range wholesaleConfigPaths {
-			applyWholesale(merged, dropped, dotted)
+			if err := applyWholesale(merged, dropped, dotted); err != nil {
+				// REFUSE the whole save. Not "skip this path and write the rest":
+				// the merge already folded the caller's other keys in, and a
+				// partial apply is how a caller learns its save "worked" while
+				// one map silently did not move. Nothing has been written yet —
+				// this is above the CAS and the write — so the on-disk config is
+				// untouched and c.current still describes it.
+				log.Printf("brain: config.save refused: %v", err)
+				return c.current, err
+			}
 		}
 		if c.persistBlocked {
 			// The on-disk config failed to load (unreadable or unparseable): keep
 			// the change in memory only. Writing here would replace the user's file
 			// with defaults + this partial — permanent loss of everything else.
 			c.current = merged
-			return merged
+			return merged, nil
 		}
 		preWriteHook()
 		// COMPARE-AND-SWAP: re-check the file's identity immediately before
@@ -547,18 +623,18 @@ func (c *configService) saveLocked(partial map[string]any) map[string]any {
 			// setting look applied until the next restart reverted it. Also does
 			// not latch persistBlocked: ENOSPC and EIO are transient, and the latch
 			// is unclearable from here for the reason described in save().
-			return c.current
+			return c.current, nil
 		}
 		c.current = merged
 		c.loadedAt = configStamp()
-		return merged
+		return merged, nil
 	}
 	// Exhausted retries: something outside the lock is rewriting config.yaml
 	// faster than a save can land. Refuse rather than write over whatever it
 	// left — the caller sees the value it did not get, same as a lock timeout.
 	log.Printf("brain: config.save: config.yaml is being rewritten outside the lock faster than "+
 		"this save could land (%d attempts) — nothing written", saveCASAttempts)
-	return c.current
+	return c.current, nil
 }
 
 func (c *configService) path() string { return configPath() }

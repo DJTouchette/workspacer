@@ -27,7 +27,310 @@
     "user-owned map whose keys the user can individually delete, and 'the caller",
     "resends everything they want kept' is how that delete is expressed. A plain",
     "scalar or a map nobody deletes entries from does not belong here — it merges",
-    "normally."
+    "normally.",
+    "",
+    "WHAT A WHOLESALE VALUE MAY BE — the `valueCases` block below.",
+    "",
+    "Replacing rather than merging makes the VALUE'S TYPE load-bearing, and the two",
+    "writers disagreed about it in opposite and equally wrong directions. The Go",
+    "brain coerced any non-object at one of these paths to an empty map:",
+    "",
+    "    if vMap, ok := v.(map[string]any); ok { dst[leaf] = vMap }",
+    "    else                                  { dst[leaf] = map[string]any{} }",
+    "",
+    "so one malformed save DELETED every project's label, colour, icon, favourite",
+    "flag, delivery mode, yolo flag and worktreeSetup hooks — and returned the",
+    "emptied config as a SUCCESSFUL save. Nothing is backed up on a successful write",
+    "(writeConfigYAML backs up only an UNPARSEABLE file), so there was nothing to",
+    "recover from. The TS writer took the same input and wrote it through verbatim",
+    "(dst[leaf] = src[leaf] ?? {}), leaving a string where a map belongs, so every",
+    "config.projects[cwd] lookup answered undefined.",
+    "",
+    "It was reachable rather than exotic: an agent's config writes ALWAYS go through",
+    "the brain, and the MCP facade registered save_config as a bare free-form object",
+    "with no input schema, so a client that serialised its argument sent `projects`",
+    "as a STRING and was coerced instead of refused.",
+    "",
+    "Both writers now REFUSE, write nothing, and say so. `null` is refused with the",
+    "rest: an empty object already spells 'empty this map', unambiguously and in",
+    "both languages, so null adds no expressive power and is far likelier to be an",
+    "accident (a serialiser's undefined, a lookup that missed) than an intent to",
+    "delete everything the user owns. An explicit JS `undefined` is NOT in this",
+    "corpus and is not a refusal: it is how JavaScript spells 'I did not provide",
+    "this', JSON cannot carry it, and the Go side therefore never sees it — the TS",
+    "loader pins that one separately."
   ],
-  "paths": ["ui.customThemes", "claude.budgets", "projects"]
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be declared",
+      "here and everything here must be a block — closure in both directions, so a new",
+      "block is a failure until someone says what its cases must carry, and a renamed",
+      "one cannot quietly stop being validated.",
+      "",
+      "This fixture used to be on both vocabulary guards' no-blocks exemption list",
+      "(cmd/brain/corpusvocab_test.go vocabExempt, contractsVocabulary.test.ts",
+      "NO_BLOCK_FIXTURES) because it carried only the `paths` list. Adding valueCases",
+      "took it off both."
+    ],
+    "blocks": {
+      "valueCases": {
+        "why": "applyWholesale over ONE dotted path, judging the VALUE the caller sent there: which values are taken as the new map, and which are refused with nothing written.",
+        "required": [
+          "name",
+          "path",
+          "current",
+          "value",
+          "expect",
+          "why"
+        ],
+        "optional": [
+          "expected",
+          "refusedBy"
+        ],
+        "loaders": [
+          "services/hub/cmd/brain/config_wholesale_test.go::TestWholesaleValueContractCases(",
+          "apps/desktop/src/main/services/configService.test.ts::wholesale VALUE contract"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "accept": {
+            "requires": [
+              "expected"
+            ],
+            "forbids": [
+              "refusedBy"
+            ]
+          },
+          "refuse": {
+            "requires": [
+              "refusedBy"
+            ],
+            "forbids": [
+              "expected"
+            ],
+            "reasons": "refusalReasons"
+          }
+        }
+      }
+    },
+    "refusalReasons": {
+      "not-an-object": "The value at a wholesale path is present but is not a JSON object. Refused by BOTH writers with nothing written: coercing it to {} deletes the user's map and reports success, and writing it through verbatim leaves a non-map where every reader indexes a map."
+    }
+  },
+  "paths": [
+    "ui.customThemes",
+    "claude.budgets",
+    "projects"
+  ],
+  "valueCases": [
+    {
+      "name": "an object at projects IS the new map",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        }
+      },
+      "expect": "accept",
+      "expected": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        }
+      },
+      "why": "The whole point of a wholesale path: re-sending the surviving map is the only way to express a delete, and the survivor keeps every field it came with."
+    },
+    {
+      "name": "an empty object at projects empties the map",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": {},
+      "expect": "accept",
+      "expected": {},
+      "why": "{} is the ONE unambiguous way to say 'empty this map'. It stays accepted, which is what lets null be refused without losing any expressive power."
+    },
+    {
+      "name": "a JSON string at projects is refused, not coerced to an empty map",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": "{\"/w/keep\":{\"label\":\"Keep\"}}",
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "THE LIVE DEFECT. An MCP client that serialised its save_config argument sent exactly this, and the brain answered by deleting every project and reporting success."
+    },
+    {
+      "name": "null at projects is refused",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": null,
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "Both writers used to read null as 'empty it' ({} in Go, ?? {} in TS). {} already says that; a null at a wholesale path is a serialiser accident far more often than an intent to delete a user's whole map."
+    },
+    {
+      "name": "an array at projects is refused",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": [],
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "An empty array is the shape a client gets from serialising an empty collection in a language where maps and lists share a literal. typeof [] === 'object' in JS, so the TS check has to exclude arrays explicitly or this one slips through as a map."
+    },
+    {
+      "name": "a number at projects is refused",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": 0,
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "0 and false are the falsy scalars: a guard written as a truthiness test rather than a type test treats them differently from a non-empty string, so both are in the corpus."
+    },
+    {
+      "name": "false at projects is refused",
+      "path": "projects",
+      "current": {
+        "/w/keep": {
+          "label": "Keep",
+          "yolo": true
+        },
+        "/w/drop": {
+          "label": "Drop"
+        }
+      },
+      "value": false,
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "The other falsy scalar. Pinned beside 0 for the same reason."
+    },
+    {
+      "name": "a nested path takes an object: ui.customThemes",
+      "path": "ui.customThemes",
+      "current": {
+        "nord": {
+          "bg": "#2e3440"
+        },
+        "gruv": {
+          "bg": "#282828"
+        }
+      },
+      "value": {
+        "nord": {
+          "bg": "#2e3440"
+        }
+      },
+      "expect": "accept",
+      "expected": {
+        "nord": {
+          "bg": "#2e3440"
+        }
+      },
+      "why": "A wholesale path with a parent segment must reach the leaf and replace it, not stop at the parent — the nested walk is a second implementation in each language."
+    },
+    {
+      "name": "a string at a nested path is refused too: ui.customThemes",
+      "path": "ui.customThemes",
+      "current": {
+        "nord": {
+          "bg": "#2e3440"
+        },
+        "gruv": {
+          "bg": "#282828"
+        }
+      },
+      "value": "nord",
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "The refusal must live at the leaf, not at the top level: a guard bolted onto the caller's top-level keys would miss every nested wholesale path."
+    },
+    {
+      "name": "a nested path takes an object: claude.budgets",
+      "path": "claude.budgets",
+      "current": {
+        "opus": {
+          "limit": 20
+        },
+        "sonnet": {
+          "limit": 5
+        }
+      },
+      "value": {
+        "opus": {
+          "limit": 40
+        }
+      },
+      "expect": "accept",
+      "expected": {
+        "opus": {
+          "limit": 40
+        }
+      },
+      "why": "The third wholesale path, exercised so the corpus covers every entry of `paths` rather than just the one the incident happened to hit."
+    },
+    {
+      "name": "null at a nested path is refused: claude.budgets",
+      "path": "claude.budgets",
+      "current": {
+        "opus": {
+          "limit": 20
+        },
+        "sonnet": {
+          "limit": 5
+        }
+      },
+      "value": null,
+      "expect": "refuse",
+      "refusedBy": "not-an-object",
+      "why": "Budgets are per-model spend limits; silently emptying them turns every configured cap off while reporting a saved config."
+    }
+  ]
 }
