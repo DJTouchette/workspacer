@@ -17,20 +17,31 @@ package main
 // (fleetmsg_test.go), which reads fleetMessages.ts and compares the strings
 // rather than trusting this comment.
 //
-// ONLY TWO KINDS ARE PORTED, deliberately:
+// FOUR OF THE FIVE KINDS ARE PORTED:
 //
-//   - progress  — agents.reportProgress, a worker's own mid-task line.
-//   - threshold — agents.notifyWhen, a watch the manager armed firing once.
+//   - progress        — agents.reportProgress, a worker's own mid-task line.
+//   - threshold       — agents.notifyWhen, a watch the manager armed firing once.
+//   - worker-finished — a dispatch coming home, produced by finishwake.go's own
+//                       transition watcher over claudemon's /events stream.
+//   - catch-up        — the same wake under an honest header, re-sent by the
+//                       backstop sweep when the live one never landed.
 //
-// worker-finished / catch-up / blocked are produced by the desktop's own
-// supervisor nudge machinery (main/services/supervisorNudge.ts), which watches
-// its own session store's finish transitions. The brain does not run that
-// machinery, so porting their formats here would be dead code that could drift
-// unnoticed — the two the brain can actually send are the two it spells.
+// `blocked` is NOT ported. It is the one wake that is not parent-keyed (it
+// broadcasts to every live wake target), it carries its own 20s survive-this-long
+// debounce and a matching clear edge, and nothing headless produces it — so its
+// header here would be a format with no writer, which is exactly the dead-code
+// drift this file's two-kinds era was avoiding. See finishwake.go's header for
+// what a headless manager still does not receive.
+//
+// The `result` / `resultError` entry fields are not ported either, for the same
+// has-no-writer reason: `resultSchema` is declined by the headless spawn
+// (parity_test.go's spawnParamsDeclined), so no brain-dispatched worker ever
+// carries a structured-result contract to validate.
 
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // fleetProgressHeader / fleetThresholdHeader are HEADERS['progress'] and
@@ -42,6 +53,20 @@ import (
 const (
 	fleetProgressHeader  = "[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:"
 	fleetThresholdHeader = "[fleet] A threshold you asked to be told about has been crossed:"
+
+	// fleetWorkerFinishedHeader is HEADERS['worker-finished'] and
+	// fleetWorkerFailedHeader is ALT_HEADERS['worker-finished'] — the honest
+	// spelling for an entry set whose every worker DIED. A wake that opens with
+	// the word "finished" is the exact sentence a manager reads as a landed
+	// outcome, so an all-failed set must not use it; a MIXED set keeps the
+	// normal header and lets the bullets carry the truth, because "finished" IS
+	// accurate for the entries that did. Both parse back to the same kind.
+	fleetWorkerFinishedHeader = "[fleet] Worker finished:"
+	fleetWorkerFailedHeader   = "[fleet] Worker FAILED — did not complete:"
+
+	// fleetCatchUpHeader is HEADERS['catch-up'] — the backstop's spelling, which
+	// says out loud that the manager may already have seen this.
+	fleetCatchUpHeader = "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:"
 )
 
 // fleetProgressTail / fleetThresholdTail are TAILS['progress'] and
@@ -60,15 +85,139 @@ const (
 		"one-shot, so nothing further will arrive unless you arm another. Decide: let it run, " +
 		"send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) " +
 		"and redispatch surgically with respawn_with. Then STOP again — do not start polling."
+
+	// fleetWorkerFinishedTail / fleetCatchUpTail are TAILS['worker-finished']
+	// and TAILS['catch-up'].
+	//
+	// The worker-finished tail still names the "structured result" block even
+	// though the brain never emits one (resultSchema is declined headless). That
+	// is deliberate: it is the desktop's byte-exact string, and the ONE thing a
+	// tail must do is read identically whichever host composed it — a manager
+	// trained on one wording and handed another is the drift this twin exists to
+	// prevent. The sentence is conditional in its own words ("a ... block below
+	// is"), so a wake with no such block does not mislead.
+	fleetWorkerFinishedTail = "A \"structured result\" block below is the worker's own machine-readable report for a " +
+		"dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them " +
+		"from the prose. " +
+		"The worker's complete final message (when longer than its bullet excerpt) is included " +
+		"above — read it from this wake instead of fetching the conversation; use " +
+		"get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you " +
+		"need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" " +
+		"(and adjust \"## Now\"), then report the outcome briefly with session:<id> references. " +
+		"If it was not one of your dispatches, a one-line acknowledgement is enough."
+
+	fleetCatchUpTail = "Review each (get_conversation with sinceSeq), update the project brief's \"## Recently\", " +
+		"and report the outcome with session:<id> references. Then STOP again."
 )
 
-// fleetEntry is the subset of FleetMessageEntry the brain's two kinds use.
-// The fields it does NOT have (stopped / failed / lastReply / result /
-// fullReply) belong to worker-finished wakes, which the brain does not send.
+// fleetFailedNote / fleetStoppedNote are the plain (non-bullet) blocks a wake
+// appends when any entry carries the matching flag. TWIN: FAILED_NOTE and
+// STOPPED_NOTE in fleetMessages.ts. Spelled out rather than left to the bullet
+// because the whole point is that a manager must not book a crash as an outcome.
+const (
+	fleetFailedNote = "A \"FAILED\" entry did NOT complete its task — the agent reported an error (an API " +
+		"failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is " +
+		"that error, NOT a result: do not record it in a brief's \"## Recently\" as work landed. " +
+		"Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause " +
+		"to the user if it is an account/quota problem no retry will fix."
+
+	fleetStoppedNote = "A \"stopped/killed\" entry's session ENDED (killed or exited) rather than going idle — " +
+		"treat its last reply as possibly incomplete, not as a clean finish."
+)
+
+// fleetReplyExcerptMax is REPLY_EXCERPT_MAX: how much of a worker's last reply
+// rides the BULLET. fleetFullReplyMax is FULL_REPLY_MAX, the cap on the
+// complete-final-message block — deliberately generous, because the point of
+// carrying the whole message is that the manager never has to fetch a 4KB report
+// through get_conversation. Truncation is announced in the block, never silent.
+const (
+	fleetReplyExcerptMax = 400
+	fleetFullReplyMax    = 32768
+)
+
+// excerptReply is the flattened, capped bullet excerpt. TWIN: excerptReply in
+// fleetMessages.ts. Flattening is not cosmetic: the bullet grammar is LINE
+// based, so a reply spanning lines makes the whole wake unparseable and the GUI
+// card degrades to a text blob.
+//
+// The cap is counted in RUNES where the desktop counts UTF-16 code units. They
+// agree on ASCII and on the BMP, and differ only in how many astral characters
+// (emoji) fit before the ellipsis — a cosmetic difference in an excerpt that is
+// explicitly lossy, and the alternative is cutting a multi-byte character in
+// half, which is not.
+func excerptReply(reply string) string {
+	flat := flattenLine(reply)
+	return clipRunes(flat, fleetReplyExcerptMax, "…")
+}
+
+// clipRunes cuts s to at most max runes, appending suffix when it had to cut.
+func clipRunes(s string, max int, suffix string) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n == max {
+			return s[:i] + suffix
+		}
+		n++
+	}
+	return s + suffix
+}
+
+// renderFullReply is the full-reply block BODY: complete under the cap,
+// explicitly annotated over it (keeping the head — reports lead with the
+// outcome). TWIN: renderFullReply in fleetMessages.ts.
+//
+// The character counts in the truncation note are runes for the same reason
+// excerptReply's cap is, and the note is the only place the difference is
+// visible: it names a number the manager might compare against the desktop's.
+func renderFullReply(reply string) string {
+	text := strings.TrimSpace(reply)
+	total := utf8.RuneCountInString(text)
+	if total <= fleetFullReplyMax {
+		return text
+	}
+	return clipRunes(text, fleetFullReplyMax, "") + "\n" +
+		fmt.Sprintf("[truncated: showing the first %d of %d characters — "+
+			"fetch the rest with get_conversation (lastMessage:true)]", fleetFullReplyMax, total)
+}
+
+// fleetWorkerFinishedHeaderFor picks the header an entry set is delivered
+// under. TWIN: headerFor in fleetMessages.ts, whose ALT_HEADERS table has this
+// one entry.
+func fleetWorkerFinishedHeaderFor(entries []fleetEntry) string {
+	if len(entries) == 0 {
+		return fleetWorkerFinishedHeader
+	}
+	for _, e := range entries {
+		if e.Failed == "" {
+			return fleetWorkerFinishedHeader
+		}
+	}
+	return fleetWorkerFailedHeader
+}
+
+// fleetEntry is the subset of FleetMessageEntry the brain's kinds use.
+//
+// The two it does NOT have are `result` / `resultError`: those carry a
+// VALIDATED structured result, and validation needs a resultSchema the headless
+// spawn declines to accept (parity_test.go's spawnParamsDeclined), so a field
+// here would have no writer. `blockedOn` is absent for the same reason — the
+// brain sends no `blocked` wake.
 type fleetEntry struct {
 	Label     string
 	SessionID string
 	Cwd       string
+	// Stopped says the worker's SESSION ended (killed or exited) rather than
+	// going idle at its prompt: the bullet reads "stopped/killed" instead of as
+	// a clean finish. On 'worker-finished' / 'catch-up' entries only.
+	Stopped bool
+	// Failed is why the worker DIED rather than completing — already flattened
+	// to one line by workerFailureReason. A SEPARATE axis from Stopped, which
+	// says the session went away: a provider error can arrive with the session
+	// still alive, and a SIGTERM is not an API refusal.
+	Failed string
 	// Crossed is the rendered threshold ("tokens 309,412 ≥ 250,000"), on
 	// 'threshold' entries only.
 	Crossed string
@@ -78,6 +227,17 @@ type fleetEntry struct {
 	// than merely keeping it informed. A rendering/urgency hint: the channel is
 	// one-way and the manager still replies with send_message.
 	NeedsDecision bool
+	// LastReply is the flattened, capped excerpt of the worker's final message,
+	// on 'worker-finished' entries. Mutually exclusive with Note — the bullet
+	// grammar has ONE rest-of-line, and a progress entry must never read as a
+	// finish, so Note wins.
+	LastReply string
+	// FullReply is the worker's COMPLETE final message, rendered as its own
+	// block below the bullets. Builder-side only (the desktop's parser does not
+	// round-trip it): the card shows the excerpt, the full text is for the
+	// manager AGENT, so it never has to fetch a conversation to read a report.
+	// Set only when the excerpt is lossy.
+	FullReply string
 }
 
 // formatFleetEntry renders one entry's bullet BODY (no leading "- ").
@@ -94,29 +254,73 @@ func formatFleetEntry(e fleetEntry) string {
 		cwd = "?"
 	}
 	out := fmt.Sprintf("%s (session:%s, cwd %s)", e.Label, e.SessionID, cwd)
+	if e.Stopped {
+		out += " — stopped/killed"
+	}
+	if e.Failed != "" {
+		out += " — FAILED: " + e.Failed
+	}
 	if e.Crossed != "" {
 		out += " — crossed: " + e.Crossed
 	}
 	if e.NeedsDecision {
 		out += " — NEEDS A DECISION"
 	}
-	// One anchored tail, never two: the grammar has a single rest-of-line.
+	// One anchored tail, never two: the grammar has a single rest-of-line, so
+	// Note and LastReply are the same slot under two labels — and a worker's own
+	// progress line WINS, because an entry carrying one is not a finish.
 	if e.Note != "" {
 		out += " — reports: " + e.Note
+	} else if e.LastReply != "" {
+		out += " — last reply: " + e.LastReply
 	}
 	return out
 }
 
-// buildFleetMessage composes a wake: header, one bullet per entry, then the
-// instruction tail. Neither of the brain's kinds carries the post-bullet extra
-// blocks (FAILED/stopped notes, structured results, full replies), so the
-// no-extras branch of the desktop's builder is the whole of this one.
+// buildFleetMessage composes a wake: header, one bullet per entry, then (for a
+// worker-finished wake that carries them) the post-bullet extra blocks, then
+// the instruction tail.
+//
+// The extras sit between the bullets and the tail, where the desktop parser's
+// bullet loop has already stopped — they are read by the manager AGENT, not
+// round-tripped into the GUI card, which renders the bullet excerpt. Their
+// ORDER is the desktop's: the FAILED note, the stopped note, then one full-reply
+// block per entry that has one. (The desktop emits structured-result blocks
+// between those two groups; the brain never has one to emit, and the order of
+// what remains is unchanged by their absence.)
+//
+// A progress or threshold entry sets none of these fields, so this composes the
+// byte-identical no-extras string those two kinds always produced.
 func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 	bullets := make([]string, 0, len(entries))
 	for _, e := range entries {
 		bullets = append(bullets, "- "+formatFleetEntry(e))
 	}
-	return header + "\n" + strings.Join(bullets, "\n") + "\n" + tail
+	head := header + "\n" + strings.Join(bullets, "\n")
+
+	var extras []string
+	for _, e := range entries {
+		if e.Failed != "" {
+			extras = append(extras, fleetFailedNote)
+			break
+		}
+	}
+	for _, e := range entries {
+		if e.Stopped {
+			extras = append(extras, fleetStoppedNote)
+			break
+		}
+	}
+	for _, e := range entries {
+		if e.FullReply != "" {
+			extras = append(extras, fmt.Sprintf("Full final message — %s (session:%s):\n%s",
+				e.Label, e.SessionID, renderFullReply(e.FullReply)))
+		}
+	}
+	if len(extras) == 0 {
+		return head + "\n" + tail
+	}
+	return head + "\n\n" + strings.Join(extras, "\n\n") + "\n\n" + tail
 }
 
 // fleetAgentLabel is the cwd-basename fallback for a worker with no label.
