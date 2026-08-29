@@ -47,9 +47,15 @@
 export type ProfileProvider = 'claude' | 'codex' | 'copilot';
 
 export interface ProfileProviderCaps {
+  /** What to call this harness in a picker. */
+  label: string;
   /** The env var that relocates this harness's config root — the profile
    *  primitive. Set on the spawn's env; see profileConfigEnv. */
   configRootEnv: string;
+  /** The harness's default config root when a profile names none, as a path
+   *  RELATIVE TO $HOME. Used to read the account identity of the "no configDir"
+   *  rows (the Default profile) rather than reporting them as unknown. */
+  defaultConfigRoot: string;
   /** Placeholder/example root, for the field that edits it. */
   configRootHint: string;
   /** Whether this harness reports a per-account usage window we could rotate
@@ -75,14 +81,18 @@ export const PROFILE_PROVIDERS: readonly ProfileProvider[] = ['claude', 'codex',
 
 export const PROFILE_CAPS: Readonly<Record<ProfileProvider, ProfileProviderCaps>> = {
   claude: {
+    label: 'Claude Code',
     configRootEnv: 'CLAUDE_CONFIG_DIR',
+    defaultConfigRoot: '.claude',
     configRootHint: '~/.claude-work (blank = default ~/.claude)',
     failoverWeight: true,
     mcpItemIds: true,
     preset: false,
   },
   codex: {
+    label: 'Codex',
     configRootEnv: 'CODEX_HOME',
+    defaultConfigRoot: '.codex',
     configRootHint: '~/.codex-work (blank = default ~/.codex)',
     // Codex reports primary/secondary usage windows, which claudemon maps onto
     // the same five_hour_pct / seven_day_pct the failover trigger reads.
@@ -96,7 +106,9 @@ export const PROFILE_CAPS: Readonly<Record<ProfileProvider, ProfileProviderCaps>
       'Layers $CODEX_HOME/<name>.config.toml over the base config. Same account, same usage pool — a settings preset, not a login switch.',
   },
   copilot: {
+    label: 'Copilot',
     configRootEnv: 'COPILOT_HOME',
+    defaultConfigRoot: '.copilot',
     configRootHint: '~/.copilot-work (blank = default ~/.copilot)',
     // The one genuine hole: providers/copilot.rs emits no RateLimits update —
     // it reports token/AIU counts, never a window percentage — so nothing could
@@ -192,7 +204,7 @@ export function profileSpawnArgs(profile: ProfileLike | undefined): string[] {
   if (!profile) return [];
   const caps = profileCapsOf(profile);
   const args = [...(profile.extraArgs ?? [])];
-  const preset = profile.preset?.trim();
+  const preset = sanitizeProfilePreset(profile.preset);
   if (caps.preset && caps.presetFlag && preset) args.push(caps.presetFlag, preset);
   return args;
 }
@@ -205,4 +217,44 @@ export function profileSpawnArgs(profile: ProfileLike | undefined): string[] {
 export function clampProfileWeight(provider: ProfileProvider, weight: unknown): number {
   if (!PROFILE_CAPS[provider].failoverWeight) return 0;
   return typeof weight === 'number' && weight > 0 ? weight : 0;
+}
+
+/**
+ * A preset name reduced to what is safe to hand a harness.
+ *
+ * `codex -p <name>` resolves to the FILE `$CODEX_HOME/<name>.config.toml` and
+ * the name rides argv, so the two things that must not get through are a path
+ * separator (which escapes the config root) and a leading `-` (which codex
+ * would read as the next flag, leaving `-p` to swallow whatever followed).
+ * Anything outside `[A-Za-z0-9._-]` is dropped rather than escaped: a preset
+ * name is a config-file stem the user typed, not free text.
+ *
+ * Returns '' for a name with nothing usable left, which every caller treats as
+ * "no preset" — the same as the field being blank.
+ */
+export function sanitizeProfilePreset(preset: string | undefined): string {
+  const cleaned = (preset ?? '').trim().replace(/[^A-Za-z0-9._-]/g, '');
+  return /^[A-Za-z0-9_]/.test(cleaned) ? cleaned : '';
+}
+
+/**
+ * The config root this profile's harness will actually read: the profile's own
+ * `configDir` when it names one, else the harness default (`$CODEX_HOME` and
+ * friends when the app itself was launched with one set, else `~/<default>`).
+ *
+ * CONSUMER: lib/profileAccounts.ts, which reads the login/account identity out
+ * of that root. Resolving the DEFAULT root here rather than reporting "unknown"
+ * is what lets the Default profile show the same attribution as a named one.
+ */
+export function profileConfigRoot(
+  profile: ProfileLike | undefined,
+  home: string,
+  env: Record<string, string | undefined> = {},
+): string {
+  const caps = profileCapsOf(profile);
+  const dir = profile?.configDir?.trim();
+  if (dir) return expandProfileHome(dir, home);
+  const fromEnv = env[caps.configRootEnv]?.trim();
+  if (fromEnv) return expandProfileHome(fromEnv, home);
+  return `${home}/${caps.defaultConfigRoot}`;
 }

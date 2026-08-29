@@ -14,6 +14,8 @@ import type {
   SessionData,
   LayoutInput,
   ProfileUpdate,
+  ProfileInit,
+  ProfileAccount,
   ClaudeProfile,
   GitStatus,
   GitNumstatEntry,
@@ -300,6 +302,11 @@ export interface ElectronAPI {
     configDir: string,
     extraArgs: string[],
     mcpItemIds?: string[],
+    /** Per-harness fields (provider, codex preset, failover weight). The web
+     *  backend cannot carry them — the bus twin models only the positionals —
+     *  which is why the non-Claude profile UI is gated on
+     *  `claudeProfilesAccounts` being present. */
+    init?: ProfileInit,
   ) => Promise<ClaudeProfile>;
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate) => Promise<ClaudeProfile>;
   claudeProfilesRemove: (id: string) => Promise<void>;
@@ -309,8 +316,13 @@ export interface ElectronAPI {
   claudeProfilesAddAccount?: (
     name: string,
   ) => Promise<{ profile: ClaudeProfile; shared: string[]; warnings: string[] }>;
-  /** Desktop-only: profile id → "has a login" (configDir-less profiles = true). */
+  /** Desktop-only: profile id → "has a login", read from each harness's own
+   *  credential file. Unreadable (Copilot) reports true. */
   claudeProfilesLoginStatus?: () => Promise<Record<string, boolean>>;
+  /** Desktop-only: profile id → the identity behind it (harness, config root,
+   *  the harness's stable account id). Its PRESENCE is the capability gate for
+   *  per-harness profiles — the web mirror has no local credential files. */
+  claudeProfilesAccounts?: () => Promise<Record<string, ProfileAccount>>;
   getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
   getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
   /** All sessions the daemon still holds (all providers, incl. archived),

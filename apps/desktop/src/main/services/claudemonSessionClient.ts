@@ -210,11 +210,13 @@ class ClaudemonSessionClient {
     permissionMode?: string;
     /** Claude (stream) only: resume this prior conversation (`--resume <id>`). */
     resumeSessionId?: string;
-    /** Claude (stream) only: extra argv appended verbatim (profile extras,
-     *  session-scoped `--mcp-config`, …). */
+    /** Extra argv appended verbatim (profile extras, `codex -p <preset>`, a
+     *  session-scoped `--mcp-config`, …). Carried for every provider; the
+     *  daemon decides which of its adapters can apply it. */
     extraArgs?: string[];
-    /** Claude (stream) only: env merged over the daemon's environment
-     *  (e.g. a profile's CLAUDE_CONFIG_DIR). */
+    /** Env merged over the daemon's environment — a profile's config root
+     *  (CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME). Carried for every
+     *  provider; see extraArgs. */
     env?: Record<string, string>;
     /** Workspacer MCP facade URL to register with the provider (supervisors). */
     mcp?: string;

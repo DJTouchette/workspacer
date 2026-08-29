@@ -7,6 +7,8 @@ import type {
   SessionData,
   LayoutInput,
   ProfileUpdate,
+  ProfileInit,
+  ProfileAccount,
   GitStatus,
   GitNumstatEntry,
   GitLogEntry,
@@ -408,8 +410,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     configDir: string,
     extraArgs: string[],
     mcpItemIds?: string[],
+    init?: ProfileInit,
   ): Promise<ProfileUpdate> =>
-    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD, name, configDir, extraArgs, mcpItemIds),
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD, name, configDir, extraArgs, mcpItemIds, init),
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate): Promise<ProfileUpdate> =>
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_UPDATE, id, updates),
   claudeProfilesRemove: (id: string): Promise<void> =>
@@ -420,6 +423,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD_ACCOUNT, name),
   claudeProfilesLoginStatus: (): Promise<Record<string, boolean>> =>
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LOGIN_STATUS),
+  claudeProfilesAccounts: (): Promise<Record<string, ProfileAccount>> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ACCOUNTS),
 
   getClaudeSession: (sessionId: string): Promise<ClaudeSessionSnapshot | null> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET, sessionId),

@@ -47,7 +47,8 @@ import { installWorkspacerCli } from './services/cliInstall';
 import { ensureSupervisorHome } from './lib/workspacerHome';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
-import { createAccountConfigDir, accountLoginStatus } from './services/claudeAccountSetup';
+import { createAccountConfigDir } from './services/claudeAccountSetup';
+import { profileAccount, profileSignedIn, type ProfileAccount } from './lib/profileAccounts';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
@@ -85,6 +86,7 @@ import type {
   SessionData,
   LayoutInput,
   ProfileUpdate,
+  ProfileInit,
   RemoteTokenScope,
   InAppNotification,
 } from './shared/ipcTypes';
@@ -1368,8 +1370,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.CLAUDE_PROFILES_LIST, () => claudeProfiles.getProfiles());
   ipcMain.handle(
     IPC.CLAUDE_PROFILES_ADD,
-    (_event, name: string, configDir: string, extraArgs: string[], mcpItemIds?: string[]) =>
-      claudeProfiles.addProfile(name, configDir, extraArgs, mcpItemIds ?? []),
+    (
+      _event,
+      name: string,
+      configDir: string,
+      extraArgs: string[],
+      mcpItemIds?: string[],
+      init?: ProfileInit,
+    ) => claudeProfiles.addProfile(name, configDir, extraArgs, mcpItemIds ?? [], init ?? {}),
   );
   ipcMain.handle(IPC.CLAUDE_PROFILES_UPDATE, (_event, id: string, updates: ProfileUpdate) =>
     claudeProfiles.updateProfile(id, updates),
@@ -1388,13 +1396,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const profile = claudeProfiles.addProfile(trimmed, dir, [], []);
     return { profile, shared, warnings };
   });
-  // Per-profile "has anyone logged in here yet", keyed by profile id. Profiles
-  // without a configDir use the primary login and report true.
+  // Per-profile "has anyone logged in here yet", keyed by profile id. Read from
+  // each HARNESS's own credential file (lib/profileAccounts), so a Codex
+  // profile reports its real auth.json state rather than Claude's. A profile
+  // whose harness keeps credentials somewhere unreadable (Copilot: the OS
+  // credential store) reports true — a candidate we cannot rule out stays in,
+  // exactly as a Claude profile with no configDir always has.
   ipcMain.handle(IPC.CLAUDE_PROFILES_LOGIN_STATUS, () => {
     const out: Record<string, boolean> = {};
-    for (const p of claudeProfiles.getProfiles()) {
-      out[p.id] = p.configDir ? accountLoginStatus(p.configDir) : true;
-    }
+    for (const p of claudeProfiles.getProfiles()) out[p.id] = profileSignedIn(p);
+    return out;
+  });
+  // The fuller identity behind each profile: which harness, which config root,
+  // and the harness's own STABLE account id where it writes one (Codex's
+  // auth.json `tokens.account_id`). Desktop-only — it reads local credential
+  // files, and the bus twin has no equivalent — which is also what gates the
+  // non-Claude profile UI to the desktop (see ClaudeProfilesSection).
+  ipcMain.handle(IPC.CLAUDE_PROFILES_ACCOUNTS, () => {
+    const out: Record<string, ProfileAccount> = {};
+    for (const p of claudeProfiles.getProfiles()) out[p.id] = profileAccount(p);
     return out;
   });
 }
