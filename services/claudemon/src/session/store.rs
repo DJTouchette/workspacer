@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use time::OffsetDateTime;
 
-use super::account_usage::AccountUsage;
+use super::account_usage::{AccountUsage, UsageError, UsageFailure};
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
@@ -173,6 +173,17 @@ pub struct WrapperHandle {
     pub tx: mpsc::UnboundedSender<WrapperMessage>,
 }
 
+/// A classified account-usage poll failure, with when it happened. `kind` is
+/// what a surface must branch on: `NeedsReauth` is actionable, `NoCredentials`
+/// means this account was never a source, `Unreachable` is transient. None of
+/// them is zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountUsageFailure {
+    pub kind: UsageFailure,
+    pub detail: String,
+    pub at: OffsetDateTime,
+}
+
 #[derive(Clone)]
 pub struct SessionStore {
     states: Arc<DashMap<String, SessionState>>,
@@ -297,6 +308,16 @@ pub struct SessionStore {
     /// `rate_limit_event` rarely carries `utilization`, so without this a
     /// stream session never shows a usage percentage.
     account_usage: Arc<std::sync::RwLock<std::collections::HashMap<String, AccountUsage>>>,
+    /// Why a root's last poll FAILED, keyed the same way. Kept beside the
+    /// readings rather than folded into them because the two answer different
+    /// questions and a consumer needs both: a root can have a stale reading
+    /// AND a current failure, and "we asked and were refused" is not the same
+    /// answer as "we never asked". Without this, a failed poll was silent, and
+    /// silence at the surface is indistinguishable from 0% — which reads as
+    /// "plenty of headroom" and is the one thing the gauge must never lie
+    /// about. Cleared on the next success.
+    account_usage_errors:
+        Arc<std::sync::RwLock<std::collections::HashMap<String, AccountUsageFailure>>>,
     /// Session ids for daemon-owned keep-warm pings (see `daemon::heartbeat`).
     /// A warm ping runs a real headless `claude`, whose Claude Code hooks would
     /// otherwise register a stray session and surface it in the sidebar / recent
@@ -413,6 +434,9 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            account_usage_errors: Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             heartbeat_ids: Arc::new(DashSet::new()),
         }
     }
@@ -871,6 +895,9 @@ impl SessionStore {
             .write()
             .unwrap()
             .insert(root.to_string(), usage);
+        // A success retires the last failure: keeping it would leave a root
+        // permanently flagged needs-reauth after the CLI rotated its token.
+        self.account_usage_errors.write().unwrap().remove(root);
         let targets: Vec<(String, Option<String>, StatusLine)> = self
             .states
             .iter()
@@ -905,6 +932,44 @@ impl SessionStore {
     /// [`AccountUsage::is_fresh`] themselves.
     pub fn account_usage_for(&self, root: &str) -> Option<AccountUsage> {
         self.account_usage.read().unwrap().get(root).cloned()
+    }
+
+    /// Record a classified poll failure for one config root. Deliberately does
+    /// NOT drop the previous reading: a stale-but-real number plus "and the
+    /// last refresh failed because the token expired" is strictly more
+    /// information than either alone, and dropping the reading would make an
+    /// expired account look like a brand-new one.
+    pub fn set_account_usage_error(&self, root: &str, err: UsageError) {
+        self.account_usage_errors.write().unwrap().insert(
+            root.to_string(),
+            AccountUsageFailure {
+                kind: err.kind,
+                detail: err.detail,
+                at: OffsetDateTime::now_utc(),
+            },
+        );
+    }
+
+    /// The last recorded failure for one config root, if the most recent poll
+    /// did not succeed.
+    pub fn account_usage_error_for(&self, root: &str) -> Option<AccountUsageFailure> {
+        self.account_usage_errors.read().unwrap().get(root).cloned()
+    }
+
+    /// Every config root the store has an opinion about — a reading, a
+    /// failure, or both. Union, sorted, deduped.
+    pub fn known_account_roots(&self) -> Vec<String> {
+        let mut roots: Vec<String> = self
+            .account_usage
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .chain(self.account_usage_errors.read().unwrap().keys().cloned())
+            .collect();
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     /// Whether any non-stopped Claude session exists — the account-usage

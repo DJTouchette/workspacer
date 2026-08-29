@@ -24,7 +24,7 @@
 //! call. Failure is always soft — no credentials, an expired token, or a
 //! non-200 just means the gauges stay wire-fed.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -164,6 +164,53 @@ pub fn normalize_root(root: &str) -> String {
     }
 }
 
+/// Why an account's usage could not be read. The distinction is load-bearing:
+/// a UI that renders any of these as `0%` tells the user they have a full
+/// window when the truth is that we do not know, and `NeedsReauth` is
+/// specifically actionable in a way the others are not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageFailure {
+    /// Credentials exist, but their OAuth token has expired. The daemon
+    /// deliberately does NOT refresh it — rotation is the CLI's job and racing
+    /// it can invalidate the CLI's own stored token — so this persists until
+    /// that account's CLI runs again. Measured live on 2026-08-28: the `work`
+    /// profile's token expired 2026-08-20 and has stayed expired since.
+    NeedsReauth,
+    /// No readable credentials at all: an API-key / Bedrock setup, a config
+    /// root that was never logged in, or (macOS, named roots only) a login
+    /// that lives in the Keychain under a service entry we cannot name.
+    NoCredentials,
+    /// The endpoint could not be reached or refused the request — offline,
+    /// timeout, 5xx, or an auth rejection the local expiry check did not catch.
+    Unreachable,
+}
+
+/// A classified fetch failure. Carries the human detail as well as the kind so
+/// a log line and a wire field can both say something true.
+#[derive(Debug, Clone)]
+pub struct UsageError {
+    pub kind: UsageFailure,
+    pub detail: String,
+}
+
+impl UsageError {
+    fn new(kind: UsageFailure, detail: impl std::fmt::Display) -> Self {
+        Self {
+            kind,
+            detail: detail.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+impl std::error::Error for UsageError {}
+
 /// The CLI's OAuth access token for one config root. `""` (the default root)
 /// reads `~/.claude/.credentials.json` with a macOS-Keychain fallback; a named
 /// root reads `<root>/.credentials.json` only — a second account's login on
@@ -173,7 +220,7 @@ pub fn normalize_root(root: &str) -> String {
 /// Never refreshes: rotation is the CLI's job (racing it with our own refresh
 /// could invalidate the CLI's stored token). An expired token is an `Err` and
 /// the poll simply retries next tick — the CLI refreshes it on its next turn.
-fn read_access_token(root: &str) -> Result<String> {
+fn read_access_token(root: &str) -> std::result::Result<String, UsageError> {
     match read_credentials_json(root) {
         Ok(creds) => token_from_credentials(&creds),
         Err(file_err) => {
@@ -199,7 +246,7 @@ fn read_access_token(root: &str) -> Result<String> {
                     }
                 }
             }
-            Err(file_err)
+            Err(UsageError::new(UsageFailure::NoCredentials, format!("{file_err:#}")))
         }
     }
 }
@@ -223,15 +270,24 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 }
 
 /// Extract + validate the token from the credentials document.
-fn token_from_credentials(creds: &Value) -> Result<String> {
-    let oauth = creds
-        .get("claudeAiOauth")
-        .context("no claudeAiOauth in credentials")?;
+fn token_from_credentials(creds: &Value) -> std::result::Result<String, UsageError> {
+    let oauth = creds.get("claudeAiOauth").ok_or_else(|| {
+        UsageError::new(
+            UsageFailure::NoCredentials,
+            "no claudeAiOauth in credentials",
+        )
+    })?;
     // `expiresAt` is epoch milliseconds. A stale token would just 401; skip
-    // the round-trip when we can tell locally.
+    // the round-trip when we can tell locally — and report it as its own kind,
+    // because "this account needs the CLI to log in again" is a different
+    // thing to tell a user than "we could not reach the endpoint".
     if let Some(expires_ms) = oauth.get("expiresAt").and_then(Value::as_i64) {
         if expires_ms <= OffsetDateTime::now_utc().unix_timestamp() * 1000 {
-            bail!("oauth token expired (CLI will refresh it on its next turn)");
+            return Err(UsageError::new(
+                UsageFailure::NeedsReauth,
+                "oauth token expired (the CLI refreshes it on its next turn; \
+                 the daemon deliberately does not)",
+            ));
         }
     }
     oauth
@@ -239,13 +295,16 @@ fn token_from_credentials(creds: &Value) -> Result<String> {
         .and_then(Value::as_str)
         .filter(|t| !t.is_empty())
         .map(str::to_owned)
-        .context("no accessToken in credentials")
+        .ok_or_else(|| UsageError::new(UsageFailure::NoCredentials, "no accessToken in credentials"))
 }
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
 /// One fetch for one config root: credentials → GET → parsed reading.
-pub async fn fetch_account_usage(client: &reqwest::Client, root: &str) -> Result<AccountUsage> {
+pub async fn fetch_account_usage(
+    client: &reqwest::Client,
+    root: &str,
+) -> std::result::Result<AccountUsage, UsageError> {
     let token = read_access_token(root)?;
     let resp = client
         .get(USAGE_URL)
@@ -254,42 +313,224 @@ pub async fn fetch_account_usage(client: &reqwest::Client, root: &str) -> Result
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .context("usage request failed")?;
+        .map_err(|err| UsageError::new(UsageFailure::Unreachable, format!("usage request failed: {err}")))?;
     if !resp.status().is_success() {
-        bail!("usage endpoint returned {}", resp.status());
+        let status = resp.status();
+        // A 401/403 after our local expiry check passed still means the token
+        // is no good — surface it as reauth, not as a network blip.
+        let kind = if status == reqwest::StatusCode::UNAUTHORIZED
+            || status == reqwest::StatusCode::FORBIDDEN
+        {
+            UsageFailure::NeedsReauth
+        } else {
+            UsageFailure::Unreachable
+        };
+        return Err(UsageError::new(
+            kind,
+            format!("usage endpoint returned {status}"),
+        ));
     }
-    let body: Value = resp.json().await.context("parsing usage response")?;
+    let body: Value = resp.json().await.map_err(|err| {
+        UsageError::new(
+            UsageFailure::Unreachable,
+            format!("parsing usage response: {err}"),
+        )
+    })?;
     Ok(parse_usage_response(&body))
 }
 
-/// How often the poller re-reads the endpoint while a Claude session is live.
-const POLL_INTERVAL_SECS: u64 = 60;
+/// Where the desktop records the Claude account profiles the user has set up.
+/// Read-only, and read fresh on every discovery pass so a profile added while
+/// the daemon is running is picked up without a restart. Owned by
+/// `apps/desktop/src/main/services/claudeProfiles.ts`; the daemon only ever
+/// looks at `profiles[].configDir`.
+fn profiles_file() -> Option<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return Some(
+                std::path::PathBuf::from(dir)
+                    .join("workspacer")
+                    .join("claude-profiles.json"),
+            );
+        }
+    }
+    directories::BaseDirs::new().map(|d| {
+        d.home_dir()
+            .join(".config")
+            .join("workspacer")
+            .join("claude-profiles.json")
+    })
+}
 
-/// Background poll loop. Ticks every [`POLL_INTERVAL_SECS`]; skips the fetch
-/// entirely while no live Claude session exists, so an idle daemon touches
-/// neither the credentials file nor the network. One fetch per DISTINCT config
-/// root among the live sessions (in practice one, or one per logged-in
-/// account profile); each successful reading goes through
-/// [`SessionStore::set_account_usage`], which patches and re-broadcasts the
-/// status lines of that root's sessions only.
+/// Every Claude config root the daemon should poll, whether or not a session
+/// is running on it. Normalized keys, `""` first (the default account).
+///
+/// The poller used to iterate `live_claude_config_roots()`, which is empty at
+/// boot — so a cold daemon fetched nothing and every rate-limit gauge stayed
+/// blank until a session happened to start. The fetch itself has no session
+/// dependency; the gate existed only to keep an idle daemon from hammering the
+/// endpoint, and that intent is preserved by the CADENCE (see
+/// [`next_poll_delay`]) rather than by having nothing to poll.
+///
+/// Three sources, unioned:
+///   1. the default root, always — it is the account almost everything runs on;
+///   2. `configDir` of every profile in the desktop's `claude-profiles.json`;
+///   3. `<default>/accounts/*` on disk, so a daemon running without the desktop
+///      (`workspacer serve`, a headless node) still finds second logins.
+///
+/// A named root is only included if it actually has a `.credentials.json` —
+/// polling a root that cannot possibly answer just manufactures failures.
+pub fn configured_config_roots() -> Vec<String> {
+    let mut roots: Vec<String> = vec![String::new()];
+    let mut push = |root: &str| {
+        let key = normalize_root(root);
+        if key.is_empty() {
+            return; // already covered by the default entry
+        }
+        if !std::path::Path::new(&key).join(".credentials.json").is_file() {
+            return;
+        }
+        if !roots.contains(&key) {
+            roots.push(key);
+        }
+    };
+
+    if let Some(path) = profiles_file() {
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            if let Ok(doc) = serde_json::from_str::<Value>(&raw) {
+                if let Some(list) = doc.get("profiles").and_then(Value::as_array) {
+                    for p in list {
+                        if let Some(dir) = p.get("configDir").and_then(Value::as_str) {
+                            push(dir);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // `<default>/accounts/*` — the layout workspacer's "Add Claude Account"
+    // creates. Enumerated lexically; `push` filters to the ones with a login.
+    let accounts = std::path::PathBuf::from(default_config_root()).join("accounts");
+    if let Ok(rd) = std::fs::read_dir(&accounts) {
+        let mut dirs: Vec<std::path::PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            if let Some(dir) = d.to_str() {
+                push(dir);
+            }
+        }
+    }
+    roots
+}
+
+/// How often a root is re-read while a Claude session is live on the account.
+const LIVE_INTERVAL_SECS: u64 = 60;
+/// …and while nothing is running. Still polled — a boot readout is exactly what
+/// an idle daemon is asked for — but 15× less often, which is what keeps the
+/// original "don't hammer the API from an idle daemon" intent intact.
+const IDLE_INTERVAL_SECS: u64 = 15 * 60;
+/// Ceiling on the failure backoff. An expired profile token (the live case on
+/// this machine since 2026-08-20) is not going to fix itself from our side, so
+/// a failing root settles at one attempt an hour rather than one a minute.
+const MAX_BACKOFF_SECS: u64 = 60 * 60;
+/// How often the scheduler wakes to see whether any root is due. Cheap: no
+/// file is read and no request is made unless something is actually due.
+const SCHEDULER_TICK_SECS: u64 = 30;
+
+/// Delay until a root's next attempt, given whether it has live sessions and
+/// how many times in a row it has just failed. Doubling from the base interval,
+/// capped — so a permanently broken root costs one request an hour, and a
+/// healthy idle root costs four an hour.
+pub fn next_poll_delay(live: bool, consecutive_failures: u32) -> std::time::Duration {
+    let base = if live {
+        LIVE_INTERVAL_SECS
+    } else {
+        IDLE_INTERVAL_SECS
+    };
+    let secs = if consecutive_failures == 0 {
+        base
+    } else {
+        let shift = consecutive_failures.min(16);
+        base.saturating_mul(1u64 << shift).min(MAX_BACKOFF_SECS)
+    };
+    std::time::Duration::from_secs(secs.min(MAX_BACKOFF_SECS))
+}
+
+/// Background poll loop.
+///
+/// Iterates CONFIGURED roots ([`configured_config_roots`]) unioned with the
+/// roots of any live session, so a cold daemon with zero sessions still has
+/// real gauges within a tick of boot. Each root keeps its own schedule: live
+/// accounts every [`LIVE_INTERVAL_SECS`], idle ones every
+/// [`IDLE_INTERVAL_SECS`], and a failing one backs off toward
+/// [`MAX_BACKOFF_SECS`] (see [`next_poll_delay`]).
+///
+/// Every outcome is recorded, success or failure — `set_account_usage` for a
+/// reading, `set_account_usage_error` for a classified failure — so a consumer
+/// can tell "0% used" from "we could not ask" from "this account needs to log
+/// in again". Silence was the old behaviour and it is indistinguishable from
+/// zero at the surface, which is the thing that lies to the user.
 ///
 /// [`SessionStore::set_account_usage`]: super::store::SessionStore::set_account_usage
 pub fn spawn_poller(store: super::store::SessionStore) {
     tokio::spawn(async move {
         let client = reqwest::Client::new();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // root → (next attempt, consecutive failures). A root absent from the
+        // map has never been attempted and is due immediately, which is what
+        // makes the FIRST tick after boot do the work.
+        let mut schedule: std::collections::HashMap<String, (tokio::time::Instant, u32)> =
+            std::collections::HashMap::new();
         loop {
             tick.tick().await;
-            for root in store.live_claude_config_roots() {
-                match fetch_account_usage(&client, &root).await {
-                    Ok(usage) => store.set_account_usage(&root, usage),
-                    // Soft-fail by design: no credentials (API-key or Bedrock
-                    // setups, or a second macOS account whose login lives in
-                    // the Keychain), expired token, offline — that root's
-                    // gauges just stay wire-fed until a tick succeeds.
-                    Err(err) => tracing::debug!(?err, root, "account usage poll failed"),
+            let now = tokio::time::Instant::now();
+            let live = store.live_claude_config_roots();
+            let mut roots = configured_config_roots();
+            for r in &live {
+                if !roots.contains(r) {
+                    roots.push(r.clone());
                 }
+            }
+            // Forget roots that are no longer configured or live, so a removed
+            // profile stops occupying the schedule.
+            schedule.retain(|k, _| roots.contains(k));
+
+            for root in roots {
+                let due = schedule
+                    .get(&root)
+                    .map(|(at, _)| *at <= now)
+                    .unwrap_or(true);
+                if !due {
+                    continue;
+                }
+                let is_live = live.contains(&root);
+                let failures = match fetch_account_usage(&client, &root).await {
+                    Ok(usage) => {
+                        store.set_account_usage(&root, usage);
+                        0
+                    }
+                    Err(err) => {
+                        // Soft-fail by design — no credentials, an expired
+                        // token, or being offline must never take the daemon
+                        // down — but no longer SILENT: the classified failure
+                        // is stored so callers can say which of the three it is.
+                        tracing::debug!(kind = ?err.kind, root, detail = %err.detail,
+                                        "account usage poll failed");
+                        let prev = schedule.get(&root).map(|(_, f)| *f).unwrap_or(0);
+                        store.set_account_usage_error(&root, err);
+                        prev.saturating_add(1)
+                    }
+                };
+                let delay = next_poll_delay(is_live, failures);
+                schedule.insert(root, (tokio::time::Instant::now() + delay, failures));
             }
         }
     });
