@@ -1613,6 +1613,47 @@ describe('agents.sendMessage', () => {
     );
     expect(clientMock.message).not.toHaveBeenCalled();
   });
+
+  // ATTRIBUTION. send_message's tool contract promises that fromSessionId makes
+  // the message "delivered with a header naming you as the sender, so the
+  // recipient knows who sent it", and the headless brain has always honoured it
+  // (cmd/brain/handlers.go). This door dropped the field, so the SAME call was
+  // attributed on a headless node and anonymous on the desktop — the case that
+  // actually runs. Every assertion below is on the text handed to
+  // claudemonSessionClient.message, which is the delivery chokepoint: it is
+  // literally what lands in the recipient's transcript, not what the sender
+  // passed in.
+  it('prefixes a sender header naming the worker when fromSessionId is given', async () => {
+    getSnapshot.mockReturnValue({ sessionId: 'worker1', label: 'Rust Worker' } as never);
+    await call('agents.sendMessage', {
+      sessionId: 'manager1',
+      text: "I'm blocked on X",
+      fromSessionId: 'worker1',
+    });
+    // Byte-identical to the brain's twin (TestSendMessageAttributesNamedSender).
+    expect(clientMock.message).toHaveBeenCalledWith(
+      'manager1',
+      "[fleet] session:worker1 (Rust Worker) says:\nI'm blocked on X",
+    );
+  });
+
+  it('names an unlabelled sender by id rather than leaving it anonymous', async () => {
+    getSnapshot.mockReturnValue(null as never);
+    await call('agents.sendMessage', {
+      sessionId: 'manager1',
+      text: 'status update',
+      fromSessionId: 'worker2',
+    });
+    expect(clientMock.message).toHaveBeenCalledWith(
+      'manager1',
+      '[fleet] session:worker2 says:\nstatus update',
+    );
+  });
+
+  it('leaves the text untouched without fromSessionId (a human, a plugin)', async () => {
+    await call('agents.sendMessage', { sessionId: 's1', text: 'hi', fromSessionId: '   ' });
+    expect(clientMock.message).toHaveBeenCalledWith('s1', 'hi');
+  });
 });
 
 // agents.reportProgress is the WORKER's half of the fleet wake channel, and the

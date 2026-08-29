@@ -323,6 +323,36 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 	return head + "\n\n" + strings.Join(extras, "\n\n") + "\n\n" + tail
 }
 
+// fleetSenderHeaderPrefix / fleetSenderHeaderSuffix are SENDER_HEADER_PREFIX
+// and SENDER_HEADER_SUFFIX in fleetMessages.ts — the two fixed halves of the
+// agents.sendMessage attribution header, split out on both sides so the twin
+// test can pin them against the TypeScript source text.
+const (
+	fleetSenderHeaderPrefix = "[fleet] session:"
+	fleetSenderHeaderSuffix = " says:"
+)
+
+// fleetSenderHeaderText composes the attribution prefix a message whose caller
+// named itself (agents.sendMessage's fromSessionId) is delivered with.
+//
+// TWIN: buildSenderHeader in fleetMessages.ts. Not a wake kind — the text that
+// follows is arbitrary, so parseFleetMessage does not (and should not)
+// round-trip it; it borrows the [fleet] / session:<id> vocabulary so the tokens
+// read the same to the manager agent as a real wake's do. A sender with no
+// recorded label is named by id alone rather than going unattributed, and there
+// is deliberately no cwd-basename fallback: an invented label would read as a
+// name the sender never had.
+//
+// The label LOOKUP lives with the metadata it reads (fleetSenderHeader in
+// enrich.go); only the composition is here, where the desktop twin can pin it.
+func fleetSenderHeaderText(sessionID, label string) string {
+	named := sessionID
+	if label != "" {
+		named = sessionID + " (" + label + ")"
+	}
+	return fleetSenderHeaderPrefix + named + fleetSenderHeaderSuffix + "\n"
+}
+
 // fleetAgentLabel is the cwd-basename fallback for a worker with no label.
 // TWIN: agentLabel in progressReports.ts and basename in thresholdWatch.ts —
 // the same function under two names, because the wake bullets have to look the

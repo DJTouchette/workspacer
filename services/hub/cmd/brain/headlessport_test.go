@@ -188,6 +188,12 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 		"failed note":             fleetFailedNote,
 		"stopped note":            fleetStoppedNote,
 		"full-reply block prefix": "Full final message — ",
+		// agents.sendMessage's attribution header. Split into its two fixed
+		// halves on both sides precisely so it can be pinned here: the
+		// TypeScript composes it with a template literal, which this
+		// source-text comparison cannot see through.
+		"sender header prefix": fleetSenderHeaderPrefix,
+		"sender header suffix": fleetSenderHeaderSuffix,
 	} {
 		if !strings.Contains(ts, want) {
 			t.Errorf("%s has drifted from fleetMessages.ts.\n  go: %q\n"+
@@ -226,6 +232,19 @@ func TestFleetEntryBulletGrammar(t *testing.T) {
 	want = "worker (session:s1, cwd ?) — crossed: tokens 1,000 ≥ 500"
 	if got != want {
 		t.Errorf("threshold bullet\n got %q\nwant %q", got, want)
+	}
+}
+
+// The composed sender header, byte-for-byte. The desktop asserts the SAME two
+// strings (fleetMessages.test.ts, and hubCapabilities.test.ts on what the
+// recipient actually receives) — a divergence here means a worker's message
+// reads differently to its manager depending on which host delivered it.
+func TestFleetSenderHeaderText(t *testing.T) {
+	if got, want := fleetSenderHeaderText("worker1", "Rust Worker"), "[fleet] session:worker1 (Rust Worker) says:\n"; got != want {
+		t.Errorf("labelled sender\n got %q\nwant %q", got, want)
+	}
+	if got, want := fleetSenderHeaderText("worker2", ""), "[fleet] session:worker2 says:\n"; got != want {
+		t.Errorf("unlabelled sender\n got %q\nwant %q", got, want)
 	}
 }
 
