@@ -693,6 +693,23 @@ pub struct SessionState {
     /// we expose (a spawn UUID) differs from Claude's own id that names the file.
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// The Claude config root this session was SPAWNED with — the value of
+    /// `CLAUDE_CONFIG_DIR` in its spawn env, or the daemon's own default when
+    /// the spawn set none. Absolute and un-normalized; `None` means the daemon
+    /// did not spawn this session and genuinely does not know.
+    ///
+    /// This is the ATTRIBUTION KEY, and it exists because deriving it from the
+    /// transcript path is a correctness hazard rather than a shortcut.
+    /// `~/.claude/accounts/<name>/projects` is a SYMLINK to the shared
+    /// `~/.claude/projects` (workspacer's "share memories, separate login"
+    /// profile design), so both accounts write into ONE physical directory and
+    /// the only thing that tells them apart is the *un-resolved* path string
+    /// the CLI happened to use. One `realpath`/`canonicalize` anywhere upstream
+    /// — ours or someone else's — collapses both logins onto the default
+    /// account, silently and with no error, and the two accounts' usage merges.
+    /// Recording the root at the source makes attribution independent of that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_root: Option<String>,
     /// Latest statusLine telemetry, fed by the `/statusline` forwarder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_line: Option<StatusLine>,
@@ -788,6 +805,7 @@ impl SessionState {
             user_prompts: 0,
             last_event: None,
             transcript_path: None,
+            config_root: None,
             status_line: None,
             provider: default_provider(),
             transport: Transport::default(),
@@ -971,13 +989,31 @@ impl SessionState {
     }
 
     /// The Claude config root serving this session, `""` = the daemon's
-    /// default. Derived from the transcript path (every hook carries it, and
-    /// the stream tailer records it too) — a profile spawn with its own
-    /// `CLAUDE_CONFIG_DIR` writes transcripts under that root, which is what
-    /// keys its account-usage reading. A session that hasn't produced a
-    /// transcript yet reads as the default root; it also has no status line
-    /// yet, so nothing wrong gets patched in the interim.
+    /// default. This is what keys the account-usage reading, so getting it
+    /// wrong merges two logins' rate-limit gauges.
+    ///
+    /// Two sources, in this order, and the order is the whole point:
+    ///
+    /// 1. [`config_root`](Self::config_root) — what the session was actually
+    ///    SPAWNED with. Robust: no amount of path canonicalization downstream
+    ///    can change it, because it never came from a path.
+    /// 2. the transcript path, as a fallback for sessions the daemon did not
+    ///    spawn (`claudemon wrap` in a terminal that exported
+    ///    `CLAUDE_CONFIG_DIR`, or a child orphaned by a restart).
+    ///
+    /// Source 2 is only correct while the path is un-resolved, and that is a
+    /// property of the string, not something we can enforce: profile roots
+    /// symlink `projects` at the shared `~/.claude/projects`, so a canonicalized
+    /// path names the default account no matter which login wrote it. It used
+    /// to be the ONLY source, which made every account's attribution one stray
+    /// `realpath` away from silently merging. Source 1 is why it no longer is.
+    ///
+    /// A session with neither reads as the default root; it also has no status
+    /// line yet, so nothing wrong gets patched in the interim.
     pub fn claude_config_root(&self) -> String {
+        if let Some(root) = self.config_root.as_deref() {
+            return super::account_usage::normalize_root(root);
+        }
         self.transcript_path
             .as_deref()
             .and_then(super::account_usage::root_from_transcript)
