@@ -38,6 +38,7 @@ import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
+import { profileAppliesTo } from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
 export interface ClaudeSpawnOptions {
@@ -137,7 +138,18 @@ export interface ClaudeSpawnOptions {
  * Library MCP servers when `mcpItemIds` is present.
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
-  const rawProfile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  // A Claude PTY spawn takes CLAUDE profiles only. The picker filters on it,
+  // but this path is also reachable from the bus, and a Codex profile applied
+  // here would put a Codex config root in CLAUDE_CONFIG_DIR — a session that
+  // boots into first-run onboarding and looks like a broken login.
+  const pickedProfile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  if (pickedProfile && !profileAppliesTo(pickedProfile, 'claude')) {
+    console.warn(
+      `[claudeSpawn] ignoring profile '${pickedProfile.name}' — it configures ` +
+        `${pickedProfile.provider}, not claude`,
+    );
+  }
+  const rawProfile = profileAppliesTo(pickedProfile, 'claude') ? pickedProfile : undefined;
   const profile = opts.scrubProfileBypass
     ? opts.profileGranted
       ? scrubRemoteGrantedProfile(rawProfile)

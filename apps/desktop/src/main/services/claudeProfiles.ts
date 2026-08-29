@@ -6,11 +6,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getConfigDir } from './configService';
+import {
+  clampProfileWeight,
+  profileCapsOf,
+  profileProviderOf,
+  sanitizeEnvVarName,
+  sanitizeProfilePreset,
+  type ProfileProvider,
+} from '../shared/agentProfiles';
 
 export interface ClaudeProfile {
   id: string;
   name: string;
-  /** Custom CLAUDE_CONFIG_DIR (empty = use default ~/.claude) */
+  /** Which harness this profile configures. ABSENT MEANS CLAUDE — every profile
+   *  written before this field existed is a Claude profile, and they are in
+   *  daily use, so nothing migrates them. Absent is also what keeps the Go
+   *  brain's round-trip lossless for the Claude rows it does model
+   *  (contracts/claude-profiles-cases.json pins the emitted shape). */
+  provider?: ProfileProvider;
+  /** The harness's config root (empty = its default). Named for Claude by
+   *  history; the env var it becomes is per-harness — CLAUDE_CONFIG_DIR,
+   *  CODEX_HOME, COPILOT_HOME. See shared/agentProfiles PROFILE_CAPS. */
   configDir: string;
   /** Extra CLI args, e.g. ["--dangerously-skip-permissions"] */
   extraArgs: string[];
@@ -27,6 +43,22 @@ export interface ClaudeProfile {
    *  round-trips the file, so a field it doesn't model gets WIPED on its next
    *  write. */
   weight?: number;
+  /** Codex only: a NATIVE settings preset — `codex -p <name>` layers
+   *  `$CODEX_HOME/<name>.config.toml` over the base config. Same login, same
+   *  auth.json, same usage pool: it is not an account switch, which is why it
+   *  sits beside `configDir` instead of aliasing it. Forced off for harnesses
+   *  with no such flag (PROFILE_CAPS.preset). */
+  preset?: string;
+  /** Copilot only: the NAME of an environment variable the user already
+   *  exports, whose value is handed to the spawn as COPILOT_GITHUB_TOKEN.
+   *
+   *  A NAME, NEVER A TOKEN. This file holds no secrets, it is round-tripped by
+   *  the Go brain, and `claude.profiles.list` is a bus capability — storing a
+   *  PAT here would change its security posture in four places at once. The
+   *  value is resolved at spawn time from this process's own environment and
+   *  is never persisted or returned. Forced off for harnesses whose config
+   *  root already IS the account switch (PROFILE_CAPS.tokenEnv). */
+  tokenEnvVar?: string;
 }
 
 /**
@@ -117,10 +149,26 @@ export function scrubBypassArgs(args: string[] | undefined): string[] {
  * where nothing scrubs" escalation this function's own comment describes.
  */
 export function scrubBypassProfile<
-  T extends { extraArgs?: string[]; configDir?: string; mcpItemIds?: string[] },
+  T extends {
+    extraArgs?: string[];
+    configDir?: string;
+    mcpItemIds?: string[];
+    tokenEnvVar?: string;
+  },
 >(profile: T | undefined): T | undefined {
   return profile
-    ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs), configDir: '', mcpItemIds: [] }
+    ? {
+        ...profile,
+        extraArgs: scrubBypassArgs(profile.extraArgs),
+        configDir: '',
+        mcpItemIds: [],
+        // A variable NAME is resolved against THIS PROCESS's environment at
+        // spawn, so a remote caller who can name one can have its value read
+        // out of the host and handed to an agent that can print its own `env`.
+        // The name is harmless in the file and dangerous on an untrusted
+        // spawn, which is exactly the shape configDir already has here.
+        tokenEnvVar: '',
+      }
     : profile;
 }
 
@@ -137,7 +185,12 @@ export function scrubBypassProfile<
  * ConfigDir only. Change them together.
  */
 export function scrubRemoteGrantedProfile<
-  T extends { extraArgs?: string[]; configDir?: string; mcpItemIds?: string[] },
+  T extends {
+    extraArgs?: string[];
+    configDir?: string;
+    mcpItemIds?: string[];
+    tokenEnvVar?: string;
+  },
 >(profile: T | undefined): T | undefined {
   return profile
     ? {
@@ -145,6 +198,12 @@ export function scrubRemoteGrantedProfile<
         extraArgs: scrubBypassArgs(profile.extraArgs),
         configDir: profile.configDir ?? '',
         mcpItemIds: [],
+        // KEPT under a grant, for the same reason configDir is: the grant names
+        // this profile id, the hub verified it, and running the worker as that
+        // identity is the entire point — a Copilot identity IS the token. The
+        // grant is minted from the profiles that existed when the manager
+        // spawned, so a profile a bus caller adds later is not in it.
+        tokenEnvVar: profile.tokenEnvVar ?? '',
       }
     : profile;
 }
@@ -172,15 +231,44 @@ export const DEFAULT_PROFILE = (): ClaudeProfile => ({
  * no `mcpItemIds` key at all here and with `[]` there.
  */
 export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
+  const provider = profileProviderOf(p);
+  const caps = profileCapsOf(p);
+  const preset = caps.preset ? sanitizeProfilePreset(p.preset) : '';
+  const tokenEnvVar = caps.tokenEnv ? sanitizeEnvVarName(p.tokenEnvVar) : '';
+  // Both per-harness keys are peeled off the input before the spread. A
+  // conditional spread can only ADD a key — it cannot remove one the row
+  // already carries — so spreading `p` wholesale would leave a stale
+  // `provider: 'codex'` (or a preset the new harness has no flag for) on a
+  // profile that was just switched back to Claude.
+  const { provider: _provider, preset: _preset, tokenEnvVar: _tokenEnvVar, ...rest } = p;
+  void _provider;
+  void _preset;
+  void _tokenEnvVar;
   return {
-    ...p,
+    ...rest,
+    // The two per-harness keys are OMITTED at their Claude defaults rather than
+    // emitted as 'claude' / ''. Absent means Claude by contract
+    // (shared/agentProfiles.profileProviderOf), and the Go twin — which
+    // round-trips this file for every web/remote client — models neither key,
+    // so emitting them on a Claude row would make the same method answer with
+    // two shapes depending on which provider ran.
+    // contracts/claude-profiles-cases.json pins that.
+    ...(provider === 'claude' ? {} : { provider }),
     configDir: p.configDir ?? '',
     extraArgs: p.extraArgs ?? [],
-    mcpItemIds: p.mcpItemIds ?? [],
+    // A capability the harness does not have is stripped AT WRITE TIME, so the
+    // stored file never holds a value that looks like an opt-in and isn't.
+    // Library MCP selections ride Claude's --mcp-config; nothing would read a
+    // list saved for another harness.
+    mcpItemIds: caps.mcpItemIds ? (p.mcpItemIds ?? []) : [],
     isDefault: p.isDefault === true,
     // Emit the key always (0 = manual-only), mirroring the Go twin's
     // no-omitempty int — same method, same shape, whichever provider answers.
-    weight: typeof p.weight === 'number' && p.weight > 0 ? p.weight : 0,
+    // Copilot clamps to 0: it reports no usage-window percentage, so a weight
+    // there could never fire (PROFILE_CAPS.copilot.whyNoFailoverWeight).
+    weight: clampProfileWeight(provider, p.weight),
+    ...(preset ? { preset } : {}),
+    ...(tokenEnvVar ? { tokenEnvVar } : {}),
   };
 }
 
@@ -214,19 +302,36 @@ class ClaudeProfileService {
     return this.profiles.find((p) => p.isDefault) ?? this.profiles[0];
   }
 
+  /**
+   * `init` carries the per-harness fields. It is a trailing OPTIONS OBJECT
+   * rather than two more positionals because the four positionals are the
+   * shape the Go brain's `claude.profiles.add` also answers — a bus caller
+   * cannot send `init`, and a Claude profile added from the web must stay
+   * byte-identical to one added here (contracts/claude-profiles-cases.json).
+   */
   addProfile(
     name: string,
     configDir: string,
     extraArgs: string[],
     mcpItemIds: string[] = [],
+    init: {
+      provider?: ProfileProvider;
+      preset?: string;
+      weight?: number;
+      tokenEnvVar?: string;
+    } = {},
   ): ClaudeProfile {
     const profile: ClaudeProfile = normalizeProfile({
       id: crypto.randomUUID(),
       name,
+      ...(init.provider && { provider: init.provider }),
       configDir: configDir.trim(),
       extraArgs,
       mcpItemIds,
       isDefault: this.profiles.length === 0,
+      ...(init.preset !== undefined && { preset: init.preset }),
+      ...(init.weight !== undefined && { weight: init.weight }),
+      ...(init.tokenEnvVar !== undefined && { tokenEnvVar: init.tokenEnvVar }),
     });
     this.profiles.push(profile);
     this.save();
@@ -234,22 +339,33 @@ class ClaudeProfileService {
   }
 
   updateProfile(id: string, updates: Partial<Omit<ClaudeProfile, 'id'>>): ClaudeProfile | null {
-    const profile = this.profiles.find((p) => p.id === id);
-    if (!profile) return null;
-    if (updates.name !== undefined) profile.name = updates.name;
-    if (updates.configDir !== undefined) profile.configDir = updates.configDir.trim();
-    if (updates.extraArgs !== undefined) profile.extraArgs = updates.extraArgs;
-    if (updates.mcpItemIds !== undefined) profile.mcpItemIds = updates.mcpItemIds;
-    if (updates.weight !== undefined) {
-      profile.weight =
-        typeof updates.weight === 'number' && updates.weight > 0 ? updates.weight : 0;
-    }
+    const index = this.profiles.findIndex((p) => p.id === id);
+    if (index === -1) return null;
+    const draft = { ...this.profiles[index] };
+    if (updates.name !== undefined) draft.name = updates.name;
+    if (updates.configDir !== undefined) draft.configDir = updates.configDir.trim();
+    if (updates.extraArgs !== undefined) draft.extraArgs = updates.extraArgs;
+    if (updates.mcpItemIds !== undefined) draft.mcpItemIds = updates.mcpItemIds;
+    if (updates.provider !== undefined) draft.provider = updates.provider;
+    if (updates.preset !== undefined) draft.preset = updates.preset;
+    if (updates.weight !== undefined) draft.weight = updates.weight;
+    if (updates.tokenEnvVar !== undefined) draft.tokenEnvVar = updates.tokenEnvVar;
+    // Normalized as a WHOLE ROW, replacing the old one, rather than clamped
+    // field by field. Two reasons, both bugs otherwise: a single update can
+    // change the provider AND a capability field at once (switching a profile
+    // to copilot while setting a weight has to end at weight 0, judged against
+    // the NEW harness, not the old one), and normalizeProfile OMITS the keys
+    // that are at their Claude default — which only takes effect if the row is
+    // replaced. Mutating in place would leave a stale `provider: 'codex'`
+    // behind on a profile switched back to Claude.
+    const profile = normalizeProfile(draft);
+    this.profiles[index] = profile;
     if (updates.isDefault) {
       // Unset other defaults
       for (const p of this.profiles) p.isDefault = p.id === id;
     }
     this.save();
-    return { ...profile };
+    return { ...this.profiles[index] };
   }
 
   removeProfile(id: string): void {

@@ -110,10 +110,18 @@ describe('managedOptionsFromRequest', () => {
         // where the option keeps the same name.
         if (!(field in opts) || opts[field] === undefined) unclassified.push(field);
       }
-      // 'derived' / 'unsupported' are deliberate: the reason string is the
-      // contract, and explainUnsupportedManagedOptions surfaces it at spawn.
+      // 'derived' / 'unsupported' / 'conditional' are deliberate: the reason
+      // string is the contract, and explainUnsupportedManagedOptions surfaces
+      // it at spawn.
       if (rule.kind === 'unsupported') expect(rule.why.length).toBeGreaterThan(10);
       if (rule.kind === 'derived') expect(rule.into.length).toBeGreaterThan(0);
+      if (rule.kind === 'conditional') {
+        // A conditional field DOES arrive — it is only announced for the
+        // harnesses named as unable to take it.
+        if (!(field in opts) || opts[field] === undefined) unclassified.push(field);
+        expect(rule.on.length).toBeGreaterThan(0);
+        expect(rule.why.length).toBeGreaterThan(10);
+      }
     }
     expect(unclassified).toEqual([]);
   });
@@ -146,13 +154,44 @@ describe('explainUnsupportedManagedOptions', () => {
   it('names each option it cannot honour, with a reason', () => {
     const why = explainUnsupportedManagedOptions({
       provider: 'codex',
-      profileId: 'work',
       mcpItemIds: ['a'],
       permissionMode: 'plan',
     });
-    expect(why.join('\n')).toMatch(/profileId/);
     expect(why.join('\n')).toMatch(/mcpItemIds/);
     expect(why.join('\n')).toMatch(/permissionMode 'plan'/);
+  });
+
+  /**
+   * The claim this table used to make about profileId — "Claude accounts
+   * (CLAUDE_CONFIG_DIR) have no equivalent on this provider" — was false, and
+   * the warning it produced was the visible half of the falsehood: a codex
+   * spawn announced that its profile had been dropped while the user had
+   * deliberately picked one. A profile is a config ROOT, and codex and copilot
+   * both have one.
+   */
+  describe('profileId is a config root, and three harnesses have one', () => {
+    it.each(['codex', 'copilot'] as const)(
+      'says nothing for a %s profile — it is applied',
+      (provider) => {
+        expect(
+          explainUnsupportedManagedOptions({ provider, profileId: 'work' }).join('\n'),
+        ).not.toMatch(/profileId/);
+      },
+    );
+
+    it.each(['opencode', 'pi'] as const)(
+      'still announces it for %s, which has no config-root override',
+      (provider) => {
+        const why = explainUnsupportedManagedOptions({ provider, profileId: 'work' }).join('\n');
+        expect(why).toMatch(/profileId/);
+        expect(why).toMatch(/config-root/);
+      },
+    );
+
+    it('no longer claims other harnesses have no equivalent to a Claude account', () => {
+      expect(SPAWN_REQUEST_FIELDS.profileId.why).not.toMatch(/no equivalent/i);
+      expect(SPAWN_REQUEST_FIELDS.profileId.kind).toBe('conditional');
+    });
   });
 
   it('flags a facade asked of pi, which has no MCP client', () => {

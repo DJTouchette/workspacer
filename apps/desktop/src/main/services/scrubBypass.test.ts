@@ -119,6 +119,22 @@ describe('scrubBypassProfile', () => {
     expect(profile.extraArgs).toEqual(['--dangerously-skip-permissions', '--model', 'opus']);
   });
 
+  it('drops the referenced token variable — a NAME is resolved against the HOST', () => {
+    // The name is harmless in the file and dangerous on an untrusted spawn: it
+    // is resolved against this process's environment, and the agent it lands in
+    // can print its own `env`. Same shape as configDir above.
+    const clean = scrubBypassProfile({
+      id: 'p1',
+      name: 'Copilot',
+      provider: 'copilot' as const,
+      configDir: '~/.copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'GH_TOKEN_WORK',
+      isDefault: false,
+    })!;
+    expect(clean.tokenEnvVar).toBe('');
+  });
+
   it('passes undefined through (no profile chosen)', () => {
     expect(scrubBypassProfile(undefined)).toBeUndefined();
   });
@@ -145,8 +161,27 @@ describe('scrubRemoteGrantedProfile', () => {
     expect(profile.mcpItemIds).toEqual(['evil-server']); // per-spawn view, not an edit
   });
 
+  it('keeps the referenced token variable — a Copilot identity IS its token', () => {
+    // Copilot's config root is not its account (the login lives in the OS
+    // credential store), so dropping the reference under a grant would leave
+    // the worker running as the DEFAULT copilot login while the card claimed
+    // otherwise — the silent-wrong-identity failure the grant exists to avoid.
+    const granted = scrubRemoteGrantedProfile({
+      id: 'p3',
+      name: 'Copilot work',
+      provider: 'copilot' as const,
+      configDir: '~/.copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'GH_TOKEN_WORK',
+      isDefault: false,
+    })!;
+    expect(granted.tokenEnvVar).toBe('GH_TOKEN_WORK');
+    expect(granted.configDir).toBe('~/.copilot-work');
+  });
+
   it('passes undefined through and normalizes a missing configDir to empty', () => {
     expect(scrubRemoteGrantedProfile(undefined)).toBeUndefined();
     expect(scrubRemoteGrantedProfile({ extraArgs: [] })!.configDir).toBe('');
+    expect(scrubRemoteGrantedProfile({ extraArgs: [] })!.tokenEnvVar).toBe('');
   });
 });

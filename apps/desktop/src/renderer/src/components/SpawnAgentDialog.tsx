@@ -2,7 +2,7 @@ import { ProjectMark } from './ProjectMark';
 import { resolveProject } from '../lib/projectIdentity';
 import { projectKey } from '../lib/projectKey';
 import type { ProjectIdentity } from '../hooks/useConfig';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
@@ -12,6 +12,23 @@ import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps
 import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
 import { useProviderDetection } from '../hooks/useProviderDetection';
 import { visibleProviderOptions, type ProviderDetection } from '../lib/providerAvailability';
+import { profilesForProvider } from '../lib/profileFields';
+import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
+
+/**
+ * What a profile chip promises, in the vocabulary of the harness it belongs to.
+ * The three differ in what the config root actually switches, and saying
+ * "Claude profile" over a Codex chip was the old text's whole problem.
+ */
+function profileChipTitle(profile: SpawnProfile, provider: AgentProvider): string {
+  const caps = provider in PROFILE_CAPS ? PROFILE_CAPS[provider as ProfileProvider] : undefined;
+  if (!caps) return 'Dispatch with this profile.';
+  const root = `sets ${caps.configRootEnv}`;
+  const preset = profile.preset ? `, plus ${caps.presetFlag} ${profile.preset}` : '';
+  if (profile.isDefault)
+    return `Dispatch under the default ${caps.label} login — plus whatever this profile carries${preset}.`;
+  return `Dispatch with this ${caps.label} profile — ${root}${preset}.`;
+}
 
 /** Bypass-everything mode id per provider family (claude vs managed). */
 const bypassModeFor = (provider: AgentProvider): string =>
@@ -32,8 +49,13 @@ function normalizePermissionModeForProvider(provider: AgentProvider, mode: strin
 interface SpawnProfile {
   id: string;
   name: string;
+  /** Which harness this profile configures. ABSENT MEANS CLAUDE — see
+   *  shared/agentProfiles.profileProviderOf. */
+  provider?: ProfileProvider;
   mcpItemIds?: string[];
   isDefault?: boolean;
+  /** Codex only: `-p <name>`, a same-account settings preset. */
+  preset?: string;
 }
 
 interface SpawnAgentDialogProps {
@@ -332,16 +354,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   useEffect(() => {
     window.electronAPI
       .claudeProfilesList?.()
-      .then((list: SpawnProfile[]) => {
-        setProfiles(list ?? []);
-        // Select the default profile rather than offering a separate "no
-        // profile" chip beside it: the service MATERIALIZES an `id: 'default'`
-        // row named "Default" (claudeProfiles.ts / the brain's twin), so a
-        // synthetic one rendered two chips both labelled Default — and picking
-        // the synthetic one silently skipped the MCP loadout the user had
-        // attached to the real Default in Settings.
-        setProfileId((cur) => cur || (list ?? []).find((p) => p.isDefault)?.id || '');
-      })
+      .then((list: SpawnProfile[]) => setProfiles(list ?? []))
       .catch(() => {});
     window.electronAPI
       .libraryList?.(defaultCwd || undefined)
@@ -458,11 +471,38 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     };
   }, []);
 
-  // Pre-fill the MCP selection from the chosen profile's default loadout.
+  // The profiles this spawn may actually use. A Claude profile on a Codex
+  // spawn would point CODEX_HOME at a Claude config root, and a harness with no
+  // config root (OpenCode, Pi) gets an empty list — which is what makes the
+  // picker disappear rather than offer chips that set nothing.
+  const eligibleProfiles = useMemo(
+    () => profilesForProvider(profiles, provider),
+    [profiles, provider],
+  );
+
+  // Selection follows the harness. Switching provider must not leave the other
+  // harness's profile id selected — it would be dropped at spawn while the
+  // dialog still showed it as chosen.
+  //
+  // The default row is SELECTED rather than offered beside a "no profile" chip:
+  // the service MATERIALIZES an `id: 'default'` row named "Default"
+  // (claudeProfiles.ts / the brain's twin), so a synthetic one rendered two
+  // chips both labelled Default — and picking the synthetic one silently
+  // skipped the MCP loadout attached to the real Default in Settings.
   useEffect(() => {
-    const p = profiles.find((x) => x.id === profileId);
+    setProfileId((cur) => {
+      if (cur && eligibleProfiles.some((p) => p.id === cur)) return cur;
+      return eligibleProfiles.find((p) => p.isDefault)?.id || eligibleProfiles[0]?.id || '';
+    });
+  }, [eligibleProfiles]);
+
+  // Pre-fill the MCP selection from the chosen profile's default loadout.
+  // Claude only: the loadout rides Claude's --mcp-config, and PROFILE_CAPS says
+  // so — a Codex/Copilot profile is forced to carry an empty one on write.
+  useEffect(() => {
+    const p = isClaude ? eligibleProfiles.find((x) => x.id === profileId) : undefined;
     setMcpSel(p?.mcpItemIds ?? []);
-  }, [profileId, profiles]);
+  }, [profileId, eligibleProfiles, isClaude]);
 
   // Drop any selected server that no longer exists (e.g. cwd changed).
   useEffect(() => {
@@ -567,6 +607,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             cwd: cwd.trim(),
             name: name.trim() || undefined,
             provider,
+            // The harness's own profile — its config root (CODEX_HOME /
+            // COPILOT_HOME), extra argv, `-p` preset and, for Copilot, the
+            // referenced token. Empty for a harness with no config root,
+            // because eligibleProfiles is empty there.
+            profileId: profileId || undefined,
             // Codex only, and ALWAYS stated: both shapes are real choices now
             // (headless is the default, hybrid the opt-in), so sending only the
             // non-default would leave "hybrid" indistinguishable from "the user
@@ -1449,7 +1494,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           )}
 
           {/* ── Profiles: pick a preconfiguration, knobs become overrides ── */}
-          {isClaude && profiles.length > 0 && (
+          {eligibleProfiles.length > 0 && (
             <div style={{ marginTop: 20, width: '100%', maxWidth: 560, textAlign: 'center' }}>
               <div style={quietLabel}>profile</div>
               <div
@@ -1461,17 +1506,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   marginTop: 8,
                 }}
               >
-                {profiles.map((p) => {
+                {eligibleProfiles.map((p) => {
                   const on = profileId === p.id;
                   return (
                     <button
                       key={p.id}
                       onClick={() => setProfileId(p.id)}
-                      title={
-                        p.isDefault
-                          ? 'Dispatch under the default login — plus whatever MCP loadout Default carries.'
-                          : 'Dispatch with this Claude profile — pre-fills its MCP loadout and settings.'
-                      }
+                      title={profileChipTitle(p, provider)}
                       style={{
                         fontSize: '0.7rem',
                         fontWeight: 500,

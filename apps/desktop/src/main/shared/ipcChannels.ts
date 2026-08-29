@@ -92,6 +92,9 @@ export const IPC = {
   CLAUDE_PROFILES_ADD: 'claude-profiles:add',
   CLAUDE_PROFILES_ADD_ACCOUNT: 'claude-profiles:addAccount',
   CLAUDE_PROFILES_LOGIN_STATUS: 'claude-profiles:loginStatus',
+  /** Per-profile account identity read from each harness's own credential file
+   *  (config root, stable account id, auth mode). Desktop-only. */
+  CLAUDE_PROFILES_ACCOUNTS: 'claude-profiles:accounts',
   CLAUDE_PROFILES_UPDATE: 'claude-profiles:update',
   CLAUDE_PROFILES_REMOVE: 'claude-profiles:remove',
 

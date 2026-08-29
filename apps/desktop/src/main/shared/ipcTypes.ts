@@ -8,6 +8,10 @@
  * must be parseable by both the main tsc build and the renderer tsc build.
  */
 
+import type { ProfileProvider } from './agentProfiles';
+
+export type { ProfileProvider };
+
 // ── Git (review pane: git:status / diff / numstat / stage / …) ──
 
 /** One changed file from `git status --porcelain`. `staged`/`unstaged` are the
@@ -763,15 +767,70 @@ export type LayoutInput = { id?: string; name: string; agents: LayoutAgent[] };
 export interface ClaudeProfile {
   id: string;
   name: string;
+  /** Which harness this profile configures. ABSENT MEANS CLAUDE — see
+   *  shared/agentProfiles.profileProviderOf; every profile written before this
+   *  field existed is a Claude one. */
+  provider?: ProfileProvider;
+  /** The harness's config root (blank = its default). Becomes
+   *  CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME per PROFILE_CAPS. */
   configDir: string;
   extraArgs: string[];
-  /** Library item ids (kind 'mcp') loaded by default when spawning with this profile. */
+  /** Library item ids (kind 'mcp') loaded by default when spawning with this profile.
+   *  Claude only — it rides Claude's --mcp-config (PROFILE_CAPS.mcpItemIds). */
   mcpItemIds?: string[];
   isDefault: boolean;
   /** Automatic-failover weight: 0/absent = manual only; heavier wins first
-   *  when a session's account exhausts a usage window (lib/profileFailover). */
+   *  when a session's account exhausts a usage window (lib/profileFailover).
+   *  Offered only where the harness reports a usage window (Claude, Codex). */
   weight?: number;
+  /** Codex only: `codex -p <name>` — a SAME-ACCOUNT settings preset layered
+   *  over the base config, never a login switch. */
+  preset?: string;
+  /** Copilot only: the NAME of an environment variable holding a GitHub token
+   *  — never the token. Copilot's config root is not its account (the login
+   *  lives in the OS credential store), so a second identity is expressed by
+   *  referencing a credential the user already has. */
+  tokenEnvVar?: string;
 }
 
 /** Partial update payload for claude-profiles:update. */
 export type ProfileUpdate = Partial<Omit<ClaudeProfile, 'id'>>;
+
+/**
+ * The per-harness fields of `claude-profiles:add`, as a trailing options object.
+ *
+ * They are NOT positionals because the four positionals are the shape the Go
+ * brain answers `claude.profiles.add` with too: a bus caller can only send
+ * those, and a Claude profile added over the bus has to come out identical to
+ * one added here.
+ */
+export interface ProfileInit {
+  provider?: ProfileProvider;
+  preset?: string;
+  weight?: number;
+  tokenEnvVar?: string;
+}
+
+/**
+ * Who a profile actually is, read from its harness's own credential file
+ * (main/lib/profileAccounts). The type lives here because the renderer renders
+ * it and must not import the fs-backed module that produces it.
+ */
+export interface ProfileAccount {
+  provider: ProfileProvider;
+  /** The config root the identity was read from (absolute). */
+  configRoot: string;
+  /** true = a login lives here, false = none yet, undefined = the harness keeps
+   *  its credentials somewhere we cannot read (Copilot's OS credential store).
+   *  undefined is DISTINCT from false and the UI must not collapse them. */
+  signedIn?: boolean;
+  /** The harness's own stable account id, when it writes one. */
+  accountId?: string;
+  /** How that account authenticates, in the harness's word ('chatgpt', 'apikey'). */
+  authMode?: string;
+  /** Copilot: the variable the profile REFERENCES, echoed back so the UI can
+   *  name it. Reported with `signedIn` telling whether it is currently visible
+   *  to this app — a name that resolves to nothing is the one failure a user
+   *  cannot otherwise see. Never the value. */
+  tokenEnvVar?: string;
+}

@@ -767,3 +767,126 @@ describe('spawnManagedAgent — role effort comes from config when the caller na
     expect(lastManaged().effort).toBeUndefined();
   });
 });
+
+/**
+ * A profile is a CONFIG ROOT, and the root is Claude-specific only by history.
+ * These pin the value actually arriving on the wire: `CODEX_HOME` in the
+ * payload's `env`, `codex -p <preset>` in its `extra_args` — the same two
+ * fields a Claude profile has always used.
+ *
+ * The harness match is re-checked HERE and not only in the pickers, because
+ * this dispatch is also the hub bus's (`agents.spawn`), where no picker ran.
+ */
+describe('spawnManagedAgent — per-harness profiles', () => {
+  it("a codex profile's config dir arrives as CODEX_HOME, not CLAUDE_CONFIG_DIR", async () => {
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Codex work',
+      provider: 'codex',
+      configDir: '/roots/codex-work',
+      extraArgs: [],
+    });
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', profileId: 'p1' });
+
+    expect(lastManaged().env).toEqual({ CODEX_HOME: '/roots/codex-work' });
+    expect(lastManaged().env).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+  });
+
+  it("a codex preset arrives as `-p <name>` after the profile's own extraArgs", async () => {
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Codex work',
+      provider: 'codex',
+      configDir: '',
+      extraArgs: ['-c', 'model_reasoning_effort="high"'],
+      preset: 'work',
+    });
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', profileId: 'p1' });
+
+    expect(lastManaged().extraArgs).toEqual(['-c', 'model_reasoning_effort="high"', '-p', 'work']);
+    // No configDir means the default login — no env key is invented for it.
+    expect(lastManaged()).not.toHaveProperty('env');
+  });
+
+  it("a copilot profile's config dir arrives as COPILOT_HOME", async () => {
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Copilot work',
+      provider: 'copilot',
+      configDir: '/roots/copilot-work',
+      extraArgs: [],
+    });
+    await spawnManagedAgent({ provider: 'copilot', cwd: '/proj', profileId: 'p1' });
+
+    expect(lastManaged().env).toEqual({ COPILOT_HOME: '/roots/copilot-work' });
+  });
+
+  it('a CLAUDE profile on a codex spawn is ignored — it would point CODEX_HOME at a Claude root', async () => {
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Claude work',
+      configDir: '/roots/claude-work',
+      extraArgs: ['--model', 'opus'],
+    });
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', profileId: 'p1' });
+
+    expect(lastManaged()).not.toHaveProperty('env');
+    expect(lastManaged()).not.toHaveProperty('extraArgs');
+  });
+
+  it('a profile of ANY harness is ignored for a provider that takes none', async () => {
+    getProfile.mockReturnValue({
+      id: 'p1',
+      name: 'Codex work',
+      provider: 'codex',
+      configDir: '/roots/codex-work',
+      extraArgs: [],
+    });
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', profileId: 'p1' });
+
+    expect(lastManaged()).not.toHaveProperty('env');
+    getProfile.mockReturnValue(undefined as unknown);
+  });
+
+  it("a copilot profile's REFERENCED token is resolved at spawn and sent as COPILOT_GITHUB_TOKEN", async () => {
+    process.env.WKS_TEST_GH_TOKEN = 'ghp_work';
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Copilot work',
+      provider: 'copilot',
+      configDir: '/roots/copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'WKS_TEST_GH_TOKEN',
+    });
+    await spawnManagedAgent({ provider: 'copilot', cwd: '/proj', profileId: 'p1' });
+    delete process.env.WKS_TEST_GH_TOKEN;
+
+    expect(lastManaged().env).toEqual({
+      COPILOT_HOME: '/roots/copilot-work',
+      COPILOT_GITHUB_TOKEN: 'ghp_work',
+    });
+  });
+
+  it('a referenced variable that is NOT set contributes nothing — never an empty token', async () => {
+    delete process.env.WKS_TEST_GH_TOKEN;
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Copilot work',
+      provider: 'copilot',
+      configDir: '/roots/copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'WKS_TEST_GH_TOKEN',
+    });
+    await spawnManagedAgent({ provider: 'copilot', cwd: '/proj', profileId: 'p1' });
+
+    // An empty COPILOT_GITHUB_TOKEN would out-rank copilot's stored credential.
+    expect(lastManaged().env).toEqual({ COPILOT_HOME: '/roots/copilot-work' });
+  });
+
+  it('a profile-less codex spawn sends neither key — the payload is unchanged', async () => {
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
+
+    expect(lastManaged()).not.toHaveProperty('env');
+    expect(lastManaged()).not.toHaveProperty('extraArgs');
+  });
+});

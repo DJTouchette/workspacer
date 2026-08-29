@@ -36,6 +36,13 @@ import {
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
+import {
+  profileAppliesTo,
+  profileConfigEnv,
+  profileSpawnArgs,
+  profileTokenEnv,
+  providerTakesProfiles,
+} from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { installManagerSkills } from './managerSkills';
@@ -108,8 +115,11 @@ export interface ManagedSpawnOptions {
    *  (sanitizeSpawnParams deletes any caller-supplied copy). Meaningless
    *  without scrubProfileBypass. */
   profileGranted?: boolean;
-  /** Claude (stream) only: Claude profile (CLAUDE_CONFIG_DIR + extraArgs) —
-   *  same semantics as the PTY path (claudeSpawn.ts). */
+  /** A profile of THIS provider's harness: its config root (CLAUDE_CONFIG_DIR /
+   *  CODEX_HOME / COPILOT_HOME) + extraArgs + any native preset — same
+   *  semantics as the Claude PTY path (claudeSpawn.ts). A profile belonging to
+   *  a different harness is ignored and logged: it would point the wrong root
+   *  at the wrong CLI. */
   profileId?: string;
   /** Claude (stream) only: Library item ids (kind 'mcp') selected for this
    *  spawn, resolved to a session-scoped `--mcp-config` with
@@ -307,30 +317,57 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const yolo = isClaudeStream
     ? skipPermissions || permissionMode === 'bypassPermissions'
     : skipPermissions;
-  // Claude (stream) parity with the PTY path (claudeSpawn.ts): a profile maps
-  // to CLAUDE_CONFIG_DIR + its extra argv, and Library MCP selections become a
-  // session-scoped --mcp-config with --strict-mcp-config + pre-allowed tools.
-  // Both ride the spawn-managed payload's claude-only env/extra_args fields
-  // instead of being silently dropped. Facade sessions take the facade MCP
-  // config instead of the user's library servers, as on the PTY path.
-  const profile =
-    isClaudeStream && opts.profileId
-      ? opts.scrubProfileBypass
-        ? opts.profileGranted
-          ? scrubRemoteGrantedProfile(claudeProfiles.getProfile(opts.profileId))
-          : scrubBypassProfile(claudeProfiles.getProfile(opts.profileId))
-        : claudeProfiles.getProfile(opts.profileId)
+  // A profile maps to its harness's CONFIG ROOT plus its extra argv. The root
+  // is Claude-specific only by history — every harness with profiles has one
+  // (CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME, PROFILE_CAPS) — so the
+  // lookup is no longer gated on Claude. Library MCP selections stay Claude's
+  // alone: they become a session-scoped --mcp-config with --strict-mcp-config +
+  // pre-allowed tools, and managed providers register servers their own way.
+  // Facade sessions take the facade MCP config instead of the user's library
+  // servers, as on the PTY path.
+  //
+  // profileAppliesTo re-checks the harness even though both pickers filter on
+  // it: this dispatch is reachable from the hub bus, where no picker ran, and a
+  // Claude profile applied to a Codex spawn would point CODEX_HOME at a Claude
+  // config root — a broken session that looks like a working one.
+  const picked =
+    opts.profileId && providerTakesProfiles(provider)
+      ? claudeProfiles.getProfile(opts.profileId)
       : undefined;
-  const env: Record<string, string> = {};
-  if (profile?.configDir) {
-    env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
-    // A profile spawn inherits the primary login's trust for this folder —
-    // without it the account's own .claude.json (unlinked by design, and
+  const rawProfile = profileAppliesTo(picked, provider) ? picked : undefined;
+  if (opts.profileId && picked && !rawProfile) {
+    console.warn(
+      `[managedSpawn] ignoring profile '${picked.name}' — it configures ` +
+        `${picked.provider ?? 'claude'}, not ${provider}`,
+    );
+  }
+  const profile = rawProfile
+    ? opts.scrubProfileBypass
+      ? opts.profileGranted
+        ? scrubRemoteGrantedProfile(rawProfile)
+        : scrubBypassProfile(rawProfile)
+      : rawProfile
+    : undefined;
+  // The config root, plus (Copilot) the auth token the profile REFERENCES by
+  // variable name — resolved from this process's environment here, at spawn,
+  // and never stored. An unset name contributes nothing rather than an empty
+  // token that would out-rank copilot's own stored credential.
+  const env: Record<string, string> = {
+    ...profileConfigEnv(profile, os.homedir()),
+    ...profileTokenEnv(profile, process.env),
+  };
+  if (env.CLAUDE_CONFIG_DIR) {
+    // A Claude profile spawn inherits the primary login's trust for this folder
+    // — without it the account's own .claude.json (unlinked by design, and
     // seeded empty by the old wrong-path read) gates the spawn on a trust
-    // dialog no headless/GUI surface ever renders.
+    // dialog no headless/GUI surface ever renders. Claude-only because the
+    // trust map is a Claude file; the other harnesses have no equivalent.
     syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
   }
-  const extraArgs: string[] = [...(profile?.extraArgs ?? [])];
+  // extraArgs plus the harness's native preset flag (`codex -p <name>`) when
+  // the profile set one — see profileSpawnArgs for why the preset is appended
+  // after extraArgs.
+  const extraArgs: string[] = profileSpawnArgs(profile);
   // Overlay settings (hooks + statusLine) so stream sessions carry our hooks
   // without mutating the user's global settings.json — the stream analogue of
   // the PTY path's `--settings` in buildClaudeArgv.
@@ -435,9 +472,25 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(isClaudeStream && {
       permissionMode,
       ...(opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
-      ...(extraArgs.length && { extraArgs }),
-      ...(Object.keys(env).length && { env }),
     }),
+    // The profile's config-root env and its extra argv. Sent for EVERY harness
+    // that takes profiles, not just Claude: `CODEX_HOME` / `COPILOT_HOME` are
+    // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
+    // the same argv channel. Both keys stay off the payload when empty, so a
+    // profile-less spawn is byte-identical to what it sent before.
+    //
+    // THE DAEMON HALF IS NOT DONE YET. Read at 2026-08-28 on this branch:
+    // `daemon/spawn.rs` `/sessions/spawn-managed` forwards `env`/`extra_args`
+    // into the `"claude"` (claude_stream) arm ONLY — `codex::spawn_session` and
+    // `copilot::SpawnConfig` take neither, so for those two harnesses these
+    // keys reach the daemon and stop there. Everything above (the store, the
+    // scrub, the harness re-check, the token resolution) is correct and pinned
+    // by managedSpawn.test.ts, but a Codex/Copilot profile does not change the
+    // spawned process until the Rust side threads these two fields through.
+    // Do not "fix" this by dropping the keys — the wire contract is the half
+    // that is right.
+    ...(extraArgs.length && { extraArgs }),
+    ...(Object.keys(env).length && { env }),
     ...(wantsFacade && {
       // Claude stream carries the facade via the --mcp-config file above, so
       // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
