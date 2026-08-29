@@ -22,7 +22,11 @@ import {
   summarizeFileChanges,
   withRecordedUsage,
 } from '../lib/sessionStats';
-import { useRecordedUsage } from '../contexts/RecordedUsageContext';
+import {
+  absentUsageTitle,
+  useRecordedUsage,
+  useRecordedUsageUnavailable,
+} from '../contexts/RecordedUsageContext';
 import { useGitBranch } from '../hooks/useGitBranch';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
@@ -135,6 +139,10 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   // a stopped daemon row), so every figure below would be absent even though
   // the history DB recorded them. Merge the recorded ones UNDER the live ones.
   const stats = withRecordedUsage(deriveSessionStats(snapshot), useRecordedUsage(agent.sessionId));
+  // Why the figures below are missing, when they are. Null means the recorded
+  // source answered and simply had nothing for this session; a string means it
+  // was never asked, which is a different sentence to put on screen.
+  const usageUnavailable = useRecordedUsageUnavailable();
   const ctxPct = stats.ctxPct;
   // Occupancy comes from deriveSessionStats, which owns the same two-source
   // rule this used to restate (transcript count first, pct × the provider's
@@ -481,8 +489,15 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             <span style={{ color: 'var(--wks-text-disabled)' }}>last recorded</span>
           </span>
         ) : (
-          <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
-            {agent.sessionId ? 'No usage yet' : ''}
+          // Nothing live and nothing recorded. "No usage yet" claimed the
+          // stronger of the two facts available — that this agent has spent
+          // nothing — when the weaker one is all we have, and when the source
+          // is unreachable we do not even have that. Say which it is.
+          <span
+            title={agent.sessionId ? absentUsageTitle(usageUnavailable) : undefined}
+            style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
+          >
+            {agent.sessionId ? (usageUnavailable ? 'Usage unavailable' : 'No usage recorded') : ''}
           </span>
         )}
       </div>

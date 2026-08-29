@@ -33,7 +33,11 @@ import {
   isSnapshotStale,
   withRecordedUsage,
 } from '../lib/sessionStats';
-import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
+import {
+  absentUsageTitle,
+  useRecordedUsageMap,
+  useRecordedUsageUnavailable,
+} from '../contexts/RecordedUsageContext';
 import { useConfig } from '../hooks/useConfig';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 import {
@@ -285,6 +289,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   // Last-recorded cost/tokens per session — the only figures a cold-start fleet
   // has, since every restored agent's session is a stopped row with no snapshot.
   const recordedUsage = useRecordedUsageMap();
+  // Whether a missing figure below means "never recorded" or "never asked".
+  const usageUnavailable = useRecordedUsageUnavailable();
 
   // Type-to-filter by name or provider. Applied before sort, so cards, list, and
   // keyboard nav all operate on the filtered set; header counts stay whole-fleet.
@@ -1049,7 +1055,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                       // says it is the last one written, not a live reading.
                       title={
                         stats.costUSD === undefined
-                          ? 'No cost recorded for this session'
+                          ? absentUsageTitle(usageUnavailable)
                           : stats.recorded
                             ? 'Last recorded for this session — not a live reading'
                             : undefined

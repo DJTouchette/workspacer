@@ -2628,7 +2628,10 @@ function App() {
           onSpawnAgent={openSpawnDialog}
           attention={attention}
         >
-          <RecordedUsageProvider value={recordedUsage}>
+          {/* `unavailable` rides along so a surface can tell "nothing was ever
+              recorded for this session" from "the list could not be read at
+              all" — both arrive here as a missing map entry. */}
+          <RecordedUsageProvider value={recordedUsage} unavailable={recentSessionsUnavailable}>
             <div className="app-root">
               {sidebarOverlay && !sidebarCollapsed && (
                 <div
