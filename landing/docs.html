@@ -286,7 +286,7 @@
 <p><strong>A manager cannot start its own successor</strong>, and its doctrine says so rather than letting it try. <code>spawn_agent</code> has no manager role: a session it spawned would come up without the doctrine, without the operator grants, without the slash commands, and unregistered as a wake target, which is a manager-shaped agent that is not one. So <code>/handoff</code> ends by handing the job back to you: terminate the Fleet Manager card (right-click ▸ Terminate, which drops the card so nothing resumes it), then open the Fleet Manager again from the Overview.</p>
 <h3>limits worth knowing</h3>
 <ul>
-<li>The manager itself runs on Claude or Codex only. It dispatches to all five backends.</li>
+<li>The manager itself runs on Claude, Codex or GitHub Copilot only — the three with both an MCP client and a personal-skills folder. It dispatches to all five backends.</li>
 <li>Armed <code>notify_when</code> watches and the parent graph behind succession are both in memory, by design, and are gone after a restart.</li>
 <li>Delivery mode is relayed, not enforced.</li>
 <li>A <strong>Pi</strong> worker gets no work{spacer} tools at all, since Pi ships no MCP client, so it cannot report its own progress. Its finish still wakes the manager, because that wake is host-side.</li>

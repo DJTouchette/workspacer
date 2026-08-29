@@ -29,7 +29,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Spawn agent | Pick cwd / backend (Claude, Codex, OpenCode, Pi) / model / profile / permission mode / transport, plus resume-in-cwd and git-worktree isolation; initial prompts are seeded by the flows that need them (Ask, library items, handoff) | 🔵 Working |
 | Worktree setup hooks | Fresh agent worktrees auto-symlink the source checkout's `node_modules`, then run the project's `projects[<dir>].worktreeSetup` commands in order (cwd = worktree; `$SOURCE`/`$WORKTREE` substituted + exported; `script:<name>` runs a project script; 5 min/command; first failure logged + skips the rest, spawn proceeds). Edited per project in Settings → Projects | 🔵 Working |
 | Auto-adopt | Sessions spawned externally (MCP, another agent) appear as cards automatically | 🔵 Working |
-| Fleet Manager | Dispatch a Fleet Manager (Claude or Codex) with the workspacer MCP facade attached to hand work out and coordinate the rest of the fleet; rendered nested under its parent | 🔵 Working |
+| Fleet Manager | Dispatch a Fleet Manager (Claude, Codex or GitHub Copilot) with the workspacer MCP facade attached to hand work out and coordinate the rest of the fleet; rendered nested under its parent | 🔵 Working |
 | Respawn / terminate | Restart a stopped agent (re-points its Claude panes); kill an agent's session | 🔵 Working |
 | Rename / reorder agents | Per-agent display name, sidebar ordering | 🔵 Working |
 | Deterministic agent identity | Cards keyed by a stable id derived from the session, deduped on layout sync — prevents cross-client duplication | 🟢 Solid |

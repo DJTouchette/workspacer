@@ -834,6 +834,10 @@ pub struct TurnArgs<'a> {
     pub yolo: bool,
     /// Path to the `--additional-mcp-config` file, when this session has one.
     pub mcp_config: Option<&'a std::path::Path>,
+    /// Names of the workspacer MCP servers registered in that config
+    /// (`expected_mcp_servers`). Each becomes an `--allow-tool <name>` grant —
+    /// see `turn_argv` for why the session is unusable without them.
+    pub mcp_servers: &'a [String],
     /// The profile's extra argv, appended verbatim after everything above.
     pub extra_args: &'a [String],
 }
@@ -895,6 +899,30 @@ pub fn turn_argv(args: &TurnArgs<'_>) -> Vec<String> {
     if let Some(path) = args.mcp_config {
         argv.push("--additional-mcp-config".into());
         argv.push(format!("@{}", path.display()));
+        // WITHOUT THIS THE FACADE IS DECORATIVE. `-p` mode cannot ask the user
+        // anything, so an MCP tool call that is merely *unapproved* is not
+        // parked — it is hard-denied, `{"code":"denied","message":"Permission
+        // denied and could not request permission from user"}`. Verified live
+        // against CLI 1.0.81: the same prompt against the same server returns
+        // the tool result with an allow grant and that error without one. So a
+        // non-yolo Copilot session registered the workspacer facade, connected
+        // to it, listed its tools — and then could not call a single one. For a
+        // FLEET MANAGER that is the whole role: `spawn_agent` denied every
+        // time, by a session that otherwise looks perfectly healthy.
+        //
+        // The grant is per SERVER NAME (`--allow-tool 'MyMCP'` allows all of
+        // that server's tools, per the CLI's own `--help` examples), so it
+        // names only the servers we registered — `workspacer` and
+        // `workspacer_ask`. It is NOT `--allow-all`: verified in the same run
+        // that a session with only this grant still had a read outside its cwd
+        // denied. That is the point — it lifts the facade out of the deny-by-
+        // default tier and leaves the ask tier's path confinement exactly where
+        // it was. The Claude twin is `--allowedTools mcp__workspacer` in
+        // managedSpawn.ts.
+        for server in args.mcp_servers {
+            argv.push("--allow-tool".into());
+            argv.push(server.clone());
+        }
     }
     // The profile's own argv last. Nothing above is negotiable — the three
     // refusals in the doc comment are baked in and appear earlier, so an
@@ -1169,6 +1197,7 @@ async fn run_session(
             effort: effort.as_deref(),
             yolo: yolo_live.load(Ordering::Relaxed),
             mcp_config: mcp_path.as_deref(),
+            mcp_servers: &expected_servers,
             extra_args: &config.extras.extra_args,
         });
 
@@ -2370,6 +2399,7 @@ mod tests {
             effort,
             yolo,
             mcp_config: None,
+            mcp_servers: &[],
             extra_args: &[],
         })
     }
@@ -2441,6 +2471,7 @@ mod tests {
             effort: None,
             yolo: false,
             mcp_config: None,
+            mcp_servers: &[],
             extra_args: &extra,
         });
         assert_eq!(argv.last().unwrap(), "--banner");
@@ -2456,6 +2487,7 @@ mod tests {
             effort: None,
             yolo: false,
             mcp_config: Some(std::path::Path::new("/tmp/wks.json")),
+            mcp_servers: &[],
             extra_args: &[],
         });
         let i = argv
@@ -2463,6 +2495,44 @@ mod tests {
             .position(|a| a == "--additional-mcp-config")
             .unwrap();
         assert_eq!(argv[i + 1], "@/tmp/wks.json");
+    }
+
+    /// The facade is REGISTERED by `--additional-mcp-config` and made CALLABLE
+    /// by `--allow-tool`. Registering without granting is the shape of bug that
+    /// makes a Copilot Fleet Manager look healthy and dispatch nothing: `-p`
+    /// cannot prompt, so an unapproved MCP call is denied outright rather than
+    /// parked. Pinned per server name, at the ask tier, which is where it bites.
+    #[test]
+    fn the_registered_facade_servers_are_allowed_to_run_at_the_ask_tier() {
+        let servers = vec!["workspacer".to_string(), "workspacer_ask".to_string()];
+        let argv = turn_argv(&TurnArgs {
+            prompt: "p",
+            session_id: "s",
+            model: None,
+            effort: None,
+            yolo: false,
+            mcp_config: Some(std::path::Path::new("/tmp/wks.json")),
+            mcp_servers: &servers,
+            extra_args: &[],
+        });
+        let granted: Vec<&String> = argv
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--allow-tool")
+            .map(|(i, _)| &argv[i + 1])
+            .collect();
+        assert_eq!(granted, vec!["workspacer", "workspacer_ask"]);
+        // The grant is scoped to the facade, NOT a blanket bypass: path/url
+        // confinement is what still separates the ask tier from yolo.
+        assert!(!argv.iter().any(|a| a.starts_with("--allow-all")));
+    }
+
+    /// No facade, no grant. A plain Copilot worker with neither the facade nor
+    /// the ask shim must not pick up an allow-list it has no use for.
+    #[test]
+    fn a_session_with_no_mcp_config_gets_no_tool_grants() {
+        let argv = argv_for(false, None, None);
+        assert!(!argv.iter().any(|a| a == "--allow-tool"));
     }
 
     // ── MCP config + the dynamic capability cliff ──────────────────────────

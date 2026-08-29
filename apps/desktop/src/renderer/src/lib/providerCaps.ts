@@ -207,11 +207,19 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     //
     // Verified against the CLI: in non-interactive `-p` mode Copilot cannot ask
     // the user anything — a blocked tool comes back "Permission denied and could
-    // not request permission from user" — and tools run automatically whether or
-    // not `--allow-all-tools` is passed. What the allow flags actually change is
-    // path/URL confinement: with none, writes outside the session's cwd are
-    // refused; `--allow-all` lifts that. So those are the two tiers on offer,
-    // and the pill names them for what they are.
+    // not request permission from user" — and its BUILT-IN tools run
+    // automatically whether or not `--allow-all-tools` is passed. What the allow
+    // flags actually change for those is path/URL confinement: with none, reads
+    // and writes outside the session's cwd are refused; `--allow-all` lifts
+    // that. So those are the two tiers on offer, and the pill names them for
+    // what they are.
+    //
+    // THIRD-PARTY MCP TOOLS ARE THE EXCEPTION and do not follow that rule: they
+    // are deny-by-default at BOTH tiers, so the workspacer facade would be
+    // unusable on an `ask` session. `providers/copilot.rs` grants exactly the
+    // servers it registered with `--allow-tool <server>`, which is why a
+    // non-yolo copilot session (a facade worker, or a Fleet Manager without
+    // full access) can call facade tools while still being path-confined.
     permissionModes: [
       { id: 'ask', label: 'Workspace only' },
       { id: 'yolo', label: 'Full access' },

@@ -1101,6 +1101,18 @@ describe('agents.spawn — dispatch', () => {
         expect(arg.provider).toBe('codex');
       });
 
+      it('spawns a COPILOT manager over the bus too', async () => {
+        getConfig.mockReturnValue({
+          agents: { ...DEFAULT_CFG.agents, managerProvider: 'copilot' },
+        });
+        await call('agents.spawn', { cwd: '/proj', manager: true });
+        const arg = spawnManagedAgent.mock.calls[0][0] as { provider?: string; manager?: boolean };
+        expect(arg.provider).toBe('copilot');
+        // …still wake-eligible: without `manager` the copilot manager's workers
+        // finish into the void (see supervisorNudge / isSupervisor).
+        expect(arg.manager).toBe(true);
+      });
+
       it('leaves a plain worker on claude — the role setting is not a global default', async () => {
         getConfig.mockReturnValue({
           agents: { ...DEFAULT_CFG.agents, managerProvider: 'codex' },

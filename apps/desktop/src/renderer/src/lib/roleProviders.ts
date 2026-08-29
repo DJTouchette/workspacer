@@ -43,14 +43,31 @@ export const SUPERVISOR_PROVIDERS: readonly RoleProviderOption[] = [
 ];
 
 /**
- * Harnesses the FLEET MANAGER role is verified on. Narrower than
- * SUPERVISOR_PROVIDERS on purpose: the manager needs an MCP client to dispatch
- * at all, and a personal-skills directory for /standup, /checkpoint and
- * /handoff. Claude and Codex have both (`~/.claude/skills` /
- * `$CODEX_HOME/skills`, identical SKILL.md format); listing a harness that
- * silently loses half the role is the failure mode this picker exists to avoid.
+ * Harnesses the FLEET MANAGER role is verified on. Still narrower than
+ * SUPERVISOR_PROVIDERS: the manager needs an MCP client to dispatch at all, and
+ * a personal-skills directory for /standup, /checkpoint and /handoff. Listing a
+ * harness that silently loses half the role is the failure mode this picker
+ * exists to avoid, so a value earns its place here by having BOTH.
+ *
+ *  - claude  → `~/.claude/skills`, facade via `--mcp-config`.
+ *  - codex   → `$CODEX_HOME/skills`, facade via `-c mcp_servers.workspacer.url`.
+ *  - copilot → `~/.copilot/skills`, facade via `--additional-mcp-config`
+ *    (`lib/agentSkills`, `providers/copilot.rs`). Same SKILL.md format on all
+ *    three. Copilot is the one harness whose MCP surface is not decidable
+ *    ahead of time — a GitHub org policy can disable third-party MCP servers —
+ *    but that failure ANNOUNCES itself: the adapter checks
+ *    `session.mcp_servers_loaded` and raises a session error rather than
+ *    letting a toolless manager pass for a working one, so the bad case is
+ *    visible instead of silent. Probed live against CLI 1.0.81: an HTTP MCP
+ *    server registered this way connects, lists and executes its tools.
+ *
+ * OpenCode is absent for the reason SUPERVISOR_PROVIDERS' comment gives for Pi,
+ * one step milder: it has an MCP client but no verified personal-skills path
+ * (`agentSkillsRoot` returns null), so a manager there would come up without
+ * /standup, /checkpoint or /handoff.
  */
 export const MANAGER_PROVIDERS: readonly RoleProviderOption[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
+  { value: 'copilot', label: 'GitHub Copilot' },
 ];

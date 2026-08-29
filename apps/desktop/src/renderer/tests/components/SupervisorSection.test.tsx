@@ -28,6 +28,27 @@ describe('SupervisorSection — Pi has no facade access, so it must not be offer
     expect(row.getByRole('button', { name: 'Codex' })).toBeInTheDocument();
   });
 
+  // Copilot is the third manager harness: it has a real MCP client (servers
+  // ride in on --additional-mcp-config) and a personal-skills directory
+  // (~/.copilot/skills), which is the whole bar MANAGER_PROVIDERS sets.
+  it('offers GitHub Copilot as a manager harness', () => {
+    renderSection();
+    const row = within(screen.getByText('Manager runs on').closest('div') as HTMLElement);
+    expect(row.getByRole('button', { name: 'GitHub Copilot' })).toBeInTheDocument();
+  });
+
+  // Its capability surface is the only one not decidable before the session
+  // starts (an org policy can disable third-party MCP servers), so the pane
+  // says so — but only when it is the harness actually chosen.
+  it('warns about the org MCP policy only when copilot is selected', () => {
+    const policy = /org policy can disable third-party MCP servers/;
+    expect(renderSection().container.textContent).not.toMatch(policy);
+    expect(
+      renderSection({ agents: { managerProvider: 'copilot' } } as Partial<Config>).container
+        .textContent,
+    ).toMatch(policy);
+  });
+
   it('does not claim Pi agents are wired to the workspacer MCP facade', () => {
     const { container } = renderSection();
     // The false claim this pins: Pi cannot be "wired to the workspacer MCP

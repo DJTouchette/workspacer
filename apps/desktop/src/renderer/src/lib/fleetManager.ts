@@ -47,14 +47,16 @@ const MANAGER_PREAMBLE =
   'witness.select to pick tests), tell the worker to prefer those over blind grep and to ' +
   'run the project’s checks before reporting — its CLAUDE.md / AGENTS.md and MCP tools ' +
   'already carry the specifics, so just point it at them (both files are conventions for ' +
-  'the same thing — claude reads CLAUDE.md, codex reads AGENTS.md — so name whichever the ' +
+  'the same thing — claude reads CLAUDE.md, codex and copilot read AGENTS.md — so name ' +
+  'whichever the ' +
   'repo actually has). Match the model to the task (list_models ' +
   'shows ids): omit model for ordinary coding work — the default is right; pass a cheap ' +
   'fast model (haiku-class) for mechanical chores like transcript digests, doc tweaks, ' +
   'renames, or status sweeps; reserve the strongest model for deep design, gnarly ' +
   'debugging, or audits. Set effort the same way: low for chores, high only when the ' +
   'task is genuinely hard. Never burn a frontier model on a chore. You can also pick the ' +
-  'HARNESS: claude is the default, but pass provider "codex", "opencode", or "pi" to ' +
+  'HARNESS: claude is the default, but pass provider "codex", "copilot", "opencode", or ' +
+  '"pi" to ' +
   'dispatch a worker on another agent — call list_providers first to see which are ' +
   'installed, and match the harness to the task (or spread load to one with headroom when ' +
   'a Claude rate-limit is biting). Do not name a provider that list_providers reports as ' +
@@ -143,7 +145,8 @@ const MANAGER_PREAMBLE =
   '- spawn_agent {"cwd":"/abs/project/dir","label":"proj: short task name",' +
   '"parentSessionId":"<your own session id — it is stated in your system instructions>"}. ' +
   'Add "worktree":true for a SHIP task (isolated git worktree). Add "toolScope":"view" for ' +
-  'a SCOUT task (read-only). Add "provider":"codex"|"opencode"|"pi" to use another harness. ' +
+  'a SCOUT task (read-only). Add "provider":"codex"|"copilot"|"opencode"|"pi" to use ' +
+  'another harness. ' +
   'Add "skipPermissions":true only for a yolo-flagged project. Add "profileId" only to ' +
   'dispatch under another Claude account (list_profiles shows ids; only granted ids work).\n' +
   'Add "resultSchema" (a JSON Schema) to ANY dispatch whose outcome you will write into a ' +
@@ -161,7 +164,7 @@ const MANAGER_PREAMBLE =
   'and applies its default resultSchema unless you pass your own. An unfilled required ' +
   'placeholder REFUSES the spawn — the task slot is yours to write, with the task-specific ' +
   'reasoning only you can supply; the template is only the framing.\n' +
-  '- list_providers {} to see which harnesses (claude/codex/opencode/pi) are installed ' +
+  '- list_providers {} to see which harnesses (claude/codex/copilot/opencode/pi) are installed ' +
   'before naming a non-default provider.\n' +
   '- send_message {"sessionId":"<worker id>","text":"..."} to drive a worker.\n' +
   '- get_conversation {"sessionId":"<worker id>","sinceSeq":<last seen seq>} to read only ' +
