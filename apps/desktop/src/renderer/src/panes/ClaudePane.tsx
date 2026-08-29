@@ -64,7 +64,11 @@ import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
 import { SessionStatusBar } from '../components/claude/SessionStatusBar';
 import { ComposerControls, type RestartOverrides } from '../components/claude/ComposerControls';
-import { pickFailoverProfile, windowExhausted } from '../lib/profileFailover';
+import {
+  pickFailoverProfile,
+  profileFailoverPossible,
+  windowExhausted,
+} from '../lib/profileFailover';
 import type { ClaudeProfile } from '../../../main/shared/ipcTypes';
 import {
   buildReplyPrefix,
@@ -1692,21 +1696,30 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   // ── Automatic account failover ──
   // "Cycle through until one works": when this session's account exhausts a
-  // usage window, restart onto the heaviest-weighted signed-in profile that
-  // hasn't just been exhausted itself (weights live in Settings → Claude
-  // Profiles; 0 = manual only). The switch resumes the SAME conversation —
-  // transcripts sit in the accounts' shared projects/ dir. Cooldown keeps a
-  // stale statusline (the old account's last report survives the restart
-  // until the new login speaks) from re-triggering mid-flip.
-  // Local Claude sessions only: a profile is a CLAUDE_CONFIG_DIR, which
-  // remote spawns scrub and other providers don't have.
+  // usage window, restart onto the heaviest-weighted signed-in profile of the
+  // SAME HARNESS that hasn't just been exhausted itself (weights live in
+  // Settings → Agent Profiles; 0 = manual only). The switch resumes the same
+  // pinned session id. Cooldown keeps a stale statusline (the old account's
+  // last report survives the restart until the new login speaks) from
+  // re-triggering mid-flip.
+  //
+  // The composer's profile PILL stays Claude-only: it is a manual mid-session
+  // account switch that leans on Add-Claude-Account's shared projects/ dir to
+  // keep the conversation, which no other harness has an equivalent of.
+  // Local sessions only — remote spawns scrub configDir off a profile.
   const canSwitchProfile =
     isClaude && !session?.hub && typeof window.electronAPI.claudeProfilesList === 'function';
 
   const failoverRef = useRef({ lastAt: 0, blocked: new Map<string, number>() });
   const fiveHourPct = session?.statusLine?.fiveHourPct;
   const sevenDayPct = session?.statusLine?.sevenDayPct;
-  const failoverEligible = isClaude && !session?.hub && !!sessionId;
+  // Which harnesses rotate is the capability table's call, not a name check
+  // here: claudemon's rate_limits_from maps Codex's primary/secondary windows
+  // onto the same five_hour_pct / seven_day_pct this trigger reads, so a Codex
+  // weight is a real opt-in. Copilot reports no window percentage at all, and
+  // PROFILE_CAPS.failoverWeight says so — its weight is forced to 0 on write,
+  // and pickFailoverProfile returns null for it regardless.
+  const failoverEligible = profileFailoverPossible(provider) && !session?.hub && !!sessionId;
   useEffect(() => {
     if (!failoverEligible || !windowExhausted(fiveHourPct, sevenDayPct)) return;
     const st = failoverRef.current;
@@ -1726,6 +1739,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           (status as Record<string, boolean>) ?? {},
           st.blocked,
           now,
+          // Same harness only — a Claude session must never restart onto a
+          // profile whose configDir is a CODEX_HOME.
+          provider,
         );
         if (!next) return;
         st.lastAt = now;
