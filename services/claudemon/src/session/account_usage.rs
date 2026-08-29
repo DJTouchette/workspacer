@@ -898,7 +898,11 @@ mod tests {
         std::fs::create_dir_all(primary.join("projects").join("-p")).unwrap();
         let root = primary.to_string_lossy().into_owned();
         assert_eq!(
-            attribute_transcript(&format!("{root}/projects/-p/a.jsonl"), &[root.clone()]).certain(),
+            attribute_transcript(
+                &format!("{root}/projects/-p/a.jsonl"),
+                std::slice::from_ref(&root),
+            )
+            .certain(),
             Some(root.as_str()),
         );
         let _ = std::fs::remove_dir_all(&base);

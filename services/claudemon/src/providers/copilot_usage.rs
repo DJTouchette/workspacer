@@ -342,7 +342,7 @@ mod tests {
     fn we_undercount_where_the_embedded_table_disagrees() {
         // Live aggregates for claude-haiku-4.5, 2026-08-28.
         let (input, cache_read, output) = (616_592u64, 457_559u64, 6_139u64);
-        let theirs = 27_516_815_000u64 as f64 / NANO_AIU_PER_USD;
+        let theirs = 27_516_815_000_f64 / NANO_AIU_PER_USD;
         let ours = crate::session::pricing::estimate_cost(
             Some("claude-haiku-4.5"),
             Some(input),
@@ -376,7 +376,7 @@ mod tests {
             Some(4_335),
         )
         .unwrap();
-        let theirs = 3_103_300_000u64 as f64 / NANO_AIU_PER_USD;
+        let theirs = 3_103_300_000_f64 / NANO_AIU_PER_USD;
         assert!(
             (ours - theirs).abs() < 1e-9,
             "ours {ours} vs GitHub {theirs}",
