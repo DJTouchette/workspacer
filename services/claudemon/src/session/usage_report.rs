@@ -632,11 +632,15 @@ fn codex_report(store: &SessionStore) -> ProviderReport {
     }
 }
 
-/// `$CODEX_HOME` recovered from a rollout path: rollouts live at
-/// `<home>/sessions/YYYY/MM/DD/`, so it is four components up.
+/// `$CODEX_HOME` recovered from a rollout path. Rollouts live at
+/// `<home>/sessions/YYYY/MM/DD/rollout-*.jsonl`, so from the containing
+/// directory the home is FOUR ancestors up — `DD`, `MM`, `YYYY`, `sessions` —
+/// and `ancestors()` counts itself as the zeroth, which is the off-by-one this
+/// is spelled out to avoid. Verified against a live report: `nth(3)` returned
+/// `~/.codex/sessions`.
 fn codex_home_of(dir: &std::path::Path) -> String {
     dir.ancestors()
-        .nth(3)
+        .nth(4)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
@@ -743,6 +747,16 @@ fn live_sessions_for(store: &SessionStore, provider: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The account key for Codex is its HOME, not the sessions directory
+    /// underneath it — caught by reading a live report, so it is pinned here.
+    #[test]
+    fn the_codex_account_key_is_the_codex_home() {
+        assert_eq!(
+            codex_home_of(std::path::Path::new("/home/u/.codex/sessions/2026/08/28")),
+            "/home/u/.codex",
+        );
+    }
 
     /// The three values are three distinct JSON documents. This is the whole
     /// contract a client codes against, so it is pinned literally rather than
