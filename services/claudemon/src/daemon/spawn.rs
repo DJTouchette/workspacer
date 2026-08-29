@@ -379,13 +379,22 @@ pub struct SpawnManagedPayload {
     /// starting fresh with a pinned id.
     #[serde(default)]
     pub resume: Option<String>,
-    /// Claude only: extra argv appended verbatim (escape hatch for CLI flags
-    /// the payload doesn't model).
+    /// Extra argv appended verbatim, for EVERY harness that takes profiles —
+    /// Claude's `--settings`, `codex -p <preset>`, and any hand-written
+    /// `extraArgs` a profile carries.
     #[serde(default)]
     pub extra_args: Vec<String>,
-    /// Claude only: extra env vars merged on top of the daemon's environment
-    /// (e.g. a Claude profile's `CLAUDE_CONFIG_DIR`) — same semantics as
-    /// `/sessions/spawn`'s `env`.
+    /// Extra env vars merged on top of the daemon's environment: a profile's
+    /// config root under whichever name its harness uses (`CLAUDE_CONFIG_DIR`
+    /// / `CODEX_HOME` / `COPILOT_HOME`), plus Copilot's resolved auth token.
+    /// Same semantics as `/sessions/spawn`'s `env`.
+    ///
+    /// BOTH FIELDS WERE CLAUDE-ONLY, and only by omission. They were forwarded
+    /// into the `"claude"` arm below and nowhere else, so a Codex or Copilot
+    /// profile configured the Settings form, the spawn picker and this payload
+    /// — and changed nothing about the process that ran. The desktop half was
+    /// correct and pinned by managedSpawn.test.ts the whole time; this is the
+    /// half that was missing.
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// The agent's FIRST PROMPT, delivered as part of the spawn rather than by
@@ -567,6 +576,10 @@ pub async fn handle_managed(
                 headless,
                 resume_thread,
                 facade,
+                crate::providers::SpawnExtras {
+                    env: payload.env.clone(),
+                    extra_args: payload.extra_args.clone(),
+                },
             )
         }
         // GitHub Copilot CLI. One `copilot -p` process per TURN (not per
@@ -584,6 +597,10 @@ pub async fn handle_managed(
                 effort: payload.effort.clone(),
                 yolo: payload.yolo,
                 facade,
+                extras: crate::providers::SpawnExtras {
+                    env: payload.env.clone(),
+                    extra_args: payload.extra_args.clone(),
+                },
             },
         ),
         "pi" => crate::providers::pi::spawn_session(

@@ -968,6 +968,31 @@ pub fn apply_updates(
         store.apply_status_line(session_id, acc.status_line());
     }
 }
+/// The profile half of a managed spawn: the harness's config-root environment
+/// and the extra argv that go with it.
+///
+/// One type for every harness because it IS one primitive wearing three names.
+/// `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `COPILOT_HOME` all say "read your
+/// config from here", and `codex -p <preset>` rides the same argv channel as
+/// Claude's `--settings`. The desktop resolves which name applies (see
+/// `PROFILE_CAPS` in apps/desktop/src/main/shared/agentProfiles.ts) and sends
+/// the resolved pair; the daemon does not need to know which harness it is
+/// looking at in order to pass it on.
+///
+/// It exists because passing it on is exactly what the daemon was NOT doing.
+/// `/sessions/spawn-managed` forwarded `env`/`extra_args` into the claude_stream
+/// arm only, so a Codex or Copilot profile changed the Settings form, the spawn
+/// picker and the payload on the wire — and nothing about the process that
+/// actually ran. Threading one value through every arm is what makes a dropped
+/// field a compile error instead of a silent no-op.
+#[derive(Debug, Clone, Default)]
+pub struct SpawnExtras {
+    /// Merged on top of the daemon's own environment, never replacing it.
+    pub env: HashMap<String, String>,
+    /// Appended verbatim after the argv the daemon builds.
+    pub extra_args: Vec<String>,
+}
+
 
 /// Spawn a PTY child and wire it into an already-registered session's byte
 /// stream + input channel — the **Term half** of a hybrid managed agent. Output
@@ -984,6 +1009,7 @@ pub(crate) fn spawn_attach_pty(
     session_id: &str,
     argv: &[String],
     cwd: &str,
+    env: &HashMap<String, String>,
 ) -> anyhow::Result<Arc<pty::PtyHandle>> {
     let handle = Arc::new(pty::spawn(
         argv,
@@ -994,7 +1020,7 @@ pub(crate) fn spawn_attach_pty(
             pixel_width: 0,
             pixel_height: 0,
         },
-        &HashMap::new(),
+        env,
     )?);
 
     // input pump: WrapperMessage (from POST /sessions/:id/input) -> PTY

@@ -105,6 +105,7 @@ use crate::session::state::{
     Plan, PlanStatus, PlanStep, SessionMode, SubagentStatus, SubagentUpdate,
 };
 use crate::session::{ConversationStore, ModelSwitch, SessionStore};
+use super::SpawnExtras;
 
 /// The one `--model` value this adapter can promise works: Copilot's own
 /// router. See [`list_models`].
@@ -833,6 +834,8 @@ pub struct TurnArgs<'a> {
     pub yolo: bool,
     /// Path to the `--additional-mcp-config` file, when this session has one.
     pub mcp_config: Option<&'a std::path::Path>,
+    /// The profile's extra argv, appended verbatim after everything above.
+    pub extra_args: &'a [String],
 }
 
 /// Build the argv for one `copilot -p` turn (the binary itself is argv[0]'s
@@ -893,6 +896,10 @@ pub fn turn_argv(args: &TurnArgs<'_>) -> Vec<String> {
         argv.push("--additional-mcp-config".into());
         argv.push(format!("@{}", path.display()));
     }
+    // The profile's own argv last. Nothing above is negotiable — the three
+    // refusals in the doc comment are baked in and appear earlier, so an
+    // extra arg cannot un-say `--no-remote`.
+    argv.extend(args.extra_args.iter().cloned());
     argv
 }
 
@@ -1018,6 +1025,16 @@ pub struct SpawnConfig {
     pub effort: Option<String>,
     pub yolo: bool,
     pub facade: Facade,
+    /// The profile's `COPILOT_HOME` and the auth-token variable it references,
+    /// plus any extra argv. Carried, not interpreted — see [`SpawnExtras`].
+    ///
+    /// Copilot is the one harness where the config root is NOT the account:
+    /// `copilot login` puts its token in the OS credential store, so a second
+    /// `COPILOT_HOME` shares the first one's login and the second IDENTITY has
+    /// to come from `COPILOT_GITHUB_TOKEN` in the environment. Both arrive
+    /// here, and dropping either one is what made a second Copilot account
+    /// look configured while running as the first.
+    pub extras: SpawnExtras,
 }
 
 /// Spawn and drive a Copilot-managed session in the background. Returns
@@ -1152,6 +1169,7 @@ async fn run_session(
             effort: effort.as_deref(),
             yolo: yolo_live.load(Ordering::Relaxed),
             mcp_config: mcp_path.as_deref(),
+            extra_args: &config.extras.extra_args,
         });
 
         let turn = run_turn(
@@ -1231,6 +1249,11 @@ async fn run_turn(
     let session_id = config.session_id.as_str();
     let mut child = Command::new(&config.bin)
         .args(argv)
+        // Every TURN is its own process for this provider, so the profile's
+        // COPILOT_HOME / token must be re-applied here rather than once at
+        // session start — a session-scoped env would be right for a long-lived
+        // child and silently wrong for this one. Merged, never replacing.
+        .envs(&config.extras.env)
         .current_dir(&config.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -2347,6 +2370,7 @@ mod tests {
             effort,
             yolo,
             mcp_config: None,
+            extra_args: &[],
         })
     }
 
@@ -2405,6 +2429,24 @@ mod tests {
         assert_eq!(argv[e + 1], "xhigh");
     }
 
+    /// A profile's extra argv lands on the turn, AFTER everything the daemon
+    /// insists on — so an extra arg can never un-say `--no-remote`.
+    #[test]
+    fn a_profiles_extra_argv_rides_the_turn_last() {
+        let extra = vec!["--banner".to_string()];
+        let argv = turn_argv(&TurnArgs {
+            prompt: "p",
+            session_id: "s",
+            model: None,
+            effort: None,
+            yolo: false,
+            mcp_config: None,
+            extra_args: &extra,
+        });
+        assert_eq!(argv.last().unwrap(), "--banner");
+        assert!(argv.contains(&"--no-remote".to_string()));
+    }
+
     #[test]
     fn mcp_config_rides_in_as_an_at_prefixed_path() {
         let argv = turn_argv(&TurnArgs {
@@ -2414,6 +2456,7 @@ mod tests {
             effort: None,
             yolo: false,
             mcp_config: Some(std::path::Path::new("/tmp/wks.json")),
+            extra_args: &[],
         });
         let i = argv
             .iter()
