@@ -284,14 +284,24 @@ fn claude_spend_by_account(
 ) -> std::collections::BTreeMap<Option<String>, ClaudeBucket> {
     let mut out: std::collections::BTreeMap<Option<String>, ClaudeBucket> = Default::default();
     for s in store.list().into_iter().filter(|s| s.provider == "claude") {
-        let key = match s.claude_account_attribution(roots) {
-            RootAttribution::Certain { account } => Some(account),
-            RootAttribution::Ambiguous { .. } | RootAttribution::Unknown => None,
-        };
-        let bucket = out.entry(key).or_default();
+        let bucket = out.entry(account_bucket_key(&s, roots)).or_default();
         bucket.add(&s);
     }
     out
+}
+
+/// Which account row a session's spend belongs in — the one decision that
+/// turns attribution into money.
+///
+/// `None` for BOTH `Ambiguous` and `Unknown`, and that is the whole point.
+/// Folding either into the default account is the silent merge: it inflates
+/// one login's spend and empties another's, with nothing anywhere saying so.
+/// Pulled out of the fold so it can be tested without a store.
+fn account_bucket_key(s: &SessionState, roots: &[String]) -> Option<String> {
+    match s.claude_account_attribution(roots) {
+        RootAttribution::Certain { account } => Some(account),
+        RootAttribution::Ambiguous { .. } | RootAttribution::Unknown => None,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -756,6 +766,66 @@ mod tests {
             codex_home_of(std::path::Path::new("/home/u/.codex/sessions/2026/08/28")),
             "/home/u/.codex",
         );
+    }
+
+    /// THE JOIN between attribution and the report, on the real hazard.
+    ///
+    /// A session whose transcript path resolves into a `projects` directory two
+    /// logins share cannot be attributed, and its spend must land in the
+    /// null-account row — NOT in the default account's total, which is where
+    /// the old string-only derivation silently put it. `account: null` is the
+    /// fourth value the module note describes and it is not a bucket: a
+    /// consumer reads it as unknown.
+    #[cfg(unix)]
+    #[test]
+    fn an_unattributable_session_lands_in_the_null_row_not_the_default() {
+        let base = crate::testtmp::dir().join(format!("report-attr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let primary = base.join(".claude");
+        let work = primary.join("accounts").join("work");
+        std::fs::create_dir_all(primary.join("projects").join("-p")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::os::unix::fs::symlink(primary.join("projects"), work.join("projects")).unwrap();
+        let transcript = work.join("projects").join("-p").join("a.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+        let resolved = std::fs::canonicalize(&transcript)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let roots = vec![
+            primary.to_string_lossy().into_owned(),
+            work.to_string_lossy().into_owned(),
+        ];
+
+        // No spawn stamp — the case the fallback has to answer.
+        let mut s = SessionState::new("s-resolved".into(), None);
+        s.provider = "claude".into();
+        s.transcript_path = Some(resolved);
+        assert!(
+            matches!(
+                s.claude_account_attribution(&roots),
+                RootAttribution::Ambiguous { .. }
+            ),
+            "fixture must produce the ambiguous case",
+        );
+
+        assert_eq!(
+            account_bucket_key(&s, &roots),
+            None,
+            "an unattributable session must bucket as null, NOT as the primary \
+             account — that fold is the silent merge this layer exists to stop",
+        );
+
+        // …while a session that DOES carry its spawn stamp still buckets to its
+        // own account, so the honesty above is not bought with uselessness.
+        let mut stamped = SessionState::new("s-stamped".into(), None);
+        stamped.provider = "claude".into();
+        stamped.config_root = Some(work.to_string_lossy().into_owned());
+        assert_eq!(
+            account_bucket_key(&stamped, &roots),
+            Some(work.to_string_lossy().into_owned()),
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The three values are three distinct JSON documents. This is the whole

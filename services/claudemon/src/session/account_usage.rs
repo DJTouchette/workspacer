@@ -322,11 +322,6 @@ pub fn attribute_transcript(path: &str, roots: &[String]) -> RootAttribution {
     }
 }
 
-/// [`attribute_transcript`] against the accounts this machine actually has.
-pub fn attribute_transcript_here(path: &str) -> RootAttribution {
-    attribute_transcript(path, &configured_config_roots())
-}
-
 /// Why an account's usage could not be read. The distinction is load-bearing:
 /// a UI that renders any of these as `0%` tells the user they have a full
 /// window when the truth is that we do not know, and `NeedsReauth` is
