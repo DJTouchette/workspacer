@@ -478,6 +478,17 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
     // the same argv channel. Both keys stay off the payload when empty, so a
     // profile-less spawn is byte-identical to what it sent before.
+    //
+    // THE DAEMON HALF IS NOT DONE YET. Read at 2026-08-28 on this branch:
+    // `daemon/spawn.rs` `/sessions/spawn-managed` forwards `env`/`extra_args`
+    // into the `"claude"` (claude_stream) arm ONLY — `codex::spawn_session` and
+    // `copilot::SpawnConfig` take neither, so for those two harnesses these
+    // keys reach the daemon and stop there. Everything above (the store, the
+    // scrub, the harness re-check, the token resolution) is correct and pinned
+    // by managedSpawn.test.ts, but a Codex/Copilot profile does not change the
+    // spawned process until the Rust side threads these two fields through.
+    // Do not "fix" this by dropping the keys — the wire contract is the half
+    // that is right.
     ...(extraArgs.length && { extraArgs }),
     ...(Object.keys(env).length && { env }),
     ...(wantsFacade && {

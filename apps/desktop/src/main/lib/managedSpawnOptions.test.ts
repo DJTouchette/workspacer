@@ -170,11 +170,14 @@ describe('explainUnsupportedManagedOptions', () => {
    * both have one.
    */
   describe('profileId is a config root, and three harnesses have one', () => {
-    it.each(['codex', 'copilot'] as const)('says nothing for a %s profile — it is applied', (provider) => {
-      expect(explainUnsupportedManagedOptions({ provider, profileId: 'work' }).join('\n')).not.toMatch(
-        /profileId/,
-      );
-    });
+    it.each(['codex', 'copilot'] as const)(
+      'says nothing for a %s profile — it is applied',
+      (provider) => {
+        expect(
+          explainUnsupportedManagedOptions({ provider, profileId: 'work' }).join('\n'),
+        ).not.toMatch(/profileId/);
+      },
+    );
 
     it.each(['opencode', 'pi'] as const)(
       'still announces it for %s, which has no config-root override',
