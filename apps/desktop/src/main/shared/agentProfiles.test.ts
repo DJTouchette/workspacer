@@ -15,7 +15,9 @@ import {
   profileConfigRoot,
   profileProviderOf,
   profileSpawnArgs,
+  profileTokenEnv,
   providerTakesProfiles,
+  sanitizeEnvVarName,
   sanitizeProfilePreset,
 } from './agentProfiles';
 
@@ -156,6 +158,40 @@ describe('profileConfigRoot — where the identity is read from', () => {
   });
 });
 
+describe('profileTokenEnv — a NAME is stored, the value is read at spawn', () => {
+  const ENV = { GH_TOKEN_WORK: 'ghp_work', EMPTY: '   ' };
+
+  it('resolves the named variable into the one copilot reads', () => {
+    expect(profileTokenEnv({ provider: 'copilot', tokenEnvVar: 'GH_TOKEN_WORK' }, ENV)).toEqual({
+      COPILOT_GITHUB_TOKEN: 'ghp_work',
+    });
+  });
+
+  it('contributes NOTHING when the named variable is unset or blank', () => {
+    // An empty COPILOT_GITHUB_TOKEN would out-rank copilot's stored credential
+    // and break a login that was working.
+    expect(profileTokenEnv({ provider: 'copilot', tokenEnvVar: 'MISSING' }, ENV)).toEqual({});
+    expect(profileTokenEnv({ provider: 'copilot', tokenEnvVar: 'EMPTY' }, ENV)).toEqual({});
+    expect(profileTokenEnv({ provider: 'copilot' }, ENV)).toEqual({});
+  });
+
+  it('is not offered on harnesses whose config root already IS the account', () => {
+    expect(profileTokenEnv({ provider: 'claude', tokenEnvVar: 'GH_TOKEN_WORK' }, ENV)).toEqual({});
+    expect(profileTokenEnv({ provider: 'codex', tokenEnvVar: 'GH_TOKEN_WORK' }, ENV)).toEqual({});
+    expect(PROFILE_CAPS.claude.whyNoTokenEnv).toBeTruthy();
+    expect(PROFILE_CAPS.codex.whyNoTokenEnv).toBeTruthy();
+  });
+
+  it('a name no shell could export resolves to nothing', () => {
+    expect(sanitizeEnvVarName('GH_TOKEN_WORK')).toBe('GH_TOKEN_WORK');
+    expect(sanitizeEnvVarName('_x1')).toBe('_x1');
+    expect(sanitizeEnvVarName('1BAD')).toBe('');
+    expect(sanitizeEnvVarName('a-b')).toBe('');
+    expect(sanitizeEnvVarName('$(id)')).toBe('');
+    expect(sanitizeEnvVarName(undefined)).toBe('');
+  });
+});
+
 describe('every provider in the table is complete', () => {
   it.each(PROFILE_PROVIDERS)('%s declares a root env, a default root and a label', (p) => {
     const caps = PROFILE_CAPS[p];
@@ -173,6 +209,11 @@ describe('every provider in the table is complete', () => {
       // A preset claim without the flag that applies it would put nothing on argv.
       expect(!!caps.presetFlag, `${p} presetFlag`).toBe(caps.preset);
       expect(!!caps.presetHint, `${p} presetHint`).toBe(caps.preset);
+      // A token claim without the variable to put it in would resolve a secret
+      // and then drop it on the floor.
+      expect(!!caps.tokenEnvTarget, `${p} tokenEnvTarget`).toBe(caps.tokenEnv);
+      expect(!!caps.tokenEnvHint, `${p} tokenEnvHint`).toBe(caps.tokenEnv);
+      expect(!!caps.whyNoTokenEnv, `${p} whyNoTokenEnv`).toBe(!caps.tokenEnv);
     }
   });
 });

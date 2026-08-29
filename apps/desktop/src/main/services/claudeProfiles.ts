@@ -10,6 +10,7 @@ import {
   clampProfileWeight,
   profileCapsOf,
   profileProviderOf,
+  sanitizeEnvVarName,
   sanitizeProfilePreset,
   type ProfileProvider,
 } from '../shared/agentProfiles';
@@ -48,6 +49,16 @@ export interface ClaudeProfile {
    *  sits beside `configDir` instead of aliasing it. Forced off for harnesses
    *  with no such flag (PROFILE_CAPS.preset). */
   preset?: string;
+  /** Copilot only: the NAME of an environment variable the user already
+   *  exports, whose value is handed to the spawn as COPILOT_GITHUB_TOKEN.
+   *
+   *  A NAME, NEVER A TOKEN. This file holds no secrets, it is round-tripped by
+   *  the Go brain, and `claude.profiles.list` is a bus capability — storing a
+   *  PAT here would change its security posture in four places at once. The
+   *  value is resolved at spawn time from this process's own environment and
+   *  is never persisted or returned. Forced off for harnesses whose config
+   *  root already IS the account switch (PROFILE_CAPS.tokenEnv). */
+  tokenEnvVar?: string;
 }
 
 /**
@@ -138,10 +149,26 @@ export function scrubBypassArgs(args: string[] | undefined): string[] {
  * where nothing scrubs" escalation this function's own comment describes.
  */
 export function scrubBypassProfile<
-  T extends { extraArgs?: string[]; configDir?: string; mcpItemIds?: string[] },
+  T extends {
+    extraArgs?: string[];
+    configDir?: string;
+    mcpItemIds?: string[];
+    tokenEnvVar?: string;
+  },
 >(profile: T | undefined): T | undefined {
   return profile
-    ? { ...profile, extraArgs: scrubBypassArgs(profile.extraArgs), configDir: '', mcpItemIds: [] }
+    ? {
+        ...profile,
+        extraArgs: scrubBypassArgs(profile.extraArgs),
+        configDir: '',
+        mcpItemIds: [],
+        // A variable NAME is resolved against THIS PROCESS's environment at
+        // spawn, so a remote caller who can name one can have its value read
+        // out of the host and handed to an agent that can print its own `env`.
+        // The name is harmless in the file and dangerous on an untrusted
+        // spawn, which is exactly the shape configDir already has here.
+        tokenEnvVar: '',
+      }
     : profile;
 }
 
@@ -158,7 +185,12 @@ export function scrubBypassProfile<
  * ConfigDir only. Change them together.
  */
 export function scrubRemoteGrantedProfile<
-  T extends { extraArgs?: string[]; configDir?: string; mcpItemIds?: string[] },
+  T extends {
+    extraArgs?: string[];
+    configDir?: string;
+    mcpItemIds?: string[];
+    tokenEnvVar?: string;
+  },
 >(profile: T | undefined): T | undefined {
   return profile
     ? {
@@ -166,6 +198,12 @@ export function scrubRemoteGrantedProfile<
         extraArgs: scrubBypassArgs(profile.extraArgs),
         configDir: profile.configDir ?? '',
         mcpItemIds: [],
+        // KEPT under a grant, for the same reason configDir is: the grant names
+        // this profile id, the hub verified it, and running the worker as that
+        // identity is the entire point — a Copilot identity IS the token. The
+        // grant is minted from the profiles that existed when the manager
+        // spawned, so a profile a bus caller adds later is not in it.
+        tokenEnvVar: profile.tokenEnvVar ?? '',
       }
     : profile;
 }
@@ -196,14 +234,16 @@ export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
   const provider = profileProviderOf(p);
   const caps = profileCapsOf(p);
   const preset = caps.preset ? sanitizeProfilePreset(p.preset) : '';
+  const tokenEnvVar = caps.tokenEnv ? sanitizeEnvVarName(p.tokenEnvVar) : '';
   // Both per-harness keys are peeled off the input before the spread. A
   // conditional spread can only ADD a key — it cannot remove one the row
   // already carries — so spreading `p` wholesale would leave a stale
   // `provider: 'codex'` (or a preset the new harness has no flag for) on a
   // profile that was just switched back to Claude.
-  const { provider: _provider, preset: _preset, ...rest } = p;
+  const { provider: _provider, preset: _preset, tokenEnvVar: _tokenEnvVar, ...rest } = p;
   void _provider;
   void _preset;
+  void _tokenEnvVar;
   return {
     ...rest,
     // The two per-harness keys are OMITTED at their Claude defaults rather than
@@ -228,6 +268,7 @@ export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
     // there could never fire (PROFILE_CAPS.copilot.whyNoFailoverWeight).
     weight: clampProfileWeight(provider, p.weight),
     ...(preset ? { preset } : {}),
+    ...(tokenEnvVar ? { tokenEnvVar } : {}),
   };
 }
 
@@ -273,7 +314,12 @@ class ClaudeProfileService {
     configDir: string,
     extraArgs: string[],
     mcpItemIds: string[] = [],
-    init: { provider?: ProfileProvider; preset?: string; weight?: number } = {},
+    init: {
+      provider?: ProfileProvider;
+      preset?: string;
+      weight?: number;
+      tokenEnvVar?: string;
+    } = {},
   ): ClaudeProfile {
     const profile: ClaudeProfile = normalizeProfile({
       id: crypto.randomUUID(),
@@ -285,6 +331,7 @@ class ClaudeProfileService {
       isDefault: this.profiles.length === 0,
       ...(init.preset !== undefined && { preset: init.preset }),
       ...(init.weight !== undefined && { weight: init.weight }),
+      ...(init.tokenEnvVar !== undefined && { tokenEnvVar: init.tokenEnvVar }),
     });
     this.profiles.push(profile);
     this.save();
@@ -302,6 +349,7 @@ class ClaudeProfileService {
     if (updates.provider !== undefined) draft.provider = updates.provider;
     if (updates.preset !== undefined) draft.preset = updates.preset;
     if (updates.weight !== undefined) draft.weight = updates.weight;
+    if (updates.tokenEnvVar !== undefined) draft.tokenEnvVar = updates.tokenEnvVar;
     // Normalized as a WHOLE ROW, replacing the old one, rather than clamped
     // field by field. Two reasons, both bugs otherwise: a single update can
     // change the provider AND a capability field at once (switching a profile

@@ -17,8 +17,12 @@
  *   copilot → nothing readable. `copilot login` stores its token in the OS
  *             credential store, falling back to a plaintext file under the
  *             root only when there is no store; there is no file we can read
- *             for identity. So copilot reports UNKNOWN, and the UI says
- *             nothing rather than claiming a state it cannot see.
+ *             for identity. So copilot reports UNKNOWN — UNLESS the profile
+ *             references a token variable, in which case the answerable
+ *             question changes: not "is there a login" but "is the variable
+ *             this profile names actually visible to this app", which is the
+ *             one failure the user cannot otherwise see (the spawn would
+ *             silently fall back to the default login).
  *
  * `signedIn: undefined` is therefore load-bearing and distinct from `false`:
  * false is "this root has no login yet", undefined is "this harness does not
@@ -32,8 +36,8 @@ import * as path from 'path';
 import {
   profileConfigRoot,
   profileProviderOf,
+  sanitizeEnvVarName,
   type ProfileLike,
-  type ProfileProvider,
 } from '../shared/agentProfiles';
 import { accountLoginStatus } from '../services/claudeAccountSetup';
 import type { ProfileAccount } from '../shared/ipcTypes';
@@ -109,8 +113,16 @@ export function profileAccount(profile: ProfileLike | undefined): ProfileAccount
   const root = profileConfigRoot(profile, os.homedir(), process.env);
   if (provider === 'claude') return claudeAccount(root, profile?.configDir);
   if (provider === 'codex') return codexAccountFromAuthFile(root);
-  // copilot: the OS credential store holds the token — nothing to read.
-  return { provider, configRoot: root };
+  // copilot: the OS credential store holds the token, so the root tells us
+  // nothing. A referenced variable does: report whether it resolves.
+  const tokenEnvVar = sanitizeEnvVarName(profile?.tokenEnvVar);
+  if (!tokenEnvVar) return { provider, configRoot: root };
+  return {
+    provider,
+    configRoot: root,
+    tokenEnvVar,
+    signedIn: !!process.env[tokenEnvVar]?.trim(),
+  };
 }
 
 /**

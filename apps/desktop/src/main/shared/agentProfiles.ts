@@ -28,10 +28,25 @@
  * is modelled as its own optional field beside the root, never as an alias for
  * it.
  *
+ * Copilot is the one harness where the ROOT IS NOT THE ACCOUNT. `copilot login`
+ * writes its token to the OS credential store, so a second `COPILOT_HOME` gets
+ * its own config, state, sessions and MCP registrations but shares the first
+ * one's login. A second Copilot IDENTITY needs a token, and copilot takes one
+ * from the environment (`COPILOT_GITHUB_TOKEN` > `GH_TOKEN` > `GITHUB_TOKEN`).
+ *
+ * So the profile stores the NAME of a variable the user already exports, never
+ * the token. That is deliberate and not a convenience: claude-profiles.json
+ * holds no secrets today, it sits beside the rest of the config, it is
+ * round-tripped by the Go brain, and `claude.profiles.list` is a BUS
+ * capability. Putting a PAT in it would change that file's security posture
+ * permanently and in four places at once. A variable name is not a credential:
+ * it is only resolvable inside a process that already has the value.
+ *
  * Every capability here is a claim about what the harness can do, and each one
  * has exactly one consumer that must agree with it:
  *
  *   configRootEnv  → services/managedSpawn.ts (the spawn env) via profileConfigEnv
+ *   tokenEnv       → services/managedSpawn.ts (the spawn env) via profileTokenEnv
  *   preset         → services/managedSpawn.ts (the spawn argv) via profileSpawnArgs
  *   mcpItemIds     → services/claudeProfiles.ts normalizeProfile (forced empty)
  *   failoverWeight → services/claudeProfiles.ts clampProfileWeight (forced 0)
@@ -75,6 +90,17 @@ export interface ProfileProviderCaps {
   presetFlag?: string;
   /** How the preset differs from the root switch, in the user's words. */
   presetHint?: string;
+  /** Whether this harness reads an AUTH TOKEN out of its environment, which is
+   *  the only way to give it a second identity WITHOUT putting a secret in
+   *  claude-profiles.json: the profile stores the NAME of a variable the user
+   *  already exports, never its value. False forces the name off on write. */
+  tokenEnv: boolean;
+  /** The variable the harness reads, which the named one is copied into. */
+  tokenEnvTarget?: string;
+  /** Why this harness needs it, in the user's words. */
+  tokenEnvHint?: string;
+  /** Why the field is not offered, when it isn't. */
+  whyNoTokenEnv?: string;
 }
 
 export const PROFILE_PROVIDERS: readonly ProfileProvider[] = ['claude', 'codex', 'copilot'];
@@ -88,6 +114,11 @@ export const PROFILE_CAPS: Readonly<Record<ProfileProvider, ProfileProviderCaps>
     failoverWeight: true,
     mcpItemIds: true,
     preset: false,
+    // A Claude profile's config dir holds .credentials.json — the login itself
+    // — so the root IS the account switch. Nothing to reference.
+    tokenEnv: false,
+    whyNoTokenEnv:
+      'A Claude profile’s config dir holds its own login, so the root already is the account switch',
   },
   codex: {
     label: 'Codex',
@@ -104,6 +135,10 @@ export const PROFILE_CAPS: Readonly<Record<ProfileProvider, ProfileProviderCaps>
     presetFlag: '-p',
     presetHint:
       'Layers $CODEX_HOME/<name>.config.toml over the base config. Same account, same usage pool — a settings preset, not a login switch.',
+    // Same as Claude: $CODEX_HOME holds auth.json, so the root is the account.
+    tokenEnv: false,
+    whyNoTokenEnv:
+      'A Codex profile’s CODEX_HOME holds its own auth.json, so the root already is the account switch',
   },
   copilot: {
     label: 'Copilot',
@@ -120,6 +155,19 @@ export const PROFILE_CAPS: Readonly<Record<ProfileProvider, ProfileProviderCaps>
     whyNoMcpItemIds:
       'Library MCP selections ride Claude’s --mcp-config; Copilot takes MCP servers its own way',
     preset: false,
+    // The one harness where the root is NOT the account. `copilot login` puts
+    // its token in the OS credential store (a plaintext file under the root
+    // only when there is no store), so a second COPILOT_HOME shares the first
+    // one's login. Copilot does read a token from the environment —
+    // COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN, per `copilot help
+    // environment` — so a second IDENTITY is expressible by NAMING a variable
+    // the user already exports. The name is what we store; the value is read
+    // at spawn and never persisted. See the module header on why a PAT in
+    // claude-profiles.json was refused.
+    tokenEnv: true,
+    tokenEnvTarget: 'COPILOT_GITHUB_TOKEN',
+    tokenEnvHint:
+      'Name of an environment variable you already export (e.g. GH_TOKEN_WORK). Its value is passed to this agent as COPILOT_GITHUB_TOKEN at spawn — the name is stored, the token never is.',
   },
 };
 
@@ -132,6 +180,7 @@ export interface ProfileLike {
   extraArgs?: string[];
   preset?: string;
   weight?: number;
+  tokenEnvVar?: string;
 }
 
 export function isProfileProvider(value: unknown): value is ProfileProvider {
@@ -257,4 +306,41 @@ export function profileConfigRoot(
   const fromEnv = env[caps.configRootEnv]?.trim();
   if (fromEnv) return expandProfileHome(fromEnv, home);
   return `${home}/${caps.defaultConfigRoot}`;
+}
+
+/**
+ * An environment-variable NAME reduced to what a shell can actually export.
+ * Anything else is not a variable this app could ever resolve, so it is not
+ * stored as one — the field ends up blank rather than holding a name that
+ * silently never matches.
+ */
+export function sanitizeEnvVarName(name: string | undefined): string {
+  const cleaned = (name ?? '').trim();
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(cleaned) ? cleaned : '';
+}
+
+/**
+ * The AUTH TOKEN this profile contributes to a spawn, resolved from the
+ * environment at spawn time.
+ *
+ * The profile names a variable; this reads it out of `env` (the app's own
+ * environment) and hands the VALUE to the harness under the variable the
+ * harness actually reads. Nothing is persisted, and an unset name contributes
+ * NOTHING rather than an empty string — an empty COPILOT_GITHUB_TOKEN would
+ * out-rank the stored credential and turn a working default login into an
+ * authentication failure.
+ *
+ * CONSUMER: services/managedSpawn.ts, merged into the spawn payload's `env`
+ * beside profileConfigEnv.
+ */
+export function profileTokenEnv(
+  profile: ProfileLike | undefined,
+  env: Record<string, string | undefined>,
+): Record<string, string> {
+  const caps = profileCapsOf(profile);
+  if (!caps.tokenEnv || !caps.tokenEnvTarget) return {};
+  const name = sanitizeEnvVarName(profile?.tokenEnvVar);
+  if (!name) return {};
+  const value = env[name]?.trim();
+  return value ? { [caps.tokenEnvTarget]: value } : {};
 }

@@ -117,6 +117,43 @@ describe('a Copilot profile', () => {
   });
 });
 
+describe('a Copilot profile — the token is REFERENCED, never stored', () => {
+  it('stores the variable NAME, and the file still holds no secret', async () => {
+    const svc = await service();
+    const p = svc.addProfile('Copilot work', '~/.copilot-work', [], [], {
+      provider: 'copilot',
+      tokenEnvVar: 'GH_TOKEN_WORK',
+    });
+
+    expect(p.tokenEnvVar).toBe('GH_TOKEN_WORK');
+    const raw = fs.readFileSync(path.join(state.dir, 'claude-profiles.json'), 'utf-8');
+    expect(raw).toContain('GH_TOKEN_WORK');
+    // The whole point: what is on disk is a name a shell could export, which is
+    // only resolvable inside a process that already holds the value.
+    expect(raw).not.toMatch(/gh[pousr]_/);
+  });
+
+  it('refuses a name no shell could export rather than storing one that never matches', async () => {
+    const svc = await service();
+    const p = svc.addProfile('Copilot', '', [], [], {
+      provider: 'copilot',
+      tokenEnvVar: '$(cat ~/.netrc)',
+    });
+    expect(p).not.toHaveProperty('tokenEnvVar');
+  });
+
+  it('is not offered on harnesses whose root already IS the account', async () => {
+    const svc = await service();
+    const codex = svc.addProfile('Codex', '', [], [], {
+      provider: 'codex',
+      tokenEnvVar: 'GH_TOKEN_WORK',
+    });
+    const claude = svc.addProfile('Claude', '', [], [], { tokenEnvVar: 'GH_TOKEN_WORK' });
+    expect(codex).not.toHaveProperty('tokenEnvVar');
+    expect(claude).not.toHaveProperty('tokenEnvVar');
+  });
+});
+
 describe('updateProfile re-judges the WHOLE row against the harness it ends on', () => {
   it('switching to copilot in the same call that sets a weight lands at 0', async () => {
     const svc = await service();

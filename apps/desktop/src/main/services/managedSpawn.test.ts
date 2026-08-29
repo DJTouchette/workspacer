@@ -848,6 +848,41 @@ describe('spawnManagedAgent — per-harness profiles', () => {
     getProfile.mockReturnValue(undefined as unknown);
   });
 
+  it("a copilot profile's REFERENCED token is resolved at spawn and sent as COPILOT_GITHUB_TOKEN", async () => {
+    process.env.WKS_TEST_GH_TOKEN = 'ghp_work';
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Copilot work',
+      provider: 'copilot',
+      configDir: '/roots/copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'WKS_TEST_GH_TOKEN',
+    });
+    await spawnManagedAgent({ provider: 'copilot', cwd: '/proj', profileId: 'p1' });
+    delete process.env.WKS_TEST_GH_TOKEN;
+
+    expect(lastManaged().env).toEqual({
+      COPILOT_HOME: '/roots/copilot-work',
+      COPILOT_GITHUB_TOKEN: 'ghp_work',
+    });
+  });
+
+  it('a referenced variable that is NOT set contributes nothing — never an empty token', async () => {
+    delete process.env.WKS_TEST_GH_TOKEN;
+    getProfile.mockReturnValueOnce({
+      id: 'p1',
+      name: 'Copilot work',
+      provider: 'copilot',
+      configDir: '/roots/copilot-work',
+      extraArgs: [],
+      tokenEnvVar: 'WKS_TEST_GH_TOKEN',
+    });
+    await spawnManagedAgent({ provider: 'copilot', cwd: '/proj', profileId: 'p1' });
+
+    // An empty COPILOT_GITHUB_TOKEN would out-rank copilot's stored credential.
+    expect(lastManaged().env).toEqual({ COPILOT_HOME: '/roots/copilot-work' });
+  });
+
   it('a profile-less codex spawn sends neither key — the payload is unchanged', async () => {
     await spawnManagedAgent({ provider: 'codex', cwd: '/proj' });
 

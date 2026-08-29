@@ -772,6 +772,11 @@ export interface ClaudeProfile {
   /** Codex only: `codex -p <name>` — a SAME-ACCOUNT settings preset layered
    *  over the base config, never a login switch. */
   preset?: string;
+  /** Copilot only: the NAME of an environment variable holding a GitHub token
+   *  — never the token. Copilot's config root is not its account (the login
+   *  lives in the OS credential store), so a second identity is expressed by
+   *  referencing a credential the user already has. */
+  tokenEnvVar?: string;
 }
 
 /** Partial update payload for claude-profiles:update. */
@@ -789,6 +794,7 @@ export interface ProfileInit {
   provider?: ProfileProvider;
   preset?: string;
   weight?: number;
+  tokenEnvVar?: string;
 }
 
 /**
@@ -808,4 +814,9 @@ export interface ProfileAccount {
   accountId?: string;
   /** How that account authenticates, in the harness's word ('chatgpt', 'apikey'). */
   authMode?: string;
+  /** Copilot: the variable the profile REFERENCES, echoed back so the UI can
+   *  name it. Reported with `signedIn` telling whether it is currently visible
+   *  to this app — a name that resolves to nothing is the one failure a user
+   *  cannot otherwise see. Never the value. */
+  tokenEnvVar?: string;
 }

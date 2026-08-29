@@ -40,6 +40,7 @@ import {
   profileAppliesTo,
   profileConfigEnv,
   profileSpawnArgs,
+  profileTokenEnv,
   providerTakesProfiles,
 } from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
@@ -347,7 +348,14 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
         : scrubBypassProfile(rawProfile)
       : rawProfile
     : undefined;
-  const env: Record<string, string> = profileConfigEnv(profile, os.homedir());
+  // The config root, plus (Copilot) the auth token the profile REFERENCES by
+  // variable name — resolved from this process's environment here, at spawn,
+  // and never stored. An unset name contributes nothing rather than an empty
+  // token that would out-rank copilot's own stored credential.
+  const env: Record<string, string> = {
+    ...profileConfigEnv(profile, os.homedir()),
+    ...profileTokenEnv(profile, process.env),
+  };
   if (env.CLAUDE_CONFIG_DIR) {
     // A Claude profile spawn inherits the primary login's trust for this folder
     // — without it the account's own .claude.json (unlinked by design, and
