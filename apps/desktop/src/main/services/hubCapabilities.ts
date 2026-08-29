@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
 import { DRIFT_TOLERANCE } from '../shared/modelContextWindows';
+import { buildSenderHeader } from '../shared/fleetMessages';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { applyLiveEffort } from './liveEffort';
 import { agentHandoffBrief } from './agentHandoff';
@@ -483,11 +484,39 @@ export function registerHubCapabilities(): void {
   // (and the old fallback could press Enter on an open permission dialog), so
   // surface the rejection to the caller instead.
   registerCapability('agents.sendMessage', async (params: unknown) => {
-    const { sessionId, text } = (params ?? {}) as { sessionId?: string; text?: string };
+    const { sessionId, text, fromSessionId } = (params ?? {}) as {
+      sessionId?: string;
+      text?: string;
+      fromSessionId?: string;
+    };
     if (!sessionId || typeof text !== 'string') {
       throw new Error('agents.sendMessage requires { sessionId, text }');
     }
-    const res = await claudemonSessionClient.message(sessionId, text);
+    // A caller that NAMES ITSELF is attributed onto the delivered text. This is
+    // the only fleet-chat message class with no attribution of its own (a
+    // finish / threshold / progress wake always names its subject), so a worker
+    // answering its manager used to arrive as bare text with nothing saying
+    // which worker — or that an agent was speaking at all.
+    //
+    // `fromSessionId` is what send_message's tool contract PROMISES ("the
+    // message is delivered with a header naming you as the sender, so the
+    // recipient knows who sent it"), and the headless brain has always honoured
+    // it (registry.sendMessage, cmd/brain/handlers.go). This door dropped the
+    // field on the floor, so the same call was attributed on a headless node
+    // and anonymous on the desktop — which is the case that actually runs.
+    // Header composed by the shared module, never spelled here: it is wire
+    // format shared with the brain's twin (cmd/brain/fleetmsg.go).
+    const from = (fromSessionId ?? '').trim();
+    const outgoing = from
+      ? buildSenderHeader({
+          sessionId: from,
+          // The sender's own spawn label when the host has one. A sender it
+          // does not know is still named by id — the header is attribution,
+          // and refusing to send because a label is missing would be worse.
+          label: claudeSessionStore.getSnapshot(from)?.label,
+        }) + text
+      : text;
+    const res = await claudemonSessionClient.message(sessionId, outgoing);
     if (!res.ok) {
       throw new Error(`session is not accepting input (mode=${res.mode ?? 'unknown'})`);
     }
