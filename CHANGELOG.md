@@ -9,6 +9,39 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- **The MCP facade no longer serves an uncredentialed caller.** It listens on
+  `127.0.0.1:7897` over plain HTTP and exposes the whole fleet — `spawn_agent`,
+  `send_message`, `write_file`, `save_config` — and it used to hand that entire
+  operator tool set to any request that presented no token at all. Loopback is
+  reachable by every process and every user account on the machine, and by a
+  container sharing the host network namespace, so "reached the port" was
+  effectively no authentication. The shipped default of the `-untokened` dial is
+  now `deny`: `/mcp` and `/sse` answer 401 to a credential-less request, while
+  `/health` stays open for liveness probes.
+
+  **Nothing you spawn needs configuring.** Every facade session the desktop or
+  the headless brain starts already mints its own per-session scoped token and
+  presents it (an `Authorization` header on the generated `--mcp-config` for
+  Claude PTY/stream, `?t=` on the URL for codex/opencode/copilot), so tiers and
+  tools are unchanged for agents, workers and the Fleet Manager. The one thing
+  this breaks is a *hand-configured* MCP client that sent no token: give it one
+  with `workspacer token create --scope operator`, or set
+  `facade.untokenedAccess: operator` in `config.yaml` to opt the whole facade
+  back open.
+
+  The `facade.untokenedAccess` key (`deny` | `view` | `operator`) is now
+  documented — on the [docs](landing/docs.html) configuration page, in the
+  [build & internals](landing/build.html) MCP section, in
+  `services/hub/README.md`, and in `docs/remote-sharing-security.md` — including
+  what each value costs.
+
+  Unchanged, and worth stating because they were already right: the facade's
+  DNS-rebinding `Host` guard, and the policy that refuses at startup to bind a
+  non-loopback address without a credential. Also unchanged, and still a gap:
+  claudemon's session API on `127.0.0.1:7891` accepts message injection and
+  spawns from any local process with no credential.
+
 ### Removed
 - **The supervisor role.** The `supervisor: true` spawn flag, the `/supervise`
   skill, and the `supervisor` config block are gone, along with the
