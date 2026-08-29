@@ -16,8 +16,9 @@
  *    because nothing was measured to be missing.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { AgentCard } from '../src/components/AgentCard';
+import { InspectorCard } from '../src/components/claude/InspectorCard';
 import { RecordedUsageProvider } from '../src/contexts/RecordedUsageContext';
 import { absentUsageTitle } from '../src/contexts/RecordedUsageContext';
 import type { RecordedUsageBySession } from '../src/lib/recordedUsage';
@@ -90,5 +91,44 @@ describe('AgentCard — the three states of an absent figure', () => {
     renderCard({ [SID]: { costUSD: 46.24 } }, 'hub link down');
     expect(screen.getByText(/\$46\.24/)).toBeInTheDocument();
     expect(screen.queryByText('Usage unavailable')).toBeNull();
+  });
+});
+
+describe('InspectorCard — the Usage tab says which absence it is showing', () => {
+  /** The Usage tab of a card bound to a session with NO live snapshot — the
+   *  cold start the recorded-usage seam exists for. */
+  function renderUsage(bySession: RecordedUsageBySession, unavailable: string | null = null) {
+    render(
+      <RecordedUsageProvider value={bySession} unavailable={unavailable}>
+        <InspectorCard snapshot={null} sessionId={SID} />
+      </RecordedUsageProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Usage/ }));
+  }
+
+  it('renders the recorded figures rather than short-circuiting to an empty tab', () => {
+    // The tab used to gate on a LIVE source (`!sl && !usage`), which no cold
+    // start has — so these tiles were unreachable in the only case they were
+    // written for, and the tab said "No usage data yet" over a history DB that
+    // held the numbers.
+    renderUsage({ [SID]: { costUSD: 46.24, billedTokens: 30_000_000 } });
+    expect(screen.getByText('$46.24')).toBeInTheDocument();
+    expect(screen.getByText(/Cost · last recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/Billed tokens · last recorded/)).toBeInTheDocument();
+    expect(screen.queryByText(/No usage data yet/)).toBeNull();
+  });
+
+  it('says there is no data — never $0.00 — when the source answered with none', () => {
+    renderUsage({});
+    expect(screen.getByText(/No usage data yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.00/)).toBeNull();
+  });
+
+  it('names the reason instead when the record could not be consulted', () => {
+    renderUsage({}, 'headless');
+    expect(screen.getByText(/could not be read \(headless\)/)).toBeInTheDocument();
+    // "we could not look" must not wear the sentence for "we looked, and it
+    // was empty".
+    expect(screen.queryByText(/No usage data yet/)).toBeNull();
   });
 });

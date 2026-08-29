@@ -27,7 +27,11 @@ import { UsageDetailDialog } from './UsageDetailDialog';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
 import { ConfigContext } from '../../contexts/ConfigContext';
-import { useRecordedUsage } from '../../contexts/RecordedUsageContext';
+import {
+  absentUsageTitle,
+  useRecordedUsage,
+  useRecordedUsageUnavailable,
+} from '../../contexts/RecordedUsageContext';
 import { capsFor } from '../../lib/providerCaps';
 import type { AgentProvider } from '../../types/pane';
 
@@ -537,6 +541,17 @@ export const InspectorCard: React.FC<{
   const costIsRecorded = liveCost === undefined && cost !== undefined;
   const recordedBilled =
     inTok === undefined && outTok === undefined ? recordedUsage?.billedTokens : undefined;
+  // Nothing live AND nothing recorded. The tiles simply vanish, which on the
+  // app's most detailed usage surface reads as "there is nothing to say" —
+  // true when the record was consulted and came back empty, and false when it
+  // could not be consulted at all. Say which, rather than let a blank stand in
+  // for both. (`unavailable` is null whenever the source answered.)
+  const usageUnavailable = useRecordedUsageUnavailable();
+  const noUsageFigures =
+    inTok === undefined &&
+    outTok === undefined &&
+    cost === undefined &&
+    recordedBilled === undefined;
   const model = sl?.modelDisplay ?? usage?.model ?? undefined;
 
   const tabs: {
@@ -1003,8 +1018,23 @@ export const InspectorCard: React.FC<{
           ))}
 
         {activeTab === 'usage' &&
-          (!sl && !usage ? (
-            <EmptyState icon={Gauge} text="No usage data yet" />
+          // A LIVE source is not the only thing this tab can render. Gating on
+          // `!sl && !usage` alone meant the recorded cost/token tiles below
+          // were unreachable in the exact case they exist for: a cold start has
+          // no snapshot at all, so neither `sl` nor `usage` is ever set and the
+          // tab short-circuited to "No usage data yet" over a history DB that
+          // had the figures. The recorded pair opens the body too.
+          (!sl && !usage && cost === undefined && recordedBilled === undefined ? (
+            <EmptyState
+              icon={Gauge}
+              // Three states: nothing live, nothing recorded, and a record we
+              // could not consult. The last is not an empty history.
+              text={
+                usageUnavailable
+                  ? `Recorded usage could not be read (${usageUnavailable})`
+                  : 'No usage data yet'
+              }
+            />
           ) : (
             <div>
               {model && (
@@ -1208,6 +1238,16 @@ export const InspectorCard: React.FC<{
                   {session && (
                     <StatTile label="Tool calls" value={String(session.totalToolCalls)} />
                   )}
+                </div>
+              )}
+              {noUsageFigures && (
+                <div
+                  title={absentUsageTitle(usageUnavailable)}
+                  style={{ marginTop: 12, fontSize: '0.72rem', color: colors.mutedDim }}
+                >
+                  {usageUnavailable
+                    ? `Recorded usage could not be read (${usageUnavailable}).`
+                    : 'No cost or token usage was ever recorded for this session.'}
                 </div>
               )}
               <div style={{ marginTop: 10, fontSize: '0.72rem', lineHeight: 1.6 }}>
