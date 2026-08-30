@@ -20,12 +20,17 @@
 // time. We remember that reset (or assume now+5h) so `auto` mode stays quiet
 // until the window actually lapses.
 //
-// Window checks before pinging:
-//   claude — claudemon's ungated GET /usage (exact, works with no sessions)
-//   codex  — the freshest 5h reset from live Codex sessions' status lines
-//            (no sessionless usage query exists for ChatGPT accounts); when
-//            unknown, ping to be safe — a redundant ping costs a few tokens
-//            and cannot reset an already-running window.
+// Window checks before pinging — both sessionless, neither needs the provider
+// to be running:
+//   claude — claudemon's ungated GET /usage. It answers for the DEFAULT login,
+//            which is the one `argvFor` warms, and it refetches on demand when
+//            its cached reading has gone stale.
+//   codex  — claudemon's GET /usage/report, which reads the newest rollout the
+//            Codex CLI left on disk. A live session's status line is the
+//            fallback for the one case the rollout cannot answer (a reading
+//            with no reset time, so nothing can say which window it describes).
+// When both are silent, ping to be safe — a redundant ping costs a few tokens
+// and cannot reset an already-running window.
 //
 // Off by default; only runs while Workspacer is open. Failure is always soft
 // and log-only. Decision logic lives in keepWarmLogic.ts (pure, unit-tested).
@@ -39,9 +44,11 @@ import {
   KeepWarmConfig,
   ProviderWarmState,
   ScheduleState,
+  UsageReportWire,
   dayKey,
   emptyProviderState,
   emptySchedule,
+  fiveHourWindowFromReport,
   providerNeedsCheck,
   scheduleDue,
   windowActive,
@@ -63,6 +70,7 @@ class KeepWarmService {
   private inFlight = false;
   private schedule: ScheduleState = emptySchedule();
   private providerState = new Map<string, ProviderWarmState>();
+  private warnedNoWarmableProvider = false;
 
   start(): void {
     if (this.timer) return;
@@ -87,8 +95,23 @@ class KeepWarmService {
   private readConfig(): KeepWarmConfig | null {
     const kw = configService.getConfig().claude?.keepWarm;
     if (!kw?.enabled) return null;
-    const providers = (kw.providers ?? ['claude']).filter((p) => WARMABLE.has(p));
-    if (!providers.length) return null;
+    const configured = kw.providers ?? ['claude'];
+    const providers = configured.filter((p) => WARMABLE.has(p));
+    if (!providers.length) {
+      // Enabled, but nothing warmable is configured — the service would
+      // otherwise do nothing at all, silently, beside a ticked checkbox. Not
+      // reachable from Settings (its buttons emit only claude/codex), so this
+      // is defensive: a hand-edited config.yaml or an imported one. Logged
+      // once, because the tick is every 60s and forever.
+      if (!this.warnedNoWarmableProvider) {
+        this.warnedNoWarmableProvider = true;
+        console.log(
+          `[keepWarm] enabled, but none of [${configured.join(', ')}] has a 5h window to warm — doing nothing`,
+        );
+      }
+      return null;
+    }
+    this.warnedNoWarmableProvider = false;
     return {
       enabled: true,
       providers,
@@ -124,9 +147,7 @@ class KeepWarmService {
   private async evaluate(provider: string, now: Date): Promise<void> {
     const state = this.stateFor(provider);
     const known =
-      provider === 'claude'
-        ? await this.fetchClaudeUsage()
-        : this.codexWindowFromSessions(now.getTime());
+      provider === 'claude' ? await this.fetchClaudeUsage() : await this.codexWindow(now.getTime());
     if (known && windowActive(known, now.getTime())) {
       if (known.five_hour_resets_at != null) {
         state.assumedResetsAtMs = known.five_hour_resets_at * 1000;
@@ -136,6 +157,8 @@ class KeepWarmService {
     }
     if (!known) {
       console.log(`[keepWarm] ${provider} window state unknown — pinging to be safe`);
+    } else {
+      console.log(`[keepWarm] ${provider} 5h window has lapsed — warming`);
     }
     await this.ping(provider, now);
   }
@@ -153,8 +176,48 @@ class KeepWarmService {
     }
   }
 
-  /** Codex has no sessionless usage query; the best available reading is the
-   *  freshest 5h reset from live Codex sessions' status lines. */
+  /** claudemon's sessionless usage report — every provider's windows as their
+   *  own CLIs left them on disk. null = unreadable.
+   *
+   *  THIS is /usage/report's first client. The route has served the widest read
+   *  on the loopback plane since 0.160.0 with nothing in the repo constructing
+   *  the URL; the capspec caller sweep is what found that out.
+   */
+  private async fetchUsageReport(): Promise<UsageReportWire | null> {
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/usage/report`, {
+        signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as UsageReportWire;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Codex's 5h window: the daemon's on-disk report first, a live session's
+   *  status line second.
+   *
+   *  The order is not a preference between two equal sources. The report
+   *  answers with no Codex session running, which is the cold-start case the
+   *  status-line path returns null for — and "unknown" there means keep-warm
+   *  pings a window that may already be open. The status line is still
+   *  consulted after a LAPSED disk reading because it only ever reports a
+   *  window that is still running: it can add a window the newest rollout has
+   *  not recorded yet, and it can never take one away. */
+  private async codexWindow(nowMs: number): Promise<AccountUsageWire | null> {
+    const report = await this.fetchUsageReport();
+    const onDisk = report ? fiveHourWindowFromReport(report, 'codex', nowMs) : null;
+    if (onDisk && windowActive(onDisk, nowMs)) return onDisk;
+    // `onDisk` here is either `{}` (definitely lapsed) or null (unreadable);
+    // both let a live status line speak, and the difference between them is
+    // what evaluate() logs.
+    return this.codexWindowFromSessions(nowMs) ?? onDisk;
+  }
+
+  /** The freshest 5h reset from live Codex sessions' status lines. Only ever
+   *  reports a window that is still running — a session with a lapsed window
+   *  is skipped, not reported as expired. */
   private codexWindowFromSessions(nowMs: number): AccountUsageWire | null {
     let best: number | null = null;
     for (const snap of claudeSessionStore.getAllSnapshots()) {

@@ -7,6 +7,26 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- **Keep-warm knows Codex's window without a Codex session.** Warming a
+  5-hour window starts by asking whether one is already running, and for
+  Codex that question used to be put to whatever live sessions happened to
+  be open — so on a cold start, with no Codex agent running, the answer was
+  "no idea" and keep-warm sent a warm ping that a still-open window did not
+  need. It now reads the window from `GET /usage/report`, which reads the
+  rollout the Codex CLI already wrote to disk, so a running window is
+  recognised with nothing open. A live session's status line is still
+  consulted, as the fallback for the one reading the rollout cannot settle.
+  Codex's *percentage* is deliberately not used to decide this: a reading of
+  67% against a reset time that has passed is real history and a false
+  present, and treating it as a live window would stop keep-warm warming at
+  all. Claude's check is unchanged — `GET /usage` already answers with no
+  session, for the one login that is warmed, and refetches on demand. This
+  also gives `/usage/report` its first client: the endpoint shipped in
+  0.160.0 with nothing in the app reading it.
+
 ## [0.160.0] - 2026-08-29
 
 ### Added
@@ -47,7 +67,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   though it still opens from the inspector and shows each window's duration
   alongside its percentage. The daemon can answer for windows without a live
   session, over `GET /usage/report`, which reads what each CLI already left
-  on disk for Claude, Codex and Copilot. No client reads that endpoint yet.
+  on disk for Claude, Codex and Copilot. Nothing in this release reads that
+  endpoint.
 - **Account profiles for every harness, not just Claude.** A profile is a
   config root, and each harness has one: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
   `COPILOT_HOME`. So a second Codex or Copilot login is now a profile you

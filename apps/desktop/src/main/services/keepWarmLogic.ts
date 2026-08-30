@@ -92,3 +92,90 @@ export function windowActive(usage: AccountUsageWire, nowMs: number): boolean {
   if (usage.five_hour_resets_at != null && usage.five_hour_resets_at * 1000 > nowMs) return true;
   return false;
 }
+
+// ---- claudemon's GET /usage/report ------------------------------------
+//
+// The sessionless half of the window question. `/usage` answers only for the
+// DEFAULT Claude login and will make a blocking network fetch to do it;
+// `/usage/report` answers for every provider and every configured account from
+// what each CLI already left on disk, immediately and with nothing running.
+// Only the 5h window is typed here — the document is far wider (spend, tokens,
+// per-model splits) and keep-warm reads none of it.
+
+/** One scalar in the report. `ok` carries a reading; the other two carry a
+ *  reason instead, and are NOT zero. */
+export interface UsageReportMeasured {
+  state: 'ok' | 'unknown' | 'unavailable';
+  value?: number | null;
+  reason?: string | null;
+}
+
+export interface UsageReportWindow {
+  used_percent?: UsageReportMeasured | null;
+  /** Epoch seconds. `null` when the source reported no reset time, which is
+   *  also why the report leaves `is_current` null there. */
+  resets_at?: number | null;
+  window_minutes?: number | null;
+  is_current?: boolean | null;
+}
+
+export interface UsageReportAccount {
+  /** `""` is the default login; `null` means the daemon cannot say which. */
+  account?: string | null;
+  label?: string | null;
+  windows?: { five_hour?: UsageReportWindow | null } | null;
+}
+
+export interface UsageReportProvider {
+  provider: string;
+  accounts?: UsageReportAccount[] | null;
+}
+
+export interface UsageReportWire {
+  generated_at?: number;
+  providers?: UsageReportProvider[] | null;
+}
+
+/**
+ * A provider's 5h window as the report sees it, in the flat shape
+ * `windowActive` consumes. Three outcomes, and the difference between the last
+ * two is the whole value of reading the report at all:
+ *
+ *   `{five_hour_resets_at}` — a window is running, and this is when it lapses.
+ *   `{}`                    — every readable reading has ALREADY rolled over.
+ *                             A definite "no window is running", so the caller
+ *                             can ping without claiming it was in the dark.
+ *   `null`                  — nothing readable. Genuinely unknown; ask a
+ *                             different source.
+ *
+ * The PERCENTAGE is deliberately not carried across. `used_percent` is the last
+ * figure the provider wrote, and for a rolled-over window that is real history
+ * and a false present — Codex reads 67% on a `resets_at` two days gone.
+ * `windowActive` treats any percentage above zero as a live window, so
+ * forwarding it would suppress warming permanently. Currency is decided from
+ * `resets_at` against `nowMs` rather than from the report's own `is_current`,
+ * which was computed at `generated_at` and is the staler of the two.
+ */
+export function fiveHourWindowFromReport(
+  report: UsageReportWire,
+  provider: string,
+  nowMs: number,
+): AccountUsageWire | null {
+  const p = (report.providers ?? []).find((x) => x?.provider === provider);
+  if (!p) return null;
+  let best: number | null = null;
+  let lapsed = false;
+  for (const acct of p.accounts ?? []) {
+    const resets = acct?.windows?.five_hour?.resets_at;
+    // No reset time is no answer: a percentage alone cannot say which window
+    // it describes, which is exactly why the report leaves is_current null.
+    if (resets == null) continue;
+    if (resets * 1000 > nowMs) {
+      if (best == null || resets > best) best = resets;
+    } else {
+      lapsed = true;
+    }
+  }
+  if (best != null) return { five_hour_resets_at: best };
+  return lapsed ? {} : null;
+}

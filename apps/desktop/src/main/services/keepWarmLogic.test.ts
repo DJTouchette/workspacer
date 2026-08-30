@@ -6,7 +6,9 @@ import {
   providerNeedsCheck,
   scheduleDue,
   windowActive,
+  fiveHourWindowFromReport,
   type KeepWarmConfig,
+  type UsageReportWire,
 } from './keepWarmLogic';
 
 const cfg = (over: Partial<KeepWarmConfig> = {}): KeepWarmConfig => ({
@@ -100,5 +102,97 @@ describe('windowActive', () => {
       windowActive({ five_hour_pct: null, five_hour_resets_at: nowMs / 1000 - 10 }, nowMs),
     ).toBe(false);
     expect(windowActive({}, nowMs)).toBe(false);
+  });
+});
+
+describe('fiveHourWindowFromReport', () => {
+  const nowMs = at(9, 0).getTime();
+  const sec = (offsetMs: number) => Math.floor((nowMs + offsetMs) / 1000);
+
+  const report = (provider: string, accounts: unknown[]): UsageReportWire =>
+    ({
+      generated_at: Math.floor(nowMs / 1000),
+      providers: [{ provider, accounts }],
+    }) as UsageReportWire;
+
+  const acct = (five_hour: unknown) => ({ account: '', label: 'x', windows: { five_hour } });
+
+  it('a future reset is a running window, and feeds windowActive', () => {
+    const w = fiveHourWindowFromReport(
+      report('codex', [
+        acct({
+          used_percent: { state: 'ok', value: 12 },
+          resets_at: sec(3_600_000),
+          is_current: true,
+        }),
+      ]),
+      'codex',
+      nowMs,
+    );
+    expect(w).toEqual({ five_hour_resets_at: sec(3_600_000) });
+    expect(windowActive(w!, nowMs)).toBe(true);
+  });
+
+  // The trap this whole function exists to avoid. The live daemon serves codex
+  // at 67% against a resets_at two days gone: the percentage is real history
+  // and a false present, and windowActive() reads any pct > 0 as a live window.
+  // Carrying it across would suppress warming permanently.
+  it('a high percentage on a ROLLED-OVER window is not a running window', () => {
+    const w = fiveHourWindowFromReport(
+      report('codex', [
+        acct({
+          used_percent: { state: 'ok', value: 67 },
+          resets_at: sec(-172_800_000),
+          is_current: false,
+        }),
+      ]),
+      'codex',
+      nowMs,
+    );
+    expect(w).toEqual({});
+    expect(windowActive(w!, nowMs)).toBe(false);
+  });
+
+  it('distinguishes "definitely lapsed" from "cannot tell"', () => {
+    // No reset time at all: the report leaves is_current null, and so do we.
+    expect(
+      fiveHourWindowFromReport(
+        report('codex', [acct({ used_percent: { state: 'ok', value: 67 }, resets_at: null })]),
+        'codex',
+        nowMs,
+      ),
+    ).toBeNull();
+    // An unreadable window is unknown, not lapsed.
+    expect(
+      fiveHourWindowFromReport(
+        report('codex', [
+          acct({ used_percent: { state: 'unavailable', reason: 'no local quota record' } }),
+        ]),
+        'codex',
+        nowMs,
+      ),
+    ).toBeNull();
+  });
+
+  it('takes the latest reset when several accounts report one', () => {
+    expect(
+      fiveHourWindowFromReport(
+        report('codex', [
+          acct({ resets_at: sec(-1000) }),
+          acct({ resets_at: sec(600_000) }),
+          acct({ resets_at: sec(3_600_000) }),
+        ]),
+        'codex',
+        nowMs,
+      ),
+    ).toEqual({ five_hour_resets_at: sec(3_600_000) });
+  });
+
+  it('a provider the report does not carry is unknown, not lapsed', () => {
+    expect(
+      fiveHourWindowFromReport(report('claude', [acct({ resets_at: sec(-1) })]), 'codex', nowMs),
+    ).toBeNull();
+    expect(fiveHourWindowFromReport({}, 'codex', nowMs)).toBeNull();
+    expect(fiveHourWindowFromReport(report('codex', []), 'codex', nowMs)).toBeNull();
   });
 });
