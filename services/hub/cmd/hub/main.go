@@ -648,6 +648,22 @@ func main() {
 	srv.RegisterLocalIdent("fleet.quiescence", watcher.answer)
 	go watcher.run(ctx, quiescence.DefaultSampleInterval)
 
+	// Limit-aware routing: the hub's edge onto claudemon's usage document.
+	//
+	// This is the layer's FIRST HALF and it is deliberately dormant until
+	// something asks. The poller winds down exactly as the quiescence sampler
+	// does — nothing polls /usage/report on a machine nobody has asked for a
+	// routing decision on — and the ask surface (routing.select) is a later
+	// slice, so on this tip usage.Latest has no caller and no reading is ever
+	// taken. That is the intended state, not an oversight: the alternative is
+	// an unconditional background HTTP GET every 30s on every install, for an
+	// answer nothing reads.
+	//
+	// Registered nowhere. Routing exposes no write RPC over the bus, ever, and
+	// it exposes no read RPC yet either.
+	usage := newUsageWatcher(*claudemonURL)
+	go usage.run(ctx, quiescence.DefaultSampleInterval)
+
 	// Remote node registry: which machines exist, whether each is available,
 	// waking, stopped or unreachable, and the one call that starts a stopped
 	// one. Registered only when a nodes.json exists, so an ordinary desktop

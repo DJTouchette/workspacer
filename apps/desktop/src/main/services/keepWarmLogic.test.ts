@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   dayKey,
   emptyProviderState,
@@ -194,5 +196,132 @@ describe('fiveHourWindowFromReport', () => {
     ).toBeNull();
     expect(fiveHourWindowFromReport({}, 'codex', nowMs)).toBeNull();
     expect(fiveHourWindowFromReport(report('codex', []), 'codex', nowMs)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CROSS-LANGUAGE HALF.
+//
+// contracts/usage-window-currency-cases.json is the WINDOW-CURRENCY RULE: a
+// reading may be used only if resets_at is present and strictly after the
+// moment of the decision, and the wire's own `is_current` is a display hint
+// that is never the decision input. The other loader is
+// services/hub/internal/limits/window_test.go, which holds the hub's routing
+// reader to the same verdicts.
+//
+// The two implementations answer deliberately different questions, so only the
+// currency verdict is shared. fiveHourWindowFromReport's three returns ARE the
+// three verdicts:
+//
+//   {five_hour_resets_at}  current      — a window is running
+//   {}                     rolled-over  — every readable reading has lapsed
+//   null                   unreadable   — nothing readable; ask elsewhere
+//
+// and the percentage is dropped on all three, which is why usedPercent is
+// asserted absent here rather than compared.
+// ---------------------------------------------------------------------------
+
+interface CurrencyCase {
+  name: string;
+  now: number;
+  window: {
+    used_percent?: { state: string; value?: number | null; reason?: string | null } | null;
+    resets_at?: number | null;
+    window_minutes?: number | null;
+    is_current?: boolean | null;
+  } | null;
+  expect: 'current' | 'rolled-over' | 'unreadable';
+  unknownBecause?: string;
+  usedPercent: number | null;
+  secondsToReset: number | null;
+  why: string;
+}
+
+const currencyFixture: { cases: CurrencyCase[] } = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'contracts',
+      'usage-window-currency-cases.json',
+    ),
+    'utf8',
+  ),
+);
+
+/** The floor is what stops a fixture edit that drops half the cases from
+ *  reporting a clean sweep over the two that survived. */
+const CURRENCY_CASE_FLOOR = 11;
+
+describe('usage-window currency (cross-language contract)', () => {
+  it('the corpus loaded (a fixture that stopped loading would pass vacuously)', () => {
+    expect(currencyFixture.cases.length).toBeGreaterThanOrEqual(CURRENCY_CASE_FLOOR);
+  });
+
+  const oneWindow = (c: CurrencyCase): UsageReportWire =>
+    ({
+      generated_at: c.now,
+      providers: [
+        {
+          provider: 'codex',
+          accounts: [{ account: '', label: 'x', windows: { five_hour: c.window } }],
+        },
+      ],
+    }) as UsageReportWire;
+
+  for (const c of currencyFixture.cases) {
+    it(c.name, () => {
+      const nowMs = c.now * 1000;
+      const got = fiveHourWindowFromReport(oneWindow(c), 'codex', nowMs);
+
+      switch (c.expect) {
+        case 'current':
+          expect(got).toEqual({ five_hour_resets_at: c.window?.resets_at });
+          expect(windowActive(got!, nowMs)).toBe(true);
+          break;
+        case 'rolled-over':
+          // A DEFINITE "no window is running" — strictly more than "unknown",
+          // and what lets keep-warm ping without claiming it was in the dark.
+          expect(got).toEqual({});
+          expect(windowActive(got!, nowMs)).toBe(false);
+          break;
+        case 'unreadable':
+          expect(got).toBeNull();
+          break;
+      }
+
+      // The percentage never crosses, on ANY verdict. windowActive() reads any
+      // pct above zero as a live window, so a stale 67% forwarded here would
+      // suppress codex warming permanently — which is why this reader answers
+      // a narrower question than the hub's.
+      if (got != null) expect('five_hour_pct' in got).toBe(false);
+    });
+  }
+
+  it('the wire’s is_current is never the decision input', () => {
+    // A reader that consulted the hint would pass every case above, because the
+    // daemon computed it correctly at generated_at. Flipping it on every case
+    // and requiring the verdicts not to move is what makes "display-only"
+    // checkable rather than a comment.
+    let flipped = 0;
+    for (const c of currencyFixture.cases) {
+      if (c.window == null) continue;
+      const nowMs = c.now * 1000;
+      const before = fiveHourWindowFromReport(oneWindow(c), 'codex', nowMs);
+      const mutant: CurrencyCase = {
+        ...c,
+        window: {
+          ...c.window,
+          is_current: c.window.is_current == null ? true : !c.window.is_current,
+        },
+      };
+      flipped += 1;
+      expect(fiveHourWindowFromReport(oneWindow(mutant), 'codex', nowMs)).toEqual(before);
+    }
+    expect(flipped).toBeGreaterThanOrEqual(CURRENCY_CASE_FLOOR - 1);
   });
 });

@@ -277,6 +277,12 @@ var claudemonCallers = []callerScan{
 		res:   []*regexp.Regexp{goLoopbackURLRe},
 		floor: 1,
 	},
+	{
+		file: "services/hub/cmd/hub/routing.go", server: "claudemon-api",
+		what:  "the limit-aware routing layer's usage poll — the hub's own read of GET /usage/report, on the --claudemon base. It is the SECOND caller of that route: keep-warm reads Codex's 5h window from it in the desktop, and this reads every provider's every window for the routing engine",
+		res:   []*regexp.Regexp{goBasePlusRe},
+		floor: 1,
+	},
 }
 
 // claudemonRouteCallers is the mirror-image declaration: a route that nothing in
