@@ -1,12 +1,12 @@
 # work{spacer}
 
-> A local-first control plane and IDE for running many coding agents (Claude Code, Codex, OpenCode, Pi) side by side. One manager agent dispatches the fleet and is woken when work lands, and writes what the fleet learns into a per-project brief that outlives the sessions. Around that sit the panes, the diff review, the plugin system, and a WebSocket hub bus every client speaks.
+> A local-first control plane and IDE for running many coding agents (Claude Code, Codex, GitHub Copilot, OpenCode, Pi) side by side. One manager agent dispatches the fleet and is woken when work lands, and writes what the fleet learns into a per-project brief that outlives the sessions. Around that sit the panes, the diff review, the plugin system, and a WebSocket hub bus every client speaks.
 
 ## Docs
 
 - [Operational docs](docs.html): overview, getting started, running agents, the agent pane, pane types, layout and navigation, attention and notifications, remote and multi-client, extending, and configuration.
 - [Overview](docs.html#overview): the problem, the mental model (one agent = one session = one workspace), and what runs on your machine.
-- [Running agents](docs.html#agents-and-providers): the four providers, the spawn dialog, terminal-style vs managed agents.
+- [Running agents](docs.html#agents-and-providers): the five providers, the spawn dialog, terminal-style vs managed agents.
 - [Pane types](docs.html#panes): terminal, browser, editor, review/diff, library, analytics, overview, plugin panes (including the Notes plugin's scratchpad), and more.
 - [Extending (plugins, mcp, tui)](docs.html#extending): installing plugins, driving the fleet over MCP, the terminal client.
 
