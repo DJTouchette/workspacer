@@ -79,9 +79,21 @@ export interface WorktreeCreateResult {
   error?: string;
 }
 
-/** In-app update status (main pushes transitions; 'unsupported' in dev/web). */
+/**
+ * In-app update status (main pushes transitions; 'unsupported' in dev/web).
+ * 'manual' = packaged, but this platform has no working updater (macOS, whose
+ * build is unsigned) — updates come from the releases page by hand.
+ */
 export interface UpdateStatus {
-  state: 'unsupported' | 'disabled' | 'idle' | 'checking' | 'downloading' | 'downloaded' | 'error';
+  state:
+    | 'unsupported'
+    | 'manual'
+    | 'disabled'
+    | 'idle'
+    | 'checking'
+    | 'downloading'
+    | 'downloaded'
+    | 'error';
   version?: string;
   percent?: number;
   current: string;

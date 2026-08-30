@@ -522,6 +522,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           <RefreshCw size={16} strokeWidth={1.75} />,
           onInstallUpdate,
         );
+      } else if (updateStatus.state === 'manual') {
+        // No updater on this platform (unsigned macOS build) — the honest
+        // action is the releases page, which is what checkNow opens there.
+        add(
+          'cmd-update',
+          'Download the Latest Release',
+          "This build can't update itself — opens the releases page to download a newer one",
+          <RefreshCw size={16} strokeWidth={1.75} />,
+          onCheckUpdates,
+        );
       } else {
         add(
           'cmd-update',

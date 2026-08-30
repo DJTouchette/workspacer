@@ -56,6 +56,17 @@ vi.mock('./hubCapabilities', () => ({
   openExternalUrl: (url: string) => openExternalUrl(url),
 }));
 
+// ─── platform stub ───────────────────────────────────────────────────────────
+// The updater is gated off on platforms whose build can't apply an update
+// (macOS — unsigned, no zip target). `process.platform` is read at module load
+// and inside start()/checkNow(), so it is pinned per-test rather than inherited
+// from whatever host runs the suite — otherwise every test below would change
+// meaning on a developer's mac.
+const HOST_PLATFORM = process.platform;
+function setPlatform(p: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value: p, configurable: true });
+}
+
 // A fake window that looks alive to the service.
 function fakeWindow() {
   return { isDestroyed: () => false } as any;
@@ -75,10 +86,12 @@ beforeEach(() => {
   electronApp.isPackaged = true;
   electronApp.getVersion = () => '0.0.0-test';
   configValue = { updates: { enabled: true, channel: 'latest' } };
+  setPlatform('linux'); // a platform the updater actually runs on
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  setPlatform(HOST_PLATFORM);
 });
 
 describe('updateService – gating', () => {
@@ -188,6 +201,117 @@ describe('updateService – gating', () => {
     svc.start(fakeWindow());
     expect(autoUpdater.channel).toBe('latest');
     svc.stop();
+  });
+});
+
+// The mac build is neither signed nor notarized, and electron-updater refuses
+// to apply an update it can't verify: on macOS every check ended in `error`, at
+// launch and then every four hours, for every user, forever. The gate is the
+// difference between a recurring failure and an honest "updates are manual".
+describe('updateService – platform gate (unsigned macOS build)', () => {
+  it('never touches the updater on macOS', async () => {
+    setPlatform('darwin');
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    expect(autoUpdater.setFeedURL).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('reports manual, not error, so the surfaces can say updates are by hand', async () => {
+    setPlatform('darwin');
+    const svc = await loadService();
+    // Before start() too: the renderer's first pull happens on mount and must
+    // not be told auto-update is idle/working.
+    expect(svc.getStatus().state).toBe('manual');
+    svc.start(fakeWindow());
+    expect(svc.getStatus().state).toBe('manual');
+    svc.stop();
+  });
+
+  it('does not wire the updater listeners on macOS', async () => {
+    setPlatform('darwin');
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    // Nothing is subscribed, so nothing can flip the status to 'error' — the
+    // exact state the gate exists to prevent. (An unlistened 'error' event is
+    // rethrown by EventEmitter, which is itself the proof wire() never ran.)
+    expect(autoUpdater.listenerCount('error')).toBe(0);
+    expect(autoUpdater.listenerCount('update-downloaded')).toBe(0);
+    expect(() => autoUpdater.emit('error', new Error('Could not get code signature'))).toThrow();
+    expect(svc.getStatus().state).toBe('manual');
+    svc.stop();
+  });
+
+  it('schedules no periodic re-check on macOS', async () => {
+    vi.useFakeTimers();
+    setPlatform('darwin');
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    vi.advanceTimersByTime(4 * 60 * 60 * 1000 * 6); // a day of checks
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('answers an explicit "check now" with the releases page instead of a doomed check', async () => {
+    setPlatform('darwin');
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    const status = await svc.checkNow();
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://github.com/DJTouchette/workspacer/releases',
+    );
+    expect(status.state).toBe('manual');
+    svc.stop();
+  });
+
+  it('a browser that will not open leaves the status alone', async () => {
+    setPlatform('darwin');
+    openExternalUrl.mockResolvedValueOnce({ ok: false, error: 'no handler' });
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    await expect(svc.checkNow()).resolves.toMatchObject({ state: 'manual' });
+    svc.stop();
+  });
+
+  it('installNow stays a no-op on macOS (nothing can ever be downloaded)', async () => {
+    setPlatform('darwin');
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    svc.installNow();
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('a dev build on macOS is still unsupported, and opens no browser', async () => {
+    setPlatform('darwin');
+    electronApp.isPackaged = false;
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(svc.getStatus().state).toBe('unsupported');
+    await svc.checkNow();
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('leaves the signed platforms alone', async () => {
+    for (const platform of ['win32', 'linux'] as NodeJS.Platform[]) {
+      setPlatform(platform);
+      const svc = await loadService();
+      expect(svc.getStatus().state, platform).toBe('idle');
+      svc.start(fakeWindow());
+      expect(autoUpdater.checkForUpdates, platform).toHaveBeenCalledTimes(1);
+      svc.stop();
+      vi.clearAllMocks();
+    }
+  });
+
+  it('autoUpdateSupportedOn names exactly the gated platform', async () => {
+    const { autoUpdateSupportedOn } = await import('./updateService');
+    expect(autoUpdateSupportedOn('darwin')).toBe(false);
+    expect(autoUpdateSupportedOn('win32')).toBe(true);
+    expect(autoUpdateSupportedOn('linux')).toBe(true);
   });
 });
 

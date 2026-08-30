@@ -10,11 +10,10 @@
  * Gating:
  *  - `updates.enabled` (config, default true) is the master switch.
  *  - `updates.channel` (default 'latest') selects the release channel.
- *  - macOS refuses to apply UNSIGNED updates: electron-updater emits an `error`
- *    rather than an `update-available`. We treat every updater error as
- *    non-fatal and log-only (never a user-facing dialog), so an unsigned mac
- *    build degrades silently and the flow lights up on its own once signing +
- *    a zip target land — no code change required.
+ *  - Platforms with no working updater for this build (macOS — see
+ *    NO_AUTO_UPDATE_PLATFORMS) never start the updater at all and report
+ *    `manual` instead, so the app says "updates are manual here" rather than
+ *    failing a check every four hours.
  *  - Nightly builds (version contains `-nightly`) update from the rolling
  *    `nightly` prerelease via the generic provider (see wire()); stable and
  *    nightly feeds never cross.
@@ -35,6 +34,28 @@ const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
  * there is one literal to change if the repo ever moves.
  */
 const RELEASES_URL = 'https://github.com/DJTouchette/workspacer/releases';
+
+/**
+ * Platforms where in-app auto-update cannot work for this build at all.
+ *
+ * The macOS artifact is neither signed nor notarized (`.github/workflows/
+ * release.yml` sets `CSC_IDENTITY_AUTO_DISCOVERY: false`) and `mac.target` is
+ * `dmg` with no `zip`. electron-updater needs BOTH a signed app and a zip to
+ * swap a build in place; without them every check ends in `error` instead of
+ * `update-available` — at launch and then every four hours, for the life of the
+ * install, for every mac user. Running the updater there buys nothing and costs
+ * a permanent error state, so mac is gated off and reports `manual`: updates
+ * come from the releases page by hand.
+ *
+ * Drop 'darwin' from this list when signing + a mac zip target land. Nothing
+ * else has to change — the whole flow lights up on its own.
+ */
+const NO_AUTO_UPDATE_PLATFORMS: readonly NodeJS.Platform[] = ['darwin'];
+
+/** Whether electron-updater could actually apply an update on this platform. */
+export function autoUpdateSupportedOn(platform: NodeJS.Platform = process.platform): boolean {
+  return !NO_AUTO_UPDATE_PLATFORMS.includes(platform);
+}
 
 /**
  * A plain semver, optionally with a prerelease tail (`0.149.0`,
@@ -71,6 +92,7 @@ export function releaseNotesUrl(version: unknown): string {
 export interface UpdateStatus {
   state:
     | 'unsupported' // dev build / web mirror — no update feed
+    | 'manual' // packaged, but this platform has no working updater (see NO_AUTO_UPDATE_PLATFORMS)
     | 'disabled' // updates.enabled=false in config
     | 'idle' // checked, nothing newer
     | 'checking'
@@ -144,7 +166,10 @@ class UpdateService {
   /** Guard so overlapping checks (startup + interval) don't stack dialogs. */
   private promptOpen = false;
   private status: UpdateStatus = {
-    state: app.isPackaged ? 'idle' : 'unsupported',
+    // A dev build has no feed at all; a packaged build on a gated platform has
+    // a feed it can never apply. Both are answered before the renderer's first
+    // pull, so the palette/settings never briefly claim auto-update works.
+    state: !app.isPackaged ? 'unsupported' : autoUpdateSupportedOn() ? 'idle' : 'manual',
     current: app.getVersion(),
   };
 
@@ -169,9 +194,22 @@ class UpdateService {
   /**
    * Manual "check now" (palette). Works even when auto-update is disabled in
    * config — an explicit ask is explicit consent. No-op in dev/web.
+   *
+   * On a gated platform an explicit ask still deserves an answer, and the only
+   * true one is the page the update actually comes from — so it opens the
+   * releases page rather than starting a check that can only end in `error`.
+   * The palette entry is labelled for that (see CommandPalette's 'manual'
+   * branch), so the browser opening is what the user asked for.
    */
   async checkNow(): Promise<UpdateStatus> {
     if (!app.isPackaged) return this.status; // unsupported
+    if (!autoUpdateSupportedOn()) {
+      const opened = await openExternalUrl(RELEASES_URL);
+      if (!opened.ok) {
+        console.warn(`[updateService] could not open the releases page: ${opened.error}`);
+      }
+      return this.status; // manual
+    }
     this.wire(readUpdatesConfig().channel);
     await this.check();
     return this.status;
@@ -192,6 +230,17 @@ class UpdateService {
 
     if (!app.isPackaged) {
       console.log('[updateService] dev build — auto-update disabled');
+      return;
+    }
+
+    // Ahead of the config gate on purpose: on a gated platform the toggle is
+    // moot either way, and "updates are manual here" is the more useful thing
+    // to tell the user than "you turned updates off".
+    if (!autoUpdateSupportedOn()) {
+      console.log(
+        `[updateService] ${process.platform} has no in-app updater for this build (unsigned) — updates are manual`,
+      );
+      this.setStatus({ state: 'manual' });
       return;
     }
 

@@ -22,7 +22,12 @@ interface UpdatesSectionProps {
 }
 
 const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
-  const { version, isNightly } = useAppVersion();
+  const { version, isNightly, updateState } = useAppVersion();
+  // This platform has no working in-app updater (today: macOS, whose build is
+  // unsigned, so electron-updater can't verify a swap). The toggle below has
+  // nothing to switch there, and saying so is the only honest thing this
+  // section can do — see main/services/updateService.ts.
+  const manualUpdates = updateState === 'manual';
   const updates = config.updates ?? UPDATES_DEFAULTS;
   const set = (patch: Partial<typeof updates>) =>
     save({ updates: { ...UPDATES_DEFAULTS, ...updates, ...patch } });
@@ -45,13 +50,24 @@ const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
         label="Automatically check for and install updates"
         checked={updates.enabled !== false}
         onChange={(v) => set({ enabled: v })}
+        disabled={manualUpdates}
       />
-      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Checks the GitHub release feed on launch and every few hours, downloads a newer build in the
-        background, and asks before restarting to install. Only active in the packaged app.
-        {isNightly &&
-          ' Nightly builds update from the rolling nightly prerelease, never stable — to return to stable, reinstall a release build from the website.'}
-      </div>
+      {manualUpdates ? (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
+          Updates are manual on this platform. This build isn&rsquo;t code-signed, so the app
+          can&rsquo;t verify an update and replace itself — automatic updates are switched off
+          rather than failing a check every few hours. Download a newer build from the releases page
+          and replace the app; &ldquo;Download the Latest Release&rdquo; in the command palette
+          opens that page.
+        </div>
+      ) : (
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+          Checks the GitHub release feed on launch and every few hours, downloads a newer build in
+          the background, and asks before restarting to install. Only active in the packaged app.
+          {isNightly &&
+            ' Nightly builds update from the rolling nightly prerelease, never stable — to return to stable, reinstall a release build from the website.'}
+        </div>
+      )}
 
       {/* The notes live beside the version they describe, which is the one
           question anybody opening this section actually has. Same markdown the
