@@ -173,7 +173,8 @@ remote/web/phone clients all view and drive the same fleet.
 | Spawn / approve / answer / signal | Full agent control from the terminal | 🔵 Working |
 | Command palette, vim nav | Ctrl-K fuzzy palette; leader + which-key, Ctrl-w splits, harpoon pins, `/` filter, `:` cmdline, vim counts | 🔵 Working |
 | Daemon bootstrap | Auto-spawns claudemon if not running | 🔵 Working |
-| Tests | Behavioral unit coverage for navigation, approval/question handling, review pane basics, direct mode, bus mode, and reconnect behavior | 🟢 Solid |
+| Git review pane (`R`) | ⚠️ Not wired. The pane's status/diff/stage/commit calls still target claudemon `/git/*`, and those routes moved to the desktop host in `37320188`; a live daemon answers 404. Pulled from the public docs; git review is desktop-only. | ⚪ Not built |
+| Tests | Behavioral unit coverage for navigation, approval/question handling, direct mode, bus mode, and reconnect behavior. The review-pane tests fold state in-process and never hit the daemon, which is why they still pass against the missing routes | 🟢 Solid |
 
 ## 12. Substrate — `claudemon` daemon (Rust)
 
