@@ -35,6 +35,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 	"github.com/djtouchette/workspacer-hub/internal/push"
 	"github.com/djtouchette/workspacer-hub/internal/quiescence"
+	"github.com/djtouchette/workspacer-hub/internal/routing"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
@@ -380,6 +381,7 @@ func main() {
 	// reading its logs. It is NOT an idle timer and there is none: nothing in
 	// this hub powers a working machine down on a clock.
 	nodesKeepFailedWakesRunning := flag.Bool("nodes-keep-failed-wakes-running", false, "do NOT stop a machine whose wake never produced a provider (default: the hub stops it again so it does not keep billing). For debugging a node that dies on boot")
+	routingFile := flag.String("routing-file", routing.DefaultPath(), "limit-aware routing matrix (routing.yaml: role -> capability -> provider/model/effort, health thresholds, mode overrides, per-directory ceilings; seeded once on first run, 0600, hand-editable and re-read on the tick). Empty = run on the compiled-in defaults and write nothing")
 	jobsFile := flag.String("jobs-file", defaultJobsFile(), "hub job specs file (recurring/one-off jobs: spawn an agent, call a capability, run a shell command; persisted 0600 — a job is persisted argv). Empty = jobs disabled")
 	flag.Parse()
 
@@ -659,10 +661,25 @@ func main() {
 	// an unconditional background HTTP GET every 30s on every install, for an
 	// answer nothing reads.
 	//
-	// Registered nowhere. Routing exposes no write RPC over the bus, ever, and
-	// it exposes no read RPC yet either.
+	// routing.select is the ONE method this layer registers, it is READ-ONLY,
+	// and it is the only one it will ever have: routing exposes no write RPC
+	// over the bus, ever. That, plus fs.write refusing the hub's state
+	// directory, is the whole security argument for routing.yaml's `ceilings:`
+	// block — a matrix an agent could edit is not a ceiling.
+	//
+	// Registered through the caller-aware door (RegisterLocalIdent) rather than
+	// the plain one, for the reason fleet.quiescence is and layout.set learned:
+	// the answer depends on WHO asks — a caller's own project directory picks
+	// the ceiling that will govern its spawns — and a handler that starts plain
+	// and later needs the identity is a handler that gets moved in a hurry.
+	// Registered with the LITERAL name, because capspec's hub-native guard and
+	// the renderer's CAP_LABELS drift guard both parse this file for it.
 	usage := newUsageWatcher(*claudemonURL)
 	go usage.run(ctx, quiescence.DefaultSampleInterval)
+
+	routingSvc := routing.New(*routingFile, newRoutingCatalog(*claudemonURL, self))
+	go routingSvc.Run(ctx, routing.DefaultTickEvery)
+	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage))
 
 	// Remote node registry: which machines exist, whether each is available,
 	// waking, stopped or unreachable, and the one call that starts a stopped

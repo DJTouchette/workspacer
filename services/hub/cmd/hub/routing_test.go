@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/limits"
+	"github.com/djtouchette/workspacer-hub/internal/routing"
 )
 
 // The document served here is the SAME real capture internal/limits'
@@ -200,5 +203,79 @@ func TestTheWatcherHoldsTheDocumentUnjudged(t *testing.T) {
 	}
 	if _, ok := stale.Reading.UsedPercent(); ok {
 		t.Error("a percentage escaped off a window that has since closed")
+	}
+}
+
+// A ROUTING DECISION TAKES ITS OWN READING.
+//
+// Latest's cache is right for a status pane and wrong for a decision: the
+// currency guard stops a WINDOW verdict outliving its instant, and this stops
+// the DOCUMENT outliving its instant, which is the same defect one level out. A
+// window that reset thirty seconds ago is unreadable in a document fetched two
+// minutes ago and readable in one fetched now, and a routing decision commits an
+// hour of a frontier model's allowance on the difference.
+func TestARoutingDecisionTakesItsOwnReading(t *testing.T) {
+	body := liveReportBody(t)
+	var hits int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	w := newUsageWatcher(srv.URL)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		if _, err := w.LatestWithin(ctx, usageDecisionMaxAge); err != nil {
+			t.Fatalf("decision %d: %v", i, err)
+		}
+		if got := atomic.LoadInt64(&hits); got != int64(i) {
+			t.Fatalf("after %d decisions the daemon had been read %d time(s) — a decision that reuses a cached document is deciding against a picture that may have rolled over since", i, got)
+		}
+	}
+
+	// And the ordinary bound is untouched: three back-to-back Latest calls after
+	// those must add exactly one more fetch, not three.
+	before := atomic.LoadInt64(&hits)
+	for i := 0; i < 3; i++ {
+		if _, err := w.Latest(ctx); err != nil {
+			t.Fatalf("Latest: %v", err)
+		}
+	}
+	if got := atomic.LoadInt64(&hits) - before; got > 1 {
+		t.Errorf("three Latest calls inside usageMaxAge made %d fetches — the decision bound leaked into the ordinary one", got)
+	}
+}
+
+// routing.select must answer even when nothing about the machine cooperates,
+// because a hub that refuses to route while claudemon restarts is worse than one
+// that routes conservatively and says why.
+func TestRoutingSelectAnswersWithoutAUsageDocument(t *testing.T) {
+	svc := routing.New("", nil) // compiled-in defaults, no file, no catalog
+	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"))
+
+	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{}`)); err == nil {
+		t.Error("a request with no role was answered — routing answers in ROLES, and guessing one is how a decision gets attributed to work nobody described")
+	}
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"scout","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d, ok := raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if !d.Eligible || d.Model == "" {
+		t.Errorf("no model with the daemon unreachable: %+v", d)
+	}
+	if d.Capacity.Health != limits.HealthUnknown {
+		t.Errorf("health = %q with the daemon unreachable, want unknown", d.Capacity.Health)
+	}
+	if d.Mode != routing.ModeNormal {
+		t.Errorf("mode = %q on an unknown capacity — an unreadable provider is not a constrained one and is not a spendable one either", d.Mode)
+	}
+	if len(d.Reason) == 0 {
+		t.Error("no reasons")
 	}
 }

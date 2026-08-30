@@ -138,19 +138,36 @@ type Provenance struct {
 	ObservedAt *time.Time
 }
 
-// Reading is one window, judged. The zero value is not meaningful; construct it
-// with ReadWindow.
+// Reading is one window, judged. The zero value is not meaningful and every
+// accessor refuses it; construct it with ReadWindow.
 //
 // The invariant this type exists to make structural: UsedPercent, ResetsAt and
-// TimeToReset are only ever populated when State is WindowCurrent. There is no
-// path through ReadWindow that fills any of them otherwise, so a caller cannot
-// read a capacity off a dead window by forgetting to check the state - the
-// worst it can do is read a zero, and the accessors below refuse even that.
+// TimeToReset are only ever readable when the verdict is WindowCurrent. There
+// is no path through ReadWindow that fills any of them otherwise, so a caller
+// cannot read a capacity off a dead window by forgetting to check the state -
+// the worst it can do is read a zero, and the accessors below refuse even that.
+//
+// EVERY FIELD IS PRIVATE, and that is the fix for the hole the P0 review found.
+// While `State` was exported, the verdict was FORGEABLE: `Reading{State:
+// WindowCurrent, Now: time.Now()}` - written by hand, or produced by a JSON
+// round trip, which preserves the exported half and drops the private half -
+// answered ResetsAt() with ok=true and a ZERO reset time, so TimeToReset()
+// returned a large NEGATIVE duration through a gate whose entire purpose is
+// that a non-positive time-to-reset is unreachable. A verdict that can be
+// asserted from outside is not a verdict. Now the only constructor is
+// ReadWindow, an unmarshalled Reading is indistinguishable from the zero value,
+// and the zero value is unusable.
+//
+// The belt-and-braces half: ResetsAt/TimeToReset additionally require the
+// private reset time to have actually been populated (hasReset) AND the
+// remaining duration to be strictly positive, so even a future edit that
+// reintroduces a way to set the state cannot resurrect the negative-duration
+// path.
 type Reading struct {
-	State WindowState
-	// Reason is empty when State is WindowCurrent and is one of the Reason*
-	// constants otherwise.
-	Reason string
+	state WindowState
+	// reason is empty when the verdict is WindowCurrent and is one of the
+	// Reason* constants otherwise.
+	reason string
 
 	// usedPercent is nil when the window is current but the source could not
 	// read a percentage for it. Currency and readability are separate axes:
@@ -158,16 +175,37 @@ type Reading struct {
 	// its utilization is not.
 	usedPercent *float64
 	resetsAt    time.Time
+	// hasReset records that resetsAt was actually populated by ReadWindow, so
+	// a zero time can never be mistaken for "the epoch, which is in the past
+	// but present".
+	hasReset bool
 	// windowMinutes is the window's declared length, when the source reports
 	// one. Anthropic reports none; codex reports 300 and 10080.
 	windowMinutes *int64
 
-	// Now is the instant the verdict was reached. Held so a decision log can
+	// now is the instant the verdict was reached. Held so a decision log can
 	// say which clock produced it - the whole failure this guard closes is a
 	// verdict outliving the moment it was correct at.
-	Now  time.Time
-	From Provenance
+	now  time.Time
+	from Provenance
 }
+
+// State is the currency verdict. The zero Reading answers "" - not
+// WindowCurrent, and not WindowUnreadable either: an unconstructed Reading is
+// not a reading at all, and dressing it as a definite unknown would let one
+// through a `switch` that handles the three real verdicts.
+func (r Reading) State() WindowState { return r.state }
+
+// Reason is empty on a current reading and one of the Reason* constants
+// otherwise.
+func (r Reading) Reason() string { return r.reason }
+
+// Now is the instant this verdict was reached, which is the only clock any of
+// its durations are relative to.
+func (r Reading) Now() time.Time { return r.now }
+
+// From is what the caller knew about where the reading came from.
+func (r Reading) From() Provenance { return r.from }
 
 // ReadWindow is THE currency test, and the only door a percentage may come
 // through.
@@ -189,9 +227,9 @@ type Reading struct {
 // window that closed two days ago. TimeToReset below can never return a
 // negative duration because it can only be reached in WindowCurrent.
 func ReadWindow(w *WireWindow, from Provenance, now time.Time) Reading {
-	r := Reading{Now: now, From: from}
+	r := Reading{now: now, from: from}
 	if w == nil {
-		r.State, r.Reason = WindowUnreadable, ReasonNoWindowReading
+		r.state, r.reason = WindowUnreadable, ReasonNoWindowReading
 		return r
 	}
 	if w.ResetsAt == nil {
@@ -200,20 +238,20 @@ func ReadWindow(w *WireWindow, from Provenance, now time.Time) Reading {
 		// is_current null here too. Note that the percentage is dropped even
 		// when it reads `ok` - "67% and no reset" and "0% and no reset" are
 		// both inventions.
-		r.State, r.Reason = WindowUnreadable, ReasonNoResetTime
+		r.state, r.reason = WindowUnreadable, ReasonNoResetTime
 		return r
 	}
 	resets := time.Unix(*w.ResetsAt, 0)
 	switch {
 	case resets.Equal(now):
-		r.State, r.Reason = WindowRolledOver, ReasonResetEqualsNow
+		r.state, r.reason = WindowRolledOver, ReasonResetEqualsNow
 		return r
 	case resets.Before(now):
-		r.State, r.Reason = WindowRolledOver, ReasonResetHasPassed
+		r.state, r.reason = WindowRolledOver, ReasonResetHasPassed
 		return r
 	}
-	r.State = WindowCurrent
-	r.resetsAt = resets
+	r.state = WindowCurrent
+	r.resetsAt, r.hasReset = resets, true
 	r.windowMinutes = w.WindowMinutes
 	if v, ok := w.UsedPercent.Number(); ok {
 		r.usedPercent = &v
@@ -225,7 +263,7 @@ func ReadWindow(w *WireWindow, from Provenance, now time.Time) Reading {
 // False on any reading that is not current, and false on a current reading
 // whose source could not read a percentage.
 func (r Reading) UsedPercent() (float64, bool) {
-	if r.State != WindowCurrent || r.usedPercent == nil {
+	if r.state != WindowCurrent || r.usedPercent == nil {
 		return 0, false
 	}
 	return *r.usedPercent, true
@@ -245,8 +283,16 @@ func (r Reading) RemainingPercent() (float64, bool) {
 // ResetsAt is when the window lapses, and whether that is known. Only a current
 // reading has one: a rolled-over reading's reset is in the past and describes a
 // window that no longer exists.
+//
+// THREE conditions, not one, and the last two are the P0 review's fix. The
+// verdict alone used to be the whole gate, so anything that could assert the
+// verdict - a hand-built literal, an unmarshalled document - got a zero
+// resetsAt back with ok=true. Requiring hasReset means the field was actually
+// populated by ReadWindow; requiring the reset to be strictly after the
+// deciding instant means the answer is checked against the clock it will be
+// subtracted from rather than trusted from a tag.
 func (r Reading) ResetsAt() (time.Time, bool) {
-	if r.State != WindowCurrent {
+	if r.state != WindowCurrent || !r.hasReset || !r.resetsAt.After(r.now) {
 		return time.Time{}, false
 	}
 	return r.resetsAt, true
@@ -261,37 +307,52 @@ func (r Reading) TimeToReset() (time.Duration, bool) {
 	if !ok {
 		return 0, false
 	}
-	return resets.Sub(r.Now), true
+	d := resets.Sub(r.now)
+	if d <= 0 {
+		// Unreachable through ResetsAt above, and stated anyway: this is the
+		// exact value the spec's `time_to_reset < 90 minutes` arm reads wrong,
+		// so the function that produces it refuses rather than relying on one
+		// caller upstream having got its comparison right.
+		return 0, false
+	}
+	return d, true
 }
 
 // WindowLength is the window's declared duration, when the source reports one.
 // Anthropic reports none, so a caller must tolerate false here on a perfectly
 // healthy claude reading.
 func (r Reading) WindowLength() (time.Duration, bool) {
-	if r.State != WindowCurrent || r.windowMinutes == nil {
+	if r.state != WindowCurrent || r.windowMinutes == nil {
 		return 0, false
 	}
 	return time.Duration(*r.windowMinutes) * time.Minute, true
 }
 
 // Usable reports whether anything may be read off this reading at all.
-func (r Reading) Usable() bool { return r.State == WindowCurrent }
+func (r Reading) Usable() bool { return r.state == WindowCurrent }
 
 // Explain is one clause for a routing decision's reason list (the spec's §31).
 // Surfacing staleness is the cheapest detection this feature has: a provider
 // that silently vanishes from a decision is indistinguishable from one that was
 // considered and rejected.
 func (r Reading) Explain() string {
-	switch r.State {
+	switch r.state {
 	case WindowCurrent:
-		d, _ := r.TimeToReset()
+		d, ok := r.TimeToReset()
+		if !ok {
+			// Only reachable from a Reading nobody constructed. Say so rather
+			// than printing "resets in 0s", which reads as a live window.
+			return "unknown - this reading was never taken"
+		}
 		if used, ok := r.UsedPercent(); ok {
 			return fmt.Sprintf("%.0f%% used, resets in %s", used, d.Round(time.Minute))
 		}
 		return fmt.Sprintf("utilization unreadable, resets in %s", d.Round(time.Minute))
 	case WindowRolledOver:
 		return "unknown - the last reading describes a window that has since rolled over"
-	default:
+	case WindowUnreadable:
 		return "unknown - no reset time was reported, so no window can be identified"
+	default:
+		return "unknown - this reading was never taken"
 	}
 }

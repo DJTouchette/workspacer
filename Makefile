@@ -95,9 +95,11 @@ test-tui:
 	cd $(TUI) && cargo test
 
 ## test-routing-harness: real hub + fake claudemon runtime harness for
-##                       limit-aware routing. Routing assertions are reported
-##                       pending until routing.select exists; set
-##                       ROUTING_HARNESS_REQUIRE_ROUTING=1 to make that fatal.
+##                       limit-aware routing. Every assertion runs against the
+##                       registered routing.select; set
+##                       ROUTING_HARNESS_REQUIRE_ROUTING=1 to make a PARKED
+##                       assertion (i.e. routing.select gone) fatal rather than
+##                       a note.
 test-routing-harness:
 	env -u NO_COLOR node $(HUB)/scripts/routing-limit-harness.mjs
 

@@ -603,6 +603,18 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
+	// Limit-aware routing. Placed in the SPAWN group because it lights up
+	// exactly where spawn_agent does and is only useful immediately before one:
+	// ask which model this piece of work should get, then dispatch it.
+	//
+	// NOT named `escalate` or anything in that family — "escalation" already
+	// means two other things in this codebase (a worker asking its manager for
+	// help, and the permission-bypass escalation sanitizeSpawnParams scrubs) and
+	// a third meaning is how a doctrine sentence ends up true of the wrong
+	// mechanism.
+	addTool[routingSelectIn](b, "select_model",
+		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer can be a different model family from the implementer) and forecastDemandBeforeResetPct. Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent.",
+		"routing.select")
 	addTool[openTerminalIn](b, "open_terminal",
 		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
 		"terminals.open")
@@ -1529,6 +1541,29 @@ type openTerminalIn struct {
 	Command         string `json:"command,omitempty" jsonschema:"a command to run in the terminal on open, e.g. \"npm run dev\" — omit to open an empty shell"`
 	Label           string `json:"label,omitempty" jsonschema:"a short human label for the terminal pane, e.g. \"preheat dev server\""`
 	ParentSessionId string `json:"parentSessionId,omitempty" jsonschema:"your own session id, so the terminal nests under you in the UI"`
+}
+
+// routingSelectIn is routing.select's §39 request, plus the three fields the
+// codebase forces (a cwd, an account/profileId, and an explicit provider).
+//
+// It deliberately does NOT accept a model, an effort or a capability: the whole
+// point of the layer is that workflow logic names a ROLE and the matrix names
+// the model, so a tool that let a caller ask for `frontier_plus` directly would
+// be the escalation door §18 says only the supervisor may open.
+type routingSelectIn struct {
+	Role                         string   `json:"role" jsonschema:"the work role this agent will perform: supervisor | scout | mechanical | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | judge"`
+	Cwd                          string   `json:"cwd,omitempty" jsonschema:"the project directory the work happens in — it selects which per-directory routing ceiling applies"`
+	TicketID                     string   `json:"ticketId,omitempty" jsonschema:"your own identifier for the piece of work, echoed back so decisions can be correlated"`
+	Difficulty                   string   `json:"difficulty,omitempty" jsonschema:"low | medium | high | extreme"`
+	Risk                         string   `json:"risk,omitempty" jsonschema:"low | medium | high | critical — auth, money, destructive migrations, concurrency and externally visible contracts are high or critical"`
+	DecisionDensity              string   `json:"decisionDensity,omitempty" jsonschema:"low | medium | high — how many consequential decisions are NOT already made for the agent. A 1500-line mechanical migration is low; a 20-line authorization change is high"`
+	PreviousProvider             string   `json:"previousProvider,omitempty" jsonschema:"the provider that ran the PREVIOUS agent on this work, so a reviewer can be given a different model family from the implementer"`
+	RequireIndependentFamily     bool     `json:"requireIndependentFamily,omitempty" jsonschema:"true when the answer must be a different model family from previousProvider; the response says plainly if that could not be arranged"`
+	Profile                      string   `json:"profile,omitempty" jsonschema:"a routing profile to resolve under (mixed | codex_only | anthropic_only); omit to use whichever the matrix has active"`
+	Provider                     string   `json:"provider,omitempty" jsonschema:"ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one"`
+	Account                      string   `json:"account,omitempty" jsonschema:"the account key the spawn will bill to; omit for the provider's default login"`
+	ProfileID                    string   `json:"profileId,omitempty" jsonschema:"a Claude profile id, used as the account key when account is omitted"`
+	ForecastDemandBeforeResetPct *float64 `json:"forecastDemandBeforeResetPct,omitempty" jsonschema:"how much of this provider's allowance you expect the work still ahead to consume before the window resets, as a percentage. 0 is a real answer meaning 'nothing more is coming' and is what unlocks spend-down; omitting it leaves demand UNKNOWN, which keeps routing in normal mode"`
 }
 
 type sendMessageIn struct {

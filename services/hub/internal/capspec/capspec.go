@@ -131,6 +131,12 @@ var unscopedByDecision = map[string]string{
 	// the encoded name through claudeProjectDirName, which refuses "", "." and
 	// "..", so the slug really is a single plain component and the reason below
 	// is true rather than aspirational.
+	// routing.select — the hub-native limit-aware routing answer. The only
+	// method internal/routing will ever register, and it is READ-ONLY: there is
+	// no routing write RPC over the bus and there must never be one, because
+	// that plus fs.write refusing the hub's state directory is the whole
+	// security argument for routing.yaml's `ceilings:` block.
+	"routing.select":        "the caller supplies a WORK DESCRIPTION — a role, a ticket id, a difficulty/risk/decision-density classification, an optional provider and account, and a cwd — and gets back a (provider, model, effort, capability, mode) with the reasons. Nothing it carries reaches a sink: `cwd` is not opened, joined or statted (it selects which per-directory entry of the hub's OWN routing.yaml applies, exactly as nodes.wake's `id` selects a row of the hub's own nodes.json), `provider`/`account`/`profileId` SELECT rows of the usage document claudemon already serves, and `role` selects a key of the matrix file. The call starts nothing and writes nothing — it is a table lookup over a hub-owned file plus one read of claudemon's /usage/report, and every action anybody takes on the answer happens through a SEPARATE, refusable capability (agents.spawn), which is why an advisory answer is not an authorization. What it DISCLOSES is model names, capability names, a routing mode and a per-window utilization percentage for the caller's own subscription: no credential, no path, no argv. Deliberately NOT in any scoped tier (authtoken viewMethods/triageMethods) — §18 and §40 of the design are explicit that only the supervisor/control plane invokes a routing decision, and the tier lists are how this repo says that; ScopeOperator.Methods() returns [\"*\"], so the Fleet Manager gets it and a phone token does not",
 	"claude.sessionsForDir": "cwd is encoded into a ~/.claude/projects slug by the provider (claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component); the caller's string is never opened as a path",
 	"replay.open":           "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd",
 	// The sentence used to stop at "containment is structural", and the structure
@@ -906,6 +912,12 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	// precisely why the method-level guard over cmd/hub's registrations exists.
 	"layout.set": {
 		"data": {KindPermission, "the shared workspace document. Opaque to the hub except for four per-agent fields that become arguments to a LOCAL spawn when the desktop adopts it — skipPermissions, permissionMode, profileId, mcpItemIds — which layout.scrubAdoptedSpawnFields strips from a non-trusted write, matching agents.spawn's own clamps. The document's cwds and URLs are description: the hub never opens one"},
+	},
+	// Hub-native, and hand-written for the reason layout.set's block above is:
+	// neither params scan reaches cmd/hub.
+	"routing.select": {
+		"cwd":    {KindPath, "NOT a directory the hub opens, joins, stats or spawns in. It SELECTS which per-directory entry of the hub's own routing.yaml `ceilings:` block applies to the answer — the same shape as nodes.wake's `id` selecting a row of the hub's own nodes.json — and the matching is a lexical ancestor test over the string (routing.Matrix.CeilingFor), never a filesystem operation. Nothing downstream of this method touches the path: the answer is a (provider, model, effort) and every action taken on it goes through agents.spawn, whose OWN `cwd` decision is the row above"},
+		"effort": {KindShell, "not a caller value at all on this method — it is REPORTED, not accepted: the level comes out of routing.yaml's profile table and is validated at matrix-load time against the provider's own ladder (ValidateAgainstCatalog). It appears here because the response carries the name and the vocabulary scans on names"},
 	},
 	"files.upload": {
 		// dataBase64 deliberately has NO row: the vocabulary has no data-at-rest
