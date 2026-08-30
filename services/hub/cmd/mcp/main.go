@@ -613,7 +613,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// a third meaning is how a doctrine sentence ends up true of the wrong
 	// mechanism.
 	addTool[routingSelectIn](b, "select_model",
-		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer can be a different model family from the implementer) and forecastDemandBeforeResetPct. Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent.",
+		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer can be a different model family from the implementer), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent.",
 		"routing.select")
 	addTool[openTerminalIn](b, "open_terminal",
 		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
@@ -1564,6 +1564,27 @@ type routingSelectIn struct {
 	Account                      string   `json:"account,omitempty" jsonschema:"the account key the spawn will bill to; omit for the provider's default login"`
 	ProfileID                    string   `json:"profileId,omitempty" jsonschema:"a Claude profile id, used as the account key when account is omitted"`
 	ForecastDemandBeforeResetPct *float64 `json:"forecastDemandBeforeResetPct,omitempty" jsonschema:"how much of this provider's allowance you expect the work still ahead to consume before the window resets, as a percentage. 0 is a real answer meaning 'nothing more is coming' and is what unlocks spend-down; omitting it leaves demand UNKNOWN, which keeps routing in normal mode"`
+	// ExpectedWork is §15's phase counts. It exists here because the weighted
+	// forecast path was otherwise UNREACHABLE from the surface agents actually
+	// use: forecast_weights ships in the matrix and limits.DemandFromWork
+	// implements it, but only a direct bus caller could supply the counts, so a
+	// supervisor holding select_model could never exercise it. A live
+	// configuration block no caller can reach is dead configuration.
+	//
+	// It does NOT become a percentage — see limits/forecast.go: weighted units
+	// have no cost model behind them yet, so a work-only forecast leaves demand
+	// UNKNOWN for the mode arms and shows its arithmetic instead. The schema
+	// says so, because a field that quietly did nothing to the mode would be
+	// worse than one that is not there.
+	ExpectedWork []routingWorkIn `json:"expectedWork,omitempty" jsonschema:"the work still AHEAD before the window resets, as counts per workflow phase — e.g. [{phase: implementation, count: 2}, {phase: review, count: 4}]. Weighted by the matrix's forecast_weights and REPORTED with its arithmetic on the answer (demand.units / demand.phases); it does not become a percentage, so on its own it leaves demand UNKNOWN for the mode rules. Pass forecastDemandBeforeResetPct when you know the actual share — that wins over this"`
+}
+
+// routingWorkIn is one phase count in routingSelectIn.ExpectedWork. The field
+// names are limits.Work's own wire shape, because the facade forwards this
+// struct verbatim and routing.Request decodes it on the other side.
+type routingWorkIn struct {
+	Phase string `json:"phase" jsonschema:"the workflow phase, from the matrix's forecast_weights keys: scouting | implementation | review | fixing | validation. A phase the matrix has no weight for is REPORTED back as unweighted rather than counted as free"`
+	Count int    `json:"count" jsonschema:"how many agent runs of that phase are still expected before the window resets"`
 }
 
 type sendMessageIn struct {

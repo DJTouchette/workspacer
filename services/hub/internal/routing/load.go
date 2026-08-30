@@ -114,6 +114,16 @@ func Load(source string, userYAML []byte) (*Matrix, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The spec's vendor names are folded onto workspacer provider ids BEFORE
+	// the merge, not after the decode, and that ordering is load-bearing. The
+	// shipped defaults always carry a `codex:` entry, so a user file that says
+	// `openai:` produces a merged map holding BOTH spellings — and normalizing
+	// afterwards means two keys collapsing onto one in Go map order, which is
+	// randomized. That is a user's explicit `modes.providers.openai: conserve`
+	// being honoured or silently discarded on a coin flip, per process start.
+	// Renaming the key first makes the user's value overlay the default's the
+	// ordinary way, and makes the load log name the key that actually applied.
+	normalizeDocProviderKeys(user)
 	applied, changed, unrecognized := keyPaths(user, base)
 	m, err := decodeMatrix(deepMerge(base, user))
 	if err != nil {
@@ -247,6 +257,54 @@ func decodeMatrix(doc map[string]any) (*Matrix, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// normalizeDocProviderKeys renames alias-spelled provider KEYS in a parsed
+// document, in the two blocks that are keyed by provider.
+//
+// A document that spells the same provider both ways is its own contradiction,
+// and it is resolved deterministically rather than by map order: the canonical
+// spelling wins key by key, and whatever the alias said that the canonical did
+// not is merged underneath it. Nothing is dropped in silence.
+func normalizeDocProviderKeys(doc map[string]any) {
+	if doc == nil {
+		return
+	}
+	if providers, ok := doc["providers"].(map[string]any); ok {
+		doc["providers"] = renameAliasKeys(providers)
+	}
+	if modes, ok := doc["modes"].(map[string]any); ok {
+		if providers, ok := modes["providers"].(map[string]any); ok {
+			modes["providers"] = renameAliasKeys(providers)
+		}
+	}
+}
+
+func renameAliasKeys(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	// Canonical spellings first, so an alias can only ever fill a gap.
+	for _, k := range sortedKeys(in) {
+		if normalizeProvider(k) == k {
+			out[k] = in[k]
+		}
+	}
+	for _, k := range sortedKeys(in) {
+		canonical := normalizeProvider(k)
+		if canonical == k {
+			continue
+		}
+		existing, taken := out[canonical]
+		if !taken {
+			out[canonical] = in[k]
+			continue
+		}
+		eMap, eOK := existing.(map[string]any)
+		aMap, aOK := in[k].(map[string]any)
+		if eOK && aOK {
+			out[canonical] = deepMerge(aMap, eMap)
+		}
+	}
+	return out
 }
 
 // normalize folds the spec's vendor names onto workspacer provider ids,

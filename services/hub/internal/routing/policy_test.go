@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,14 @@ type winSpec struct {
 
 func snapshotOf(t *testing.T, provider, account string, windows map[string]winSpec) limits.Snapshot {
 	t.Helper()
+	return snapshotOfProviders(t, account, map[string]map[string]winSpec{provider: windows})
+}
+
+// snapshotOfProviders is snapshotOf for more than one provider at a time, which
+// is what a CROSS-PROVIDER mode shift needs: the mode comes from one provider's
+// document row and the shift's landing capacity comes from another's.
+func snapshotOfProviders(t *testing.T, account string, byProvider map[string]map[string]winSpec) limits.Snapshot {
+	t.Helper()
 	wire := func(w winSpec) map[string]any {
 		out := map[string]any{"window_minutes": nil, "is_current": nil}
 		if w.used < 0 {
@@ -55,27 +64,37 @@ func snapshotOf(t *testing.T, provider, account string, windows map[string]winSp
 		}
 		return out
 	}
-	byName := map[string]any{}
-	for _, name := range limits.WindowOrder {
-		spec, ok := windows[name]
-		if !ok {
-			// Absent from the SPEC still means present on the wire and
-			// permanently unavailable, which is how a provider says "I do not
-			// have this window" — the real document always carries all three
-			// keys.
-			spec = winSpec{used: -1, noReset: true}
-		}
-		byName[name] = wire(spec)
+	names := make([]string, 0, len(byProvider))
+	for name := range byProvider {
+		names = append(names, name)
 	}
-	doc := map[string]any{
-		"generated_at": policyNow.Unix(),
-		"providers": []any{map[string]any{
+	sort.Strings(names)
+	providers := make([]any, 0, len(names))
+	for _, provider := range names {
+		windows := byProvider[provider]
+		byName := map[string]any{}
+		for _, name := range limits.WindowOrder {
+			spec, ok := windows[name]
+			if !ok {
+				// Absent from the SPEC still means present on the wire and
+				// permanently unavailable, which is how a provider says "I do
+				// not have this window" — the real document always carries all
+				// three keys.
+				spec = winSpec{used: -1, noReset: true}
+			}
+			byName[name] = wire(spec)
+		}
+		providers = append(providers, map[string]any{
 			"provider": provider,
 			"accounts": []any{map[string]any{
 				"account": account, "label": "test", "is_default": true,
 				"source": "oauth_poll", "windows": byName,
 			}},
-		}},
+		})
+	}
+	doc := map[string]any{
+		"generated_at": policyNow.Unix(),
+		"providers":    providers,
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -233,14 +252,31 @@ func TestDecideModeTable(t *testing.T) {
 // moves each number in routing.yaml and requires the verdict to move with it —
 // a threshold that is loaded but never compared against is this fleet's most
 // common bug, and it looks identical to one that works.
+//
+// EVERY NUMBER UNDER `thresholds:` HAS ITS OWN CASE, and the two health bands
+// have one EACH rather than one between them. The earlier version moved yellow
+// and red together and asserted a red-only outcome, which a hardcoded yellow
+// would have passed unchanged, and it never touched
+// max_forecast_pct_of_remaining at all. A test that claims coverage it does not
+// have is worse than an obviously narrow one, because it is the reason nobody
+// looks again.
 func TestTheThresholdsComeFromTheFile(t *testing.T) {
 	base := map[string]winSpec{
 		"five_hour": {used: 12, resets: 75 * time.Minute},
 		"seven_day": {used: 11, resets: 96 * time.Hour},
 	}
+	// yellowBase is 75% used on a RUNNING window: over the shipped
+	// yellow_at_used_pct of 70 and under the shipped red_at_used_pct of 90. It
+	// is what tells the two bands apart, because Bands.Valid refuses an
+	// inverted pair — red cannot be dropped below yellow to isolate it, so red
+	// has to be RAISED to meet a reading yellow already covers.
+	yellowBase := map[string]winSpec{
+		"five_hour": {used: 75, resets: 3 * time.Hour},
+		"seven_day": {used: 11, resets: 96 * time.Hour},
+	}
 	zero := 0.0
 
-	mode := func(t *testing.T, userYAML string, windows map[string]winSpec) (Mode, Capacity) {
+	modeAt := func(t *testing.T, userYAML string, windows map[string]winSpec, forecast *float64) (Mode, Capacity) {
 		t.Helper()
 		m, err := Load("test.yaml", []byte(userYAML))
 		if err != nil {
@@ -248,12 +284,19 @@ func TestTheThresholdsComeFromTheFile(t *testing.T) {
 		}
 		snap := snapshotOf(t, "codex", "acct", windows)
 		cap := ReadCapacity(m, snap, "codex", "acct", policyNow)
-		v := DecideMode(cap, limits.Forecast(&zero, nil, m.ForecastWeights), m.Thresholds, m.ModeFor("codex"))
+		v := DecideMode(cap, limits.Forecast(forecast, nil, m.ForecastWeights), m.Thresholds, m.ModeFor("codex"))
 		return v.Mode, cap
+	}
+	mode := func(t *testing.T, userYAML string, windows map[string]winSpec) (Mode, Capacity) {
+		t.Helper()
+		return modeAt(t, userYAML, windows, &zero)
 	}
 
 	if got, _ := mode(t, "", base); got != ModeSpendDown {
 		t.Fatalf("the shipped thresholds do not spend down on the control case (%q) — the rest of this test proves nothing", got)
+	}
+	if got, cap := mode(t, "", yellowBase); got != ModeNormal || cap.Health != limits.HealthYellow {
+		t.Fatalf("the yellow control case is %q/%q, want normal/yellow — the band cases below prove nothing", got, cap.Health)
 	}
 
 	// time_to_reset_minutes: shrink the window below 75 and the same reading
@@ -266,8 +309,31 @@ func TestTheThresholdsComeFromTheFile(t *testing.T) {
 	if got, _ := mode(t, "thresholds:\n  spend_down:\n    min_remaining_pct: 95\n", base); got != ModeNormal {
 		t.Errorf("min_remaining_pct: 95 still spent down on 88%% remaining (%q)", got)
 	}
-	// yellow_at_used_pct / red_at_used_pct: drop red under the reading and the
-	// same window must conserve.
+	// max_forecast_pct_of_remaining: the third spend-down arm, and the one the
+	// review found unproven. 20% forecast is under 30% of the 88% remaining
+	// (26.4%) and spends down; move ONLY that number to 20 and the budget falls
+	// to 17.6%, so the identical reading and the identical forecast must stop.
+	// Deliberately NOT tested by setting it to 0 against a 0% forecast — that
+	// arm would pass against a hardcoded 0 just as happily.
+	twenty := 20.0
+	if got, _ := modeAt(t, "", base, &twenty); got != ModeSpendDown {
+		t.Fatalf("the shipped max_forecast_pct_of_remaining does not spend down at 20%% forecast (%q) — the case below proves nothing", got)
+	}
+	if got, _ := modeAt(t, "thresholds:\n  spend_down:\n    max_forecast_pct_of_remaining: 20\n", base, &twenty); got != ModeNormal {
+		t.Errorf("max_forecast_pct_of_remaining: 20 still spent down on a 20%% forecast against 88%% remaining (%q) — the file's budget is not reaching the comparison", got)
+	}
+	// yellow_at_used_pct ALONE. red stays at the shipped 90, so nothing here
+	// can be explained by red: the only thing that moves is where GREEN stops,
+	// and spend-down requires GREEN (§33).
+	if got, cap := mode(t, "thresholds:\n  health:\n    yellow_at_used_pct: 10\n", base); got != ModeNormal || cap.Health != limits.HealthYellow {
+		t.Errorf("yellow_at_used_pct: 10 left a 12%%-used window at %q (mode %q) — the file's YELLOW band is not reaching the ladder, and red is untouched here so red cannot be what carried the earlier case", cap.Health, got)
+	}
+	// red_at_used_pct ALONE, on the 75%-used window that is already YELLOW
+	// under the shipped bands. yellow stays at 70, so only red moves.
+	if got, cap := mode(t, "thresholds:\n  health:\n    red_at_used_pct: 72\n", yellowBase); got != ModeConserve || cap.Health != limits.HealthRed {
+		t.Errorf("red_at_used_pct: 72 left a 75%%-used window at %q (mode %q) — the file's RED band is not reaching the ladder", cap.Health, got)
+	}
+	// And both together, which is the case that was here before.
 	if got, cap := mode(t, "thresholds:\n  health:\n    yellow_at_used_pct: 5\n    red_at_used_pct: 10\n", base); got != ModeConserve {
 		t.Errorf("red_at_used_pct: 10 did not make a 12%%-used window RED (%q, health %q) — the file's bands are not reaching the ladder", got, cap.Health)
 	}
@@ -437,6 +503,37 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 		t.Errorf("the implementer moved to %q under conserve — §12 keeps frontier for implementation and hard diagnosis", impl.Capability)
 	}
 
+	// THE FIXER STAYS BALANCED UNDER CONSERVE. §12's behaviour table reads
+	// "routine fixes -> balanced tier", and the shipped matrix demoted it to
+	// `cheap` while its own comment claimed otherwise. The spec is
+	// authoritative and the comment agreed with it, so the DATA moved: there is
+	// no `conserve.fixer` entry any more, and its absence is what keeps the
+	// role on `balanced`. Demoting the role that repairs broken work is also
+	// the demotion most likely to cost more than it saves.
+	fix := Select(m, conserve, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	if fix.Mode != ModeConserve {
+		t.Fatalf("the fixer case is not in conserve (%q) — it proves nothing", fix.Mode)
+	}
+	if fix.BaseCapability != "balanced" || fix.Capability != "balanced" {
+		t.Errorf("fixer capability %q -> %q under conserve, want balanced -> balanced: §12 keeps routine fixes on the balanced tier",
+			fix.BaseCapability, fix.Capability)
+	}
+	if fix.Model != "gpt-5.6-terra" {
+		t.Errorf("fixer model = %q under conserve, want gpt-5.6-terra", fix.Model)
+	}
+	if _, shifted := m.ShiftFor("conserve", "fixer"); shifted {
+		t.Error("the shipped matrix carries a conserve shift for `fixer` again — §12 says routine fixes stay balanced, and a shift entry here is the contradiction the review found")
+	}
+	// And the shift is still DATA, not a hardcoded exemption: a user who
+	// disagrees with §12 can still demote their own fixer.
+	demoted, err := Load("test.yaml", []byte("mode_shifts:\n  conserve:\n    fixer: cheap\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := Select(demoted, conserve, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero}); got.Capability != "cheap" {
+		t.Errorf("a user matrix that DOES demote the fixer was ignored (capability %q) — the default moved, not the mechanism", got.Capability)
+	}
+
 	// And the shift is the FILE's, not Go's.
 	tuned, err := Load("test.yaml", []byte("mode_shifts:\n  conserve:\n    scout: frontier\n"))
 	if err != nil {
@@ -520,4 +617,194 @@ func TestThePolicyLayerNeverReadsTheRawScalar(t *testing.T) {
 	if scanned < 3 {
 		t.Fatalf("scanned only %d source files — the package was renamed or moved and this guard is guarding nothing", scanned)
 	}
+}
+
+// TestADisabledProviderIsNotSELECTED is the other half of
+// TestDisablingIsExplicit, which proved only that `providers.codex.enabled:
+// false` PARSES.
+//
+// routing.yaml tells the operator, in its own header, that deletion cannot
+// disable anything and that `enabled: false` is the one spelling that can. The
+// selection path honoured that on a per-capability ASSIGNMENT and ignored it on
+// the PROVIDER, so an operator could take codex out of service, watch the flag
+// load, and still be handed codex — a setting written and never read, which is
+// indistinguishable from one that works right up until it matters.
+func TestADisabledProviderIsNotSelected(t *testing.T) {
+	zero := 0.0
+	healthy := snapshotOfProviders(t, "acct", map[string]map[string]winSpec{
+		"codex":  {"five_hour": {used: 12, resets: 4 * time.Hour}, "seven_day": {used: 11, resets: 96 * time.Hour}},
+		"claude": {"five_hour": {used: 12, resets: 4 * time.Hour}, "seven_day": {used: 11, resets: 96 * time.Hour}},
+	})
+	off := func(t *testing.T, provider string) *Matrix {
+		t.Helper()
+		m, err := Load("test.yaml", []byte("providers:\n  "+provider+":\n    enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if pol, ok := m.ProviderPolicy(provider); !ok || pol.IsEnabled() {
+			t.Fatalf("the file's providers.%s.enabled: false did not survive the load — the rest proves nothing", provider)
+		}
+		return m
+	}
+
+	t.Run("the role's own provider is refused, not substituted", func(t *testing.T) {
+		// scout -> balanced -> codex under `mixed`, with no provider named by
+		// the caller at all.
+		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
+		if d.Eligible {
+			t.Fatalf("a disabled codex still answered with %s %s", d.Provider, d.Model)
+		}
+		if d.Model != "" {
+			t.Errorf("a refusal carried a model: %q", d.Model)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "enabled: false") {
+			t.Errorf("the refusal does not name the flag that caused it: %v", d.Reason)
+		}
+	})
+
+	t.Run("a provider asked about by name is refused", func(t *testing.T) {
+		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+		if d.Eligible {
+			t.Fatalf("got %+v", d)
+		}
+	})
+
+	t.Run("the spec's vendor alias disables the same provider", func(t *testing.T) {
+		m, err := Load("test.yaml", []byte("providers:\n  openai:\n    enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if d := Select(m, healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero}); d.Eligible {
+			t.Errorf("providers.openai.enabled: false did not take codex out of service: %+v", d)
+		}
+	})
+
+	t.Run("another profile is not a way around it", func(t *testing.T) {
+		// implementer -> frontier -> claude under `anthropic_only`, which
+		// assignmentFor will reach for when the caller names claude. A disabled
+		// provider must not be reachable through a cross-profile search either.
+		d := Select(off(t, "claude"), healthy, nil, policyNow, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero})
+		if d.Eligible {
+			t.Fatalf("a disabled claude was still reachable through another profile: %s %s", d.Provider, d.Model)
+		}
+	})
+
+	t.Run("disabling one provider does not disable the others", func(t *testing.T) {
+		// The control. A refusal that refused everything would pass every
+		// assertion above and be a far worse bug than the one being fixed.
+		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero})
+		if !d.Eligible || d.Provider != "claude" || d.Model != "sonnet" {
+			t.Fatalf("disabling codex took claude down with it: %+v", d)
+		}
+	})
+
+	t.Run("the shipped matrix disables nothing", func(t *testing.T) {
+		d := Select(shipped(t), healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
+		if !d.Eligible {
+			t.Fatalf("the shipped defaults refuse an ordinary scout: %+v", d)
+		}
+	})
+}
+
+// TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn is the second
+// half of the mode-shift story.
+//
+// CROSSING PROVIDERS IS ALLOWED AND IS THE POINT: §12 says conserve should
+// "shift workload toward another healthy provider", and the shipped `mixed`
+// profile already puts the reviewer capabilities on claude while the
+// implementer ones are codex. Routing away from a constrained provider is the
+// feature, so the fix is NOT to pin the shift to the evaluated provider.
+//
+// What was wrong is narrower and worse: the mode came from codex's capacity and
+// the shift could hand the work to claude, whose capacity nobody had read. The
+// decision then said "conserve, because codex is red" over a claude model. Now
+// the landing provider's capacity is read in its own right and the move is
+// refused when that provider is itself conserving — and the decision reports
+// BOTH readings, so it cannot claim a reason it did not use.
+func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
+	zero := 0.0
+	// `mixed` puts balanced on codex and deep_reviewer on claude, so this one
+	// edit makes a codex-driven spend_down land the scout on claude.
+	crossing, err := Load("test.yaml", []byte("mode_shifts:\n  spend_down:\n    scout: deep_reviewer\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	codexSpendsDown := map[string]winSpec{"five_hour": {used: 12, resets: 75 * time.Minute}, "seven_day": {used: 11, resets: 96 * time.Hour}}
+	claudeHealthy := map[string]winSpec{"five_hour": {used: 12, resets: 4 * time.Hour}, "seven_day": {used: 11, resets: 96 * time.Hour}}
+	claudeRed := map[string]winSpec{"five_hour": {used: 95, resets: 2 * time.Hour}, "seven_day": {used: 11, resets: 96 * time.Hour}}
+
+	scout := Request{Role: "scout", ForecastDemandBeforeResetPct: &zero}
+
+	t.Run("it applies when the landing provider can take the work, and says whose capacity said so", func(t *testing.T) {
+		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeHealthy})
+		d := Select(crossing, snap, nil, policyNow, scout)
+		if d.Mode != ModeSpendDown {
+			t.Fatalf("mode = %q, want spend_down — the rest proves nothing", d.Mode)
+		}
+		if d.Capability != "deep_reviewer" || d.Provider != "claude" || d.Model != "opus" {
+			t.Fatalf("capability %q on %s %s, want deep_reviewer on claude opus — a shift that crosses providers is the feature, not the bug", d.Capability, d.Provider, d.Model)
+		}
+		if d.ModeProvider != "codex" {
+			t.Errorf("ModeProvider = %q, want codex — the mode came from codex's expiring window, and a decision that cannot say so can claim a reason it did not use", d.ModeProvider)
+		}
+		if d.ShiftCapacity == nil {
+			t.Fatal("the shift crossed to claude and no claude capacity was recorded — that is the defect: deciding on one provider's reading and spending another's")
+		}
+		if d.ShiftCapacity.Provider != "claude" || d.ShiftCapacity.Health != limits.HealthGreen {
+			t.Errorf("ShiftCapacity = %+v, want a green claude reading", d.ShiftCapacity)
+		}
+		if d.ShiftMode != ModeNormal {
+			t.Errorf("ShiftMode = %q, want normal (claude's own verdict)", d.ShiftMode)
+		}
+	})
+
+	t.Run("it is REFUSED when the landing provider is itself conserving", func(t *testing.T) {
+		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeRed})
+		d := Select(crossing, snap, nil, policyNow, scout)
+		if d.Mode != ModeSpendDown || d.ModeProvider != "codex" {
+			t.Fatalf("mode %q from %q, want spend_down from codex", d.Mode, d.ModeProvider)
+		}
+		if d.Capability != "balanced" || d.Provider != "codex" || d.Model != "gpt-5.6-terra" {
+			t.Fatalf("the scout was promoted onto a RED claude (%q on %s %s) because CODEX had capacity to spend — a shift onto a constrained provider because a different one was constrained is worse than not shifting",
+				d.Capability, d.Provider, d.Model)
+		}
+		if d.ShiftCapacity == nil || d.ShiftCapacity.Health != limits.HealthRed || d.ShiftMode != ModeConserve {
+			t.Errorf("the refused move did not record the reading it was refused on: %+v / %q", d.ShiftCapacity, d.ShiftMode)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "REFUSED") {
+			t.Errorf("the refusal is silent: %v", d.Reason)
+		}
+	})
+
+	t.Run("a disabled landing provider refuses the move without refusing the decision", func(t *testing.T) {
+		m, err := Load("test.yaml", []byte("mode_shifts:\n  spend_down:\n    scout: deep_reviewer\nproviders:\n  claude:\n    enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeHealthy})
+		d := Select(m, snap, nil, policyNow, scout)
+		if !d.Eligible || d.Provider != "codex" || d.Capability != "balanced" {
+			t.Fatalf("a disabled claude should cost the scout its promotion, not its assignment: %+v", d)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "enabled: false") {
+			t.Errorf("the reason does not name the flag: %v", d.Reason)
+		}
+	})
+
+	t.Run("a same-provider shift needs no second reading", func(t *testing.T) {
+		// The shipped spend_down moves the scout balanced -> frontier, both on
+		// codex under `mixed`. Nothing crosses, so nothing is re-read — and
+		// ShiftCapacity staying nil is what says so.
+		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown})
+		d := Select(shipped(t), snap, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+		if d.Capability != "frontier" || d.Provider != "codex" {
+			t.Fatalf("got %q on %s", d.Capability, d.Provider)
+		}
+		if d.ShiftCapacity != nil {
+			t.Errorf("a shift that stayed on codex recorded a second capacity: %+v", d.ShiftCapacity)
+		}
+		if d.ModeProvider != "codex" {
+			t.Errorf("ModeProvider = %q, want codex", d.ModeProvider)
+		}
+	})
 }

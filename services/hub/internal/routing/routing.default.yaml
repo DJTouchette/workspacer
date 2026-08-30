@@ -236,12 +236,20 @@ forecast_weights:
 # reported at load and ignored.
 mode_shifts:
   # "scouting -> cheaper tier; mechanical work -> cheap; routine fixes ->
-  # balanced; frontier for implementation and hard diagnosis only;
-  # frontier_plus strict escalation only."
+  # balanced; browser validation -> balanced/cheap; frontier for implementation
+  # and hard diagnosis only; frontier_plus strict escalation only."
+  #
+  # `fixer` HAS NO ENTRY HERE ON PURPOSE, and its absence is the point of
+  # keying these by role: section 12 says routine fixes STAY on the balanced
+  # tier under conserve, which is what `roles.fixer: balanced` above already
+  # says, so restating it would be a second place to keep in agreement. The
+  # scout drops off `balanced` and the fixer does not — a capability ->
+  # capability map would have moved both and been wrong about one. Demoting the
+  # role that repairs broken work is also the demotion most likely to cost more
+  # than it saves.
   conserve:
     scout: cheap
     validator: cheap
-    fixer: cheap
     judge: deep_reviewer
   # "balanced scout -> frontier scout; balanced reviewer -> frontier reviewer;
   # frontier high -> frontier max on difficult work." Unused subscription
