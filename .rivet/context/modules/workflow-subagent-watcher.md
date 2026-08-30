@@ -43,3 +43,26 @@ last_reviewed: 2026-07-11
 - `sessionDir` is derived by stripping the `.jsonl` suffix off `transcriptPath` (`workflowWatcher.attach`) — `attach()` no-ops if that strip doesn't change the string ("unexpected path shape"), so any transcript-path format change upstream silently disables the whole watcher for that session.
 - `MAX_RUNS=3` and the `buildUpdate` comment note that dropped runs' `workflowAgentIds` must still be excluded from `subagentActivity`, otherwise agents from aged-out runs would reappear in the plain-subagent list — this coupling between `runs` slicing and `workflowAgentIds` computation is easy to break independently.
 - `journal.jsonl` `started`/`result` entries only update agents already registered from a `meta.json` sighting (`refreshJournal` looks up `run.agents.get(id)` and no-ops if absent) — ordering matters: meta.json must be seen before journal entries are meaningful.
+
+## Hand-authored notes (2026-08-26) — this watcher is Claude-artifact-only; provider-native subagents come from elsewhere
+
+Everything in this module reads Claude Code's on-disk `subagents/*.jsonl`
+sidecars. **Codex subagent activity is app-server NATIVE** — `subAgentActivity`
+and `collabAgentToolCall` items plus thread metadata (`parentThreadId`,
+`agentNickname`, `agentRole`) — so Codex cannot become visible by reusing this
+file watcher at all. The provider-neutral surface lives in claudemon
+(`SessionState.subagents` fed by `apply_subagent_update`); see
+`modules/claudemon-providers.md` for the three wire shapes and the child-thread-id
+join key.
+
+The trap this leaves in the renderer: **the Agents tab renders every
+`session.subagents[]` row with a click target that calls
+`requestAgentWatch(kind: 'subagent')`, and the main-process handler for that
+watch pane reads from `workflowWatcher`.** So a provider-native row added to
+`subagents[]` gets a drill-in affordance the watcher cannot serve. For a first
+provider-neutral snapshot path, either gate the monitor/watch affordance to
+providers with transcript-backed watcher data, or add the provider read path
+first — which is what `readProviderSubagentConversation` +
+`sessions.subagentConversation` now do. The routing rule between the two sources
+is `runId === null`, re-implemented in FOUR places; see
+`domains/renderer-backend-seam.md` before touching either side.

@@ -23,7 +23,7 @@ v1 shipped 2026-08-18. A job = trigger (interval / daily HH:MM+weekday-mask /
 once RFC3339 / manual) + action (spawn an agent with a prompt / call one bus
 capability / run a shell command). A spawn action may first run **context
 steps** (2026-08-18) — code whose output feeds the prompt, and whose guards can
-cancel the run before any model is called. The HUB owns everything (`internal/jobs`):
+cancel the run before any model is called. The HUB owns everything (`services/hub/internal/jobs`):
 storage, validation, scheduling, execution, history — so jobs run in desktop
 mode and `workspacer serve` alike, and keep running while the desktop is
 closed. The desktop's Settings → Jobs section (and the web `/app` for a
@@ -94,7 +94,7 @@ has — the brain publishes no such event, so library hot-reload is Electron-onl
   re-minted every reload and walk the next run forward each time.
 - **Only jobs whose arming/trigger changed are rescheduled** (`sameSchedule`);
   a rename must not re-anchor every interval job on the machine.
-- Proven by `internal/jobs/handedit_e2e_test.go` (real `RunScheduler`
+- Proven by `services/hub/internal/jobs/handedit_e2e_test.go` (real `RunScheduler`
   goroutine, real file, written from outside) and by the harness's
   hand-editing section against a real hub process, including the job firing on
   the real 30s tick.
@@ -162,7 +162,7 @@ has — the brain publishes no such event, so library hot-reload is Electron-onl
   or `workspacer jobs approve <id>`. Proposals sort to the top of Settings →
   Jobs with an amber badge and a disabled enable-checkbox, and arrival rides
   `notify.post` at level info.
-- Facade tools (operator tier only, `cmd/mcp/main.go` group "jobs"):
+- Facade tools (operator tier only, `services/hub/cmd/mcp/main.go` group "jobs"):
   `list_jobs`, `job_history`, `propose_job`, `run_job`, `remove_job` — and
   `tiers_test.go` pins that NO tier ever gains an `upsert_job`/`save_job`/
   `enable_job` tool, since that would make the review step decoration.
@@ -171,7 +171,7 @@ has — the brain publishes no such event, so library hot-reload is Electron-onl
   (the last one is caught by `pluginPermissions.test.ts`, not the Go build).
 
 ## `workspacer jobs` CLI (2026-08-18)
-`cmd/workspacer/jobscmd.go` — host authority (reads `<config>/remote-token`),
+`services/hub/cmd/workspacer/jobscmd.go` — host authority (reads `<config>/remote-token`),
 so it reaches `jobs.upsert`, which the facade withholds. `add -f <file>|-`
 installs a spec written anywhere (the point: an LLM-written spec no longer has
 to be retyped into the UI; editing jobs.json directly is now a first-class
@@ -184,7 +184,7 @@ DEFAULT hub — wrong machine, no error. `splitPositionals` normalizes flag/arg
 order; pinned by `jobscmd_test.go`.
 
 ## The docs are pinned to the validator
-`internal/jobs/docs_test.go` treats `landing/docs.html#jobs` as part of the
+`services/hub/internal/jobs/docs_test.go` treats `landing/docs.html#jobs` as part of the
 spec, because for anyone authoring a job by hand — or an LLM asked to write one
 — it IS the spec:
 - every `<pre data-job-example>` block in the page is parsed and run through
@@ -214,3 +214,33 @@ that JSON has no comments — a model copying it otherwise emits invalid JSON.
   guarded `Failing tests → agent` job whose history is mostly `skipped` (what a
   healthy guarded job looks like); `?empty` shows the template-chip empty state, `?theme=<name>` re-themes. Fully
   interactive: run-now "finishes" after 4s alternating ok/failed.
+
+## Hand-authored notes (2026-08-24) — `jobs.json` is now hand-editable
+
+`services/hub/internal/jobs` `Service` re-reads its spec file whenever the CONTENTS change.
+`reloadIfChangedLocked()` runs at the top of the locked section of `tick`,
+`List`, `Upsert`, `Propose`, `Remove` and `RunNow`. **Change detection is a
+sha256 of the file bytes (`specHash`/`haveSpecHash`), not mtime**, and the same
+hash suppresses the service's own write echo. `New()` is just the first reload,
+so boot and hot-reload share one code path. `RunScheduler`'s interval is now the
+`Service.tickEvery` field (default `defaultTickEvery` = 30s), which is what lets
+a test drive the real scheduler goroutine.
+
+Two things that used to be true are no longer true: an external edit to
+`jobs.json` was invisible until restart, and the next hub write silently
+clobbered it. **Anything that assumed `s.jobs` is a boot-time snapshot is wrong
+now.**
+
+- **Do NOT add an mtime comparison as an optimisation in front of the hash.** The
+  hash exists because a same-size write inside one mtime tick is missable, and
+  this repo has already shipped one millisecond-collision bug.
+- If you add a new `jobs.*` RPC that mutates, call `reloadIfChangedLocked()`
+  first or it will clobber hand edits.
+- The ONLY bookkeeping write to the spec file is the `once` trigger's self-disarm;
+  interval reschedules touch `nextAt` only.
+- Bad-parse and missing-file both keep the last good schedule; only
+  `{"jobs": []}` clears it.
+
+Security note: a `shell`-kind job runs unconfined in the hub process's
+environment, and `jobsTrusted` is a bare `IsTrusted()` — see
+`modules/fly-node-deploy.md` for why the Fly hub passes `--jobs-file ""`.

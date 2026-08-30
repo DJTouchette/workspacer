@@ -1,6 +1,6 @@
 ---
 title: wks-tui: standalone Rust TUI over claudemon REST+SSE
-tags: [tui, rust, claudemon-client, sse, vim]
+tags: [tui, rust, claudemon-client, sse, vim, overlay]
 related_paths:
   - "apps/tui/src/**/*.rs"
   - "apps/tui/Cargo.toml"
@@ -51,3 +51,65 @@ last_reviewed: 2026-08-16
 ## Hand-authored notes (2026-08-16) — federation
 
 - In bus mode the TUI shows the merged federated fleet: `apps/tui/src/federation.rs` (`RemoteFleet` — per-hub session store, hub-stamped `agent.snapshot` ingest, seed/re-seed via `federation.peers` + `hub:<peer>/sessions.snapshots`, tombstones while a peer is down, plus the camelCase-row→`Agent` adapter). `Driver` qualifies per-session verbs as `hub:<peer>/<method>`; remote question answers route via `agents.sendMessage`; inherently local ops (PTY terminal, git) toast "local only" for remote sessions. Sidebar rows are hub-tagged; needs-you and the `m` jump span machines. None of this exists under `--direct` (claudemon has no federation). Sparse brain-only peer rows are ACCEPTED (since 2026-08-16): `fold_row` overlays sparse refreshes onto rich rows without clobbering enrichment, stopped-history rows ride the existing orphan curation, and `RemoteFleet::summary()` counts only live sessions so a brain's resumable-stopped backlog doesn't inflate the dashboard. See `modules/hub-federation.md`.
+
+## Hand-authored notes (2026-08-25/26) — overlay width/height budgets and the `hello` frame
+
+- **Overlays must wrap to (interior − indent); ratatui clips the overflow
+  silently.** The idiom `for l in wrap(text, inner_w) { push(format!("    {l}")) }`
+  overflows whenever the indent is added AFTER wrapping. ratatui's `Paragraph`
+  does not panic or ellipsize — it just drops the tail beyond the block's
+  interior, so the line LOOKS complete. Caught while building `ui/nodes.rs`: the
+  cost sentence "…nothing here can stop it again yet." rendered as "…nothing here
+  can stop" / "again yet.", losing the word "it" mid-sentence, **on a screen whose
+  whole job is telling someone they are about to spend money.** `modal_rect`'s
+  clamp does not help — it guards the RECT, not the line width. Compute the
+  interior once (`w - 2`) and derive a width per indent level
+  (`body_w = inner - 4`, `note_w = inner - 6`), wrapping each block to its own.
+  The failure is invisible in a passing `contains(...)` assertion unless the
+  assertion happens to straddle the clip point, so when adding an overlay, dump
+  the rendered buffer at a realistic size with a temporary `#[ignore]` test and
+  READ it — the small-terminal sweep in `ui_render_tests` only proves it does not
+  panic, not that it is legible.
+- **Overlay prose is HEIGHT-budgeted too, and overflow evicts other content.**
+  `apps/tui/src/nodes.rs::WAKE_COST_NOTE` cannot be extended freely: it is wrapped
+  and rendered inside the fixed-height nodes overlay
+  (`apps/tui/src/ui/nodes.rs`), so adding words pushes content off the top. Adding
+  one clause ("or the phone") broke TWO render tests and only one of them was
+  about the note: `the_overlay_prints_what_a_wake_costs_beside_the_action` failed
+  because "not this one" now straddled a wrap boundary (`joined()` concatenates
+  padded screen rows with `\n`, so **any prose assertion is wrap-sensitive**), and
+  `the_overlay_surfaces_a_crash_record_and_failed_wakes` failed because the extra
+  wrapped line **scrolled the "did not end cleanly" crash notice out of the
+  visible overlay entirely.** The second failure is the dangerous one: a longer
+  note silently evicts the node's crash record from the only place a TUI user ever
+  sees it, and the failure message points at the note rather than at the eviction.
+  **Treat overlay prose strings as budgeted, not free-form.** After editing one,
+  run `cargo test` in `apps/tui` and READ the rendered overlay dump in the failure
+  output — if a line other than the one you edited disappeared, you spent height
+  you did not have. If a future edit genuinely needs the length, add a
+  whitespace-collapsing helper rather than reflowing the sentence to suit the wrap.
+- **The bus client silently dropped the hub `hello` frame, so no client-side tier
+  gating was possible.** `handle_frame` in `apps/tui/src/bus.rs` matched
+  `result`/`error`/`event` and swallowed everything else under
+  `_ => {} // hello / subscribed / unsubscribed acks`. The hub's `hello` frame is
+  **the ONLY place a client learns the tier it authenticated as**
+  (`{"op":"hello","scope":"operator"|<tier>,"methods":[…]}`, from
+  `conn.helloFrame()` in `services/hub/internal/bus/bus.go` — a trusted
+  host/operator token reports "operator", a scoped token its own tier, a plugin
+  token nothing at all). Dropping it meant the TUI could not gate any
+  host-authority-only capability and would have offered controls that die on
+  press. Fixed by republishing it on a synthetic topic `TOPIC_BUS_HELLO`
+  (`"_bus.hello"`), the same shape as the pre-existing `TOPIC_BUS_CONNECTED`;
+  `App::bus_scope` reads it in `apply_bus_event`. (Borrowck wrinkle: the match
+  scrutinee borrows `v`, so the hello arm must clone rather than move it.)
+  `/app`'s `hubBusClient` already did this; the TUI was the last client without
+  it. **Read the tier from `App::bus_scope`/`App::can_wake_nodes` rather than
+  adding a second discovery path, and never infer authority from the presence of a
+  token** — a scoped token is still a token. Absent scope reads as NOT operator,
+  the safe default for anything that spends money.
+- **The module header in `apps/tui/src/main.rs` is STALE.** It still says the TUI
+  talks directly to claudemon and "can't rely on" hub capabilities because the
+  Electron main process registers them. `apps/tui/README.md` and the actual
+  `Cli`/startup flow are bus-first with a claudemon-direct fallback (see the
+  Overview above). Trust the README and the code, not that header, and update it
+  if you touch TUI startup.

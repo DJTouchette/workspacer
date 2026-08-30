@@ -47,3 +47,40 @@ Three coordinated Go packages keep the hub's supervised child tree (brain capabi
 - `jobobject.Confine()`'s job handle is *intentionally* never closed — closing it would defeat the mechanism, since job death (triggered by process exit) is what fires `KILL_ON_JOB_CLOSE`. Nested jobs work since Windows 8, so this composes with an outer IDE/service-wrapper job.
 - Two twin structures must stay in sync when adding a new supervised process type: the `Spec` struct's defaulting methods (`healthPeriod`/`restartWait`/`maxRestartWait`/`restartResetAfter`) and the per-callsite `supervisor.New(supervisor.Spec{...})` construction in `services/hub/internal/plugin/manager.go` / `services/hub/cmd/hub/main.go` — omitted fields silently fall back to defaults (2s/1s/30s/30s).
 - `mergeEnv` overrides same-key entries in `base` rather than appending duplicates, because duplicate `KEY=val` resolution is platform-dependent; any code adding env vars to a `Spec.Env` should rely on override semantics, not append-and-hope.
+
+## Hand-authored notes (2026-08-21) — hot-swapping the hub binary in a dev build is just SIGTERM
+
+In an `npm run dev` desktop build the hub is an **app-OWNED child of Electron
+main**. `hubDaemon.ts`'s `launch()` registers
+`child.on('exit') → scheduleRestart(bin)`, guarded only by `intentionalStop` (set
+by `stopHub()`/quit); `scheduleRestart` uses `RestartBackoff`
+(`main/lib/daemonUtils.ts`: base 1s, ×2, cap 30s, 10 attempts / 60s reset) and
+calls `launch(bin)` again, which **re-reads the binary from disk and
+RECONSTRUCTS argv from config** — so a plain `kill -TERM <hubpid>` swaps a rebuilt
+`services/hub/hub` in with byte-identical flags. Measured live: new listener on
+:7895 ~3s later.
+
+The process-tree facts that make this safe: `claudemon` (:7890/:7891) and the
+`mcp` bridge (:7897) are **SIBLINGS** of the hub — both children of Electron main,
+not of the hub — so agent sessions are untouched, and the mcp bridge reconnects
+itself via `services/hub/internal/busclient` (200ms→5s backoff, subscriptions re-sent). Only
+the hub's own children die and get respawned: the `brain` provider and the bwrap
+plugin sidecars (`--die-with-parent`).
+
+**This is the ONLY way to ship a `/m` PWA change**: `mobile.html`, `sw.js`, the
+manifest and the icons are `go:embed`-ed in `services/hub/cmd/hub/remote.go` with no dev-mode
+disk fallback, so a running hub serves its build-time copy forever. Anyone who
+rebuilds the hub and then refreshes `/m` sees the OLD PWA and concludes the build
+did not take.
+
+**Check the hub's PPID first.** PPID == Electron main ⇒ app-owned ⇒ `kill -TERM`
+and wait ~3s. If `workspacer serve` started it, `startHub()` **ADOPTED** it (the
+health probe wins before the spawn path) and there is no supervision — killing
+that hub leaves nothing to restart it.
+
+Verify the swap, don't assume it: `md5sum /proc/<newpid>/exe services/hub/hub`
+must match (the stale process's `/proc/<pid>/exe` reads `(deleted)`), then
+`diff <(curl -s http://127.0.0.1:7895/m) <(git show HEAD:services/hub/cmd/hub/mobile.html)`
+should be empty. PWA assets live at ROOT paths (`/manifest.webmanifest`,
+`/sw.js`, `/icon-192.png`), not under `/m/`. Bus smoke-test frames use `op`, not
+`type`: `{"op":"call","id":"1","method":"agents.list"}`.

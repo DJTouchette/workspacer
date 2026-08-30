@@ -37,3 +37,26 @@ The pane system defines 18 UI pane types that users can open as tabs and split w
 - **Pane components must export default**: Each component in `panes/` must be a default export so `React.lazy(() => import(...))` works. A named export will silently fail to render (Suspense spinner hangs).
 - **Config state persists pane-specific fields**: PaneConfig carries conditional fields like `resumeSessionId` (claude only), `url` (browser/plugin), `filePath` (editor), `watchSessionId` (agentwatch), etc. If you add a new pane type with custom state, add a new optional field to PaneConfig and thread it through the open-pane callbacks.
 - **Editor pane is legacy**: The 'editor' type renders differently based on config.editor.engine: 'terminal' mode wraps a TerminalPane with a command, 'codemirror' (default) now routes to the sandboxed editor plugin instead.
+
+## Hand-authored notes (2026-08-24) — grid geometry is now single-sourced; keyboard nav must not re-derive it
+
+`ScrollContainer.tsx`'s `TilingLayout` special-cases exactly **3 panes** as a main
+pane spanning both rows on the left (colSpan 1, rowSpan 2) with two panes stacked
+on the right — **not a uniform grid**. `useKeyboardNav.ts`'s `navigatePane`
+computed vertical/horizontal neighbours as `currentIdx ± tilingColumns(count)`,
+which assumes every cell is a uniform 1×1 square. For the top-right pane (index 1)
+that gave `1+2=3`, out of range for a 3-pane tab, so **nav-down (prefix `j`)
+silently did nothing even though a pane sits directly below it on screen**.
+nav-left/right happened to still move focus to SOME pane by luck of the index
+arithmetic, which is why only nav-down was reported as broken.
+
+The two are now unified: **`computePaneLayouts(count, isSmallScreen)` in
+`apps/desktop/src/renderer/src/lib/layoutUtils.ts` is the single source of the
+grid geometry** (col/row/colSpan/rowSpan per pane), consumed by both
+`ScrollContainer`'s `TilingLayout` (rendering) and `useKeyboardNav`'s
+`navigatePane` via `findAdjacentPaneIndex` (spatial neighbour lookup by edge gap
++ perpendicular overlap, **not flat index math**).
+
+**Any new special-cased pane-count layout belongs in `computePaneLayouts`, not
+inline in `ScrollContainer`** — otherwise the same class of bug reappears for a
+different pane count.

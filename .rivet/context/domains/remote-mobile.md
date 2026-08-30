@@ -56,3 +56,26 @@ Five screens behind four tabs — Fleet, Needs You, Chat, Inspector (Flows/Agent
 ## Hand-authored notes (2026-08-23) — desktop vocabulary follows the PWA, with named exceptions
 
 - **The desktop renderer's fleet vocabulary now matches `/m`'s, and future UI copy should keep following `/m`, not the other way round.** `/m` moved to fleet-manager language first (commit `8d5db890`): state badges Working→"In flight", Idle→"Standing by", Finished→"Landed"; verb Spawn→Dispatch; inbox tab "Needs you"→"Waiting". The desktop renderer (SideBar, FleetDeck, AgentCard, AttentionCard, InboxDrawer, OverviewPane, SpawnAgentDialog, HomeSpace, AskPane, NotificationsSection, ClaudeProfilesSection, JobsSection, LibraryPane, Onboarding, CommandPalette, `shortcuts.ts`, `pluginPermissions.ts`, `useAttentionFeed`, `AgentWatchPane`) was then renamed to match. **Three exceptions are deliberate, not oversights — keep them if sweeping vocabulary again**: (1) `WorkingTimer.tsx`'s "Working" verb stayed — no PWA equivalent exists, and renaming it broke 8+ test assertions while mismatching the component's own name; (2) InboxDrawer's "Review" tab and the bigdiff "Review"/"Review changes" labels stayed put despite the PWA saying "Landed" — "Review" is already a distinct, load-bearing feature name elsewhere (the git-diff `ReviewPane` / paneMenu `'review'` pane type), and renaming would create ambiguity between two unrelated "Review" concepts; (3) "agent" as the general noun was NOT swapped to "worker" anywhere — matches the PWA's own restraint (only the state/verb vocabulary moved, not every noun). Approval/question language ("Needs approval", "Waiting for input") was untouched by the PWA and so left alone on desktop too.
+
+## Hand-authored notes (2026-08-23) — `attentionFor` kinds are shared across differently-shaped payloads
+
+In `services/hub/cmd/hub/mobile.html`, `attentionFor()` can emit the `'stuck'`
+kind TWO ways: (1) a stale `pendingQuestions` item past `STUCK_MS`, which carries
+`it.questions`, and (2) a progress-fingerprint stall with **no `questions` at
+all**, just title/detail like bigdiff/error. `inboxCard()`'s render branch was
+`it.kind === 'question' || it.kind === 'stuck'`, which unconditionally rendered
+the questions-shaped body (`qs2 = it.questions || []`) for BOTH — so a stall card
+rendered an empty question block with a dangling "Decline & stop" button and **no
+visible title or detail text at all**.
+
+Fixed to `it.kind === 'question' || (it.kind === 'stuck' && it.questions)`, plus a
+dedicated no-questions `'stuck'` branch showing `it.title` bolded above
+`it.detail` — the generic bigdiff/done branch drops `it.title` in favour of
+`it.detail` alone, which would have erased the Not-moving / No-signal distinction
+entirely.
+
+**`kind` alone does not select the right body shape.** Any future `attentionFor()`
+item that reuses an existing kind with a different payload must have
+`inboxCard()`'s branch conditions checked explicitly. See
+`domains/session-lifecycle.md` for why the Not-moving / No-signal distinction
+exists at all (only Claude-on-PTY has a heartbeat).
