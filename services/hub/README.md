@@ -140,7 +140,7 @@ credential gets nothing by default. The dial is `-untokened` (env
 | --- | --- |
 | `deny` (**default**) | 401 on `/mcp` and `/sse`. `/health` stays open. |
 | `view` | the read-only tier — no spawning or writing, but every agent list and every transcript |
-| `operator` | everything: spawn agents, write files, rewrite config. The pre-0.151 default, kept as an explicit opt-in |
+| `operator` | everything: spawn agents, write files, rewrite config. The pre-0.160 default, kept as an explicit opt-in |
 
 A *present but unknown* token is always 401, under every setting — a revoked
 session token never falls through to the untokened tier.

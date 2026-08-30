@@ -11,6 +11,13 @@ export function baseVersion(v: string): string {
 }
 
 /**
+ * Longest "taste" that still reads as a notification. A CHANGELOG entry is a
+ * paragraph, not a line — the 0.160.0 lead entry is over 1000 characters — and
+ * the caller appends a "see Settings → Updates" tail after this.
+ */
+const TASTE_MAX = 220;
+
+/**
  * Build the notice body: the section titles and how many entries each has, then
  * the first entry as a taste. Deliberately NOT the whole release — the center is
  * a list of one-liners, and the full notes are one click away in Settings.
@@ -22,10 +29,21 @@ export function whatsNewBody(version: string): string {
     .map((s) => `${s.items.length} ${s.title.toLowerCase()}`)
     .join(' · ');
   const first = release.sections[0]?.items[0] ?? '';
-  // Strip the leading bold lead-in that most entries open with, so the toast
-  // reads as a sentence rather than as a heading fragment.
-  const taste = first.replace(/^\*\*(.+?)\*\*\s*/, '$1 ').trim();
+  // This body is PLAIN TEXT — an OS notification and an in-app toast, neither of
+  // which renders markdown — so EVERY bold run has to be unwrapped, not just the
+  // lead-in one an entry opens with. Entries routinely bold a term mid-sentence,
+  // and a literal `**` in a notification reads as a rendering bug.
+  const taste = clip(first.replace(/\*\*(.+?)\*\*/g, '$1').trim(), TASTE_MAX);
   return counts && taste ? `${counts} — ${taste}` : counts || taste;
+}
+
+/** Clip to `max`, at a word boundary when there is a plausible one. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  const kept = space > max * 0.6 ? cut.slice(0, space) : cut;
+  return kept.replace(/[\s,;:.\u2014-]+$/, '') + '…';
 }
 
 /**

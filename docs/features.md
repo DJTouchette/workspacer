@@ -145,7 +145,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Example: agent-dashboard | Bus-native agent grid webview | 🔵 Working |
 | Example: clock-plugin | Minimal demo webview | 🔵 Working |
 
-## 9b. Hub federation (hub-of-hubs) — NEXT RELEASE (v0.150)
+## 9b. Hub federation (hub-of-hubs)
 
 | Feature | Notes | Status |
 |---|---|---|
@@ -161,7 +161,7 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` MCP clients | 🟢 Solid |
 | MCP tools (~50, tiered) | The driving set (list_agents, get_transcript, spawn_agent, create_terminal, send_message, approve, answer, signal, terminal_input, notify) plus snapshots/conversations, config/profiles, saved sessions/layouts, library, analytics, path-scoped fs/search, a per-tier `help` tool, and UI navigation (focus_agent/open_pane/open_browser/open_plugin/open_spawn_dialog, triage+) | 🟢 Solid |
-| Tool tiers (toolScope) | Spawn-time view/triage/operator tiers: the desktop mints a per-session scoped token (tokens.json), the facade filters tools/list + calls per request token, revokes at session end + boot sweep. Untokened loopback stays operator (back-compat) | 🟢 Solid |
+| Tool tiers (toolScope) | Spawn-time view/triage/operator tiers: the desktop mints a per-session scoped token (tokens.json), the facade filters tools/list + calls per request token, revokes at session end + boot sweep. Credential-less loopback requests are refused (`facade.untokenedAccess: deny`, the shipped default; `view`/`operator` are opt-in) | 🟢 Solid |
 | Plugin-contributed tools | Manifest `tools` (bound to consent-pinned `provides`) → hub-local `plugins.tools` → facade polls + grafts per-token; strictly opt-in per session (`pluginTools`, spawn-dialog pills) | 🟢 Solid |
 | Per-method capability tokens | Enforced: view/triage/operator grant sets at the router's dispatch seam (see §8); the facade's own inbound tiers derive from the same allowlists | 🟢 Solid |
 
