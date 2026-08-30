@@ -16,6 +16,10 @@ import {
 } from './primitives';
 import HarnessModelSelect from './HarnessModelSelect';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
+import {
+  WARMABLE_PROVIDERS,
+  type WarmableProvider,
+} from '../../../../main/shared/keepWarmProviders';
 import type { AgentProvider } from '../../types/pane';
 import { useProviderDetection } from '../../hooks/useProviderDetection';
 import {
@@ -46,25 +50,25 @@ const TITLE_PROVIDERS: { label: string; value: AgentProvider }[] = [
   { label: 'Pi', value: 'pi' },
 ];
 
-/** Harnesses keep-warm can actually warm — the renderer's copy of main's
- *  `WARMABLE` set (main/services/keepWarmService.ts).
+/** Harnesses keep-warm can actually warm, labelled for the buttons. The PAIR
+ *  is not restated here: it comes from `main/shared/keepWarmProviders`, the
+ *  same list `main/services/keepWarmService.ts` filters the configured
+ *  providers through, so an option this row offers cannot be one the service
+ *  silently drops. That module says WHY it is these two and not all five.
  *
- *  This is deliberately NOT all five providers, and it is not an oversight:
- *  Claude and Codex are the only harnesses that meter a 5-hour subscription
- *  window a ping can START. Copilot bills monthly premium requests and exposes
- *  no local quota at all (GitHub answers 403 to `copilot_internal/v2/token`),
- *  and opencode/pi are bring-your-own-key with no window — warming any of the
- *  three would spend tokens to start something that does not exist. Main
- *  filters the configured list through the same pair, so an option outside it
- *  would be a button that writes config the service then silently drops.
+ *  The label map is a total `Record`, so adding a provider to the shared list
+ *  fails typecheck here until it is named rather than rendering as an id.
  *
- *  What DOES belong to detection is the other half: of these two, offer the
+ *  What DOES belong to the renderer is the other half: of these two, offer the
  *  ones this machine has. Hence `visibleProviderOptions` below — the buttons
  *  are the intersection, not either half alone. */
-const KEEP_WARM_PROVIDERS: { label: string; value: AgentProvider }[] = [
-  { label: 'Claude', value: 'claude' },
-  { label: 'Codex', value: 'codex' },
-];
+const KEEP_WARM_LABELS: Record<WarmableProvider, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+};
+const KEEP_WARM_PROVIDERS: { label: string; value: AgentProvider }[] = WARMABLE_PROVIDERS.map(
+  (value) => ({ label: KEEP_WARM_LABELS[value], value: value as AgentProvider }),
+);
 
 const AGENT_PROVIDERS: {
   label: string;
