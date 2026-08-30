@@ -32,12 +32,38 @@ interface SessionSectionProps {
 
 /** Harnesses that can answer a one-shot title call — every provider with a
  *  `directCompletion` adapter (services/directCompletion). One row each,
- *  because the titler uses the AGENT's harness, not a configured one. */
+ *  because the titler uses the AGENT's harness, not a configured one.
+ *
+ *  Copilot belongs here even though its only servable model id is `auto`: this
+ *  list is also the label source for the row below it, so a copilot-primary
+ *  user (titleHarness defaults to `agents.defaultProvider`) otherwise reads
+ *  "undefined title model" against a picker with nothing selected. */
 const TITLE_PROVIDERS: { label: string; value: AgentProvider }[] = [
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
+  { label: 'Copilot', value: 'copilot' },
   { label: 'OpenCode', value: 'opencode' },
   { label: 'Pi', value: 'pi' },
+];
+
+/** Harnesses keep-warm can actually warm — the renderer's copy of main's
+ *  `WARMABLE` set (main/services/keepWarmService.ts).
+ *
+ *  This is deliberately NOT all five providers, and it is not an oversight:
+ *  Claude and Codex are the only harnesses that meter a 5-hour subscription
+ *  window a ping can START. Copilot bills monthly premium requests and exposes
+ *  no local quota at all (GitHub answers 403 to `copilot_internal/v2/token`),
+ *  and opencode/pi are bring-your-own-key with no window — warming any of the
+ *  three would spend tokens to start something that does not exist. Main
+ *  filters the configured list through the same pair, so an option outside it
+ *  would be a button that writes config the service then silently drops.
+ *
+ *  What DOES belong to detection is the other half: of these two, offer the
+ *  ones this machine has. Hence `visibleProviderOptions` below — the buttons
+ *  are the intersection, not either half alone. */
+const KEEP_WARM_PROVIDERS: { label: string; value: AgentProvider }[] = [
+  { label: 'Claude', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
 ];
 
 const AGENT_PROVIDERS: {
@@ -265,6 +291,16 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
     titleHarness,
     ...Object.keys(config.agents?.autoTitle?.models ?? {}),
   ]);
+  // Keep-warm's buttons are the intersection of what keep-warm supports
+  // (KEEP_WARM_PROVIDERS) and what is installed — the same filter the pickers
+  // above use, rather than the hardcoded pair this row used to render. Already
+  // configured providers are kept (flagged) so a warm target whose CLI went
+  // away stays visible and can still be switched OFF.
+  const visibleKeepWarmProviders = visibleProviderOptions(
+    KEEP_WARM_PROVIDERS,
+    detectionOrNull,
+    keepWarm.providers,
+  );
   // Same resolution main uses (lib/roleModels): this harness's entry, then the
   // legacy single field but only where it is servable — `'haiku'` is a claude
   // alias and must not be shown as codex's configured title model.
@@ -568,24 +604,37 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       </div>
       {keepWarm.enabled && (
         <>
-          <Row label="Warm providers">
-            <div style={{ display: 'flex', gap: 4 }}>
-              {(['claude', 'codex'] as const).map((p) => (
-                <ModeButton
-                  key={p}
-                  label={p === 'claude' ? 'Claude' : 'Codex'}
-                  active={keepWarm.providers.includes(p)}
-                  onClick={() =>
-                    saveKeepWarm({
-                      providers: keepWarm.providers.includes(p)
-                        ? keepWarm.providers.filter((x) => x !== p)
-                        : [...keepWarm.providers, p],
-                    })
-                  }
-                />
-              ))}
+          {visibleKeepWarmProviders.length > 0 ? (
+            <Row label="Warm providers">
+              <div style={{ display: 'flex', gap: 4 }}>
+                {visibleKeepWarmProviders.map((p) => (
+                  <ModeButton
+                    key={p.value}
+                    label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
+                    active={keepWarm.providers.includes(p.value)}
+                    onClick={() =>
+                      saveKeepWarm({
+                        providers: keepWarm.providers.includes(p.value)
+                          ? keepWarm.providers.filter((x) => x !== p.value)
+                          : [...keepWarm.providers, p.value],
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            </Row>
+          ) : (
+            // Neither warmable CLI is installed, so there is nothing to select.
+            // An empty row or a dead disabled control reads as a broken panel;
+            // a line says which harnesses this applies to and why yours isn't
+            // one, which is the only useful thing this space can do.
+            <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+              Nothing to warm on this machine. Only Claude and Codex meter a 5-hour subscription
+              window that a ping can start — Copilot bills per premium request, and OpenCode and Pi
+              are bring-your-own-key. Install Claude Code or the Codex CLI (or point at one under
+              Tool paths below) and it will appear here.
             </div>
-          </Row>
+          )}
           <Row label="Warm trigger">
             <div style={{ display: 'flex', gap: 4 }}>
               <ModeButton
