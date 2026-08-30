@@ -140,11 +140,15 @@ profiles:
     balanced: { provider: codex, model: gpt-5.6-terra, effort: high }
     frontier: { provider: codex, model: gpt-5.6-sol, effort: high }
     frontier_max: { provider: codex, model: gpt-5.6-sol, effort: xhigh }
-    # Cross-family, so independent by construction — `fresh` is not needed to
-    # make it so, though nothing stops you setting it.
-    reviewer: { provider: claude, model: sonnet, effort: high }
-    deep_reviewer: { provider: claude, model: opus, effort: high }
-    frontier_plus: { provider: claude, model: fable }
+    # These are cross-family here, so they are already independent of a codex
+    # implementer by construction. `fresh` is set anyway: it is a property of
+    # the ROLE, not of whether a profile happens to pair two families. Leave it
+    # unset and freshness holds only by accident of the model pairing, and it
+    # stops holding the moment someone edits this profile so implementer and
+    # reviewer land on the same family.
+    reviewer: { provider: claude, model: sonnet, effort: high, fresh: true }
+    deep_reviewer: { provider: claude, model: opus, effort: high, fresh: true }
+    frontier_plus: { provider: claude, model: fable, fresh: true }
 
   # One subscription. The critical detail is FRESH REVIEW CONTEXT: the reviewer
   # gets the ticket, the acceptance criteria, the architecture rules, the diff,
@@ -169,7 +173,7 @@ profiles:
     frontier_max: { provider: claude, model: opus, effort: max }
     reviewer: { provider: claude, model: sonnet, effort: high, fresh: true }
     deep_reviewer: { provider: claude, model: opus, effort: high, fresh: true }
-    frontier_plus: { provider: claude, model: fable }
+    frontier_plus: { provider: claude, model: fable, fresh: true }
 
 # ---------------------------------------------------------------------------
 # PROVIDERS — what is known about each one's capacity, not what it can do.
