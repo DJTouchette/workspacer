@@ -1320,6 +1320,32 @@ describe('libraryService — the global seed is additive per item', () => {
     expect(marker.seeded).toHaveLength(7);
   });
 
+  it('ends the ship task with a reviewer handoff, not with the worker grading itself', () => {
+    // Invariant 3 of the routing spec: review is independent of implementation.
+    // A ship worker still VERIFIES itself against the project's checks (that is
+    // an external oracle, and it is what produced every honest caveat the fleet
+    // gets); what it must not do is pronounce on whether its own work is right.
+    // The two readings are one word apart in this body, so both are pinned.
+    seed();
+    const body = fs.readFileSync(path.join(libDir(), 'ship-task.md'), 'utf-8');
+
+    // Self-verification, strengthened: an exit code is not a result.
+    expect(body).toContain('Run the project’s own checks');
+    expect(body).toMatch(/Read what a check actually printed rather than trusting its exit code/);
+    expect(body).toMatch(/proved by RUNNING something and which you only read/);
+
+    // Self-review, gone: it hands off instead.
+    expect(body).toMatch(/Do not judge whether your own work is correct/);
+    expect(body).toMatch(/HANDOFF/);
+    expect(body).toMatch(/fresh session that never saw how you got here/);
+
+    // And the handoff carries the spec's list, minus the anchoring half.
+    expect(body).toMatch(/acceptance criteria/);
+    expect(body).toMatch(/architectural constraints/);
+    expect(body).toMatch(/files a reviewer should read first/);
+    expect(body).toMatch(/Leave your plan and your reasoning out of it/);
+  });
+
   it('seeds a NEW starter into a populated pre-marker library', () => {
     // The exact shape of the install that surfaced this: two of the four
     // originals kept, two deleted, no marker, no dispatch templates.

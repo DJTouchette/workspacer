@@ -47,6 +47,10 @@ describe('installManagerSkills', () => {
     // conversation — the digest reads it there instead of re-asking the worker.
     expect(standup).toContain('report_progress');
     expect(standup).toContain('NEEDS A DECISION');
+    // Landed code that nobody independent has looked at is an outstanding
+    // dispatch, so the digest has to surface it (routing spec Invariant 3).
+    expect(standup).toContain('have not been reviewed yet');
+    expect(standup).toMatch(/implementer's own sign-off does not count/);
     expect(checkpoint).toContain('most specific home');
     expect(checkpoint).toContain('.workspacer/brief.md');
     expect(checkpoint).toContain('inspect-then-edit');
