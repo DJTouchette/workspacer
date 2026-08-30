@@ -2887,3 +2887,38 @@ func TestMaxLinkHopsMatchesTheFixture(t *testing.T) {
 		t.Errorf("maxLinkHops = %d, the contract says %d", maxLinkHops, *fx.MaxLinkHops)
 	}
 }
+
+// TestHubStateDirsFor pins the darwin branch the corpus cannot reach.
+//
+// The containment corpus exercises the SIBLING clause on whatever platform the
+// suite runs on. It cannot exercise the darwin one: cmd/hub resolves its state
+// dir with os.UserConfigDir(), which on darwin is $HOME/Library/Application
+// Support and IGNORES XDG_CONFIG_HOME, while configDir() there is
+// ~/.config/workspacer — so the two are not siblings at all and a copy without
+// this branch leaves jobs.json unprotected on every Mac. Injected inputs are the
+// only way to run it from Linux CI.
+//
+// TWIN: the same three rows in internal/bus/policy_test.go and in
+// pathConfinement.test.ts.
+func TestHubStateDirsFor(t *testing.T) {
+	linux := hubStateDirsFor("linux", filepath.Join("/home/u", ".config", "workspacer"), "/home/u")
+	if len(linux) != 1 || linux[0] != filepath.Join("/home/u", ".config", "workspacer-hub") {
+		t.Errorf("linux: got %v, want just the config-dir sibling", linux)
+	}
+	darwin := hubStateDirsFor("darwin", filepath.Join("/home/u", ".config", "workspacer"), "/home/u")
+	want := []string{
+		filepath.Join("/home/u", ".config", "workspacer-hub"),
+		filepath.Join("/home/u", "Library", "Application Support", "workspacer-hub"),
+	}
+	if len(darwin) != len(want) || darwin[0] != want[0] || darwin[1] != want[1] {
+		t.Errorf("darwin: got %v, want %v", darwin, want)
+	}
+	// configDir() answers "" when there is no home to anchor on. A "-hub"
+	// appended to that is the relative string "-hub", which canonicalRoot
+	// discards — but the gate reads an unresolvable candidate as "cannot prove
+	// the target is outside it" and denies EVERYTHING, so a blank must not reach
+	// it as a candidate at all.
+	if got := hubStateDirsFor("linux", "   ", "/home/u"); len(got) != 0 {
+		t.Errorf("blank config dir: got %v, want no candidates", got)
+	}
+}

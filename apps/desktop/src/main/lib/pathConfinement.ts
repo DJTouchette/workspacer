@@ -494,6 +494,62 @@ export function isAgentInterpretedConfigPath(canonicalTarget: string): boolean {
   return false;
 }
 
+/** The hub's own state directory, as a SIBLING of the workspacer config dir.
+ *  Not a `path.join` of anything: the derived root is built by CONCATENATION so
+ *  the prefix the caller's config dir actually names is preserved verbatim.
+ *  `path.join`/`filepath.Join` Clean their argument, which collapses a `link/..`
+ *  inside `XDG_CONFIG_HOME` before any symlink is read — and the whole point of
+ *  handing the result to `canonicalRoot` is that the per-component walk resolves
+ *  it instead.
+ *
+ *  TWIN: hubStateDirSuffix in cmd/brain/fsguard.go and internal/bus/policy.go. */
+const HUB_STATE_DIR_SUFFIX = '-hub';
+
+/** Where `os.UserConfigDir()` lands on macOS. cmd/hub resolves its state dir
+ *  with Go's `os.UserConfigDir()`, which on darwin is
+ *  `$HOME/Library/Application Support` and IGNORES `XDG_CONFIG_HOME` — while
+ *  `getConfigDir()` there is `~/.config/workspacer`. So on macOS the two are not
+ *  siblings at all and the suffix clause above misses the real directory. */
+const DARWIN_APP_SUPPORT = ['Library', 'Application Support'];
+const HUB_STATE_DIR_NAME = 'workspacer-hub';
+
+/**
+ * The directories the HUB keeps its own host-trusted state in, un-canonicalized.
+ *
+ * `~/.config/workspacer-hub/` is not inside `getConfigDir()` — it is a SIBLING
+ * of it, so every containment test in the gate below answered "outside the
+ * config dir, therefore not secret by location" for it. What lives there:
+ * `jobs.json` (PERSISTED ARGV — a shell command, a spawn cwd+prompt, a
+ * capability call, run by the hub on the user's behalf), `routing.yaml` (the
+ * capability matrix and the per-project autonomy ceiling), `layout.json`,
+ * `vapid.json` (the web-push keypair) and the push subscriptions.
+ *
+ * Reaching it needs an agent whose cwd CONTAINS it — `$HOME` or `~/.config` —
+ * which is not exotic: `agents.spawn({})` with no cwd normalizes to $HOME, and
+ * an operator-tier caller can spawn an agent at either. Once inside such a root
+ * `fs.write` had nothing left to refuse, so an agent could rewrite the hub's job
+ * argv, or raise its own ceiling. The `configStoreRoots()` carve-outs are
+ * deliberately NOT extended here: nothing legitimately edits this directory
+ * through `fs.*`; the hub owns it and hand-editing is a human at a terminal.
+ *
+ * TWIN: hubStateDirs in cmd/brain/fsguard.go and internal/bus/policy.go.
+ */
+export function hubStateDirs(): string[] {
+  return hubStateDirsFor(process.platform, getConfigDir(), os.homedir());
+}
+
+/** hubStateDirs with its two environment reads injected, so the darwin branch is
+ *  exercisable on any host. TWIN: hubStateDirsFor in cmd/brain/fsguard.go and
+ *  internal/bus/policy.go. */
+export function hubStateDirsFor(platform: string, configDir: string, home: string): string[] {
+  const out: string[] = [];
+  if (configDir.trim() !== '') out.push(configDir + HUB_STATE_DIR_SUFFIX);
+  if (platform === 'darwin' && home) {
+    out.push(path.join(home, ...DARWIN_APP_SUPPORT, HUB_STATE_DIR_NAME));
+  }
+  return out;
+}
+
 /**
  * True when any component of an ALREADY-canonical path is the repository
  * metadata directory.
@@ -623,6 +679,10 @@ export function isGitGlobalConfigPath(canonicalTarget: string): boolean {
  * plugins/** and the dir itself. The Go twin (fsguard.go) denies the same whole
  * remainder; the two are supposed to stay word for word.
  *
+ * The hub's own state directory is refused on the same footing and for the same
+ * reason, and it needed saying separately because it is a SIBLING of the config
+ * dir rather than a child of it — see hubStateDirs.
+ *
  * Order matters: the basename check runs FIRST and unconditionally, so a
  * credential name inside a store carve-out is still refused. The two git gates
  * (`.git/**` and the per-user global config) run next, for the same reason and
@@ -641,6 +701,16 @@ export function isSecretPath(canonicalTarget: string): boolean {
   const cfg = canonicalRoot(getConfigDir());
   // An unverifiable config dir means we cannot prove the target is outside it.
   if (cfg === null) return true;
+  // The hub's state dir is a SIBLING of the config dir, so it has to be tested
+  // BEFORE the "outside the config dir ⇒ not secret" early return below — which
+  // is exactly what answered `false` for jobs.json until now. Same posture as
+  // the config dir on an unresolvable candidate: a root we cannot resolve is a
+  // root we cannot prove the target is outside of.
+  for (const hub of hubStateDirs()) {
+    const hr = canonicalRoot(hub);
+    if (hr === null) return true;
+    if (containsCanonicalFolded(hr, canonicalTarget)) return true;
+  }
   if (!containsCanonicalFolded(cfg, canonicalTarget)) return false;
   for (const store of configStoreRoots()) {
     const sr = canonicalRoot(store);

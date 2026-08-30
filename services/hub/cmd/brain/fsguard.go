@@ -561,6 +561,61 @@ var secretBasenames = map[string]bool{
 	".settings.json": true, // per-plugin settings, secrets in plaintext
 }
 
+// hubStateDirSuffix turns the workspacer config dir into the hub's own state
+// directory, which is its SIBLING: <configDir>-hub.
+//
+// Concatenated onto the config dir rather than rebuilt with filepath.Join,
+// because Join Cleans — an XDG_CONFIG_HOME carrying "link/.." would have that
+// collapsed textually before a single symlink was read, and the point of
+// handing the result to canonicalRoot is that the per-component walk resolves
+// it. TWIN: HUB_STATE_DIR_SUFFIX in pathConfinement.ts and internal/bus/policy.go.
+const hubStateDirSuffix = "-hub"
+
+// hubStateDirName / darwinAppSupport cover the one platform where the sibling
+// rule does not hold: cmd/hub resolves its state dir with os.UserConfigDir(),
+// which on darwin is $HOME/Library/Application Support and IGNORES
+// XDG_CONFIG_HOME, while configDir() there is ~/.config/workspacer.
+const hubStateDirName = "workspacer-hub"
+
+var darwinAppSupport = []string{"Library", "Application Support"}
+
+// hubStateDirs are the directories the HUB keeps its own host-trusted state in,
+// un-canonicalized.
+//
+// ~/.config/workspacer-hub is not INSIDE configDir() — it is a sibling of it, so
+// every containment test in the gate below answered "outside the config dir,
+// therefore not secret by location" for it. What lives there: jobs.json
+// (PERSISTED ARGV — a shell command, a spawn cwd+prompt, a capability call, run
+// by the hub on the user's behalf), routing.yaml (the capability matrix and the
+// per-project autonomy ceiling), layout.json, vapid.json (the web-push keypair)
+// and the push subscriptions.
+//
+// Reaching it needs an agent whose cwd CONTAINS it — $HOME or ~/.config — which
+// is not exotic: agents.spawn({}) with no cwd normalizes to $HOME, and an
+// operator-tier caller can spawn an agent at either. Once inside such a root
+// fs.write had nothing left to refuse, so an agent could rewrite the hub's job
+// argv, or raise its own ceiling. configStoreRoots is deliberately NOT extended
+// to cover it: nothing legitimately edits this directory through fs.*; the hub
+// owns it and hand-editing is a human at a terminal.
+//
+// TWIN: hubStateDirs in pathConfinement.ts and internal/bus/policy.go.
+func hubStateDirs() []string {
+	return hubStateDirsFor(runtime.GOOS, configDir(), homeDir())
+}
+
+// hubStateDirsFor is hubStateDirs with its two environment reads injected, so
+// the darwin branch is exercisable on any host.
+func hubStateDirsFor(goos, cfgDir, home string) []string {
+	var out []string
+	if strings.TrimSpace(cfgDir) != "" {
+		out = append(out, cfgDir+hubStateDirSuffix)
+	}
+	if goos == "darwin" && home != "" {
+		out = append(out, filepath.Join(append(append([]string{home}, darwinAppSupport...), hubStateDirName)...))
+	}
+	return out
+}
+
 // pathIsSecret is the second gate, applied to every guarded path after the roots
 // check — reads AND writes, because handing a token out is a privilege promotion
 // and overwriting one is a denial of service on the whole bus.
@@ -610,6 +665,19 @@ func pathIsSecretCanonical(canonicalTarget string) bool {
 	cfg, ok := canonicalRoot(configDir())
 	if !ok {
 		return true // unverifiable config dir → cannot prove the target is outside it
+	}
+	// The hub's state dir is a SIBLING of the config dir, so it has to be tested
+	// BEFORE the "outside the config dir ⇒ not secret" early return below —
+	// which is exactly what answered "allowed" for jobs.json until now. Same
+	// posture as the config dir on an unresolvable candidate.
+	for _, hub := range hubStateDirs() {
+		hr, ok := canonicalRoot(hub)
+		if !ok {
+			return true
+		}
+		if containsPathFolded(hr, canonicalTarget) {
+			return true
+		}
 	}
 	if !containsPathFolded(cfg, canonicalTarget) {
 		return false // nothing outside the config dir is secret by location

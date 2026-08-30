@@ -3425,6 +3425,103 @@
       "expect": "allow",
       "resolvesTo": "${ROOT}/claude/settings.json",
       "why": "No provider reads a bare `claude` directory; a project may well have one. The marker is the dotted component, exactly as `.git` is."
+    },
+    {
+      "name": "the hub's own state directory is refused, even though it is a SIBLING of the config dir",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "config/workspacer",
+          "config/workspacer-hub"
+        ],
+        "files": {
+          "config/workspacer-hub/jobs.json": "{\"jobs\":[]}"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}-hub/jobs.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "jobs.json is PERSISTED ARGV \u2014 a shell command, a spawn cwd+prompt, a capability call the hub runs on the user's behalf \u2014 and routing.yaml beside it carries the capability matrix and the per-project autonomy ceiling. The whole gate keyed on the config dir, and `<configHome>/workspacer-hub` is a SIBLING of `<configHome>/workspacer`, not a child: every containment test answered \"outside the config dir, therefore not secret by location\". An agent cwd of $HOME or ~/.config admits it as a root, and `agents.spawn({})` with no cwd normalizes to $HOME, so nothing else was left to refuse it."
+    },
+    {
+      "name": "the hub state directory itself",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "config/workspacer",
+          "config/workspacer-hub"
+        ]
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}-hub",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "At-or-inside, matching the config dir's own case: listing the directory enumerates the hub's state file names even without reading one."
+    },
+    {
+      "name": "a not-yet-existing file in the hub state dir is still secret",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "config/workspacer",
+          "config/workspacer-hub"
+        ]
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}-hub/routing.yaml",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The gate runs on the canonical path, which for a missing file is the lexical continuation. A copy that only refused files that already exist would let fs.write CREATE routing.yaml \u2014 and a matrix written by an agent is an agent choosing its own capability ceiling."
+    },
+    {
+      "name": "a sibling whose name merely starts with the hub state dir's is not the hub state dir",
+      "group": "secrets",
+      "tree": {
+        "dirs": [
+          "config/workspacer",
+          "config/workspacer-hubbub"
+        ],
+        "files": {
+          "config/workspacer-hubbub/notes.md": "# mine"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}-hubbub/notes.md",
+      "expect": "allow",
+      "resolvesTo": "${CONFIG}-hubbub/notes.md",
+      "why": "The allow direction that keeps the new clause a CONTAINMENT test rather than a string prefix. A copy that answered startsWith(hubStateDir) refuses this ordinary directory, and would refuse `<configHome>/workspacer-hub-backup` and anything else a user parks beside their config."
+    },
+    {
+      "name": "the hub state dir is canonicalized before the secret gate compares against it",
+      "group": "secrets",
+      "needsSymlinks": true,
+      "configDirVia": "cfglink",
+      "tree": {
+        "dirs": [
+          "root",
+          "config/workspacer",
+          "config/workspacer-hub"
+        ],
+        "files": {
+          "config/workspacer-hub/jobs.json": "{\"jobs\":[]}"
+        }
+      },
+      "roots": [
+        "${SANDBOX}"
+      ],
+      "target": "${CONFIG}-hub/jobs.json",
+      "expect": "deny",
+      "deniedBy": "secret",
+      "why": "The sibling is derived from the implementation's OWN config dir, so it inherits that value's resolution problem: with the config home reached through a link (a symlinked $HOME, /var on macOS, a dotfiles-managed config home) the derived root is `<link>/workspacer-hub` while the target resolves to the real path. The two only meet if the derived root is canonicalized too. It is also why the derivation CONCATENATES `-hub` rather than rebuilding the path from its parent: any Clean collapses a `link/..` in XDG_CONFIG_HOME before a symlink is read."
     }
   ],
   "methods": [
