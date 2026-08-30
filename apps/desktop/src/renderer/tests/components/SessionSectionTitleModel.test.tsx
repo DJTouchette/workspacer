@@ -40,9 +40,22 @@ describe('SessionSection — the auto-title model picker follows the harness', (
   it('offers every harness that can answer a one-shot title call', () => {
     renderSection();
     const row = within(screen.getByText('Title model for').closest('div') as HTMLElement);
-    for (const name of ['Claude', 'Codex', 'OpenCode', 'Pi']) {
+    // Copilot included: it has a directCompletion adapter like the rest, even
+    // though the only id it serves is 'auto'.
+    for (const name of ['Claude', 'Codex', 'Copilot', 'OpenCode', 'Pi']) {
       expect(row.getByRole('button', { name })).toBeInTheDocument();
     }
+  });
+
+  it('names the model row after a copilot-primary user’s own harness', async () => {
+    // TITLE_PROVIDERS is also the label source for the row beneath it, and
+    // titleHarness starts at agents.defaultProvider — so a missing entry read
+    // as literally "undefined title model" with no harness button selected.
+    renderSection({ agents: { defaultProvider: 'copilot' } });
+    const row = within(screen.getByText('Title model for').closest('div') as HTMLElement);
+    expect(row.getByRole('button', { name: 'Copilot' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Copilot title model')).toBeInTheDocument());
+    expect(screen.queryByText(/undefined title model/i)).toBeNull();
   });
 
   it('lists CODEX models once the codex row is selected', async () => {
