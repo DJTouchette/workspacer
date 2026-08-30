@@ -61,3 +61,42 @@ Federation lets the local hub link *outbound* to named peer hubs (typically anot
 - **Cross-hub MCP facade** (`services/hub/cmd/mcp/federated.go`): `list_agents`/`list_snapshots` merge connected peers (10s per-peer budget, per-peer failures cost only their rows), remote rows tagged `hub`; per-session tools + `spawn_agent` take an optional `hub` param (embedded `hubArg` struct — the go-sdk flattens embedded structs into the schema; field stripped before forwarding). Supervisor prompt/skill/help teach the hub round-trip; `fleet.mjs` stays local-claudemon-only.
 - **Untokened dial**: facade `-untokened operator|view|deny` (env `WKS_MCP_UNTOKENED`, desktop `facade.untokenedAccess` passthrough); `deny` alone satisfies the non-loopback bind policy, `view` doesn't; invalid value fails startup.
 - **Harness answers calls now**: `federation-harness.sh` registers agents.list/sessions.snapshots/sessions.snapshot/sessions.conversation (sinceSeq honored)/agents.sendMessage/claude.approve/claude.signal on the fake peer, so qualified calls, remote chat, approvals, and the cross-hub facade are all exercisable live; `SPARSE=1` emulates a headless-brain peer.
+
+## Hand-authored notes (2026-08-24) — Go's Windows file mode is SYNTHETIC, so a `0o077` check carries zero information
+
+`os.FileInfo.Mode().Perm()` on Windows is synthesised from ONE attribute bit
+(`os/types_windows.go`: `if FILE_ATTRIBUTE_READONLY { m |= 0444 } else { m |=
+0666 }`), so `Perm()` is 0666 for every writable file and 0444 for every
+read-only one — **`Perm()&0o077 != 0` is TRUE in both cases, for every file that
+exists.** `os.Chmod` is the same story inverted: on Windows it only toggles
+`FILE_ATTRIBUTE_READONLY`, so `os.Chmod(p, 0o644)` grants no principal anything.
+
+This made `services/hub/internal/nodes.FileLooksExposed` (the on-disk guard for the Fly API
+token in `nodes.json`) report "readable beyond its owner" on every Windows start
+regardless of the file's real ACL, and CI caught it as a red
+`TestFileLooksExposedNoticesLoosePermissions` on the containment-windows job.
+**The test was a true positive; the check was the broken half.** A permission
+check written the Unix way is not merely imprecise on Windows — it carries zero
+information, and a warning that fires unconditionally is worse than no warning
+because the user learns to scroll past it.
+
+Two situations, two answers, and the repo now has a precedent for each:
+
+1. **Asserting the mode WE WROTE** (a write we control) → skip on Windows:
+   `if onWindows { t.Skip("POSIX mode bits") }`
+   (`services/hub/cmd/brain/unpinnedguards_test.go`) or
+   `runtime.GOOS != "windows" &&` (`services/hub/cmd/hub/upload_test.go`).
+2. **A shipped check that renders a VERDICT about who can read a file** → do NOT
+   skip; the skip leaves a live check that lies. Use `services/hub/internal/nodes.FileExposure`
+   (`exposure.go` + `exposure_unix.go` + `exposure_windows.go`): three-valued
+   (`ExposureLoose`/`ExposureOwnerOnly`/`ExposureUnknown`, **zero value Unknown so
+   a forgotten case never reads as safe**), with a real DACL walk on Windows via
+   `golang.org/x/sys/windows` (already a direct dep) —
+   `GetNamedSecurityInfo` → `DACL()` → `GetAce`, read grant to a well-known
+   everyone-ish SID = loose, **NULL DACL = loose** (it grants EVERYONE full
+   control), domain group / unparseable ACE = unknown.
+
+**The same trap is waiting for `peers.json`, `tokens.json`, `jobs.json` and
+`remote-token`**, all of which are 0600 BY CONVENTION with no check at all today.
+Lift `FileExposure` into a shared place if a second 0600 credential file ever
+grows a check.

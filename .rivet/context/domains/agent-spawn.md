@@ -1,6 +1,6 @@
 ---
 title: Agent Spawn (two transports)
-tags: [spawn, agents, providers, ipc, hub-bus, permissions, tool-tiers, federation]
+tags: [spawn, agents, providers, ipc, hub-bus, permissions, tool-tiers, federation, prompt, starter]
 related_paths:
   - "apps/desktop/src/main/services/managedSpawn.ts"
   - "apps/desktop/src/main/services/claudeSpawn.ts"
@@ -56,12 +56,146 @@ Agents spawn via two independent transports: Electron IPC (`claude:spawn`) and h
 
 ## Hand-authored notes (2026-08-23) — the first message rides the spawn
 
-- **A spawn's FIRST MESSAGE is now a spawn PARAMETER (`message`), not a second call.** Every dispatch used to be spawn → wait for the id → `agents.sendMessage`, with a manager turn boundary in between and a live worker holding no instructions in the gap. The param rides all four surfaces — `spawn_agent` (`cmd/mcp/main.go` `spawnAgentIn.Message`), `agents.spawn` (`hubCapabilities.ts`), `claude:spawn` (`main/lib/managedSpawnOptions.ts` `AgentSpawnRequest.message` → `firstMessage` on the helper options), and the brain (`cmd/brain/handlers.go` `spawnParams.Message`) — down to claudemon's `first_message` on BOTH spawn payloads.
+- **A spawn's FIRST MESSAGE is now a spawn PARAMETER (`message`), not a second call.** Every dispatch used to be spawn → wait for the id → `agents.sendMessage`, with a manager turn boundary in between and a live worker holding no instructions in the gap. The param rides all four surfaces — `spawn_agent` (`services/hub/cmd/mcp/main.go` `spawnAgentIn.Message`), `agents.spawn` (`hubCapabilities.ts`), `claude:spawn` (`main/lib/managedSpawnOptions.ts` `AgentSpawnRequest.message` → `firstMessage` on the helper options), and the brain (`services/hub/cmd/brain/handlers.go` `spawnParams.Message`) — down to claudemon's `first_message` on BOTH spawn payloads.
 - **The window it closes is measured, not theoretical, and it is asymmetric between the two daemon routes.** `register_managed` (`session/store.rs`) marks a managed row `SessionMode::Input` up front but attaches no PTY wrapper, and `register_managed_input` only runs deep inside the provider's driver task (`claude_stream.rs` registers it AFTER `Command::spawn`, well past the handler's 200). So `submit_message` in that window resolves `managed_input`=None → mode `Input` → `wrapper()`=None → **`MessageOutcome::NoWrapper`, HTTP 404 "no wrapper attached to that session"**. A PTY row is born `Unknown` with its wrapper already registered, so the same post-spawn send is queued and flushed on the first `Input` transition — which is why spawn-then-send *looked* reliable: it is, on the transport people tested it on. The desktop's `kickoffMessage` (Fleet Manager + guide tour) and `/m`'s library-prompt chip both did the racy form, both spawn `transport: 'stream'`, and both only `console.error`/`toast`ed the loss.
 - **Delivery: queued inside the spawn handler, before the 200; drained by the driver's own registration.** `SessionStore::queue_first_message` enqueues into the existing `pending_messages` queue, and `register_managed_input` drains it into the provider's prompt channel — ONE shared point every adapter (claude_stream/codex/opencode/pi) already calls, so no per-provider code and no window. PTY reuses the cold-start ladder verbatim (settle past the composer redraw, then submit-verify). If the child never launches, the row goes `Stopped` and `clear_pending_messages` drops it with the session — a visible stopped card, not a live-looking one holding a lost prompt.
 - **`instructions` is NOT the channel, and it structurally cannot be.** `Facade.instructions` is a passive PREFIX: every adapter parks it in `pending_instructions` and `with_instructions()` prepends it to the first prompt the session receives (`codex.rs`), so it never starts a turn. A dispatch put there would wait forever for the prompt it *is*. Keeping them separate also fixes ordering for free — the facade role note and the `wks-result` contract get prepended to the first message, once, in one turn. (PTY has no `instructions` at all; its contract is `--append-system-prompt`, a system prompt, while the dispatch is a user turn.)
-- **No silent drop, at two independent layers.** claudemon answers `first_message_queued`; `claudemonSessionClient.deliverFirstMessage` falls back to `POST /message` when unconfirmed and raises a `notifySystem` error banner naming the session if that fails too. `agents.spawn` then answers `messageQueued` — the TRUTH about delivery, not "we passed it on": the client flags a total failure via `takeUndeliveredFirstMessage` (one-shot, so the set cannot grow) and the answer reflects it. The key is omitted entirely when no message was sent, so the result shape is unchanged for every other spawn and the facade's `confirmFirstMessage` (`cmd/mcp/main.go`) falls back to `agents.sendMessage` when a provider does not confirm — which is what covers an older federated peer or a lagging brain, where the spawn looks perfectly successful and the prompt went nowhere.
+- **No silent drop, at two independent layers.** claudemon answers `first_message_queued`; `claudemonSessionClient.deliverFirstMessage` falls back to `POST /message` when unconfirmed and raises a `notifySystem` error banner naming the session if that fails too. `agents.spawn` then answers `messageQueued` — the TRUTH about delivery, not "we passed it on": the client flags a total failure via `takeUndeliveredFirstMessage` (one-shot, so the set cannot grow) and the answer reflects it. The key is omitted entirely when no message was sent, so the result shape is unchanged for every other spawn and the facade's `confirmFirstMessage` (`services/hub/cmd/mcp/main.go`) falls back to `agents.sendMessage` when a provider does not confirm — which is what covers an older federated peer or a lagging brain, where the spawn looks perfectly successful and the prompt went nowhere.
 - **The brain MIRRORS this param where it DECLINES `resultSchema`, and the rule behind the difference is "who honors it".** `resultSchema` has two desktop-owned halves (a prompt the desktop compiles, a wake the desktop delivers), so headless would take it and provably never honor it. `message` is claudemon's, and the brain reaches the same two claudemon routes the desktop does — declining it would mean a bus dispatch silently loses its task whenever the desktop is not running.
 - **`respawn_with` does not INHERIT a first message, and should not.** It already recovers something strictly better: `firstUserMessage` reads the task out of the original's conversation (what the agent actually received) rather than what a caller asked for at spawn time; inheriting the param would add a staler second copy plus a rule about which wins. It DOES use the field to deliver, which retires its own "spawned but could not deliver the task" branch — and its explicit `sendMessage` had to be REMOVED at the same time, or the successor reads its whole dispatch twice.
-- **Census, for the next spawn param.** Declared/forwarded/asserted in: `cmd/mcp/main.go` (`spawnAgentIn` + `spawnWithGrants`), `cmd/mcp/respawn.go`, `cmd/mcp/help.go`, `cmd/brain/handlers.go` (`spawnParams` + both legs + `spawnResult`), `cmd/brain/claudemon.go` (`spawnReq`/`spawnManagedReq`), `cmd/brain/parity_test.go` (`spawnParams`/`spawnParamsDeclined`/`spawnParamsAhead`), `hubCapabilities.ts`, `main/lib/managedSpawnOptions.ts` (the `satisfies Record<keyof AgentSpawnRequest, …>` guard — a new field is a COMPILE error until classified), `main/ipc.ts` (three branches + the federated forward), `main/preload.ts`, `main/services/claudeSpawn.ts`, `main/services/managedSpawn.ts` (managed + the codex PTY hybrid), `main/services/claudemonSessionClient.ts`, `renderer/src/types/electron.d.ts`, `renderer/src/hooks/useAgentManager.ts`, `cmd/hub/mobile.html`, and claudemon's `daemon/spawn.rs` (both payloads) + `session/store.rs`. **`renderer/src/types/electron.d.ts` is the THIRD copy of the spawn options and no guard covers it** — the renderer builds its spawn opts as a variable, so excess-property checking does not fire and a field missing there typechecks clean while being invisible to every renderer caller. `webBackend.ts` forwards `opts` wholesale, so the web mirror needs no edit; `apps/tui/src/bus.rs` builds its own param map and would need one if the TUI ever grows a first-message field.
-- **Not an authorization surface, and the tier table is the proof.** `agents.sendMessage` is a TRIAGE method (`authtoken.go` `triageMethods`) while `agents.spawn` is operator-only and named in triage's own doc comment as deliberately absent — so every caller that can spawn already holds the right to send this exact text to the session it just created. `sanitizeSpawnParams` (`internal/bus/rpc.go`) passes unknown params through untouched, which is correct here: there is nothing to strip because there is no privilege to strip it from.
+- **Census, for the next spawn param.** Declared/forwarded/asserted in: `services/hub/cmd/mcp/main.go` (`spawnAgentIn` + `spawnWithGrants`), `services/hub/cmd/mcp/respawn.go`, `services/hub/cmd/mcp/help.go`, `services/hub/cmd/brain/handlers.go` (`spawnParams` + both legs + `spawnResult`), `services/hub/cmd/brain/claudemon.go` (`spawnReq`/`spawnManagedReq`), `services/hub/cmd/brain/parity_test.go` (`spawnParams`/`spawnParamsDeclined`/`spawnParamsAhead`), `hubCapabilities.ts`, `main/lib/managedSpawnOptions.ts` (the `satisfies Record<keyof AgentSpawnRequest, …>` guard — a new field is a COMPILE error until classified), `main/ipc.ts` (three branches + the federated forward), `main/preload.ts`, `main/services/claudeSpawn.ts`, `main/services/managedSpawn.ts` (managed + the codex PTY hybrid), `main/services/claudemonSessionClient.ts`, `renderer/src/types/electron.d.ts`, `renderer/src/hooks/useAgentManager.ts`, `services/hub/cmd/hub/mobile.html`, and claudemon's `daemon/spawn.rs` (both payloads) + `session/store.rs`. **`renderer/src/types/electron.d.ts` is the THIRD copy of the spawn options and no guard covers it** — the renderer builds its spawn opts as a variable, so excess-property checking does not fire and a field missing there typechecks clean while being invisible to every renderer caller. `webBackend.ts` forwards `opts` wholesale, so the web mirror needs no edit; `apps/tui/src/bus.rs` builds its own param map and would need one if the TUI ever grows a first-message field.
+- **Not an authorization surface, and the tier table is the proof.** `agents.sendMessage` is a TRIAGE method (`authtoken.go` `triageMethods`) while `agents.spawn` is operator-only and named in triage's own doc comment as deliberately absent — so every caller that can spawn already holds the right to send this exact text to the session it just created. `sanitizeSpawnParams` (`services/hub/internal/bus/rpc.go`) passes unknown params through untouched, which is correct here: there is nothing to strip because there is no privilege to strip it from.
+
+## Hand-authored notes (2026-08-24/27) — per-harness models, codex transport, and what a template may carry
+
+- **Every model-holding config key predates multi-provider and ships a CLAUDE
+  id.** `claude.defaultModel` ('opus[1m]'), `supervisor.model`,
+  `supervisor.summarizerModel` ('sonnet') and `agents.autoTitle.model` ('haiku')
+  are all Claude ids for historical reasons, and only `claude.defaultModel` was
+  ever gated on provider (`main/lib/spawnModel.ts`, and the Go facade's
+  `providerIsClaude`). The other three were read unconditionally on paths that
+  can spawn codex. **A foreign model id on a spawn is a 400 at best and a
+  silently-wrong model at worst.** Fixed 2026-08-27 by giving each a per-harness
+  sibling map (`supervisor.models`, `supervisor.summarizerModels`,
+  `agents.autoTitle.models`, `agents.managerModels`) resolved through
+  `main/lib/roleModels.ts`, with `main/shared/modelVocabulary.ts` as the
+  cross-harness oracle. **Any NEW config key holding a model must be born
+  per-harness** — a single field is only ever right for one harness. Resolve
+  through `roleModels` `perHarnessModel`; never read a `*.model` config field
+  inline in a spawn path. `resolveSpawnModel` is the last-line guard and drops a
+  demonstrably-foreign id to `undefined` (= the CLI's own default, the one value
+  valid everywhere).
+- **The headless Go brain resolves NO supervisor/manager role model at all.**
+  `services/hub/cmd/brain/handlers.go` has no equivalent of `lib/supervisorModel` or
+  `lib/roleModels` — it only forwards `spawnParams.Model`. So a supervisor or
+  Fleet Manager spawned on a headless node ignores
+  `supervisor.model`/`supervisor.models`/`agents.managerModels` entirely and gets
+  the harness default. **Role model settings are desktop-only.**
+  `services/hub/cmd/mcp/main.go` DOES gate `claude.defaultModel` on `providerIsClaude` (pinned
+  by `spawndefaults_test.go`), so the claude-id-to-codex leak is closed there — it
+  is the ROLE models that are missing, not the provider gate. Porting
+  `perHarnessModel` to Go beside `launchPermissionMode` (the existing
+  desktop/brain twin pattern) plus a `services/hub/cmd/brain/parity_test.go` entry is the fix;
+  deliberately out of scope 2026-08-27.
+- **Codex transport now resolves through ONE shared default
+  (`config.codex.transport`, shipped `'stream'`).** Codex previously had no config
+  transport at all: an absent `transport` key on the spawn-managed payload means
+  "hybrid" to claudemon, which is indistinguishable from a dropped field, and four
+  entry points each applied their own `?? 'pty'` for claude and nothing for codex.
+  Now `main/lib/spawnTransport.ts` `resolveTransport()` runs inside
+  `spawnManagedAgent` — **the choke point that IPC, hub bus, respawn, jobs and
+  supervisor/manager all reach** — with the Go twin `registry.transportDefault` in
+  `services/hub/cmd/brain/handlers.go`. Both codex shapes are now STATED on the wire and in
+  `setSpawnMeta`, including `'pty'` on the Windows rollout hybrid.
+  Two traps: (1) **forwarding only `transport === 'stream'` at a
+  request-translation layer now SILENTLY OVERRIDES an explicit hybrid request**,
+  because an omitted key is re-resolved downstream to the configured default —
+  forward both values or forward neither; (2) `spawnManagedAgent` gates the
+  Windows rollout hybrid on `transport === 'pty'`, not on
+  `process.platform === 'win32'`, so headless codex on Windows takes the managed
+  app-server path. Its safety net is claudemon-side: `run_session` degrades a
+  failed HEADLESS app-server to `run_rollout_fallback` (previously a hard error),
+  resetting `store.set_transport(..., Transport::Pty)` so the pane grows its Term
+  view, plus a `DEGRADED_FROM_HEADLESS_NOTICE` conversation item.
+  When adding a provider with more than one session shape, add it to
+  `TRANSPORT_FALLBACK` (TS) and `transportFallback` (Go) and resolve at the choke
+  point, not at each caller.
+  *To exercise a real codex session end-to-end without the desktop:* run claudemon
+  with `env -u WORKSPACER_PARENT_PID` (it otherwise inherits the live app's
+  parent-watchdog pid and exits immediately), plus the hub and the brain on spare
+  ports with `XDG_CONFIG_HOME` at a temp dir, then call `agents.spawn` over the
+  bus with a `{op:'call',id,method,params}` frame.
+- **`LibraryHost`'s `initialPrompt` is a SECURITY property: never auto-send text
+  that can come off disk.** Library items have a PROJECT scope stored at
+  `<cwd>/.workspacer/library/*.md` — per repo, committable — and both LibraryPane
+  and CommandPalette render a Dispatch button on every one. What keeps a
+  repo-shipped prompt from RUNNING on one click is a single line: `LibraryHost.tsx`'s
+  spawn branch passes `initialPrompt` (composer PRE-FILL) rather than
+  `kickoffMessage` (AUTO-SEND). Swapping that one field would let a cloned repo
+  run a prompt of its choosing with no read step. The app's own auto-send call
+  sites (`spawnGuide`, `spawnFleetManager`) are safe for a reason that does not
+  transfer: they send text the APP composed in code around a question the USER
+  typed. **The rule: auto-send is only for text the app owns in code.** Now pinned
+  by a call-site comment, by `LibraryHost`'s Props type (which has no
+  `kickoffMessage` field), and by `tests/libraryHostAutoSend.test.tsx`. The same
+  rule governs `lib/draftAgent.ts`, whose bus event carries a brief ID rather than
+  text so free text cannot enter that path at all.
+- **Dispatch templates (`kind: 'dispatch'`) are text-only BY CONSTRUCTION.** A
+  template carries template text + an optional default `resultSchema` and NO
+  spawn-argument fields, so a template file cannot smuggle
+  `toolScope`/`cwd`/`model`/`worktree` — the no-trust-boundary property is pinned
+  in `libraryDispatch.test.ts` (TS) and `TestLibraryDispatchRoundTrip` (Go).
+  Rendering is host-side in `hubCapabilities` `agents.spawn` via
+  `main/lib/dispatchTemplate.ts`, which deliberately does NOT reuse the renderer's
+  `applyTemplate`: placeholders are required by default and an unfilled one
+  REFUSES the spawn naming the param (`applyTemplate` silently defaults, which is
+  right for its form dialog and wrong for dispatch). The headless brain declines
+  `template`/`templateParams` in `spawnParamsDeclined` because the default-schema
+  half rides the already-declined `resultSchema` machinery.
+- **Library seeding is additive per ITEM, gated by `library-seeded.json`.** Both
+  seeders used to no-op the moment `<config>/library` held any `.md`, so every
+  starter added after a user's first run was invisible to the entire installed
+  base (the three dispatch templates from 7317b1c5 landed for nobody). Fixed in
+  b8b447e3: `LibraryService.seedGlobalIfEmpty` → `seedGlobalStarters` (starters
+  come from a `starters()` array of `{id, item}`) and the Go twin
+  `seedLibraryIfEmpty` → `seedLibraryStarters` + `starterItems()`.
+  **The non-obvious part is `<config>/library-seeded.json`** (`{"seeded":[id…]}`,
+  written and read by BOTH twins, same key): the directory alone cannot tell "you
+  deleted this starter" from "you were never offered it", and the seeder must
+  never resurrect the first. An id recorded there is never written again — and a
+  starter that already exists on disk is recorded but never overwritten, so
+  deleting a hand-edited starter afterwards still sticks. Legacy installs
+  (non-empty library, no marker) bootstrap from
+  `PRE_MARKER_STARTER_IDS`/`preMarkerStarterIDs`, the four starters that predate
+  the marker. **That list is FROZEN** — adding to it would silently stop a new
+  starter reaching existing users, which is the exact bug this fixed. New starters
+  go in `starters()`/`starterItems()` only. Two test consequences:
+  `TestLibrarySeedAndList` pins the count against `len(starterItems())` (the TS
+  twin's count is still a hand-kept literal in that same test), and any test
+  asserting on the WHOLE library list must call `suppressLibrarySeed(t)` — a
+  populated-but-unseeded temp dir legitimately gains starters now. Go seeds on
+  every `listLibrary` call; TS seeds only in the singleton's constructor.
+- **Porting a JS regex/trim to Go: neither `\s` nor `TrimSpace` is JavaScript's
+  whitespace.** The dispatch-template placeholder parser
+  (`main/lib/dispatchTemplate.ts`) spells its token with JavaScript's `\s` and
+  trims with `String.prototype.trim()`. **Neither Go spelling matches:** Go's
+  `regexp` `\s` is only `[\t\n\f\r ]` (no `\v` U+000B, no NBSP U+00A0), while
+  `strings.TrimSpace`/`unicode.IsSpace` is WIDER in one direction (trims U+0085
+  NEL, which JS does not) and NARROWER in another (does not trim U+FEFF BOM,
+  which JS does). `services/hub/cmd/brain/dispatchparams.go` therefore writes the ECMAScript
+  WhiteSpace ∪ LineTerminator set out by hand (`jsWhitespace`) and uses it for
+  both the character class and `strings.Trim`; four cases in
+  `contracts/dispatch-template-params-cases.json` pin all four divergent code
+  points. A `TrimSpace`-based port would have made the same `library.list` call
+  advertise a param name the caller cannot fill, **on one provider only** —
+  invisible until a template author pasted a non-breaking space. **When porting
+  any JS string parser to Go, write the whitespace class out explicitly and pin
+  U+000B, U+00A0, U+0085, U+FEFF in a contract fixture.**
+  Two other seam facts from that change: `LIBRARY_KINDS` had to live in
+  `main/shared/libraryKinds.ts` rather than `libraryService.ts`, because SIX
+  suites do `vi.mock('./libraryService', …)` wholesale and a value imported from
+  there is `undefined` under the mock; and
+  `hubCapabilitiesKillSwitch.test.ts` extracted the per-file guard positionally as
+  `mock.calls[0].at(-1)`, which silently stopped meaning "the guard" the moment
+  `library.list` grew a trailing filter argument — it now finds the single
+  function-typed argument (`guardArgOf`) and asserts there is exactly one.

@@ -49,3 +49,39 @@ Desktop remote-client mode is a startup-time actor flip: the Electron shell stop
 - **This is the mirror of, not the same as, phone/mobile remote sharing** — see the existing `.rivet/context/domains/remote-mobile.md` doc, which covers the hub's `/remote` and `/m` PWA client surfaces (phone-facing, hub as host) plus a brief one-paragraph mention of this file. `desktop-remote-client-mode` is specifically about the **Electron desktop app acting as the client** of someone else's server — a different actor and code path (`main/index.ts` daemon-skip + `install.ts`/`remoteBackend.ts` transport selection) than the hub's outbound phone-sharing story. `RemoteShareDialog.tsx` hosts UI for both concerns in one component but they are functionally independent: `info.remoteClient` (this domain, client mode) vs. `info.enabled`/`hubAdopted` (phone-sharing / host mode, remote-mobile domain).
 - **Adopted daemons vs. remote-client mode are different "not fully local" states.** `hubAdopted`/`claudemonAdopted` (also surfaced in `getRemoteShareInfo()`) mean this desktop is using daemons from a `workspacer serve` running on the *same* machine (still local, just not spawned by this Electron instance — see the `AdoptedNote` in `RemoteShareDialog.tsx`). Remote-client mode (`remoteClient`) means the daemons are on a genuinely different machine and none run locally at all. The dialog's `!info.remoteClient` guard is what keeps these two states from being conflated in the UI.
 - **`selectBackendMode` and `normalizeRemoteServerUrl` are pure and unit-tested in isolation** (`install.test.ts`, `remoteServer.test.ts`) — prefer extending those tables over hand-testing the full relaunch flow when changing URL-parsing or transport-selection logic.
+
+## Hand-authored notes (2026-08-27/28) — blocking UI and action affordances must not assume the remote is up
+
+- **First-run welcome must not depend on remote CONFIG WRITES.** In
+  desktop remote-client mode, renderer config reads and writes go through the
+  remote hub. If that configured server is offline, `ConfigContext` falls back to
+  `DEFAULT_CONFIG` and `config.save` returns the previous snapshot after warning —
+  so `onboardingDismissed` **cannot change**. A first-run welcome gate that
+  depends only on persisted config therefore keeps remounting and blocks access to
+  Settings / Connect to Server: remote-client users pointed at a down Fly/ORD node
+  are trapped behind the welcome modal exactly when they need local settings
+  controls to recover. Keep a local, in-session dismissal path for any blocking
+  UI, or route recovery settings through host-local APIs instead of remote config
+  calls.
+- **An action affordance can contradict a correctly rendered status — audit the
+  affordance per state, not just its label.** Knowing a node is `stopping` in
+  presentation state is not enough: every WAKE affordance must refuse a wake while
+  the hub is draining it. The desktop/`/app` `wakeAffordance()` handled
+  `available`, `waking`/`pending`, `!wakeable` and `!canWake`, then fell through
+  to an **enabled Connect action for `stopping`** — and `RemoteNodesBar.tsx` calls
+  that helper with no additional gating. Its sibling `sleepAffordance()` already
+  had the mirrored stopping guard, which is what made the omission easy to
+  overlook. The hub intentionally ACCEPTS a wake during drain
+  (`services/hub/internal/nodes/wake.go` clears `stopping` and increments the
+  generation), so this is UX rather than an authorization failure: **one click can
+  silently cancel a user-requested shutdown and restart billing.** The
+  authoritative hub state must be checked BEFORE an optimistic local `pending`
+  flag. `/m` already put its `stopping` branch first; the TUI had the same gap
+  (`NodeState::Stopping`, fixed on `wks/tui-handle-the-stopping-state`,
+  `05cfa350`); the desktop counterpart was fixed on
+  `wks/desktop-m-refuse-wake-while-stopping` (`35fa9fd4`).
+  **Whenever a new node state is introduced, keep an explicit state/action parity
+  matrix across `wakeAffordance`, `sleepAffordance`, `/m`'s button chain and the
+  TUI equivalent.** Stale cross-client copy compounds this: claims that there is
+  no stop verb, or that a failed wake necessarily leaves billing running, no
+  longer match `nodes.sleep` / `stopAfterFailedWake`.

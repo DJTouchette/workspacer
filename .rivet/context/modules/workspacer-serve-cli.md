@@ -1,6 +1,6 @@
 ---
 title: workspacer serve CLI (headless server launcher)
-tags: [hub, cli, headless-server, process-supervision, auth-token, remote]
+tags: [hub, cli, headless-server, process-supervision, auth-token, remote, ports]
 related_paths:
   - "services/hub/cmd/workspacer/main.go"
   - "services/hub/cmd/workspacer/serve.go"
@@ -60,3 +60,68 @@ last_reviewed: 2026-07-11
 - **`waitForHealth`'s probe window and `probeListen`'s port-check have a real TOCTOU gap** (both files' own comments acknowledge this: "There is a small window between the probe and the child binding for real") — accepted as a tradeoff for a clearer error message over silent EADDRINUSE crash loops, not eliminated.
 - **`opts.Host` only affects the hub's bind address — claudemon is hardcoded to `127.0.0.1`** in `buildServePlan` (`claudemon.Args` always passes `--host 127.0.0.1`). Remote clients never talk to claudemon directly under any `--host` setting; they always go through the hub bus, mirroring how the desktop app talks to claudemon.
 - **The banner deliberately prints the token in plaintext to stdout/stderr** (`renderBanner`'s comment: "unlike the desktop... a headless server's terminal IS the pairing surface") — this is an intentional UX choice, not an oversight; don't "fix" it by redacting the token without understanding this is how operators are expected to get the pairing credential.
+
+## Hand-authored notes (2026-08-24) — two things `serve` never passed to claudemon
+
+Both were the same class of omission: `buildServePlan` (`plan.go`) passed
+claudemon only `serve --host --hook-port --api-port`, and everything the desktop
+does around that spawn was invisible from the plan.
+
+- **The SQLite session store was unpinned, so two stacks on alternate ports shared
+  one `state.db`.** With no `--db-path`, `cli.rs` falls back to
+  `store::default_db_path()`: `$XDG_DATA_HOME/claudemon/state.db`, else
+  `~/.claudemon/state.db`, else the **RELATIVE** `.claudemon/state.db` under the
+  process CWD. Nothing downstream supplied it (the desktop's
+  `claudemonDaemon.ts` spawn omits it too) and there is no env override besides
+  `XDG_DATA_HOME`. Consequence: `bootStack` refuses busy ports, so the ONLY way to
+  run a second stack is to change claudemon's ports — and that second daemon then
+  opened the SAME `~/.claudemon/state.db`. The two share the `sessions` and
+  `events` tables, so the newcomer's boot hydration (`load_recent_sessions` →
+  `store.hydrate`, which marks rows Stopped IN MEMORY only) lists the live stack's
+  agents as its own resumable sessions, its clients can `claude --resume` them,
+  and its `fleet.quiescence` sampler counts them. **Silent on both sides.**
+  Fix: `resolveDBPath` (`serve.go`) decides before any port probe or spawn, and
+  `buildServePlan` carries the answer into the argv. **The derived default MIRRORS
+  `default_db_path` exactly** — desktop and serve share one session store on
+  purpose (adopt-don't-kill), so relocating it would strand every install. Two
+  deliberate non-copies: claudemon's relative third fallback, and Rust's
+  `env::var` returning `Ok("")` for a set-but-empty `XDG_DATA_HOME` (which also
+  yields a relative path) — both now REFUSE with a named fix instead of silently
+  landing the DB on an ephemeral CWD. New `--claudemon-db-path` flag, REQUIRED
+  whenever either claudemon port differs from its default.
+  **Anything added to claudemon's argv in `plan.go` should ask "is this persistent
+  state?"** — the ports were all pinned and the one file it opens was not. Keep
+  `deriveClaudemonDBPath` in lockstep with `store/mod.rs`'s `default_db_path`;
+  `TestResolveDBPath` is the guard.
+- **`claudemon init` never ran, and the severe consequence is not missing
+  telemetry — it is that a dispatched PTY worker never receives its prompt.**
+  `claudemon init` is a PEER subcommand (`services/claudemon/src/cli.rs`) whose
+  only caller in the whole repo was the desktop's Electron main
+  (`runClaudemonInit`). Since both share one `~/.claude/settings.json`, `serve`
+  inherited working hooks on any machine where the desktop had ever run, and
+  registered nothing on a state dir where it had not. A PTY session is born
+  `SessionMode::Unknown` and **ONLY hook events move it to Input/Responding**, and
+  a spawn's `first_message` is held until the `Input` transition
+  (`session/store.rs` `queue_first_message` → `schedule_pending_flush`, pinned by
+  `a_pty_first_message_waits_for_the_input_transition`). So with no hooks a
+  dispatched PTY worker **sits at an empty composer looking alive**; `POST
+  /message` likewise only queues, and permission prompts produce no approvable
+  record. Fixed by running `claudemon init --hook-port N` as a one-shot pre-flight
+  inside `bootStack`, before the daemons (`servePlan.Init`), with
+  `--no-claudemon-init` to opt out.
+  *Counter to a scout claim: `fleet.quiescence` is NOT fooled* —
+  `services/hub/internal/quiescence`'s `stateBlocker` treats `mode: "unknown"` as
+  `KindSessionUnknown`, i.e. a BLOCKER, not rest. A hookless PTY session pins the
+  machine awake, which is the safe direction and the reason this stayed invisible.
+  Stream transport (the default, `services/hub/cmd/brain/config_defaults.json`) is unaffected:
+  managed adapters call `providers::set_mode` directly.
+  **When adding anything to the serve path that depends on Claude Code hooks,
+  remember the desktop and the CLI share `~/.claude/settings.json` — a dev machine
+  cannot reproduce the hookless case. Test against a HOME with no settings.json.**
+
+*(Also verified while checking this: `serve` DOES refuse busy ports rather than
+killing them — `serve.go`'s `probeListen` — unlike the desktop, which kills stale
+listeners because it owns its daemons.)*
+
+Image/deployment concerns for the same binary (release-artifact installs, build
+stamps, boot-state records) live in `modules/fly-node-deploy.md`.

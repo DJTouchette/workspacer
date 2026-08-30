@@ -252,3 +252,73 @@ cross-project state only — it is its memory across restarts.
 - Related docs: `modules/mcp-tool-facade.md` (tiers, the `help` tool),
   `domains/agent-spawn.md`, `domains/session-lifecycle.md`,
   `modules/hub-process-supervision.md` (the unrelated namesake).
+
+## Hand-authored notes (2026-08-27/29) — role models, provider-less dispatch, and the sender header twin
+
+- **`supervisor.model` is per-harness now — read it through
+  `main/lib/supervisorModel.ts`, never inline.** `config.supervisor.model` is a
+  single field but the supervisor can run on claude/codex/opencode, and a model id
+  is never portable between them. Two latent bugs came out of the inline
+  `supCfg?.model` read in `claudeSpawn.ts`: (1) `managedSpawn` never read it at
+  all, so `supervisor.model` was silently Claude-PTY-only — picking a codex
+  supervisor model changed nothing; (2) a Claude supervisor launched from AskPane
+  while `supervisor.provider` was codex would have inherited the codex id and
+  400'd. Resolution: `supervisor.models[provider]` (the per-harness memory the
+  settings picker writes) wins, then `supervisor.model` **but ONLY when
+  `supervisor.provider` matches**, else `undefined` (= the CLI's own default, the
+  one value valid everywhere). Any new supervisor spawn path that reads
+  `supervisor.model` directly reintroduces the cross-harness 400. Keep
+  `managedFacadeInstructions` (managed/stream) and `facadeSpawnArgs` (PTY) in step
+  — both now carry summarizerModel + pollSeconds + whether `/supervise` was
+  installed for that harness. Also: the settings model dropdown is keyed on the
+  selected harness via `renderer/src/lib/modelOptions.loadModelOptions` +
+  `capsFor(provider).modelSource`; it used to call `claudeListModels()`
+  unconditionally, which is what made codex show Claude models. See
+  `domains/agent-spawn.md` for the wider "every model-holding config key predates
+  multi-provider" note.
+- **`spawn_agent` with NO `provider` spawns Claude — and prompt text is
+  load-bearing wiring, not documentation.** The `/supervise` skill and both facade
+  prompt builders (`mcpConfig` `facadeSpawnArgs` + `managedFacadeInstructions`)
+  told the supervisor to spawn its transcript-digest worker with a MODEL but no
+  PROVIDER. Because `spawn_agent` defaults to Claude, a **codex** supervisor
+  dispatched **Claude** summarizers — which is why `supervisor.summarizerModel`'s
+  claude-only `'sonnet'` default looked correct: it was right by accident, and only
+  because the setting it named was never actually reaching a codex spawn. Fixed by
+  adding `summarizerProvider` to both builders (one shared
+  `mcpConfig.summarizerSpawnNote`) so the digest worker follows its supervisor's
+  harness, and by omitting the model key entirely when it resolves to nothing.
+  **Any prompt that instructs an agent to call `spawn_agent` must name the provider
+  explicitly.** Keep the instruction in `mcpConfig.summarizerSpawnNote` — the PTY
+  and managed prompt builders drifted once already; `supervisorSkill.ts`'s
+  `SKILL_BODY` now defers to the system prompt for both provider and model rather
+  than restating a config key.
+- **`agents.sendMessage`'s `fromSessionId` is a TWO-PROVIDER contract, and the
+  desktop was the half that dropped it** (fixed 2026-08-29).
+  `services/hub/cmd/brain/handlers.go` prepends `fleetSenderHeader()` —
+  `"[fleet] session:<id> (<label>) says:\n"` (`services/hub/cmd/brain/enrich.go`) — when
+  `agents.sendMessage` carries `fromSessionId`, and the MCP facade's
+  `sendMessageIn` (`services/hub/cmd/mcp/main.go`) advertises the param to every agent as *"the
+  message is delivered with a header naming you as the sender"*. The desktop twin
+  in `hubCapabilities.ts` destructured only `{ sessionId, text }` and dropped the
+  field — so a dispatched worker messaging its manager arrived **ANONYMOUS in the
+  normal desktop case and attributed only on a headless node**, while the tool
+  description promised attribution the primary provider did not implement.
+  The header string is a shared twin: it borrows `[fleet]` and `session:<id>` from
+  `main/shared/fleetMessages.ts` but is deliberately **NOT** a `FleetMessageKind`,
+  so `parseFleetMessage` must keep not round-tripping it. **Any new field on a
+  dual-provider agent method has to be destructured on BOTH sides** — see
+  `paradigms/registration-checklists.md`, Checklist B.
+
+## Hand-authored notes (2026-08-26) — the brief line's DOUBLE SPACE is load-bearing
+
+`briefService.normalizeBriefLine` already warns about this and it is easy to
+reintroduce one layer up: the doctrine's dated-log format is
+`- YYYY-MM-DD  <what happened>` with **TWO spaces**, so a `\s+ -> ' '` flatten in
+any new brief-line composer silently re-spaces the one format the brief tooling
+exists to write. Caught by a test on `composeResultLine`'s "the caller already
+dated their sentence" path.
+
+The correct flatten is `normalizeBriefLine`'s two replaces — newline runs and
+tab/FF/VT runs become one space, **interior SPACES are left alone** — and the Go
+twin `flattenBriefLine` (`services/hub/cmd/brain/brief.go`) is the same function,
+so both providers must use it rather than `strings.Fields` or a `\s+` regexp.

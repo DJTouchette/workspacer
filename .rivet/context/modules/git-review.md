@@ -42,3 +42,53 @@ last_reviewed: 2026-07-11
 - **Rename parsing has two independent formats** that must stay consistent: porcelain `-z` renames put the source path as a *separate* NUL token (`parsePorcelain`), while numstat renames appear inline as `old => new` or brace form `prefix/{old => new}/suffix` (`parseNumstatPath`) — a bug fix in one format won't fix the other.
 - `isUnmergedStatus` (in `apps/desktop/src/renderer/src/lib/gitQueries.ts`, reused by ReviewPane to bucket files into the Conflicts section) hardcodes the 7 XY unmerged combos (`DD,AU,UD,UA,DU,AA,UU`) plus a fallback for either code being `U` — if git ever adds a new conflict marker combo this needs a matching update.
 - `apps/desktop/src/renderer/src/panes/ReviewPane.tsx`'s "Push" button is greyed out only when `status.upstream != null && ahead === 0`; with no upstream (or an older host omitting ahead/behind) it stays enabled so a real failure reason surfaces via `formatGitActionError` instead of a false "nothing to push".
+
+## Hand-authored notes (2026-08-24) — `git.*` now has TWO providers, and the untracked-diff leg needs BOTH root sets
+
+The read-only half of `git.*` (status/log/diff/numstat) is now provided by BOTH
+`apps/desktop/src/main/services/hubCapabilities.ts` and
+`services/hub/cmd/brain/git.go`. Two things are non-obvious:
+
+1. **The hub router is single-owner per METHOD and first-registration-wins**, so
+   in the "adopted hub" configuration the brain wins the four reads while the
+   desktop keeps commitDiff/commitNumstat/stage/unstage/commit/push — no method is
+   owned twice, and the split is stable rather than a race.
+   `services/hub/cmd/brain/delegation_guard_test.go`'s `declaredOverlap` is where
+   that has to be written down or the package fails. Anyone adding a fifth
+   brain-provided git method must add a `declaredOverlap` entry too.
+2. **`git.diff{untracked}` is an arbitrary-file reader unless its `path` is held
+   to TWO root sets**: the DERIVED work-tree root (which comes out of
+   `rev-parse --show-toplevel` AFTER the cwd guard and is never itself
+   allow-listed) **AND** the ordinary workspace roots. Holding it to the repo
+   alone lets an agent cwd of `<repo>/frontend` read `<repo>/backend/.env`,
+   because `git diff --no-index -- /dev/null <path>` reads the operand as a
+   filesystem path and renders any readable file as an all-added diff.
+
+**Anyone "simplifying" `anchorGitPathspec` to resolve against the caller's cwd
+reopens a documented arbitrary-file read on an internet-facing node.** Before
+touching either provider's git block, read the `anchorGitPathspec` comment in
+`services/hub/cmd/brain/git.go` and run `go test ./cmd/brain -run TestGitDiff`. The mutant
+that drops the extra `workspaceRoots` assertion is caught by
+`TestGitDiffUntrackedCannotEscapeTheAllowedRoots/a_sibling_subtree_of_the_agent_cwd`;
+**if that test ever needs weakening, the leg is wrong, not the test.** Note
+`git.*` is operator-tier only (`authtoken` `Scope.Methods()`: view/triage carry
+zero git entries, operator is `"*"`), so no tier work is involved.
+
+## Hand-authored notes (2026-08-28) — recovering a dirty worktree: search sibling commits BEFORE applying the diff
+
+A stale checkout's branch NAME and its distance from master are not reliable
+descriptions of its working patch. A worktree named for a committed stall fix
+carried a 24-file working diff that actually implemented **spawn-carried
+first-message delivery**; its HEAD (`da5e8710`) and the landed feature commit
+(`827d6d33`) were SIBLING commits with the same parent. At merge `55c84e1a`, 19
+of the 24 dirty files matched the stale working files byte-for-byte, and the
+other five retained the behaviour while adding federated version-skew fallback,
+bounded failure tracking, and pending-slot ownership hardening — so current
+master had no stale-only behaviour left to port at all.
+
+**Blindly applying the old diff would have duplicated an existing feature and
+regressed current safeguards.** The procedure: inspect the dirty PATHS and
+vocabulary first, use `git log -S` or a commit-message search to find sibling
+implementations, then compare the stale working file hashes against the landing
+merge before attempting a port. **Treat an already-landed superset as a
+successful recovery and commit only the audit record.**

@@ -1,6 +1,6 @@
 ---
 title: Webview attach-time hardening (BrowserPane + PluginPane)
-tags: [security, electron, webview, browser-pane, plugin-pane, main-process]
+tags: [security, electron, webview, browser-pane, plugin-pane, main-process, origin, blocked]
 related_paths:
   - "apps/desktop/src/main/lib/webviewGuard.ts"
   - "apps/desktop/src/main/lib/webviewGuard.test.ts"
@@ -52,3 +52,96 @@ Workspacer's main `BrowserWindow` enables `webviewTag: true` (`apps/desktop/src/
 - **Empty `src` / `about:blank` is allowed at attach time by design**, because panes attach an empty shell and then drive it via `wv.loadURL()`/`navigate()` afterward — that follow-up load is caught by the separate `will-navigate` check, so this is not a bypass, but a future editor must not "simplify" by rejecting empty `src` at attach without also confirming panes don't rely on the shell-then-load pattern.
 - **Two-listener design is required, not redundant**: `will-attach-webview` alone would only catch the *initial* `src`; `did-attach-webview` + `will-navigate`/`will-redirect` on the guest's own `webContents` is what stops a later in-page navigation (e.g. a link click, JS redirect, or a user retyping the omnibox) from reaching `file://` after a legitimate attach. Removing either listener reopens part of the original gap.
 - **Fan-in is deliberately tiny** (`recon.context` reports `fan_in: 2`, `hotspot_score` ~0.005) — `webviewGuard.ts` has exactly one production caller (`apps/desktop/src/main/index.ts`) plus its test file. Low fan-in here is a *feature*, not a coverage gap: the policy is intentionally centralized to one attach point rather than duplicated per pane type.
+
+## Hand-authored notes (2026-08-24) — framing plugin UI in a BROWSER is an origin problem
+
+Everything above is about the Electron `<webview>`. The `/app` browser mirror has
+a different problem with the same panes, and the two are easy to conflate.
+
+- **Nothing sets X-Frame-Options or a `frame-ancestors` CSP** — verified by
+  repo-wide grep and by curl against a live hub (`/plugins/ui/<id>/` and `/app/`
+  both return neither header), and all three sandbox variants of a hub-served
+  plugin UI load in an iframe under Chromium. **So framing itself needs no header
+  change.** The real fork is the SANDBOX, and it splits by plugin kind:
+  - A **webview-only** plugin (manifest `ui`, no `server`) is served by the HUB at
+    `/plugins/ui/<id>/`, which is the **SAME ORIGIN** as `/app`. Framed with
+    `allow-same-origin` its page can read `parent.document`, call
+    `parent.window.electronAPI.*`, and **lift the hub's full host token out of
+    sessionStorage** — escalating past the scoped per-pane token `PluginPane`
+    mints. Mutation-verified in Chromium: the frame reported
+    `hostToken:<host token>`, and `iframe.contentDocument` was readable both with
+    no sandbox and with `allow-scripts allow-same-origin`.
+  - A **sidecar** plugin (`server.port`) is served from `http://127.0.0.1:<port>`,
+    a DIFFERENT origin from `/app`. `allow-scripts allow-same-origin` there is
+    safe (`parent.document` throws) AND its bus WebSocket connects, because the
+    frame keeps a real loopback origin. Verified live: a sidecar plugin pane on
+    `/app` renders with `bus: CONNECTED`.
+- **Withholding `allow-same-origin` is safe but kills the bus.** An opaque origin
+  sends `Origin: null`, which `services/hub/internal/bus/bus.go`'s `originAllowed`
+  refuses explicitly ("malformed / opaque (\"null\") Origin — fail closed") because
+  it is the DNS-rebinding guard. Measured: the plugin's `/bus` upgrade gets a 403
+  handshake response and the SDK reconnect-loops forever.
+- **So there is exactly one degree of freedom: a SECOND origin.** A distinct
+  origin routed to the same hub (`hub --plugin-origin`, advertised at the public
+  `/plugins/origin` route, or the free `127.0.0.1` ⇄ `localhost` sibling on
+  loopback) is the only way a browser-framed plugin keeps its bus link, and it
+  **loosens nothing** — the browser's own same-origin policy becomes the wall.
+  Verified: at a distinct origin the frame connects to `/bus`, keeps storage, and
+  still reports parentDoc/hostToken/electronAPI BLOCKED, while every capability
+  outside its manifest is refused by the pane token.
+  **Anyone extending the `/app` iframe fallback will be tempted to "just add
+  allow-same-origin" when a hub-served plugin's bus link fails, or to make
+  `originAllowed` accept null. Both were declined deliberately** — either silently
+  widens a boundary on a box that may be internet-facing over Tailscale. Keep
+  `guestFramePolicy()` (`apps/desktop/src/renderer/src/lib/guestFrame.ts`) as the
+  single decision point and keep it ORIGIN-driven.
+- **SIDECAR plugin UIs cannot be remoted with a hub path-prefix proxy.** Their
+  pages fetch ROOT-relative paths (`jira/ui/index.html`: `/state`,
+  `/issue/<k>/detail`, `/briefs`, `/projects`; `shiplight/ui/widget.html`:
+  `STATE_URL = '/state'`) which escape any `/plugins/proxy/<id>/` prefix — they
+  need an origin ROOT, i.e. **one origin per plugin**. On top of that, a proxy
+  would publish a loopback-confined sidecar's API to the network with no
+  subresource-safe credential (relative fetches carry no token; cookies are
+  unavailable in an opaque frame and third-party-blocked in a cross-origin one).
+  If remote sidecar panes are ever wanted, budget for per-plugin origins plus a
+  credential scheme that survives root-relative subresources.
+- **The discriminator for "can I reach a sidecar's loopback port" must be *is the
+  hub endpoint I talk to on my own loopback*, never `platform === 'web'`** —
+  desktop remote-client mode is a web backend with a real host platform, and a
+  browser on the hub machine is `'web'` but local.
+- *(Catalogue split at 2026-08-24: 13 of 20 plugins are sidecar and work fully in
+  an iframe; 7 are hub-served `ui` and render statically with no bus.)*
+
+## Hand-authored notes (2026-08-24) — a derived-path guard whose ROOT is the caller's own cwd
+
+`library.list`/`save`/`remove` guard the caller's `cwd` and then guard the
+DERIVED item path (`<cwd>/.workspacer/library/<slug>.md`,
+`<cwd>/.claude/skills/<id>/SKILL.md`) against
+`libraryItemRoots(canonicalCwd)` = `[<configDir>/library, canonicalCwd]`. **That
+second guard is only as narrow as the cwd the caller named** — and `library.list`
+checks its cwd against the BROWSE roots (workspace + the whole home tree),
+because the New Agent dialog lists a directory no agent runs in yet.
+
+So a caller may name `$HOME`, the item roots become the whole home tree, and a
+`$HOME/.workspacer/library/a.md -> $HOME/.ssh/id_rsa` symlink canonicalizes
+inside the root, passes, and comes back as an item BODY — while `fs.read` of the
+identical path is refused for the same caller. The brain
+(`services/hub/cmd/brain/library.go`) had closed this with a second, **LEXICAL**
+requirement (`libraryItemDirs` + `containsPath`) that the RESOLVED file sit in a
+directory a library item actually lives in; `hubCapabilities.ts` shipped without
+it, so the two providers disagreed about the same call — and the wide one is what
+`DELEGATE_CATALOG_TO_BRAIN=false` puts back on the bus. Fixed 2026-08-24
+(3158c6f2), pinned by a `libraryItemDirs` block in
+`contracts/path-containment-cases.json` with two loaders. **The second gate must
+stay LEXICAL:** canonicalizing the two cwd-derived directories resolves the very
+link it exists to see.
+
+**The general lesson beyond `library.*`: when a derived-path guard's ROOT is
+itself derived from the caller's directory, the guard is self-fulfilling for any
+method whose cwd may be a wide root. Ask what the WIDEST cwd that method accepts
+is, not what a typical one is.** Any new capability that composes a
+provider-chosen path under a caller-supplied directory needs BOTH halves —
+containment against roots, and a requirement about where the resolved file may
+live — with cases in `contracts/path-containment-cases.json`
+(`methods.derivedRootSet` for the first, the `libraryItemDirs` pattern for the
+second) rather than one-off tests.

@@ -157,3 +157,31 @@ last_reviewed: 2026-08-16
   finds absolute image paths in ASSISTANT prose (cap 4) and leaves them in place as
   FileLinks. Tiles render only for paths that actually decoded; `ConversationMessage`
   gained a `cwd` prop purely to resolve relative paths.
+
+## Hand-authored notes (2026-08-23) — a wake's post-bullet BLOCKS need an explicit fold, or the GUI card loses them
+
+`buildFleetMessage` emits post-bullet BLOCKS after a blank line (FAILED note,
+STOPPED note, `Structured result — <label> (session:<id>):` + pretty JSON,
+`Structured result MISSING — …`, `Full final message — …`), but
+`parseFleetMessage`'s bullet loop `break`s at the first non-bullet line — so
+**every one of those blocks was dropped**. A dispatch with a `resultSchema`
+produced a validated object the manager AGENT could read in the wake text, while
+the GUI card showed no trace of it at all: not a raw JSON dump, nothing.
+`resultError` was equally invisible.
+
+Fixed 2026-08-23 (`01ad83f7`): `attachResultBlocks()` folds `result`/`resultError`
+back onto their entries by `sessionId` and **STOPS at the first
+`Full final message — ` block**, because a full reply is arbitrary worker prose
+with blank lines whose paragraphs would otherwise be scanned as blocks (and could
+FORGE a result). `fullReply` deliberately still does not round-trip.
+
+- **When adding a new extras block to `buildFleetMessage`, add the matching fold
+  in `attachResultBlocks` AND a round-trip test in `fleetMessages.test.ts`, or the
+  GUI silently loses it.**
+- **The `RESULT_MAX` cap means a valid result can arrive as INVALID JSON**
+  (truncated mid-object with a `[truncated: …]` marker), so any renderer of
+  `entry.result` must tolerate unparseable input.
+- Render structured results through
+  `apps/desktop/src/renderer/src/components/claude/StructuredResultCard.tsx`
+  (+ `structuredResultFields.ts`), which classifies by VALUE SHAPE because the
+  schema is authored per dispatch.
