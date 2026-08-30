@@ -1,0 +1,284 @@
+{
+  "_comment": [
+    "THE WINDOW-CURRENCY RULE: when a rate-limit window reading from claudemon's",
+    "GET /usage/report may be USED, and what a reader must answer when it may not.",
+    "",
+    "The rule, stated once:",
+    "",
+    "  A window reading is usable ONLY IF resets_at is present AND resets_at is",
+    "  strictly greater than now AT THE MOMENT OF THE DECISION. A reading that",
+    "  fails that test yields UNKNOWN for that window - never a percentage, never",
+    "  a remaining capacity, never a time-to-reset.",
+    "",
+    "is_current on the wire is a DISPLAY HINT and is never the decision input.",
+    "The daemon computes it at generated_at (usage_report.rs against the same now",
+    "that stamps generated_at), so it is correct in the response and becomes a lie",
+    "the moment a client caches or polls the document - which is exactly what a",
+    "routing engine does. Every case below therefore carries the wire's own",
+    "is_current, and the expected verdict is derived from resets_at vs now instead:",
+    "the case named 'the wire still says is_current true and the reset has since",
+    "passed' is the one that fails if a reader ever trusts the hint.",
+    "",
+    "WHY THIS FIXTURE EXISTS. Live on 2026-08-30 the daemon served codex's 5h",
+    "window as used_percent ok 67.0 against a resets_at 1 day 23 hours in the",
+    "PAST. The percentage is real history and a false present, and both arms of",
+    "the routing spec's initial mode rule read it wrong in opposite directions:",
+    "",
+    "  SPEND_DOWN arm - 'time_to_reset < 90 minutes' is TRIVIALLY TRUE on a",
+    "  negative number, so a literal implementation spends down premium",
+    "  allowance against a window that closed two days ago.",
+    "  CONSERVE arm - 'remaining capacity' reads 33% from a window that has in",
+    "  fact rolled over to ~100%, so the fleet conserves for no reason. That one",
+    "  is self-reinforcing: conserving slows the arrival of a fresh reading,",
+    "  which keeps the stale one authoritative.",
+    "",
+    "Both owners implement the same currency test and disagree deliberately about",
+    "what they do with a CURRENT reading, which is why only the currency verdict",
+    "is pinned here:",
+    "",
+    "  apps/desktop/.../services/keepWarmLogic.ts fiveHourWindowFromReport (TS)",
+    "  deliberately DISCARDS the percentage - windowActive() treats any pct above",
+    "  zero as a live window, so forwarding a stale 67% would suppress codex",
+    "  warming permanently. Its three returns are exactly this fixture's three",
+    "  verdicts: {five_hour_resets_at} = current, {} = rolled-over, null =",
+    "  unreadable.",
+    "  services/hub/internal/limits/window.go (Go) is the ROUTING reader and",
+    "  needs the percentage, so it answers the wider question - the same currency",
+    "  test, returning the reading plus its provenance when current and an",
+    "  explicit unreadable/rolled-over reason when not.",
+    "",
+    "usedPercent and secondsToReset are pinned as null on every non-current case",
+    "on purpose. 'UNKNOWN' has to mean no number at all; a reader that answered",
+    "0% and no reset would satisfy 'it refused' while handing a router a figure."
+  ],
+  "vocabulary": {
+    "_comment": [
+      "THE BLOCK REGISTRY. Every array-of-objects block in this file must be",
+      "declared here and everything here must be a block - closure in both",
+      "directions. Held by cmd/brain/corpusvocab_test.go and",
+      "apps/desktop/src/main/services/contractsVocabulary.test.ts."
+    ],
+    "blocks": {
+      "cases": {
+        "why": "One rate-limit window reading from GET /usage/report, the instant a decision is being made about it, and whether that reading may be used - plus, when it may not, which of the two ways it failed.",
+        "required": [
+          "name",
+          "now",
+          "window",
+          "expect",
+          "usedPercent",
+          "secondsToReset",
+          "why"
+        ],
+        "optional": [
+          "unknownBecause"
+        ],
+        "nested": {
+          "window": [
+            "used_percent",
+            "resets_at",
+            "window_minutes",
+            "is_current"
+          ]
+        },
+        "loaders": [
+          "services/hub/internal/limits/window_test.go::TestWindowCurrencyMatchesTheContract",
+          "apps/desktop/src/main/services/keepWarmLogic.test.ts::usage-window currency (cross-language contract)"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "current": {
+            "requires": [],
+            "forbids": [
+              "unknownBecause"
+            ]
+          },
+          "rolled-over": {
+            "requires": [
+              "unknownBecause"
+            ],
+            "reasons": "rolledOverReasons"
+          },
+          "unreadable": {
+            "requires": [
+              "unknownBecause"
+            ],
+            "reasons": "unreadableReasons"
+          }
+        }
+      }
+    },
+    "rolledOverReasons": {
+      "reset-time-has-passed": "resets_at is present and is strictly before now, so the window this reading describes has closed. A DEFINITE answer: no window from this reading is running.",
+      "reset-time-equals-now": "resets_at is exactly now. The comparison is strictly greater-than, which is the boundary services/claudemon/src/providers/codex_usage.rs already pins as not-current, so the two sides cannot disagree by one second."
+    },
+    "unreadableReasons": {
+      "no-reset-time-reported": "The source reported no resets_at. A percentage alone cannot say WHICH window it describes, which is why the daemon leaves is_current null here too - so this is genuinely unknown rather than definitely lapsed.",
+      "no-window-reading-at-all": "There is no window object for this provider/account/window at all. Nothing to judge; ask a different source."
+    }
+  },
+  "cases": [
+    {
+      "name": "a live 5h window with room left",
+      "now": 1788126404,
+      "window": {
+        "used_percent": { "state": "ok", "value": 18.0 },
+        "resets_at": 1788132000,
+        "window_minutes": null,
+        "is_current": true
+      },
+      "expect": "current",
+      "usedPercent": 18.0,
+      "secondsToReset": 5596,
+      "why": "The claude default login exactly as the live daemon served it on 2026-08-30. A future resets_at is the only thing that makes a percentage usable, and window_minutes null is normal for Anthropic - it must not be mistaken for an unreadable window."
+    },
+    {
+      "name": "a genuine zero on an open window is an answer, not an absence",
+      "now": 1788126404,
+      "window": {
+        "used_percent": { "state": "ok", "value": 0.0 },
+        "resets_at": 1788731121,
+        "window_minutes": 10080,
+        "is_current": true
+      },
+      "expect": "current",
+      "usedPercent": 0.0,
+      "secondsToReset": 604717,
+      "why": "codex's 7d window, live on 2026-08-30. Measured.ok carries a real zero and a reader that treats 0 as missing turns a healthy provider into an unknown one - the exact collapse the three-state scalar exists to prevent."
+    },
+    {
+      "name": "the live codex 5h reading, two days after its window closed",
+      "now": 1788124095,
+      "window": {
+        "used_percent": { "state": "ok", "value": 67.0 },
+        "resets_at": 1787953526,
+        "window_minutes": 300,
+        "is_current": false
+      },
+      "expect": "rolled-over",
+      "unknownBecause": "reset-time-has-passed",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "The live row this whole fixture exists for, verbatim: used 67.0, resets_at 1787953526, window_minutes 300, observed on 2026-08-30. Signed, time_to_reset is -170569 seconds. A router that reads it gets 33% remaining from a window that has actually reset to about 100%, and a 'reset in under 90 minutes' arm that is trivially true."
+    },
+    {
+      "name": "a dead window whose stale percentage also passes the spend-down capacity test",
+      "now": 1788126404,
+      "window": {
+        "used_percent": { "state": "ok", "value": 20.0 },
+        "resets_at": 1788122804,
+        "window_minutes": 300,
+        "is_current": false
+      },
+      "expect": "rolled-over",
+      "unknownBecause": "reset-time-has-passed",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "The sharper half of the same defect. Both spend-down preconditions appear satisfied at once - remaining reads 80% and time_to_reset is -3600, which is under 90 minutes on any unsigned or unguarded comparison - so a literal implementation promotes every role against a window that closed an hour ago."
+    },
+    {
+      "name": "the wire still says is_current true and the reset has since passed",
+      "now": 1788126404,
+      "window": {
+        "used_percent": { "state": "ok", "value": 40.0 },
+        "resets_at": 1788126403,
+        "window_minutes": 300,
+        "is_current": true
+      },
+      "expect": "rolled-over",
+      "unknownBecause": "reset-time-has-passed",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "THE case that fails if a reader trusts the hint. is_current was true when the document was generated and the document was then cached for one second; currency has to be decided against the caller's own clock, so the wire's answer and the correct answer disagree here by construction."
+    },
+    {
+      "name": "one second before the reset",
+      "now": 1787953525,
+      "window": {
+        "used_percent": { "state": "ok", "value": 67.0 },
+        "resets_at": 1787953526,
+        "window_minutes": 300,
+        "is_current": true
+      },
+      "expect": "current",
+      "usedPercent": 67.0,
+      "secondsToReset": 1,
+      "why": "The open side of the boundary. Same reading as the live codex row, judged one second earlier: it was a true 67% then, which is why the percentage is only ever wrong relative to a clock."
+    },
+    {
+      "name": "resets_at exactly equals now",
+      "now": 1787953526,
+      "window": {
+        "used_percent": { "state": "ok", "value": 67.0 },
+        "resets_at": 1787953526,
+        "window_minutes": 300,
+        "is_current": false
+      },
+      "expect": "rolled-over",
+      "unknownBecause": "reset-time-equals-now",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "The closed side of the same boundary, one second later. codex_usage.rs's is_current already answers false at exactly the reset (resets_at > now, strictly), so pinning it here is what stops a >= creeping into either reader and disagreeing with the daemon by one second."
+    },
+    {
+      "name": "a percentage the source could not read, on a window that is still open",
+      "now": 1788126404,
+      "window": {
+        "used_percent": {
+          "state": "unknown",
+          "reason": "the most recent rollout carrying rate limits did not include this window"
+        },
+        "resets_at": 1788127004,
+        "window_minutes": 300,
+        "is_current": true
+      },
+      "expect": "current",
+      "usedPercent": null,
+      "secondsToReset": 600,
+      "why": "Currency and readability are separate axes and both readers must keep them apart. The window IS the one running - so a time-to-reset is knowable and spend-down may reason about it - while the percentage is not, so no capacity figure may be invented for it."
+    },
+    {
+      "name": "a percentage with no reset time at all",
+      "now": 1788126404,
+      "window": {
+        "used_percent": { "state": "ok", "value": 67.0 },
+        "resets_at": null,
+        "window_minutes": null,
+        "is_current": null
+      },
+      "expect": "unreadable",
+      "unknownBecause": "no-reset-time-reported",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "The reading that most looks usable and is not. A number with no window attached cannot say which window it describes, so it must answer UNKNOWN - never '67% and no reset', and never the '0% and no reset' a reader that zero-fills the missing half would produce."
+    },
+    {
+      "name": "copilot: a window nobody can ever report",
+      "now": 1788126404,
+      "window": {
+        "used_percent": {
+          "state": "unavailable",
+          "reason": "GitHub exposes no local quota record, and copilot_internal/v2/token answers 403 to a gh OAuth token (probed live against copilot CLI v1.0.81)"
+        },
+        "resets_at": null,
+        "window_minutes": null,
+        "is_current": null
+      },
+      "expect": "unreadable",
+      "unknownBecause": "no-reset-time-reported",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "unavailable is a permanent structural answer where unknown is a retryable one, and the currency test cannot tell them apart - both give no reset time, so both are unreadable HERE. Keeping the distinction alive is the reading's job, not the currency guard's; what matters is that neither yields a capacity."
+    },
+    {
+      "name": "no window object at all",
+      "now": 1788126404,
+      "window": null,
+      "expect": "unreadable",
+      "unknownBecause": "no-window-reading-at-all",
+      "usedPercent": null,
+      "secondsToReset": null,
+      "why": "A provider or account the document does not carry a window for. Distinct from a window that reports nothing readable, and distinct again from one that has lapsed: nothing here is even a claim, so it can never be rendered as a lapsed window either."
+    }
+  ]
+}

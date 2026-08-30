@@ -1,0 +1,217 @@
+{
+  "generated_at": 1788126404,
+  "providers": [
+    {
+      "provider": "claude",
+      "accounts": [
+        {
+          "account": "",
+          "label": "default",
+          "is_default": true,
+          "source": "oauth_poll",
+          "observed_at": 1788126384,
+          "fresh": true,
+          "failure": null,
+          "windows": {
+            "five_hour": {
+              "used_percent": {
+                "state": "ok",
+                "value": 18.0
+              },
+              "resets_at": 1788132000,
+              "window_minutes": null,
+              "is_current": true
+            },
+            "seven_day": {
+              "used_percent": {
+                "state": "ok",
+                "value": 91.0
+              },
+              "resets_at": 1788170400,
+              "window_minutes": null,
+              "is_current": true
+            },
+            "monthly": {
+              "used_percent": {
+                "state": "unavailable",
+                "reason": "extra usage (monthly overage) is not enabled on this account"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            }
+          }
+        },
+        {
+          "account": "/home/you/.claude/accounts/work",
+          "label": "work",
+          "is_default": false,
+          "source": "oauth_poll",
+          "observed_at": null,
+          "fresh": null,
+          "failure": {
+            "kind": "needs_reauth",
+            "detail": "oauth token expired (the CLI refreshes it on its next turn; the daemon deliberately does not)",
+            "at": 1788123624
+          },
+          "windows": {
+            "five_hour": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "NeedsReauth: oauth token expired (the CLI refreshes it on its next turn; the daemon deliberately does not)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "seven_day": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "NeedsReauth: oauth token expired (the CLI refreshes it on its next turn; the daemon deliberately does not)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "monthly": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "NeedsReauth: oauth token expired (the CLI refreshes it on its next turn; the daemon deliberately does not)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            }
+          }
+        },
+        {
+          "account": null,
+          "label": "unattributed",
+          "is_default": false,
+          "source": "transcript",
+          "observed_at": null,
+          "fresh": null,
+          "failure": null,
+          "windows": {
+            "five_hour": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "these sessions carry no spawn-recorded account, and their transcript paths cannot name one \u2014 a row older than schema v8, a session this daemon did not spawn, or a path whose account was erased by canonicalization"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "seven_day": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "these sessions carry no spawn-recorded account, and their transcript paths cannot name one \u2014 a row older than schema v8, a session this daemon did not spawn, or a path whose account was erased by canonicalization"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "monthly": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "these sessions carry no spawn-recorded account, and their transcript paths cannot name one \u2014 a row older than schema v8, a session this daemon did not spawn, or a path whose account was erased by canonicalization"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            }
+          }
+        }
+      ],
+      "note": null
+    },
+    {
+      "provider": "codex",
+      "accounts": [
+        {
+          "account": "/home/you/.codex",
+          "label": "self_serve_business_prolite",
+          "is_default": true,
+          "source": "disk",
+          "observed_at": 1788126402,
+          "fresh": null,
+          "failure": null,
+          "windows": {
+            "five_hour": {
+              "used_percent": {
+                "state": "unknown",
+                "reason": "the most recent rollout carrying rate limits did not include this window"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "seven_day": {
+              "used_percent": {
+                "state": "ok",
+                "value": 0.0
+              },
+              "resets_at": 1788731121,
+              "window_minutes": 10080,
+              "is_current": true
+            },
+            "monthly": {
+              "used_percent": {
+                "state": "unavailable",
+                "reason": "Codex publishes no monthly window"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            }
+          }
+        }
+      ],
+      "note": "credits: none"
+    },
+    {
+      "provider": "copilot",
+      "accounts": [
+        {
+          "account": "/home/you/.copilot/session-store.db",
+          "label": "copilot",
+          "is_default": true,
+          "source": "disk",
+          "observed_at": 1788060356,
+          "fresh": null,
+          "failure": null,
+          "windows": {
+            "five_hour": {
+              "used_percent": {
+                "state": "unavailable",
+                "reason": "GitHub exposes no local quota record, and copilot_internal/v2/token answers 403 to a gh OAuth token (probed live against copilot CLI v1.0.81)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "seven_day": {
+              "used_percent": {
+                "state": "unavailable",
+                "reason": "GitHub exposes no local quota record, and copilot_internal/v2/token answers 403 to a gh OAuth token (probed live against copilot CLI v1.0.81)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            },
+            "monthly": {
+              "used_percent": {
+                "state": "unavailable",
+                "reason": "GitHub exposes no local quota record, and copilot_internal/v2/token answers 403 to a gh OAuth token (probed live against copilot CLI v1.0.81)"
+              },
+              "resets_at": null,
+              "window_minutes": null,
+              "is_current": null
+            }
+          }
+        }
+      ],
+      "note": "77 requests over 25 sessions, recorded by GitHub itself"
+    }
+  ]
+}
