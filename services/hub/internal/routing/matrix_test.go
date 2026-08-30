@@ -503,3 +503,39 @@ func TestChangedExcludesKeysThatRestateTheDefault(t *testing.T) {
 		t.Errorf("Applied = %d keys, want the same %d the file carries either way", len(m2.Applied), len(m.Applied))
 	}
 }
+
+// TestVendorAliasKeysFoldBeforeTheMerge pins the ordering the alias fold has to
+// happen in, and it loops because the bug it guards is a Go map-order coin
+// flip: one run proves nothing.
+//
+// The shipped defaults always carry `codex:` under both `providers:` and
+// `modes.providers:`. A user file that spells it the spec's way (`openai:`)
+// therefore merges into a document holding BOTH keys, and folding the alias
+// AFTER the decode collapsed two entries onto one in randomized map order — so
+// `modes.providers.openai: conserve` was honoured or silently thrown away
+// depending on the run. A setting read and then discarded by a coin flip is
+// worse than one never read, because half the evidence says it works.
+func TestVendorAliasKeysFoldBeforeTheMerge(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		m, err := Load("test.yaml", []byte(
+			"modes:\n  providers:\n    openai: conserve\nproviders:\n  anthropic:\n    enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if got := m.ModeFor("codex"); got != "conserve" {
+			t.Fatalf("run %d: modes.providers.openai: conserve resolved to %q for codex — the alias lost the collision with the shipped `codex: auto`", i, got)
+		}
+		if pol, ok := m.ProviderPolicy("claude"); !ok || pol.IsEnabled() {
+			t.Fatalf("run %d: providers.anthropic.enabled: false did not take claude out of service (%+v)", i, pol)
+		}
+		// The shipped values the alias entry did NOT mention must survive: the
+		// fold renames a key, it does not replace the block.
+		if pol, _ := m.ProviderPolicy("claude"); !pol.Metered || pol.WhenUnknown != "yellow" {
+			t.Fatalf("run %d: the alias entry replaced claude's whole provider block instead of merging into it: %+v", i, pol)
+		}
+		// And the load log names the key that actually applied.
+		if !contains(m.Changed, "modes.providers.codex") {
+			t.Fatalf("run %d: Changed says %v — an operator reading the log must see the key that took effect", i, m.Changed)
+		}
+	}
+}

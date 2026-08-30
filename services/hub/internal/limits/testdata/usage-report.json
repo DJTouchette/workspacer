@@ -139,8 +139,8 @@
           "windows": {
             "five_hour": {
               "used_percent": {
-                "state": "unknown",
-                "reason": "the most recent rollout carrying rate limits did not include this window"
+                "state": "unavailable",
+                "reason": "the Codex plan `self_serve_business_prolite` publishes no five-hour window \u2014 the newest rollout's rate_limits block enumerated this account's limits and this window was not among them"
               },
               "resets_at": null,
               "window_minutes": null,

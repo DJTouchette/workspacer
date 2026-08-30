@@ -492,6 +492,23 @@ type Decision struct {
 	Capacity   Capacity      `json:"capacity"`
 	Demand     limits.Demand `json:"demand"`
 
+	// ModeProvider names the provider whose capacity actually produced Mode —
+	// the provider Capacity describes. It exists because Provider is the
+	// provider that will RUN the work, and a mode shift is allowed to move
+	// those apart (routing away from a constrained provider is the whole
+	// feature). An explanation that named only one of them could claim a
+	// capacity reason it never used.
+	ModeProvider string `json:"modeProvider,omitempty"`
+	// ShiftCapacity is the LANDING provider's own capacity, read when a mode
+	// shift would have moved this role onto a provider other than ModeProvider.
+	// It is present whether the shift was applied or refused: "we looked at
+	// claude before sending claude the work" is the claim, and a field that
+	// appeared only on success would not support it.
+	ShiftCapacity *Capacity `json:"shiftCapacity,omitempty"`
+	// ShiftMode is the mode that landing provider's OWN capacity decides, which
+	// is what the shift was allowed or refused on.
+	ShiftMode Mode `json:"shiftMode,omitempty"`
+
 	Reason []string `json:"reason"`
 
 	// Matrix names where the answer came from, so an operator can tell a
@@ -577,36 +594,49 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 		d.Reason = append(d.Reason, fmt.Sprintf("the request asks about provider %s, so its capacity is what governs this decision", subject))
 	}
 
-	// 4. Capacity, judged against THIS instant.
-	if snapErr != nil {
-		d.Capacity = Capacity{
-			Provider: subject,
-			Health:   limits.HealthUnknown,
-			Because:  fmt.Sprintf("claudemon's usage report could not be read (%v), so no provider's capacity is knowable right now", snapErr),
-		}
-		d.Capacity.EffectiveHealth = d.Capacity.Health
-		if pol, ok := m.ProviderPolicy(subject); ok {
-			if assumed, ok := parseWhenUnknown(pol.WhenUnknown); ok {
-				d.Capacity.AssumedHealth, d.Capacity.EffectiveHealth = assumed, assumed
-			}
-		}
-	} else {
-		d.Capacity = ReadCapacity(m, snap, subject, req.wantedAccount(), now)
+	// 3b. PROVIDER-LEVEL DISABLEMENT, before any capacity is read or any
+	//     assignment is resolved. routing.yaml documents `enabled: false` as the
+	//     one spelling for taking something out of service — a deep merge cannot
+	//     delete, so an operator who wants codex gone writes that line and
+	//     expects it to mean something. Honouring it only on the per-capability
+	//     ASSIGNMENT (step 8) would leave the provider-level flag parsed,
+	//     reported and never enforced, which looks identical to working.
+	if reason, off := providerDisabled(m, subject); off {
+		d.Reason = append(d.Reason, reason)
+		return d
 	}
+
+	// 4. Capacity, judged against THIS instant.
+	d.Capacity = capacityFor(m, snap, snapErr, subject, req.wantedAccount(), now)
 
 	// 5. Forecast, from the matrix's own weights.
 	d.Demand = limits.Forecast(req.ForecastDemandBeforeResetPct, req.ExpectedWork, m.ForecastWeights)
 
-	// 6. Mode.
+	// 6. Mode, from the SUBJECT provider's capacity. d.ModeProvider records
+	//    whose capacity that was, because step 7 is allowed to hand the work to
+	//    somebody else.
 	verdict := DecideMode(d.Capacity, d.Demand, m.Thresholds, m.ModeFor(subject))
-	d.Mode, d.ModeManual = verdict.Mode, verdict.Manual
+	d.Mode, d.ModeManual, d.ModeProvider = verdict.Mode, verdict.Manual, subject
 	d.Reason = append(d.Reason, verdict.Reason...)
 
-	// 7. The mode moves the capability, if the matrix says it does.
+	// 7. The mode moves the capability, if the matrix says it does — and if the
+	//    provider the move LANDS ON can take it.
+	//
+	// A SHIFT MAY CROSS PROVIDERS, DELIBERATELY. That is the feature: §12 says
+	// conserve "should also shift workload toward another healthy provider",
+	// and the shipped `mixed` profile already puts the reviewer capabilities on
+	// claude while the implementer ones are codex. Constraining the shift to
+	// the evaluated provider would delete the one thing limit-aware routing is
+	// for.
+	//
+	// What is NOT allowed is deciding on one provider's capacity and spending
+	// another's without ever looking at it. So when the shift crosses, the
+	// landing provider's capacity is READ AND JUDGED IN ITS OWN RIGHT, and the
+	// move is refused if that provider is itself conserving: a shift onto a red
+	// provider because a green one was constrained is worse than not shifting,
+	// and it is worse in exactly the direction this feature exists to prevent.
 	if shifted, ok := m.ShiftFor(string(d.Mode), d.Role); ok && shifted != d.Capability {
-		d.Reason = append(d.Reason, fmt.Sprintf(
-			"routing.yaml's mode_shifts moves role %s from %s to %s under %s", d.Role, d.Capability, shifted, d.Mode))
-		d.Capability = shifted
+		d.applyShift(m, snap, snapErr, now, req, profile, subject, constrained, shifted)
 	}
 
 	// 8. Resolve the capability to something spawnable, honouring the provider
@@ -623,6 +653,14 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	}
 	if !a.IsEnabled() {
 		d.Reason = append(d.Reason, fmt.Sprintf("profile %s has capability %s explicitly disabled (enabled: false)", from, d.Capability))
+		return d
+	}
+	// The final assignment's provider, checked again on the way out. Step 3b
+	// covered the subject; this covers the provider a cross-profile or
+	// cross-provider resolution actually landed on, so there is no arm of this
+	// function that can return an eligible decision naming a disabled provider.
+	if reason, off := providerDisabled(m, a.Provider); off {
+		d.Reason = append(d.Reason, reason)
 		return d
 	}
 
@@ -646,6 +684,105 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	d.Reason = append(d.Reason, fmt.Sprintf("selected %s %s%s for capability %s under profile %s",
 		d.Provider, d.Model, effortSuffix(d.Effort), d.Capability, from))
 	return d
+}
+
+// providerDisabled reports whether routing.yaml takes this provider out of
+// service outright, with the sentence a refusal quotes.
+//
+// A provider with no `providers:` entry at all is NOT disabled: the block
+// describes capacity, and a matrix that named a provider only under `profiles:`
+// must still be able to route there.
+func providerDisabled(m *Matrix, provider string) (string, bool) {
+	pol, ok := m.ProviderPolicy(provider)
+	if !ok || pol.IsEnabled() {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"routing.yaml's providers.%s is explicitly disabled (enabled: false), so nothing routes there — that flag is the ONE spelling for taking a provider out of service (a deep merge cannot delete), and honouring it anywhere but here would make it a comment. Re-enable it, or ask for a provider that is in service",
+		provider), true
+}
+
+// capacityFor is step 4's reading, factored out because step 7 needs the same
+// reading for a DIFFERENT provider — the one a mode shift would land on.
+//
+// A usage report that could not be read is UNKNOWN capacity with the failure
+// named, never an error and never a healthy default.
+func capacityFor(m *Matrix, snap limits.Snapshot, snapErr error, provider, account string, now time.Time) Capacity {
+	if snapErr == nil {
+		return ReadCapacity(m, snap, provider, account, now)
+	}
+	cap := Capacity{
+		Provider: provider,
+		Health:   limits.HealthUnknown,
+		Because:  fmt.Sprintf("claudemon's usage report could not be read (%v), so no provider's capacity is knowable right now", snapErr),
+	}
+	cap.EffectiveHealth = cap.Health
+	if pol, ok := m.ProviderPolicy(provider); ok {
+		if assumed, ok := parseWhenUnknown(pol.WhenUnknown); ok {
+			cap.AssumedHealth, cap.EffectiveHealth = assumed, assumed
+		}
+	}
+	return cap
+}
+
+// applyShift is step 7: move the role's capability if the matrix says the mode
+// moves it, AND the provider that move lands on can actually take the work.
+//
+// The check that matters is the cross-provider one. The mode was computed from
+// ModeProvider's capacity; if the shifted capability resolves somewhere else,
+// that second provider's capacity has never been read, and applying the move
+// would be a decision justified by a reading of a machine that is not going to
+// run the work. So it is read, judged by the same §14 rules and the same
+// matrix (including that provider's own `modes:` override), and:
+//
+//   - CONSERVE there means the landing provider is itself scarce or
+//     over-forecast. The shift is REFUSED and the role keeps its ordinary
+//     capability on the subject. Not shifting is the smaller mistake.
+//   - `enabled: false` there means the same refusal for a different reason.
+//   - anything else applies the shift, and the decision then reports BOTH
+//     capacities, so the sentence "we moved this to claude because codex is
+//     red" is backed by a claude reading rather than by an assumption.
+func (d *Decision) applyShift(
+	m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req Request,
+	profile, subject string, constrained bool, shifted string,
+) {
+	from := d.Capability
+	move := fmt.Sprintf("routing.yaml's mode_shifts moves role %s from %s to %s under %s", d.Role, from, shifted, d.Mode)
+
+	a, _, ok := m.assignmentFor(profile, shifted, subject, constrained)
+	if !ok {
+		d.Reason = append(d.Reason, fmt.Sprintf(
+			"%s — but nothing in this matrix resolves %s to something spawnable on %s, so the role keeps %s rather than being left with no assignment at all",
+			move, shifted, subject, from))
+		return
+	}
+	landing := normalizeProvider(a.Provider)
+	if landing == "" || landing == subject {
+		d.Reason = append(d.Reason, fmt.Sprintf("%s, on %s — the same provider whose capacity decided the mode", move, subject))
+		d.Capability = shifted
+		return
+	}
+
+	// The move crosses providers. Read the one that will actually run it.
+	landCap := capacityFor(m, snap, snapErr, landing, req.wantedAccount(), now)
+	landVerdict := DecideMode(landCap, d.Demand, m.Thresholds, m.ModeFor(landing))
+	d.ShiftCapacity, d.ShiftMode = &landCap, landVerdict.Mode
+
+	if reason, off := providerDisabled(m, landing); off {
+		d.Reason = append(d.Reason, fmt.Sprintf(
+			"%s — REFUSED, because it lands on %s and %s", move, landing, reason))
+		return
+	}
+	if landVerdict.Mode == ModeConserve {
+		d.Reason = append(d.Reason, fmt.Sprintf(
+			"%s — REFUSED. The move lands on %s, not on %s, so %s's own capacity was read rather than assumed: %s (%s), which is itself CONSERVE. Moving work onto a constrained provider because a different one was constrained is worse than not moving it, so role %s keeps %s on %s",
+			move, landing, subject, landing, landCap.EffectiveHealth, landCap.Because, d.Role, from, subject))
+		return
+	}
+	d.Reason = append(d.Reason, fmt.Sprintf(
+		"%s — and the move lands on %s rather than on %s, so %s's OWN capacity was read before applying it: %s (%s), mode %s. The mode came from %s's capacity; the work goes to %s, whose capacity supports it",
+		move, landing, subject, landing, landCap.EffectiveHealth, landCap.Because, landVerdict.Mode, subject, landing))
+	d.Capability = shifted
 }
 
 func effortSuffix(effort string) string {
