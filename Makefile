@@ -14,7 +14,7 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
-        build-cli test test-desktop test-hub test-tui test-claudemon docs-drift package clean
+        build-cli test test-desktop test-hub test-tui test-claudemon claudemon-routes docs-drift package clean
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -92,6 +92,15 @@ test-claudemon:
 
 test-tui:
 	cd $(TUI) && cargo test
+
+## claudemon-routes: regenerate contracts/claudemon-routes.json from the two
+##                    axum routers in services/claudemon/src/daemon/{api,hook}.rs.
+##                    The fixture is the SERVED half of the claudemon HTTP seam:
+##                    capspec's caller sweep and apps/tui's mock_server both read
+##                    it, so a hand-edited copy is a caller guard checking a list
+##                    nobody serves. Run this after adding or deleting a route.
+claudemon-routes:
+	cd $(CLAUDEMON) && UPDATE_CLAUDEMON_ROUTES=1 cargo test --lib routes_contract
 
 ## docs-drift: informational scan for stale maturity wording in component READMEs
 docs-drift:
