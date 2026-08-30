@@ -46,6 +46,7 @@ import {
   resolveStoreEntry,
   isGitGlobalConfigPath,
   MAX_LINK_HOPS,
+  hubStateDirsFor,
 } from './pathConfinement';
 
 interface Case {
@@ -989,5 +990,36 @@ describe('MAX_LINK_HOPS is the number the other two copies use', () => {
     // open, which is the check-path/opened-path split BINDING DECISION 2 closes.
     expect(typeof fixture.maxLinkHops).toBe('number');
     expect(MAX_LINK_HOPS).toBe(fixture.maxLinkHops);
+  });
+});
+
+describe('hubStateDirs is the same table as the two Go copies', () => {
+  // The corpus exercises the SIBLING clause on whatever platform the suite runs
+  // on. The darwin clause it cannot reach: `os.UserConfigDir()` — which is what
+  // cmd/hub resolves its state dir with — is $HOME/Library/Application Support
+  // there and IGNORES XDG_CONFIG_HOME, while getConfigDir() is
+  // ~/.config/workspacer, so the two are not siblings at all and a copy without
+  // this branch leaves jobs.json unprotected on every Mac. Injected inputs are
+  // the only way to run it from Linux CI.
+  // TWIN: TestHubStateDirsFor in cmd/brain/fsguard_test.go and
+  // internal/bus/policy_test.go — same three rows.
+  it('linux: the config dir sibling, and nothing else', () => {
+    expect(hubStateDirsFor('linux', '/home/u/.config/workspacer', '/home/u')).toEqual([
+      '/home/u/.config/workspacer-hub',
+    ]);
+  });
+  it('darwin: the sibling AND the real Application Support directory', () => {
+    expect(hubStateDirsFor('darwin', '/home/u/.config/workspacer', '/home/u')).toEqual([
+      '/home/u/.config/workspacer-hub',
+      path.join('/home/u', 'Library', 'Application Support', 'workspacer-hub'),
+    ]);
+  });
+  it('a config dir that resolved to nothing contributes no root', () => {
+    // getConfigDir answers '' when there is no home to anchor on. A '-hub'
+    // appended to that is the relative string '-hub', which canonicalRoot would
+    // discard anyway — but the gate reads an unresolvable candidate as "cannot
+    // prove the target is outside it" and denies EVERYTHING, so a blank must not
+    // reach it as a candidate at all.
+    expect(hubStateDirsFor('linux', '   ', '/home/u')).toEqual([]);
   });
 });

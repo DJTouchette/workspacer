@@ -1,0 +1,435 @@
+package routing
+
+import (
+	_ "embed"
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+
+	yaml "gopkg.in/yaml.v3"
+)
+
+// defaultMatrixYAML is the SHIPPED DEFAULT, and it does two jobs.
+//
+//  1. It is the BASE OF THE MERGE. A user file that omits frontier_plus still
+//     resolves it; a release that adds a role still works against a file written
+//     before that role existed. Same pattern as cmd/brain's config_defaults.json,
+//     minus the generated TypeScript twin — there is no TS side here.
+//  2. Its bytes are what gets written to disk on first run, VERBATIM, comments
+//     and all. That is why the header comment lives in the file rather than
+//     being prepended at write time: a file the user is told to edit has to
+//     exist, and it has to explain itself.
+//
+//go:embed routing.default.yaml
+var defaultMatrixYAML []byte
+
+// DefaultBytes is the shipped default document, for the seeder and for tests.
+func DefaultBytes() []byte {
+	out := make([]byte, len(defaultMatrixYAML))
+	copy(out, defaultMatrixYAML)
+	return out
+}
+
+// providerAliases maps the vendor names the design spec uses onto the provider
+// ids the spawn wire actually takes. A matrix pasted out of the spec works, and
+// says so in the log rather than silently naming a provider nothing can serve.
+var providerAliases = map[string]string{
+	"openai":    "codex",
+	"anthropic": "claude",
+}
+
+// knownProviders is the spawn wire's provider vocabulary. A `provider:` outside
+// this set is an Issue, not a refusal — the set grows, and an older hub must not
+// reject a newer file outright.
+var knownProviders = map[string]bool{
+	"claude": true, "codex": true, "copilot": true, "opencode": true, "pi": true,
+}
+
+func normalizeProvider(p string) string {
+	p = strings.ToLower(strings.TrimSpace(p))
+	if alias, ok := providerAliases[p]; ok {
+		return alias
+	}
+	return p
+}
+
+// CatalogModel is one model a provider can actually launch right now.
+type CatalogModel struct {
+	ID string
+	// EffortLevels is the reasoning-effort ladder this model accepts, when the
+	// provider reports one. Empty means "not reported" and effort goes
+	// unvalidated — never "no efforts allowed".
+	EffortLevels []string
+}
+
+// Catalog is the live model catalog, injected rather than dialled here: this
+// package does no I/O, so it stays importable and testable with no server.
+//
+// The wiring supplies claudemon's `GET /providers/:provider/models` (which
+// returns id/label/default/defaultEffort/effortLevels per harness by booting the
+// CLI) and `claude.listModels` over the bus. An error means "could not ask" and
+// the models for that provider go unvalidated — an unreachable daemon must not
+// condemn a correct matrix.
+type Catalog interface {
+	Models(provider string) ([]CatalogModel, error)
+}
+
+// Defaults is the compiled-in matrix on its own, with no user file merged in.
+// It is what every fallback in matrix.go resolves against.
+func Defaults() (*Matrix, error) {
+	doc, err := parseDoc(defaultMatrixYAML)
+	if err != nil {
+		return nil, fmt.Errorf("the compiled-in routing defaults do not parse: %w", err)
+	}
+	m, err := decodeMatrix(doc)
+	if err != nil {
+		return nil, fmt.Errorf("the compiled-in routing defaults do not decode: %w", err)
+	}
+	normalize(m)
+	return m, nil
+}
+
+// Load merges a user document over the shipped defaults and validates the
+// result.
+//
+// userYAML may be nil (nothing on disk) or may parse to an empty document (a
+// 0-byte, whitespace-only or comment-only file); both mean "no overrides" and
+// resolve to the shipped defaults. A document that does NOT parse is an error,
+// and the caller's contract is to keep whatever matrix it already had.
+//
+// THE MERGE IS DEEP AND PER KEY. No block is wholesale. That is not a stylistic
+// preference: contracts/wholesale-config-paths.json exists because a wholesale
+// replace makes the value's TYPE load-bearing, and the two config writers
+// disagreed about it in opposite directions — one coercing a malformed value to
+// {} and deleting every project's settings while reporting a successful save.
+// There is one writer here, but the lesson holds, and for a routing matrix
+// "cannot delete" is the CORRECT failure mode.
+func Load(source string, userYAML []byte) (*Matrix, error) {
+	base, err := parseDoc(defaultMatrixYAML)
+	if err != nil {
+		return nil, fmt.Errorf("the compiled-in routing defaults do not parse: %w", err)
+	}
+	user, err := parseDoc(userYAML)
+	if err != nil {
+		return nil, err
+	}
+	applied, changed, unrecognized := keyPaths(user, base)
+	m, err := decodeMatrix(deepMerge(base, user))
+	if err != nil {
+		return nil, err
+	}
+	normalize(m)
+	if len(user) > 0 {
+		m.Source = source
+	}
+	m.Applied, m.Changed, m.Unrecognized = applied, changed, unrecognized
+	if fb, err := Defaults(); err == nil {
+		m.fallback = fb
+	}
+	m.Issues = validate(m)
+	return m, nil
+}
+
+// parseDoc turns YAML into a generic document. A nil/blank/comment-only input
+// unmarshals to a nil map with NO error: that is not a parse failure, it is a
+// document with no keys, and it must not be mistaken for one (the config writers
+// learned that the expensive way — a 0-byte config.yaml that looked like a parse
+// error would have had defaults written over the user's real file).
+func parseDoc(raw []byte) (map[string]any, error) {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return map[string]any{}, nil
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return map[string]any{}, nil
+	}
+	return doc, nil
+}
+
+// deepMerge overlays source onto a shallow copy of target: a null source value
+// means "unset" (keep the default), nested maps recurse, and everything else
+// (including sequences) replaces. Same object semantics as cmd/brain's
+// deepMerge, pinned there by contracts/deepmerge-cases.json.
+//
+// The property that matters here is what it CANNOT do: no key of the base
+// survives being absent from the source, so no user edit can delete a role, a
+// capability, a profile or the default ceiling.
+func deepMerge(target, source map[string]any) map[string]any {
+	result := make(map[string]any, len(target))
+	for k, v := range target {
+		result[k] = v
+	}
+	for k, sv := range source {
+		if sv == nil {
+			continue
+		}
+		if svMap, ok := sv.(map[string]any); ok {
+			if tvMap, ok := result[k].(map[string]any); ok {
+				result[k] = deepMerge(tvMap, svMap)
+				continue
+			}
+		}
+		result[k] = sv
+	}
+	return result
+}
+
+// keyPaths walks the user's document and returns three lists of leaf key paths.
+//
+//	applied      every leaf the user's file carries. The literal answer to
+//	             "what was taken from this file".
+//	changed      the subset whose value DIFFERS from the shipped default. This
+//	             is the one the load log names, and the reason is the seeded
+//	             file: it starts out byte-identical to the defaults, so a user
+//	             who edits one line has a file that "carries" a hundred keys,
+//	             and enumerating all of them on every save buries the one that
+//	             moved. A matrix that silently half-applied is what the log
+//	             exists to prevent, and a key that restates the default cannot
+//	             half-apply anything. The full list stays on the Matrix.
+//	unrecognized leaves (and whole blocks) matching nothing in the shipped
+//	             defaults — almost always a typo. Reported rather than refused:
+//	             the schema grows, and an older hub rejecting a newer file
+//	             outright would be worse than one ignoring a key it never knew.
+func keyPaths(user, base map[string]any) (applied, changed, unrecognized []string) {
+	var walk func(prefix string, u, b map[string]any)
+	walk = func(prefix string, u, b map[string]any) {
+		for k, v := range u {
+			path := k
+			if prefix != "" {
+				path = prefix + "." + k
+			}
+			var bChild map[string]any
+			bHas := false
+			if b != nil {
+				var bv any
+				bv, bHas = b[k]
+				bChild, _ = bv.(map[string]any)
+			}
+			if uChild, ok := v.(map[string]any); ok && len(uChild) > 0 {
+				if !bHas {
+					unrecognized = append(unrecognized, path)
+				}
+				walk(path, uChild, bChild)
+				continue
+			}
+			applied = append(applied, path)
+			switch {
+			case !bHas:
+				unrecognized = append(unrecognized, path)
+				changed = append(changed, path)
+			case !reflect.DeepEqual(b[k], v):
+				changed = append(changed, path)
+			}
+		}
+	}
+	walk("", user, base)
+	sort.Strings(applied)
+	sort.Strings(changed)
+	sort.Strings(unrecognized)
+	return applied, changed, unrecognized
+}
+
+// decodeMatrix re-marshals the merged generic document and decodes it into the
+// typed Matrix. Round-tripping through YAML rather than reflecting over the map
+// keeps ONE schema definition — the struct tags — instead of a second hand-rolled
+// decoder that would drift from it.
+func decodeMatrix(doc map[string]any) (*Matrix, error) {
+	raw, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	var m Matrix
+	if err := yaml.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// normalize folds the spec's vendor names onto workspacer provider ids,
+// everywhere a provider can be named.
+func normalize(m *Matrix) {
+	for pname, prof := range m.Profiles {
+		for cap, a := range prof {
+			if n := normalizeProvider(a.Provider); n != a.Provider {
+				a.Provider = n
+				prof[cap] = a
+			}
+		}
+		m.Profiles[pname] = prof
+	}
+	m.Providers = normalizeKeys(m.Providers)
+	m.Modes.Providers = normalizeKeys(m.Modes.Providers)
+}
+
+func normalizeKeys[V any](in map[string]V) map[string]V {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]V, len(in))
+	for k, v := range in {
+		out[normalizeProvider(k)] = v
+	}
+	return out
+}
+
+// validate reports what is wrong WITHOUT refusing the document. Every finding is
+// something an operator wants to hear at load rather than discover at spawn
+// time; none of them is a reason to run on a stale matrix, because the fallbacks
+// in matrix.go already keep every role answerable.
+func validate(m *Matrix) []Issue {
+	var issues []Issue
+	add := func(where, format string, args ...any) {
+		issues = append(issues, Issue{Where: where, Detail: fmt.Sprintf(format, args...)})
+	}
+
+	if m.Version <= 0 {
+		add("version", "missing or not a positive integer")
+	}
+	if _, ok := m.Profiles[m.ActiveProfile]; !ok {
+		add("active_profile", "%q is not one of the profiles in this file — falling back to the shipped default", m.ActiveProfile)
+	}
+
+	declared := map[string]bool{}
+	for _, c := range m.Capabilities {
+		declared[c] = true
+	}
+	for role, capability := range m.Roles {
+		if capability == "" {
+			add("roles."+role, "no capability named")
+			continue
+		}
+		if !declared[capability] {
+			add("roles."+role, "capability %q is not in the `capabilities:` list", capability)
+		}
+	}
+	for pname, prof := range m.Profiles {
+		for _, c := range m.Capabilities {
+			if _, ok := prof[c]; !ok {
+				add("profiles."+pname, "does not resolve capability %q", c)
+			}
+		}
+		for capability, a := range prof {
+			where := "profiles." + pname + "." + capability
+			if !declared[capability] {
+				add(where, "not in the `capabilities:` list")
+			}
+			if strings.TrimSpace(a.Model) == "" {
+				add(where, "no model named")
+			}
+			if !knownProviders[a.Provider] {
+				add(where, "provider %q is not a workspacer provider id (%s)", a.Provider, providerList())
+			}
+		}
+	}
+	for p := range m.Providers {
+		if !knownProviders[p] {
+			add("providers."+p, "not a workspacer provider id (%s)", providerList())
+		}
+	}
+	for _, key := range sortedKeys(m.Ceilings) {
+		c := m.Ceilings[key]
+		if c.MaxCapability != "" && !declared[c.MaxCapability] {
+			add("ceilings."+key, "max_capability %q is not in the `capabilities:` list", c.MaxCapability)
+		}
+		switch c.MaxToolScope {
+		case "", "view", "triage", "operator":
+		default:
+			add("ceilings."+key, "max_tool_scope %q is not an authority tier (view, triage, operator)", c.MaxToolScope)
+		}
+	}
+	if _, ok := m.Ceilings[CeilingDefaultKey]; !ok {
+		add("ceilings", "no %q entry — a directory with no entry of its own would have no ceiling", CeilingDefaultKey)
+	}
+	return issues
+}
+
+// ValidateAgainstCatalog checks every model id in every profile against what the
+// installed CLIs actually serve, and is separate from validate() because it does
+// I/O through the injected Catalog and validate() must stay pure.
+//
+// A provider the catalog cannot answer for is SKIPPED, not condemned: a codex
+// CLI that is not installed on this machine says nothing about whether the
+// matrix is right. An empty-but-successful answer is treated the same way — the
+// route documents an empty list as valid (Pi with no authed providers), and
+// failing every model against it would be a false alarm on the one shape that
+// means "I do not know".
+func ValidateAgainstCatalog(m *Matrix, cat Catalog) []Issue {
+	if cat == nil || m == nil {
+		return nil
+	}
+	type known struct {
+		ids     map[string]bool
+		efforts map[string][]string
+	}
+	seen := map[string]*known{}
+	lookup := func(provider string) *known {
+		if k, ok := seen[provider]; ok {
+			return k
+		}
+		models, err := cat.Models(provider)
+		if err != nil || len(models) == 0 {
+			seen[provider] = nil
+			return nil
+		}
+		k := &known{ids: map[string]bool{}, efforts: map[string][]string{}}
+		for _, mm := range models {
+			id := strings.ToLower(strings.TrimSpace(mm.ID))
+			k.ids[id] = true
+			k.efforts[id] = mm.EffortLevels
+		}
+		seen[provider] = k
+		return k
+	}
+
+	var issues []Issue
+	for _, pname := range sortedKeys(m.Profiles) {
+		prof := m.Profiles[pname]
+		for _, capability := range sortedKeys(prof) {
+			a := prof[capability]
+			k := lookup(a.Provider)
+			if k == nil {
+				continue
+			}
+			where := "profiles." + pname + "." + capability
+			id := strings.ToLower(strings.TrimSpace(a.Model))
+			if !k.ids[id] {
+				issues = append(issues, Issue{Where: where, Detail: fmt.Sprintf(
+					"%s does not serve model %q — it offers %s", a.Provider, a.Model, strings.Join(sortedKeys(k.ids), ", "))})
+				continue
+			}
+			levels := k.efforts[id]
+			if a.Effort == "" || len(levels) == 0 {
+				continue
+			}
+			if !containsFold(levels, a.Effort) {
+				issues = append(issues, Issue{Where: where, Detail: fmt.Sprintf(
+					"%s %s does not take effort %q — it takes %s", a.Provider, a.Model, a.Effort, strings.Join(levels, ", "))})
+			}
+		}
+	}
+	return issues
+}
+
+func containsFold(hay []string, needle string) bool {
+	for _, h := range hay {
+		if strings.EqualFold(strings.TrimSpace(h), strings.TrimSpace(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerList() string { return strings.Join(sortedKeys(knownProviders), ", ") }
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

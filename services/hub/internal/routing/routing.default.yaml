@@ -1,0 +1,250 @@
+# ~/.config/workspacer-hub/routing.yaml — THE SHIPPED DEFAULT ROUTING MATRIX.
+#
+# Written here once, on first run, from the copy compiled into the hub binary.
+# It will NOT be rewritten while it exists: edit it freely. If you delete it on
+# purpose it stays deleted — the compiled-in copy is still the base of every
+# answer, so nothing breaks; you only lose this documentation.
+#
+# ---------------------------------------------------------------------------
+# HOW THIS FILE IS READ
+#
+#   * Your file is DEEP-MERGED OVER the defaults compiled into the binary, key
+#     by key. No block is wholesale. Anything you omit still resolves, and a
+#     release that adds a role, a capability or a profile works against a file
+#     written before it existed.
+#
+#   * A merge CANNOT DELETE, and for a routing matrix that is the correct
+#     failure mode: an unresolvable role falls back to the shipped default,
+#     never to nothing. To turn something off, SAY SO — `enabled: false` — never
+#     by removing it.
+#
+#   * Save it and the next tick picks it up. No restart, no watcher. A file that
+#     cannot be read, or that does not parse, leaves the running matrix EXACTLY
+#     as it was and logs: a half-typed edit, or an editor unlinking the file
+#     during its own atomic save, must not silently disarm routing.
+#
+#   * Every key taken from this file is logged at load, and so is every key that
+#     matches nothing in the shipped defaults (usually a typo). A matrix that
+#     only half-applied is worse than one that refused.
+#
+#   * Model ids are validated at load against the LIVE provider catalogs
+#     (`GET /providers/:provider/models` and `claude.listModels`). An id your
+#     installed CLI no longer serves is reported at load, not discovered at
+#     spawn time. A provider that cannot be reached is skipped, not condemned.
+#
+# ---------------------------------------------------------------------------
+# THE IDEA, in one line
+#
+# Workflow logic names a CAPABILITY, never a model. A profile resolves the
+# capability to a real (provider, model, effort). Limit state then moves the
+# router above or below that default, instead of there being three separate
+# piles of model-selection logic. Model vendors rename things; this file is the
+# only place that has to know.
+#
+# ---------------------------------------------------------------------------
+# WHY IT LIVES HERE, and not in config.yaml
+#
+# 0600, in the hub's own state directory, beside jobs.json. There is NO routing
+# write RPC over the bus and there never will be one; `config.save` cannot
+# address another file at all; `library.save` is confined to the library; and
+# `fs.write` refuses this whole directory. That is what makes the `ceilings:`
+# block at the bottom mean something rather than merely say something.
+#
+# PROVIDER IDS ARE WORKSPACER'S, NOT THE VENDORS'. The design spec writes
+# "openai" and "anthropic"; the ids the spawn wire actually takes are `codex`
+# and `claude` (plus `copilot`, `opencode`, `pi`). `openai` and `anthropic` are
+# accepted here as aliases and normalized at load with a log line, so a matrix
+# pasted out of the spec still works.
+
+version: 1
+
+# Which profile resolves capabilities right now. One of the keys under
+# `profiles:` below. `mixed` is the recommended default when both subscriptions
+# are available: it distributes consumption across two providers AND buys
+# model-family diversity on review, which is the point of section 23.
+active_profile: mixed
+
+# ---------------------------------------------------------------------------
+# CAPABILITIES — the vocabulary workflow logic is allowed to use.
+#
+#   cheap          High-volume work where the design decisions are already made:
+#                  repo searching, reference tracing, repetitive edits,
+#                  boilerplate, mechanical fixes.
+#   balanced       Strong general coding without spending the most valuable
+#                  allowance: scouting, bug investigation, routine review,
+#                  straightforward fixes, browser validation.
+#   frontier       The primary serious engineering tier: feature implementation,
+#                  difficult debugging, consequential business logic.
+#   frontier_max   The top of the ordinary ladder — same model, more reasoning —
+#                  for difficult work inside the frontier tier.
+#   reviewer       Routine independent review. NOT the same thing as `balanced`:
+#                  independence is part of the requirement, not a coincidence.
+#   deep_reviewer  Architecture and logic review where the reviewer must be able
+#                  to disagree with a frontier implementer.
+#   frontier_plus  RESERVED. Repeated frontier failure, serious model
+#                  disagreement, P0 findings, critical adjudication. An
+#                  escalation target, not a default execution tier.
+#
+# Adding a name here does nothing on its own — every profile has to resolve it.
+capabilities:
+  - cheap
+  - balanced
+  - frontier
+  - frontier_max
+  - reviewer
+  - deep_reviewer
+  - frontier_plus
+
+# ---------------------------------------------------------------------------
+# ROLES — what each kind of worker needs, as a capability. This is the clean
+# part: the profiles below merely resolve the aliases.
+roles:
+  # NOT CONSULTED YET. The Fleet Manager's own model is chosen before there is a
+  # manager to ask, and it is a user-facing setting: Settings -> Fleet Manager
+  # (`agents.managerProvider` / `managerModels` / `managerEfforts`). This row is
+  # here so the vocabulary is complete and so the two can be reconciled later —
+  # two mechanisms that both claim to pick the supervisor's model, with neither
+  # naming the other, is a bug this project has already had once.
+  supervisor: frontier
+  scout: balanced
+  mechanical: cheap
+  implementer: frontier
+  reviewer: reviewer
+  deep_reviewer: deep_reviewer
+  fixer: balanced
+  complex_fixer: frontier
+  validator: balanced
+  diagnostician: frontier
+  judge: frontier_plus
+
+# ---------------------------------------------------------------------------
+# PROFILES — capability -> (provider, model, effort).
+#
+#   provider  a workspacer provider id: claude | codex | copilot | opencode | pi
+#   model     an id that provider's CLI actually serves (validated at load)
+#   effort    reasoning effort. The ladders differ per provider and are NOT
+#             interchangeable: claude is low|medium|high|xhigh|max, codex is
+#             minimal|low|medium|high|xhigh. The spec's "Sol Max" is codex's
+#             `xhigh` — codex has no level named `max`.
+#   fresh     the worker must NOT inherit the previous agent's conversation.
+#             Set on every same-family reviewer, because a Sol reviewer that
+#             inherits the Sol implementer's reasoning is not a reviewer.
+#   enabled   set to false to take an entry out of service. Omitting it is not
+#             the same thing — a deep merge cannot delete, by design.
+profiles:
+  # Codex builds and diagnoses; Anthropic reviews and adjudicates. Two
+  # subscriptions drawn down in parallel, and an implementer never reviewed by
+  # its own model family.
+  mixed:
+    cheap: { provider: codex, model: gpt-5.6-luna }
+    balanced: { provider: codex, model: gpt-5.6-terra, effort: high }
+    frontier: { provider: codex, model: gpt-5.6-sol, effort: high }
+    frontier_max: { provider: codex, model: gpt-5.6-sol, effort: xhigh }
+    # Cross-family, so independent by construction — `fresh` is not needed to
+    # make it so, though nothing stops you setting it.
+    reviewer: { provider: claude, model: sonnet, effort: high }
+    deep_reviewer: { provider: claude, model: opus, effort: high }
+    frontier_plus: { provider: claude, model: fable }
+
+  # One subscription. The critical detail is FRESH REVIEW CONTEXT: the reviewer
+  # gets the ticket, the acceptance criteria, the architecture rules, the diff,
+  # the relevant source and the test results — and not the implementer's
+  # reasoning history.
+  codex_only:
+    cheap: { provider: codex, model: gpt-5.6-luna }
+    balanced: { provider: codex, model: gpt-5.6-terra, effort: high }
+    frontier: { provider: codex, model: gpt-5.6-sol, effort: high }
+    frontier_max: { provider: codex, model: gpt-5.6-sol, effort: xhigh }
+    reviewer: { provider: codex, model: gpt-5.6-terra, effort: high, fresh: true }
+    deep_reviewer: { provider: codex, model: gpt-5.6-sol, effort: high, fresh: true }
+    frontier_plus: { provider: codex, model: gpt-5.6-sol, effort: xhigh, fresh: true }
+
+  # Sonnet is used considerably more aggressively than the traditional Claude
+  # hierarchy would imply — that is deliberate, and it is the user's call from
+  # what they have been seeing.
+  anthropic_only:
+    cheap: { provider: claude, model: sonnet }
+    balanced: { provider: claude, model: sonnet, effort: high }
+    frontier: { provider: claude, model: opus, effort: high }
+    frontier_max: { provider: claude, model: opus, effort: max }
+    reviewer: { provider: claude, model: sonnet, effort: high, fresh: true }
+    deep_reviewer: { provider: claude, model: opus, effort: high, fresh: true }
+    frontier_plus: { provider: claude, model: fable }
+
+# ---------------------------------------------------------------------------
+# PROVIDERS — what is known about each one's capacity, not what it can do.
+#
+#   metered       this provider exposes a subscription allowance worth routing
+#                 around. Only claude and codex report usage windows.
+#   when_unknown  the health to assume when there is NO trustworthy limit
+#                 information: `yellow` is the conservative default for a
+#                 metered provider (do not pretend to know), `unmetered` means
+#                 the question does not apply and the provider stays eligible.
+providers:
+  codex: { metered: true, when_unknown: yellow }
+  claude: { metered: true, when_unknown: yellow }
+  copilot: { metered: false, when_unknown: unmetered } # no readable quota, ever
+  opencode: { metered: false, when_unknown: unmetered } # BYO key
+  pi: { metered: false, when_unknown: unmetered } # BYO key
+
+# ---------------------------------------------------------------------------
+# THRESHOLDS — the rules that pick a routing mode. Configuration, deliberately,
+# rather than constants buried in Go.
+thresholds:
+  # SPEND_DOWN: unused subscription capacity has no value after the reset, so
+  # near a reset with capacity left and little demand coming, spend it on
+  # confidence — a second independent reviewer, a stronger scout — never on
+  # arbitrary extra tokens.
+  spend_down:
+    time_to_reset_minutes: 90
+    min_remaining_pct: 50
+    max_forecast_pct_of_remaining: 30
+  # Health from the worst applicable limit bucket. A provider is not GREEN just
+  # because its short window is healthy while the weekly one is not.
+  health:
+    yellow_at_used_pct: 70
+    red_at_used_pct: 90
+
+# ---------------------------------------------------------------------------
+# FORECAST WEIGHTS — how much premium demand a ticket in each phase implies.
+# Static on purpose; historical usage replaces these later, not machine
+# learning.
+forecast_weights:
+  scouting: 1
+  implementation: 4
+  review: 2
+  fixing: 2
+  validation: 1
+
+# ---------------------------------------------------------------------------
+# MODES — the manual override. `auto` lets the thresholds above decide.
+#   auto | conserve | normal | spend_down
+# A per-provider entry wins over the global one for that provider.
+modes:
+  global: auto
+  providers:
+    codex: auto
+    claude: auto
+
+# ---------------------------------------------------------------------------
+# CEILINGS — the most a spawn started in a given project directory may be given,
+# keyed by project directory, whatever the caller asks for.
+#
+#   max_capability  the highest capability a spawn there may resolve to.
+#   max_tool_scope  the highest authority tier a worker there may be handed:
+#                   view | triage | operator. ("tier" already means AUTHORITY in
+#                   this codebase, which is why the model axis is called
+#                   `capability` everywhere above.)
+#
+# The `default` key applies to any directory with no entry of its own; the
+# longest matching ancestor directory wins over it.
+#
+# This is a CEILING, not an assignment: it can only lower what was asked for.
+# It is enforceable rather than merely stated because of where this file lives —
+# no agent can write to it, and there is no routing write RPC. It does not, and
+# cannot, constrain a full-access manager's own shell.
+ceilings:
+  default: { max_capability: frontier, max_tool_scope: operator }
+  # Per-project overrides look like this — an absolute directory as the key:
+  #
+  # /home/you/Work/some-client-repo: { max_capability: balanced, max_tool_scope: triage }

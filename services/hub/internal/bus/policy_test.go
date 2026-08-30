@@ -1370,3 +1370,28 @@ func TestMaxLinkHopsMatchesTheFixture(t *testing.T) {
 		t.Errorf("maxLinkHops = %d, the contract says %d", maxLinkHops, *fx.MaxLinkHops)
 	}
 }
+
+// TestHubStateDirsFor pins the darwin branch the containment corpus cannot
+// reach: cmd/hub resolves its state dir with os.UserConfigDir(), which on darwin
+// is $HOME/Library/Application Support and IGNORES XDG_CONFIG_HOME, while
+// authtoken.ConfigDir() there is ~/.config/workspacer — so the two are not
+// siblings and a copy without this branch leaves jobs.json unprotected on every
+// Mac. TWIN: the same three rows in cmd/brain/fsguard_test.go and in
+// pathConfinement.test.ts.
+func TestHubStateDirsFor(t *testing.T) {
+	linux := hubStateDirsFor("linux", "/home/u/.config/workspacer", "/home/u")
+	if len(linux) != 1 || linux[0] != "/home/u/.config/workspacer-hub" {
+		t.Errorf("linux: got %v, want just the config-dir sibling", linux)
+	}
+	darwin := hubStateDirsFor("darwin", "/home/u/.config/workspacer", "/home/u")
+	want := []string{
+		"/home/u/.config/workspacer-hub",
+		"/home/u" + canonicalSep() + "Library" + canonicalSep() + "Application Support" + canonicalSep() + "workspacer-hub",
+	}
+	if len(darwin) != len(want) || darwin[0] != want[0] || darwin[1] != want[1] {
+		t.Errorf("darwin: got %v, want %v", darwin, want)
+	}
+	if got := hubStateDirsFor("linux", "   ", "/home/u"); len(got) != 0 {
+		t.Errorf("blank config dir: got %v, want no candidates", got)
+	}
+}
