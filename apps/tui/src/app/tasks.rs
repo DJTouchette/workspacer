@@ -84,51 +84,6 @@ pub(super) async fn fetch_search_index(
     });
 }
 
-pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
-    match cm.git_status(&cwd).await {
-        Ok((branch, files)) => {
-            let _ = tx.send(AppMsg::GitStatus { cwd, branch, files });
-        }
-        Err(e) => {
-            // Surface in the review pane (e.g. "not inside a git work tree")
-            // instead of a fleeting toast, so an empty list isn't mistaken for
-            // a clean repo.
-            let _ = tx.send(AppMsg::GitError {
-                cwd,
-                message: e.to_string(),
-            });
-        }
-    }
-}
-
-pub(super) async fn fetch_git_summary(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
-    if let Ok((branch, files)) = cm.git_status(&cwd).await {
-        let _ = tx.send(AppMsg::GitSummary {
-            cwd,
-            branch,
-            changed: files.len(),
-        });
-    }
-}
-
-pub(super) async fn fetch_git_diff(
-    cm: &Claudemon,
-    tx: &UnboundedSender<AppMsg>,
-    cwd: String,
-    path: String,
-    staged: bool,
-    untracked: bool,
-) {
-    if let Ok(diff) = cm.git_diff(&cwd, &path, staged, untracked).await {
-        let _ = tx.send(AppMsg::GitDiff {
-            cwd,
-            path,
-            staged,
-            diff,
-        });
-    }
-}
-
 /// Wrap text in bracketed-paste markers so a multi-line prompt is inserted into
 /// Claude's input as one paste (newlines stay newlines instead of submitting).
 ///

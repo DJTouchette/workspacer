@@ -1,5 +1,5 @@
 //! Window splits and tabs inside an agent workspace, plus the key handlers
-//! for the surfaces they host (terminal, review, changes).
+//! for the surfaces they host (terminal, changes).
 
 use super::*;
 
@@ -212,62 +212,6 @@ impl App {
         tokio::spawn(async move {
             let _ = drv.terminal_input(&sid, &bytes).await;
         });
-    }
-
-    /// Keys for the git review pane (a modal over the agent view). Bypasses the
-    /// keymap — this pane owns all its keys, including a commit-message composer.
-    pub(in crate::app) fn handle_review_key(&mut self, key: KeyEvent) {
-        // Commit-message composer captures characters until enter/esc.
-        if self.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
-            match key.code {
-                KeyCode::Esc => {
-                    if let Some(r) = self.review.as_mut() {
-                        r.commit_msg = None;
-                    }
-                }
-                KeyCode::Enter => self.review_submit_commit(),
-                KeyCode::Backspace => {
-                    if let Some(m) = self.review.as_mut().and_then(|r| r.commit_msg.as_mut()) {
-                        m.pop();
-                    }
-                }
-                KeyCode::Char(c) => {
-                    if let Some(m) = self.review.as_mut().and_then(|r| r.commit_msg.as_mut()) {
-                        m.push(c);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('R') | KeyCode::Char('q') => {
-                self.close_review()
-            }
-            KeyCode::Char('j') | KeyCode::Down => self.review_select(1),
-            KeyCode::Char('k') | KeyCode::Up => self.review_select(-1),
-            // Diff scroll: J/K by a line, Ctrl-D/U or PageDn/Up by a chunk.
-            KeyCode::Char('J') => self.review_scroll(1),
-            KeyCode::Char('K') => self.review_scroll(-1),
-            KeyCode::Char('d') if ctrl => self.review_scroll(10),
-            KeyCode::Char('u') if ctrl => self.review_scroll(-10),
-            KeyCode::PageDown => self.review_scroll(10),
-            KeyCode::PageUp => self.review_scroll(-10),
-            KeyCode::Char('t') => self.review_toggle_staged(),
-            KeyCode::Char('s') => self.review_stage(),
-            KeyCode::Char('u') => self.review_unstage(),
-            KeyCode::Char('a') => self.review_stage_all(),
-            KeyCode::Char('c') => {
-                if let Some(r) = self.review.as_mut() {
-                    r.commit_msg = Some(String::new());
-                }
-            }
-            KeyCode::Char('P') => self.review_push(),
-            KeyCode::Char('r') => self.review_reload(),
-            _ => {}
-        }
     }
 
     /// Keys for the docked changes pane — read-only, so it only scrolls and closes.

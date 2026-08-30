@@ -61,16 +61,9 @@ impl App {
                 self.focus_side(false);
                 return;
             }
-            match self.side.as_ref().map(|p| p.kind) {
-                Some(crate::app::SideKind::Review) if self.review.is_some() => {
-                    self.handle_review_key(key);
-                    return;
-                }
-                Some(crate::app::SideKind::Changes) => {
-                    self.handle_changes_key(key);
-                    return;
-                }
-                _ => {}
+            if let Some(crate::app::SideKind::Changes) = self.side.as_ref().map(|p| p.kind) {
+                self.handle_changes_key(key);
+                return;
             }
         }
         // The runs overlay is read-only — it only needs a way out.
@@ -268,7 +261,6 @@ impl App {
                     self.new_terminal_tab();
                 }
             }
-            OpenReview => self.open_review(),
             OpenRuns => self.open_runs(),
             OpenChanges => self.toggle_side(crate::app::SideKind::Changes),
             OpenNotes => self.open_notes(),

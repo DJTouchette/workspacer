@@ -37,30 +37,6 @@ pub enum AppMsg {
         agent_id: String,
         session_id: String,
     },
-    /// Git status for the review pane's work tree.
-    GitStatus {
-        cwd: String,
-        branch: Option<String>,
-        files: Vec<FileStatus>,
-    },
-    /// A file's unified diff for the review pane.
-    GitDiff {
-        cwd: String,
-        path: String,
-        staged: bool,
-        diff: String,
-    },
-    /// Lightweight branch + changed-file count for the open agent's inspector.
-    GitSummary {
-        cwd: String,
-        branch: Option<String>,
-        changed: usize,
-    },
-    /// A git read failed for a work tree (e.g. not a repo) — shown in review.
-    GitError {
-        cwd: String,
-        message: String,
-    },
     /// A session's transcript lines, for the content-search index.
     SearchEntries {
         session_id: String,
@@ -497,9 +473,6 @@ impl QuestionFlow {
 /// What a docked side pane is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideKind {
-    /// The git work tree: what the repo looks like now. Interactive — its keys
-    /// apply while it holds focus.
-    Review,
     /// The files the agent changed, from the transcript. Read-only.
     Changes,
 }
@@ -513,44 +486,4 @@ pub struct SidePane {
     /// True while keys route here instead of to the chat.
     pub focused: bool,
     pub scroll: u16,
-}
-
-/// State of the git review pane (mirrors the desktop Review pane): the work
-/// tree's branch + changed files on the left, the selected file's unified diff
-/// on the right. Opened over an agent and keyed by that agent's cwd.
-pub struct ReviewState {
-    pub cwd: String,
-    pub branch: Option<String>,
-    pub files: Vec<FileStatus>,
-    pub selected: usize,
-    /// Raw unified diff for the selected file in the current staged/unstaged view.
-    pub diff: String,
-    pub diff_scroll: u16,
-    /// false = unstaged (work tree) changes; true = staged (index) changes.
-    pub staged_view: bool,
-    /// When `Some`, the user is composing a commit message.
-    pub commit_msg: Option<String>,
-    /// Set when the status fetch failed — e.g. the cwd isn't a git work tree —
-    /// so the pane says so instead of looking like a clean repo.
-    pub error: Option<String>,
-}
-
-impl ReviewState {
-    pub(super) fn new(cwd: String) -> Self {
-        ReviewState {
-            cwd,
-            branch: None,
-            files: Vec::new(),
-            selected: 0,
-            diff: String::new(),
-            diff_scroll: 0,
-            staged_view: false,
-            commit_msg: None,
-            error: None,
-        }
-    }
-
-    pub fn selected_file(&self) -> Option<&FileStatus> {
-        self.files.get(self.selected)
-    }
 }

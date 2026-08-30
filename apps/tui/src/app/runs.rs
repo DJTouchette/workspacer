@@ -4,8 +4,6 @@
 use super::*;
 
 impl App {
-    /// Open the review pane over the targeted agent's work tree. No-op (with a
-    /// toast) when the agent has no cwd.
     /// Open the runs overlay on the agent in focus, and kick off the first read.
     pub(in crate::app) fn open_runs(&mut self) {
         let Some(sid) = self.target_session() else {
@@ -82,9 +80,6 @@ impl App {
     pub(in crate::app) fn toggle_side(&mut self, kind: SideKind) {
         if self.side.as_ref().is_some_and(|p| p.kind == kind) {
             self.side = None;
-            if kind == SideKind::Review {
-                self.review = None;
-            }
             return;
         }
         let Some(sid) = self.target_session() else {
