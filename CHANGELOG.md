@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.160.0] - 2026-08-29
 
 ### Added
 - **GitHub Copilot is a supported harness.** `copilot` joins Claude Code,

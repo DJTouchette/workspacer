@@ -148,8 +148,40 @@ else. Pushing to `master` runs `ci.yml` only, which never builds an installer.
 
 The release version is the desktop app's version in
 `apps/desktop/package.json`. The tag is that version with a `v` prefix
-(`0.150.0` → `v0.150.0`), and `scripts/changelog-section.mjs` looks the
+(`0.160.0` → `v0.160.0`), and `scripts/changelog-section.mjs` looks the
 version up in `CHANGELOG.md` by that number, so the three have to agree.
+
+**Those are the only three places the product version is declared** —
+`npm version --no-git-tag-version X.Y.Z` in `apps/desktop` updates
+`package.json` and `package-lock.json` together, and the CHANGELOG heading you
+write by hand. Everything else derives it at build time and needs no edit:
+`app.getVersion()` reads the packaged `package.json`, `release.yml` reads it
+with `node -p` to stamp `WKS_STAMP_VERSION` into the server/claudemon bundles,
+and the nightly job appends its `-nightly.<stamp>` tail to it.
+
+**The component versions are deliberately independent and stay put.**
+`services/claudemon/Cargo.toml` and `apps/tui/Cargo.toml` have been `0.1.0` for
+the life of the project — that is what `claudemon --version` prints, and
+`release.yml` says so in as many words where it explains why the build stamp
+exists. `services/hub` has no Go version constant at all. Bumping any of them
+to match the desktop would be a new claim, not a fix. Version strings in tests
+(`manualUpdates.test.tsx`, `useWhatsNew.test.tsx`, `updateService.test.ts`,
+`deploy/fly/test-fetch-release.sh`) are fixtures — arbitrary by design — and
+must not be swept along with a bump.
+
+**Do sweep the prose for a version somebody guessed at.** Docs written before
+the number was picked tend to name the *next* release, and that guess goes
+stale the moment a different number is chosen. Before tagging:
+
+```bash
+grep -rnE '\b(pre-)?v?0\.1[0-9]{2}(\.[0-9]+)?\b' \
+  docs/ landing/ services/*/README.md README.md
+```
+
+and fix anything that names a version that will never exist. Cutting `0.160.0`
+turned up four sites reading `pre-0.151` and a `docs/features.md` section
+headed `NEXT RELEASE (v0.150)` for something that had already shipped in
+`0.150.0`.
 
 ### CHANGELOG.md is the single source for release notes
 

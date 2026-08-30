@@ -54,8 +54,28 @@ describe('useWhatsNew', () => {
     const newest = CHANGELOG.find((r) => !r.unreleased)!;
     const body = whatsNewBody(newest.version);
     expect(body).toContain(newest.sections[0].title.toLowerCase());
-    // The lead-in bold is unwrapped rather than shown as literal asterisks.
+    // Bold is unwrapped rather than shown as literal asterisks.
     expect(body).not.toContain('**');
+  });
+
+  it('unwraps EVERY bold run, not just the lead-in one', () => {
+    // Regression: only `^\*\*(.+?)\*\*` was stripped, so an entry that bolds a
+    // term mid-sentence (0.160.0's lead entry bolds three) shipped literal
+    // asterisks into an OS notification, which renders no markdown.
+    for (const r of CHANGELOG) {
+      if (r.unreleased) continue;
+      expect(whatsNewBody(r.version), `${r.version} leaks markdown bold`).not.toContain('**');
+    }
+  });
+
+  it('clips a paragraph-length entry instead of pasting the whole thing', () => {
+    // Entries are paragraphs — 0.160.0's first is over 1000 characters — and the
+    // caller appends a "see Settings → Updates" tail to whatever comes back.
+    const newest = CHANGELOG.find((r) => !r.unreleased)!;
+    const first = newest.sections[0].items[0];
+    const body = whatsNewBody(newest.version);
+    expect(body.length).toBeLessThan(320);
+    if (first.length > 320) expect(body.endsWith('…')).toBe(true);
   });
 
   it('degrades to no body rather than a wrong one for an unknown version', () => {

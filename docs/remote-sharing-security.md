@@ -53,7 +53,7 @@ carries a per-session scoped token minted at spawn (`remoteTokens.ts` /
 with `workspacer token create --scope operator`.
 
 The `facade.untokenedAccess` config key (`operator` | `view` | `deny`) dials
-this. `operator` restores the pre-0.151 behaviour — an uncredentialed local
+this. `operator` restores the pre-0.160 behaviour — an uncredentialed local
 process gets the full fleet-driving tool set — and is an explicit opt-in for
 clients that cannot carry a token. `view` is the halfway house: read-only tools,
 but that still includes every agent list and every transcript.
