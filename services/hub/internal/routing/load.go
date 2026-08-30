@@ -330,6 +330,24 @@ func validate(m *Matrix) []Issue {
 			add("providers."+p, "not a workspacer provider id (%s)", providerList())
 		}
 	}
+	for _, mode := range sortedKeys(m.ModeShifts) {
+		switch mode {
+		case "conserve", "spend_down":
+		case "normal", "auto":
+			add("mode_shifts."+mode, "%q is not a shift: the `roles:` table is the normal answer and `auto` is not a mode at all, so entries here never apply", mode)
+		default:
+			add("mode_shifts."+mode, "%q is not a routing mode (conserve, spend_down)", mode)
+		}
+		for _, role := range sortedKeys(m.ModeShifts[mode]) {
+			where := "mode_shifts." + mode + "." + role
+			if _, ok := m.Roles[role]; !ok {
+				add(where, "no role %q in the `roles:` table, so this shift can never fire", role)
+			}
+			if c := m.ModeShifts[mode][role]; !declared[c] {
+				add(where, "capability %q is not in the `capabilities:` list", c)
+			}
+		}
+	}
 	for _, key := range sortedKeys(m.Ceilings) {
 		c := m.Ceilings[key]
 		if c.MaxCapability != "" && !declared[c.MaxCapability] {

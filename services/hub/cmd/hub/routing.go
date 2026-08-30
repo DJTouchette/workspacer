@@ -160,6 +160,25 @@ func (w *usageWatcher) fetch(ctx context.Context) (limits.Snapshot, error) {
 	return limits.DecodeReport(body, time.Now())
 }
 
+// usageDecisionMaxAge is how old a held document may be at the moment a ROUTING
+// DECISION is made, and it is ZERO on purpose: a decision takes its own reading.
+//
+// It is deliberately NOT usageMaxAge, and the two answer different questions. A
+// reading a minute old is fine for a status pane and is what usageMaxAge is
+// sized for. A routing decision is a rare, consequential act that commits an
+// hour of a frontier model's allowance, and the one thing that makes its
+// evidence trustworthy is that nothing has moved since it was gathered — the
+// currency guard fixes a window verdict outliving its instant, and this fixes
+// the DOCUMENT outliving its instant, which is the same defect one level out. A
+// window that reset thirty seconds ago is unreadable in a document fetched two
+// minutes ago and readable in one fetched now.
+//
+// The cost is one loopback GET against a document claudemon assembles from what
+// each CLI already wrote to disk — no network call, nothing spawned. That is a
+// price worth paying per decision, and the poller and its cache remain for
+// every other reader.
+const usageDecisionMaxAge = 0
+
 // Latest is the ask. It notes the ask (which starts the poller), and answers
 // from the held document unless there is none or it has aged past usageMaxAge,
 // in which case it takes one reading inline — so the FIRST ask on a quiet
@@ -168,11 +187,17 @@ func (w *usageWatcher) fetch(ctx context.Context) (limits.Snapshot, error) {
 //
 // The returned Snapshot is unjudged: call Buckets with the deciding instant.
 func (w *usageWatcher) Latest(ctx context.Context) (limits.Snapshot, error) {
+	return w.LatestWithin(ctx, usageMaxAge)
+}
+
+// LatestWithin is Latest with the caller's own freshness bound. A maxAge of 0
+// or less always takes a reading; see usageDecisionMaxAge.
+func (w *usageWatcher) LatestWithin(ctx context.Context, maxAge time.Duration) (limits.Snapshot, error) {
 	now := time.Now()
 	w.noteAsk(now)
 
 	w.mu.Lock()
-	fresh := w.haveSnap && now.Sub(w.snap.FetchedAt) < usageMaxAge
+	fresh := maxAge > 0 && w.haveSnap && now.Sub(w.snap.FetchedAt) < maxAge
 	snap, err := w.snap, w.err
 	w.mu.Unlock()
 	if fresh {

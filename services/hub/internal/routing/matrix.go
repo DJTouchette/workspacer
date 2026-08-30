@@ -152,7 +152,14 @@ type Matrix struct {
 	Thresholds      Thresholds          `yaml:"thresholds" json:"thresholds"`
 	ForecastWeights map[string]float64  `yaml:"forecast_weights" json:"forecastWeights"`
 	Modes           Modes               `yaml:"modes" json:"modes"`
-	Ceilings        map[string]Ceiling  `yaml:"ceilings" json:"ceilings"`
+	// ModeShifts is mode -> role -> capability: what a routing mode does to the
+	// `roles:` table above. It is keyed by ROLE rather than by capability
+	// because the spec's own §12/§13 tables are per-role and disagree per role
+	// about the same capability — CONSERVE moves a scout down from `balanced`
+	// while leaving the fixer on it, so a capability->capability map would move
+	// both and be wrong about one of them.
+	ModeShifts map[string]map[string]string `yaml:"mode_shifts" json:"modeShifts"`
+	Ceilings   map[string]Ceiling           `yaml:"ceilings" json:"ceilings"`
 
 	// Source is the on-disk file merged in, or "" when only the compiled-in
 	// defaults are live (no file, or a file that could not be read or parsed).
@@ -273,6 +280,24 @@ func (m *Matrix) ModeFor(provider string) string {
 		return m.Modes.Global
 	}
 	return "auto"
+}
+
+// ShiftFor answers what a routing mode does to a role's capability, and whether
+// it does anything at all.
+//
+// Absent means unchanged, which is why NORMAL carries no block: the matrix's
+// `roles:` table IS the normal answer, and restating it under a mode would be
+// two places to keep in agreement.
+func (m *Matrix) ShiftFor(mode, role string) (string, bool) {
+	byRole, ok := m.ModeShifts[strings.ToLower(strings.TrimSpace(mode))]
+	if !ok {
+		return "", false
+	}
+	c, ok := byRole[role]
+	if !ok || strings.TrimSpace(c) == "" {
+		return "", false
+	}
+	return c, true
 }
 
 // ProviderPolicy returns what is known about a provider's capacity.

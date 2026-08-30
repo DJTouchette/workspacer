@@ -251,10 +251,11 @@ describe('CAP_LABELS drift guard', () => {
     ].map((m) => m[1]);
     // A RATCHET, not a canary: a scan that finds nothing asserts nothing, and
     // "nothing looked at this file" is exactly the state layout.set shipped in.
+    // TWINNED with capspec's hubNativeFloor. 22 as of routing.select.
     expect(
       new Set(registered).size,
       'the hub-native registry regex found fewer methods than the hub registers — has RegisterLocal been renamed or the registrations moved?',
-    ).toBeGreaterThanOrEqual(8);
+    ).toBeGreaterThanOrEqual(22);
     for (const must of ['layout.get', 'layout.set']) {
       expect(
         registered,

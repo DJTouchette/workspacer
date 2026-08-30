@@ -108,14 +108,14 @@ func TestDecodeRealUsageReport(t *testing.T) {
 		if b.Reading.Usable() {
 			t.Error("a window with no reset time is never usable")
 		}
-		if b.Reading.Reason != ReasonNoResetTime {
-			t.Errorf("reason = %q", b.Reading.Reason)
+		if b.Reading.Reason() != ReasonNoResetTime {
+			t.Errorf("reason = %q", b.Reading.Reason())
 		}
 		if _, ok := b.Reading.UsedPercent(); ok {
 			t.Error("no percentage may be read off it")
 		}
-		if b.RawUsedPercent.State != MeasuredUnknown || b.RawUsedPercent.Reason == "" {
-			t.Errorf("raw scalar = %+v; unknown must arrive WITH its reason, which is what makes it retryable rather than permanent", b.RawUsedPercent)
+		if b.DisplayOnlyRawUsedPercent().State != MeasuredUnknown || b.DisplayOnlyRawUsedPercent().Reason == "" {
+			t.Errorf("raw scalar = %+v; unknown must arrive WITH its reason, which is what makes it retryable rather than permanent", b.DisplayOnlyRawUsedPercent())
 		}
 		if b.Failure == nil || b.Failure.Kind != "needs_reauth" {
 			t.Errorf("failure = %+v, want the classified needs_reauth record", b.Failure)
@@ -150,8 +150,8 @@ func TestDecodeRealUsageReport(t *testing.T) {
 			if b.Reading.Usable() {
 				t.Errorf("%s: usable, and GitHub publishes no quota at all", w)
 			}
-			if b.RawUsedPercent.State != MeasuredUnavailable {
-				t.Errorf("%s: raw state = %q, want unavailable — a retry will never succeed and collapsing that into `unknown` is how a provider gets conserved forever", w, b.RawUsedPercent.State)
+			if b.DisplayOnlyRawUsedPercent().State != MeasuredUnavailable {
+				t.Errorf("%s: raw state = %q, want unavailable — a retry will never succeed and collapsing that into `unknown` is how a provider gets conserved forever", w, b.DisplayOnlyRawUsedPercent().State)
 			}
 			if b.Metered() {
 				t.Errorf("%s: metered, and there is no allowance here to conserve", w)
@@ -167,8 +167,8 @@ func TestDecodeRealUsageReport(t *testing.T) {
 		if _, ok := b.Reading.UsedPercent(); ok {
 			t.Error("no percentage")
 		}
-		if b.RawUsedPercent.State != MeasuredUnknown {
-			t.Errorf("raw state = %q, want unknown (the rollout carrying rate limits did not include this window — retryable)", b.RawUsedPercent.State)
+		if b.DisplayOnlyRawUsedPercent().State != MeasuredUnknown {
+			t.Errorf("raw state = %q, want unknown (the rollout carrying rate limits did not include this window — retryable)", b.DisplayOnlyRawUsedPercent().State)
 		}
 	})
 
@@ -230,8 +230,8 @@ func TestTheSameSnapshotIsRejudgedAgainstTheCallersClock(t *testing.T) {
 	}
 	if b := at(toReset); !b.Reading.Usable() {
 		// resets_at == now is rolled over, strictly.
-		if b.Reading.Reason != ReasonResetEqualsNow {
-			t.Errorf("at exactly the reset: reason = %q, want %q", b.Reading.Reason, ReasonResetEqualsNow)
+		if b.Reading.Reason() != ReasonResetEqualsNow {
+			t.Errorf("at exactly the reset: reason = %q, want %q", b.Reading.Reason(), ReasonResetEqualsNow)
 		}
 	} else {
 		t.Error("at exactly the reset the window has closed — the comparison is strictly greater-than, matching codex_usage.rs")
@@ -240,15 +240,16 @@ func TestTheSameSnapshotIsRejudgedAgainstTheCallersClock(t *testing.T) {
 	if later.Reading.Usable() {
 		t.Fatal("two hours past the reset the reading is stale and must yield UNKNOWN")
 	}
-	if later.Reading.Reason != ReasonResetHasPassed {
-		t.Errorf("reason = %q, want %q", later.Reading.Reason, ReasonResetHasPassed)
+	if later.Reading.Reason() != ReasonResetHasPassed {
+		t.Errorf("reason = %q, want %q", later.Reading.Reason(), ReasonResetHasPassed)
 	}
 	if _, ok := later.Reading.UsedPercent(); ok {
 		t.Error("the stale percentage escaped through a cached snapshot — this is the defect, one indirection later")
 	}
 	// The raw scalar is still reachable so the decision can EXPLAIN itself.
-	if v, ok := later.RawUsedPercent.Number(); !ok || v != 18 {
-		t.Errorf("RawUsedPercent = %v, %v; a decision that drops a provider must be able to say what it last saw", v, ok)
+	raw := later.DisplayOnlyRawUsedPercent()
+	if v, ok := raw.Number(); !ok || v != 18 {
+		t.Errorf("DisplayOnlyRawUsedPercent() = %v, %v; a decision that drops a provider must be able to say what it last saw", v, ok)
 	}
 	if later.Reading.Explain() == "" {
 		t.Error("no explanation for a dropped provider")

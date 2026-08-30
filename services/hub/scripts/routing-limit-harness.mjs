@@ -6,11 +6,12 @@
  * fake claudemon in this directory. The fake walks through runtime usage
  * states that are not reproducible on demand against the real daemon.
  *
- * Today this branch has no routing.select implementation. Active checks prove
- * the fake server and hub wiring are runnable; routing assertions are present
- * and reported as PENDING until routing.select is registered. After the routing
- * layer lands, run with ROUTING_HARNESS_REQUIRE_ROUTING=1 to make a missing
- * routing.select fail the harness instead of parking those assertions.
+ * routing.select IS registered now, so every assertion below executes against
+ * the real routing layer and none of them park. The PENDING machinery is kept
+ * on purpose: it is what a branch that removes or renames routing.select looks
+ * like, and it must be an obvious regression rather than a silent skip. Run
+ * with ROUTING_HARNESS_REQUIRE_ROUTING=1 — as CI and the acceptance run do — to
+ * make a parked assertion a FAILURE instead of a note.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -130,6 +131,12 @@ function startHub(hubPort, fakeURL) {
       '-layout-file', path.join(tmp, 'layout.json'),
       '-push-dir', path.join(tmp, 'push'),
       '-peers-file', path.join(tmp, 'peers.json'),
+      // Keep the scratch hub off the developer's real
+      // ~/.config/workspacer-hub/routing.yaml: the routing service SEEDS that
+      // file on first run and re-reads it every tick, so without this the
+      // harness's answers would depend on whatever the machine's own matrix
+      // says. Pointing it at the scratch dir also exercises the seed path.
+      '-routing-file', path.join(tmp, 'routing.yaml'),
       '-tokens-file', '',
     ],
     { env, stdio: ['ignore', 'pipe', 'pipe'] },

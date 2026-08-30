@@ -217,6 +217,39 @@ forecast_weights:
   validation: 1
 
 # ---------------------------------------------------------------------------
+# MODE SHIFTS — what a routing mode DOES, keyed by mode then by role.
+#
+# The `roles:` table above is the NORMAL answer, so `normal` has no block here:
+# restating it would be two places to keep in agreement. A role with no entry
+# under a mode keeps its usual capability.
+#
+# Keyed by ROLE rather than by capability on purpose. Sections 12 and 13 of the
+# design are per-role and disagree per role about the same capability — CONSERVE
+# moves the scout down off `balanced` while the fixer stays on it — so a
+# capability -> capability map would move both and be wrong about one.
+#
+# Every value must be a name from `capabilities:` above; anything else is
+# reported at load and ignored.
+mode_shifts:
+  # "scouting -> cheaper tier; mechanical work -> cheap; routine fixes ->
+  # balanced; frontier for implementation and hard diagnosis only;
+  # frontier_plus strict escalation only."
+  conserve:
+    scout: cheap
+    validator: cheap
+    fixer: cheap
+    judge: deep_reviewer
+  # "balanced scout -> frontier scout; balanced reviewer -> frontier reviewer;
+  # frontier high -> frontier max on difficult work." Unused subscription
+  # capacity has no value after the reset, so near one it buys assurance.
+  spend_down:
+    scout: frontier
+    reviewer: deep_reviewer
+    implementer: frontier_max
+    complex_fixer: frontier_max
+    diagnostician: frontier_max
+
+# ---------------------------------------------------------------------------
 # MODES — the manual override. `auto` lets the thresholds above decide.
 #   auto | conserve | normal | spend_down
 # A per-provider entry wins over the global one for that provider.

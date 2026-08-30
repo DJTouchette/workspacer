@@ -142,15 +142,11 @@ type Bucket struct {
 	// Snapshot.Buckets, not against the instant the document was fetched.
 	Reading Reading
 
-	// RawUsedPercent is the wire scalar exactly as served, ungated.
-	//
-	// DISPLAY AND EXPLANATION ONLY. It is deliberately reachable so a decision
-	// can say "codex 5h unknown — the last reading was 67% and its window has
-	// since rolled over" instead of silently dropping the provider, which is
-	// the cheapest detection this feature has. It is NEVER a routing input:
-	// Reading is, and Reading refuses to hand out a percentage off a window
-	// that has closed.
-	RawUsedPercent Measured
+	// rawUsedPercent is the wire scalar exactly as served, UNGATED — it may
+	// describe a window that closed two days ago. See
+	// DisplayOnlyRawUsedPercent, which is the only way to it and is named the
+	// way it is on purpose.
+	rawUsedPercent Measured
 
 	// Provenance of the account row this bucket came from.
 	Source     string
@@ -185,8 +181,27 @@ func (b Bucket) Metered() bool {
 	if b.Reading.Usable() {
 		return true
 	}
-	return b.RawUsedPercent.State != MeasuredUnavailable
+	return b.rawUsedPercent.State != MeasuredUnavailable
 }
+
+// DisplayOnlyRawUsedPercent is the wire scalar exactly as served, UNGATED by
+// the currency rule, and its name is the guard.
+//
+// It exists for ONE job: so an explanation can say "codex 5h unknown — the last
+// reading was 67% and its window has since rolled over" instead of silently
+// dropping a provider, which is the cheapest detection this feature has. It was
+// an exported FIELD until the P0 review pointed out what that meant: the
+// routing layer, the first big consumer of this package, could read a stale
+// 67%-used figure off a window that had already reset simply by reaching for
+// the obvious-looking member — which is the phantom-CONSERVE bug arriving
+// through a second door after the first one was closed.
+//
+// So: not a field, not a short name, and not something anyone reaches for by
+// accident. THE POLICY LAYER MUST NEVER CALL THIS. Bucket.Reading is the
+// decision surface, and it refuses to hand out a percentage off a window that
+// has closed. TestThePolicyLayerNeverReadsTheRawScalar (internal/routing) reads
+// that package's source and fails if this name appears in it.
+func (b Bucket) DisplayOnlyRawUsedPercent() Measured { return b.rawUsedPercent }
 
 // ---------------------------------------------------------------------------
 // THE SNAPSHOT
@@ -307,12 +322,12 @@ func bucketFrom(provider string, a WireAccount, window string, now time.Time) Bu
 	}
 	w := a.Windows.Window(window)
 	if w != nil && w.UsedPercent != nil {
-		b.RawUsedPercent = *w.UsedPercent
+		b.rawUsedPercent = *w.UsedPercent
 	} else {
 		// No scalar at all is not `ok 0`. Spelling it `unknown` with a reason
 		// keeps the document's own three-state discipline through a hole in the
 		// document.
-		b.RawUsedPercent = Measured{
+		b.rawUsedPercent = Measured{
 			State:  MeasuredUnknown,
 			Reason: "the report carried no used_percent for this window",
 		}

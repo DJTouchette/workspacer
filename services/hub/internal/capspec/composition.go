@@ -606,6 +606,10 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "WRITE-THEN-INTERPRET: `note` is read as instruction, by an AGENT — but that crossing is already fully available to any caller holding agents.sendMessage, whose recorded pair covers it, and this method reaches strictly less of it. The caller cannot pick the reader (the host derives it from the caller's own parentSessionId), cannot suppress the host-composed header that says the sender is still running, and cannot exceed one 500-char line per 60s. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session — the only state it touches is its own in-memory per-session budget, which nothing else consults, and `callerSessionId` selects the caller rather than a target",
 		Witnesses: []Witness{paramsClassified("note", "callerSessionId")},
 	},
+	"routing.select": {
+		Reason:    "answers which (provider, model, effort) a work ROLE should get, from a hub-owned file plus one read of claudemon's /usage/report. WRITE-THEN-INTERPRET: it writes nothing at all — no file, no event, no bus publish — so there are no bytes for any interpreter to read as config, code, argv or policy; routing exposes no write RPC over the bus and the matrix file it reads is refused to fs.write, which is what makes its `ceilings:` block a ceiling rather than a suggestion. WIDEN-THEN-USE: it changes no grant, no root set, no permission mode, no approval gate and no session — the returned model name is INFORMATION, and the only way to act on it is agents.spawn, which is a separate capability with its own clamps that do not consult this answer. Its one caller value the host does anything with is `cwd`, whose per-parameter decision is on the record: it selects a row of the hub's own routing.yaml and is never opened",
+		Witnesses: []Witness{paramsClassified("cwd")},
+	},
 	"claude.sessionsForDir": {
 		Reason:    "lists claudemon's known sessions for a directory. Read-only, its `cwd` carries a per-parameter decision on the record, and the ids it returns are already handed out by agents.list and sessions.snapshots",
 		Witnesses: []Witness{paramsClassified("cwd")},
