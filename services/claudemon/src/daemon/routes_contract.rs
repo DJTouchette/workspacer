@@ -130,9 +130,89 @@ pub(crate) fn scan_all() -> Vec<Route> {
     all
 }
 
+// ---------------------------------------------------------------------------
+// THE VOCABULARY BLOCK, generated with the table.
+//
+// Every fixture in `contracts/` declares a `vocabulary.blocks` registry, and
+// `cmd/brain/corpusvocab_test.go` plus its TypeScript twin
+// `apps/desktop/src/main/services/contractsVocabulary.test.ts` hold every
+// fixture to it: an array-of-objects block nobody declared is a failure, and so
+// is a case carrying a field the registry does not name. `routes` is a block
+// like any other, so it owes the same declaration — being generated is a reason
+// for the DECLARATION to be generated too, not a reason to be exempt. An
+// exemption here would mean a `Route` field renamed by one character sailed
+// through, which is the same silent-typo defect `unknown-fields` exists to
+// catch, and this is the one fixture where a machine writes the rows.
+//
+// So `required` is DERIVED from `Route`'s own serialization rather than typed
+// out: add a field to the struct and the declaration grows with the rows in the
+// same `make claudemon-routes` run. The prose and the `loaders` list are the
+// human half, and they live here because the whole `vocabulary` key is written
+// from this module — `the_route_fixture_is_the_router` pins it, so a hand-edit
+// of the block trips the same drift check a hand-edit of a route does.
+
+/// The `_comment` the other fixtures carry, in this file's own words.
+const VOCAB_COMMENT: [&str; 4] = [
+    "GENERATED with the routes below — do not hand-edit; `make claudemon-routes` rewrites this",
+    "whole key from services/claudemon/src/daemon/routes_contract.rs, and the drift test fails",
+    "if the two disagree. `required` is the field set of the Rust `Route` struct as serde",
+    "serializes it, so a new column on the table cannot arrive undeclared.",
+];
+
+/// What a row in `routes` is. Read by the two corpus-vocabulary loaders only;
+/// the route guards themselves read the rows.
+const ROUTES_WHY: &str = "One route claudemon's axum routers actually register. `server` picks \
+                          the router (claudemon-api on :7891, claudemon-hook on :7890 — /health \
+                          is on both), `pattern` is the path AS REGISTERED so `:id` is still a \
+                          wildcard segment, and `method` is normative rather than decoration: \
+                          /mcp/ask/:session_id is POST-only and axum answers a GET there with \
+                          405, so a GET caller is as dead as a caller of a route nobody serves.";
+
+/// The tests that read THIS block, "<repo-relative file>::<needle>".
+/// `cmd/brain/contracts_test.go::TestEveryDeclaredBlockLoaderStillExists`
+/// resolves both halves of each entry, so a renamed test fails here.
+const ROUTES_LOADERS: [&str; 3] = [
+    "services/claudemon/src/daemon/routes_contract.rs::the_route_fixture_is_the_router",
+    "services/hub/internal/capspec/claudemoncallers_test.go::TestClaudemonRouteFixtureMatchesTheServedRegistry",
+    "apps/tui/src/claudemon.rs::every_path_this_client_builds_is_a_route_claudemon_serves",
+];
+
+/// The field names a `Route` serializes to, from serde and not from memory.
+pub(crate) fn route_field_names() -> Vec<String> {
+    let probe = Route {
+        server: String::new(),
+        pattern: String::new(),
+        method: String::new(),
+    };
+    match serde_json::to_value(probe) {
+        Ok(serde_json::Value::Object(map)) => map.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The `vocabulary` key, exactly as the fixture must carry it.
+pub(crate) fn vocabulary() -> serde_json::Value {
+    serde_json::json!({
+        "_comment": VOCAB_COMMENT,
+        "blocks": {
+            "routes": {
+                "why": ROUTES_WHY,
+                "required": route_field_names(),
+                "loaders": ROUTES_LOADERS,
+            }
+        }
+    })
+}
+
 #[derive(serde::Deserialize)]
 struct Fixture {
     routes: Vec<Route>,
+}
+
+/// The fixture as a whole document, for the keys this module writes but does not
+/// model as a struct.
+fn fixture_doc() -> serde_json::Value {
+    serde_json::from_str(FIXTURE).expect("contracts/claudemon-routes.json does not parse")
 }
 
 #[cfg(test)]
@@ -180,15 +260,30 @@ mod tests {
     #[test]
     fn the_route_fixture_is_the_router() {
         let scanned = scan_all();
+        let doc = fixture_doc();
         let fixture: Fixture =
             serde_json::from_str(FIXTURE).expect("contracts/claudemon-routes.json does not parse");
+        let vocab_matches = doc.get("vocabulary") == Some(&vocabulary());
 
-        if scanned == fixture.routes {
+        if scanned == fixture.routes && vocab_matches {
             return;
         }
         if std::env::var_os("UPDATE_CLAUDEMON_ROUTES").is_some() {
             rewrite_fixture(&scanned);
             return;
+        }
+        if scanned == fixture.routes && !vocab_matches {
+            panic!(
+                "contracts/claudemon-routes.json carries the right routes and the wrong \
+                 `vocabulary` block. That key is generated by routes_contract.rs too — \
+                 `required` is the serialized field set of the Rust `Route` struct — so a \
+                 hand-edit of it is drift like any other. Run `make claudemon-routes`.\n\
+                 in the fixture: {}\n\
+                 generated:      {}",
+                serde_json::to_string(doc.get("vocabulary").unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default(),
+                serde_json::to_string(&vocabulary()).unwrap_or_default(),
+            );
         }
 
         let mut msg = String::from(
@@ -226,10 +321,57 @@ mod tests {
         let mut doc: serde_json::Value =
             serde_json::from_str(FIXTURE).expect("fixture does not parse");
         doc["routes"] = serde_json::to_value(routes).expect("routes serialize");
+        doc["vocabulary"] = vocabulary();
         let mut text = serde_json::to_string_pretty(&doc).expect("fixture serializes");
         text.push('\n');
         std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
         eprintln!("rewrote {}", path.display());
+    }
+
+    /// The generated `vocabulary` block has to describe the rows it ships with,
+    /// or the corpus guard is declaring a field set nothing carries. Derived
+    /// from `Route` on one side and read off a real scanned row on the other,
+    /// so a rename that only touched one of them fails here rather than in a
+    /// fixture diff nobody reads.
+    #[test]
+    fn the_generated_vocabulary_names_the_fields_a_row_really_carries() {
+        let fields = route_field_names();
+        assert!(
+            !fields.is_empty(),
+            "route_field_names() came back empty — `required` would ship as [], and an empty \
+             required list makes the corpus guard's required-fields check vacuous for every row"
+        );
+        let row = scan_all()
+            .first()
+            .cloned()
+            .expect("the routers register something");
+        let encoded = serde_json::to_value(&row).expect("a row serializes");
+        let keys: Vec<String> = encoded
+            .as_object()
+            .expect("a row is an object")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            fields, keys,
+            "vocabulary.blocks.routes.required does not match the keys a scanned row serializes to"
+        );
+
+        let vocab = vocabulary();
+        assert_eq!(
+            vocab["blocks"]["routes"]["required"],
+            serde_json::to_value(&keys).expect("keys serialize"),
+            "the generated block does not carry the derived field set"
+        );
+        // Every loader entry is "<file>::<needle>"; cmd/brain/contracts_test.go
+        // resolves both halves against the filesystem, but that runs in another
+        // language's suite and a malformed entry should fail here too.
+        for entry in ROUTES_LOADERS {
+            assert!(
+                entry.contains("::"),
+                "loader {entry:?} is not \"<repo-relative file>::<needle>\""
+            );
+        }
     }
 
     /// The scanner has to survive the wrapped registration form, because six of
