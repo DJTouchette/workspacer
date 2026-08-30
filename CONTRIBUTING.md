@@ -227,9 +227,17 @@ page.
 6. **Publish the draft by hand.** This is the step that is easy to miss:
    `release.yml` creates the GitHub Release with `draft: true`. A draft is
    invisible to `api.github.com/repos/.../releases/latest`, which is the
-   endpoint the landing page's download button reads — so until a human hits
+   endpoint the landing page's download button reads. Until a human hits
    **Publish release**, the site still offers the previous version and the
    auto-updater sees nothing new.
+
+   Publishing the draft is not the whole story. Flipping `draft` to `false`
+   does not by itself reassign `/releases/latest` to the new tag. During the
+   `0.160.0` cut, `/releases/latest` still resolved to `0.150.0` after the
+   draft was published. A second call, a `PATCH` on the release with
+   `make_latest=true`, was required before `/releases/latest` pointed at
+   `0.160.0`. After publishing, re-query `/releases/latest` yourself and
+   confirm it resolves to the new tag. Do not assume the publish step did it.
 7. **Check the release page** actually has every platform's installer and the
    updater metadata before you announce it. `fail_on_unmatched_files: false`
    means a leg that produced no artifact does not fail the run.
