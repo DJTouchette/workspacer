@@ -64,7 +64,9 @@ progress note it sent you, if any; a note marked NEEDS A DECISION means that
 worker is blocked on YOUR answer, so say what you are going to tell it.
 
 **Landed recently** — the newest entries across the project briefs' "## Recently"
-(a few lines, newest first), each with its project.
+(a few lines, newest first), each with its project. Flag any that changed code
+and have not been reviewed yet: an independent reviewer is a dispatch you still
+owe them, and the implementer's own sign-off does not count as one.
 
 **Waiting on you** — every decision parked on the user: a worker blocked on an
 approval you escalated, a question, a merge awaiting the go-ahead.

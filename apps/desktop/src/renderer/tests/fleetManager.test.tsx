@@ -51,6 +51,48 @@ describe('buildManagerKickoff — crash succession', () => {
   });
 });
 
+describe('buildManagerKickoff — reviewer independence', () => {
+  // Invariant 3 of the routing spec, landed as doctrine rather than as routing
+  // machinery: review must not inherit the implementer's reasoning. The habit
+  // only exists here, so each half of it is pinned — a separate worker, what
+  // the reviewer is given, what it is deliberately NOT given, and the model
+  // guidance that keeps a reviewer-per-ship-task affordable.
+  const doctrine = buildManagerKickoff('go');
+
+  it('names REVIEW as a task shape alongside ship and scout', () => {
+    expect(doctrine).toMatch(/SHIP task, a SCOUT task, or a REVIEW task/);
+    expect(doctrine).toMatch(/A REVIEW task follows every ship task that lands/);
+  });
+
+  it('forbids asking the implementer to grade its own work', () => {
+    expect(doctrine).toMatch(/Never ask the implementer whether its own work is right/);
+    expect(doctrine).toMatch(/reasoning that wrote the code cannot grade it/);
+  });
+
+  it('says a fresh session makes independence the default, and naming the one way to lose it', () => {
+    expect(doctrine).toMatch(/spawn_agent always starts a FRESH session/);
+    expect(doctrine).toMatch(/paste the implementer’s reasoning into the reviewer’s first message/);
+  });
+
+  it('lists what the reviewer is given, and what it is withheld', () => {
+    // The spec's list: ticket, acceptance criteria, architectural constraints,
+    // final diff, relevant files, test results.
+    expect(doctrine).toMatch(/acceptance criteria/);
+    expect(doctrine).toMatch(/architectural constraints/);
+    expect(doctrine).toMatch(/branch or commit and its diff/);
+    expect(doctrine).toMatch(/test results/);
+    expect(doctrine).toMatch(
+      /Do NOT give it the implementer’s plan, its reasoning, or its transcript/,
+    );
+  });
+
+  it('prefers a different model family and keeps the reviewer tier cheap', () => {
+    expect(doctrine).toMatch(/different model FAMILY/);
+    expect(doctrine).toMatch(/list_models/);
+    expect(doctrine).toMatch(/doubles your worker count/);
+  });
+});
+
 describe('buildManagerKickoff — dispatch templates', () => {
   // The doctrine is the only place a manager learns templates exist; the text
   // is paid for in every manager session, so it is short — but the three

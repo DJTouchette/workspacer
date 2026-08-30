@@ -109,6 +109,21 @@ func TestLibrarySeedAndList(t *testing.T) {
 	if !strings.Contains(dispatch["ship-task"].Body, "{{task}}") {
 		t.Errorf("ship-task lost its required {{task}} placeholder:\n%s", dispatch["ship-task"].Body)
 	}
+	// Invariant 3 of the routing spec, in the half of the twin that a headless
+	// brain seeds: a ship worker verifies itself against the project's checks
+	// and then HANDS OFF, rather than ruling on its own work. The desktop twin
+	// (libraryService.test.ts, "ends the ship task with a reviewer handoff")
+	// pins the same lines, so this is the drift catch between the two copies.
+	for _, want := range []string{
+		"Read what a check actually printed rather than trusting its exit code",
+		"Do not judge whether your own work is correct",
+		"HANDOFF",
+		"Leave your plan and your reasoning out of it",
+	} {
+		if !strings.Contains(dispatch["ship-task"].Body, want) {
+			t.Errorf("ship-task body lost %q (desktop twin has it):\n%s", want, dispatch["ship-task"].Body)
+		}
+	}
 }
 
 // suppressLibrarySeed writes the seed marker with every starter id already
