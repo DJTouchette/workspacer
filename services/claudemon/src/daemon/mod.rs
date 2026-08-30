@@ -4,6 +4,10 @@ pub mod hook;
 pub mod init;
 pub mod mcp_ask;
 pub mod oneshot;
+// Test-only: derives contracts/claudemon-routes.json from the two routers above
+// and fails when the fixture drifts. See the module doc.
+#[cfg(test)]
+mod routes_contract;
 pub mod spawn;
 pub mod wrapper_ws;
 

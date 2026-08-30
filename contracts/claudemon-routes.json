@@ -1,0 +1,201 @@
+{
+  "$comment": "GENERATED — do not hand-edit. The route table claudemon actually serves, extracted from the axum routers in services/claudemon/src/daemon/{api,hook}.rs. Regenerate with: make claudemon-routes  (or read the diff a failing services/claudemon `routes_contract` test prints). A hand-maintained copy of this list would drift, which is the disease this fixture exists to cure.",
+  "notes": [
+    "`pattern` is the axum path AS REGISTERED, so `:id` is a wildcard segment and a caller path matches it segment-by-segment with a static segment winning over a wildcard — the same precedence axum applies.",
+    "`server` distinguishes the two independent routers on two ports: claudemon-api (:7891, everything a client calls) and claudemon-hook (:7890, ingress for Claude Code's own hook and statusLine shellouts). /health exists on both.",
+    "`method` is the axum verb. It is not decoration: /mcp/ask/:session_id is POST-only and axum answers a GET there with 405, so a GET caller is as dead as a caller of a route that does not exist."
+  ],
+  "owners": [
+    "services/claudemon/src/daemon/routes_contract.rs (Rust) — extracts the table from the two router sources at compile time and fails if this file disagrees. That is what makes the fixture DERIVED rather than declared.",
+    "services/hub/internal/capspec/claudemoncallers_test.go (Go) — sweeps every claudemon HTTP caller in the repo, in three languages, and fails on a path no row here serves; also pins this file to capspec's own httpRoutes registry, which a separate scan already holds to the same two routers.",
+    "apps/tui/src/claudemon.rs (Rust) — the TUI's mock_server answers 404 for a path absent from this table and 405 for a method it does not serve, so a client-side route assertion can no longer pin the caller's own URL against itself."
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "pattern": "/conversation/stream",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/events",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/health",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/heartbeat",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/heartbeats",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/hooks/stream",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/mcp/ask/:session_id",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/oneshot",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/providers/:provider/models",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/answer",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/approve",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id/conversation",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/decide",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/gate",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/handoff",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/input",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/message",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/model",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id/output",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/permission-mode",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/resize",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/signal",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id/stream",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id/subagents/:agent_id/conversation",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/sessions/:id/transcript",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/spawn",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/spawn-managed",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/statusline/stream",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/usage",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/usage/report",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/wrapper/:id",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
+      "pattern": "/health",
+      "server": "claudemon-hook"
+    },
+    {
+      "method": "POST",
+      "pattern": "/hook",
+      "server": "claudemon-hook"
+    },
+    {
+      "method": "POST",
+      "pattern": "/hook/:kind",
+      "server": "claudemon-hook"
+    },
+    {
+      "method": "POST",
+      "pattern": "/statusline",
+      "server": "claudemon-hook"
+    }
+  ],
+  "why": "37 routes with no contract is how commit 37320188 deleted claudemon's /git family while apps/tui kept calling six of them for weeks with a green suite. Nothing in the repo compared the paths a caller BUILDS against the paths the daemon SERVES, so the only symptom was a 404 nobody read. The hub bus seam had such a guard (cmd/brain/headless_completeness_test.go) and stayed clean; this seam had none and rotted. This file is the served half of the comparison."
+}

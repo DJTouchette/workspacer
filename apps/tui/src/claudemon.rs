@@ -1045,11 +1045,201 @@ mod tests {
         }
     }
 
+    // ── the route table this client is allowed to talk to ──────────────────
+
+    /// `contracts/claudemon-routes.json` — what claudemon actually serves,
+    /// derived from its two axum routers by
+    /// `services/claudemon/src/daemon/routes_contract.rs`. Regenerate with
+    /// `make claudemon-routes`.
+    const ROUTES_FIXTURE: &str = include_str!("../../../contracts/claudemon-routes.json");
+
+    /// This file's own source, so the sweep below reads the paths this client
+    /// really builds rather than a list someone remembered to update.
+    const CLAUDEMON_RS: &str = include_str!("claudemon.rs");
+
+    /// `(method, pattern)` for every route on the API port (`:7891`). The hook
+    /// port is claudemon's own ingress from Claude Code and this client never
+    /// touches it.
+    fn api_routes() -> Vec<(String, String)> {
+        let doc: Value =
+            serde_json::from_str(ROUTES_FIXTURE).expect("contracts/claudemon-routes.json parses");
+        let rows: Vec<(String, String)> = doc["routes"]
+            .as_array()
+            .expect("fixture has a routes array")
+            .iter()
+            .filter(|r| r["server"] == json!("claudemon-api"))
+            .map(|r| {
+                (
+                    r["method"].as_str().unwrap_or_default().to_string(),
+                    r["pattern"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            rows.len() >= 30,
+            "the fixture yielded only {} API routes — it is stale or the shape changed, and \
+             every check that reads it is now checking nothing",
+            rows.len()
+        );
+        rows
+    }
+
+    /// Resolve a request path the way axum does: segment by segment, a static
+    /// segment beating a `:wildcard` one. Returns the methods the matched route
+    /// serves, or `None` when nothing serves the path at all.
+    fn resolve_route(path: &str) -> Option<Vec<String>> {
+        let want: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let mut wildcard: Option<Vec<String>> = None;
+        let mut exact: Option<Vec<String>> = None;
+        for (method, pattern) in api_routes() {
+            let have: Vec<&str> = pattern.trim_start_matches('/').split('/').collect();
+            if have.len() != want.len() {
+                continue;
+            }
+            let mut is_exact = true;
+            let mut ok = true;
+            for (h, w) in have.iter().zip(want.iter()) {
+                if h.starts_with(':') {
+                    is_exact = false;
+                } else if h != w {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let slot = if is_exact { &mut exact } else { &mut wildcard };
+            slot.get_or_insert_with(Vec::new).push(method);
+        }
+        exact.or(wildcard)
+    }
+
+    /// Fold a path this client BUILDS (`/sessions/{session_id}/model`) into the
+    /// comparable form. A `{…}` hole filling a whole segment is a path
+    /// parameter; a hole starting mid-segment is a query or a suffix, and the
+    /// path ends there.
+    fn normalize_built_path(raw: &str) -> String {
+        let b = raw.as_bytes();
+        let mut out = String::new();
+        let mut i = 0usize;
+        while i < b.len() {
+            if b[i] == b'{' {
+                let Some(k) = raw[i..].find('}') else { break };
+                let end = i + k + 1;
+                let at_start = i == 0 || b[i - 1] == b'/';
+                let at_end = end == b.len() || b[end] == b'/';
+                if !at_start || !at_end {
+                    break;
+                }
+                out.push_str(":param");
+                i = end;
+                continue;
+            }
+            if b[i] == b'?' || b[i] == b'#' {
+                break;
+            }
+            out.push(b[i] as char);
+            i += 1;
+        }
+        out
+    }
+
+    /// THE CLIENT-SIDE HALF OF THE SEAM, checked from Rust so it fires under
+    /// `cargo test` and not only under the repo-wide Go sweep in
+    /// `services/hub/internal/capspec/claudemoncallers_test.go`.
+    ///
+    /// This is the test that was missing. Commit `37320188` deleted claudemon's
+    /// `/git` routes and this file kept calling six of them for weeks; the whole
+    /// suite stayed green, because `mock_server` answered any path and the four
+    /// review-pane tests only ever asserted in-process dock state. Every `"/…"`
+    /// literal outside this test module is a path this client puts on the wire —
+    /// there is no other kind in this file — so the sweep is exhaustive by
+    /// construction rather than by anyone remembering to add a case.
+    #[test]
+    fn every_path_this_client_builds_is_a_route_claudemon_serves() {
+        let src = CLAUDEMON_RS
+            .split_once("#[cfg(test)]")
+            .map(|(head, _)| head)
+            .unwrap_or(CLAUDEMON_RS);
+
+        let mut checked = 0;
+        let mut rest = src;
+        while let Some(q) = rest.find("\"/") {
+            let after = &rest[q + 1..];
+            let Some(e) = after.find('"') else { break };
+            let literal = &after[..e];
+            rest = &after[e + 1..];
+            if literal.contains('\n') {
+                continue;
+            }
+            let path = normalize_built_path(literal);
+            checked += 1;
+            assert!(
+                resolve_route(&path).is_some(),
+                "this client builds {path:?} (from the literal {literal:?}) and claudemon \
+                 serves no such route. That request 404s; the error usually dies in an \
+                 `if let Ok(..)` and nothing on screen says so. Fix the call or restore the \
+                 route — do not widen contracts/claudemon-routes.json to match."
+            );
+        }
+        assert!(
+            checked >= 16,
+            "the sweep read only {checked} path literals out of this file — the scan broke \
+             and this guard is asserting nothing"
+        );
+
+        // The hand-rolled request lines are the one place a path is spelled
+        // inside a bigger format! string rather than as a bare literal, so they
+        // are swept separately or `/events` and `/sessions/:id/stream` would be
+        // the two calls this guard cannot see.
+        let mut request_lines = 0;
+        let mut rest = src;
+        while let Some(i) = rest.find(" HTTP/1.1") {
+            let head = &rest[..i];
+            rest = &rest[i + " HTTP/1.1".len()..];
+            // Walk back to the start of the request line: the opening quote of
+            // the format! string, or the previous newline.
+            let start = head.rfind(['"', '\n']).map(|q| q + 1).unwrap_or(0);
+            let mut parts = head[start..].split_whitespace();
+            let (Some(_verb), Some(raw)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            // `GET {path} HTTP/1.1` is the generic helper — the path is a
+            // variable and the literal callers of it are swept above.
+            if !raw.starts_with('/') {
+                continue;
+            }
+            let path = normalize_built_path(raw);
+            request_lines += 1;
+            assert!(
+                resolve_route(&path).is_some(),
+                "the hand-rolled request line `{raw} HTTP/1.1` targets {path:?}, which \
+                 claudemon does not serve"
+            );
+        }
+        assert!(
+            request_lines >= 2,
+            "found only {request_lines} hand-rolled request lines with a literal path — the \
+             `GET /events HTTP/1.1` shape changed and the SSE/PTY calls are no longer checked"
+        );
+    }
+
     // ── provider-parity client round-trips (against a one-shot mock server) ──
 
     /// A one-shot mock HTTP server: answers the next request with
     /// `status`/`resp_body`, then hands back the parsed request as
     /// `(method, path, json_body)` for assertions.
+    ///
+    /// It answers the configured status ONLY for a route
+    /// `contracts/claudemon-routes.json` says claudemon serves: an unknown path
+    /// gets 404 and a known path with the wrong verb gets 405, exactly as axum
+    /// would. That is not decoration. This mock used to answer any path, so
+    /// every `assert_eq!(path, "/sessions/s1/model")` below pinned the caller's
+    /// own URL against itself and could not fail — which is how six calls to a
+    /// deleted `/git` family survived here for weeks with a green suite. Do not
+    /// relax this back to any-path to make a test pass; a test that breaks
+    /// against it is a test that was calling a route nobody serves.
     async fn mock_server(
         status: u16,
         reason: &'static str,
@@ -1095,6 +1285,27 @@ mod tests {
                 body_bytes.extend_from_slice(&tmp[..n]);
             }
             let body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
+
+            // Route the request against the real table before answering. A path
+            // claudemon does not serve gets a 404 and a served path reached with
+            // the wrong verb gets a 405 — the two answers axum gives — so a
+            // route assertion in a test below is now a claim about the DAEMON
+            // and not just about the string this client happened to build.
+            let bare = path.split('?').next().unwrap_or(&path);
+            let (status, reason, resp_body) = match resolve_route(bare) {
+                None => (
+                    404u16,
+                    "Not Found",
+                    r#"{"error":"no such route (contracts/claudemon-routes.json)"}"#,
+                ),
+                Some(methods) if !methods.iter().any(|m| m == &method) => (
+                    405u16,
+                    "Method Not Allowed",
+                    r#"{"error":"route exists, wrong method (contracts/claudemon-routes.json)"}"#,
+                ),
+                Some(_) => (status, reason, resp_body),
+            };
+
             let resp = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
                  Content-Length: {}\r\nConnection: close\r\n\r\n{}",
