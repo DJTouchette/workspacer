@@ -159,8 +159,13 @@ func TestDecodeRealUsageReport(t *testing.T) {
 		}
 	})
 
-	t.Run("a window the source did not include is unknown, not zero", func(t *testing.T) {
-		b := find(t, buckets, "codex//home/you/.codex/five_hour")
+	t.Run("a window the source could not read this time is unknown, not zero", func(t *testing.T) {
+		// UNKNOWN is the RETRYABLE answer — the source exists, this read of it
+		// did not produce a number, and asking again may. Pinned on the claude
+		// login whose oauth token expired, which is what the daemon still emits
+		// for it. (It used to be pinned on codex's five-hour window; see the
+		// unavailable case below for why that is no longer the same claim.)
+		b := find(t, buckets, "claude//home/you/.claude/accounts/work/five_hour")
 		if b.Reading.Usable() {
 			t.Error("no reset time, so not usable")
 		}
@@ -168,7 +173,45 @@ func TestDecodeRealUsageReport(t *testing.T) {
 			t.Error("no percentage")
 		}
 		if b.DisplayOnlyRawUsedPercent().State != MeasuredUnknown {
-			t.Errorf("raw state = %q, want unknown (the rollout carrying rate limits did not include this window — retryable)", b.DisplayOnlyRawUsedPercent().State)
+			t.Errorf("raw state = %q, want unknown (the token expired and the CLI refreshes it on its next turn — retryable)", b.DisplayOnlyRawUsedPercent().State)
+		}
+		if !b.Metered() {
+			t.Error("unmetered, and an expired token says nothing about whether this account HAS an allowance — collapsing 'we could not read it' into 'there is nothing here' is how a constrained provider reads free")
+		}
+	})
+
+	t.Run("a window the plan does not publish is unavailable, and does not drag the provider dark", func(t *testing.T) {
+		// The distinction this case exists for, and it is not cosmetic.
+		// UNAVAILABLE is structural — nobody has this window, a retry can never
+		// produce one — so Metered() is false and Worst() SKIPS the bucket.
+		// UNKNOWN is retryable, so Worst() folds it in, and UNKNOWN outranks
+		// GREEN. Report the absence as unknown and a five-hour window this plan
+		// never had drags all of codex to UNKNOWN beside a perfectly current
+		// weekly reading — a provider going dark to routing over a window that
+		// does not exist. The daemon reports it as absent (claudemon 841d6c7d,
+		// after the account's plan changed to one publishing a single weekly
+		// window), and this is the hub half of that contract.
+		b := find(t, buckets, "codex//home/you/.codex/five_hour")
+		if b.Reading.Usable() {
+			t.Error("no reset time, so not usable")
+		}
+		if _, ok := b.Reading.UsedPercent(); ok {
+			t.Error("no percentage")
+		}
+		if b.DisplayOnlyRawUsedPercent().State != MeasuredUnavailable {
+			t.Errorf("raw state = %q, want unavailable — a plan that publishes no five-hour window will not start publishing one on a retry", b.DisplayOnlyRawUsedPercent().State)
+		}
+		if b.Metered() {
+			t.Error("metered, and there is no five-hour allowance on this plan to conserve")
+		}
+
+		bands := Bands{YellowAtUsedPct: 70, RedAtUsedPct: 90}
+		rep := ForProvider(buckets, "codex", "/home/you/.codex", bands)
+		if rep.Health != HealthGreen {
+			t.Errorf("codex folds to %q (%s) — it has one readable window, 0%% used and current, and an absent five-hour window must not outrank it", rep.Health, rep.Because)
+		}
+		if !rep.Metered {
+			t.Error("codex reads unmetered, and its weekly window is a real allowance")
 		}
 	})
 
