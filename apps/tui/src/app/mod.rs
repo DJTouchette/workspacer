@@ -21,17 +21,16 @@ use crate::library::LibraryItem;
 use crate::profiles::Profile;
 use crate::terminal::Term;
 use crate::theme::Theme;
-use crate::types::{Agent, FileStatus, StatusLine, Turn};
+use crate::types::{Agent, StatusLine, Turn};
 use base64::Engine as _;
 
-use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_projects, fetch_transcript};
+use tasks::{fetch_agents, fetch_projects, fetch_transcript};
 
 mod state;
 pub use state::*;
 use state::{fuzzy_match, TOAST_TTL};
 
 mod agents;
-mod git;
 mod nodes;
 mod providers;
 mod runs;
@@ -72,16 +71,14 @@ pub struct App {
     /// Last known permission mode per session, updated from each successful
     /// switch — the cycle advances from here.
     pub perm_modes: HashMap<String, String>,
-    /// The git review pane, when open (a modal over the agent view).
-    pub review: Option<ReviewState>,
-    /// A pane docked beside the agent tiles: the git review, or the agent's own
-    /// changed files. `None` when the content column is all agent.
+    /// A pane docked beside the agent tiles: the agent's own changed files.
+    /// `None` when the content column is all agent.
     ///
     /// Deliberately its own slot rather than another entry in `tiles`: every tile
     /// is an agent, and the split/focus/close logic is written around that
     /// (`focus_agent` on every move, "no other agent to split"). Threading a kind
     /// through all of it to express "one docked pane" would put those invariants
-    /// at risk for no user-visible gain — nobody wants three reviews side by side.
+    /// at risk for no user-visible gain — nobody wants three docks side by side.
     pub side: Option<SidePane>,
     /// The runs overlay: which session's subagents + workflows are on screen.
     /// `None` when closed.
@@ -121,8 +118,6 @@ pub struct App {
     pub bus_scope: Option<String>,
     /// Per-cwd scratchpad text (persisted).
     pub notes: HashMap<String, String>,
-    /// Inspector cache: cwd → (branch, changed-file count), for the open agent.
-    pub git_summary: HashMap<String, (Option<String>, usize)>,
 
     pub connected: bool,
     pub should_quit: bool,
@@ -289,7 +284,6 @@ impl App {
             picker: None,
             managed_providers: HashMap::new(),
             perm_modes: HashMap::new(),
-            review: None,
             rename: None,
             names: crate::names::load(),
             projects: crate::projects::Projects::new(),
@@ -299,7 +293,6 @@ impl App {
             nodes_view: None,
             installed_providers: None,
             bus_scope: None,
-            git_summary: HashMap::new(),
             connected: false,
             should_quit: false,
             chat_mode: ChatMode::Terminal,
@@ -485,27 +478,6 @@ impl App {
                     }
                     s.pending = s.pending.saturating_sub(1);
                     s.rematch();
-                }
-            }
-            AppMsg::GitStatus { cwd, branch, files } => self.apply_git_status(cwd, branch, files),
-            AppMsg::GitDiff {
-                cwd,
-                path,
-                staged,
-                diff,
-            } => self.apply_git_diff(cwd, path, staged, diff),
-            AppMsg::GitSummary {
-                cwd,
-                branch,
-                changed,
-            } => {
-                self.git_summary.insert(cwd, (branch, changed));
-            }
-            AppMsg::GitError { cwd, message } => {
-                if let Some(r) = self.review.as_mut() {
-                    if r.cwd == cwd {
-                        r.error = Some(message);
-                    }
                 }
             }
             AppMsg::PermissionMode { session_id, mode } => {
@@ -826,8 +798,6 @@ impl App {
             }
         });
     }
-
-    // ── git review pane actions ─────────────────────────────────────────────
 }
 
 #[cfg(test)]

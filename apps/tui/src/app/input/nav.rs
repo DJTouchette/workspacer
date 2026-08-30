@@ -81,13 +81,6 @@ impl App {
                 self.jump_idx = self.jumplist.len().saturating_sub(1);
             }
         }
-        let cwd = self
-            .agents
-            .iter()
-            .find(|a| a.session_id == id)
-            .map(|a| a.cwd_str().to_string())
-            .unwrap_or_default();
-        self.load_git_summary(cwd);
         self.view = View::Agent { id: id.clone() };
         self.workspaces
             .entry(id.clone())

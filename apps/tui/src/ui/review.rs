@@ -1,13 +1,11 @@
-//! The git panes: the docked side pane, the transcript's changed-file list, and
-//! the full review view with its file list and unified diff.
+//! The docked side pane and the transcript's changed-file list.
 
 use super::*;
 
-/// The pane docked beside the agent: the git review, or the agent's own changes.
-/// The border says which one has the keys, so `Ctrl-w` is never a guess.
+/// The pane docked beside the agent: the agent's own changes.
+/// The border says when it has the keys, so `Ctrl-w` is never a guess.
 pub(super) fn render_side_pane(f: &mut Frame, area: Rect, app: &App) {
     match app.side.as_ref().map(|p| p.kind) {
-        Some(crate::app::SideKind::Review) => render_review(f, area, app),
         Some(crate::app::SideKind::Changes) => render_changes(f, area, app),
         None => {}
     }
@@ -16,9 +14,8 @@ pub(super) fn render_side_pane(f: &mut Frame, area: Rect, app: &App) {
 /// Files the agent changed, newest turn first.
 ///
 /// This is the agent's account of its own work, taken from the transcript — a
-/// different question from what the work tree looks like now, which is the review
-/// pane beside it. A file the agent edited and then reverted appears here and not
-/// there; a file you changed by hand appears there and not here. Both are true.
+/// different question from what the work tree looks like now. A file the agent
+/// edited and then reverted appears here; a file you changed by hand does not.
 pub(super) fn render_changes(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let focused = app.side_focused();
@@ -124,196 +121,6 @@ pub(super) fn change_row(t: &Theme, c: &crate::types::ChangedFile, width: u16) -
         Span::styled(format!("+{}", c.added), Style::default().fg(t.ok)),
         Span::styled(format!(" −{}", c.removed), Style::default().fg(t.bad)),
     ])
-}
-
-// ── runs overlay: workflows + subagents ───────────────────────────────────────
-
-pub(super) fn render_review(f: &mut Frame, area: Rect, app: &App) {
-    let t = &app.theme;
-    let Some(r) = app.review.as_ref() else { return };
-
-    let branch = r.branch.as_deref().unwrap_or("(detached)");
-    let view = if r.staged_view { "staged" } else { "unstaged" };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(
-            " review · {branch} · {view} ({} files) ",
-            r.files.len()
-        ))
-        .title_bottom(Line::from(Span::styled(
-            if app.side_focused() {
-                " ctrl-w back to chat "
-            } else {
-                " ctrl-w to focus "
-            },
-            Style::default().fg(t.dim),
-        )))
-        // Dim when the chat has the keys, so which pane a keystroke lands in is
-        // never a guess.
-        .border_style(Style::default().fg(if app.side_focused() { t.accent } else { t.dim }));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let composing = r.commit_msg.is_some();
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(if composing { 3 } else { 0 }),
-        ])
-        .split(inner);
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(36), Constraint::Min(20)])
-        .split(rows[0]);
-
-    render_review_files(f, cols[0], t, r);
-    render_review_diff(f, cols[1], t, r);
-
-    if composing {
-        let msg = r.commit_msg.as_deref().unwrap_or("");
-        let p = Paragraph::new(Line::from(vec![
-            Span::styled(
-                "commit ",
-                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("{msg}▏")),
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" message · enter commit · esc cancel ")
-                .border_style(Style::default().fg(t.accent)),
-        );
-        f.render_widget(p, rows[1]);
-    }
-}
-
-pub(super) fn render_review_files(
-    f: &mut Frame,
-    area: Rect,
-    t: &Theme,
-    r: &crate::app::ReviewState,
-) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" files ")
-        .border_style(Style::default().fg(t.dim));
-    if let Some(err) = &r.error {
-        let p = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "git unavailable",
-                Style::default().fg(t.bad).add_modifier(Modifier::BOLD),
-            )),
-            Line::raw(""),
-            Line::from(Span::styled(err.clone(), Style::default().fg(t.dim))),
-        ])
-        .wrap(ratatui::widgets::Wrap { trim: false })
-        .block(block);
-        f.render_widget(p, area);
-        return;
-    }
-    if r.files.is_empty() {
-        let p = Paragraph::new(Line::from(Span::styled(
-            "working tree clean",
-            Style::default().fg(t.dim),
-        )))
-        .block(block);
-        f.render_widget(p, area);
-        return;
-    }
-    let items: Vec<ListItem> = r
-        .files
-        .iter()
-        .map(|file| {
-            let staged = file.staged.trim();
-            let unstaged = file.unstaged.trim();
-            let sc = if staged.is_empty() {
-                '·'
-            } else {
-                staged.chars().next().unwrap()
-            };
-            let uc = if unstaged.is_empty() {
-                '·'
-            } else {
-                unstaged.chars().next().unwrap()
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{sc}"), Style::default().fg(t.ok)),
-                Span::styled(format!("{uc} "), Style::default().fg(t.warn)),
-                Span::styled(
-                    crate::types::truncate(&file.display_path(), 30),
-                    Style::default(),
-                ),
-            ]))
-        })
-        .collect();
-    let list = List::new(items).block(block).highlight_style(
-        Style::default()
-            .bg(t.selection_bg)
-            .add_modifier(Modifier::BOLD),
-    );
-    let mut state = ListState::default();
-    state.select(Some(r.selected));
-    f.render_stateful_widget(list, area, &mut state);
-}
-
-pub(super) fn render_review_diff(
-    f: &mut Frame,
-    area: Rect,
-    t: &Theme,
-    r: &crate::app::ReviewState,
-) {
-    let path = r
-        .selected_file()
-        .map(|file| file.path.as_str())
-        .unwrap_or("");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {} ", if path.is_empty() { "diff" } else { path }))
-        .border_style(Style::default().fg(t.dim));
-
-    if r.diff.trim().is_empty() {
-        let msg = if r.files.is_empty() {
-            "nothing to review"
-        } else {
-            "no changes in this view"
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(t.dim)))).block(block),
-            area,
-        );
-        return;
-    }
-
-    let lines: Vec<Line> = r
-        .diff
-        .lines()
-        .map(|line| {
-            let style = if line.starts_with("@@") {
-                Style::default().fg(t.accent)
-            } else if line.starts_with("+++")
-                || line.starts_with("---")
-                || line.starts_with("diff ")
-                || line.starts_with("index ")
-            {
-                Style::default().fg(t.dim)
-            } else if line.starts_with('+') {
-                Style::default().fg(t.ok)
-            } else if line.starts_with('-') {
-                Style::default().fg(t.bad)
-            } else {
-                Style::default()
-            };
-            Line::from(Span::styled(line.to_string(), style))
-        })
-        .collect();
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .scroll((r.diff_scroll, 0)),
-        area,
-    );
 }
 
 // ── footer ────────────────────────────────────────────────────────────────────

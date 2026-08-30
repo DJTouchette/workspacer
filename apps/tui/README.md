@@ -16,7 +16,7 @@ or you want one fewer process. The TUI also falls back to this automatically if 
 loopback bus isn't reachable.
 
 The TUI is a working bus client for monitoring, control, spawning, raw PTY
-terminal views, tabs/splits, library insertion, review, notes, and attention
+terminal views, tabs/splits, library insertion, notes, and attention
 handling. It is still intentionally narrower than the desktop app around
 analytics and rich browser/editor workflows. See
 [`docs/features.md`](../../docs/features.md) for the repo-wide maturity catalog.
@@ -25,7 +25,7 @@ analytics and rich browser/editor workflows. See
 
 - **Command palette** — `Ctrl-K` opens a fuzzy launcher over several sources:
   start a new agent, open a terminal, run any `:` **command** (`vsplit`, `pin`,
-  `review`, …), jump to any running agent (findable by its **cwd**, not just its
+  `changes`, …), jump to any running agent (findable by its **cwd**, not just its
   name), or insert a **library** item into the focused agent. Type to filter
   (matches label + hint), `↑`/`↓` to move, `enter` to run.
 - **Library** — reusable prompts / skills / agents loaded from
@@ -66,7 +66,7 @@ analytics and rich browser/editor workflows. See
   along in the profile's args, as in the desktop app.
 - **Leader menu (which-key)** — press the leader (`space` by default; set
   `"leader"` in `tui.json`) to pop a menu of the next keys and what they do:
-  `p` palette, `a` new agent, `t` terminal, `n` notes, `r` rename, `g` review,
+  `p` palette, `a` new agent, `t` terminal, `n` notes, `r` rename,
   `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
   sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
   `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
@@ -76,7 +76,7 @@ analytics and rich browser/editor workflows. See
   the pending count shows in the footer.
 - **Command line (`:`)** — vim's ex line for verbs that don't need a key:
   `:q` quit, `:vsplit`/`:split`/`:only`/`:close` windows, `:spawn` / `:term`,
-  `:notes` / `:review` / `:pin`, `:rename <name>`, `:filter <query>`,
+  `:notes` / `:pin`, `:rename <name>`, `:filter <query>`,
   `:ls` (dashboard), `:help`. `enter` runs, `esc` cancels.
 - **Content search (`<leader>/`)** — grep every agent's transcript at once.
   Opening it indexes each session's conversation in the background (the title
@@ -113,19 +113,16 @@ analytics and rich browser/editor workflows. See
   `/conversation`), live as it streams: text, tool calls **with their output**
   (a dimmed `↳` snippet, red on error), and inline diffs' summaries. Long runs of
   consecutive tool calls (e.g. during a workflow) collapse into one compact
-  `N tool calls · …` line. An open agent's tab bar shows a git inspector
-  (`⎇ branch ±changed`).
+  `N tool calls · …` line.
 - **Changes pane** — `C` docks a pane listing the files the agent changed,
   grouped by turn with `+`/`−` counts and a session total. This is the agent's
   account of its own work, taken from the transcript, which is a *different*
   question from what the work tree looks like now: a file the agent edited and
-  then reverted shows up here and not in the review, and one you changed by hand
-  shows up there and not here.
-- **Docked panes** — the review (`R`) and changes (`C`) panes dock beside the
-  conversation instead of covering it. The focused pane has the bright border and
-  owns the keys; `Ctrl-w` moves focus between it and the chat, and `esc` closes
-  it. From the chat, `Ctrl-w l` steps into the dock as the last stop in the pane
-  cycle.
+  then reverted shows up here, and one you changed by hand does not.
+- **Docked panes** — the changes (`C`) pane docks beside the conversation instead
+  of covering it. The focused pane has the bright border and owns the keys;
+  `Ctrl-w` moves focus between it and the chat, and `esc` closes it. From the
+  chat, `Ctrl-w l` steps into the dock as the last stop in the pane cycle.
 - **Runs overlay** — `W` shows the work an agent spawned: workflow runs with
   their phases and per-agent progress, plain Agent-tool subagents, and the
   agent's own plan. Read from Claude Code's on-disk artifacts and refreshed on a
@@ -136,10 +133,8 @@ analytics and rich browser/editor workflows. See
   conversation feed, so it needs no fetch. The details pane shows the whole
   checklist with the in-flight step highlighted in its present tense, and the
   composer's bottom border always shows that one step plus a done/total count.
-- **Review pane** — `R` opens a git review of the agent's work tree (backed by
-  claudemon's git API, like the desktop Review pane): branch + changed files on
-  the left, the selected file's colourised unified diff on the right. Stage /
-  unstage / commit / push without leaving the terminal.
+- **Git review** — desktop-only. The terminal client has no review pane; use the
+  desktop app (or your own git tooling) for staging, diffing, and committing.
 - **Approvals** — `y` / `n` / `a` to approve, deny, or always-approve a pending
   permission prompt.
 - **Questions** — `1`–`9` to pick an `AskUserQuestion` option, or type a free
@@ -169,7 +164,6 @@ analytics and rich browser/editor workflows. See
 | `1`–`9` | answer a pending question |
 | `e` | rename (a custom per-project name, persisted) |
 | `S` | respawn a stopped agent (fresh Claude in its cwd) |
-| `R` | open the git review pane |
 | `W` | open the runs overlay — workflow runs, subagents + plan |
 | `C` | dock the changes pane — files the agent changed |
 | `N` | open the notes scratchpad |
@@ -218,21 +212,6 @@ only `Ctrl-]` is intercepted.
 | `↑` / `↓` | cycle the Claude profile |
 | `enter` | spawn |
 | `esc` | cancel |
-
-**Review pane** (`R` — docks beside the conversation; `Ctrl-w` to focus it)
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | select previous / next changed file |
-| `J` / `K` | scroll the diff by a line |
-| `Ctrl-d` / `Ctrl-u` (or PageDn/Up) | scroll the diff by a chunk |
-| `t` | toggle staged ⇄ unstaged diff |
-| `s` / `u` | stage / unstage the selected file |
-| `a` | stage everything |
-| `c` | commit (type a message, `enter` to commit) |
-| `P` | push |
-| `r` | refresh status |
-| `esc` / `h` / `q` | close the review |
 
 ## Configuration
 
@@ -316,8 +295,8 @@ passed `--no-spawn` with nothing running.
 ## Testing
 
 The TUI has unit coverage across key parsing/dispatch, app state transitions,
-bus calls, claudemon response parsing, terminal attachment state, review flow
-state, themes, config, and rendering helpers. Run it from this package with:
+bus calls, claudemon response parsing, terminal attachment state, themes,
+config, and rendering helpers. Run it from this package with:
 
 ```sh
 cargo test

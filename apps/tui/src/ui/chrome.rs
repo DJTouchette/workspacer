@@ -51,24 +51,6 @@ pub(super) fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         "  T:term  [ ]:tabs  w:close",
         Style::default().fg(t.dim),
     ));
-    // Inspector: branch + changed-file count for the open agent's work tree.
-    if let Some((branch, changed)) = app
-        .chat_agent()
-        .and_then(|a| app.git_summary.get(a.cwd_str()))
-    {
-        if let Some(b) = branch {
-            spans.push(Span::styled(
-                format!("   ⎇ {b}"),
-                Style::default().fg(t.dim),
-            ));
-        }
-        if *changed > 0 {
-            spans.push(Span::styled(
-                format!(" ±{changed}"),
-                Style::default().fg(t.warn),
-            ));
-        }
-    }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -101,10 +83,6 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         "i edit · j/k scroll · esc close"
     } else if app.rename.is_some() {
         "type a name · enter save · esc cancel"
-    } else if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
-        "type message · enter commit · esc cancel"
-    } else if app.review.is_some() {
-        "j/k file · J/K scroll · t staged · s stage · u unstage · a all · c commit · P push · esc back"
     } else if app.spawn_form.is_some() {
         "type path · tab complete · ↑↓ profile · enter spawn · esc cancel"
     } else if app.term_attached() {
@@ -126,7 +104,6 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     // the leader menu so it's discoverable.
     let in_text = app.notes_view.is_some()
         || app.rename.is_some()
-        || app.review.is_some()
         || app.spawn_form.is_some()
         || app.term_attached()
         || app.filter_editing
@@ -166,10 +143,6 @@ pub(super) fn mode_chip(app: &App, in_agent: bool, on_shell: bool) -> (&'static 
         ("NOTES", t.ok)
     } else if app.rename.is_some() {
         ("RENAME", t.accent)
-    } else if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
-        ("COMMIT", t.ok)
-    } else if app.review.is_some() {
-        ("REVIEW", t.accent)
     } else if app.spawn_form.is_some() {
         ("SPAWN", t.accent)
     } else if app.term_attached() {

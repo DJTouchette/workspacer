@@ -51,36 +51,6 @@ async fn toggling_the_same_pane_closes_it() {
     assert!(app.side.is_none());
 }
 
-/// Two kinds, one dock: asking for the other swaps it rather than stacking.
-#[tokio::test]
-async fn asking_for_the_other_kind_swaps_the_dock() {
-    let mut app = test_app();
-    app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
-    app.selected = 1;
-    app.open_agent();
-
-    app.toggle_side(SideKind::Changes);
-    app.toggle_side(SideKind::Review);
-    assert_eq!(app.side.as_ref().map(|p| p.kind), Some(SideKind::Review));
-    assert!(app.side_of(SideKind::Changes).is_none());
-}
-
-/// Closing the review has to take its dock with it — a docked pane with no
-/// review behind it would render an empty box you can't close.
-#[tokio::test]
-async fn closing_the_review_undocks_it() {
-    let mut app = test_app();
-    app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
-    app.selected = 1;
-    app.open_agent();
-
-    app.open_review();
-    assert_eq!(app.side.as_ref().map(|p| p.kind), Some(SideKind::Review));
-    app.close_review();
-    assert!(app.side.is_none());
-    assert!(app.review.is_none());
-}
-
 /// Resuming keeps the row's own transport; only a fresh spawn takes the
 /// configured one. Flipping a live session's transport would take away the
 /// terminal a PTY session has (or promise one a stream session never had).
@@ -665,8 +635,6 @@ async fn opening_a_remote_agent_is_transcript_only_and_gates_local_ops() {
     // Local-only operations decline with a hint instead of failing on use.
     app.new_terminal_tab();
     assert_eq!(app.workspace().map(|ws| ws.tabs.len()), Some(1));
-    app.open_review();
-    assert!(app.review.is_none());
     app.open_runs();
     assert!(app.runs_open.is_none());
     app.open_model_picker();
@@ -724,98 +692,12 @@ fn pty_bytes_event_feeds_the_terminal() {
 }
 
 #[tokio::test]
-async fn review_opens_for_selected_agent_and_closes() {
-    let mut app = test_app();
-    app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
-    app.selected = 1;
-    app.open_review();
-    assert_eq!(app.review.as_ref().map(|r| r.cwd.as_str()), Some("/repo"));
-    app.close_review();
-    assert!(app.review.is_none());
-}
-
-#[tokio::test]
-async fn open_review_on_dashboard_row_is_noop() {
-    let mut app = test_app();
-    app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
-    app.selected = 0; // Dashboard row — no agent
-    app.open_review();
-    assert!(app.review.is_none());
-    assert_eq!(app.toast(), Some("no working directory for this agent"));
-}
-
-#[tokio::test]
 async fn respawn_refuses_a_running_agent() {
     let mut app = test_app();
     app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
     app.selected = 1;
     app.respawn();
     assert_eq!(app.toast(), Some("agent is still running"));
-}
-
-#[test]
-fn git_error_surfaces_in_open_review() {
-    let mut app = test_app();
-    app.review = Some(ReviewState::new("/repo".into()));
-    app.apply_msg(AppMsg::GitError {
-        cwd: "/repo".into(),
-        message: "cwd is not inside a git work tree".into(),
-    });
-    assert_eq!(
-        app.review.as_ref().and_then(|r| r.error.as_deref()),
-        Some("cwd is not inside a git work tree")
-    );
-    // A successful status clears the error.
-    app.apply_msg(AppMsg::GitStatus {
-        cwd: "/repo".into(),
-        branch: Some("main".into()),
-        files: vec![],
-    });
-    assert!(app.review.as_ref().unwrap().error.is_none());
-}
-
-#[tokio::test]
-async fn review_selection_toggle_and_scroll_reset_view_state() {
-    let mut app = test_app();
-    app.review = Some(ReviewState::new("/repo".into()));
-    {
-        let r = app.review.as_mut().unwrap();
-        r.files = vec![
-            FileStatus {
-                path: "a.rs".into(),
-                orig_path: None,
-                staged: String::new(),
-                unstaged: "M".into(),
-            },
-            FileStatus {
-                path: "b.rs".into(),
-                orig_path: None,
-                staged: "M".into(),
-                unstaged: String::new(),
-            },
-        ];
-        r.diff = "old diff".into();
-        r.diff_scroll = 7;
-    }
-
-    app.review_select(1);
-    {
-        let r = app.review.as_ref().unwrap();
-        assert_eq!(r.selected, 1);
-        assert!(r.diff.is_empty());
-        assert_eq!(r.diff_scroll, 0);
-    }
-
-    app.review_scroll(5);
-    assert_eq!(app.review.as_ref().unwrap().diff_scroll, 5);
-    app.review_scroll(-3);
-    assert_eq!(app.review.as_ref().unwrap().diff_scroll, 2);
-
-    app.review_toggle_staged();
-    let r = app.review.as_ref().unwrap();
-    assert!(r.staged_view);
-    assert!(r.diff.is_empty());
-    assert_eq!(r.diff_scroll, 0);
 }
 
 #[test]
