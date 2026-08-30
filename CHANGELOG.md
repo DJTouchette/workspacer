@@ -9,6 +9,200 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **GitHub Copilot is a supported harness.** `copilot` joins Claude Code,
+  Codex, OpenCode and Pi as a first-class managed backend, everywhere the
+  others are: the spawn dialog, handoff, the Fleet Manager's dispatch, the
+  MCP facade and `/m`. It runs one `copilot -p … --output-format json`
+  process per turn and resumes by session id, so a restart genuinely
+  preserves the conversation and a model or effort change lands on the next
+  turn instead of needing a respawn. Two things behave differently from the
+  other harnesses and the UI now says so rather than implying otherwise:
+  Copilot cannot prompt for approval in non-interactive mode, so its
+  permission pill reads **Workspace only** / **Full access** — the allow
+  flags control path confinement, not a gate that will ask you; and its
+  model catalogue cannot be enumerated and is account-gated, so the picker
+  offers `auto` alone instead of ids the account would refuse. Copilot bills
+  AI credits with no dollar figure on the wire, so cost is estimated from
+  the shared pricing table, which gained the OpenAI rates the desktop side
+  had been missing entirely.
+- **Copilot can run the Fleet Manager.** `agents.managerProvider` now
+  accepts `copilot` beside `claude` and `codex`. One caveat is surfaced in
+  Settings when you select it, because it is the one manager harness whose
+  tool access is not decidable before the session starts: a GitHub org
+  policy can disable third-party MCP servers, and a manager that cannot
+  reach Workspacer's tools cannot dispatch. That case raises a session error
+  naming the missing servers rather than passing for a healthy manager.
+- **Usage is there at boot, for Claude, Codex and Copilot.** The usage
+  surfaces used to be able to answer only for a Claude session that was
+  running right now. `GET /usage/report` reads what each CLI already left on
+  disk — Claude's polled OAuth windows per configured config root, Codex's
+  newest rollout and token store, Copilot's — so the Overview cost tile, the
+  Inspector's Usage tab and the History pane have real numbers on a cold
+  start, with no session open. Every figure carries whether it is a real
+  zero, an **unknown** that a retry might answer, or an **unavailable** that
+  no retry can, each with the reason attached, so a dash on the screen can
+  now say why it is a dash. Sessions are billed to the account that actually
+  ran them — recorded at spawn — and a session whose account cannot be
+  determined goes to its own row instead of quietly inflating the default
+  login's total. A new usage detail modal, reachable from the dashboard and
+  the inspector, shows each window's duration alongside its percentage.
+- **Account profiles for every harness, not just Claude.** A profile is a
+  config root, and each harness has one: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+  `COPILOT_HOME`. So a second Codex or Copilot login is now a profile you
+  create in Settings, pick in the spawn dialog, and see attributed in usage.
+  Codex additionally gets `-p <preset>`, kept deliberately separate from the
+  root because a preset layers settings over the *same* account. Copilot is
+  the one harness where the root is not the identity — its login lives in
+  the OS credential store — so a Copilot profile names an environment
+  variable holding a token, and the value is resolved at spawn and never
+  written to `claude-profiles.json`. The Settings form, the spawn picker and
+  rate-limit failover all follow the selected harness now, and a field a
+  harness does not support is absent or disabled with the reason, instead of
+  present and inert.
+- **Remote worker nodes, and a Connect button.** A machine can now be off on
+  purpose. The hub keeps a node registry with a four-state model — running,
+  waking, stopped, unreachable — plus `nodes.list`, `nodes.wake` and a Fly
+  Machines client to do the waking; a woken node is claudemon plus a headless
+  brain, so its sessions arrive as ordinary sessions. The client half is a
+  strip at the top of the sidebar on the desktop and `/app`, and at the top
+  of the Fleet screen on `/m`, with the same surface in `wks-tui`. Waking
+  costs money, so the button says so in plain words and asks for confirmation
+  before it spends any; a wake that failed is shown as a machine still
+  running and still billing, not as a silent nothing. A view- or triage-tier
+  client sees the state and not the button, with the reason beside it. A hub
+  with no node registry renders nothing at all, so nothing changes for an
+  install that has none. `deploy/fly/` ships the node image, `fly.toml`,
+  entrypoint and an ordered bring-up runbook.
+- **Dispatch templates.** A new `dispatch` library kind holds a reusable
+  prompt with named placeholders and an optional default result schema.
+  `spawn_agent` takes `template` + `templateParams` and the host renders it
+  at spawn, so a manager spends no tokens retyping boilerplate. A template
+  is pure text with no trust boundary — tool scope, cwd, model, worktree and
+  permissions always come from the caller and pass the caller's clamps — and
+  an unfilled placeholder refuses the spawn by name rather than silently
+  defaulting, so the task-specific reasoning still has to be written.
+- **The first message rides the spawn.** Every spawn surface takes a
+  `message`, delivered inside the spawn handler before it answers. A
+  dispatch used to be spawn-then-send with a live worker holding no
+  instructions in the gap, and on a headless session that send could land
+  before the wrapper existed and be dropped with only a console error.
+- **A headless Fleet Manager gets its wakes.** A manager running on a box
+  with no desktop is now woken on a worker finishing, on catching up after
+  it was away, and on a worker becoming blocked on an approval or a
+  question — that last one broadcast to every live wake target rather than
+  to a parent, since two live managers after a handoff is the ordinary case.
+- **`fleet.quiescence`, and a power-down-when-quiet job.** A read-only bus
+  method that answers whether this machine's fleet is genuinely at rest, so
+  "shut the box down while nothing is happening" can be automated without
+  reimplementing the safety logic in a shell script. It refuses when unsure:
+  a session in an unrecognised state, a row that will not parse, a provider
+  that does not answer or a peer it cannot reach all block, and `blockers[]`
+  names each reason. Settings ▸ Jobs ships a template for it that arrives
+  **disabled**, with a deliberately blank command, because the command is
+  yours to write. `jobs.json` is also hand-editable now and re-read on the
+  tick.
+- **Plan, subagents and workflows on every harness that has them.** Copilot
+  and OpenCode really do plan and delegate and the evidence was being
+  dropped; both now fill the Plan and Agents tabs, including on `/app`.
+  OpenCode subagents are routed to their own row instead of appearing as the
+  parent's own work. On Pi — whose tool set has no plan or delegate verb —
+  the tabs say so, instead of an indefinite "No plan yet".
+- **Pickers only offer harnesses you have installed.** A spawn, handoff or
+  manager picker no longer lists all five backends on a machine that has
+  one. Detection failing open is the rule: a harness we have no answer for
+  stays visible, and a harness named by your config or by a live session
+  stays listed and flagged "not installed" rather than vanishing.
+- **`/app` in a browser caught up with the desktop.** Real file attachments,
+  plugin panes reachable from a browser on another machine, an iframe
+  fallback for every `<webview>` pane, the transcript fetch a headless
+  session's snapshot never carried, and `open_terminal`. Transcripts now
+  arrive as deltas over the bus, subscribed per open pane, instead of
+  re-downloading the whole in-progress reply every 500ms.
+- **Brief and dispatch housekeeping.** A worker's structured result can be
+  appended to the brief directly; `## Now` lines that outlived the dispatch
+  that created them are flagged; over-long lines are refused with the
+  section's size reported; and the archive move is a first-class operation
+  rather than a hand edit.
+- **Draft this with an agent.** Settings fields that want prose can be
+  handed to an agent to draft, and the notification it raises knows which
+  field it points at.
+
+### Changed
+- **BREAKING for mixed-version fleets: the enriched-snapshot key
+  `isSupervisor` is now `isWakeTarget`.** The flag that marks a session as a
+  wake target is renamed on the wire, in `agents.list`, and in every client,
+  and there is **no dual-emit** — the old key is not written at all. A
+  federation peer, a Fly node, or an installed `/m` PWA still running an
+  older build will silently lose the MANAGER chip and crew nesting until it
+  updates. **Update federated peers and any headless hub together with the
+  desktop, and hard-refresh an installed `/m` PWA.** The rename is
+  deliberate and lands before the key is frozen for public integrators: it
+  is a wake target, which is what the code has meant by it since the
+  supervisor role was retired.
+- **Codex runs headless by default, on every platform including Windows.**
+  `codex.transport` is a real config key shipping `stream`, the twin of
+  `claude.transport`, with its own Settings row so the TUI+viewer hybrid
+  stays one click away. Codex previously had no configured transport at all
+  and four spawn entry points each guessed, which is why the same fleet came
+  up GUI-only on one machine and hybrid on another. Both shapes now ride the
+  wire explicitly. On Windows, a headless session that cannot bring its
+  app-server up degrades to the hybrid in place — with a notice in the
+  conversation and the terminal actually appearing — instead of hard-failing
+  into a dead pane.
+- **An unknown context window is no longer spelled `200,000`.** Four places
+  asserted a 200k window on a session whose model was not even known yet,
+  which is the "every session starts at 200k and upgrades later" complaint
+  at its source. The limit is nullable end to end — absent on the wire means
+  not reported, never zero — and the twelve render paths that already
+  guarded on a positive limit now hide the meter for real. OpenCode and Pi
+  sessions, and the first turn of a stream session, lose their context
+  meters until something reports one. One shared contract table now settles
+  the window for Rust, TypeScript and Go, closing a divergence where
+  `gpt-5-codex` reported 272,000 through the status line and 200,000 through
+  usage at the same instant for the same session.
+- Workers see what they are **holding** rather than what they have billed,
+  and a fleet card reads occupancy from the one place that guards it.
+
+### Fixed
+- **A config write could empty your `projects` map and report success.** The
+  Go writer replaced the whole map with `{}` when a wholesale config path
+  (`projects`, `ui.customThemes`, `claude.budgets`) received anything that
+  was not a JSON object — a string, a number, `null` — taking every
+  project's label, colour, icon, favourite, delivery mode and worktree
+  hooks with it. Since every agent's config write goes through that path,
+  this was reachable, not theoretical. A non-object at a wholesale path is
+  now refused instead of coerced.
+- **Sessions no longer report idle while work is live**, on three separate
+  paths, and a dead subagent no longer holds its parent active while a live
+  one reads idle.
+- **Managed-provider stalls are diagnosed honestly** instead of every one of
+  them being called "No signal".
+- **Codex, OpenCode and Pi are no longer handed a Claude model id** on
+  spawn, and a Codex turn that failed no longer gets swallowed.
+- `agents.sendMessage` honours `fromSessionId` on the desktop, so a message
+  from one agent to another is attributed to the sender.
+- `spawn_agent` defaults its model to the configured default when the
+  caller omits one, rather than to nothing.
+- Restored sessions bill real cost: `transcript_path` is persisted, the
+  account is recorded at spawn rather than inferred from a path, and
+  attribution survives path canonicalisation.
+- The price cache writes by TTL and the prompt-cache read/write split is
+  surfaced; two live producers of absurd context numbers were stopped; and
+  the model a session was *asked* for is recorded and persisted on every
+  spawn path.
+- **tmux-mode pane navigation uses the actual pane geometry**, not flat
+  index arithmetic, so up/down go where you are looking.
+- `mcp_ask` no longer takes over a pending approval slot it does not own.
+
+### Removed
+- **The supervisor role.** The `supervisor: true` spawn flag, the `/supervise`
+  skill, and the `supervisor` config block are gone, along with the
+  Settings ▸ Supervisor section (folded into Settings ▸ Fleet Manager). The
+  Fleet Manager is now the only fleet-coordination role. "Ask the fleet"
+  survives: it now spawns a plain agent at the `triage` tool tier instead of a
+  supervisor.
+
 ### Security
 - **The MCP facade no longer serves an uncredentialed caller.** It listens on
   `127.0.0.1:7897` over plain HTTP and exposes the whole fleet — `spawn_agent`,
@@ -41,14 +235,6 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   non-loopback address without a credential. Also unchanged, and still a gap:
   claudemon's session API on `127.0.0.1:7891` accepts message injection and
   spawns from any local process with no credential.
-
-### Removed
-- **The supervisor role.** The `supervisor: true` spawn flag, the `/supervise`
-  skill, and the `supervisor` config block are gone, along with the
-  Settings ▸ Supervisor section (folded into Settings ▸ Fleet Manager). The
-  Fleet Manager is now the only fleet-coordination role. "Ask the fleet"
-  survives: it now spawns a plain agent at the `triage` tool tier instead of a
-  supervisor.
 
 ## [0.150.0] - 2026-08-23
 
@@ -91,6 +277,20 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   deterministically when a worktree is created for a dispatched agent, and
   `node_modules` is auto-linked into it at whatever depth the project needs,
   so a fresh worktree doesn't need a full reinstall to run.
+- **Hub federation, on every client.** Two machines can be one fleet: hubs
+  pair with each other (`peers.json`), events are stamped with the hub they
+  came from, and a capability on a peer is called through a `hub:<peer>/`
+  address. Remote sessions are chattable, not just visible, and the desktop,
+  the `/app` browser client, the `/m` phone client and `wks-tui` are all
+  federation-aware — a peer's agents appear in the fleet with a hub marker,
+  and a session that goes away leaves a tombstone rather than a ghost row.
+  *(Shipped in this release but omitted from its notes at the time.)*
+- **The hub runs errands: jobs.** Recurring or one-off jobs owned by the hub
+  — spawn an agent, call a bus capability, or run a shell command — with a
+  Settings ▸ Jobs surface, a `workspacer jobs` CLI, and job-creation RPCs
+  restricted to a trusted caller so an agent may only *suggest* one. A job
+  can run code before it wakes a model, so the cheap check happens first.
+  *(Shipped in this release but omitted from its notes at the time.)*
 
 ### Fixed
 - **Security: a federated call could forge caller identity.** `router.call`

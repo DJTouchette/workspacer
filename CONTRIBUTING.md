@@ -80,13 +80,36 @@ then `landing/build.html` (the architecture and hub-bus protocol).
 
 ### Formatting & linting
 
-Run these for whatever you changed before pushing:
+**The format gates are separate CI jobs and no test suite covers them.**
+`make test` can be entirely green on a tree that CI rejects on formatting
+alone — that is not hypothetical, it has reddened `master`. There is no
+`make fmt` target, so run the four checks by hand for whatever you touched:
 
-- **Desktop (TS/React):** Prettier is configured (`apps/desktop/.prettierrc`).
-  Formatting and type-checks run as part of the desktop workflow.
-- **Rust (`claudemon`, `wks-tui`):** `cargo fmt` and `cargo clippy` before you
-  commit; keep clippy clean.
-- **Go (`hub`):** `gofmt`/`go vet`; keep the build warning-free.
+| Component | Check CI runs | Fix it with |
+| --- | --- | --- |
+| `apps/desktop` (TS/TSX) | `npm run format:check` (Prettier) | `npm run format` |
+| `services/claudemon` (Rust) | `cargo fmt --check` | `cargo fmt` |
+| `apps/tui` (Rust) | `cargo fmt --check` | `cargo fmt` |
+| `services/hub` (Go) | `test -z "$(gofmt -l .)"` | `gofmt -w .` |
+
+Each runs from that component's directory. Note that `cargo fmt --check` is
+run **twice**, once per Rust crate — they are separate workspaces and
+formatting one does not format the other.
+
+Also gated in CI, and also not covered by the tests:
+
+- `npm run typecheck` in `apps/desktop`.
+- `cargo clippy --all-targets -- -D warnings` for both Rust crates — the tree
+  is clippy-clean, so warnings are hard errors.
+- `go vet ./...` in `services/hub`.
+- **Generated files must be fresh.** `configDefaults.generated.ts` and
+  `changelog.generated.ts` are regenerated in CI and the job fails if the
+  tree moves. If you edited `services/hub/cmd/brain/config_defaults.json` or
+  `CHANGELOG.md`, run `npm run gen:config-defaults` / `npm run gen:changelog`
+  in `apps/desktop` and commit the result.
+- **No unresolved conflict markers**, anywhere in the tree. This job exists
+  because `landing/` sits inside no other job's blast radius and once shipped
+  conflict markers to the live site.
 
 There's a `.git-blame-ignore-revs` at the root — bulk-formatting commits are
 listed there so `git blame` stays useful. If you do a repo-wide reformat, add
@@ -113,6 +136,104 @@ the commit hash to that file.
 - Describe the change, the reasoning, and how you verified it.
 - Keep the diff scoped to one concern; split unrelated changes into separate PRs.
 - Expect review comments — that's the normal path to merge, not a rejection.
+
+## Cutting a release
+
+Releases are cut by hand. **Nothing about the process is automatic on a push
+to `master`** — `.github/workflows/release.yml` triggers on `v*` tags,
+`pull_request`, `workflow_dispatch` and a nightly `schedule`, and on nothing
+else. Pushing to `master` runs `ci.yml` only, which never builds an installer.
+
+### Versioning
+
+The release version is the desktop app's version in
+`apps/desktop/package.json`. The tag is that version with a `v` prefix
+(`0.150.0` → `v0.150.0`), and `scripts/changelog-section.mjs` looks the
+version up in `CHANGELOG.md` by that number, so the three have to agree.
+
+### CHANGELOG.md is the single source for release notes
+
+Everything derives from it and nothing else is hand-maintained:
+
+- the **GitHub release body**, cut at tag time by
+  `scripts/changelog-section.mjs`;
+- the app's **Settings → Updates** pane and its post-update "what's new"
+  notice, via `apps/desktop/src/renderer/src/lib/changelog.generated.ts`;
+- the **nightly** release body, which is the `[Unreleased]` section — because
+  that is exactly what a nightly is.
+
+Write entries by what a *user* notices, not by commit. Then regenerate:
+
+```bash
+cd apps/desktop && npm run gen:changelog
+```
+
+and commit `changelog.generated.ts` alongside the markdown. CI fails the
+desktop job if you forget, and a drift test (`changelog.test.ts`) fails too.
+`gen-changelog.mjs` also **refuses a release heading with no entries under
+it** — an empty section renders as an empty card in the app — and
+`changelog-section.mjs` **exits nonzero when the tagged version has no
+section**, which fails the tag build rather than publishing an empty release
+page.
+
+### The steps
+
+1. **Get `master` green**, including the format gates above — `make test`
+   does not cover them.
+2. **Write the `[Unreleased]` section** in `CHANGELOG.md`, then promote it by
+   renaming the heading to `## [X.Y.Z] - YYYY-MM-DD`. Do **not** leave an
+   empty `[Unreleased]` behind — the generator refuses a heading with nothing
+   under it. Start the next one when the first entry exists, directly below
+   the file's prose header.
+3. **Bump `apps/desktop/package.json`** (and its lockfile) to `X.Y.Z`, run
+   `npm run gen:changelog`, and commit both with the CHANGELOG edit.
+4. **Tag and push the tag:** `git tag vX.Y.Z && git push origin vX.Y.Z`.
+5. **Wait for all three build legs** (macOS, Windows, Linux). Each attaches
+   its own installers, the `latest*.yml` + `.blockmap` updater metadata, and
+   the standalone `workspacer-server-*` / `workspacer-claudemon-*` bundles to
+   the same release.
+6. **Publish the draft by hand.** This is the step that is easy to miss:
+   `release.yml` creates the GitHub Release with `draft: true`. A draft is
+   invisible to `api.github.com/repos/.../releases/latest`, which is the
+   endpoint the landing page's download button reads — so until a human hits
+   **Publish release**, the site still offers the previous version and the
+   auto-updater sees nothing new.
+7. **Check the release page** actually has every platform's installer and the
+   updater metadata before you announce it. `fail_on_unmatched_files: false`
+   means a leg that produced no artifact does not fail the run.
+
+### Nightlies
+
+The rolling `nightly` prerelease rebuilds `master` on an 08:00 UTC cron, and
+the gate job skips the build when nothing has landed since the last one. To
+force one, dispatch it manually:
+
+```bash
+gh workflow run release.yml -f nightly=true
+```
+
+or use **Actions → release → Run workflow** and tick `nightly`. A plain
+`workflow_dispatch` **without** `nightly=true` is only a build smoke-test: it
+uploads artifacts and publishes nothing.
+
+Nightly is a prerelease on the fixed `nightly` tag, rolled publish-last so a
+failed build leaves yesterday's nightly live. It *does* ship updater metadata,
+so nightly installs self-update onto the next nightly — and never onto stable,
+since a stable install resolves `/releases/latest`, which excludes
+prereleases. Going back to stable means installing a release build by hand.
+
+### Known gaps, so nobody rediscovers them
+
+- **macOS builds are unsigned and un-notarized** (`CSC_IDENTITY_AUTO_DISCOVERY:
+  false`), and there is no Intel leg — Apple Silicon only. Windows *is* signed
+  on tag builds via Azure Trusted Signing (see
+  [`docs/windows-code-signing.md`](docs/windows-code-signing.md)).
+- **macOS auto-update does not work.** No mac zip is published, which is what
+  `MacUpdater` needs, and it would not be trustworthy unsigned anyway.
+- `scripts/check-doc-drift.sh` is informational unless `WKS_DOC_DRIFT_STRICT=1`
+  and is **not wired into CI** — it runs via `make docs-drift`. It only greps
+  four component READMEs for maturity words; it does not look at `landing/` or
+  `docs/`.
 
 ## Reporting bugs & requesting features
 
