@@ -56,7 +56,12 @@ import (
 //   - TestEveryClaudemonRouteHasACallerOrADeclaredReason — the mirror image. A
 //     route nothing in the repo calls is either serving an external caller or is
 //     dead weight, and which one it is has to be written down. GET /usage/report
-//     is the row that made this test worth having.
+//     is the row that made this test worth having: it had served the widest read
+//     on the loopback plane since 0.160.0 with no caller in any commit, and it
+//     has one now — keep-warm reads Codex's 5h window from it rather than from
+//     live status lines, which is a question only this route can answer with no
+//     Codex session running. The row is gone because the guard also fails a
+//     STALE declaration, which is how the closing of an orphan gets noticed.
 
 // claudemonRoutesFixture is the served table, derived from the routers by
 // services/claudemon/src/daemon/routes_contract.rs.
@@ -230,7 +235,7 @@ var claudemonCallers = []callerScan{
 	},
 	{
 		file: "apps/desktop/src/main/services/keepWarmService.ts", server: "claudemon-api",
-		what: "the 5h-window warmer: reads /usage and posts /heartbeat", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 2,
+		what: "the 5h-window warmer: reads /usage for Claude's default login, /usage/report for Codex's on-disk window, and posts /heartbeat", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 3,
 	},
 	{
 		file: "apps/desktop/src/main/services/directCompletion.ts", server: "claudemon-api",
@@ -282,7 +287,6 @@ var claudemonRouteCallers = map[string]string{
 	// claudemon-api
 	"claudemon-api /sessions/:id/decide": "the DECISION-record half of the approval surface. The desktop and the TUI both answer a parked prompt through /approve; /decide is reachable for a caller that has a decision record rather than a yes/no, and nothing in the repo is that caller yet. Serving it costs nothing and it shares post_approve's validation",
 	"claudemon-api /sessions/:id/output": "the raw PTY scrollback as a one-shot GET. Every in-repo client takes the same bytes from /sessions/:id/stream instead, because they all want the live feed and its snapshot-replay first frame. Kept for a caller that wants a single read without holding a stream",
-	"claudemon-api /usage/report":        "THE ORPHAN THIS TEST FOUND. The widest read on the loopback plane — every provider and every configured login, spend, quota headroom and per-model breakdown — and the 0.160.0 release notes say it powers the Overview cost tile, the Inspector's Usage tab and the History pane. Nothing in this repo has ever constructed the URL (git log -S over apps/desktop and services/hub finds no caller in any commit). Either wire the three surfaces the changelog names, or delete the route and correct the note; leaving it is a documented feature nobody can reach",
 
 	// claudemon-hook — the callers are Claude Code's own hook shellouts, not us.
 	"claudemon-hook /hook/:kind": "the per-kind ingress. claudemon init writes the generic `/hook` form into ~/.claude/settings.json, so the sub-routed spelling is for a caller that wants the kind in the URL rather than the body — hook.rs 404s an unknown :kind on purpose, which is the only reason this route is safe to leave uncalled",

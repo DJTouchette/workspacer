@@ -126,9 +126,15 @@ Token/cost accounting is implemented independently in the Electron main process 
   boot-available (`list_sessions`/`get_session` fold it from the transcript via
   `usage::usage_for_session`, for stopped and archived rows too, plus
   `workspacer.db`); account rate-limit WINDOWS are the half gated above.
-- **Codex and Copilot both persist usage on disk** — which contradicts the
+- **Codex and Copilot both persist usage on disk** — which contradicted the
   assumption encoded in `keepWarmService.ts` that "no sessionless usage query
-  exists" for Codex. True for a network query, false for on-disk state.
+  exists" for Codex. True for a network query, false for on-disk state. That
+  assumption is now gone: keep-warm reads Codex's 5h window from
+  `GET /usage/report` (`fiveHourWindowFromReport` in `keepWarmLogic.ts`) and
+  keeps the live status line only as a fallback. It is that endpoint's FIRST
+  client. Note the trap it encodes: the report's `used_percent` for a window
+  whose `resets_at` has passed is real history and a false present, so
+  currency is decided from `resets_at`, never from the percentage.
   Verified against live artifacts 2026-08-28:
   - **Codex:** every rollout at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
     carries `event_msg` payloads of type `token_count` whose `rate_limits` holds
