@@ -26,6 +26,14 @@ const fakeBin = path.join(here, 'fake-claudemon.mjs');
 const TOKEN = 'routing-limit-harness-token';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-routing-limit-harness-'));
 const hubBin = path.join(tmp, 'hub');
+const tokensFile = path.join(tmp, 'tokens.json');
+const OPERATOR_TOKEN = 'routing-limit-harness-operator-token';
+const decisionLog = path.join(tmp, 'routing-decisions.jsonl');
+// The directory the ceiling below is keyed on. Resolved through realpath because
+// the hub canonicalizes a spawn's cwd before the LEXICAL ancestor match, and on
+// macOS os.tmpdir() is itself a symlink — a ceiling keyed on the unresolved
+// spelling would never match and this harness would pass by never firing.
+const CEILED_DIR = fs.realpathSync(fs.mkdtempSync(path.join(tmp, 'ceiled-')));
 const requireRouting = process.env.ROUTING_HARNESS_REQUIRE_ROUTING === '1';
 
 let failures = 0;
@@ -137,7 +145,11 @@ function startHub(hubPort, fakeURL) {
       // harness's answers would depend on whatever the machine's own matrix
       // says. Pointing it at the scratch dir also exercises the seed path.
       '-routing-file', path.join(tmp, 'routing.yaml'),
-      '-tokens-file', '',
+      // A REAL tokens.json, because the binding half of this feature cannot be
+      // exercised from the host token: that credential is the control plane and
+      // is deliberately exempt from the caller-tier clamp. The ceiling clamp
+      // applies to an operator record like any other.
+      '-tokens-file', tokensFile,
     ],
     { env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
@@ -145,11 +157,12 @@ function startHub(hubPort, fakeURL) {
   hub.stdout.on('data', (d) => process.env.HARNESS_VERBOSE && process.stdout.write(d));
 }
 
-function connect(hubPort, name) {
+function connect(hubPort, name, token = TOKEN) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${hubPort}/bus?token=${TOKEN}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${hubPort}/bus?token=${token}`);
     let seq = 0;
     const pendingCalls = new Map();
+    const handlers = new Map();
     const events = [];
     ws.onopen = () =>
       resolve({
@@ -157,6 +170,12 @@ function connect(hubPort, name) {
         events,
         subscribe(...topics) {
           ws.send(JSON.stringify({ op: 'subscribe', topics }));
+        },
+        register(methods) {
+          ws.send(JSON.stringify({ op: 'register', methods }));
+        },
+        provide(method, fn) {
+          handlers.set(method, fn);
         },
         call(method, params = {}) {
           return new Promise((res, rej) => {
@@ -181,6 +200,12 @@ function connect(hubPort, name) {
         events.push(f.event);
         return;
       }
+      if (f.op === 'call') {
+        const fn = handlers.get(f.method);
+        const result = fn ? fn(f.params) : { ok: true };
+        ws.send(JSON.stringify({ op: 'result', id: f.id, result }));
+        return;
+      }
       if (f.op !== 'result' && f.op !== 'error') return;
       const p = pendingCalls.get(f.id);
       if (!p) return;
@@ -190,10 +215,10 @@ function connect(hubPort, name) {
   });
 }
 
-async function connectWithRetry(hubPort, name, tries = 40) {
+async function connectWithRetry(hubPort, name, tries = 40, token = TOKEN) {
   for (let i = 0; i < tries; i++) {
     try {
-      return await connect(hubPort, name);
+      return await connect(hubPort, name, token);
     } catch {
       await sleep(250);
     }
@@ -364,6 +389,186 @@ async function runRoutingCases(caller, fakeURL) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE BINDING HALF
+// ---------------------------------------------------------------------------
+
+// seedFixtures writes the two files the hub reads before it starts: an operator
+// token record (the host token is the control plane and is exempt from the
+// caller-tier clamp, so it cannot exercise the binding half) and a routing.yaml
+// whose `ceilings:` block caps ONE directory. The rest of the matrix is the
+// shipped default, merged underneath.
+function seedFixtures() {
+  fs.writeFileSync(
+    tokensFile,
+    JSON.stringify([{ token: OPERATOR_TOKEN, scope: 'operator', label: 'routing harness', created: '2026-08-30T00:00:00Z' }]),
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
+    path.join(tmp, 'routing.yaml'),
+    [
+      'ceilings:',
+      '  default: { max_capability: frontier_plus, max_tool_scope: operator }',
+      `  ${CEILED_DIR}: { max_capability: balanced, max_tool_scope: triage }`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  );
+  // The seed marker, so the service records the file as the user's rather than
+  // overwriting it with the shipped default on first run.
+  fs.writeFileSync(path.join(tmp, 'routing.yaml.seeded'), '{"seededVersion":1}\n');
+}
+
+function readDecisionLog() {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(decisionLog, 'utf8');
+  } catch {
+    return [];
+  }
+  return raw
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+// runDecisionRecordAssertions: the routing.decision event and the decision log,
+// against a LIVE hub. Both are what make the feature auditable, and the log is
+// the data that later lets forecast_weights be calibrated into a real share of
+// an allowance rather than the unitless weights it carries today.
+async function runDecisionRecordAssertions(caller, fakeURL) {
+  console.log('\nrouting.decision event + decision log:');
+  await setScenario(fakeURL, 'healthy-current', true);
+  const before = caller.events.length;
+  const result = await caller.call('routing.select', {
+    ...routingRequest('record', 'codex'),
+    role: 'implementer',
+    ticketId: 'HARNESS-REC-1',
+  });
+  const decisionId = result?.decisionId;
+  check('routing.select stamps a decisionId', typeof decisionId === 'string' && decisionId.startsWith('rd_'), JSON.stringify(result));
+
+  const ev = await waitFor(
+    async () => caller.events.slice(before).find((e) => e?.type === 'routing.decision' && e?.data?.decisionId === decisionId),
+    5000,
+  );
+  check('a routing.decision event is published for the answer', !!ev, JSON.stringify(caller.events.slice(before)));
+  if (ev) {
+    check('the event carries the model and mode the answer chose', ev.data.model === result.model && ev.data.mode === result.mode, JSON.stringify(ev.data));
+    check('the event does NOT carry the caller cwd (open-by-decision topic)', ev.data.cwd === undefined, JSON.stringify(ev.data));
+    check('the event names the ticket it was asked about', ev.data.ticketId === 'HARNESS-REC-1', JSON.stringify(ev.data));
+  }
+
+  const rows = await waitFor(async () => {
+    const all = readDecisionLog();
+    return all.some((r) => r.kind === 'decision' && r.decisionId === decisionId) ? all : null;
+  }, 5000);
+  check('the decision is appended to routing-decisions.jsonl', !!rows, `no decision row for ${decisionId} in ${decisionLog}`);
+  if (rows) {
+    const row = rows.find((r) => r.kind === 'decision' && r.decisionId === decisionId);
+    check('the logged decision carries the model it answered', row?.decision?.model === result.model, JSON.stringify(row));
+    check('the logged decision is timestamped', typeof row?.at === 'string' && row.at.length > 0, JSON.stringify(row));
+  }
+  return decisionId;
+}
+
+// runSpawnBindingAssertions is THE acceptance test for this slice: a real
+// agents.spawn, from a real scoped operator credential, through the real hub
+// router, into a real registered provider — and the ceiling in routing.yaml
+// takes the escalation away before the provider ever sees it.
+//
+// Until this existed, routing was ADVISORY: a manager could ask routing.select,
+// ignore the answer, and spawn whatever it liked.
+async function runSpawnBindingAssertions(hubPort, decisionId) {
+  console.log('\nagents.spawn ceiling enforcement:');
+  const provider = await connectWithRetry(hubPort, 'spawn-provider');
+  const seen = [];
+  provider.provide('agents.spawn', (params) => {
+    seen.push(params);
+    return { sessionId: `harness-sess-${seen.length}` };
+  });
+  provider.register(['agents.spawn']);
+  await sleep(300); // let the registration settle
+
+  const operator = await connectWithRetry(hubPort, 'operator', 40, OPERATOR_TOKEN);
+
+  // 1. ABOVE the ceiling, inside the capped directory.
+  const over = await operator.call('agents.spawn', {
+    cwd: CEILED_DIR,
+    capability: 'frontier_plus',
+    model: 'fable',
+    effort: 'high',
+    toolScope: 'operator',
+    role: 'judge',
+    decisionId,
+  });
+  const got = seen[seen.length - 1] ?? {};
+  check('the spawn reached the provider at all', !!over?.sessionId, JSON.stringify(over));
+  check('capability was CLAMPED to the directory ceiling', got.capability === 'balanced', JSON.stringify(got));
+  check('the model the refused capability chose was dropped', got.model === undefined, JSON.stringify(got));
+  check('the effort was dropped with it', got.effort === undefined, JSON.stringify(got));
+  check('the tool tier was clamped to the directory ceiling', got.toolScope === 'triage', JSON.stringify(got));
+  check(
+    'the downgrade is named in escalationScrubbed (no silent downgrades)',
+    Array.isArray(got.escalationScrubbed) &&
+      ['capability', 'model', 'effort', 'toolScope'].every((f) => got.escalationScrubbed.includes(f)),
+    JSON.stringify(got),
+  );
+  check('the recorded routing metadata rode through untouched', got.role === 'judge' && got.decisionId === decisionId, JSON.stringify(got));
+
+  // 2. UNDER the ceiling, same directory: nothing is taken.
+  await operator.call('agents.spawn', { cwd: CEILED_DIR, capability: 'cheap', model: 'gpt-5.6-luna', toolScope: 'triage' });
+  const under = seen[seen.length - 1] ?? {};
+  check('a spawn under the ceiling keeps its capability', under.capability === 'cheap', JSON.stringify(under));
+  check('a spawn under the ceiling keeps its model', under.model === 'gpt-5.6-luna', JSON.stringify(under));
+  check('a spawn under the ceiling reports nothing scrubbed', under.escalationScrubbed === undefined, JSON.stringify(under));
+
+  // 2b. THE SYMLINK. CeilingFor is a LEXICAL ancestor match, so a spawn whose
+  //     cwd merely NAMES the capped directory through a link must still be
+  //     judged by it — the hub canonicalizes before the lookup, and if it ever
+  //     stops, this is the case that walks around every per-directory ceiling.
+  const link = path.join(tmp, 'ceiled-link');
+  try {
+    fs.symlinkSync(CEILED_DIR, link);
+    await operator.call('agents.spawn', { cwd: link, capability: 'frontier_plus', model: 'fable', toolScope: 'operator' });
+    const viaLink = seen[seen.length - 1] ?? {};
+    check('a SYMLINK to the capped directory does not walk around its ceiling', viaLink.capability === 'balanced' && viaLink.model === undefined, JSON.stringify(viaLink));
+    check('the symlinked spawn is also tier-clamped', viaLink.toolScope === 'triage', JSON.stringify(viaLink));
+  } catch (err) {
+    check('symlink case ran', false, `could not create ${link}: ${err?.message ?? err}`);
+  }
+
+  // 3. OUTSIDE the capped tree: the permissive default ceiling applies, so the
+  //    same request that was refused above is admitted here. Without this the
+  //    clamp could be firing everywhere and the case above would not notice.
+  await operator.call('agents.spawn', { cwd: tmp, capability: 'frontier_plus', model: 'fable', toolScope: 'operator' });
+  const outside = seen[seen.length - 1] ?? {};
+  check('the SAME request outside the capped tree is admitted', outside.capability === 'frontier_plus' && outside.model === 'fable', JSON.stringify(outside));
+
+  // 4. The spawn is recorded, and it joins the decision that produced it.
+  const joined = await waitFor(async () => {
+    const rows = readDecisionLog();
+    return rows.find((r) => r.kind === 'spawn' && r.decisionId === decisionId) ?? null;
+  }, 5000);
+  check('the clamped spawn is appended to the decision log', !!joined, `no spawn row for ${decisionId}`);
+  if (joined) {
+    check('the spawn row records the ceiling that matched', joined.spawn?.ceiling?.key === CEILED_DIR, JSON.stringify(joined.spawn?.ceiling));
+    check('the spawn row records what was taken', Array.isArray(joined.spawn?.scrubbed) && joined.spawn.scrubbed.includes('model'), JSON.stringify(joined.spawn));
+    check('the spawn row records the CANONICAL cwd the ceiling was looked up on', joined.spawn?.cwd === CEILED_DIR, JSON.stringify(joined.spawn));
+    check('the spawn row records the caller tier, not its token', joined.spawn?.callerScope === 'operator' && !JSON.stringify(joined.spawn).includes(OPERATOR_TOKEN), JSON.stringify(joined.spawn));
+  }
+
+  provider.close();
+  operator.close();
+}
+
 try {
   console.log('building hub...');
   execFileSync('go', ['build', '-o', hubBin, './cmd/hub'], { cwd: hubDir, stdio: 'inherit' });
@@ -372,6 +577,7 @@ try {
   const hubPort = await freePort();
   const fake = await startFake(fakePort);
   fakeChild = fake.child;
+  seedFixtures();
   startHub(hubPort, fake.url);
   const caller = await connectWithRetry(hubPort, 'routing-limit');
   caller.subscribe('routing.*');
@@ -420,6 +626,9 @@ try {
 
   await clearFakeRequests(fake.url);
   await runRoutingCases(caller, fake.url);
+
+  const decisionId = await runDecisionRecordAssertions(caller, fake.url);
+  await runSpawnBindingAssertions(hubPort, decisionId);
 
   caller.close();
   fake.child.kill('SIGTERM');

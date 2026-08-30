@@ -106,6 +106,9 @@ function spawnResult(
   /** The message was RENDERED FROM A TEMPLATE, so the caller has not seen it.
    *  A plain `message` spawn gets no echo — the caller wrote the text. */
   renderedFromTemplate = false,
+  /** The routing fields as this host RECEIVED them — i.e. after the hub
+   *  router's ceiling clamp, which is not always what was sent. */
+  routing?: { role?: string; capability?: string; decisionId?: string },
 ): Record<string, unknown> {
   // NO SILENT DOWNGRADES (2026-08-26). `fullAccess` is what the session ACTUALLY
   // runs with — not what was requested — and rides EVERY spawn answer, so a
@@ -116,6 +119,17 @@ function spawnResult(
   // TWIN: cmd/brain/handlers.go spawnResult.
   const out: Record<string, unknown> = { sessionId, fullAccess: escalation.fullAccess };
   if (escalation.scrubbed.length) out.escalationScrubbed = escalation.scrubbed;
+  // THE ROUTING FIELDS, ECHOED — what this host ACCEPTED, not what was sent.
+  // The hub router clamps `capability` to routing.yaml's per-directory ceiling
+  // before the call arrives (dropping model and effort with it), so a
+  // dispatcher that asked for frontier_plus and reads back `frontier` has its
+  // answer in the same place `fullAccess` gives it: in the ANSWER, rather than
+  // in a log line on a machine it cannot read. Omitted for a spawn that named
+  // none of them. TWIN: cmd/brain/handlers.go spawnResult.
+  const routed = Object.fromEntries(
+    Object.entries(routing ?? {}).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
+  );
+  if (Object.keys(routed).length) out.routing = routed;
   // THE RENDER, echoed back — the point being that a template spawn is the one
   // case where the dispatcher does not know what it sent. Before this, checking
   // that {{task}} landed where it should meant agents.getConversation, which has
@@ -570,6 +584,9 @@ export function registerHubCapabilities(): void {
       message: reqMessage,
       template,
       templateParams,
+      role,
+      capability,
+      decisionId,
     } = (params ?? {}) as {
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
@@ -665,6 +682,32 @@ export function registerHubCapabilities(): void {
       /** Values for the template's named placeholders. Required placeholders
        *  refuse the spawn when unfilled (see lib/dispatchTemplate.ts). */
       templateParams?: Record<string, string>;
+      /** ── the routing wire ──────────────────────────────────────────────
+       *
+       *  Three RECORDED fields a dispatch copies off a `routing.select`
+       *  answer. TWIN: cmd/brain/handlers.go spawnParams (byte-compared by
+       *  parity_test.go's TestSpawnParamSurfaceMatchesDesktop).
+       *
+       *  NAMING IS NOT FREE-FORM HERE. `tier` already means AUTHORITY in this
+       *  codebase (toolScope: view | triage | operator), so the
+       *  cheap/balanced/frontier axis is CAPABILITY everywhere on this wire;
+       *  `escalation` was taken twice before these existed.
+       *
+       *  The work role the matrix answered for (scout, implementer, reviewer,
+       *  fixer, validator, judge …). Metadata: nothing here grants anything
+       *  from it. */
+      role?: string;
+      /** The model-capability this spawn is entitled to, from the routing
+       *  decision. IT IS READ, and by the only code that can enforce it: the
+       *  hub router clamps it to routing.yaml's `ceilings.<dir>.max_capability`
+       *  BEFORE this call arrives, dropping `model` and `effort` with it and
+       *  naming all three in `escalationScrubbed`. A value that reaches this
+       *  handler is one the ceiling allowed. TWIN: rpc.go sanitizeSpawnParams. */
+      capability?: string;
+      /** Joins this spawn to the `routing.select` answer it acted on, in the
+       *  hub's append-only decision log (routing-decisions.jsonl, beside
+       *  routing.yaml). The hub writes both rows; this is the key. */
+      decisionId?: string;
     };
     // ── Dispatch templates: resolve + render BEFORE anything else ─────────
     // The rendered text becomes the first message; the template's default
@@ -894,7 +937,11 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
+        role,
+        capability,
+        decisionId,
+      });
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -932,7 +979,11 @@ export function registerHubCapabilities(): void {
         resultSchema,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
+        role,
+        capability,
+        decisionId,
+      });
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -957,7 +1008,11 @@ export function registerHubCapabilities(): void {
       resultSchema,
       firstMessage: message,
     });
-    return spawnResult(sessionId, message, escalation(), renderedFromTemplate);
+    return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
+      role,
+      capability,
+      decisionId,
+    });
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the

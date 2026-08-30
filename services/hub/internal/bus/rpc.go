@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"slices"
 	"sort"
@@ -113,6 +114,18 @@ type router struct {
 	// unprovided, so the log line fires once per method rather than once per
 	// call. Cleared for a method the moment something registers it.
 	noProviderSeen map[string]struct{}
+	// spawnCeiling resolves routing.yaml's per-directory ceiling for one spawn;
+	// spawnAudit records what the gate saw and did. Both injected by cmd/hub at
+	// startup — see [Server.SetSpawnCeiling] — and both nil-safe.
+	spawnCeiling SpawnCeilingFunc
+	spawnAudit   SpawnAuditFunc
+}
+
+// ceilingHooks reads the injected pair under the lock.
+func (rt *router) ceilingHooks() (SpawnCeilingFunc, SpawnAuditFunc) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.spawnCeiling, rt.spawnAudit
 }
 
 type pendingCall struct {
@@ -365,37 +378,234 @@ func (cn *conn) mayBypassPermissions() bool {
 	return cn.trusted
 }
 
+// ---------------------------------------------------------------------------
+// THE SPAWN CEILING — where a routing decision stops being advice
+// ---------------------------------------------------------------------------
+
+// SpawnCeilingRequest is what the router can tell the routing layer about one
+// agents.spawn. It is the only shape [SpawnCeilingFunc] receives, deliberately:
+// the bus hands over facts, never the params object, so a resolver cannot grow
+// an opinion about a first message or an account.
+//
+// CanonicalCwd IS ALREADY RESOLVED when this is built. The router canonicalizes
+// with its own filesystem-guard walk (the same one that decides whether an
+// fs.write is inside a granted root) before calling out, because the ceiling
+// lookup on the other side is a LEXICAL ancestor match: `/tmp/x ->
+// /home/you/Work/locked` is a different key from the directory it names, and a
+// ceiling looked up on the caller's spelling is a ceiling a symlink walks around.
+// Same check-path/opened-path rule, same reason.
+type SpawnCeilingRequest struct {
+	// CanonicalCwd is the spawn's working directory, symlink-resolved. Empty when
+	// the caller named none or it could not be resolved — see the CwdResolved
+	// note on how that is treated.
+	CanonicalCwd string
+	// CwdResolved is false when the caller's cwd could not be canonicalized (it
+	// does not exist yet, it is relative, it is unnameable). The router still
+	// asks, with an empty CanonicalCwd, so the DEFAULT ceiling applies: an
+	// unresolvable directory must not be a directory with no ceiling.
+	CwdResolved bool
+
+	// Capability is the spawn's declared `capability` param.
+	Capability string
+	// ToolScope is the AUTHORITY tier asked for, already folded together with the
+	// legacy `mcpFacade: true` spelling.
+	ToolScope string
+	Provider  string
+	Model     string
+	Effort    string
+}
+
+// SpawnCeilingVerdict is what the routing layer answers. Field-for-field the
+// shape of routing.CeilingVerdict, restated here so internal/bus does not import
+// internal/routing — the bus holds no matrix, no capability vocabulary and no
+// ladder, and it must not start.
+type SpawnCeilingVerdict struct {
+	// Key names the ceilings: entry that matched, for the log. "" means the
+	// routing layer had no ceiling to apply and nothing is clamped.
+	Key string
+	// MaxCapability / MaxToolScope are that entry's limits, for the log line.
+	MaxCapability string
+	MaxToolScope  string
+
+	// CapabilityRefused says the spawn asked for more model capability than the
+	// directory allows; Capability is what it is clamped TO.
+	CapabilityRefused bool
+	Capability        string
+	// ToolScopeRefused says the same for AUTHORITY; ToolScope is the clamp.
+	ToolScopeRefused bool
+	ToolScope        string
+
+	// Because is one sentence per refusal. It goes to the SECURITY log verbatim.
+	Because []string
+}
+
+// Refused reports whether this verdict takes anything away.
+func (v SpawnCeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolScopeRefused }
+
+// SpawnCeilingFunc resolves the routing ceiling for one spawn. Injected at
+// wiring time from cmd/hub (see [Server.SetSpawnCeiling]) rather than read here:
+// internal/bus has no config reader, no file access and no matrix, and giving it
+// one would put the routing engine on the wrong side of the seam. Same injection
+// shape the fleet watcher already uses for jobs and peers.
+//
+// Nil means no ceiling layer is wired, and nothing is clamped by it. The
+// caller-tier clamp below does NOT depend on this function and applies either
+// way — it is a property of the credential, not of any file.
+type SpawnCeilingFunc func(SpawnCeilingRequest) SpawnCeilingVerdict
+
+// SpawnRecord is what the router observed one spawn to be, handed to the audit
+// sink so the hub can join it to the routing decision it came from. It exists
+// because the DECISION is recorded by cmd/hub and the SPAWN is only visible
+// here, and a join needs both halves written by somebody.
+type SpawnRecord struct {
+	DecisionID    string
+	Role          string
+	Capability    string
+	Cwd           string
+	Provider      string
+	Model         string
+	Effort        string
+	ToolScope     string
+	CallerScope   string
+	CallerTokenID string
+	Ceiling       SpawnCeilingVerdict
+	Scrubbed      []string
+}
+
+// SpawnAuditFunc receives one SpawnRecord per agents.spawn. Nil = nothing is
+// recorded. It MUST NOT BLOCK: it runs on the router's dispatch path, in front
+// of a caller waiting for its spawn.
+type SpawnAuditFunc func(SpawnRecord)
+
+// SetSpawnCeiling wires the routing ceiling and the spawn audit sink. Both are
+// optional and independent; either may be nil.
+//
+// Called once at startup from cmd/hub, before any connection is accepted.
+func (s *Server) SetSpawnCeiling(ceiling SpawnCeilingFunc, audit SpawnAuditFunc) {
+	s.router.mu.Lock()
+	s.router.spawnCeiling = ceiling
+	s.router.spawnAudit = audit
+	s.router.mu.Unlock()
+}
+
+// callerToolScopeCeiling is INVARIANT 1a: a caller may not grant a child a tier
+// above its own.
+//
+// The invariant was already true for the view and triage tiers by a different
+// mechanism — agents.spawn is in neither viewMethods nor triageMethods, so those
+// tokens cannot spawn anything at all. The hole this closes is
+// operator-to-operator and, more importantly, it is the belt for the day a tier
+// list is widened or a record is hand-edited: an authority ladder enforced only
+// by a method list is enforced only until somebody adds a method.
+//
+// WHO IS EXEMPT, and why each:
+//
+//   - The HOST TOKEN (trusted, not via tokens.json) — the control plane itself:
+//     the desktop, the brain, the MCP facade. A process holding it could rewrite
+//     tokens.json, so clamping it here would be theater, exactly as it is for
+//     mayUseProfile.
+//   - A PLUGIN token has no tier at all, so there is nothing to compare against.
+//     It is left alone here rather than clamped to a guess; a plugin reaching
+//     agents.spawn needs the capability granted at install, and what it may then
+//     hand a child is a question for the consent dialog, not for a ladder it has
+//     no rung on. Recorded as a known gap rather than closed by assumption.
+//   - An OPERATOR-tier scoped record reaches this with cn.scope EMPTY, because
+//     the handshake promotes ScopeOperator to `trusted` and only the narrower
+//     tiers keep their name (bus.go handleBus). That produces the right answer
+//     for the right reason and not by accident: operator is the top of the
+//     ladder, so "no tier ceiling" and "clamped to operator" are the same
+//     clamp. The DIRECTORY ceiling still applies to it — see the caller of this
+//     function, which takes the lower of the two.
+//
+// Returns "" when this connection imposes no tier ceiling.
+func (cn *conn) callerToolScopeCeiling() string {
+	if cn.pluginID != "" {
+		return ""
+	}
+	if !cn.viaScopedToken {
+		return "" // host token: the control plane
+	}
+	return strings.ToLower(strings.TrimSpace(cn.scope))
+}
+
+// toolScopeRank orders the three authority tiers. TWIN of routing's
+// ToolScopeRank and of authtoken's tier list — three values, closed vocabulary,
+// and the duplication is one switch rather than an import that would drag the
+// matrix into the bus.
+func toolScopeRank(scope string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "view":
+		return 1, true
+	case "triage":
+		return 2, true
+	case "operator":
+		return 3, true
+	}
+	return 0, false
+}
+
 // sanitizeSpawnParams enforces the profile-dispatch grant on an agents.spawn's
 // params, at the router's single dispatch point:
 //
 //  1. `profileGranted` is DELETED from every incoming call. It is hub-stamped
 //     only — a provider seeing it true knows the hub verified the caller, and
 //     no caller (spoofing included) can be its source.
+//
 //  2. `profileId` survives only when the caller may use that exact profile
 //     (mayUseProfile); the hub then stamps `profileGranted: true` beside it.
 //     Otherwise the field is stripped, which is byte-for-byte today's doctrine:
 //     an ungranted bus caller cannot name a profile at all.
+//
 //  3. `yoloGranted` is likewise DELETED from every incoming call and hub-
 //     stamped true only for a caller holding the full-access grant
 //     (mayBypassPermissions). The stamp is about the CALLER, not the request:
 //     `skipPermissions` itself passes through untouched either way — callers
 //     keep requesting it, the stamp says the provider may honor it, and an
 //     unstamped request keeps today's clamp.
-//  4. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
-//     only, same as the two above) and re-stamped with what THIS router took
-//     away — today just `profileId`. NO SILENT DOWNGRADES: the provider folds
-//     the stamp together with its own clamps and returns the union as the spawn
-//     result's `escalationScrubbed`, so a caller that asked for full access and
-//     did not get it learns so from the ANSWER instead of from a log line on a
-//     machine it cannot read. An empty/absent stamp means "the hub took
-//     nothing".
+//
+//  4. The AUTHORITY CLAMP. `toolScope` (and its legacy `mcpFacade: true`
+//     spelling, which means operator) is lowered to the smaller of two ceilings:
+//     the caller's own tier — Invariant 1a, a caller may not grant a child more
+//     authority than it holds — and routing.yaml's `max_tool_scope` for the
+//     spawn's directory.
+//
+//  5. The CAPABILITY CLAMP. `capability` is lowered to routing.yaml's
+//     `max_capability` for that directory, and when it is, `model` and `effort`
+//     go with it — keeping the model that the refused capability chose would
+//     make the ceiling a relabelling rather than a limit. The matrix also
+//     catches a spawn that declares nothing and simply NAMES a reserved model;
+//     see routing.Matrix.CheckSpawn for why that arm only fires on an
+//     unambiguous reading.
+//
+//  6. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
+//     only, same as the stamps above) and re-stamped with what THIS router took
+//     away — `profileId`, and now the two clamps' fields. NO SILENT DOWNGRADES:
+//     the provider folds the stamp together with its own clamps and returns the
+//     union as the spawn result's `escalationScrubbed`, so a caller that asked
+//     for full access, or for a tier, or for a capability, and did not get it
+//     learns so from the ANSWER instead of from a log line on a machine it
+//     cannot read. An empty/absent stamp means "the hub took nothing".
+//
+// WHY THE CEILING LIVES HERE AND NOWHERE ELSE. This is the only spawn-path code
+// in the repo that is not a twin: `methodSanitizers` is the single dispatch
+// table for call() AND federatedCall(), so a clamp added here covers the
+// federated hop by construction, and every provider — the desktop's
+// hubCapabilities, the headless brain, a peer's hub — sits behind it. The local
+// Electron IPC door is deliberately NOT sanitized: that is a human at the
+// machine clicking Spawn, and nothing here should change that.
+//
+// WHAT IT IS NOT. It is a CLAMP, never a re-route. It lowers what was asked for;
+// it never picks a provider, never substitutes a model and never promotes
+// anything. Re-routing at this gate would mean the gate needed the whole routing
+// engine plus a task classification the caller did not supply, and would create
+// a second place where model selection happens.
 //
 // Non-object params pass through untouched — there is no field to smuggle in a
 // shape the provider's own decoder would reject anyway. The provider keeps its
 // own scrubs (configDir never comes from the wire; the profile id resolves
 // against the provider's LOCAL profile store), so this is an additional gate in
 // front of them, not a replacement.
-func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
 	}
@@ -431,6 +641,9 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 			scrubbed = append(scrubbed, "profileId")
 		}
 	}
+
+	scrubbed = append(scrubbed, rt.clampSpawnAuthority(caller, m)...)
+
 	if len(scrubbed) > 0 {
 		if raw, err := json.Marshal(scrubbed); err == nil {
 			m["escalationScrubbed"] = raw
@@ -443,6 +656,156 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	return out
+}
+
+// clampSpawnAuthority applies items 4 and 5 above and records the spawn, in
+// place, returning the field names it took away.
+//
+// It runs on EVERY bus agents.spawn, including one with no routing layer wired
+// and one that names no capability at all: the caller-tier half of the authority
+// clamp is a property of the credential and needs no file, and the audit record
+// is worth having for a spawn nothing clamped.
+func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage) []string {
+	str := func(key string) string {
+		r, ok := m[key]
+		if !ok {
+			return ""
+		}
+		var v string
+		if json.Unmarshal(r, &v) != nil {
+			return ""
+		}
+		return strings.TrimSpace(v)
+	}
+	boolAt := func(key string) bool {
+		r, ok := m[key]
+		if !ok {
+			return false
+		}
+		var v bool
+		return json.Unmarshal(r, &v) == nil && v
+	}
+
+	// `mcpFacade: true` is the legacy spelling of "operator tier", and folding it
+	// in HERE rather than treating it as a separate flag is load-bearing: a clamp
+	// that only rewrote `toolScope` would be walked around by one boolean.
+	wantScope := str("toolScope")
+	viaLegacyFacade := false
+	if wantScope == "" && boolAt("mcpFacade") {
+		wantScope, viaLegacyFacade = "operator", true
+	}
+
+	rawCwd := str("cwd")
+	canonical, resolved := canonicalizeRoot(rawCwd)
+
+	ceilingFn, auditFn := rt.ceilingHooks()
+	var verdict SpawnCeilingVerdict
+	if ceilingFn != nil {
+		verdict = ceilingFn(SpawnCeilingRequest{
+			CanonicalCwd: canonical,
+			CwdResolved:  resolved,
+			Capability:   str("capability"),
+			ToolScope:    wantScope,
+			Provider:     str("provider"),
+			Model:        str("model"),
+			Effort:       str("effort"),
+		})
+	}
+
+	var scrubbed []string
+	// ---- authority: the smaller of the caller's own tier and the directory's --
+	effectiveMax, effectiveWhy := verdict.ToolScope, ""
+	if !verdict.ToolScopeRefused {
+		effectiveMax = ""
+	}
+	if callerMax := caller.callerToolScopeCeiling(); callerMax != "" && wantScope != "" {
+		want, wantOK := toolScopeRank(wantScope)
+		cmax, cmaxOK := toolScopeRank(callerMax)
+		if wantOK && cmaxOK && want > cmax {
+			// Take the LOWER of the two ceilings when both bite.
+			if cur, ok := toolScopeRank(effectiveMax); !ok || cmax < cur {
+				effectiveMax = callerMax
+				effectiveWhy = fmt.Sprintf(
+					"this spawn asked for the %s tool tier from a %s-tier credential — a caller cannot grant a child more authority than it holds, so the tier is clamped to %s",
+					strings.ToLower(wantScope), callerMax, callerMax)
+			}
+		}
+	}
+	if effectiveMax != "" {
+		if viaLegacyFacade {
+			// The legacy flag has no gradations, so a clamp below operator has to
+			// remove it and say the tier explicitly.
+			delete(m, "mcpFacade")
+			scrubbed = append(scrubbed, "mcpFacade")
+		}
+		if _, had := m["toolScope"]; had {
+			scrubbed = append(scrubbed, "toolScope")
+		}
+		m["toolScope"] = mustJSON(effectiveMax)
+		reasons := verdict.Because
+		if effectiveWhy != "" {
+			reasons = append(append([]string(nil), reasons...), effectiveWhy)
+		}
+		log.Printf("SECURITY: agents.spawn: tool tier clamped from %q to %q for caller %s: %s",
+			wantScope, effectiveMax, caller.tokenID, strings.Join(reasons, " | "))
+		verdict.ToolScopeRefused, verdict.ToolScope = true, effectiveMax
+		verdict.Because = reasons
+	}
+
+	// ---- capability: the directory's ceiling, and the model that went with it -
+	if verdict.CapabilityRefused {
+		if _, had := m["capability"]; had {
+			scrubbed = append(scrubbed, "capability")
+		}
+		if verdict.Capability != "" {
+			m["capability"] = mustJSON(verdict.Capability)
+		} else {
+			delete(m, "capability")
+		}
+		// The model and the effort go with the capability. A spawn that keeps
+		// `model: fable` after `capability` was clamped to `frontier` has had a
+		// label changed, not a limit applied.
+		for _, key := range []string{"model", "effort"} {
+			if _, had := m[key]; had {
+				delete(m, key)
+				scrubbed = append(scrubbed, key)
+			}
+		}
+		log.Printf("SECURITY: agents.spawn: capability clamped to %q for caller %s: %s",
+			verdict.Capability, caller.tokenID, strings.Join(verdict.Because, " | "))
+	}
+
+	if auditFn != nil {
+		auditFn(SpawnRecord{
+			DecisionID: str("decisionId"),
+			Role:       str("role"),
+			Capability: str("capability"),
+			Cwd:        canonical,
+			Provider:   str("provider"),
+			Model:      str("model"),
+			Effort:     str("effort"),
+			ToolScope:  str("toolScope"),
+			// identity()'s spelling, not the raw field: an operator-tier record
+			// is promoted to `trusted` at the handshake and its cn.scope is
+			// left empty, so reading the field directly would log the fleet
+			// manager's own dispatches as tier-less.
+			CallerScope:   caller.identity().Scope,
+			CallerTokenID: caller.tokenID,
+			Ceiling:       verdict,
+			Scrubbed:      scrubbed,
+		})
+	}
+	return scrubbed
+}
+
+// mustJSON encodes a string that is known to encode. json.Marshal of a string
+// cannot fail; the helper exists so the clamp above reads as one line per act.
+func mustJSON(s string) json.RawMessage {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return b
 }
 
 // sanitizeReportProgressParams deletes `callerSessionId` from an untrusted
@@ -459,7 +822,7 @@ func sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
 // the control plane, and the facade in particular multiplexes every session over
 // one host-token connection, so it is the only party that CAN name the session
 // (from the token record it resolved). Non-object params pass through untouched.
-func sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMessage {
 	if caller.trusted || len(raw) == 0 {
 		return raw
 	}
@@ -481,7 +844,11 @@ func sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMes
 
 // paramSanitizer rewrites a call's params based on the VERIFIED caller. Keyed
 // by the BARE method name in [methodSanitizers] below.
-type paramSanitizer func(caller *conn, raw json.RawMessage) json.RawMessage
+//
+// It takes the router because a sanitizer may need something the hub injected at
+// wiring time — the spawn ceiling and the audit sink — and the alternative was a
+// package-level variable, which is a second, invisible dispatch table.
+type paramSanitizer func(rt *router, caller *conn, raw json.RawMessage) json.RawMessage
 
 // methodSanitizers is the single source of truth for which capabilities have
 // caller-identity fields the router must strip or stamp rather than forward
@@ -494,15 +861,15 @@ type paramSanitizer func(caller *conn, raw json.RawMessage) json.RawMessage
 // agents.reportProgress the day it was added to the view tier: see
 // TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
 var methodSanitizers = map[string]paramSanitizer{
-	spawnMethod:          sanitizeSpawnParams,
-	reportProgressMethod: sanitizeReportProgressParams,
+	spawnMethod:          (*router).sanitizeSpawnParams,
+	reportProgressMethod: (*router).sanitizeReportProgressParams,
 }
 
 // sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
-func sanitizeCallParams(caller *conn, method string, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) json.RawMessage {
 	if s, ok := methodSanitizers[method]; ok {
-		return s(caller, raw)
+		return s(rt, caller, raw)
 	}
 	return raw
 }
@@ -533,7 +900,7 @@ func (rt *router) call(caller *conn, f Frame) {
 	// (profile dispatch, the reportProgress session stamp, ...): strip/stamp
 	// them based on the VERIFIED caller, before either dispatch path (local or
 	// provider) can see them. See [methodSanitizers].
-	f.Params = sanitizeCallParams(caller, f.Method, f.Params)
+	f.Params = rt.sanitizeCallParams(caller, f.Method, f.Params)
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
 	// providers. Run off the read loop so a slow handler can't stall the caller's
@@ -673,7 +1040,7 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 	// it. A hand-listed pair here that forgot one entry is exactly how
 	// agents.reportProgress's callerSessionId briefly rode across ungated: see
 	// TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
-	f.Params = sanitizeCallParams(caller, bare, f.Params)
+	f.Params = rt.sanitizeCallParams(caller, bare, f.Params)
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the
 	// federated hop rather than an ambiguous local deadline.

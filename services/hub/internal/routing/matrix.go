@@ -128,6 +128,10 @@ type Ceiling struct {
 // its own.
 const CeilingDefaultKey = "default"
 
+// UnrankedCapability is what RankOf reports for a capability the matrix's
+// `capability_ranks:` block does not name.
+const UnrankedCapability = -1
+
 // Issue is one load-time finding: a model the provider does not serve, a role
 // pointing at a capability no profile resolves, an unknown provider id. Issues
 // never stop a matrix from being applied — they are reported so an operator
@@ -143,9 +147,27 @@ func (i Issue) String() string { return i.Where + ": " + i.Detail }
 
 // Matrix is the merged, validated document.
 type Matrix struct {
-	Version         int                 `yaml:"version" json:"version"`
-	ActiveProfile   string              `yaml:"active_profile" json:"activeProfile"`
-	Capabilities    []string            `yaml:"capabilities" json:"capabilities"`
+	Version       int      `yaml:"version" json:"version"`
+	ActiveProfile string   `yaml:"active_profile" json:"activeProfile"`
+	Capabilities  []string `yaml:"capabilities" json:"capabilities"`
+	// CapabilityRanks orders the capability names by STRENGTH, which is the one
+	// question `capabilities:` cannot answer.
+	//
+	// `capabilities:` is a VOCABULARY and its order is documentation, not a
+	// ladder: `reviewer` is listed after `frontier` and resolves to Sonnet High,
+	// which is cheaper than frontier's Sol High. Reading list position as
+	// strength would make the shipped `default: {max_capability: frontier}`
+	// ceiling refuse every reviewer and deep_reviewer spawn — a clamp firing on
+	// the CHEAPER side of the thing it is protecting. So the ordering is stated,
+	// in the file, as its own block, and ties are allowed because the axis
+	// genuinely has them (deep_reviewer and frontier are the same strength on
+	// two different model families).
+	//
+	// A capability with no rank cannot be compared, and the ceiling FAILS CLOSED
+	// on it — see [Matrix.CheckSpawn]. validate() reports every unranked
+	// capability at load so that is discovered when the file is saved rather
+	// than when a spawn is refused.
+	CapabilityRanks map[string]int      `yaml:"capability_ranks" json:"capabilityRanks"`
 	Roles           map[string]string   `yaml:"roles" json:"roles"`
 	Profiles        map[string]Profile  `yaml:"profiles" json:"profiles"`
 	Providers       map[string]Provider `yaml:"providers" json:"providers"`
@@ -270,11 +292,26 @@ func (m *Matrix) ResolveRole(role string) (Resolved, error) {
 	return Resolved{Role: role, Capability: capability, Profile: profile, Assignment: a, FellBack: fellBack}, nil
 }
 
-// ModeFor is the routing mode in force for a provider: its own entry when it has
-// one, otherwise the global one, otherwise "auto".
+// ModeFor is the routing mode in force for a provider: its own entry when that
+// entry states an opinion, otherwise the global one, otherwise "auto".
+//
+// A PER-PROVIDER `auto` IS NOT AN OVERRIDE. It is the absence of one, and
+// reading it as an override made `modes.global` dead on arrival: the shipped
+// file writes `providers: {codex: auto, claude: auto}` to document the shape, a
+// deep merge cannot delete them, and a per-provider entry outranks the global —
+// so a user who wrote `modes: {global: conserve}` and nothing else was overruled
+// by two lines the hub itself had put in their file, for the only two providers
+// that have a readable allowance. §34 offers `auto` as a value precisely so a
+// provider can say "let the thresholds decide"; when a global is set, that
+// sentence means "I have no opinion here", not "ignore what you just said
+// globally". A provider that genuinely wants to opt out of a global conserve
+// says `normal`, which is a verdict rather than a deferral, and which this
+// function does honour.
 func (m *Matrix) ModeFor(provider string) string {
 	if v, ok := m.Modes.Providers[normalizeProvider(provider)]; ok && strings.TrimSpace(v) != "" {
-		return v
+		if parsed, ok := ParseMode(v); !ok || parsed != ModeAuto {
+			return v
+		}
 	}
 	if strings.TrimSpace(m.Modes.Global) != "" {
 		return m.Modes.Global

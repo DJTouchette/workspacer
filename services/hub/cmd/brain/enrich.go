@@ -24,6 +24,16 @@ type spawnMeta struct {
 	ParentSessionID string
 	IsWakeTarget    bool
 
+	// What the ROUTING layer said this worker is, carried from agents.spawn's
+	// role/capability/decisionId. Recorded here because a headless node has no
+	// analytics store of its own — workspacer.db is written by the Electron main
+	// process — so without this the answer to "which decision produced this
+	// session" would exist only in the hub's decision log, keyed by a session
+	// this process never told it about.
+	Role       string
+	Capability string
+	DecisionID string
+
 	// Live switches this brain confirmed with the daemon (livecontrol.go). No
 	// hook, status line or init frame reports the switch itself, so without
 	// these the composer pill reads the pre-switch value until the provider's
@@ -113,6 +123,29 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 			}
 			if sm.IsWakeTarget {
 				m["isWakeTarget"] = true
+			}
+			// What the routing layer said this worker is. Present only when the
+			// spawn carried it, so an unrouted row keeps its exact shape.
+			// BRAIN-ONLY TODAY, deliberately and not by oversight: the desktop
+			// records the same three fields on the spawn wire and echoes them in
+			// the spawn result, but its snapshot is assembled from the session
+			// store rather than overlaid here, and §36's analytics are its own
+			// (workspacer.db). This overlay is what gives a HEADLESS node — the
+			// one most likely to be running a dispatched fleet, and the one with
+			// no analytics store at all — an answer to "which decision produced
+			// this session" without going back to the hub's decision log.
+			if sm.Role != "" || sm.Capability != "" || sm.DecisionID != "" {
+				routing := map[string]any{}
+				if sm.Role != "" {
+					routing["role"] = sm.Role
+				}
+				if sm.Capability != "" {
+					routing["capability"] = sm.Capability
+				}
+				if sm.DecisionID != "" {
+					routing["decisionId"] = sm.DecisionID
+				}
+				m["routing"] = routing
 			}
 			// The desktop field names the composer pills read
 			// (ComposerControls.tsx: `snapshot?.livePermissionMode ??

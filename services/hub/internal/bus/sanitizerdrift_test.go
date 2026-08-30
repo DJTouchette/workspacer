@@ -20,7 +20,7 @@ import (
 func TestFederatedCallSanitizesThroughTheSameTableAsLocalCall(t *testing.T) {
 	const thirdMethod = "test.thirdSanitizer"
 	stripped := false
-	methodSanitizers[thirdMethod] = func(caller *conn, raw json.RawMessage) json.RawMessage {
+	methodSanitizers[thirdMethod] = func(rt *router, caller *conn, raw json.RawMessage) json.RawMessage {
 		stripped = true
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &m); err != nil || m == nil {

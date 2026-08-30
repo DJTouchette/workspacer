@@ -1520,6 +1520,24 @@ type spawnAgentIn struct {
 	// silently-defaulted one.
 	Template       string            `json:"template,omitempty" jsonschema:"the id of a library DISPATCH TEMPLATE (an item of kind 'dispatch'; list_library shows them) to render as the worker's first message instead of composing 'message' yourself. The template's default resultSchema applies unless this call passes its own resultSchema. Mutually exclusive with 'message'. Desktop-only (the headless brain declines it)"`
 	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"values for the template's named placeholders ({{task}} etc.). Placeholders are REQUIRED unless the template marks them optional with a default, and a spawn with an unfilled required placeholder is refused naming the missing param — write the task-specific text yourself; the template only supplies the framing"`
+
+	// ── the routing wire ────────────────────────────────────────────────────
+	//
+	// The three fields that turn `select_model`'s answer from advice into a
+	// dispatch. Without them on THIS struct the routing layer would be a tool an
+	// agent can call and cannot act on: the facade is the only door a supervisor
+	// has to agents.spawn, so a field missing here is a field the supervisor
+	// cannot send however carefully it read the decision.
+	//
+	// `capability` is the enforced one — the hub clamps it to the directory's
+	// ceiling and drops the model with it — which is why it is described to the
+	// model as something that can be refused rather than as a free choice. There
+	// is deliberately no way to ask for a capability ABOVE what select_model
+	// answered: the tool takes what the decision said, and raising the ceiling is
+	// an edit to a file no agent can write.
+	Role       string `json:"role,omitempty" jsonschema:"the work ROLE this agent will perform, copied from the select_model answer you are acting on (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge). Recorded against the session so a dispatch can be joined to the decision behind it"`
+	Capability string `json:"capability,omitempty" jsonschema:"the model CAPABILITY select_model answered with (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus) — copy it, do not raise it. The host CLAMPS this to the ceiling configured for the target directory, and when it clamps it also drops the model and effort you named; the spawn's answer reports what was taken in escalationScrubbed"`
+	DecisionID string `json:"decisionId,omitempty" jsonschema:"the decisionId from the select_model answer this dispatch is acting on. It joins the decision and the worker it produced in the host's routing decision log; pass it whenever you routed"`
 }
 
 // takeHub implements hubRouted for spawn_agent's own hub field.

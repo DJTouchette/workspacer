@@ -297,6 +297,15 @@ var eventTopics = []EventTopic{
 		Disposition: TopicOpenByDecision,
 		Reason:      "carries the same nodes.NodeView the view tier already reads from nodes.list, plus the state it came from: a node id, a label, one of four states, two timestamps, a sentence of detail, a wakeable bit and a failed-wake count. It is an allowlist PROJECTION of the registry record, so the credential-bearing half — the cloud API token, the file holding it, the app name, the machine id, the endpoint — is absent by construction and not by a strip list. Receiving it discloses strictly nothing beyond the read the same tier holds; what it buys is that a wake shows progress instead of a spinner. Publishing it is the hub's own (the topic is refused to every non-trusted publisher by the publish-ownership half of this registry), which matters because a forged \"available\" would send a client typing at a machine that is not there",
 	},
+	// routing.decision — one answer from the limit-aware routing layer
+	// (cmd/hub/routingselect.go). Section 37's topic, and the only one this
+	// layer has: routing exposes no write RPC over the bus, so there is no
+	// mutation for a second topic to announce.
+	{
+		Pattern:     "routing.decision",
+		Disposition: TopicOpenByDecision,
+		Reason:      "the PUBLISHED projection of a routing answer, and it is deliberately narrower than the answer the caller gets: decision id, ticket id, role, capability, provider, model, effort, mode and the reason list. Every one of those is a fact about which MODEL was chosen for which kind of work, which is what the fleet view renders (\"promoted from Sol High, reason: spend-down, reset in 38m\") and what a view-tier phone needs to render it. It names no credential, no path and no argv — in particular the request's `cwd` and `account` do NOT ride this topic even though they are on the decision, because \"which project directory is being worked in\" is a fact about the user's disk and belongs in the 0600 decision log, not on a plane every tier receives. Publishing it is the hub's own (the publish-ownership half of this registry refuses it to every non-trusted publisher), which matters because a forged routing.decision would put a model name and a spend-down justification into a fleet view for work nobody decided",
+	},
 	{
 		Pattern:     "layout.changed",
 		Disposition: TopicOpenByDecision,

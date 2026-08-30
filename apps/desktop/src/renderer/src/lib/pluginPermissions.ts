@@ -415,6 +415,9 @@ export const EVENT_TOPIC_RULES: EventTopicRule[] = [
   { pattern: 'node.state_changed', disposition: 'open-by-decision' },
   { pattern: 'layout.changed', disposition: 'open-by-decision' },
   { pattern: 'library.changed', disposition: 'open-by-decision' },
+  // routing.decision — one answer from the limit-aware routing layer: which
+  // model a work ROLE got, the mode, and why. No cwd and no account ride it.
+  { pattern: 'routing.decision', disposition: 'open-by-decision' },
   // notify.post — free-text notification bodies (a hub job failure carries a
   // shell-output tail); written for the trusted desktop center, phones use push.
   { pattern: 'notify.post', disposition: 'host-only' },

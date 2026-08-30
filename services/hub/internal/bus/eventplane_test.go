@@ -150,6 +150,10 @@ var topicDeliveryKey = []topicDelivery{
 	{topic: "library.changed", view: true, bare: true, term: true, watch: true, snap: true,
 		why: "an EMPTY payload — a bare refetch signal with no data field at all"},
 
+	// ---- limit-aware routing -------------------------------------------------
+	{topic: "routing.decision", view: true, bare: true, term: true, watch: true, snap: true,
+		why: "decision id, ticket, role, capability, provider/model/effort, mode and the reason list — which MODEL was chosen for which kind of work, which is what the fleet view renders and what a view-tier phone needs to render it. The request's cwd and account are deliberately NOT on this topic (they are in the 0600 decision log), so it names no path, no account, no credential and no argv"},
+
 	// ---- notifications ------------------------------------------------------
 	{topic: "notify.post",
 		why: "free-text notification title/body from any publisher — a hub job failure carries a shell-output/error tail. Written for the trusted desktop notification center; phones are served by Web Push, not this topic"},

@@ -209,6 +209,10 @@
    "disposition": "host-only"
   },
   {
+   "pattern": "routing.decision",
+   "disposition": "open-by-decision"
+  },
+  {
    "pattern": "pty.bytes.*",
    "disposition": "guarded-by-capability",
    "method": "sessions.attachTerminal"

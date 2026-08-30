@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/bus"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/limits"
 	"github.com/djtouchette/workspacer-hub/internal/routing"
 )
@@ -252,7 +254,7 @@ func TestARoutingDecisionTakesItsOwnReading(t *testing.T) {
 // that routes conservatively and says why.
 func TestRoutingSelectAnswersWithoutAUsageDocument(t *testing.T) {
 	svc := routing.New("", nil) // compiled-in defaults, no file, no catalog
-	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"))
+	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"), nil, nil)
 
 	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{}`)); err == nil {
 		t.Error("a request with no role was answered — routing answers in ROLES, and guessing one is how a decision gets attributed to work nobody described")
@@ -277,5 +279,174 @@ func TestRoutingSelectAnswersWithoutAUsageDocument(t *testing.T) {
 	}
 	if len(d.Reason) == 0 {
 		t.Error("no reasons")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// THE STAMPEDE
+// ---------------------------------------------------------------------------
+
+// TestConcurrentDecisionsShareOneFetch is the singleflight.
+//
+// Every decision takes its own reading (usageDecisionMaxAge is 0), which was
+// affordable while routing was advisory and rarely asked. Once dispatch routes
+// through it, N concurrent decisions were N concurrent GETs against one loopback
+// daemon, each queued behind the others' work — and the fix must NOT be a
+// time-based cache, because a cached document is the founding defect of this
+// whole feature. Sharing one OPEN request is fine; serving a CLOSED one is not,
+// and the second half of this test is what tells the two apart.
+func TestConcurrentDecisionsShareOneFetch(t *testing.T) {
+	body := liveReportBody(t)
+	var hits int64
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		<-release // hold every request open until all the callers have arrived
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	w := newUsageWatcher(srv.URL)
+	const callers = 8
+	done := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			_, err := w.LatestWithin(context.Background(), usageDecisionMaxAge)
+			done <- err
+		}()
+	}
+	// Wait until the first request is actually in the handler, then give the
+	// others time to pile onto it rather than starting their own.
+	deadline := time.Now().Add(3 * time.Second)
+	for atomic.LoadInt64(&hits) == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if got := atomic.LoadInt64(&hits); got != 1 {
+		close(release)
+		t.Fatalf("%d concurrent decisions produced %d requests against claudemon — every spawn now routes through this, so a stampede is the ordinary case rather than the exotic one", callers, got)
+	}
+	close(release)
+	for i := 0; i < callers; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("shared fetch failed for one of the waiters: %v", err)
+		}
+	}
+
+	// AND IT IS NOT A CACHE. The next decision, arriving after the shared fetch
+	// has landed, must take its OWN reading — a document that is correct at fetch
+	// time and read at some later, unrelated instant is exactly what this layer
+	// exists to close.
+	before := atomic.LoadInt64(&hits)
+	if _, err := w.LatestWithin(context.Background(), usageDecisionMaxAge); err != nil {
+		t.Fatalf("decision after the shared fetch: %v", err)
+	}
+	if got := atomic.LoadInt64(&hits) - before; got != 1 {
+		t.Errorf("a decision arriving after the shared fetch made %d requests, want 1 — the singleflight turned into a cache, which is the defect it was supposed to avoid", got)
+	}
+}
+
+// TestASlowClaudemonCannotHangADecision: a hub whose usage daemon stops
+// answering must degrade the ANSWER, never stall the fleet. Routing is on the
+// dispatch path now, so "the decision waits as long as the HTTP client would" is
+// not good enough — a hung connect can sit there for the whole probe timeout.
+//
+// What a decision does with no reading is the deliberate part: it routes as if
+// capacity were UNKNOWN and says so. Not a refusal (a hub that would not
+// dispatch because a usage daemon was restarting is worse than the advisory
+// layer it replaced) and not a healthy default (UNKNOWN goes through the
+// matrix's own when_unknown and satisfies neither mode arm, so the answer is
+// NORMAL — no promotion off evidence that does not exist, no phantom
+// conservation).
+func TestASlowClaudemonCannotHangADecision(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	// Released BEFORE the server is torn down: Close waits for in-flight
+	// handlers, and the detached fetch this test abandons is still one.
+	defer func() { close(block); srv.Close() }()
+
+	svc := routing.New("", nil)
+	h := routingSelect(svc, newUsageWatcher(srv.URL), nil, nil)
+
+	// The handler's own budget, shortened for the test by bounding the wall
+	// clock rather than the constant: what is being proven is that SOME bound
+	// exists and that the answer past it is a routed decision, not an error.
+	start := time.Now()
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"scout","cwd":"/tmp"}`))
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("a hanging daemon turned into a refused routing call: %v", err)
+	}
+	if elapsed >= usageProbeTimeout {
+		t.Errorf("the decision waited %s — it must be bounded by usageDecisionWait (%s), not by the HTTP probe timeout (%s)",
+			elapsed.Round(time.Millisecond), usageDecisionWait, usageProbeTimeout)
+	}
+	d, ok := raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if !d.Eligible || d.Model == "" {
+		t.Errorf("no model came back from a decision made with no reading: %+v", d)
+	}
+	if d.Capacity.Health != limits.HealthUnknown {
+		t.Errorf("health = %q against a daemon that never answered, want unknown", d.Capacity.Health)
+	}
+	if d.Mode != routing.ModeNormal {
+		t.Errorf("mode = %q with no reading at all, want normal — neither a promotion nor a phantom conservation is licensed by evidence that does not exist", d.Mode)
+	}
+}
+
+// The decision the handler answers is also the decision it RECORDS and
+// PUBLISHES, joined by one id. Without this the decisionId on the spawn wire
+// would be a field nothing on the other end ever wrote.
+func TestRoutingSelectRecordsAndPublishesTheDecisionItAnswered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing-decisions.jsonl")
+	logf := routing.NewDecisionLog(path, routing.DefaultDecisionLogMaxBytes)
+
+	var published []event.Envelope
+	h := routingSelect(routing.New("", nil), newUsageWatcher("http://127.0.0.1:1"),
+		func(ev event.Envelope) { published = append(published, ev) }, logf)
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","cwd":"/tmp","provider":"codex"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d := raw.(routing.Decision)
+	if d.DecisionID == "" {
+		t.Fatal("the answer carries no decisionId, so no spawn can ever quote it")
+	}
+
+	if len(published) != 1 || published[0].Type != routingDecisionTopic {
+		t.Fatalf("published %d event(s): %+v", len(published), published)
+	}
+	var ev map[string]any
+	if err := json.Unmarshal(published[0].Data, &ev); err != nil {
+		t.Fatalf("event payload: %v", err)
+	}
+	if ev["decisionId"] != d.DecisionID {
+		t.Errorf("the event's decisionId %v does not match the answer's %q", ev["decisionId"], d.DecisionID)
+	}
+	if ev["model"] != d.Model || ev["mode"] != string(d.Mode) {
+		t.Errorf("the published projection disagrees with the answer: %v vs %+v", ev, d)
+	}
+	// The cwd is deliberately NOT on an open-by-decision topic.
+	if _, present := ev["cwd"]; present {
+		t.Errorf("the published event carries the caller's cwd, which every tier receives: %v", ev)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the decision log was not written: %v", err)
+	}
+	if !strings.Contains(string(body), d.DecisionID) {
+		t.Errorf("the log does not carry the answered decision's id:\n%s", body)
+	}
+	if !strings.Contains(string(body), `"kind":"decision"`) {
+		t.Errorf("the log row is not a decision row:\n%s", body)
 	}
 }

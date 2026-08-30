@@ -9,12 +9,18 @@ package main
 // something constructed routing.Service, routing.yaml was never seeded and
 // never read. Both are done here and in main.go.
 //
-// EVERYTHING HERE IS READ-ONLY. routing.select answers a question; it starts
-// nothing, writes nothing, and publishes nothing. ROUTING EXPOSES NO WRITE RPC
-// OVER THE BUS, EVER — that, plus the secret gate refusing the hub's state
-// directory to fs.write, is the entire security argument for the matrix file's
-// `ceilings:` block, and the moment a routing write RPC exists the ceiling
-// stops meaning anything.
+// ROUTING EXPOSES NO WRITE RPC OVER THE BUS, EVER — that, plus the secret gate
+// refusing the hub's state directory to fs.write, is the entire security
+// argument for the matrix file's `ceilings:` block, and the moment a routing
+// write RPC exists the ceiling stops meaning anything.
+//
+// routing.select STARTS NOTHING AND CHANGES NOTHING. It answers a question.
+// What it does do, since the decision became binding, is put its own answer on
+// the record: one `routing.decision` event and one line in the append-only
+// decision log beside routing.yaml. Neither is a write RPC in the sense above —
+// no caller can move a threshold, a profile, a mode or a ceiling through any bus
+// method, and causing a record of your own question to be written is the
+// opposite kind of act from editing the policy that answers it.
 //
 // Registered with the LITERAL method name through the caller-aware door, for
 // the reason fleet.quiescence is: the answer is caller-dependent (a caller's
@@ -35,6 +41,7 @@ import (
 
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/routing"
 )
 
@@ -204,19 +211,66 @@ func (c *routingCatalog) providerModels(ctx context.Context, provider string) ([
 // THE HANDLER
 // ---------------------------------------------------------------------------
 
+// routingDecisionTopic is the bus event every routing answer publishes. Section
+// 37's name, and the only topic this layer has.
+//
+// The literal lives here, on its own line, because capspec's publish sweep
+// (TestEveryPublishedTopicIsClassified) resolves a topic constant by scanning
+// the hub's sources for exactly this shape — a topic behind a computed name is
+// a topic nobody classified.
+const routingDecisionTopic = "routing.decision"
+
+// routingDecisionEvent is the published projection of a Decision, and it is
+// deliberately NARROWER than the answer the caller gets.
+//
+// The topic is open-by-decision — every tier receives it — so what rides it has
+// to be worth disclosing to a view-tier phone. The model, the capability, the
+// mode and the reasoning are: that is section 35's "promoted from Sol High,
+// reason: spend-down, reset in 38m" and it names no credential, no path and no
+// argv. The REQUEST's cwd and account do not ride it. They are in the decision
+// log, which is a 0600 file in the hub's own state directory, because "which
+// project directory is being worked in" is a fact about the user's disk and the
+// event plane has no business broadcasting it for an audit trail's benefit.
+type routingDecisionEvent struct {
+	DecisionID string   `json:"decisionId"`
+	TicketID   string   `json:"ticketId,omitempty"`
+	Role       string   `json:"role"`
+	Capability string   `json:"capability"`
+	Base       string   `json:"baseCapability"`
+	Profile    string   `json:"profile,omitempty"`
+	Provider   string   `json:"provider,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Effort     string   `json:"effort,omitempty"`
+	Eligible   bool     `json:"eligible"`
+	Mode       string   `json:"mode"`
+	ModeManual bool     `json:"modeManual"`
+	Health     string   `json:"health,omitempty"`
+	Reason     []string `json:"reason,omitempty"`
+	DecidedAt  int64    `json:"decidedAt"`
+}
+
 // routingSelect is the `routing.select` handler: read the matrix in force, take
-// a usage reading, judge it against THIS instant, and answer.
+// a usage reading, judge it against THIS instant, answer — and put the answer on
+// the record.
 //
 // The reading is taken through usageWatcher.LatestWithin with a zero freshness
 // bound, so every decision has its own document. See usageDecisionMaxAge for
-// why a decision does not reuse a cached one.
+// why a decision does not reuse a cached one, and usageDecisionWait for what
+// happens when that document does not arrive.
 //
 // A usage reading that CANNOT be taken is not an error the caller sees: it is an
 // UNKNOWN capacity with the failure named in the reason list, and the matrix
 // still answers which capability the role needs. A hub that refused to route
 // because claudemon was restarting would be worse than one that routed
 // conservatively and said why.
-func routingSelect(svc *routing.Service, usage *usageWatcher) bus.LocalIdentHandler {
+//
+// STILL NO WRITE RPC. This handler now publishes an event and appends a line to
+// an audit file, and neither of those is a write RPC in the sense that matters:
+// no caller can change the matrix, the ceilings, the thresholds or the modes
+// through any bus method, which is what makes routing.yaml's `ceilings:` block a
+// ceiling. A caller can cause a record OF ITS OWN QUESTION to be written, which
+// is the opposite kind of thing.
+func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Envelope), logf *routing.DecisionLog) bus.LocalIdentHandler {
 	return func(_ bus.CallerIdentity, params json.RawMessage) (any, error) {
 		var req routing.Request
 		if len(params) > 0 {
@@ -228,10 +282,36 @@ func routingSelect(svc *routing.Service, usage *usageWatcher) bus.LocalIdentHand
 			return nil, fmt.Errorf("routing.select: role is required — routing answers in ROLES and CAPABILITIES, never in model names (see routing.yaml's roles: block for the vocabulary)")
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), usageProbeTimeout+catalogTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), usageDecisionWait)
 		defer cancel()
 
 		snap, snapErr := usage.LatestWithin(ctx, usageDecisionMaxAge)
-		return routing.Select(svc.Matrix(), snap, snapErr, time.Now(), req), nil
+		d := routing.Select(svc.Matrix(), snap, snapErr, time.Now(), req)
+		// Stamped HERE rather than inside Select, which is pure: the id is what a
+		// spawn quotes back as `decisionId` and what joins the two rows of the
+		// log, so it is minted exactly where a decision becomes a fact.
+		d.DecisionID = routing.NewDecisionID()
+
+		logf.Decision(d)
+		if pub != nil {
+			pub(event.New(routingDecisionTopic, "routing", routingDecisionEvent{
+				DecisionID: d.DecisionID,
+				TicketID:   d.TicketID,
+				Role:       d.Role,
+				Capability: d.Capability,
+				Base:       d.BaseCapability,
+				Profile:    d.Profile,
+				Provider:   d.Provider,
+				Model:      d.Model,
+				Effort:     d.Effort,
+				Eligible:   d.Eligible,
+				Mode:       string(d.Mode),
+				ModeManual: d.ModeManual,
+				Health:     string(d.Capacity.Health),
+				Reason:     d.Reason,
+				DecidedAt:  d.DecidedAt,
+			}))
+		}
+		return d, nil
 	}
 }

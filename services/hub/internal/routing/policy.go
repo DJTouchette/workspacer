@@ -464,6 +464,13 @@ func (r Request) wantedAccount() string {
 // unavailable, and "you asked for copilot and no profile puts any model of this
 // capability on copilot" is the same shape of answer.
 type Decision struct {
+	// DecisionID is the join key: the decision log records it, the
+	// routing.decision event carries it, and a spawn that acts on this answer
+	// quotes it back on the wire as `decisionId`. Stamped by the HANDLER, not
+	// here — Select is pure and a random id read inside it would make the policy
+	// layer non-deterministic for no gain.
+	DecisionID string `json:"decisionId,omitempty"`
+
 	TicketID string `json:"ticketId,omitempty"`
 	Role     string `json:"role"`
 	// Capability is the capability actually selected, after any mode shift.

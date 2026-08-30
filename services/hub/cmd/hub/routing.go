@@ -78,6 +78,20 @@ type usageWatcher struct {
 	haveSnap bool
 	err      error
 	lastAsk  time.Time
+	// inflight is the fetch currently in progress, shared by every caller that
+	// arrives while it runs. See [usageWatcher.refresh].
+	inflight *usageFetch
+}
+
+// usageFetch is one in-flight GET /usage/report and its result, shared by every
+// caller that asked while it was running.
+type usageFetch struct {
+	// started is when the request went out, so a joiner can be told how old the
+	// reading it is about to share will be.
+	started time.Time
+	done    chan struct{}
+	snap    limits.Snapshot
+	err     error
 }
 
 func newUsageWatcher(base string) *usageWatcher {
@@ -114,30 +128,84 @@ func (w *usageWatcher) run(ctx context.Context, interval time.Duration) {
 			if !w.sampling(now) {
 				continue
 			}
-			w.refresh(ctx)
+			_, _ = w.refresh(ctx)
 		}
 	}
 }
 
-// refresh takes one reading and replaces the held one.
+// refresh takes one reading and replaces the held one, SHARING a fetch that is
+// already in progress rather than starting a second.
+//
+// THE SINGLEFLIGHT IS WHY THIS EXISTS IN THIS SHAPE. Every routing decision
+// takes its own reading (usageDecisionMaxAge is 0), which was affordable while
+// routing was advisory and rarely asked. It stops being affordable the moment
+// dispatch routes through it: five concurrent decisions used to be five
+// concurrent GETs against one loopback daemon, each one booting nothing but each
+// one queued behind the others' work. Now they are one request with five
+// waiters.
+//
+// SHARING A CONCURRENT FETCH IS NOT CACHING, and the distinction is the whole
+// feature. A cache serves a document that was correct WHEN IT WAS FETCHED and is
+// being read at some later, unrelated instant — that is the founding defect this
+// layer exists to close. A joiner here waits for a request that is still open,
+// so the document it receives is bounded by usageProbeTimeout, not by how long
+// ago somebody else happened to ask. Nothing is ever served from a completed
+// fetch: the moment one lands, the next ask starts a new one.
+//
+// THE FETCH IS DETACHED FROM THE CALLER'S CONTEXT, deliberately. A waiter that
+// gives up (see usageDecisionWait) must not cancel a request other waiters are
+// still on, and the reading should still land for the next asker rather than
+// being thrown away at the finish line. The request bounds itself with
+// usageProbeTimeout instead.
 //
 // A FAILED FETCH REPLACES THE DOCUMENT WITH THE ERROR rather than leaving the
 // last good one in place. Keeping a stale document alive across an outage is
 // the same defect one level up: the reading would keep answering with numbers
 // nobody can vouch for, and the routing layer's honest answer to "the daemon is
 // not reachable" is UNKNOWN, not "whatever it said last time".
-func (w *usageWatcher) refresh(ctx context.Context) {
-	cctx, cancel := context.WithTimeout(ctx, usageProbeTimeout)
+func (w *usageWatcher) refresh(ctx context.Context) (limits.Snapshot, error) {
+	w.mu.Lock()
+	call := w.inflight
+	if call == nil {
+		call = &usageFetch{started: time.Now(), done: make(chan struct{})}
+		w.inflight = call
+		go w.runFetch(call)
+	}
+	w.mu.Unlock()
+
+	select {
+	case <-call.done:
+		return call.snap, call.err
+	case <-ctx.Done():
+		// The caller's own patience ran out. The fetch keeps going and its result
+		// lands for whoever asks next; this caller gets UNKNOWN with the reason
+		// named, which is what capacityFor turns into an explained decision
+		// rather than a refusal.
+		return limits.Snapshot{}, fmt.Errorf(
+			"claudemon's usage report did not arrive within this decision's %s budget (the fetch is still open and will land for the next ask): %w",
+			time.Since(call.started).Round(time.Millisecond), ctx.Err())
+	}
+}
+
+// runFetch is the single owner of one shared fetch: it takes the reading, stores
+// it, releases the waiters, and clears the slot so the NEXT ask starts a fresh
+// request instead of reusing this one's answer.
+func (w *usageWatcher) runFetch(call *usageFetch) {
+	ctx, cancel := context.WithTimeout(context.Background(), usageProbeTimeout)
 	defer cancel()
-	snap, err := w.fetch(cctx)
+	snap, err := w.fetch(ctx)
 
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if err != nil {
 		w.err, w.haveSnap = err, false
-		return
+	} else {
+		w.snap, w.haveSnap, w.err = snap, true, nil
 	}
-	w.snap, w.haveSnap, w.err = snap, true, nil
+	call.snap, call.err = snap, err
+	w.inflight = nil
+	w.mu.Unlock()
+
+	close(call.done)
 }
 
 func (w *usageWatcher) fetch(ctx context.Context) (limits.Snapshot, error) {
@@ -179,6 +247,29 @@ func (w *usageWatcher) fetch(ctx context.Context) (limits.Snapshot, error) {
 // every other reader.
 const usageDecisionMaxAge = 0
 
+// usageDecisionWait is the longest a ROUTING DECISION waits for that reading
+// before answering without one.
+//
+// A DECISION MUST NOT BE ABLE TO HANG. Routing is now on the dispatch path — a
+// manager asks routing.select and then spawns — so an unresponsive claudemon
+// must degrade the ANSWER, never stall the fleet. usageProbeTimeout (10s) bounds
+// the HTTP request and is the right size for a background poll; it is far too
+// long to keep a dispatch waiting, and a hung TCP connect can sit there for the
+// whole of it.
+//
+// WHAT A DECISION DOES WHEN THE READING IS UNAVAILABLE, decided deliberately:
+// it routes as if capacity were UNKNOWN, and says so in the reason list. Not a
+// refusal — a hub that would not dispatch because a usage daemon was restarting
+// would be strictly worse than the advisory layer it replaced. Not a healthy
+// default either: UNKNOWN goes through the matrix's own `providers[].when_unknown`
+// (`yellow` for the metered providers), and UNKNOWN satisfies neither the
+// spend-down arm nor the conserve-by-forecast arm, so an unreachable daemon
+// produces NORMAL mode — no promotion off evidence that does not exist, and no
+// phantom conservation either. The observed health stays UNKNOWN on the answer
+// next to the assumed one, so nothing downstream can read "we could not ask" as
+// "it is fine".
+const usageDecisionWait = 3 * time.Second
+
 // Latest is the ask. It notes the ask (which starts the poller), and answers
 // from the held document unless there is none or it has aged past usageMaxAge,
 // in which case it takes one reading inline — so the FIRST ask on a quiet
@@ -204,18 +295,14 @@ func (w *usageWatcher) LatestWithin(ctx context.Context, maxAge time.Duration) (
 		return snap, nil
 	}
 
-	w.refresh(ctx)
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if !w.haveSnap {
-		if w.err != nil {
-			return limits.Snapshot{}, w.err
-		}
-		if err != nil {
-			return limits.Snapshot{}, err
-		}
-		return limits.Snapshot{}, fmt.Errorf("no usage reading")
+	// The result of THIS fetch (or of the one it joined), not whatever landed in
+	// the held document afterwards. Reading the field back would race a
+	// concurrent failed fetch onto a successful caller's answer, which is the
+	// same "correct when it was taken, wrong when it was read" shape one level
+	// smaller.
+	snap, err = w.refresh(ctx)
+	if err != nil {
+		return limits.Snapshot{}, err
 	}
-	return w.snap, nil
+	return snap, nil
 }

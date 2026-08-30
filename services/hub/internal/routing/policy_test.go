@@ -808,3 +808,92 @@ func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// §34 MANUAL MODE OVERRIDES
+// ---------------------------------------------------------------------------
+
+// TestManualModesFromTheFileReachTheDecision is §34's "auto | conserve | normal
+// | spend_down, globally and optionally per provider".
+//
+// The per-provider half already had a case above. What this adds is the two
+// arms that were never watched: `modes.global`, which is the spelling a user
+// reaches for first, and the PRECEDENCE between the two — a global that
+// silently outranked a per-provider entry would make "conserve Claude for the
+// next few hours" unexpressible while codex stays automatic.
+//
+// It goes through Select, not DecideMode, because the mode is not the
+// deliverable: the CAPABILITY the mode moves is. A manual mode that reached the
+// verdict and not the `mode_shifts:` table would be a control that reports
+// itself as applied and changes no dispatch.
+func TestManualModesFromTheFileReachTheDecision(t *testing.T) {
+	// A perfectly healthy, quiet codex — every automatic arm says NORMAL, so
+	// anything else in the answers below came from the file and from nothing
+	// else.
+	healthy := snapshotOf(t, "codex", "acct", map[string]winSpec{
+		"five_hour": {used: 12, resets: 4 * time.Hour},
+		"seven_day": {used: 11, resets: 96 * time.Hour},
+	})
+	sel := func(t *testing.T, userYAML string) Decision {
+		t.Helper()
+		m, err := Load("test.yaml", []byte(userYAML))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		return Select(m, healthy, nil, policyNow, Request{Role: "scout", Provider: "codex"})
+	}
+
+	control := sel(t, "")
+	if control.Mode != ModeNormal {
+		t.Fatalf("the control case is %q, not normal — every case below would prove nothing", control.Mode)
+	}
+	if control.Capability != "balanced" {
+		t.Fatalf("the control scout is %q, want balanced", control.Capability)
+	}
+
+	// modes.global alone.
+	for _, tc := range []struct {
+		yaml string
+		want Mode
+		cap  string
+	}{
+		{"modes:\n  global: conserve\n", ModeConserve, "cheap"},
+		{"modes:\n  global: spend_down\n", ModeSpendDown, "frontier"},
+		{"modes:\n  global: normal\n", ModeNormal, "balanced"},
+	} {
+		d := sel(t, tc.yaml)
+		if d.Mode != tc.want || !d.ModeManual {
+			t.Errorf("%q gave mode %q (manual=%v), want %q manual — modes.global is not reaching DecideMode",
+				strings.TrimSpace(tc.yaml), d.Mode, d.ModeManual, tc.want)
+		}
+		if d.Capability != tc.cap {
+			t.Errorf("%q left the scout on capability %q, want %q — the manual mode reached the verdict but not the mode_shifts table, which is a control that changes no dispatch\n  reasons: %s",
+				strings.TrimSpace(tc.yaml), d.Capability, tc.cap, strings.Join(d.Reason, " | "))
+		}
+	}
+
+	// PRECEDENCE: a per-provider entry wins over the global for that provider,
+	// which is what makes "conserve Claude, leave codex automatic" sayable.
+	d := sel(t, "modes:\n  global: conserve\n  providers:\n    codex: spend_down\n")
+	if d.Mode != ModeSpendDown {
+		t.Errorf("modes.providers.codex did not outrank modes.global (%q) — with the global winning, a per-provider control is unreachable", d.Mode)
+	}
+	// …and a provider the per-provider block does NOT name still follows the
+	// global one.
+	d = sel(t, "modes:\n  global: conserve\n  providers:\n    claude: normal\n")
+	if d.Mode != ModeConserve {
+		t.Errorf("codex, unnamed under modes.providers, did not follow modes.global (%q)", d.Mode)
+	}
+
+	// `auto` is not a mode: it defers, and must never appear on a decision.
+	d = sel(t, "modes:\n  global: auto\n  providers:\n    codex: auto\n")
+	if d.Mode != ModeNormal || d.ModeManual {
+		t.Errorf("auto produced mode %q (manual=%v) — auto is the deferral, not a verdict", d.Mode, d.ModeManual)
+	}
+
+	// A mode the vocabulary does not have must not silently pin anything.
+	d = sel(t, "modes:\n  global: consrve\n")
+	if d.Mode != ModeNormal || d.ModeManual {
+		t.Errorf("a misspelled mode was honoured as %q (manual=%v) — an unparseable override must fall through to the thresholds, not pin a mode nobody asked for", d.Mode, d.ModeManual)
+	}
+}

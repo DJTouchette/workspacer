@@ -679,7 +679,32 @@ func main() {
 
 	routingSvc := routing.New(*routingFile, newRoutingCatalog(*claudemonURL, self))
 	go routingSvc.Run(ctx, routing.DefaultTickEvery)
-	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage))
+
+	// The append-only audit trail, beside routing.yaml in the hub's own 0600
+	// state directory. Two writers, one file: routing.select records the
+	// decision, the spawn gate records the spawn that quoted it, and the
+	// decisionId on the wire joins them. Disabled together with the matrix file
+	// (--routing-file ""), because a log of decisions made against compiled-in
+	// defaults on a deliberately stateless deployment is state that deployment
+	// said it did not want.
+	routingLog := routing.NewDecisionLog(routing.DecisionLogPathFor(*routingFile), routing.DefaultDecisionLogMaxBytes)
+
+	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, b.Publish, routingLog))
+
+	// AND THIS IS WHERE THE ANSWER STOPS BEING ADVICE. Until this line, a
+	// manager could ask routing.select, ignore the answer, and spawn whatever it
+	// liked: Invariants 1 and 2 held by doctrine, which is precisely the state
+	// `delivery: pr|local` is in and which ipcTypes.ts calls out in as many
+	// words. The clamp itself lives in internal/bus's sanitizeSpawnParams — the
+	// only spawn-path code in this repo that is not a twin, and therefore the
+	// only place a single edit covers the desktop, the headless brain and the
+	// federated hop at once. What is injected here is the POLICY it consults and
+	// the sink it records to; the bus holds neither a matrix nor a vocabulary.
+	//
+	// There is still no routing WRITE RPC, and there must never be one: the
+	// ceilings this enforces are only a ceiling because no bus caller can edit
+	// the file they come from.
+	srv.SetSpawnCeiling(routingSpawnCeiling(routingSvc), routingSpawnAudit(routingLog))
 
 	// Remote node registry: which machines exist, whether each is available,
 	// waking, stopped or unreachable, and the one call that starts a stopped

@@ -96,6 +96,32 @@ capabilities:
   - frontier_plus
 
 # ---------------------------------------------------------------------------
+# CAPABILITY RANKS — how STRONG each capability is, which is the one question
+# the list above cannot answer.
+#
+# `capabilities:` is a vocabulary, and its order is documentation. It is NOT a
+# ladder: `reviewer` is listed after `frontier` and resolves to Sonnet High,
+# which is cheaper than frontier's Sol High. Read list position as strength and a
+# `max_capability: frontier` ceiling would refuse every reviewer spawn — a clamp
+# firing on the cheaper side of the thing it is protecting.
+#
+# Ties are real and allowed: deep_reviewer (Opus High) and frontier (Sol High)
+# are the same strength on two different model families, which is exactly what
+# section 23's independent review is buying.
+#
+# Only the `ceilings:` block reads these. A capability with no rank here CANNOT
+# be compared, so a ceiling clamps it rather than waving it through — the load
+# log names any capability you add without ranking it.
+capability_ranks:
+  cheap: 1
+  balanced: 2
+  reviewer: 2
+  frontier: 3
+  deep_reviewer: 3
+  frontier_max: 4
+  frontier_plus: 5
+
+# ---------------------------------------------------------------------------
 # ROLES — what each kind of worker needs, as a capability. This is the clean
 # part: the profiles below merely resolve the aliases.
 roles:
@@ -254,17 +280,44 @@ mode_shifts:
   # "balanced scout -> frontier scout; balanced reviewer -> frontier reviewer;
   # frontier high -> frontier max on difficult work." Unused subscription
   # capacity has no value after the reset, so near one it buys assurance.
+  #
+  # `fixer` IS PROMOTED HERE, and that is a reading of section 13's worked
+  # example rather than of its prose rules. The example turns a normal ticket
+  # from "Terra scout / Sol implementation / Sonnet review / Terra fixer" into
+  # "Sol scout / Sol implementation / Sonnet review / Opus second review / Sol
+  # fixer" — and the fixer promotion is the only one of those lines a role ->
+  # capability map could produce that was previously missing. It is also the
+  # mirror of the deliberate omission under `conserve:` above: the fixer is the
+  # role that repairs broken work, so demoting it is the demotion most likely to
+  # cost more than it saves, and promoting it on capacity that expires anyway is
+  # the same judgement pointing the other way.
+  #
+  # WHAT IS STILL NOT HERE, on purpose: "single reviewer -> two independent
+  # reviewers". That is a change to how many agents a ticket runs, not to which
+  # capability one agent gets, and this table cannot express it. It belongs to
+  # whatever dispatches the review, not to the matrix.
   spend_down:
     scout: frontier
     reviewer: deep_reviewer
     implementer: frontier_max
+    fixer: frontier
     complex_fixer: frontier_max
     diagnostician: frontier_max
 
 # ---------------------------------------------------------------------------
 # MODES — the manual override. `auto` lets the thresholds above decide.
 #   auto | conserve | normal | spend_down
-# A per-provider entry wins over the global one for that provider.
+#
+# A per-provider entry wins over the global one for that provider — EXCEPT
+# `auto`, which is a deferral rather than a verdict and falls through to the
+# global. That exception is load-bearing rather than pedantic: the two entries
+# below ship in this file to document the shape, a deep merge cannot delete
+# them, and without it `global: conserve` on its own would be overruled for
+# codex and claude — the only two providers with a readable allowance — by two
+# lines the hub itself wrote into your file.
+#
+# To hold one provider out of a global conserve, say `normal`. That is a verdict
+# and it wins.
 modes:
   global: auto
   providers:
@@ -286,10 +339,49 @@ modes:
 #
 # This is a CEILING, not an assignment: it can only lower what was asked for.
 # It is enforceable rather than merely stated because of where this file lives —
-# no agent can write to it, and there is no routing write RPC. It does not, and
-# cannot, constrain a full-access manager's own shell.
+# no agent can write to it, and there is no routing write RPC.
+#
+# WHERE IT IS ENFORCED, and on what. Every agents.spawn that arrives over the
+# bus — the remote clients, the MCP facade, a hub job, a federated peer — passes
+# one Go function in the hub router, and that is where the two limits above are
+# applied. A spawn asking for more is not refused outright: the excess is
+# CLAMPED and the caller is told what was taken, in the spawn's own answer, so a
+# manager learns its dispatch was narrowed instead of quietly getting less.
+#
+# `max_capability` binds two things, and the second is what stops the first from
+# being a label:
+#
+#   * the spawn's declared `capability` (what a dispatch acting on a routing
+#     decision copies from that decision), and
+#   * the capability the MODEL it names resolves to in the `profiles:` above —
+#     but only when that reading is unambiguous. `fable` is only ever
+#     frontier_plus and is refused under a `frontier` ceiling; `opus` with no
+#     effort could be frontier, deep_reviewer OR frontier_max, so it is allowed.
+#     A model this file never mentions is not judged at all.
+#
+# When it clamps, the spawn's `model` and `effort` go with it: keeping the model
+# a refused capability chose would make the ceiling a relabelling. The provider
+# then starts on its own configured default.
+#
+# The LOCAL desktop spawn dialog is deliberately NOT clamped. That is a human at
+# the machine clicking Spawn, not an agent granting itself capability.
+#
+# AND THE LIMIT, stated plainly: this ceiling is enforced exactly as strongly as
+# the Fleet Manager's own permission mode. It closes every capability door — the
+# bus, fs.write, config.save. With approvals on, an edit to this file raises a
+# prompt you see. With full access on, it does not. A ceiling is not a sandbox.
+#
+# THE SHIPPED `default` IS DELIBERATELY PERMISSIVE — it admits everything this
+# matrix can answer — and that is a decision rather than an oversight. A default
+# that capped at `frontier` would refuse the matrix's OWN `judge` role, which
+# `roles:` puts at frontier_plus: routing.select would answer "Fable", the spawn
+# gate would take the model away, and every judge dispatch would arrive as an
+# unexplained downgrade. A ceiling that refuses the policy it sits under is not a
+# ceiling, it is a disagreement. Capping is a per-directory act; uncomment the
+# example below and it binds on the next tick.
 ceilings:
-  default: { max_capability: frontier, max_tool_scope: operator }
-  # Per-project overrides look like this — an absolute directory as the key:
+  default: { max_capability: frontier_plus, max_tool_scope: operator }
+  # Per-project overrides look like this — an absolute directory as the key. The
+  # longest matching ancestor wins, so one entry covers a whole tree:
   #
   # /home/you/Work/some-client-repo: { max_capability: balanced, max_tool_scope: triage }

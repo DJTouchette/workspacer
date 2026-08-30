@@ -608,6 +608,36 @@ type spawnParams struct {
 	// direct privilege implication, it must move behind the same hub-verified
 	// stamp as YoloGranted rather than staying caller-set.
 	Manager bool `json:"manager"`
+	// ── the routing wire ──────────────────────────────────────────────────
+	//
+	// Three RECORDED fields, mirrored rather than declined, and the reason to
+	// mirror them is exactly that they are recorded: a headless node that cannot
+	// say which role a worker was, or which decision produced it, is a node whose
+	// analytics are silently wrong — and it is the node MOST likely to be running
+	// a dispatched fleet, since the desktop's own analytics store (workspacer.db)
+	// does not exist here at all.
+	//
+	// NAMING, which is not free-form here. "tier" already means AUTHORITY in this
+	// codebase (view | triage | operator — see ToolScope above), so the
+	// cheap/balanced/frontier axis the routing spec calls a tier is CAPABILITY
+	// everywhere on this wire. "escalation" was taken twice before either of
+	// these existed (EscalationScrubbed, notifyEscalate).
+	//
+	// Role is the work role the routing matrix answered for: scout,
+	// implementer, reviewer, fixer, validator, judge … It is metadata, not
+	// authority: nothing here grants anything from it.
+	Role string `json:"role"`
+	// Capability is the model-capability the spawn is entitled to, copied from
+	// the routing decision. IT IS READ, and by the one piece of code that can
+	// enforce it: the hub router clamps it down to routing.yaml's
+	// `ceilings.<dir>.max_capability` before this call ever arrives, dropping
+	// `model` and `effort` with it and naming all three in EscalationScrubbed.
+	// So a value that survives to here is one the ceiling allowed.
+	Capability string `json:"capability"`
+	// DecisionID joins this spawn to the routing.select answer it acted on, in
+	// the hub's append-only decision log (routing-decisions.jsonl, beside
+	// routing.yaml). The hub writes both rows; this field is the key.
+	DecisionID string `json:"decisionId"`
 	// Message is the new agent's FIRST PROMPT, carried by the spawn instead of
 	// a follow-up agents.sendMessage.
 	//
@@ -632,6 +662,14 @@ type spawnParams struct {
 	// EscalationScrubbed stamp. Unexported for the same reason as skip: it is an
 	// ANSWER, and a caller must not be able to seed it. Read by spawnResult.
 	scrubbed []string
+}
+
+// routed reports whether this spawn carries anything from the routing layer
+// worth recording against the session.
+func (p spawnParams) routed() bool {
+	return strings.TrimSpace(p.Role) != "" ||
+		strings.TrimSpace(p.Capability) != "" ||
+		strings.TrimSpace(p.DecisionID) != ""
 }
 
 // escalationScrubbed is the union of what the hub router took away before this
@@ -765,8 +803,11 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget()})
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed()) {
+		r.meta.set(sessionID, spawnMeta{
+			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
+			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
+		})
 	}
 	// AFTER the wholesale set above, which would otherwise erase it. Unlike
 	// that one this is unconditional: every session has a permission mode, and
@@ -827,6 +868,28 @@ func spawnResult(id, message string, queued bool, p spawnParams) map[string]any 
 	out["fullAccess"] = p.skip
 	if scrubbed := p.escalationScrubbed(); len(scrubbed) > 0 {
 		out["escalationScrubbed"] = scrubbed
+	}
+	// THE ROUTING FIELDS, ECHOED — what this host ACCEPTED, which is not always
+	// what was sent. The hub router clamps `capability` down to routing.yaml's
+	// per-directory ceiling before the call arrives (dropping model and effort
+	// with it), so a dispatcher that asked for frontier_plus and reads back
+	// `frontier` here has its answer in the same place `fullAccess` gives it —
+	// in the ANSWER, rather than in a log line on a machine it cannot read.
+	// Omitted entirely for a spawn that named none of them, so an unrouted
+	// spawn's result shape is exactly today's. TWIN: hubCapabilities.ts
+	// spawnResult.
+	if p.routed() {
+		routing := map[string]any{}
+		if v := strings.TrimSpace(p.Role); v != "" {
+			routing["role"] = v
+		}
+		if v := strings.TrimSpace(p.Capability); v != "" {
+			routing["capability"] = v
+		}
+		if v := strings.TrimSpace(p.DecisionID); v != "" {
+			routing["decisionId"] = v
+		}
+		out["routing"] = routing
 	}
 	return out
 }
@@ -898,8 +961,11 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	if err != nil {
 		return nil, err
 	}
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget()) {
-		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget()})
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed()) {
+		r.meta.set(sessionID, spawnMeta{
+			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
+			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
+		})
 	}
 	// Same contract as the PTY leg: after the wholesale set, unconditionally.
 	r.noteLaunch(sessionID, provider, p)

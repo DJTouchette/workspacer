@@ -406,10 +406,29 @@ func validate(m *Matrix) []Issue {
 			}
 		}
 	}
+	// The capability LADDER. `capabilities:` says which names exist; this says
+	// which is stronger, and the ceiling cannot compare anything without it. Both
+	// directions are reported: a capability with no rank is one every ceiling
+	// clamps (CheckSpawn fails closed on it), and a rank for a capability that
+	// does not exist is a typo whose ceiling comparison will never fire.
+	for _, c := range m.Capabilities {
+		if _, ok := m.CapabilityRanks[c]; !ok {
+			add("capability_ranks", "capability %q has no rank, so a `ceilings:` entry cannot tell whether it is above or below the limit — every spawn declaring it is clamped until it is ranked", c)
+		}
+	}
+	for _, name := range sortedKeys(m.CapabilityRanks) {
+		if !declared[name] {
+			add("capability_ranks."+name, "not in the `capabilities:` list, so nothing can ever be ranked by it")
+		}
+	}
+
 	for _, key := range sortedKeys(m.Ceilings) {
 		c := m.Ceilings[key]
 		if c.MaxCapability != "" && !declared[c.MaxCapability] {
 			add("ceilings."+key, "max_capability %q is not in the `capabilities:` list", c.MaxCapability)
+		}
+		if c.MaxCapability != "" && m.RankOf(c.MaxCapability) == UnrankedCapability {
+			add("ceilings."+key, "max_capability %q has no `capability_ranks:` entry, so this ceiling compares nothing and clamps nothing", c.MaxCapability)
 		}
 		switch c.MaxToolScope {
 		case "", "view", "triage", "operator":
