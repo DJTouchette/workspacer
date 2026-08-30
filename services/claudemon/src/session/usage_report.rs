@@ -573,21 +573,12 @@ fn codex_report(store: &SessionStore) -> ProviderReport {
         },
         Ok(u) => {
             let now = time::OffsetDateTime::now_utc().unix_timestamp();
-            let window = |w: &Option<codex_usage::CodexWindow>| match w {
-                Some(w) => WindowReport {
-                    used_percent: Measured::from_option(
-                        w.used_percent,
-                        "the rollout's rate_limits block carried no percentage \
-                         for this window",
-                    ),
-                    resets_at: w.resets_at,
-                    window_minutes: w.window_minutes,
-                    is_current: w.is_current(now),
-                },
-                None => WindowReport::missing(Measured::unknown(
-                    "the most recent rollout carrying rate limits did not \
-                     include this window",
-                )),
+            // See [`codex_window_report`] for why an absent window is
+            // UNAVAILABLE rather than UNKNOWN, and what licenses that claim.
+            let enumerated = u.five_hour.is_some() || u.seven_day.is_some();
+            let plan = u.plan_type.as_deref();
+            let window = |w: &Option<codex_usage::CodexWindow>, name: &str| {
+                codex_window_report(w, enumerated, plan, name, now)
             };
             let account = AccountReport {
                 // Codex has one login per CODEX_HOME and records no account
@@ -603,8 +594,8 @@ fn codex_report(store: &SessionStore) -> ProviderReport {
                 fresh: None,
                 failure: None,
                 windows: WindowsReport {
-                    five_hour: window(&u.five_hour),
-                    seven_day: window(&u.seven_day),
+                    five_hour: window(&u.five_hour, "five-hour"),
+                    seven_day: window(&u.seven_day, "seven-day"),
                     monthly: WindowReport::missing(Measured::unavailable(
                         "Codex publishes no monthly window",
                     )),
@@ -637,6 +628,72 @@ fn codex_report(store: &SessionStore) -> ProviderReport {
                     .map(|has| format!("credits: {}", if has { "available" } else { "none" })),
             }
         }
+    }
+}
+
+/// One Codex window, reported — and the decision about what an ABSENT window
+/// means, which is the whole of this function.
+///
+/// WHICH WINDOWS EXIST IS A PROPERTY OF THE PLAN, and Codex states it in full
+/// every time. A `rate_limits` block enumerates the account's entire limit set:
+/// a plan with no five-hour slot sends `secondary: null` and puts its weekly
+/// window in `primary`. That is the server SAYING there is no such window, not
+/// the server failing to mention one.
+///
+/// Observed on the author's machine 2026-08-30, in the rollouts themselves: the
+/// plan changed from `team` (primary 300min + secondary 10080min) to
+/// `self_serve_business_prolite` (primary 10080min, `secondary: null`), and the
+/// five-hour window stopped existing. Nothing rotated and nothing failed to
+/// parse — the account simply stopped having that limit.
+///
+/// So an absent window is UNAVAILABLE — structurally unpublishable, the same
+/// answer `monthly` has always given — and NOT `unknown`. The distinction is
+/// load-bearing downstream: `unknown` means "a retry may succeed", so the hub
+/// counts it as a readable-but-dark bucket, and because UNKNOWN outranks GREEN
+/// in `limits.Worst` a five-hour window THAT DOES NOT EXIST drags the whole
+/// provider to UNKNOWN beside a perfectly current weekly one. That is a
+/// provider going dark to routing over a window nobody ever had. `unavailable`
+/// marks the bucket unmetered, and unmetered buckets are skipped, not folded.
+///
+/// `enumerated` is what licenses the claim, and it must come from the caller
+/// rather than be assumed here: it is true only because a reading REACHED us,
+/// and [`codex_usage::read_from_disk`] yields one only when `rate_limits_from`
+/// populated at least one window. A block with no windows at all (seen
+/// 2026-08-26 as `limit_id: "premium"` with both null) makes the whole rollout
+/// skipped, so a `None` here is absence from an enumeration that did arrive,
+/// never silence.
+fn codex_window_report(
+    w: &Option<codex_usage::CodexWindow>,
+    enumerated: bool,
+    plan: Option<&str>,
+    name: &str,
+    now: i64,
+) -> WindowReport {
+    match w {
+        Some(w) => WindowReport {
+            used_percent: Measured::from_option(
+                w.used_percent,
+                "the rollout's rate_limits block carried no percentage for this window",
+            ),
+            resets_at: w.resets_at,
+            window_minutes: w.window_minutes,
+            is_current: w.is_current(now),
+        },
+        None if enumerated => WindowReport::missing(Measured::unavailable(format!(
+            "the Codex plan {} publishes no {name} window — the newest rollout's \
+             rate_limits block enumerated this account's limits and this window \
+             was not among them",
+            plan.map(|p| format!("`{p}`"))
+                .unwrap_or_else(|| "on this account".to_string()),
+        ))),
+        // Currently unreachable (see `enumerated`), and kept because that
+        // guarantee lives in another module. If `rate_limits_from` ever starts
+        // yielding a block with no windows, the honest answer is that we
+        // learned nothing about this window — retryable — not that the plan
+        // lacks it.
+        None => WindowReport::missing(Measured::unknown(
+            "the most recent rollout carrying rate limits did not include this window",
+        )),
     }
 }
 
@@ -756,6 +813,80 @@ fn live_sessions_for(store: &SessionStore, provider: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The regression this fix exists for. On 2026-08-30 the account's plan
+    /// changed to one that publishes a single weekly window, and the absent
+    /// five-hour window was reported UNKNOWN — which the hub reads as
+    /// "retryable", folds in as a dark bucket, and (UNKNOWN outranking GREEN)
+    /// lets drag all of codex to UNKNOWN beside a current 3%-used weekly
+    /// window. A window the plan does not have is UNAVAILABLE.
+    #[test]
+    fn a_window_the_plan_does_not_publish_is_unavailable_not_unknown() {
+        let weekly = Some(codex_usage::CodexWindow {
+            used_percent: Some(3.0),
+            window_minutes: Some(10080),
+            resets_at: Some(1788731121),
+        });
+        // Verbatim shape of the live 2026-08-30 rollout: primary is the weekly
+        // window, secondary is null, so five_hour is None.
+        let five = codex_window_report(
+            &None,
+            /* enumerated */ true,
+            Some("self_serve_business_prolite"),
+            "five-hour",
+            1788130339,
+        );
+        match &five.used_percent {
+            Measured::Unavailable { reason } => {
+                assert!(
+                    reason.contains("self_serve_business_prolite") && reason.contains("five-hour"),
+                    "the reason must name the plan and the window: {reason}",
+                );
+            }
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+        assert_eq!(five.resets_at, None);
+        assert_eq!(five.is_current, None, "an absent window is not `current`");
+
+        // The window that DOES exist is untouched by the change.
+        let seven = codex_window_report(&weekly, true, Some("x"), "seven-day", 1788130339);
+        assert_eq!(seven.used_percent, Measured::Ok { value: 3.0 });
+        assert_eq!(seven.resets_at, Some(1788731121));
+        assert_eq!(seven.is_current, Some(true));
+    }
+
+    /// The other half of the rule: absence only means "the plan lacks it" when
+    /// an enumeration actually arrived. With nothing enumerated we learned
+    /// nothing, and the honest answer is the retryable one.
+    #[test]
+    fn an_absent_window_with_nothing_enumerated_stays_unknown() {
+        let w = codex_window_report(&None, /* enumerated */ false, None, "five-hour", 0);
+        assert!(
+            matches!(w.used_percent, Measured::Unknown { .. }),
+            "no enumeration means retryable-unknown, not a claim about the plan",
+        );
+    }
+
+    /// A window that is present but carries no percentage is a THIRD case and
+    /// must not be swept into either of the above: the window exists and its
+    /// reset is knowable, only its utilization is not.
+    #[test]
+    fn a_present_window_without_a_percentage_is_unknown_but_keeps_its_reset() {
+        let w = codex_window_report(
+            &Some(codex_usage::CodexWindow {
+                used_percent: None,
+                window_minutes: Some(300),
+                resets_at: Some(1788130400),
+            }),
+            true,
+            Some("team"),
+            "five-hour",
+            1788130339,
+        );
+        assert!(matches!(w.used_percent, Measured::Unknown { .. }));
+        assert_eq!(w.resets_at, Some(1788130400));
+        assert_eq!(w.is_current, Some(true));
+    }
 
     /// The account key for Codex is its HOME, not the sessions directory
     /// underneath it — caught by reading a live report, so it is pinned here.
