@@ -39,6 +39,7 @@ import { claudeBaseArgv } from './claudeResolver';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { resolveAgentBinary } from './agentProviders';
 import { claudeSessionStore } from './claudeSessionStore';
+import { isWarmableProvider } from '../shared/keepWarmProviders';
 import {
   AccountUsageWire,
   KeepWarmConfig,
@@ -62,8 +63,6 @@ const USAGE_TIMEOUT_MS = 15_000;
 /** After a failed ping, don't retry for this long (auto mode would otherwise
  *  re-attempt every tick while e.g. offline). */
 const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
-
-const WARMABLE = new Set(['claude', 'codex']);
 
 class KeepWarmService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -96,7 +95,7 @@ class KeepWarmService {
     const kw = configService.getConfig().claude?.keepWarm;
     if (!kw?.enabled) return null;
     const configured = kw.providers ?? ['claude'];
-    const providers = configured.filter((p) => WARMABLE.has(p));
+    const providers = configured.filter(isWarmableProvider);
     if (!providers.length) {
       // Enabled, but nothing warmable is configured — the service would
       // otherwise do nothing at all, silently, beside a ticked checkbox. Not

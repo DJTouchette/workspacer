@@ -8,9 +8,10 @@
  *
  *  - keep-warm supports claude and codex ONLY, and that is correct rather than
  *    a gap: they are the only harnesses with a 5-hour subscription window a
- *    ping can start (main's `WARMABLE` set filters the config to the same
- *    pair). Installing copilot must not add a button — it would write config
- *    the service then drops on the floor.
+ *    ping can start (both sides read `main/shared/keepWarmProviders`, so the
+ *    service filters the config through the very list these buttons offer).
+ *    Installing copilot must not add a button — it would write config the
+ *    service then drops on the floor.
  *  - of those two, offer what is installed — with the usual escape hatch that a
  *    provider the config is already warming stays visible, flagged, so it can
  *    still be switched off.

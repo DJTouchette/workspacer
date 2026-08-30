@@ -153,7 +153,7 @@ pub(crate) fn scan_all() -> Vec<Route> {
 
 /// The `_comment` the other fixtures carry, in this file's own words.
 const VOCAB_COMMENT: [&str; 4] = [
-    "GENERATED with the routes below — do not hand-edit; `make claudemon-routes` rewrites this",
+    "GENERATED with the routes above — do not hand-edit; `make claudemon-routes` rewrites this",
     "whole key from services/claudemon/src/daemon/routes_contract.rs, and the drift test fails",
     "if the two disagree. `required` is the field set of the Rust `Route` struct as serde",
     "serializes it, so a new column on the table cannot arrive undeclared.",
