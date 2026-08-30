@@ -33,20 +33,21 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   policy can disable third-party MCP servers, and a manager that cannot
   reach Workspacer's tools cannot dispatch. That case raises a session error
   naming the missing servers rather than passing for a healthy manager.
-- **Usage is there at boot, for Claude, Codex and Copilot.** The usage
-  surfaces used to be able to answer only for a Claude session that was
-  running right now. `GET /usage/report` reads what each CLI already left on
-  disk — Claude's polled OAuth windows per configured config root, Codex's
-  newest rollout and token store, Copilot's — so the Overview cost tile, the
-  Inspector's Usage tab and the History pane have real numbers on a cold
-  start, with no session open. Every figure carries whether it is a real
-  zero, an **unknown** that a retry might answer, or an **unavailable** that
-  no retry can, each with the reason attached, so a dash on the screen can
-  now say why it is a dash. Sessions are billed to the account that actually
-  ran them — recorded at spawn — and a session whose account cannot be
-  determined goes to its own row instead of quietly inflating the default
-  login's total. A new usage detail modal, reachable from the dashboard and
-  the inspector, shows each window's duration alongside its percentage.
+- **Usage is there at boot.** The Overview cost tile, the Inspector's Usage
+  tab and the History pane used to be able to answer only for a session that
+  was running right now, so a restored agent showed nothing beside a database
+  that had already recorded every dollar it spent. Those surfaces now fall
+  back to the desktop's own recorded session history, so cost and token
+  figures are real on a cold start with no session open. An absence stays a
+  dash rather than a fabricated `$0.00`, and the dash says which absence it
+  is: nothing was ever recorded for that session, or the recorded usage could
+  not be read. Account rate-limit windows are the part that still needs a
+  live session. After a restart the rate-limit cards render nothing at all,
+  which also puts the new usage detail modal out of reach on the dashboard,
+  though it still opens from the inspector and shows each window's duration
+  alongside its percentage. The daemon can answer for windows without a live
+  session, over `GET /usage/report`, which reads what each CLI already left
+  on disk for Claude, Codex and Copilot. No client reads that endpoint yet.
 - **Account profiles for every harness, not just Claude.** A profile is a
   config root, and each harness has one: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
   `COPILOT_HOME`. So a second Codex or Copilot login is now a profile you
