@@ -357,9 +357,10 @@ export function registerHubCapabilities(): void {
   //     cannot call claudeSessionStore.notePermissionMode, so THIS process's
   //     `livePermissionMode` is not updated eagerly. The mode pill follows the
   //     daemon's own telemetry instead of flipping on the confirmed reply.
-  //   claude.setModel is NOT degraded: claudemon publishes the accepted
-  //     canonical pair in its session update, and the brain forwards the same
-  //     pair in the call result while it waits for that owner snapshot.
+  //   ADOPTED-DEGRADED: claude.setModel — claudemon still owns and publishes
+  //     the accepted canonical pair, and the brain forwards that pair in the
+  //     call result, but it cannot eagerly write Electron's local session
+  //     mirror. The desktop card waits for the owner snapshot broadcast.
   //   ADOPTED-DEGRADED: claude.setEffort — same again for noteEffort, and this
   //     one is the most visible: for a CLAUDE session that note is the pill's
   //     ONLY truth (effective effort appears in no hook, status line or init
