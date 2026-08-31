@@ -500,7 +500,7 @@ impl Driver {
         provider: &str,
         model: Option<&str>,
         effort: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<crate::claudemon::ModelSwitchOutcome> {
         match &self.bus {
             Some(b) => {
                 let mut params = json!({ "sessionId": sid });
@@ -516,7 +516,8 @@ impl Driver {
                 if let Some(e) = effort {
                     params["effort"] = json!(e);
                 }
-                check_ok(b.call(&self.method("claude.setModel"), params).await?).map(|_| ())
+                let value = check_ok(b.call(&self.method("claude.setModel"), params).await?)?;
+                Ok(crate::claudemon::ModelSwitchOutcome::from_wire(&value))
             }
             None if self.hub.is_some() => Err(anyhow!("remote session but no hub bus connection")),
             None => self.claudemon.set_model(sid, provider, model, effort).await,
@@ -902,6 +903,8 @@ mod tests {
             listener,
             json!({
                 "ok": true,
+                "queued": true,
+                "disposition": "queued",
                 "model": "opus[1m]",
                 "requestedSelection": {"model": "opus", "contextWindow": 1_000_000_u64},
             }),
@@ -909,10 +912,12 @@ mod tests {
         let mut driver = bus_driver(addr);
         driver.hub = Some("work".into());
 
-        driver
+        let outcome = driver
             .set_model("s1", "claude", Some("opus[1m]"), None)
             .await
             .expect("remote set_model ok");
+        assert!(outcome.queued);
+        assert_eq!(outcome.disposition, "queued");
 
         let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await

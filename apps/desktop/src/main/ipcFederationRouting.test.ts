@@ -278,6 +278,8 @@ describe('remote model switching follows owner truth', () => {
   it('routes a qualified pair request and records the pair the owner accepted', async () => {
     callHub.mockResolvedValueOnce({
       ok: true,
+      queued: false,
+      disposition: 'accepted',
       model: 'fable',
       requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
     });
@@ -305,6 +307,8 @@ describe('remote model switching follows owner truth', () => {
       'fable',
     );
     expect(result).toMatchObject({
+      queued: false,
+      disposition: 'accepted',
       model: 'fable',
       requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
     });

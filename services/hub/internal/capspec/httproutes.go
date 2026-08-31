@@ -367,7 +367,7 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Server: "claudemon-api", Pattern: "/sessions/:id/model", Disposition: RouteLoopbackConfined,
-		Reason:   "live model / reasoning-effort switch on a managed thread. Model choice is already visible in the view-tier snapshot; changing it is operator business on the bus",
+		Reason:   "owner boundary for live model switching: managed threads receive a structural update, while Claude PTY gets a daemon-built command only after model validation. PTY effort is refused as unapplied, and the response distinguishes queued delivery from accepted delivery. Model choice remains operator business on the bus and owner-authored requested_selection remains canonical",
 		Twin:     "claude.setModel",
 		TwinKind: TwinMethod,
 	},

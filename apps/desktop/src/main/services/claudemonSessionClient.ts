@@ -572,6 +572,8 @@ class ClaudemonSessionClient {
     /** Executable legacy companion accepted by the daemon/driver. */
     model?: string;
     requestedSelection?: { model: string; contextWindow: number | null };
+    queued?: boolean;
+    disposition?: 'queued' | 'accepted';
   }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/model`, {
       method: 'POST',
@@ -587,6 +589,8 @@ class ClaudemonSessionClient {
       error?: string;
       model?: string;
       requested_selection?: { model: string; context_window: number | null };
+      queued?: boolean;
+      disposition?: 'queued' | 'accepted';
     };
     if (res.ok) {
       const selection = body.requested_selection;
@@ -599,9 +603,17 @@ class ClaudemonSessionClient {
             contextWindow: selection.context_window,
           },
         }),
+        ...(typeof body.queued === 'boolean' && { queued: body.queued }),
+        ...(body.disposition && { disposition: body.disposition }),
       };
     }
-    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+    const error = body.error ?? `HTTP ${res.status}`;
+    return {
+      ok: false,
+      error: /PTY sessions switch via (?:the )?\/model slash command/i.test(error)
+        ? 'upgrade-required: claudemon does not support durable Claude PTY model switching'
+        : error,
+    };
   }
 
   /**

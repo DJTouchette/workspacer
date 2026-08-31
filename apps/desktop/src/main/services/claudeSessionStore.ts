@@ -585,6 +585,46 @@ export interface OrphanCandidate {
 /** Hard cap on retained tombstones (see pruneManagerTombstones). */
 const MAX_MANAGER_TOMBSTONES = 32;
 
+interface ModelTelemetryProvenance {
+  acceptedEpoch: number;
+  telemetryEpoch: number;
+  selection: import('../shared/modelContextWindows').ModelSelection;
+}
+
+function sameSelection(
+  left: import('../shared/modelContextWindows').ModelSelection | undefined,
+  right: import('../shared/modelContextWindows').ModelSelection | undefined,
+): boolean {
+  return (
+    !!left && !!right && left.model === right.model && left.contextWindow === right.contextWindow
+  );
+}
+
+function comparableModelIdentity(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '')
+    .replace(/^claude/, '');
+}
+
+function statusConfirmsSelection(
+  status: SessionStatusLine,
+  selection: import('../shared/modelContextWindows').ModelSelection,
+): boolean {
+  const modelMatch = status.modelDisplay
+    ? (() => {
+        const reported = comparableModelIdentity(status.modelDisplay!);
+        const selected = comparableModelIdentity(selection.model);
+        return (
+          !!reported && !!selected && (reported.includes(selected) || selected.includes(reported))
+        );
+      })()
+    : undefined;
+  return selection.contextWindow != null
+    ? status.contextWindowSize === selection.contextWindow && modelMatch !== false
+    : modelMatch === true;
+}
+
 // ── Store ──
 
 class ClaudeSessionStore {
@@ -596,6 +636,10 @@ class ClaudeSessionStore {
   // watcher, `applyHookEvent` and `publishSnapshot`. (Those collaborators only
   // read the slot — see the writer census in ./sessionStore/pendingSlot.)
   private sessions = new Map<string, PendingFencedSession>();
+  /** Owner selections and provider status lines are asynchronous. A status
+   * frame advances to an accepted epoch only when its model/window is
+   * compatible; until then only unrelated telemetry may pass. */
+  private modelTelemetryProvenance = new Map<string, ModelTelemetryProvenance>();
   private mainWindow: BrowserWindow | null = null;
   // Latest workflow/subagent filesystem state per session, re-merged whenever
   // either the watcher ticks or a hook event mutates the subagent list.
@@ -700,6 +744,41 @@ class ClaudeSessionStore {
   /** Record the canonical selection the OWNER accepted for a live switch.
    *  The previous status frame describes the previous model, so invalidate its
    *  model/window fields while preserving cost, tokens, and rate limits. */
+  private advanceModelSelectionEpoch(
+    sessionId: string,
+    accepted: import('../shared/modelContextWindows').ModelSelection | undefined,
+    force: boolean,
+  ): void {
+    if (!accepted) return;
+    const current = this.modelTelemetryProvenance.get(sessionId);
+    if (!force && current && sameSelection(current.selection, accepted)) return;
+    // With no current provenance, even an unchanged adopted/restored pair
+    // starts fenced: this process has not observed its provider confirmation.
+    this.modelTelemetryProvenance.set(sessionId, {
+      acceptedEpoch: (current?.acceptedEpoch ?? 0) + 1,
+      telemetryEpoch: current?.telemetryEpoch ?? 0,
+      selection: { ...accepted },
+    });
+  }
+
+  private reconcileModelTelemetry(
+    sessionId: string,
+    statusLine: SessionStatusLine,
+  ): SessionStatusLine {
+    const provenance = this.modelTelemetryProvenance.get(sessionId);
+    if (!provenance || provenance.telemetryEpoch === provenance.acceptedEpoch) return statusLine;
+    if (statusConfirmsSelection(statusLine, provenance.selection)) {
+      provenance.telemetryEpoch = provenance.acceptedEpoch;
+      return statusLine;
+    }
+    return {
+      ...statusLine,
+      modelDisplay: undefined,
+      contextWindowSize: undefined,
+      contextUsedPct: undefined,
+    };
+  }
+
   noteRequestedModelSelection(
     sessionId: string,
     selection: import('../shared/modelContextWindows').ModelSelection,
@@ -708,16 +787,11 @@ class ClaudeSessionStore {
     if (!sessionId || !selection?.model) return;
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.advanceModelSelectionEpoch(sessionId, selection, true);
     session.requestedSelection = selection;
     session.settings = { ...session.settings, model: legacyModel ?? selection.model };
-    if (session.statusLine) {
-      session.statusLine = {
-        ...session.statusLine,
-        modelDisplay: undefined,
-        contextWindowSize: undefined,
-        contextUsedPct: undefined,
-      };
-    }
+    if (session.statusLine)
+      session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
     SessionUsageAccumulator.refreshContextLimit(session);
     this.pushUpdate(session);
   }
@@ -1234,6 +1308,10 @@ class ClaudeSessionStore {
     // that happened not to restate it.
     if (meta?.selection) {
       applySelectionSlice(session, mergeSelectionSlice(session, meta.selection));
+      this.advanceModelSelectionEpoch(sessionId, session.requestedSelection, false);
+      if (session.statusLine) {
+        session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
+      }
     }
     // Ambient background work (a dev server, a poll loop, an async subagent)
     // rides its own count — the mode deliberately does not claim "working"
@@ -1466,6 +1544,7 @@ class ClaudeSessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     // Always record the latest value immediately (trailing-edge debounce).
+    statusLine = this.reconcileModelTelemetry(sessionId, statusLine);
     session.statusLine = statusLine;
     // Managed providers (codex/opencode/pi) never emit a transcript `usage`
     // item, so applyUsage (the only other peakContext writer) never runs for
@@ -1633,6 +1712,10 @@ class ClaudeSessionStore {
     // presence-merge, so a window push that omits the slice keeps what the
     // previous one told us.
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
+    this.advanceModelSelectionEpoch(sessionId, session.requestedSelection, false);
+    if (session.statusLine) {
+      session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
+    }
     if (folded && existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
@@ -1723,6 +1806,10 @@ class ClaudeSessionStore {
     // accepted, and a sparse row that omits it cannot erase the richer fact a
     // previous update supplied.
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
+    this.advanceModelSelectionEpoch(sessionId, session.requestedSelection, false);
+    if (session.statusLine) {
+      session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
+    }
     if (existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
@@ -1923,6 +2010,7 @@ class ClaudeSessionStore {
       });
     }
     this.sessions.delete(sessionId);
+    this.modelTelemetryProvenance.delete(sessionId);
     this.usageAccumulator.forget(sessionId);
     this.convSeq.delete(sessionId);
     this.watcherUpdates.delete(sessionId);

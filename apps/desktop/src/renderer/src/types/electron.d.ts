@@ -250,9 +250,9 @@ export interface ElectronAPI {
     sessionId: string,
     mode: string,
   ) => Promise<{ ok: boolean; mode?: string; error?: string }>;
-  /** Live reasoning-effort switch — no restart. Claude takes the `/effort`
-   *  slash command through the message path; managed providers take the
-   *  daemon's structural endpoint. */
+  /** Live reasoning-effort switch — no restart. Claude takes the genuinely
+   *  delivered `/effort` message path; managed providers take the daemon's
+   *  structural endpoint. Model switching never echoes an unapplied PTY effort. */
   claudeSetEffort: (
     sessionId: string,
     effort: string,
@@ -268,6 +268,8 @@ export interface ElectronAPI {
     error?: string;
     model?: string;
     requestedSelection?: { model: string; contextWindow: number | null };
+    queued?: boolean;
+    disposition?: 'queued' | 'accepted';
   }>;
   claudeHandoffBrief: (
     sessionId: string,

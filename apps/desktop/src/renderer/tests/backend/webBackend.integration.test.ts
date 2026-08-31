@@ -156,6 +156,8 @@ describe('web backend bus integration', () => {
     );
     client().results.set('hub:work/claude.setModel', {
       ok: true,
+      queued: true,
+      disposition: 'queued',
       model: 'fable',
       requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
     });
@@ -171,6 +173,8 @@ describe('web backend bus integration', () => {
     });
     expect(result).toEqual({
       ok: true,
+      queued: true,
+      disposition: 'queued',
       model: 'fable',
       requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
     });

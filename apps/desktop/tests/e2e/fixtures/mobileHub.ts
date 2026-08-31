@@ -43,6 +43,8 @@ export interface MobileHub {
   /** Every call the client made, in order. */
   calls: CallRecord[];
   callsTo(method: string): CallRecord[];
+  /** Make the next claude.setModel answer queued rather than accepted. */
+  queueNextModelSwitch(): void;
   /** Replace a session snapshot and broadcast it as an agent.snapshot event. */
   pushSnapshot(snap: any): void;
   /** The snapshots `sessions.snapshots` currently answers with. */
@@ -173,6 +175,7 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
 
   const snapshots = new Map<string, any>(FIXTURE_SESSIONS.map((s) => [s.sessionId, s]));
   const calls: CallRecord[] = [];
+  let nextModelQueued = false;
 
   // ── the fake provider ───────────────────────────────────────────────────
   const ws = new WebSocket(`ws://127.0.0.1:${port}/bus?token=${HOST_TOKEN}`);
@@ -192,6 +195,7 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
     'claude.answer',
     'claude.signal',
     'claude.setPermissionMode',
+    'claude.setEffort',
     'claude.setModel',
     'claude.listModels',
     'config.get',
@@ -267,8 +271,12 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
       case 'claude.setPermissionMode':
         return reply(f.id, { ok: true, mode: params.mode });
       case 'claude.setModel':
+        const queued = nextModelQueued;
+        nextModelQueued = false;
         return reply(f.id, {
           ok: true,
+          queued,
+          disposition: queued ? 'queued' : 'accepted',
           model: params.model,
           requestedSelection: params.modelIdentity
             ? { model: params.modelIdentity, contextWindow: params.contextWindow ?? null }
@@ -293,12 +301,16 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
     url,
     calls,
     callsTo: (m: string) => calls.filter((c) => c.method === m),
+    queueNextModelSwitch: () => {
+      nextModelQueued = true;
+    },
     pushSnapshot,
     snapshots,
     reset() {
       snapshots.clear();
       for (const s of FIXTURE_SESSIONS) snapshots.set(s.sessionId, s);
       calls.length = 0;
+      nextModelQueued = false;
     },
     async stop() {
       try {

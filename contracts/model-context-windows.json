@@ -768,6 +768,42 @@
       "expectedLegacyModel": null,
       "error": "conflicting-model-identity",
       "note": "Opaque does not mean ambiguous: both generations still have to name the same provider id."
+    },
+    {
+      "name": "PTY newline injection is refused",
+      "provider": "claude",
+      "model": "opus\n/help",
+      "modelIdentity": null,
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "invalid-model-identity",
+      "note": "A model identity can become a Claude PTY command, so command-separating control bytes are rejected at the shared ingress boundary."
+    },
+    {
+      "name": "bracketed-paste terminator injection is refused",
+      "provider": "claude",
+      "model": "opus\u001b[201~/help",
+      "modelIdentity": "opus\u001b[201~/help",
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "invalid-model-identity",
+      "note": "The escape byte in a bracketed-paste terminator must never reach the PTY command constructor."
+    },
+    {
+      "name": "opaque non-Claude identities reject controls too",
+      "provider": "codex",
+      "model": "gpt-5\rmalicious",
+      "modelIdentity": null,
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "invalid-model-identity",
+      "note": "All three ingress twins share one safe identity contract even when the current transport is structural."
     }
   ],
   "resolutionCases": [

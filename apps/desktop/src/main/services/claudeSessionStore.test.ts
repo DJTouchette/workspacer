@@ -989,6 +989,59 @@ describe('applyManagedMode carries the daemon selection slice', () => {
     expect(snap.resolvedContextWindow).toBe(200_000);
   });
 
+  it('fences repeated stale 200K frames until the accepted 1M epoch is confirmed', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'claude',
+      selection: {
+        requestedSelection: { model: 'sonnet', contextWindow: 200_000 },
+        resolvedContextWindow: 200_000,
+      },
+    });
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'Sonnet',
+      contextWindowSize: 200_000,
+      contextUsedPct: 75,
+    });
+
+    claudeSessionStore.noteRequestedModelSelection(
+      sid,
+      { model: 'opus', contextWindow: 1_000_000 },
+      'opus[1m]',
+    );
+    for (const costUSD of [2, 3]) {
+      claudeSessionStore.applyStatusLine(sid, {
+        modelDisplay: 'Sonnet',
+        contextWindowSize: 200_000,
+        contextUsedPct: 80,
+        costUSD,
+      });
+      const stale = claudeSessionStore.getSnapshot(sid)!;
+      expect(stale.requestedSelection).toEqual({ model: 'opus', contextWindow: 1_000_000 });
+      expect(stale.statusLine).toMatchObject({ costUSD });
+      expect(stale.statusLine?.modelDisplay).toBeUndefined();
+      expect(stale.statusLine?.contextWindowSize).toBeUndefined();
+      expect(stale.statusLine?.contextUsedPct).toBeUndefined();
+    }
+
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'Opus',
+      contextWindowSize: 1_000_000,
+      contextUsedPct: 10,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.statusLine?.contextWindowSize).toBe(1_000_000);
+
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'Sonnet',
+      contextWindowSize: 200_000,
+      contextUsedPct: 5,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.statusLine?.contextWindowSize).toBe(
+      200_000,
+      'truthful later provider changes remain visible after confirmation',
+    );
+  });
+
   // A session the daemon has said nothing about carries no key at all — absent
   // is a different fact from any number, and every readout already hides its
   // meter on it rather than drawing one against a guess.

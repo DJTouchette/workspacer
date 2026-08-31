@@ -798,6 +798,31 @@ test.describe('mobile client', () => {
     });
   });
 
+  test('a queued model response is labelled queued rather than executed', async ({ page }) => {
+    hub.queueNextModelSwitch();
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await page.locator('#chips [data-chip="model"]').click();
+    // The current model is deliberately omitted from the switch sheet; choose
+    // the known 1M alternative whose rendering is asserted above.
+    await page.locator('#sheet [data-row] .l', { hasText: /^opus-5\[1m\]$/ }).click();
+    await expect(page.locator('#toast')).toContainText('Model switch queued:');
+    await expect(page.locator('#toast')).not.toContainText(/^Model:/);
+  });
+
+  test('Claude effort uses the delivering effort route, never the model command', async ({
+    page,
+  }) => {
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await page.locator('#chips [data-chip="effort"]').click();
+    await page.locator('#sheet [data-row] .l', { hasText: /^Max$/ }).click();
+    await expect.poll(() => hub.callsTo('claude.setEffort').length).toBe(1);
+    expect(hub.callsTo('claude.setEffort')[0].params).toEqual({ sessionId: 'ws1', effort: 'max' });
+    expect(hub.callsTo('claude.setModel')).toHaveLength(0);
+    await expect(page.locator('#toast')).toContainText('Effort switch accepted: max');
+  });
+
   test('a Claude catalog deduplicates distinct seen ids that share a display label', async ({
     page,
   }) => {

@@ -19,7 +19,7 @@ import { applyLiveModel } from './liveModel';
 beforeEach(() => {
   vi.clearAllMocks();
   getSnapshot.mockReturnValue({ provider: 'claude' });
-  setModel.mockResolvedValue({ ok: true });
+  setModel.mockResolvedValue({ ok: true, queued: false, disposition: 'accepted' });
 });
 
 describe('applyLiveModel', () => {
@@ -40,6 +40,8 @@ describe('applyLiveModel', () => {
       ok: true,
       model: 'fable',
       requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
+      queued: false,
+      disposition: 'accepted',
     });
 
     const result = await applyLiveModel('s1', {
@@ -64,7 +66,7 @@ describe('applyLiveModel', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('conflicts');
+    expect(result.error).toBe('conflicting-model-identity');
     expect(setModel).not.toHaveBeenCalled();
     expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
@@ -82,6 +84,47 @@ describe('applyLiveModel', () => {
     setModel.mockResolvedValue({ ok: false, error: 'queue full' });
     const result = await applyLiveModel('s1', { model: 'opus' });
     expect(result).toEqual({ ok: false, error: 'queue full' });
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('refuses combined Claude PTY model and effort without claiming either', async () => {
+    const result = await applyLiveModel('s1', { model: 'opus', effort: 'high' });
+    expect(result).toEqual({
+      ok: false,
+      error: 'claude-pty-effort-unsupported: the PTY model command cannot deliver effort',
+    });
+    expect(setModel).not.toHaveBeenCalled();
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('still delivers combined model and effort structurally for Claude stream', async () => {
+    getSnapshot.mockReturnValue({ provider: 'claude', transport: 'stream' });
+    await applyLiveModel('s1', { model: 'opus', effort: 'high' });
+    expect(setModel).toHaveBeenCalledWith('s1', 'opus', 'high', 'opus', null);
+  });
+
+  it('rejects whitespace with the stable code before reaching the owner', async () => {
+    const result = await applyLiveModel('s1', { model: ' \t ' });
+    expect(result).toEqual({ ok: false, error: 'empty-model' });
+    expect(setModel).not.toHaveBeenCalled();
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('rejects control bytes before reaching the owner or mirror', async () => {
+    const result = await applyLiveModel('s1', { model: 'opus\u001b[201~/help' });
+    expect(result).toEqual({ ok: false, error: 'invalid-model-identity' });
+    expect(setModel).not.toHaveBeenCalled();
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('does not claim compatibility with a pre-Phase-5 PTY owner', async () => {
+    setModel.mockResolvedValue({ ok: true });
+    const result = await applyLiveModel('s1', { model: 'opus' });
+    expect(result).toEqual({
+      ok: false,
+      error:
+        'upgrade-required: the session owner does not support durable Claude PTY model switching',
+    });
     expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
 });

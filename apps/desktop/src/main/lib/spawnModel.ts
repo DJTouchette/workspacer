@@ -39,6 +39,7 @@ import { configService } from '../services/configService';
 import { isForeignModel } from '../shared/modelVocabulary';
 import {
   claudeArgvModel,
+  assertSafeModelIdentity,
   ModelSelectionError,
   normalizeModelSelection,
   sameModelSelection,
@@ -79,6 +80,8 @@ export function resolveSpawnModelInput(
   const normalizedProvider = provider.toLowerCase();
   const legacy = input.model?.trim() || '';
   const identity = input.modelIdentity?.trim() || '';
+  if (input.model?.trim()) assertSafeModelIdentity(input.model);
+  if (input.modelIdentity?.trim()) assertSafeModelIdentity(input.modelIdentity);
   const hasCanonical = identity !== '' || input.contextWindow != null;
 
   if (normalizedProvider !== 'claude') {

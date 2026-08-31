@@ -849,6 +849,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         error?: string;
         model?: string;
         requestedSelection?: { model: string; contextWindow: number | null };
+        queued?: boolean;
+        disposition?: 'queued' | 'accepted';
       }>(qualify(sessionId, 'claude.setModel'), {
         sessionId,
         model,

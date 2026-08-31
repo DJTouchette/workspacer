@@ -1066,10 +1066,16 @@ async fn post_model(
                 .into_response();
         }
     };
+    if persisted_selection.is_none() && payload.effort.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "empty-model" })),
+        )
+            .into_response();
+    }
     let provider_model = persisted_selection
         .as_ref()
-        .map(|selection| selection.legacy_model.clone())
-        .or(payload.model.clone());
+        .map(|selection| selection.legacy_model.clone());
     let accepted = if store.is_managed(&id) {
         store
             .set_managed_model(
@@ -1088,10 +1094,11 @@ async fn post_model(
             StatusCode::CONFLICT,
             "only Claude PTY sessions support compatibility model switching".to_string(),
         ))
-    } else if payload.effort.is_some() && persisted_selection.is_none() {
+    } else if payload.effort.is_some() {
         Err((
             StatusCode::CONFLICT,
-            "Claude PTY sessions cannot switch effort without a model".to_string(),
+            "claude-pty-effort-unsupported: the PTY model command cannot deliver effort"
+                .to_string(),
         ))
     } else {
         let command = format!(
@@ -1130,6 +1137,7 @@ async fn post_model(
             Json(json!({
                 "ok": true,
                 "queued": queued,
+                "disposition": if queued { "queued" } else { "accepted" },
                 "model": provider_model,
                 "effort": payload.effort,
                 "requested_selection": persisted_selection.map(|selection| selection.selection),
@@ -2857,6 +2865,83 @@ mod tests {
         assert_eq!(v["ok"], false);
     }
 
+    #[tokio::test]
+    async fn post_model_rejects_whitespace_without_queue_or_persistence_mutation() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+
+        let req = post_json("/sessions/sess-1/model", json!({ "model": " \t " }));
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["error"], "empty-model");
+        assert!(
+            rx.try_recv().is_err(),
+            "invalid input reached the PTY queue"
+        );
+        assert!(state
+            .store
+            .get("sess-1")
+            .unwrap()
+            .requested_selection
+            .is_none());
+        assert!(state.db.load_recent_sessions(10).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn post_model_rejects_control_bytes_before_pty_construction_without_mutation() {
+        for model in ["opus\n/help", "opus\u{1b}[201~/help"] {
+            let state = test_state();
+            let (h, mut rx) = wrapper();
+            state.store.register_wrapper("sess-1", "/w", h);
+            let req = post_json("/sessions/sess-1/model", json!({ "model": model }));
+            let (status, body) = request(state.clone(), req).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "model {model:?}");
+            let value = serde_json::from_slice::<Value>(&body).unwrap();
+            assert_eq!(value["error"], "invalid-model-identity");
+            assert!(
+                rx.try_recv().is_err(),
+                "control input reached the PTY queue"
+            );
+            assert!(state
+                .store
+                .get("sess-1")
+                .unwrap()
+                .requested_selection
+                .is_none());
+            assert!(state.db.load_recent_sessions(10).unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn post_model_rejects_unapplied_claude_pty_effort_without_claim_or_mutation() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json(
+            "/sessions/sess-1/model",
+            json!({ "model": "opus[1m]", "effort": "high" }),
+        );
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(
+            value["error"],
+            "claude-pty-effort-unsupported: the PTY model command cannot deliver effort"
+        );
+        assert!(value.get("effort").is_none());
+        assert!(rx.try_recv().is_err(), "refused pair reached the PTY queue");
+        assert!(state
+            .store
+            .get("sess-1")
+            .unwrap()
+            .requested_selection
+            .is_none());
+        assert!(state.db.load_recent_sessions(10).unwrap().is_empty());
+    }
+
     #[tokio::test(start_paused = true)]
     async fn post_model_on_claude_pty_enqueues_then_persists_and_hydrates() {
         let state = test_state();
@@ -3029,8 +3114,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_model_on_claude_pty_clears_stale_model_telemetry() {
+    async fn accepted_pty_selection_fences_stale_telemetry_through_snapshot_and_restart() {
         let state = test_state();
+        state
+            .db
+            .record_event(&crate::session::HookEvent {
+                event: "SessionStart".into(),
+                session_id: "sess-1".into(),
+                cwd: Some("/w".into()),
+                timestamp: None,
+                payload: serde_json::Map::new(),
+            })
+            .unwrap();
         let (h, _rx) = wrapper();
         state.store.register_wrapper("sess-1", "/w", h);
         state.store.apply_status_line(
@@ -3046,11 +3141,102 @@ mod tests {
         let req = post_json("/sessions/sess-1/model", json!({ "model": "opus[1m]" }));
         let (status, _) = request(state.clone(), req).await;
         assert_eq!(status, StatusCode::OK);
-        let status = state.store.get("sess-1").unwrap().status_line.unwrap();
-        assert_eq!(status.model_display, None);
-        assert_eq!(status.context_window_size, None);
-        assert_eq!(status.context_used_pct, None);
-        assert_eq!(status.cost_usd, Some(1.25));
+        for cost in [2.0, 3.0] {
+            state.store.apply_status_line(
+                "sess-1",
+                crate::session::StatusLine {
+                    model_display: Some("Sonnet".into()),
+                    context_window_size: Some(200_000),
+                    context_used_pct: Some(80.0),
+                    cost_usd: Some(cost),
+                    ..Default::default()
+                },
+            );
+            let snapshot = state.store.get("sess-1").unwrap();
+            let line = snapshot.status_line.as_ref().unwrap();
+            assert_eq!(line.model_display, None);
+            assert_eq!(line.context_window_size, None);
+            assert_eq!(line.context_used_pct, None);
+            assert_eq!(line.cost_usd, Some(cost), "unrelated telemetry still flows");
+            assert_eq!(
+                snapshot
+                    .requested_selection
+                    .as_ref()
+                    .unwrap()
+                    .context_window,
+                Some(1_000_000)
+            );
+        }
+
+        let snapshot = serde_json::to_value(state.store.get("sess-1").unwrap()).unwrap();
+        assert_eq!(snapshot["requested_selection"]["context_window"], 1_000_000);
+        assert!(snapshot["status_line"].get("context_window_size").is_none());
+
+        let rows = state.db.load_recent_sessions(10).unwrap();
+        let restored_store = SessionStore::new();
+        restored_store.hydrate(rows);
+        restored_store.apply_status_line(
+            "sess-1",
+            crate::session::StatusLine {
+                model_display: Some("Sonnet".into()),
+                context_window_size: Some(200_000),
+                context_used_pct: Some(25.0),
+                cost_usd: Some(4.0),
+                ..Default::default()
+            },
+        );
+        let restored = restored_store.get("sess-1").unwrap();
+        assert_eq!(
+            restored
+                .requested_selection
+                .as_ref()
+                .unwrap()
+                .context_window,
+            Some(1_000_000)
+        );
+        assert_eq!(
+            restored.status_line.as_ref().unwrap().context_window_size,
+            None
+        );
+
+        restored_store.apply_status_line(
+            "sess-1",
+            crate::session::StatusLine {
+                model_display: Some("Opus".into()),
+                context_window_size: Some(1_000_000),
+                context_used_pct: Some(10.0),
+                ..Default::default()
+            },
+        );
+        let confirmed = restored_store.get("sess-1").unwrap();
+        assert_eq!(
+            confirmed.status_line.as_ref().unwrap().context_window_size,
+            Some(1_000_000)
+        );
+        assert!(confirmed.pending_model_confirmation.is_none());
+        assert_eq!(
+            confirmed.model_telemetry_epoch,
+            confirmed.model_selection_epoch
+        );
+
+        restored_store.apply_status_line(
+            "sess-1",
+            crate::session::StatusLine {
+                model_display: Some("Sonnet".into()),
+                context_window_size: Some(200_000),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            restored_store
+                .get("sess-1")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .context_window_size,
+            Some(200_000),
+            "after compatible confirmation, later provider truth is visible",
+        );
     }
 
     #[tokio::test]

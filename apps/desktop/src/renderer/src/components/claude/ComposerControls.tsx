@@ -302,17 +302,24 @@ export const ComposerControls: React.FC<{
   /** Model id we optimistically sent `/model` for; cleared when telemetry
    *  confirms (model label changes) or after a timeout. */
   const [switching, setSwitching] = useState<string | null>(null);
+  const [switchQueued, setSwitchQueued] = useState(false);
   const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelAtSwitchRef = useRef<string | undefined>(undefined);
 
   // Clear the "switching…" state once the reported model actually changes
   // (statusLine catches up), so the pill returns to showing truth.
   useEffect(() => {
-    if (switching && stats.model !== modelAtSwitchRef.current) {
+    const providerConfirmed = !!snapshot?.statusLine?.modelDisplay;
+    if (
+      switching &&
+      stats.model !== modelAtSwitchRef.current &&
+      (!switchQueued || providerConfirmed)
+    ) {
       setSwitching(null);
+      setSwitchQueued(false);
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
     }
-  }, [stats.model, switching]);
+  }, [stats.model, switching, switchQueued, snapshot?.statusLine?.modelDisplay]);
   useEffect(
     () => () => {
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
@@ -387,6 +394,7 @@ export const ComposerControls: React.FC<{
       if (!sessionId) return;
       modelAtSwitchRef.current = stats.model;
       setSwitching(id);
+      setSwitchQueued(false);
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
       switchTimerRef.current = setTimeout(() => setSwitching(null), 15_000);
       // A successful live switch must also land on the agent RECORD:
@@ -394,6 +402,8 @@ export const ComposerControls: React.FC<{
       const recordSwitch = (accepted: {
         model?: string;
         requestedSelection?: { model: string; contextWindow: number | null };
+        queued?: boolean;
+        disposition?: 'queued' | 'accepted';
       }) => {
         const ownerSelection = accepted.requestedSelection ??
           selection ?? {
@@ -407,6 +417,7 @@ export const ComposerControls: React.FC<{
               model: accepted.model ?? id,
               modelIdentity: ownerSelection.model,
               contextWindow: ownerSelection.contextWindow,
+              disposition: accepted.disposition ?? (accepted.queued ? 'queued' : 'accepted'),
             },
           }),
         );
@@ -416,6 +427,7 @@ export const ComposerControls: React.FC<{
         .then((res) => {
           if (!res.ok) {
             setSwitching(null);
+            setSwitchQueued(false);
             setMenu({
               kind: 'model',
               x: at.x,
@@ -424,10 +436,15 @@ export const ComposerControls: React.FC<{
             });
             return;
           }
+          if (res.queued || res.disposition === 'queued') {
+            setSwitchQueued(true);
+            if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+          }
           recordSwitch(res);
         })
         .catch((err) => {
           setSwitching(null);
+          setSwitchQueued(false);
           setMenu({
             kind: 'model',
             x: at.x,
@@ -586,7 +603,11 @@ export const ComposerControls: React.FC<{
   );
 
   // ── Pill labels ──
-  const modelLabel = switching ? `${switching}…` : (stats.model ?? settings?.model ?? 'Model');
+  const modelLabel = switching
+    ? switchQueued
+      ? `${switching} queued`
+      : `${switching}…`
+    : (stats.model ?? settings?.model ?? 'Model');
   // An omitted/empty effort means "use this harness's configured default".
   // Make that a visible selected state instead of leaving the pill as the bare
   // placeholder "Effort" with no checked menu row.

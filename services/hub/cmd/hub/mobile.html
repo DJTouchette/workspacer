@@ -3274,8 +3274,8 @@
     for (const b of askDock.querySelectorAll('[data-submit]')) b.onclick = () => submitAnswers(b.dataset.submit);
 
     // Launch-setting chips. Switching needs operator scope AND a provider that
-    // serves claude.setModel / claude.setPermissionMode (the desktop does; the
-    // headless brain does not). Scope is known from the hello frame up front;
+    // serves claude.setModel / claude.setPermissionMode. Scope is known from
+    // the hello frame up front;
     // the provider gap only shows itself on the first rejection, which latches
     // the chips read-only from then on.
     const caps = capsFor(s);
@@ -3312,9 +3312,9 @@
   const modeLabel = (caps, id) => (caps.modes.find((m) => m.id === id) || {}).label ||
     ({ auto: 'Auto', dontAsk: "Don't ask" })[id] || id || 'Ask to approve';
   // Token scope says whether we're ALLOWED to switch; it says nothing about
-  // whether anyone is serving the method. The headless brain serves neither
-  // claude.setModel nor claude.setPermissionMode, so the first "no provider"
-  // rejection latches the chips read-only rather than letting them keep
+  // whether anyone is serving the method. A skewed/partial owner can still
+  // reject it, so the first capability-missing rejection latches the chips
+  // read-only rather than letting them keep
   // offering a menu that can only fail.
   let switchUnsupported = false;
   const canSwitch = () => isOperator() && can('claude.setModel') && !switchUnsupported;
@@ -3341,7 +3341,9 @@
       showSheet('REASONING EFFORT', (caps.effort || []).map((id) => ({
         label: id.charAt(0).toUpperCase() + id.slice(1),
         on: (s.settings && s.settings.effort) === id,
-        run: () => setModel(s.sessionId, null, id),
+        run: () => caps.provider === 'claude'
+          ? setEffort(s.sessionId, id)
+          : setModel(s.sessionId, null, id),
       })));
       return;
     }
@@ -4044,8 +4046,20 @@
       .then((r) => {
         if (r && r.ok === false) { toast(r.error || 'Could not switch'); return; }
         const acceptedModel = (r && (r.model || (r.requestedSelection && r.requestedSelection.model))) || model;
-        toast(acceptedModel ? 'Model: ' + shortModel(acceptedModel) : 'Effort: ' + effort);
+        const queued = r && (r.queued === true || r.disposition === 'queued');
+        if (queued) {
+          toast(acceptedModel ? 'Model switch queued: ' + shortModel(acceptedModel) : 'Effort switch queued');
+        } else {
+          toast(acceptedModel ? 'Model switch accepted: ' + shortModel(acceptedModel) : 'Effort switch accepted');
+        }
       })
+      .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
+  }
+  function setEffort(id, effort) {
+    call(qualify(id, 'claude.setEffort'), { sessionId: id, effort })
+      .then((r) => toast(r && r.ok === false
+        ? (r.error || 'Could not switch effort')
+        : 'Effort switch accepted: ' + effort))
       .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
   }
 

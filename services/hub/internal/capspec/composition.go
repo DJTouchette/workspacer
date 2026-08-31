@@ -727,7 +727,7 @@ var compositionInert = map[string]InertClaim{
 
 	// ── state changes no other guard consults ──────────────────────────────
 	"claude.setModel": {
-		Reason:    "switches the model of a running agent over the same live-switch endpoint claude.setEffort uses, with `effort` the classified value riding beside it. No guard anywhere reads the model; the permission mode, which several do read, is a different method",
+		Reason:    "asks the owner to switch a running agent's model. Managed effort may ride structurally; Claude PTY effort is refused because its validated `/model` command cannot apply it. The owner records canonical requested_selection and reports queued versus accepted without claiming provider execution. No guard reads the model; permission mode is a separate method",
 		Witnesses: []Witness{paramsClassified("effort")},
 	},
 	"claude.setEffort": {

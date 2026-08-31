@@ -67,7 +67,7 @@ vi.mock('./worktreeService', () => ({
 const clientMock = {
   message: vi.fn(async () => ({ ok: true })),
   setPermissionMode: vi.fn(async () => ({ ok: true, mode: 'plan' })),
-  setModel: vi.fn(async () => ({ ok: true })),
+  setModel: vi.fn(async () => ({ ok: true, queued: false, disposition: 'accepted' as const })),
   handoffBrief: vi.fn(async () => ({ path: '/brief.md' })),
   listProviderModels: vi.fn(async () => ['m1', 'm2']),
   answer: vi.fn(async () => ({ ok: true, managed: true })),
@@ -1633,9 +1633,18 @@ describe('claude control pass-throughs', () => {
     });
   }
 
-  it('claude.setModel forwards model + effort to claudemon', async () => {
-    await call('claude.setModel', { sessionId: 's1', model: 'gpt', effort: 'high' });
-    expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high', 'gpt', null);
+  it('claude.setModel refuses a Claude PTY model + unapplied effort without forwarding', async () => {
+    const result = await call('claude.setModel', {
+      sessionId: 's1',
+      model: 'opus',
+      effort: 'high',
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: 'claude-pty-effort-unsupported: the PTY model command cannot deliver effort',
+    });
+    expect(clientMock.setModel).not.toHaveBeenCalled();
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
 
   it('claude.setModel forwards the canonical pair beside its legacy companion', async () => {

@@ -50,6 +50,8 @@ type liveControlResult struct {
 	Error              string                    `json:"error,omitempty"`
 	Model              string                    `json:"model,omitempty"`
 	RequestedSelection *modelselection.Selection `json:"requestedSelection,omitempty"`
+	Queued             bool                      `json:"queued,omitempty"`
+	Disposition        string                    `json:"disposition,omitempty"`
 }
 
 // setPermissionMode live-switches an already-running session's permission mode.
@@ -104,7 +106,14 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if p.SessionID == "" || (p.Model == "" && p.ModelIdentity == "" && p.Effort == "") {
+	if strings.TrimSpace(p.SessionID) == "" {
+		return nil, fmt.Errorf("claude.setModel requires { sessionId, model and/or effort }")
+	}
+	if strings.TrimSpace(p.Model) == "" && strings.TrimSpace(p.ModelIdentity) == "" &&
+		p.ContextWindow == nil && strings.TrimSpace(p.Effort) == "" {
+		if p.Model != "" || p.ModelIdentity != "" {
+			return jsonResult(liveControlResult{OK: false, Error: "empty-model"})
+		}
 		return nil, fmt.Errorf("claude.setModel requires { sessionId, model and/or effort }")
 	}
 	provider := r.sessionProvider(ctx, p.SessionID)
@@ -138,9 +147,12 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 	if acceptedModel == "" {
 		acceptedModel = model
 	}
-	r.noteLiveControl(p.SessionID, "", acceptedModel, p.Effort)
+	if !accepted.Queued {
+		r.noteLiveControl(p.SessionID, "", acceptedModel, p.Effort)
+	}
 	return jsonResult(liveControlResult{
 		OK: true, Model: acceptedModel, RequestedSelection: selection,
+		Queued: accepted.Queued, Disposition: accepted.Disposition,
 	})
 }
 

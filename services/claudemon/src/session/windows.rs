@@ -131,6 +131,7 @@ impl PersistedModelSelection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelSelectionError {
     EmptyModel,
+    InvalidModelIdentity,
     InvalidContextWindow,
     ConflictingContextWindow,
     ConflictingModelIdentity,
@@ -140,6 +141,7 @@ impl ModelSelectionError {
     pub fn code(self) -> &'static str {
         match self {
             Self::EmptyModel => "empty-model",
+            Self::InvalidModelIdentity => "invalid-model-identity",
             Self::InvalidContextWindow => "invalid-context-window",
             Self::ConflictingContextWindow => "conflicting-context-window",
             Self::ConflictingModelIdentity => "conflicting-model-identity",
@@ -168,6 +170,9 @@ pub fn normalize_model_selection(
     let mut identity = model.trim();
     if identity.is_empty() {
         return Err(ModelSelectionError::EmptyModel);
+    }
+    if model.chars().any(char::is_control) {
+        return Err(ModelSelectionError::InvalidModelIdentity);
     }
 
     let mut legacy_window = None;
@@ -220,6 +225,14 @@ pub fn normalize_model_input(
     model_identity: Option<&str>,
     context_window: Option<u64>,
 ) -> Result<Option<PersistedModelSelection>, ModelSelectionError> {
+    if legacy_model
+        .into_iter()
+        .chain(model_identity)
+        .filter(|value| !value.trim().is_empty())
+        .any(|value| value.chars().any(char::is_control))
+    {
+        return Err(ModelSelectionError::InvalidModelIdentity);
+    }
     let legacy = legacy_model
         .map(str::trim)
         .filter(|value| !value.is_empty());

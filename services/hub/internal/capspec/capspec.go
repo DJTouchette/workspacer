@@ -167,7 +167,7 @@ var unscopedByDecision = map[string]string{
 	// switch and a second door onto sessions.terminalInput's raw-PTY write.
 	"claude.setPermissionMode": "mode is an approval POLICY, not a path: it decides whether the host asks before the agent's next tool call. agents.spawn refuses to let a bus caller start a bypassing agent, so this method — which reaches an ALREADY RUNNING one, including a session the local user started in ask mode — applies the same clamp (assertNoPermissionBypass in hubCapabilities.ts); de-escalating modes stay open, because tightening is not an escalation",
 	"claude.setEffort":         "effort reaches a live claude session as the message `/effort <level>` (applyLiveEffort), i.e. exactly the reach agents.sendMessage already has and no more; there is no path and nothing to confine, so holding the capability is the gate",
-	"claude.setModel":          "same shape as claude.setEffort: `model` names a model the daemon resolves and `effort` rides the same live-switch endpoint; neither becomes a path or an argv element the caller controls",
+	"claude.setModel":          "`model` is normalized into a canonical identity/window pair before the daemon owns the switch. Managed drivers receive that structure; Claude PTY alone receives a daemon-built `/model <validated identity>` command, with control bytes refused before construction. PTY effort is refused because that command cannot deliver it. The answer distinguishes queued from accepted delivery, and only owner-authored requested_selection is durable",
 	"claude.answer":            "types the answer into the session's PTY, which is sessions.terminalInput's primitive under another name — see the per-param decisions, which say so rather than implying this method is narrower than it is",
 	// The excuse names a gate, and the gate is a capability. "The agent's own
 	// tool approvals are the gate" is true of a caller that cannot RESOLVE those
@@ -962,7 +962,7 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"effort": {KindShell, "sent to a live claude session as the message `/effort <level>` (applyLiveEffort), so the value is prompt text for an already-running agent — the reach agents.sendMessage has, not the raw PTY write claude.answer has. Managed providers take the structural /model endpoint instead, where it selects among the provider's own levels"},
 	},
 	"claude.setModel": {
-		"effort": {KindShell, "the same live-switch endpoint as claude.setEffort, reached with a model beside it; neither value is composed into argv by this process"},
+		"effort": {KindShell, "delivered structurally only for managed providers. A Claude PTY request that includes effort is refused before queue/persistence mutation because its daemon-built `/model` command cannot apply effort; callers must use claude.setEffort, whose separate `/effort` message path genuinely delivers it"},
 	},
 	"agents.reportProgress": {
 		"note":            {KindShell, "prompt text for an already-running agent, like claude.setEffort's value and unlike claude.answer's — it is delivered with claudemonSessionClient.message (the queued /message endpoint every other [fleet] wake uses), never written to a PTY, and never composed into argv. The caller controls the SENTENCE and nothing around it: the host flattens it to one line, refuses it over 500 chars, and wraps it in a header and tail it composes itself (buildFleetMessage('progress')), which state that the sender is still running and that this is not a completion"},

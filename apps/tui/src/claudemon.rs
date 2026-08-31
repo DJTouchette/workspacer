@@ -57,6 +57,30 @@ pub struct HandoffBrief {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSwitchOutcome {
+    pub queued: bool,
+    pub disposition: String,
+}
+
+impl ModelSwitchOutcome {
+    pub(crate) fn from_wire(value: &Value) -> Self {
+        let queued = value
+            .get("queued")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let disposition = value
+            .get("disposition")
+            .and_then(Value::as_str)
+            .unwrap_or(if queued { "queued" } else { "accepted" })
+            .to_string();
+        Self {
+            queued,
+            disposition,
+        }
+    }
+}
+
 /// Connection-state / change notifications from the `/events` SSE stream.
 #[derive(Debug)]
 pub enum DaemonEvent {
@@ -173,7 +197,7 @@ impl Claudemon {
         provider: &str,
         model: Option<&str>,
         effort: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<ModelSwitchOutcome> {
         let mut body = json!({});
         if let Some(m) = model {
             add_model_wire_fields(&mut body, provider, m);
@@ -184,7 +208,22 @@ impl Claudemon {
         let (code, resp) = self
             .post_status(&format!("/sessions/{session_id}/model"), &body)
             .await?;
-        ok_or_daemon_error(code, resp, "model switch failed").map(|_| ())
+        if !(200..300).contains(&code)
+            && resp
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| {
+                    error
+                        .to_ascii_lowercase()
+                        .contains("pty sessions switch via the /model slash command")
+                })
+        {
+            return Err(anyhow!(
+                "upgrade-required: claudemon does not support durable Claude PTY model switching"
+            ));
+        }
+        let resp = ok_or_daemon_error(code, resp, "model switch failed")?;
+        Ok(ModelSwitchOutcome::from_wire(&resp))
     }
 
     /// Live permission-mode switch (`POST /sessions/:id/permission-mode`). Returns
@@ -1395,6 +1434,23 @@ mod tests {
         assert_eq!(body["context_window"], json!(1_000_000_u64));
     }
 
+    #[tokio::test]
+    async fn set_model_preserves_the_queued_distinction() {
+        let (base, srv) = mock_server(
+            200,
+            "OK",
+            r#"{"ok":true,"queued":true,"disposition":"queued","model":"opus[1m]"}"#,
+        )
+        .await;
+        let outcome = Claudemon::new(base)
+            .set_model("s1", "claude", Some("opus[1m]"), None)
+            .await
+            .expect("ok");
+        assert!(outcome.queued);
+        assert_eq!(outcome.disposition, "queued");
+        let _ = srv.await;
+    }
+
     /// The stream spawn decomposes a profile into typed payload fields rather
     /// than a command line: the config dir becomes `env`, the leftover flags
     /// ride `extra_args`, and bypass is the `yolo` flag.
@@ -1478,6 +1534,22 @@ mod tests {
             err.to_string().contains("opencode has no model switch"),
             "got {err}"
         );
+        let _ = srv.await;
+    }
+
+    #[tokio::test]
+    async fn set_model_pre_phase5_pty_refusal_requires_an_upgrade() {
+        let (base, srv) = mock_server(
+            409,
+            "Conflict",
+            r#"{"ok":false,"error":"PTY sessions switch via the /model slash command on the message path"}"#,
+        )
+        .await;
+        let err = Claudemon::new(base)
+            .set_model("s1", "claude", Some("opus"), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("upgrade-required"), "got {err}");
         let _ = srv.await;
     }
 

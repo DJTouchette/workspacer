@@ -76,6 +76,7 @@ export interface ModelSelection {
 
 export type ModelSelectionErrorCode =
   | 'empty-model'
+  | 'invalid-model-identity'
   | 'invalid-model-type'
   | 'invalid-context-window'
   | 'conflicting-context-window'
@@ -94,6 +95,18 @@ export class ModelSelectionError extends Error {
 }
 
 const LEGACY_ONE_MILLION_SUFFIX = /(?:\[1m\]|-1m)$/i;
+const MODEL_CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** Reject terminal/control-protocol bytes before an identity can become argv,
+ * a PTY slash command, or a durable compatibility value. */
+export function assertSafeModelIdentity(model: string): void {
+  if (MODEL_CONTROL_CHAR.test(model)) {
+    throw new ModelSelectionError(
+      'invalid-model-identity',
+      'model identity must not contain control characters',
+    );
+  }
+}
 
 /**
  * Canonicalize a model selection at ingress.
@@ -109,6 +122,7 @@ export function normalizeModelSelection(
   if (!identity) {
     throw new ModelSelectionError('empty-model', 'model selection must name a model');
   }
+  assertSafeModelIdentity(model);
 
   let legacyWindow: number | null = null;
   while (LEGACY_ONE_MILLION_SUFFIX.test(identity)) {

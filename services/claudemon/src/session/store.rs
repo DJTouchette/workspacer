@@ -404,6 +404,55 @@ pub enum MessageOutcome {
     QueueFull,
 }
 
+fn comparable_model_identity(value: &str) -> String {
+    let normalized: String = value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    normalized
+        .strip_prefix("claude")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn status_confirms_selection(
+    status: &StatusLine,
+    selection: &super::windows::ModelSelection,
+) -> bool {
+    let model_match = status.model_display.as_deref().map(|reported| {
+        let reported = comparable_model_identity(reported);
+        let selected = comparable_model_identity(&selection.model);
+        !reported.is_empty()
+            && !selected.is_empty()
+            && (reported.contains(&selected) || selected.contains(&reported))
+    });
+    match selection.context_window {
+        Some(window) => status.context_window_size == Some(window) && model_match.unwrap_or(true),
+        None => model_match == Some(true),
+    }
+}
+
+/// Keep asynchronous provider telemetry on the epoch it can prove. A frame
+/// with no command id cannot overwrite an accepted owner selection merely by
+/// arriving later; incompatible model/window fields are withheld while cost,
+/// token totals and rate-limit readings continue to flow. A compatible frame
+/// advances telemetry to the accepted epoch and releases the fence, after
+/// which later provider-driven model changes remain truthful and visible.
+fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine) {
+    let Some(pending) = session.pending_model_confirmation.as_ref() else {
+        return;
+    };
+    if status_confirms_selection(status, pending) {
+        session.model_telemetry_epoch = session.model_selection_epoch;
+        session.pending_model_confirmation = None;
+        return;
+    }
+    status.model_display = None;
+    status.context_window_size = None;
+    status.context_used_pct = None;
+}
+
 impl SessionStore {
     pub fn new() -> Self {
         let (update_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -571,6 +620,13 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_selection = s.requested_selection.clone();
+                if let Some(selection) = s.requested_selection.clone() {
+                    // A restarted daemon has durable owner truth but no proof
+                    // that a newly arriving status frame belongs to it. Re-arm
+                    // the same confirmation fence used by a live acceptance.
+                    st.model_selection_epoch = 1;
+                    st.pending_model_confirmation = Some(selection);
+                }
                 // Preserve an exact stored companion: equality with the
                 // canonical identity is the provider-neutral proof that an
                 // opaque id such as `vendor/model-1m` must stay untouched. If
@@ -849,6 +905,7 @@ impl SessionStore {
                 let root = session.claude_config_root();
                 self.patch_rate_limits(&mut status, &root);
             }
+            reconcile_model_telemetry(session, &mut status);
             session.status_line = Some(status.clone());
             session.updated_at = OffsetDateTime::now_utc();
             session.clone()
@@ -1322,6 +1379,8 @@ impl SessionStore {
         let state = self.states.get_mut(session_id).map(|mut entry| {
             entry.requested_model = Some(persisted.legacy_model.clone());
             entry.requested_selection = Some(persisted.selection.clone());
+            entry.model_selection_epoch = entry.model_selection_epoch.saturating_add(1);
+            entry.pending_model_confirmation = Some(persisted.selection.clone());
             if let Some(status) = entry.status_line.as_mut() {
                 status.model_display = None;
                 status.context_window_size = None;
@@ -1835,6 +1894,7 @@ impl SessionStore {
                 let root = entry.claude_config_root();
                 self.patch_rate_limits(&mut status, &root);
             }
+            reconcile_model_telemetry(&mut entry, &mut status);
             entry.status_line = Some(status.clone());
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()

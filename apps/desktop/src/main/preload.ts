@@ -332,6 +332,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     error?: string;
     model?: string;
     requestedSelection?: { model: string; contextWindow: number | null };
+    queued?: boolean;
+    disposition?: 'queued' | 'accepted';
   }> =>
     ipcRenderer.invoke(
       IPC.CLAUDE_SET_MODEL,

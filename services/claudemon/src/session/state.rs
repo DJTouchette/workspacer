@@ -786,6 +786,21 @@ pub struct SessionState {
     /// readers know. Absence means the owner never recorded a selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_selection: Option<super::windows::ModelSelection>,
+    /// Monotonic owner epoch for accepted live selections. Provider status
+    /// frames carry no command id, so telemetry remains on the prior epoch
+    /// until a frame is compatible with `pending_model_confirmation`.
+    #[serde(skip)]
+    pub model_selection_epoch: u64,
+    /// Epoch of the model/window fields currently allowed through from provider
+    /// telemetry. Kept separate from `model_selection_epoch` so delayed frames
+    /// cannot silently inherit the newly accepted selection's provenance.
+    #[serde(skip)]
+    pub model_telemetry_epoch: u64,
+    /// The accepted selection whose provider confirmation is still pending.
+    /// Ephemeral by design; hydration recreates the fence from durable owner
+    /// truth without a schema change.
+    #[serde(skip)]
+    pub pending_model_confirmation: Option<super::windows::ModelSelection>,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -824,6 +839,9 @@ impl SessionState {
             parent_turn_ended: false,
             requested_model: None,
             requested_selection: None,
+            model_selection_epoch: 0,
+            model_telemetry_epoch: 0,
+            pending_model_confirmation: None,
         }
     }
 

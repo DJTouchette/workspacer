@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const OneMillion uint64 = 1_000_000
 
 var (
 	ErrEmptyModel               = errors.New("empty-model")
+	ErrInvalidModelIdentity     = errors.New("invalid-model-identity")
 	ErrInvalidContextWindow     = errors.New("invalid-context-window")
 	ErrConflictingContextWindow = errors.New("conflicting-context-window")
 	ErrConflictingModelIdentity = errors.New("conflicting-model-identity")
@@ -35,6 +37,10 @@ type Resolved struct {
 // Claude alone owns [1m]/-1m syntax. Other providers' ids are opaque, so a
 // non-Claude id ending in -1m survives byte-for-byte.
 func ResolveInput(provider, legacyModel, modelIdentity string, contextWindow *uint64) (*Resolved, error) {
+	if strings.TrimSpace(legacyModel) != "" && strings.IndexFunc(legacyModel, unicode.IsControl) >= 0 ||
+		strings.TrimSpace(modelIdentity) != "" && strings.IndexFunc(modelIdentity, unicode.IsControl) >= 0 {
+		return nil, ErrInvalidModelIdentity
+	}
 	legacy := strings.TrimSpace(legacyModel)
 	identity := strings.TrimSpace(modelIdentity)
 	hasCanonical := identity != "" || contextWindow != nil
@@ -118,6 +124,9 @@ func Normalize(model string, contextWindow *uint64) (Selection, error) {
 	if identity == "" {
 		return Selection{}, ErrEmptyModel
 	}
+	if strings.IndexFunc(model, unicode.IsControl) >= 0 {
+		return Selection{}, ErrInvalidModelIdentity
+	}
 
 	var legacyWindow *uint64
 	for {
@@ -175,6 +184,8 @@ func ErrorCode(err error) string {
 	switch {
 	case errors.Is(err, ErrEmptyModel):
 		return ErrEmptyModel.Error()
+	case errors.Is(err, ErrInvalidModelIdentity):
+		return ErrInvalidModelIdentity.Error()
 	case errors.Is(err, ErrInvalidContextWindow):
 		return ErrInvalidContextWindow.Error()
 	case errors.Is(err, ErrConflictingContextWindow):

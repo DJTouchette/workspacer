@@ -5,7 +5,11 @@
  */
 
 import { resolveSpawnModelInput, type SpawnModelInput } from '../lib/spawnModel';
-import { claudeArgvModel, type ModelSelection } from '../shared/modelContextWindows';
+import {
+  claudeArgvModel,
+  ModelSelectionError,
+  type ModelSelection,
+} from '../shared/modelContextWindows';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 
@@ -18,6 +22,8 @@ export interface LiveModelSwitchResult {
   error?: string;
   model?: string;
   requestedSelection?: ModelSelection;
+  queued?: boolean;
+  disposition?: 'queued' | 'accepted';
 }
 
 function normalizedRequest(
@@ -27,10 +33,10 @@ function normalizedRequest(
   const provider = claudeSessionStore.getSnapshot(sessionId)?.provider ?? 'claude';
   const selection = resolveSpawnModelInput(provider, input);
   if (
-    (input.model?.trim() || input.modelIdentity?.trim() || input.contextWindow != null) &&
+    (input.model != null || input.modelIdentity != null || input.contextWindow != null) &&
     !selection
   ) {
-    throw new Error(`model is not valid for provider ${provider}`);
+    throw new ModelSelectionError('empty-model', 'model selection must name a model');
   }
   return {
     selection,
@@ -50,6 +56,19 @@ export function acceptLiveModelResult(
   result: LiveModelSwitchResult,
 ): LiveModelSwitchResult {
   if (!result.ok) return result;
+  const snapshot = claudeSessionStore.getSnapshot(sessionId);
+  if (
+    (snapshot?.provider ?? 'claude').toLowerCase() === 'claude' &&
+    snapshot?.transport !== 'stream' &&
+    result.queued === undefined &&
+    result.disposition === undefined
+  ) {
+    return {
+      ok: false,
+      error:
+        'upgrade-required: the session owner does not support durable Claude PTY model switching',
+    };
+  }
   const request = normalizedRequest(sessionId, input);
   const accepted = result.requestedSelection ?? request.selection;
   if (accepted) {
@@ -78,6 +97,18 @@ export async function applyLiveModel(
     if (!request.selection && !input.effort?.trim()) {
       return { ok: false, error: 'requires a model and/or effort' };
     }
+    const snapshot = claudeSessionStore.getSnapshot(sessionId);
+    if (
+      request.selection &&
+      input.effort !== undefined &&
+      (snapshot?.provider ?? 'claude').toLowerCase() === 'claude' &&
+      snapshot?.transport !== 'stream'
+    ) {
+      return {
+        ok: false,
+        error: 'claude-pty-effort-unsupported: the PTY model command cannot deliver effort',
+      };
+    }
     const result = await claudemonSessionClient.setModel(
       sessionId,
       request.legacyModel,
@@ -87,6 +118,14 @@ export async function applyLiveModel(
     );
     return acceptLiveModelResult(sessionId, input, result);
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error:
+        err instanceof ModelSelectionError
+          ? err.code
+          : err instanceof Error
+            ? err.message
+            : String(err),
+    };
   }
 }

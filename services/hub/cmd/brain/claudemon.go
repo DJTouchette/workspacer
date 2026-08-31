@@ -436,6 +436,8 @@ func (c *claudemonClient) setPermissionMode(ctx context.Context, id, mode string
 type modelSwitchResult struct {
 	Model              string                    `json:"model"`
 	RequestedSelection *modelselection.Selection `json:"requested_selection"`
+	Queued             bool                      `json:"queued"`
+	Disposition        string                    `json:"disposition"`
 }
 
 // setModel live-switches a session's model and/or reasoning effort. Empty
@@ -466,11 +468,18 @@ func (c *claudemonClient) setModel(
 			Model         string  `json:"model"`
 			ContextWindow *uint64 `json:"context_window"`
 		} `json:"requested_selection"`
+		Queued      bool   `json:"queued"`
+		Disposition string `json:"disposition"`
 	}
 	if err := c.postJSON(ctx, "/sessions/"+id+"/model", body, &wire); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "pty sessions switch via the /model slash command") {
+			return modelSwitchResult{}, fmt.Errorf("upgrade-required: claudemon does not support durable Claude PTY model switching")
+		}
 		return modelSwitchResult{}, err
 	}
-	result := modelSwitchResult{Model: wire.Model}
+	result := modelSwitchResult{
+		Model: wire.Model, Queued: wire.Queued, Disposition: wire.Disposition,
+	}
 	if wire.RequestedSelection != nil {
 		result.RequestedSelection = &modelselection.Selection{
 			Model:         wire.RequestedSelection.Model,

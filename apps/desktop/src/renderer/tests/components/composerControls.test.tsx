@@ -75,7 +75,9 @@ beforeEach(() => {
     },
     { id: 'o3', label: 'o3', default: false, effortLevels: ['low', 'high'] },
   ]);
-  api.claudeSetModel = vi.fn().mockResolvedValue({ ok: true });
+  api.claudeSetModel = vi
+    .fn()
+    .mockResolvedValue({ ok: true, queued: false, disposition: 'accepted' });
   api.claudeSetPermissionMode = vi.fn().mockResolvedValue({ ok: true });
   api.claudeSetEffort = vi.fn().mockResolvedValue({ ok: true, effort: 'high' });
   api.claudeMessage = vi.fn().mockResolvedValue({ ok: true });
@@ -264,6 +266,17 @@ describe('ComposerControls — claude live switches', () => {
     fireEvent.click(opus);
     expect(api.claudeSetModel).toHaveBeenCalledWith('sess-1', 'opus', undefined, 'opus', 200_000);
     expect(api.claudeMessage).not.toHaveBeenCalled();
+  });
+
+  it('labels a queued PTY switch without claiming the provider executed it', async () => {
+    api.claudeSetModel = vi
+      .fn()
+      .mockResolvedValue({ ok: true, queued: true, disposition: 'queued', model: 'opus' });
+    renderControls({ provider: 'claude', snapshot: snapshot({ settings: { model: 'sonnet' } }) });
+    fireEvent.click(screen.getByText('sonnet'));
+    fireEvent.click(await screen.findByText('Opus'));
+    expect(await screen.findByText('opus queued')).toBeInTheDocument();
+    expect(screen.queryByText('opus…')).not.toBeInTheDocument();
   });
 
   it('switching managed Claude sends the pair plus its marker-bearing companion', async () => {

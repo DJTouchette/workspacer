@@ -184,6 +184,108 @@ func TestSetModelOmitsFieldsItWasNotGiven(t *testing.T) {
 	}
 }
 
+func TestSetModelRejectsWhitespaceAndControlsBeforeClaudemon(t *testing.T) {
+	for name, payload := range map[string]string{
+		"whitespace": `{"sessionId":"s1","model":"   "}`,
+		"newline":    `{"sessionId":"s1","model":"opus\n/help"}`,
+		"paste-end":  `{"sessionId":"s1","model":"opus\u001b[201~/help"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newRegistry(newClaudemonClient(srv.URL))
+			res, err := reg.handle(context.Background(), "claude.setModel", json.RawMessage(payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out liveControlResult
+			_ = json.Unmarshal(res, &out)
+			want := "invalid-model-identity"
+			if name == "whitespace" {
+				want = "empty-model"
+			}
+			if out.OK || out.Error != want {
+				t.Fatalf("result = %+v, want stable %s refusal", out, want)
+			}
+			if hits := rec.calls("/sessions/s1/model"); len(hits) != 0 {
+				t.Fatalf("invalid input mutated the daemon queue: %+v", hits)
+			}
+		})
+	}
+}
+
+func TestSetModelCarriesQueuedDispositionWithoutClaimingLiveControl(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"queued":true,"disposition":"queued","model":"opus[1m]","requested_selection":{"model":"opus","context_window":1000000}}`))
+	}))
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+	reg.meta = newMetaStore()
+
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus[1m]"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out liveControlResult
+	_ = json.Unmarshal(res, &out)
+	if !out.OK || !out.Queued || out.Disposition != "queued" || out.RequestedSelection == nil {
+		t.Fatalf("queued owner truth was lost: %+v", out)
+	}
+	if meta, ok := reg.meta.get("s1"); ok && (meta.RequestedModel != "" || meta.LiveEffort != "") {
+		t.Fatalf("queued work was recorded as provider execution: %+v", meta)
+	}
+}
+
+func TestSetModelMapsPrePhase5PTYRefusalToUpgradeRequired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"PTY sessions switch via the /model slash command on the message path"}`))
+	}))
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out liveControlResult
+	_ = json.Unmarshal(res, &out)
+	if out.OK || !strings.Contains(out.Error, "upgrade-required") {
+		t.Fatalf("pre-Phase-5 skew was not explicit: %+v", out)
+	}
+}
+
+func TestSetModelDoesNotClaimAnOwnerRefusedPTYEffort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"claude-pty-effort-unsupported: the PTY model command cannot deliver effort"}`))
+	}))
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude","transport":"pty"}`))
+	reg.meta = newMetaStore()
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus","effort":"high"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out liveControlResult
+	_ = json.Unmarshal(res, &out)
+	if out.OK || !strings.Contains(out.Error, "claude-pty-effort-unsupported") || out.Effort != "" {
+		t.Fatalf("unapplied effort was claimed: %+v", out)
+	}
+	if meta, ok := reg.meta.get("s1"); ok && (meta.RequestedModel != "" || meta.LiveEffort != "") {
+		t.Fatalf("refused effort mutated brain telemetry: %+v", meta)
+	}
+}
+
 func TestSetModelForwardsCanonicalPairAndMarkerCompanion(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()

@@ -194,6 +194,8 @@ describe('setModel — pair-aware managed switch', () => {
         ({
           ok: true,
           json: async () => ({
+            queued: true,
+            disposition: 'queued',
             model: 'opus[1m]',
             requested_selection: { model: 'opus', context_window: 1_000_000 },
           }),
@@ -205,6 +207,8 @@ describe('setModel — pair-aware managed switch', () => {
       claudemonSessionClient.setModel('s-1', 'opus[1m]', undefined, 'opus', 1_000_000),
     ).resolves.toEqual({
       ok: true,
+      queued: true,
+      disposition: 'queued',
       model: 'opus[1m]',
       requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
     });
@@ -212,6 +216,26 @@ describe('setModel — pair-aware managed switch', () => {
       model: 'opus[1m]',
       model_identity: 'opus',
       context_window: 1_000_000,
+    });
+  });
+
+  it('maps a pre-Phase-5 PTY refusal to an explicit upgrade requirement', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: 'PTY sessions switch via the /model slash command on the message path',
+            }),
+          }) as Response,
+      ),
+    );
+    await expect(claudemonSessionClient.setModel('s-1', 'opus')).resolves.toEqual({
+      ok: false,
+      error: 'upgrade-required: claudemon does not support durable Claude PTY model switching',
     });
   });
 });

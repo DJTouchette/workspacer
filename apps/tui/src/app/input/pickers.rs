@@ -171,9 +171,43 @@ impl App {
         model: String,
     ) {
         let drv = self.driver_for(&sid);
-        self.dispatch("Model switched", async move {
-            drv.set_model(&sid, &provider, Some(&model), effort.as_deref())
+        let cm = self.claudemon.clone();
+        let tx = self.tx.clone();
+        let reopen = self.chat_session_id();
+        let reopen_hub = reopen.as_deref().and_then(|id| self.hub_of(id));
+        let bus = self.bus.clone();
+        tokio::spawn(async move {
+            match drv
+                .set_model(&sid, &provider, Some(&model), effort.as_deref())
                 .await
+            {
+                Ok(outcome) => {
+                    let message = if outcome.queued {
+                        "Model switch queued — applies after the current turn"
+                    } else {
+                        "Model switch accepted"
+                    };
+                    let _ = tx.send(AppMsg::Toast(message.into()));
+                    fetch_agents(&cm, &tx).await;
+                    if let Some(reopen_sid) = reopen {
+                        match (reopen_hub, bus) {
+                            (Some(hub), Some(bus)) => {
+                                crate::federation::fetch_remote_conversation(
+                                    bus, hub, reopen_sid, tx,
+                                )
+                                .await;
+                            }
+                            (Some(_), None) => {}
+                            (None, _) => {
+                                crate::app::tasks::fetch_transcript(&cm, &tx, reopen_sid).await
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    let _ = tx.send(AppMsg::Toast(format!("Model switch failed: {err}")));
+                }
+            }
         });
     }
 
