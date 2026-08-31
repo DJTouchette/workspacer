@@ -165,7 +165,22 @@ describe('SupervisorSection — manager-only, and it says what starts the manage
     expect(screen.queryByText('Supervisor model')).toBeNull();
     expect(screen.queryByText('Summarizer model')).toBeNull();
     expect(screen.queryByText('Check the fleet every')).toBeNull();
-    expect(container.textContent).not.toMatch(/supervisor/i);
+    // "Supervisor" is dead PRODUCT vocabulary here: the pane is the Fleet
+    // Manager's. The one surviving occurrence is a config KEY the manager hint
+    // has to name: routing.yaml's `roles.supervisor` row, which exists and is
+    // not consulted for this setting. Strip that token, then the old word must
+    // be gone.
+    expect(container.textContent!.replace(/roles\.supervisor/g, '')).not.toMatch(/supervisor/i);
+  });
+
+  it('says the routing matrix does not pick the manager’s own model', () => {
+    // Two mechanisms that both look like they choose the manager's model, with
+    // neither naming the other, is a bug this project has already had once.
+    // routing.yaml's comment names Settings; this is Settings naming it back.
+    const { container } = renderSection();
+    expect(container.textContent).toMatch(/roles\.supervisor/);
+    expect(container.textContent).toMatch(/not consulted for this one/);
+    expect(container.textContent).toMatch(/only place the manager’s own model is chosen/);
   });
 });
 

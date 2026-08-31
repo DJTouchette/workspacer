@@ -56,8 +56,8 @@ func TestLibrarySeedAndList(t *testing.T) {
 	// adding a starter is one edit (the slice + its id) instead of three. What
 	// still has to match by hand is the TS twin — libraryService.ts starters().
 	want := len(starterItems())
-	if want != 7 {
-		t.Fatalf("starterItems() has %d entries; the TS twin ships 7 — keep them in step", want)
+	if want != 8 {
+		t.Fatalf("starterItems() has %d entries; the TS twin ships 8: keep them in step", want)
 	}
 	// Every starter must be paired with a NON-EMPTY, UNIQUE id: starterItems
 	// pairs two parallel slices positionally, so a short ids list silently drops
@@ -75,7 +75,8 @@ func TestLibrarySeedAndList(t *testing.T) {
 		t.Fatalf("expected %d seeded items, got %d", want, len(items))
 	}
 	// Sorted by title: "Careful refactor…", "Context7 (MCP)", "Make a workspacer
-	// plugin…", "Scout task…", "Ship task…", "Summarize & plan", "Two explanations…".
+	// plugin…", "Review task…", "Scout task…", "Ship task…", "Summarize & plan",
+	// "Two explanations…".
 	if items[0].Title != "Careful refactor (skill)" {
 		t.Errorf("not sorted by title: %q first", items[0].Title)
 	}
@@ -88,7 +89,7 @@ func TestLibrarySeedAndList(t *testing.T) {
 	if mcp == nil || mcp.Mcp == nil || mcp.Mcp.Command != "npx" || len(mcp.Mcp.Args) != 2 {
 		t.Fatalf("mcp item didn't round-trip: %+v", mcp)
 	}
-	// The three starter dispatch templates ship with kind + default schema
+	// The four starter dispatch templates ship with kind + default schema
 	// intact, and their task slot is a REQUIRED placeholder (no ':default'):
 	// the manager writes the task-specific text, the template only frames it.
 	dispatch := map[string]*libraryItem{}
@@ -97,7 +98,7 @@ func TestLibrarySeedAndList(t *testing.T) {
 			dispatch[items[i].ID] = &items[i]
 		}
 	}
-	for _, id := range []string{"ship-task", "scout-task", "two-explanations"} {
+	for _, id := range []string{"ship-task", "review-task", "scout-task", "two-explanations"} {
 		it, ok := dispatch[id]
 		if !ok {
 			t.Fatalf("starter dispatch template %q not seeded (have %v)", id, dispatch)
@@ -122,6 +123,40 @@ func TestLibrarySeedAndList(t *testing.T) {
 	} {
 		if !strings.Contains(dispatch["ship-task"].Body, want) {
 			t.Errorf("ship-task body lost %q (desktop twin has it):\n%s", want, dispatch["ship-task"].Body)
+		}
+	}
+	// The review starter is the other half of that handoff, and it is the only
+	// dispatch shape the routing matrix marks `fresh`. Its body has to carry the
+	// fresh-context contract by construction: what the reviewer is given, what
+	// it is withheld on purpose, and that it reports rather than fixes.
+	review := dispatch["review-task"]
+	if review == nil {
+		t.Fatal("review-task not seeded")
+	}
+	for _, want := range []string{
+		"{{task}}",
+		"{{handoff}}",
+		"session that never saw it being done",
+		"plan, its reasoning or its transcript",
+		"Rank what you find by severity",
+		"Do not fix it",
+	} {
+		if !strings.Contains(review.Body, want) {
+			t.Errorf("review-task body lost %q (desktop twin has it):\n%s", want, review.Body)
+		}
+	}
+	// ITEM 2 of closing the routing loop: a dispatch item is text-only by
+	// construction, so the role cannot ride the template. It rides the spawn
+	// call, and the DESCRIPTION (which list_library returns) is where the
+	// manager reads which role to name.
+	for id, role := range map[string]string{
+		"ship-task":        `role "implementer"`,
+		"scout-task":       `role "scout"`,
+		"review-task":      `role "reviewer"`,
+		"two-explanations": `role "diagnostician"`,
+	} {
+		if !strings.Contains(dispatch[id].Description, role) {
+			t.Errorf("%s description does not name its dispatch role %s: %q", id, role, dispatch[id].Description)
 		}
 	}
 }

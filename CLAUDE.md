@@ -30,7 +30,7 @@ Structured context is available via MCP resources or `rivet context show <name>`
 
 **Domains:** agent-spawn, auto-update-release-channel, chat-tool-rendering, claudemon-http-api, config, cross-provider-handoff, desktop-remote-client-mode, mission-control-attention, remote-mobile, renderer-backend-seam, session-lifecycle, tui-client, usage-accounting
 
-**Modules:** claude-asset-roots, claudemon-providers, claudemon-pty-wrapper, claudemon-sqlite-store, claudemon-watch-tui, filelink-openable-files, fleet-manager, fly-node-deploy, git-review, hub-bus-control-plane, hub-federation, hub-jobs, hub-plugin-os-sandbox, hub-plugin-system, hub-process-supervision, hub-shared-cap-event-vocabulary, hub-web-push, ipc-boundary, mcp-tool-facade, pane-system, theme-system, ui-modes-manifest, webview-security-hardening, workflow-subagent-watcher, workspacer-serve-cli
+**Modules:** claude-asset-roots, claudemon-providers, claudemon-pty-wrapper, claudemon-sqlite-store, claudemon-watch-tui, filelink-openable-files, fleet-manager, fly-node-deploy, git-review, hub-bus-control-plane, hub-federation, hub-jobs, hub-plugin-os-sandbox, hub-plugin-system, hub-process-supervision, hub-shared-cap-event-vocabulary, hub-web-push, ipc-boundary, limit-aware-routing, mcp-tool-facade, pane-system, theme-system, ui-modes-manifest, webview-security-hardening, workflow-subagent-watcher, workspacer-serve-cli
 
 **Paradigms:** architecture-overview, hotspots, registration-checklists, renderer-event-buses, renderer-live-state-hooks
 

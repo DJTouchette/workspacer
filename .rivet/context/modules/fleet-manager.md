@@ -87,6 +87,12 @@ host wakes it. That wake is the feature this module exists to deliver.
   and `resolveManagerEffort(provider)` (`main/lib/roleModels.ts`, per-harness
   maps `agents.managerModels` / `agents.managerEfforts` — neither has a default
   entry in `config_defaults.json`, so blank means "the harness's own default").
+  **The routing matrix does not pick this.** `roles.supervisor` exists in
+  `routing.yaml` so the vocabulary is complete and is NOT consulted: the
+  manager's model is chosen before there is a manager to ask. The matrix routes
+  the WORKERS the manager dispatches (see `limit-aware-routing`), and Settings →
+  Fleet Manager's Manager model hint says so on the other side. Keep both
+  pointing at each other.
 - **`manager: true` is the ONLY thing that sets `isSupervisor`** in the spawn
   meta, on all three spawn legs: `claudeSpawn.ts` (~L186), `managedSpawn.ts`
   (~L377 managed/stream, ~L512 the codex Windows hybrid). Headless, the brain

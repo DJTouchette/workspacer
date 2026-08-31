@@ -1141,7 +1141,7 @@ func starterItems() []starterItem {
 		// framing is canned.
 		{
 			Title: "Ship task (dispatch)", Kind: "dispatch",
-			Description: "Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR.",
+			Description: "Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR. Dispatch with role \"implementer\".",
 			Tags:        []string{"dispatch", "ship"},
 			ResultSchema: map[string]any{
 				"type":     "object",
@@ -1170,8 +1170,41 @@ func starterItems() []starterItem {
 			}, "\n"),
 		},
 		{
+			Title: "Review task (dispatch)", Kind: "dispatch",
+			Description: "Independent review of a ship task the worker did not do: it gets the criteria, the diff, the files and the test results, and never the implementer’s reasoning. Fill {{task}} and {{handoff}} (the implementer’s own closing handoff). Dispatch with role \"reviewer\".",
+			Tags:        []string{"dispatch", "review"},
+			ResultSchema: map[string]any{
+				"type":     "object",
+				"required": []any{"verdict"},
+				"properties": map[string]any{
+					"verdict":   map[string]any{"type": "string"},
+					"blocking":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"findings":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"checksRun": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"caveats":   map[string]any{"type": "string"},
+				},
+			},
+			Body: strings.Join([]string{
+				"REVIEW TASK in {{cwd}}. Review only: do not fix what you find, and do not push anything.",
+				"",
+				"You are grading work you did not do, in a session that never saw it being done. That independence is the whole value of this dispatch: the reasoning that wrote the code cannot grade it. Nobody has handed you the implementer’s plan, its reasoning or its transcript, and you should not go looking for them.",
+				"",
+				"What was asked for, and the acceptance criteria it had to meet:",
+				"{{task}}",
+				"",
+				"What was delivered. The branch or commit and its diff, the files to read first, the architectural constraints the work had to respect, the checks that were run and what their output said, and anything the implementer could not prove:",
+				"{{handoff}}",
+				"",
+				"Read the diff against the criteria. {{focus:Weigh correctness first, then whether the change fits the code around it, then test coverage, then the rest.}} Verify what you can rather than taking a claim on trust: re-run a check instead of believing a line that says it passed, and keep track of which conclusions you established by RUNNING something and which you only read.",
+				"",
+				"Rank what you find by severity (blocking, should-fix, minor) and REPORT it. Do not fix it: the manager decides what is worth a follow-up ship task, and a reviewer that starts editing has stopped being independent. If the work meets the criteria, say so plainly rather than manufacturing findings.",
+				"",
+				"End your turn with the verdict and the ranked findings. That final message reaches your manager automatically; do not try to message anyone, just finish.",
+			}, "\n"),
+		},
+		{
 			Title: "Scout task (dispatch)", Kind: "dispatch",
-			Description: "Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/.",
+			Description: "Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/. Dispatch with role \"scout\".",
 			Tags:        []string{"dispatch", "scout"},
 			ResultSchema: map[string]any{
 				"type":     "object",
@@ -1192,7 +1225,7 @@ func starterItems() []starterItem {
 		},
 		{
 			Title: "Two explanations (dispatch)", Kind: "dispatch",
-			Description: "Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything.",
+			Description: "Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything. Dispatch with role \"diagnostician\".",
 			Tags:        []string{"dispatch", "diagnose"},
 			ResultSchema: map[string]any{
 				"type":     "object",
@@ -1221,7 +1254,7 @@ func starterItems() []starterItem {
 	}
 	// Positional pairing, as before — ids[i] names seeds[i]. A mismatched length
 	// is a programming error caught by the seed-count test, not a runtime case.
-	ids := []string{"summarize-and-plan", "careful-refactor", "context7-mcp", "make-workspacer-plugin", "ship-task", "scout-task", "two-explanations"}
+	ids := []string{"summarize-and-plan", "careful-refactor", "context7-mcp", "make-workspacer-plugin", "ship-task", "review-task", "scout-task", "two-explanations"}
 	out := make([]starterItem, 0, len(seeds))
 	for i := range seeds {
 		if i >= len(ids) {
