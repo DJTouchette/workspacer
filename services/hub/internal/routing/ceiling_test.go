@@ -112,15 +112,22 @@ func TestCheckSpawnJudgesTheModelAndNotOnlyTheLabel(t *testing.T) {
 		t.Errorf("codex sol xhigh (frontier_max) was admitted under a frontier ceiling: %+v", v)
 	}
 
-	// AMBIGUOUS READINGS ARE NOT REFUSED, and this is the arm that keeps the
-	// clamp from breaking working dispatches. `opus` with no effort is frontier
-	// (anthropic_only, high), deep_reviewer (mixed, high) AND frontier_max
-	// (anthropic_only, max); the first two are under the ceiling, so the caller
-	// may well have meant one of them.
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus"}); v.CapabilityRefused {
-		t.Errorf("claude opus with no effort was refused, but it reads as frontier/deep_reviewer as well as frontier_max — an over-refusal breaks ordinary dispatch: %+v", v)
+	// AMBIGUITY IS READ AT ITS STRONGEST, and this assertion is the REVERSE of
+	// what it used to be. `opus` with no effort is frontier (anthropic_only,
+	// high), deep_reviewer (mixed, high) AND frontier_max (anthropic_only, max).
+	// The old rule took the cheapest reading and admitted it; that hands a caller
+	// who simply omits `effort` the benefit of an interpretation the provider is
+	// under no obligation to run. A gate judges what COULD execute.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus"}); !v.CapabilityRefused {
+		t.Errorf("claude opus with no effort was admitted under a frontier ceiling, but it reads as frontier_max too — omitting a field must not buy the cheapest interpretation: %+v", v)
 	}
-	// …and naming the effort that makes it unambiguous does refuse it.
+	// Naming the effort narrows the reading, and a narrowed reading UNDER the
+	// ceiling is admitted. This is what keeps the strongest-reading rule from
+	// being an over-refusal with no remedy: the remedy is one field.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus", Effort: "high"}); v.CapabilityRefused {
+		t.Errorf("claude opus at effort high is frontier/deep_reviewer, both at or under a frontier ceiling; it was refused: %+v", v)
+	}
+	// …and the effort that makes it unambiguously frontier_max still refuses.
 	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus", Effort: "max"}); !v.CapabilityRefused {
 		t.Errorf("claude opus at effort max is frontier_max and only that; it was admitted: %+v", v)
 	}
@@ -215,5 +222,77 @@ func TestCeilingLookupNeedsAnAlreadyCanonicalPath(t *testing.T) {
 	}
 	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: link, ToolScope: "operator"}); v.ToolScopeRefused {
 		t.Fatalf("the symlink spelling matched the capped entry — CeilingFor is lexical and must not appear to resolve links, or the enforcement site's canonicalization stops being load-bearing: %+v", v)
+	}
+}
+
+// AN AUTHORITY GATE FAILS CLOSED IN BOTH DIRECTIONS. These two pin the half that
+// used to fail OPEN: a ceiling row the file cannot parse. It was reported and
+// then skipped, so a typo in the policy silently deleted the policy for that
+// tree — and the result was indistinguishable from a directory nobody had
+// capped.
+
+func TestAnUnrankableConfiguredCeilingDeniesRatherThanAdmits(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontierr, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Model: "fable", Provider: "claude"})
+	if !v.Denied {
+		t.Fatalf("a ceiling whose max_capability cannot be ranked admitted a frontier_plus spawn: %+v", v)
+	}
+	if !v.Refused() {
+		t.Error("Denied must count as a refusal — the audit and the caller both read Refused()")
+	}
+	if len(v.Because) == 0 || !strings.Contains(v.Because[0], "frontierr") {
+		t.Errorf("the refusal must quote the unrankable value so the operator knows what to fix: %v", v.Because)
+	}
+}
+
+func TestAnUnknownConfiguredToolTierDeniesRatherThanAdmits(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: opperator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", ToolScope: "operator"})
+	if !v.Denied {
+		t.Fatalf("a ceiling whose max_tool_scope is not a tier admitted an operator-tier spawn: %+v", v)
+	}
+	// A spawn asking for NO tier is not judged by the tier arm at all, so an
+	// unparseable tier row must not deny it: the row it cannot read is one this
+	// spawn was never going to be measured against.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "balanced"}); v.Denied {
+		t.Errorf("a spawn asking for no tool tier was denied by an unreadable TIER row: %+v", v)
+	}
+}
+
+// An empty max_tool_scope is ABSENCE, not a typo: the row simply does not cap the
+// authority axis, and a deny there would refuse every spawn under a
+// capability-only ceiling.
+func TestACeilingRowThatOmitsATierDoesNotDeny(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", ToolScope: "operator", Capability: "balanced"}); v.Denied || v.ToolScopeRefused {
+		t.Errorf("an omitted max_tool_scope was treated as a broken one: %+v", v)
+	}
+}
+
+// An unranked PAIRING in the profiles now outranks every ceiling instead of
+// abandoning the model arm. Before, one unrankable profile entry naming a model
+// turned the named-model check off for that model everywhere in the matrix.
+func TestAnUnrankablePairingMakesTheModelArmRefuseRatherThanGiveUp(t *testing.T) {
+	m, err := Load("test.yaml", []byte(
+		"capabilities:\n  - cheap\n  - balanced\n  - frontier\n  - frontier_max\n  - reviewer\n  - deep_reviewer\n  - frontier_plus\n  - wildcard\n"+
+			"profiles:\n  mixed:\n    wildcard: { provider: codex, model: gpt-5.6-luna }\n"+
+			"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// gpt-5.6-luna is `cheap` (rank 1) AND now also the unranked `wildcard`.
+	// The unrankable reading is the one that decides.
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "codex", Model: "gpt-5.6-luna"})
+	if !v.CapabilityRefused {
+		t.Errorf("a model with an UNRANKABLE reading was admitted under a frontier ceiling: %+v", v)
 	}
 }

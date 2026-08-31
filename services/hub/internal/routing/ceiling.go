@@ -115,6 +115,19 @@ type CeilingVerdict struct {
 	Capability string `json:"capability,omitempty"`
 	ToolScope  string `json:"toolScope,omitempty"`
 
+	// Denied refuses the spawn OUTRIGHT rather than clamping it, and it is the
+	// answer to the one question a clamp cannot express: what to do when the
+	// CEILING ITSELF cannot be read.
+	//
+	// A ceiling row naming a capability the ranks block does not rank, or a tier
+	// the security model does not have, used to be reported and then skipped —
+	// so a typo in the policy file silently deleted the protection for that
+	// directory, and the failure looked exactly like a directory that was never
+	// capped. A ceiling nobody can parse must not become a ceiling nobody has.
+	// The spawn stops, and the sentence in Because names the file, the row and
+	// the value to fix.
+	Denied bool `json:"denied,omitempty"`
+
 	// Because explains every refusal in this verdict, in one sentence each. It
 	// is what the SECURITY log line and the operator's answer both quote, so a
 	// clamp is never something only a server log knows about.
@@ -122,7 +135,7 @@ type CeilingVerdict struct {
 }
 
 // Refused reports whether this verdict takes anything away.
-func (v CeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolScopeRefused }
+func (v CeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolScopeRefused || v.Denied }
 
 // CheckSpawn judges one spawn against the ceiling that governs its directory.
 //
@@ -138,23 +151,32 @@ func (v CeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolSco
 //	entirely — the ceiling would govern a LABEL. So the model is looked up in the
 //	matrix's own profiles and the capability it resolves to is judged too.
 //
-// The named-model arm is deliberately UNAMBIGUOUS-ONLY. A model is judged above
-// the ceiling only when EVERY (provider, model, effort) pairing in the whole
-// matrix that could have produced it ranks above the ceiling. `opus` with no
-// effort named appears as `frontier` (high), `deep_reviewer` (high) AND
-// `frontier_max` (max), so it is not refused — the caller may well have meant
-// one of the first two, and a clamp that fires on a legitimate reading is worse
-// than one that misses an illegitimate one, because it breaks working dispatches
-// and teaches people to raise the ceiling. `opus` WITH `effort: max` matches only
-// frontier_max and is refused; `fable` is only ever frontier_plus and is refused.
-// A model that appears nowhere in the matrix is not judged at all: the matrix
-// makes no claim about it, and inventing one would be a classification.
+// THE NAMED-MODEL ARM READS AMBIGUITY AT ITS STRONGEST, and it used to read it
+// at its weakest. A model with several readings in the matrix was judged by the
+// LOWEST-ranked one, on the reasoning that a clamp firing on a legitimate
+// reading is worse than one missing an illegitimate one. That is the right
+// instinct for a scheduler and the wrong one for an authority gate: it hands a
+// caller who omits `effort` the cheapest interpretation of the ask while the
+// provider goes on to run the strongest one. `opus` with no effort is `frontier`
+// (high), `deep_reviewer` (high) AND `frontier_max` (max); the question this arm
+// answers is "could this be above the ceiling", and for `opus` under `frontier`
+// the answer is yes.
 //
-// UNRANKED FAILS CLOSED on the requested side and OPEN on the ceiling's side.
-// A spawn naming a capability the file does not rank cannot be shown to be under
-// the ceiling, so it is clamped; a CEILING naming an unranked capability cannot
-// judge anything, so it judges nothing and says so. Those are the two honest
-// directions, and validate() reports both cases at load.
+// So: a model is refused when ANY (provider, model, effort) pairing in the
+// matrix that could have produced it ranks above the ceiling, and a pairing the
+// ranks block cannot rank counts as above every ceiling — an unjudgeable reading
+// is not a safe one. Name `effort: high` and the reading narrows to what you
+// actually meant; that is the disambiguation, and it costs one field.
+//
+// A model that appears nowhere in the matrix is still not judged at all: the
+// matrix makes no claim about it, and inventing one would be a classification.
+//
+// UNRANKED FAILS CLOSED IN BOTH DIRECTIONS. A spawn naming a capability the file
+// does not rank cannot be shown to be under the ceiling, so it is CLAMPED; a
+// ceiling row naming one cannot judge anything, so the spawn is DENIED. The
+// second half used to be the open direction — reported and skipped — which made
+// a typo in the policy file the quietest possible way to delete the policy.
+// validate() reports both cases at load; neither is left to the log alone.
 func (m *Matrix) CheckSpawn(req SpawnRequest) CeilingVerdict {
 	var v CeilingVerdict
 	if m == nil {
@@ -179,8 +201,13 @@ func (m *Matrix) checkToolScope(req SpawnRequest, ceiling Ceiling, v *CeilingVer
 	max, maxOK := ToolScopeRank(ceiling.MaxToolScope)
 	if !maxOK {
 		if strings.TrimSpace(ceiling.MaxToolScope) != "" {
+			// FAIL CLOSED. The row exists, it names a tier, and the tier is not
+			// one — so this directory HAS a policy and the policy is unreadable.
+			// Waving the spawn through would make a typo the most effective way
+			// to remove a ceiling, and it would look identical to working.
+			v.Denied = true
 			v.Because = append(v.Because, fmt.Sprintf(
-				"ceilings.%s.max_tool_scope is %q, which is not an authority tier (view, triage, operator), so no scope ceiling could be applied here",
+				"ceilings.%s.max_tool_scope is %q, which is not an authority tier (view, triage, operator) — this spawn is REFUSED rather than admitted, because a ceiling that cannot be read is not a ceiling that does not exist. Fix the value in ~/.config/workspacer-hub/routing.yaml; there is no bus call that can",
 				v.Key, ceiling.MaxToolScope))
 		}
 		return
@@ -200,8 +227,13 @@ func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVe
 	}
 	maxRank := m.RankOf(ceiling.MaxCapability)
 	if maxRank == UnrankedCapability {
+		// FAIL CLOSED, same reasoning as the tier arm above: the row says this
+		// directory is capped and the cap is unrankable, so nothing here can be
+		// compared. Reporting it and continuing turned one unranked word into a
+		// silent removal of the whole capability ceiling for that tree.
+		v.Denied = true
 		v.Because = append(v.Because, fmt.Sprintf(
-			"ceilings.%s.max_capability is %q, which routing.yaml's capability_ranks: block does not rank, so no capability ceiling could be applied here — rank it and the ceiling starts working",
+			"ceilings.%s.max_capability is %q, which routing.yaml's capability_ranks: block does not rank — this spawn is REFUSED rather than admitted, because an unrankable ceiling cannot be shown to permit anything. Rank it under capability_ranks: and the ceiling starts working",
 			v.Key, ceiling.MaxCapability))
 		return
 	}
@@ -234,18 +266,29 @@ func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVe
 	}
 	v.CapabilityRefused, v.Capability = true, ceiling.MaxCapability
 	v.Because = append(v.Because, fmt.Sprintf(
-		"this spawn named %s %s%s, which every profile in routing.yaml resolves at capability %s, above ceilings.%s's %s for %s — the model and effort are dropped so the provider falls back to its own configured default. Declaring a lower `capability` does not change what the model IS, which is why this arm exists",
+		"this spawn named %s %s%s, which routing.yaml can read as capability %s — above ceilings.%s's %s for %s. The STRONGEST reading of an ambiguous model is the one an authority gate has to judge, so naming `effort` narrows it to what you meant. Declaring a lower `capability` does not change what the model IS, which is why this arm exists",
 		req.Provider, req.Model, effortSuffix(req.Effort), capName, v.Key, ceiling.MaxCapability, req.CanonicalCwd))
 }
 
-// capabilityOfModel answers, unambiguously or not at all, what capability a
-// named (provider, model, effort) is in this matrix.
+// capabilityOfModel answers what capability a named (provider, model, effort)
+// could be in this matrix, AT ITS STRONGEST.
 //
-// It returns the LOWEST rank among every pairing that could have produced the
-// request, because that is the reading most favourable to the caller and the
-// clamp is only entitled to fire when even that reading is above the ceiling.
-// An effort the caller left unspecified matches every effort the matrix pairs
-// with that model; an effort they DID specify must match exactly.
+// It returns the HIGHEST rank among every pairing that could have produced the
+// request. That is the reading LEAST favourable to the caller, and it is the
+// only sound one for a gate: the caller does not choose which reading the
+// provider runs, so "it might have meant the cheap one" is not a fact about what
+// will execute. An effort the caller left unspecified matches every effort the
+// matrix pairs with that model; an effort they DID specify must match exactly,
+// which is how a caller narrows the reading to the one they meant.
+//
+// AN UNRANKED PAIRING OUTRANKS EVERYTHING. A reading the ranks block cannot rank
+// cannot be shown to sit under any ceiling, so it is reported at
+// UnrankedCapabilityStrength — above every real rank — rather than abandoning
+// the judgement, which is what the old code did and what let one unranked
+// profile entry disable the model arm for that model everywhere.
+//
+// `ok` is false only when the matrix has NO reading at all: an unknown model, or
+// none named. A matrix that never mentions a model makes no claim about it.
 func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, capability string, ok bool) {
 	p := normalizeProvider(provider)
 	mo := strings.ToLower(strings.TrimSpace(model))
@@ -265,12 +308,9 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 			}
 			r := m.RankOf(cname)
 			if r == UnrankedCapability {
-				// An unranked pairing is a reading we cannot judge, and an
-				// unjudgeable reading is a reading the caller might have meant.
-				// Refuse to conclude anything from the model at all.
-				return 0, "", false
+				r = UnrankedCapabilityStrength
 			}
-			if !found || r < best {
+			if !found || r > best {
 				best, bestName, found = r, cname, true
 			}
 		}

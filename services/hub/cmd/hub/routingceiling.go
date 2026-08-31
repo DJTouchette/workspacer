@@ -72,6 +72,7 @@ func routingSpawnCeiling(svc *routing.Service) bus.SpawnCeilingFunc {
 			Capability:        v.Capability,
 			ToolScopeRefused:  v.ToolScopeRefused,
 			ToolScope:         v.ToolScope,
+			Denied:            v.Denied,
 			Because:           v.Because,
 		}
 	}
@@ -102,6 +103,7 @@ func routingSpawnAudit(logf *routing.DecisionLog) bus.SpawnAuditFunc {
 			Capability:        r.Ceiling.Capability,
 			ToolScopeRefused:  r.Ceiling.ToolScopeRefused,
 			ToolScope:         r.Ceiling.ToolScope,
+			Denied:            r.Ceiling.Denied,
 			Because:           r.Ceiling.Because,
 		}
 		logf.Spawn(r.DecisionID, routing.SpawnEntry{

@@ -378,3 +378,42 @@ func TestClampReasonsNameTheFileAsTheRemedy(t *testing.T) {
 		t.Errorf("the recorded reason does not name where the ceiling came from: %+v", (*audits)[0].Ceiling)
 	}
 }
+
+// A DENIED VERDICT STOPS THE SPAWN, and it is recorded on the way out.
+//
+// The routing layer sets Denied when the CEILING ITSELF cannot be read — a row
+// naming an unrankable capability or a tier the security model does not have.
+// Clamping is not available in that case (there is nothing to clamp TO), and
+// admitting would make a typo in the policy file the quietest way to delete the
+// policy. So the router refuses, and the audit still gets its row: a refusal
+// nobody logged is the one event an operator cannot explain.
+func TestADeniedCeilingRefusesTheSpawnAndStillRecordsIt(t *testing.T) {
+	url, got, audits := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
+		return SpawnCeilingVerdict{
+			Key: "default", MaxCapability: "frontierr", Denied: true,
+			Because: []string{"ceilings.default.max_capability is \"frontierr\", which capability_ranks: does not rank"},
+		}
+	})
+
+	caller := dialClientToken(t, url, "tok-operator")
+	caller.send(Frame{Op: "call", ID: "s1", Method: "agents.spawn",
+		Params: json.RawMessage(`{"cwd":"/tmp","capability":"balanced"}`)})
+	f := caller.readUntil("error")
+	if f.ID != "s1" {
+		t.Fatalf("error frame id %q, want s1", f.ID)
+	}
+	if !strings.Contains(f.Error, "frontierr") {
+		t.Errorf("the caller must be told which value to fix; got %q", f.Error)
+	}
+	select {
+	case raw := <-got:
+		t.Fatalf("a DENIED spawn reached the provider anyway: %s", raw)
+	default:
+	}
+	if len(*audits) != 1 {
+		t.Fatalf("a denied spawn wrote %d audit rows, want 1", len(*audits))
+	}
+	if !(*audits)[0].Ceiling.Denied {
+		t.Error("the audit row does not record that this spawn was denied")
+	}
+}

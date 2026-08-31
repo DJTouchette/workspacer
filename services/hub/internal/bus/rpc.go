@@ -435,12 +435,21 @@ type SpawnCeilingVerdict struct {
 	ToolScopeRefused bool
 	ToolScope        string
 
+	// Denied refuses the spawn OUTRIGHT instead of clamping it. The routing
+	// layer sets it when the CEILING ITSELF cannot be read — a row naming an
+	// unrankable capability or a tier the security model does not have. A
+	// directory whose policy is unparseable is not a directory with no policy,
+	// so the spawn stops here and the caller is told which line to fix.
+	Denied bool
+
 	// Because is one sentence per refusal. It goes to the SECURITY log verbatim.
 	Because []string
 }
 
 // Refused reports whether this verdict takes anything away.
-func (v SpawnCeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolScopeRefused }
+func (v SpawnCeilingVerdict) Refused() bool {
+	return v.CapabilityRefused || v.ToolScopeRefused || v.Denied
+}
 
 // SpawnCeilingFunc resolves the routing ceiling for one spawn. Injected at
 // wiring time from cmd/hub (see [Server.SetSpawnCeiling]) rather than read here:
@@ -659,7 +668,11 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 		}
 	}
 
-	scrubbed = append(scrubbed, rt.clampSpawnAuthority(caller, m)...)
+	clamped, cErr := rt.clampSpawnAuthority(caller, m)
+	if cErr != nil {
+		return nil, cErr
+	}
+	scrubbed = append(scrubbed, clamped...)
 
 	if len(scrubbed) > 0 {
 		if raw, err := json.Marshal(scrubbed); err == nil {
@@ -682,7 +695,7 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 // and one that names no capability at all: the caller-tier half of the authority
 // clamp is a property of the credential and needs no file, and the audit record
 // is worth having for a spawn nothing clamped.
-func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage) []string {
+func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage) ([]string, error) {
 	str := func(key string) string {
 		r, ok := m[key]
 		if !ok {
@@ -792,7 +805,14 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 			verdict.Capability, caller.tokenID, strings.Join(verdict.Because, " | "))
 	}
 
-	if auditFn != nil {
+	// THE DENIAL, recorded before it is returned. A spawn refused because the
+	// policy file is unreadable is exactly the spawn an operator will come
+	// looking for in the log, and a refusal that left no row would be the one
+	// event the audit trail could not explain.
+	record := func() {
+		if auditFn == nil {
+			return
+		}
 		auditFn(SpawnRecord{
 			DecisionID: str("decisionId"),
 			Role:       str("role"),
@@ -812,7 +832,14 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 			Scrubbed:      scrubbed,
 		})
 	}
-	return scrubbed
+	record()
+
+	if verdict.Denied {
+		reasons := strings.Join(verdict.Because, " | ")
+		log.Printf("SECURITY: agents.spawn REFUSED for caller %s in %q: %s", caller.tokenID, canonical, reasons)
+		return nil, fmt.Errorf("agents.spawn refused: %s", reasons)
+	}
+	return scrubbed, nil
 }
 
 // mustJSON encodes a string that is known to encode. json.Marshal of a string

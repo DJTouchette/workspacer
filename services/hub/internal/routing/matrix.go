@@ -132,6 +132,16 @@ const CeilingDefaultKey = "default"
 // `capability_ranks:` block does not name.
 const UnrankedCapability = -1
 
+// UnrankedCapabilityStrength is how STRONG an unrankable capability is when a
+// ceiling has to judge one anyway: stronger than anything the file can rank.
+//
+// It is not UnrankedCapability (-1) because these answer different questions.
+// "Is this ranked?" is -1's job. "How much authority must I assume this confers
+// when I cannot look it up?" has exactly one safe answer at a gate, and it is
+// not zero. Kept far above any plausible hand-written rank so a matrix that
+// ranks its ladder 1..10 cannot collide with it.
+const UnrankedCapabilityStrength = 1 << 20
+
 // Issue is one load-time finding: a model the provider does not serve, a role
 // pointing at a capability no profile resolves, an unknown provider id. Issues
 // never stop a matrix from being applied — they are reported so an operator
