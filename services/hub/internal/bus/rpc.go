@@ -435,6 +435,16 @@ type SpawnCeilingVerdict struct {
 	ToolScopeRefused bool
 	ToolScope        string
 
+	// Provider / Model / Effort are the SAFE ROUTED TUPLE for the clamped
+	// capability, supplied by the routing layer and WRITTEN onto the params by
+	// the clamp. Empty means the matrix could not name one; the clamp then
+	// deletes model/effort as it used to, and Because says why. See
+	// routing.CeilingVerdict for the hole this closes: an omitted model is not
+	// a weak model, it is the provider's own configured default.
+	Provider string
+	Model    string
+	Effort   string
+
 	// Denied refuses the spawn OUTRIGHT instead of clamping it. The routing
 	// layer sets it when the CEILING ITSELF cannot be read — a row naming an
 	// unrankable capability or a tier the security model does not have. A
@@ -588,11 +598,12 @@ func toolScopeRank(scope string) (int, bool) {
 //
 //  5. The CAPABILITY CLAMP. `capability` is lowered to routing.yaml's
 //     `max_capability` for that directory, and when it is, `model` and `effort`
-//     go with it — keeping the model that the refused capability chose would
-//     make the ceiling a relabelling rather than a limit. The matrix also
-//     catches a spawn that declares nothing and simply NAMES a reserved model;
-//     see routing.Matrix.CheckSpawn for why that arm only fires on an
-//     unambiguous reading.
+//     are REPLACED with what the permitted capability actually resolves to —
+//     not merely deleted. Deleting them was the hole: an omitted model is the
+//     provider's own configured default, chosen below anything this gate can
+//     see, so the clamp relabelled rather than limited. The matrix also catches
+//     a spawn that declares nothing and simply NAMES a reserved model, judged at
+//     the STRONGEST reading the matrix has for it.
 //
 //  6. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
 //     only, same as the stamps above) and re-stamped with what THIS router took
@@ -611,11 +622,16 @@ func toolScopeRank(scope string) (int, bool) {
 // Electron IPC door is deliberately NOT sanitized: that is a human at the
 // machine clicking Spawn, and nothing here should change that.
 //
-// WHAT IT IS NOT. It is a CLAMP, never a re-route. It lowers what was asked for;
-// it never picks a provider, never substitutes a model and never promotes
-// anything. Re-routing at this gate would mean the gate needed the whole routing
-// engine plus a task classification the caller did not supply, and would create
-// a second place where model selection happens.
+// WHAT IT IS NOT. It never PROMOTES and it never classifies: it lowers what was
+// asked for, and the routing engine — not this function — decides what the
+// lowered thing resolves to. It does substitute a model, and that is a
+// correction rather than a widening of scope: it names what the PERMITTED
+// capability already means under the matrix in force, on the provider the spawn
+// was already for, and only ever on the refusal path. The alternative, tried
+// first, was to delete the model and let the provider default fill the gap, and
+// that turned the ceiling into a relabelling. It still never picks a provider
+// for a spawn that named one, and it still holds no matrix of its own — the
+// tuple arrives in the verdict, from the same injected resolver as the limits.
 //
 // Non-object params pass through untouched — there is no field to smuggle in a
 // shape the provider's own decoder would reject anyway. The provider keeps its
@@ -792,17 +808,40 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 		} else {
 			delete(m, "capability")
 		}
-		// The model and the effort go with the capability. A spawn that keeps
-		// `model: fable` after `capability` was clamped to `frontier` has had a
-		// label changed, not a limit applied.
+		// THE MODEL GOES WITH THE CAPABILITY — replaced where the matrix can name
+		// a replacement, deleted where it cannot.
+		//
+		// Deleting alone was the hole. `model` absent does not mean a weak model;
+		// it means the PROVIDER picks, from its own configured default, below
+		// anything this gate can see — and the desktop's Claude default
+		// (`opus[1m]`) is a model the routing matrix never mentions, so it would
+		// not be judged on the way back round either. A clamp that turns "an
+		// explicit strong model" into "a default that is just as strong" has
+		// relabelled the spawn rather than limited it. So when the routing layer
+		// can say what the PERMITTED capability resolves to, that tuple is
+		// written here, and the provider is left no hole to fill.
 		for _, key := range []string{"model", "effort"} {
 			if _, had := m[key]; had {
 				delete(m, key)
 				scrubbed = append(scrubbed, key)
 			}
 		}
-		log.Printf("SECURITY: agents.spawn: capability clamped to %q for caller %s: %s",
-			verdict.Capability, caller.tokenID, strings.Join(verdict.Because, " | "))
+		if verdict.Model != "" {
+			m["model"] = mustJSON(verdict.Model)
+			if verdict.Effort != "" {
+				m["effort"] = mustJSON(verdict.Effort)
+			}
+			// The provider rides along ONLY when the routing layer resolved one
+			// and the spawn did not name its own. Overriding a caller's explicit
+			// provider would swap the harness under it, which the routing layer
+			// deliberately refuses to do (routeSafely constrains to the named
+			// provider or answers with nothing).
+			if _, named := m["provider"]; !named && verdict.Provider != "" {
+				m["provider"] = mustJSON(verdict.Provider)
+			}
+		}
+		log.Printf("SECURITY: agents.spawn: capability clamped to %q (model %q) for caller %s: %s",
+			verdict.Capability, verdict.Model, caller.tokenID, strings.Join(verdict.Because, " | "))
 	}
 
 	// THE DENIAL, recorded before it is returned. A spawn refused because the

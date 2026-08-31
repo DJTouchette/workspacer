@@ -417,3 +417,80 @@ func TestADeniedCeilingRefusesTheSpawnAndStillRecordsIt(t *testing.T) {
 		t.Error("the audit row does not record that this spawn was denied")
 	}
 }
+
+// THE ROUTER WRITES THE SAFE TUPLE. The routing layer names what the permitted
+// capability resolves to; this is the half that puts it on the wire, so the
+// provider is left no omitted field to resolve from its own configured default.
+func TestAClampedCapabilityArrivesWithAnExplicitSafeModel(t *testing.T) {
+	url, got, _ := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
+		if req.Capability != "frontier_plus" {
+			return SpawnCeilingVerdict{Key: "default", MaxCapability: "frontier"}
+		}
+		return SpawnCeilingVerdict{
+			Key: "default", MaxCapability: "frontier",
+			CapabilityRefused: true, Capability: "frontier",
+			Provider: "claude", Model: "opus", Effort: "high",
+			Because: []string{"the stand-in ceiling caps this directory at frontier"},
+		}
+	})
+
+	m := spawnVia(t, url, "tok-operator",
+		`{"cwd":"/tmp","capability":"frontier_plus","model":"fable","effort":"max"}`, got)
+
+	if m["capability"] != "frontier" {
+		t.Errorf("capability reached the provider as %v, want frontier", m["capability"])
+	}
+	if m["model"] != "opus" {
+		t.Errorf("model reached the provider as %v, want the routed replacement opus — an ABSENT model is the provider's own default, which is the hole this closes", m["model"])
+	}
+	if m["effort"] != "high" {
+		t.Errorf("effort reached the provider as %v, want high", m["effort"])
+	}
+	if m["provider"] != "claude" {
+		t.Errorf("provider reached the provider as %v, want claude", m["provider"])
+	}
+	// The caller still learns what was taken: replaced is not the same as kept.
+	scrub := scrubbedList(t, m)
+	for _, f := range []string{"capability", "model", "effort"} {
+		if !namesField(scrub, f) {
+			t.Errorf("%q was replaced without being reported in escalationScrubbed: %v", f, scrub)
+		}
+	}
+}
+
+// A caller's EXPLICIT provider is never overwritten. The routing layer only ever
+// answers with a tuple on the provider the spawn was already for, and the router
+// must not paper over the case where it answered with a different one.
+func TestTheClampNeverOverwritesAnExplicitProvider(t *testing.T) {
+	url, got, _ := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
+		return SpawnCeilingVerdict{
+			Key: "default", MaxCapability: "frontier",
+			CapabilityRefused: true, Capability: "frontier",
+			Provider: "codex", Model: "gpt-5.6-sol", Effort: "high",
+		}
+	})
+	m := spawnVia(t, url, "tok-operator",
+		`{"cwd":"/tmp","provider":"claude","capability":"frontier_plus"}`, got)
+	if m["provider"] != "claude" {
+		t.Errorf("the clamp swapped an explicitly named harness: provider reached the provider as %v", m["provider"])
+	}
+}
+
+// And when the routing layer names NO replacement, the old behaviour stands:
+// drop the model rather than invent one.
+func TestWithNoRoutedReplacementTheModelIsStillDropped(t *testing.T) {
+	url, got, _ := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
+		return SpawnCeilingVerdict{
+			Key: "default", MaxCapability: "balanced",
+			CapabilityRefused: true, Capability: "balanced",
+		}
+	})
+	m := spawnVia(t, url, "tok-operator",
+		`{"cwd":"/tmp","provider":"copilot","capability":"frontier_plus","model":"something","effort":"high"}`, got)
+	if _, has := m["model"]; has {
+		t.Errorf("a model was invented for a provider the matrix does not serve: %v", m)
+	}
+	if _, has := m["effort"]; has {
+		t.Errorf("effort survived with no replacement tuple: %v", m)
+	}
+}

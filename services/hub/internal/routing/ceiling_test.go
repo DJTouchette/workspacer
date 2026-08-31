@@ -296,3 +296,92 @@ func TestAnUnrankablePairingMakesTheModelArmRefuseRatherThanGiveUp(t *testing.T)
 		t.Errorf("a model with an UNRANKABLE reading was admitted under a frontier ceiling: %+v", v)
 	}
 }
+
+// THE CLAMP MUST LEAVE NO HOLE. Deleting the refused model hands the choice to
+// the provider's own configured default — `opus[1m]` on the desktop's Claude
+// path, a model this matrix never mentions and therefore never judges. These pin
+// the replacement tuple that closes it.
+
+func TestARefusedCapabilityNamesTheModelThePermittedOneResolvesTo(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{
+		CanonicalCwd: "/x", Capability: "frontier_plus", Provider: "claude", Model: "fable",
+	})
+	if !v.CapabilityRefused {
+		t.Fatalf("frontier_plus was not refused under a frontier ceiling: %+v", v)
+	}
+	if v.Model == "" {
+		t.Fatal("the verdict named no replacement model — the provider's own default would fill the hole, which is the relabelling this exists to stop")
+	}
+	if v.Model == "fable" {
+		t.Errorf("the refused model survived as the replacement: %+v", v)
+	}
+	if v.Provider != "claude" {
+		t.Errorf("the clamp moved a claude spawn onto %q — a ceiling may lower authority, not swap the harness: %+v", v.Provider, v)
+	}
+	// And the replacement must itself be at or under the ceiling, or the clamp
+	// has merely picked a different way to exceed it.
+	rank, _, ok := m.capabilityOfModel(v.Provider, v.Model, v.Effort)
+	if !ok {
+		t.Fatalf("the replacement %s %s is not a pairing this matrix knows — it cannot be shown to be under the ceiling", v.Provider, v.Model)
+	}
+	if rank > m.RankOf("frontier") {
+		t.Errorf("the replacement %s %s%s reads above the frontier ceiling it was chosen to satisfy", v.Provider, v.Model, effortSuffix(v.Effort))
+	}
+}
+
+// A spawn that declares a too-high capability and names NO model is the shape
+// that made deletion useless: there was nothing to delete, and the provider
+// default fired anyway.
+func TestARefusedCapabilityWithNoModelNamedStillGetsATuple(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus"})
+	if !v.CapabilityRefused {
+		t.Fatalf("frontier_plus was not refused under a balanced ceiling: %+v", v)
+	}
+	if v.Model == "" || v.Provider == "" {
+		t.Fatalf("no tuple for a spawn that named no model — the provider default is exactly what fills that gap: %+v", v)
+	}
+}
+
+// The model names its provider even when the spawn does not. `model: fable`
+// plainly means claude, and answering it with a codex model because the active
+// profile prefers codex would be a re-route nobody asked for.
+func TestTheReplacementFollowsTheModelsOwnProviderWhenNoneWasNamed(t *testing.T) {
+	m, err := Load("test.yaml", []byte("active_profile: mixed\nceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Model: "fable"})
+	if v.Provider != "claude" {
+		t.Errorf("a spawn naming fable (a claude model) and no provider was routed to %q — mixed's frontier is codex, but the model said claude: %+v", v.Provider, v)
+	}
+}
+
+// A provider the matrix holds no profile entry for gets NO tuple and NO
+// substitution: there was never a matrix opinion about its models for the
+// ceiling to protect, and silently moving the spawn onto codex would be a far
+// worse surprise than the drop.
+func TestAProviderTheMatrixDoesNotServeIsNotReRouted(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Provider: "copilot"})
+	if !v.CapabilityRefused {
+		t.Fatalf("the declared capability was not clamped: %+v", v)
+	}
+	if v.Provider != "" || v.Model != "" {
+		t.Errorf("a copilot spawn was re-routed onto %s %s: %+v", v.Provider, v.Model, v)
+	}
+	joined := strings.Join(v.Because, " | ")
+	if !strings.Contains(joined, "copilot") {
+		t.Errorf("the verdict did not say why no replacement was named: %v", v.Because)
+	}
+}

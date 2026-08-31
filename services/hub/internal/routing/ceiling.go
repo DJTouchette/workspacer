@@ -115,6 +115,28 @@ type CeilingVerdict struct {
 	Capability string `json:"capability,omitempty"`
 	ToolScope  string `json:"toolScope,omitempty"`
 
+	// Provider / Model / Effort are the SAFE ROUTED TUPLE for the clamped
+	// capability, and they are why the capability clamp is a limit rather than
+	// a relabelling.
+	//
+	// Deleting the refused model was not enough. Every provider resolves an
+	// OMITTED model to its own configured default, and the desktop's Claude
+	// default is `opus[1m]` — a model the matrix never mentions, so the
+	// named-model arm cannot judge it either. So a ceiling that refused
+	// `frontier_plus`/`fable` handed the spawn back to a default that is
+	// plausibly just as strong, one layer below where the ceiling could see it.
+	// The fix is to leave no hole: the clamp names what the permitted capability
+	// actually resolves to, and the enforcement site WRITES it.
+	//
+	// Empty when the matrix cannot route the permitted capability on the
+	// provider this spawn is for — a provider it holds no profile entry for
+	// (copilot, opencode, pi) has no matrix opinion about its models at all, so
+	// there is nothing here for the ceiling to have been protecting. The
+	// enforcement site falls back to deleting, and Because says so.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+
 	// Denied refuses the spawn OUTRIGHT rather than clamping it, and it is the
 	// answer to the one question a clamp cannot express: what to do when the
 	// CEILING ITSELF cannot be read.
@@ -251,8 +273,9 @@ func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVe
 		if rank > maxRank {
 			v.CapabilityRefused, v.Capability = true, ceiling.MaxCapability
 			v.Because = append(v.Because, fmt.Sprintf(
-				"this spawn asked for capability %s in %s, and routing.yaml's ceilings.%s caps that directory at %s — the capability is clamped to %s and the model/effort it named are dropped, so the spawn cannot keep the model the refused capability chose",
-				declared, req.CanonicalCwd, v.Key, ceiling.MaxCapability, ceiling.MaxCapability))
+				"this spawn asked for capability %s in %s, and routing.yaml's ceilings.%s caps that directory at %s — the capability is clamped to %s and the model/effort it named are replaced with what %s actually resolves to, so the spawn cannot keep the model the refused capability chose",
+				declared, req.CanonicalCwd, v.Key, ceiling.MaxCapability, ceiling.MaxCapability, ceiling.MaxCapability))
+			m.routeSafely(req, ceiling.MaxCapability, v)
 			return
 		}
 	}
@@ -265,9 +288,11 @@ func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVe
 		return
 	}
 	v.CapabilityRefused, v.Capability = true, ceiling.MaxCapability
+	m.routeSafely(req, ceiling.MaxCapability, v)
 	v.Because = append(v.Because, fmt.Sprintf(
 		"this spawn named %s %s%s, which routing.yaml can read as capability %s — above ceilings.%s's %s for %s. The STRONGEST reading of an ambiguous model is the one an authority gate has to judge, so naming `effort` narrows it to what you meant. Declaring a lower `capability` does not change what the model IS, which is why this arm exists",
 		req.Provider, req.Model, effortSuffix(req.Effort), capName, v.Key, ceiling.MaxCapability, req.CanonicalCwd))
+
 }
 
 // capabilityOfModel answers what capability a named (provider, model, effort)
@@ -316,4 +341,98 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 		}
 	}
 	return best, bestName, found
+}
+
+// routeSafely fills in the verdict's safe routed tuple: what the PERMITTED
+// capability actually resolves to for the provider this spawn is for.
+//
+// WITHOUT THIS, THE CLAMP IS A RELABELLING. The enforcement site used to delete
+// `model` and `effort` when it lowered `capability`, on the reasoning that
+// keeping the model a refused capability chose would change a label rather than
+// apply a limit. True as far as it goes — and then the provider resolved the
+// now-omitted model to its OWN configured default, one layer below where any
+// ceiling can see it, and the desktop's Claude default (`opus[1m]`) is a model
+// this matrix never mentions, so even the named-model arm would not have caught
+// it on the way back round. A ceiling that turns "an explicit strong model" into
+// "an omitted model that defaults to a strong model" has relabelled.
+//
+// WHICH PROVIDER, and why the answer is not simply "the one the active profile
+// prefers". Substituting the provider is a bigger change than substituting the
+// model: it swaps the harness the work runs in. So the constraint is, in order:
+//
+//  1. the provider the spawn NAMED, if it named one;
+//  2. the provider the matrix associates with the MODEL it named, when that is
+//     unambiguous — `model: fable` with no provider plainly means claude, and
+//     answering it with a codex model because the active profile prefers codex
+//     would be a re-route nobody asked for;
+//  3. otherwise the active profile's own answer, unconstrained.
+//
+// A constrained resolution that finds nothing leaves the tuple EMPTY rather than
+// substituting a provider. That is the copilot/opencode/pi case: the matrix
+// holds no profile entry for them, so it has no opinion about their models, and
+// there was never anything on that axis for the ceiling to protect. Silently
+// moving such a spawn onto codex would be a far worse surprise than the delete.
+func (m *Matrix) routeSafely(req SpawnRequest, capability string, v *CeilingVerdict) {
+	if m == nil || strings.TrimSpace(capability) == "" {
+		return
+	}
+	profile, _ := m.ActiveProfileName()
+
+	constraint := normalizeProvider(req.Provider)
+	if constraint == "" {
+		constraint = m.providerOfModel(req.Model)
+	}
+
+	a, from, ok := m.assignmentFor(profile, capability, constraint, constraint != "")
+	if ok && !a.IsEnabled() {
+		ok = false // `enabled: false` is not something to route a clamp onto
+	}
+	if !ok {
+		if constraint != "" {
+			v.Because = append(v.Because, fmt.Sprintf(
+				"routing.yaml puts no spawnable %s pairing on provider %s, so the model and effort are dropped rather than moved to another provider — the matrix expresses no opinion about %s's models, and re-routing a spawn onto a different harness is a bigger surprise than a ceiling is entitled to. The provider then starts on its own configured default, which this ceiling cannot see",
+				capability, constraint, constraint))
+			return
+		}
+		v.Because = append(v.Because, fmt.Sprintf(
+			"no profile in this matrix resolves %s to anything spawnable, so the model and effort are dropped and the provider starts on its own configured default — which this ceiling cannot see. Give %s an entry under profiles: to close that",
+			capability, capability))
+		return
+	}
+
+	v.Provider, v.Model, v.Effort = a.Provider, a.Model, a.Effort
+	v.Because = append(v.Because, fmt.Sprintf(
+		"the spawn is routed to %s %s%s instead, which is what profile %s resolves %s to — the ceiling NAMES the replacement rather than dropping the model, because an omitted model resolves to the provider's own configured default and that default is not something this ceiling can see",
+		v.Provider, v.Model, effortSuffix(v.Effort), from, capability))
+}
+
+// providerOfModel is the provider a model plainly belongs to in this matrix, or
+// "" when the matrix never mentions it or pairs it with more than one provider.
+//
+// It exists for exactly one job: keeping a clamp on a spawn that named a model
+// but no provider from silently changing which harness runs. `model: fable`
+// means claude whether or not the caller said so.
+func (m *Matrix) providerOfModel(model string) string {
+	mo := strings.ToLower(strings.TrimSpace(model))
+	if m == nil || mo == "" {
+		return ""
+	}
+	found := ""
+	for _, pname := range sortedKeys(m.Profiles) {
+		for _, cname := range sortedKeys(m.Profiles[pname]) {
+			a := m.Profiles[pname][cname]
+			if strings.ToLower(strings.TrimSpace(a.Model)) != mo {
+				continue
+			}
+			p := normalizeProvider(a.Provider)
+			if p == "" {
+				continue
+			}
+			if found != "" && found != p {
+				return "" // two providers serve this id: no plain reading
+			}
+			found = p
+		}
+	}
+	return found
 }

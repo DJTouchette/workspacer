@@ -512,8 +512,17 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   const got = seen[seen.length - 1] ?? {};
   check('the spawn reached the provider at all', !!over?.sessionId, JSON.stringify(over));
   check('capability was CLAMPED to the directory ceiling', got.capability === 'balanced', JSON.stringify(got));
-  check('the model the refused capability chose was dropped', got.model === undefined, JSON.stringify(got));
-  check('the effort was dropped with it', got.effort === undefined, JSON.stringify(got));
+  check('the model the refused capability chose did not survive', got.model !== 'fable', JSON.stringify(got));
+  // STRONGER THAN "dropped", and deliberately. Dropping `model` leaves the
+  // PROVIDER to resolve its own configured default, one layer below anything the
+  // ceiling can see — and the desktop's Claude default (`opus[1m]`) is a model
+  // the matrix never mentions, so the named-model arm would not catch it on the
+  // way back round either. So the clamp must NAME what the permitted capability
+  // resolves to and leave no hole for a default to fill.
+  check('the clamp left no hole for a provider default to fill', typeof got.model === 'string' && got.model.length > 0, JSON.stringify(got));
+  check('the replacement model is what the PERMITTED capability resolves to', got.model === 'sonnet', JSON.stringify(got));
+  check('the replacement carries its own effort', got.effort === 'high', JSON.stringify(got));
+  check('the clamp did not swap the harness the spawn was for', got.provider === 'claude', JSON.stringify(got));
   check('the tool tier was clamped to the directory ceiling', got.toolScope === 'triage', JSON.stringify(got));
   check(
     'the downgrade is named in escalationScrubbed (no silent downgrades)',
@@ -539,7 +548,7 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
     fs.symlinkSync(CEILED_DIR, link);
     await operator.call('agents.spawn', { cwd: link, capability: 'frontier_plus', model: 'fable', toolScope: 'operator' });
     const viaLink = seen[seen.length - 1] ?? {};
-    check('a SYMLINK to the capped directory does not walk around its ceiling', viaLink.capability === 'balanced' && viaLink.model === undefined, JSON.stringify(viaLink));
+    check('a SYMLINK to the capped directory does not walk around its ceiling', viaLink.capability === 'balanced' && viaLink.model === 'sonnet', JSON.stringify(viaLink));
     check('the symlinked spawn is also tier-clamped', viaLink.toolScope === 'triage', JSON.stringify(viaLink));
   } catch (err) {
     check('symlink case ran', false, `could not create ${link}: ${err?.message ?? err}`);
