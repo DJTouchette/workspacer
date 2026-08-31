@@ -383,9 +383,9 @@ func TestAnUnrankablePairingMakesTheModelArmRefuseRatherThanGiveUp(t *testing.T)
 }
 
 // THE CLAMP MUST LEAVE NO HOLE. Deleting the refused model hands the choice to
-// the provider's own configured default — `opus[1m]` on the desktop's Claude
-// path, a model this matrix never mentions and therefore never judges. These pin
-// the replacement tuple that closes it.
+// the provider's own configured default, which on the desktop's Claude path is
+// `opus[1m]` — chosen below where any ceiling can see it, whatever the matrix
+// can read about the string. These pin the replacement tuple that closes it.
 
 func TestARefusedCapabilityNamesTheModelThePermittedOneResolvesTo(t *testing.T) {
 	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
@@ -468,5 +468,183 @@ func TestAProviderTheMatrixDoesNotServeIsNotReRouted(t *testing.T) {
 	joined := strings.Join(v.Because, " | ")
 	if !strings.Contains(joined, "copilot") {
 		t.Errorf("the verdict did not say why no replacement was named: %v", v.Because)
+	}
+}
+
+// THE CONTEXT-WINDOW SUFFIX. `opus[1m]` is `opus` with a 1M window rather than
+// the standard 200K, and it is the desktop's shipped `claude.defaultModel` — so
+// for as long as the named-model arm compared raw strings, the one Claude model
+// a spawn reached by leaving `model` out entirely was the one no ceiling could
+// judge. These pin that it is judged now, that judging it changes nothing about
+// what the spawn actually carries, and that the normalizer eats the suffix and
+// nothing else.
+
+func TestTheCeilingJudgesAModelCarryingAWindowSuffix(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Exactly the assertions TestCheckSpawnJudgesTheModelAndNotOnlyTheLabel
+	// makes for bare `opus`, repeated for the suffixed spelling. Same model,
+	// same verdict, or the suffix is a way around the arm.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus[1m]"}); !v.CapabilityRefused {
+		t.Errorf("`opus[1m]` with no effort was admitted under a frontier ceiling; bare `opus` is refused there, and the suffix asks for a bigger WINDOW, not a weaker model: %+v", v)
+	}
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus[1m]", Effort: "high"}); v.CapabilityRefused {
+		t.Errorf("`opus[1m]` at high effort was refused: naming the effort narrows the reading to deep_reviewer/frontier for the suffixed spelling exactly as it does for the bare one: %+v", v)
+	}
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus[1m]", Effort: "max"}); !v.CapabilityRefused {
+		t.Errorf("`opus[1m]` at max effort is frontier_max and was admitted under a frontier ceiling: %+v", v)
+	}
+	// And the `-1m` spelling of the same request, which the window contract
+	// treats as the same marker.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus-1m"}); !v.CapabilityRefused {
+		t.Errorf("the `-1m` spelling of the window request walked past the named-model arm: %+v", v)
+	}
+	// The suffix must not make an unknown model knowable, either.
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "some-unknown-model[1m]"}); v.CapabilityRefused {
+		t.Errorf("a model this matrix never mentions was judged because it carried a suffix: %+v", v)
+	}
+}
+
+// THE VERDICT IS IDENTICAL WITH AND WITHOUT THE SUFFIX, across the whole model
+// vocabulary the shipped profiles use. Written as a parity sweep rather than a
+// list of expected verdicts so it keeps holding when the profiles change: the
+// claim is "the window suffix is not part of the model", and a parity check is
+// that claim stated directly.
+func TestTheWindowSuffixDoesNotChangeAnyVerdict(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, model := range []string{"opus", "sonnet", "fable", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		for _, provider := range []string{"claude", "codex"} {
+			for _, effort := range []string{"", "high", "max"} {
+				bare := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: provider, Model: model, Effort: effort})
+				for _, suffix := range []string{"[1m]", "-1m"} {
+					got := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: provider, Model: model + suffix, Effort: effort})
+					if got.CapabilityRefused != bare.CapabilityRefused || got.Capability != bare.Capability || got.Model != bare.Model {
+						t.Errorf("%s %s%s (effort %q) is judged differently from %s %s: refused %v/%v, clamped to %q/%q, replaced with %q/%q",
+							provider, model, suffix, effort, provider, model,
+							got.CapabilityRefused, bare.CapabilityRefused, got.Capability, bare.Capability, got.Model, bare.Model)
+					}
+				}
+			}
+		}
+	}
+}
+
+// NORMALIZED FOR THE COMPARISON, NOWHERE ELSE. Getting this wrong would be worse
+// than the gap it closes: a ceiling that strips `[1m]` from what the provider is
+// handed silently drops every dispatch from 1M to 200K, and nothing surfaces it
+// until an agent runs out of room. The verdict is a CLAMP, so on the admitted
+// path it names no model at all and the caller's string is what travels.
+func TestAnAdmittedWindowSuffixIsNotRewritten(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier_plus, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus[1m]", Effort: "high"})
+	if v.Refused() {
+		t.Fatalf("`opus[1m]` was refused under a frontier_plus ceiling: %+v", v)
+	}
+	if v.Model != "" {
+		t.Errorf("the verdict named a model %q for a spawn it did not refuse — an admitted spawn keeps the string it sent, suffix and all, and anything written here would overwrite it: %+v", v.Model, v)
+	}
+}
+
+// The model still names its own provider through the suffix. `opus[1m]` is a
+// claude model for exactly the reason `opus` is, and answering it with a codex
+// replacement because the active profile prefers codex would be a re-route
+// nobody asked for.
+func TestTheReplacementFollowsASuffixedModelsOwnProvider(t *testing.T) {
+	m, err := Load("test.yaml", []byte("active_profile: mixed\nceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Model: "opus[1m]"})
+	if v.Provider != "claude" {
+		t.Errorf("a spawn naming `opus[1m]` and no provider was routed to %q: mixed's balanced is codex, but the model said claude: %+v", v.Provider, v)
+	}
+}
+
+// BOTH SIDES OF THE COMPARISON ARE NORMALIZED, so one model needs one entry
+// whichever spelling a routing.yaml uses. Without the profile half, the entry
+// below is a model the matrix mentions and the arm cannot find, which is the
+// original bug pointing the other way.
+func TestAProfileEntryMayCarryTheSuffixToo(t *testing.T) {
+	m, err := Load("test.yaml", []byte(
+		"active_profile: anthropic_only\n"+
+			"profiles:\n  anthropic_only:\n    frontier_max: { provider: claude, model: \"opus[1m]\", effort: max }\n"+
+			"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus", Effort: "max"})
+	if !v.CapabilityRefused {
+		t.Errorf("`opus` at max effort was admitted under a frontier ceiling, but this matrix's frontier_max entry is `opus[1m]` — the same model, spelled with the window it wants: %+v", v)
+	}
+}
+
+// THE ANSWER TO "what happens to the window request when the model is replaced".
+// The substituted model runs the window ITS OWN entry implies, so a profile that
+// spells the suffix keeps it and one that does not, does not. Pasting the
+// refused model's `[1m]` onto the replacement would invent an id the matrix
+// never names, and it would be nonsense on a provider with no such vocabulary.
+func TestTheReplacementCarriesTheMatrixEntrysOwnWindow(t *testing.T) {
+	m, err := Load("test.yaml", []byte(
+		"active_profile: anthropic_only\n"+
+			"profiles:\n  anthropic_only:\n    balanced: { provider: claude, model: \"sonnet[1m]\", effort: high }\n"+
+			"ceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Provider: "claude", Model: "opus[1m]"})
+	if !v.CapabilityRefused {
+		t.Fatalf("frontier_plus was not refused under a balanced ceiling: %+v", v)
+	}
+	if v.Model != "sonnet[1m]" {
+		t.Errorf("the replacement is %q, not the `sonnet[1m]` this matrix spells for balanced — a substituted model takes the window its own entry asks for: %+v", v.Model, v)
+	}
+	joined := strings.Join(v.Because, " | ")
+	if strings.Contains(joined, "does not carry over") {
+		t.Errorf("the verdict warned that a window request was dropped while replacing one 1M model with another: %v", v.Because)
+	}
+}
+
+// And when the replacement does NOT carry a window, the caller is told. It is a
+// second thing they asked for and did not get, on an axis escalationScrubbed
+// cannot express: that list records `model` was taken, not that a 1M window went
+// with it.
+func TestADroppedWindowRequestIsSaidOutLoud(t *testing.T) {
+	m, err := Load("test.yaml", []byte("active_profile: anthropic_only\nceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_plus", Provider: "claude", Model: "opus[1m]"})
+	if !v.CapabilityRefused || v.Model == "" {
+		t.Fatalf("expected a clamp with a replacement model: %+v", v)
+	}
+	if _, suffix := splitModelWindowSuffix(v.Model); suffix != "" {
+		t.Fatalf("this case needs a replacement with no window suffix, and got %q", v.Model)
+	}
+	joined := strings.Join(v.Because, " | ")
+	if !strings.Contains(joined, "[1m]") || !strings.Contains(joined, "does not carry over") {
+		t.Errorf("the 1M request was dropped without a word: %v", v.Because)
+	}
+}
+
+// A spawn that neither declares a capability nor names a model is the shape this
+// whole gap was reached by: the provider fills `model` in from
+// `claude.defaultModel` AFTER the gate, one layer below anything the ceiling can
+// see. The clamp has to name the replacement, and this pins that the arm above
+// it does not accidentally make an unnamed model judgeable.
+func TestAnOmittedModelIsStillNotJudgedByTheNamedModelArm(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: balanced, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude"}); v.CapabilityRefused {
+		t.Errorf("a spawn naming no model at all was refused by the named-model arm — there is no model to read, and the matrix makes no claim about one: %+v", v)
 	}
 }

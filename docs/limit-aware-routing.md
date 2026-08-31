@@ -338,6 +338,19 @@ strongest (`opus` with no effort could be `frontier`, `deep_reviewer` or
 `effort: high` narrows the reading and admits it); and the model the clamp leaves
 behind. A model the matrix never mentions is not judged at all.
 
+A **context-window suffix is not another model**. `opus[1m]` is `opus` with a 1M
+window instead of the standard 200K, so it is judged as `opus`, and either
+spelling in `profiles:` matches the other. That mattered more than it looks:
+`opus[1m]` is the desktop's shipped `claude.defaultModel`, so it was what a spawn
+got by leaving `model` out entirely, and while the two strings had to match
+exactly it was the one Claude model no ceiling could read. The suffix is
+normalized for the **comparison only**. A spawn the ceiling admits reaches the
+provider spelled exactly as it was sent, window request included. A spawn the
+ceiling clamps is answered with the permitted capability's profile entry
+verbatim, so the replacement runs the window **its own** entry asks for rather
+than inheriting the refused model's; if that drops a `[1m]`, the refusal says
+so.
+
 A ceiling value the file cannot read **denies** the spawn rather than being
 skipped: a `max_capability` that `capability_ranks:` does not rank, or a
 `max_tool_scope` that is not one of the three tiers. A typo in a policy file must
