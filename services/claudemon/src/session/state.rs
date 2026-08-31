@@ -781,6 +781,11 @@ pub struct SessionState {
     /// rows and every client that doesn't send a model deserialize to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_model: Option<String>,
+    /// Canonical durable truth for the request. Internal in this slice so the
+    /// public REST/bus/snapshot shape remains unchanged; `requested_model`
+    /// above stays as the compatibility projection older readers know.
+    #[serde(skip)]
+    pub requested_selection: Option<super::windows::ModelSelection>,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -818,6 +823,7 @@ impl SessionState {
             live_subagents: 0,
             parent_turn_ended: false,
             requested_model: None,
+            requested_selection: None,
         }
     }
 

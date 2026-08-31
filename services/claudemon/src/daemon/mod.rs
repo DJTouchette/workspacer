@@ -463,7 +463,7 @@ fn spawn_persistence_task(
                     // nothing and the row would then be inserted with a NULL —
                     // and a daemon restart would revert a 1M session to the
                     // table's guess for its marker-stripped transcript id.
-                    let requested_model = store.requested_model(&event.session_id);
+                    let requested_selection = store.requested_model_selection(&event.session_id);
                     // …and WHICH ACCOUNT it bills against, for the same reason
                     // and through the same statement. `None` here is a real
                     // answer — a session the daemon did not spawn genuinely has
@@ -476,7 +476,7 @@ fn spawn_persistence_task(
                         db_inner.record_event_with_spawn_facts(
                             &event,
                             crate::store::SpawnFacts {
-                                requested_model: requested_model.as_deref(),
+                                requested_selection: requested_selection.as_ref(),
                                 config_root: config_root.as_deref(),
                             },
                         )

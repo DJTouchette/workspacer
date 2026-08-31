@@ -1,6 +1,6 @@
 //! Idempotent schema migration for the daemon's session/event persistence.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 const USER_VERSION: i32 = 8;
@@ -79,6 +79,15 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // NOT backfilled — see `add_session_config_root`.
         step(conn, 8, add_session_config_root)?;
     }
+    // Compatibility migration: these columns are additive and deliberately do
+    // NOT advance `user_version`. A v8 daemon's downgrade guard refuses any DB
+    // stamped above 8, even when the only change is ignorable nullable columns.
+    // Keeping the stamp at 8 lets the prior binary reopen this DB and continue
+    // through `requested_model`, which is the rollback contract for this slice.
+    // The catalog-checked body runs on every open, so interrupted/partial
+    // applications heal idempotently without a version marker.
+    add_session_requested_selection(conn)
+        .context("adding rollback-compatible requested model selection columns")?;
     Ok(())
 }
 
@@ -215,6 +224,23 @@ fn add_session_config_root(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_V8)
 }
 
+/// Nullable canonical model-selection columns. Each column is checked
+/// independently so a database interrupted after the first `ALTER TABLE`
+/// repairs itself on reopen.
+fn add_session_requested_selection(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let has_identity = stmt.exists(["requested_model_identity"])?;
+    let has_window = stmt.exists(["requested_context_window"])?;
+    drop(stmt);
+    if !has_identity {
+        conn.execute_batch(SCHEMA_REQUESTED_MODEL_IDENTITY)?;
+    }
+    if !has_window {
+        conn.execute_batch(SCHEMA_REQUESTED_CONTEXT_WINDOW)?;
+    }
+    Ok(())
+}
+
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -313,6 +339,14 @@ const SCHEMA_V8: &str = r#"
 ALTER TABLE sessions ADD COLUMN config_root TEXT;
 "#;
 
+const SCHEMA_REQUESTED_MODEL_IDENTITY: &str = r#"
+ALTER TABLE sessions ADD COLUMN requested_model_identity TEXT;
+"#;
+
+const SCHEMA_REQUESTED_CONTEXT_WINDOW: &str = r#"
+ALTER TABLE sessions ADD COLUMN requested_context_window INTEGER;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +360,80 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v, USER_VERSION);
+    }
+
+    #[test]
+    fn v8_database_gets_nullable_selection_columns_without_backfill_or_version_bump() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "ALTER TABLE sessions DROP COLUMN requested_model_identity",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "ALTER TABLE sessions DROP COLUMN requested_context_window",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions
+               (id, name, project, cwd, worktree_path, state, created_at,
+                last_event_at, tool_call_count, requested_model)
+             VALUES ('old', 'n', 'p', '/w', '/w', 'working', 1, 1, 0, 'opus[1m]')",
+            [],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
+
+        migrate(&conn).unwrap();
+
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions')
+                  WHERE name IN ('requested_model_identity', 'requested_context_window')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 2);
+        let row: (Option<String>, Option<i64>, String) = conn
+            .query_row(
+                "SELECT requested_model_identity, requested_context_window, requested_model
+                   FROM sessions WHERE id = 'old'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (None, None, "opus[1m]".into()));
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 8, "a prior v8 daemon must still accept the DB");
+    }
+
+    #[test]
+    fn partial_compatibility_migration_repairs_the_missing_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "ALTER TABLE sessions DROP COLUMN requested_context_window",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions')
+                  WHERE name IN ('requested_model_identity', 'requested_context_window')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 2, "both columns exist exactly once after reopen");
     }
 
     #[test]

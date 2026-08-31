@@ -568,6 +568,7 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_model = s.requested_model.clone();
+                st.requested_selection = s.requested_selection.clone();
                 // The transcript path, which is what `usage::usage_for_session`
                 // folds cost and tokens out of. `hydrate` could not restore it
                 // before v6 — the column did not exist — so EVERY rehydrated
@@ -1270,13 +1271,14 @@ impl SessionStore {
     /// switch, so a session that moves between 200k and 1M mid-flight tracks
     /// it. Blank strings are ignored (an absent `--model` means "the CLI's own
     /// default", which says nothing about the window). No-op for unknown ids.
-    pub fn set_requested_model(&self, session_id: &str, model: &str) {
-        let model = model.trim();
-        if model.is_empty() {
-            return;
-        }
+    pub fn set_requested_model_selection(
+        &self,
+        session_id: &str,
+        persisted: &super::windows::PersistedModelSelection,
+    ) {
         if let Some(mut entry) = self.states.get_mut(session_id) {
-            entry.requested_model = Some(model.to_string());
+            entry.requested_model = Some(persisted.legacy_model.clone());
+            entry.requested_selection = Some(persisted.selection.clone());
         }
     }
 
@@ -1325,10 +1327,27 @@ impl SessionStore {
     /// Read by the persistence task so the row SQLite creates for this session
     /// carries it — see `Db::record_event_with_spawn_facts` for why it
     /// cannot simply be UPDATEd at spawn time.
-    pub fn requested_model(&self, session_id: &str) -> Option<String> {
-        self.states
+    pub fn requested_model_selection(
+        &self,
+        session_id: &str,
+    ) -> Option<super::windows::PersistedModelSelection> {
+        let canonical = self
+            .aliases
             .get(session_id)
-            .and_then(|s| s.requested_model.clone())
+            .map(|entry| entry.clone())
+            .unwrap_or_else(|| session_id.to_string());
+        self.states.get(&canonical).and_then(|state| {
+            let mut persisted = super::windows::PersistedModelSelection::from_selection(
+                state.requested_selection.clone()?,
+            );
+            // Preserve a legacy value recovered from an old/corrupt row rather
+            // than rewriting it merely because another hook arrived. Normal
+            // writers always set this to the derived compatibility spelling.
+            if let Some(legacy) = &state.requested_model {
+                persisted.legacy_model.clone_from(legacy);
+            }
+            Some(persisted)
+        })
     }
 
     /// Register the prompt channel for a managed session. Prompts submitted via
@@ -3120,6 +3139,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                requested_selection: None,
                 transcript_path: None,
                 config_root: None,
             },
@@ -3132,6 +3152,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                requested_selection: None,
                 transcript_path: None,
                 config_root: None,
             },
@@ -3144,6 +3165,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                requested_selection: None,
                 transcript_path: None,
                 config_root: None,
             },
@@ -3156,6 +3178,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                requested_selection: None,
                 transcript_path: None,
                 config_root: None,
             },
@@ -3237,6 +3260,7 @@ mod tests {
             user_prompt_count: 1,
             model: None,
             requested_model: None,
+            requested_selection: None,
             transcript_path: Some(path.to_str().unwrap().to_string()),
             config_root: None,
         }]);
@@ -3269,6 +3293,10 @@ mod tests {
                 // this restored, a resumed 1M session reverts to the table's
                 // 200k answer for its stripped id and reads 5x too full.
                 requested_model: Some("opus[1m]".into()),
+                requested_selection: Some(crate::session::windows::ModelSelection {
+                    model: "opus".into(),
+                    context_window: Some(1_000_000),
+                }),
                 transcript_path: Some("/home/u/.claude/projects/-work/restored.jsonl".into()),
                 config_root: None,
             },
@@ -3282,6 +3310,7 @@ mod tests {
                 user_prompt_count: 0,
                 model: None,
                 requested_model: None,
+                requested_selection: None,
                 transcript_path: None,
                 config_root: None,
             },

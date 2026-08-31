@@ -27,7 +27,9 @@ use uuid::Uuid;
 
 use crate::protocol::WrapperMessage;
 use crate::session::store::WrapperHandle;
-use crate::session::{ConversationStore, SessionStore};
+use crate::session::{
+    windows::normalize_persisted_model_selection, ConversationStore, SessionStore,
+};
 use crate::wrapper::pty;
 
 #[derive(Debug, Deserialize)]
@@ -282,15 +284,22 @@ pub async fn handle(
     // `SpawnPayload::model`. Recorded unconditionally when either is present:
     // the guard used to be "a model appeared on argv", which is empty for every
     // resume and for every spawn that let the CLI pick.
-    if let Some(model) = payload
+    let persisted_selection = payload
         .model
         .as_deref()
         .map(str::trim)
         .filter(|m| !m.is_empty())
         .or_else(|| model_from_argv(&payload.argv))
-    {
-        store.set_requested_model(&session_id, model);
-        db.note_requested_model(&session_id, model);
+        .and_then(|model| match normalize_persisted_model_selection(model) {
+            Ok(selection) => Some(selection),
+            Err(err) => {
+                tracing::warn!(session = %session_id, model, error = err.code(), "not persisting invalid requested model");
+                None
+            }
+        });
+    if let Some(selection) = &persisted_selection {
+        store.set_requested_model_selection(&session_id, selection);
+        db.note_requested_model_selection(&session_id, selection);
     }
     store.note_term_size(&session_id, cols, rows);
     // Queued BEFORE the 200 below, so the caller never has to send it itself
@@ -478,16 +487,23 @@ pub async fn handle_managed(
         .is_some_and(|text| store.queue_first_message(&session_id, text));
     // Before the driver starts, so the very first snapshot knows this session's
     // window instead of guessing 200k from the marker-stripped transcript id.
-    if let Some(model) = payload
+    let persisted_selection = payload
         .model
         .as_deref()
         .map(str::trim)
         .filter(|m| !m.is_empty())
-    {
-        store.set_requested_model(&session_id, model);
+        .and_then(|model| match normalize_persisted_model_selection(model) {
+            Ok(selection) => Some(selection),
+            Err(err) => {
+                tracing::warn!(session = %session_id, model, error = err.code(), "not persisting invalid requested model");
+                None
+            }
+        });
+    if let Some(selection) = &persisted_selection {
+        store.set_requested_model_selection(&session_id, selection);
         // Persisted too, so a daemon restart rehydrates a 1M session as 1M
         // instead of reverting it to the table's guess for its stripped id.
-        db.note_requested_model(&session_id, model);
+        db.note_requested_model_selection(&session_id, selection);
     }
     let facade = crate::providers::Facade {
         mcp_url: payload.mcp.clone(),

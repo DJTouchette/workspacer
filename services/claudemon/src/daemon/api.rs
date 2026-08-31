@@ -999,6 +999,7 @@ struct ModelSwitchPayload {
 /// path — this endpoint is the managed-provider counterpart.
 async fn post_model(
     State(store): State<SessionStore>,
+    State(db): State<Db>,
     Path(id): Path<String>,
     Json(payload): Json<ModelSwitchPayload>,
 ) -> impl IntoResponse {
@@ -1016,6 +1017,19 @@ async fn post_model(
         )
             .into_response();
     }
+    let persisted_selection = match payload.model.as_deref() {
+        Some(model) => match crate::session::windows::normalize_persisted_model_selection(model) {
+            Ok(selection) => Some(selection),
+            Err(err) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "ok": false, "error": err.code() })),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
     match store.set_managed_model(
         &id,
         crate::session::ModelSwitch {
@@ -1028,8 +1042,9 @@ async fn post_model(
             // and possibly a different window (`opus` ⇄ `opus[1m]`). Move the
             // recorded request with it, or the gauge keeps the spawn-time
             // window until the provider happens to report one.
-            if let Some(model) = payload.model.as_deref() {
-                store.set_requested_model(&id, model);
+            if let Some(selection) = &persisted_selection {
+                store.set_requested_model_selection(&id, selection);
+                db.note_requested_model_selection(&id, selection);
             }
             Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort }))
                 .into_response()
@@ -2602,6 +2617,27 @@ mod tests {
     async fn post_model_routes_to_switch_channel() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let initial =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
+        state
+            .store
+            .set_requested_model_selection("sess-1", &initial);
+        state
+            .db
+            .record_event_with_spawn_facts(
+                &crate::session::HookEvent {
+                    event: "SessionStart".into(),
+                    session_id: "sess-1".into(),
+                    cwd: Some("/tmp/proj".into()),
+                    timestamp: None,
+                    payload: serde_json::Map::new(),
+                },
+                crate::store::SpawnFacts {
+                    requested_selection: Some(&initial),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         let _in = mark_managed(&state.store, "sess-1");
         let (tx, mut rx) = mpsc::unbounded_channel::<ModelSwitch>();
         state.store.register_managed_model_switch("sess-1", tx);
@@ -2609,7 +2645,7 @@ mod tests {
             "/sessions/sess-1/model",
             json!({ "model": "gpt-5.5", "effort": "high" }),
         );
-        let (status, body) = request(state, req).await;
+        let (status, body) = request(state.clone(), req).await;
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert_eq!(v["ok"], true);
@@ -2617,6 +2653,16 @@ mod tests {
         let switch = rx.try_recv().unwrap();
         assert_eq!(switch.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(switch.effort.as_deref(), Some("high"));
+        let restored = state.db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored[0].requested_model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(
+            restored[0].requested_selection,
+            Some(crate::session::windows::ModelSelection {
+                model: "gpt-5.5".into(),
+                context_window: None,
+            }),
+            "the accepted live switch updates the durable canonical pair",
+        );
     }
 
     // --- /handoff -----------------------------------------------------------

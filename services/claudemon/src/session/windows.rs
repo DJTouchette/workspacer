@@ -104,6 +104,28 @@ pub struct ModelSelection {
     pub context_window: Option<u64>,
 }
 
+/// The canonical selection plus the exact compatibility spelling persisted in
+/// `sessions.requested_model`. Keeping the two in one value makes it impossible
+/// for a normal writer to update only one side of the dual-write contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedModelSelection {
+    pub selection: ModelSelection,
+    pub legacy_model: String,
+}
+
+impl PersistedModelSelection {
+    /// Pair an already-validated canonical selection with its compatibility
+    /// spelling. Read recovery uses this when a row has canonical data but a
+    /// missing legacy companion; the next real write can then heal both sides.
+    pub fn from_selection(selection: ModelSelection) -> Self {
+        let legacy_model = legacy_model_for_normalized_selection(&selection);
+        Self {
+            selection,
+            legacy_model,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelSelectionError {
     EmptyModel,
@@ -165,19 +187,67 @@ pub fn normalize_model_selection(
     })
 }
 
+/// Normalize a legacy request once, then derive the legacy companion older
+/// daemons understand from that canonical result. Native-1M identities stay
+/// bare; selectable Claude 1M variants retain the marker.
+pub fn normalize_persisted_model_selection(
+    model: &str,
+) -> Result<PersistedModelSelection, ModelSelectionError> {
+    let selection = normalize_model_selection(model, None)?;
+    if selection
+        .context_window
+        .is_some_and(|value| value > i64::MAX as u64)
+    {
+        return Err(ModelSelectionError::InvalidContextWindow);
+    }
+    Ok(PersistedModelSelection::from_selection(selection))
+}
+
+/// Read adapter for SQLite rows. A valid canonical identity wins even when the
+/// legacy column disagrees. Missing/invalid canonical data falls back to the
+/// retained legacy value without rewriting either source.
+///
+/// `context_window` is signed because SQLite can contain manually-corrupted or
+/// future values. Non-positive values are invalid canonical evidence and must
+/// not make the whole session row unreadable.
+pub fn restore_persisted_model_selection(
+    identity: Option<&str>,
+    context_window: Option<i64>,
+    legacy_model: Option<&str>,
+) -> Option<ModelSelection> {
+    let canonical = identity.and_then(|identity| {
+        let identity = identity.trim();
+        if identity.is_empty() {
+            return None;
+        }
+        let context_window = match context_window {
+            Some(value) => Some(u64::try_from(value).ok().filter(|value| *value > 0)?),
+            None => None,
+        };
+        let normalized = normalize_model_selection(identity, context_window).ok()?;
+        // A canonical identity never carries legacy syntax. Treat a marker here
+        // as invalid canonical data and try the compatibility column instead.
+        (normalized.model == identity).then_some(normalized)
+    });
+
+    canonical.or_else(|| legacy_model.and_then(|model| normalize_model_selection(model, None).ok()))
+}
+
+fn legacy_model_for_normalized_selection(selection: &ModelSelection) -> String {
+    if selection.context_window == Some(1_000_000)
+        && !is_claude_inherent_one_million_model(&selection.model)
+    {
+        format!("{}[1m]", selection.model)
+    } else {
+        selection.model.clone()
+    }
+}
+
 /// Claude Code's external `--model` value. This is the one boundary allowed to
 /// reconstruct `[1m]`; normalizing first keeps legacy callers idempotent.
 pub fn claude_argv_model(selection: &ModelSelection) -> Result<String, ModelSelectionError> {
     let normalized = normalize_model_selection(&selection.model, selection.context_window)?;
-    Ok(
-        if normalized.context_window == Some(1_000_000)
-            && !is_claude_inherent_one_million_model(&normalized.model)
-        {
-            format!("{}[1m]", normalized.model)
-        } else {
-            normalized.model
-        },
-    )
+    Ok(legacy_model_for_normalized_selection(&normalized))
 }
 
 /// Fable/Mythos expose 1M as their inherent window, not as a selectable
@@ -217,6 +287,11 @@ pub fn window_for(model: &str) -> Option<u64> {
 /// number here is exactly how a wrong window gets asserted from token zero.
 pub fn requested_window_for(model: &str) -> Option<u64> {
     let selection = normalize_model_selection(model, None).ok()?;
+    requested_window_for_selection(&selection)
+}
+
+/// The requested-window claim from an already-normalized canonical selection.
+pub fn requested_window_for_selection(selection: &ModelSelection) -> Option<u64> {
     let m = selection.model.to_ascii_lowercase();
     if selection.context_window == Some(1_000_000) || m.contains("fable") || m.contains("mythos") {
         return Some(1_000_000);
@@ -264,12 +339,32 @@ pub fn resolve_window(
     override_window: Option<u64>,
     peak_context: u64,
 ) -> Option<u64> {
+    let requested = requested.and_then(|value| normalize_model_selection(value, None).ok());
+    resolve_window_for_selection(
+        model,
+        requested.as_ref(),
+        reported,
+        override_window,
+        peak_context,
+    )
+}
+
+/// [`resolve_window`] for callers that already own the canonical selection.
+/// This is the daemon persistence/session boundary's read path; it deliberately
+/// does not round-trip through `requested_model`.
+pub fn resolve_window_for_selection(
+    model: Option<&str>,
+    requested: Option<&ModelSelection>,
+    reported: Option<u64>,
+    override_window: Option<u64>,
+    peak_context: u64,
+) -> Option<u64> {
     let claims = window_claims(model, requested, reported, override_window);
     for claim in claims {
         if peak_context > claim.saturating_mul(DRIFT_TOLERANCE_NUM) / DRIFT_TOLERANCE_DEN {
             tracing::warn!(
                 model = model.unwrap_or("<none>"),
-                requested = requested.unwrap_or("<none>"),
+                requested = requested.map(|s| s.model.as_str()).unwrap_or("<none>"),
                 claimed_window = claim,
                 observed_peak = peak_context,
                 "context window drift: this session holds more than a window claimed for it, \
@@ -289,14 +384,14 @@ pub fn resolve_window(
 /// something to compare against and so tests can name the two halves separately.
 fn window_claims(
     model: Option<&str>,
-    requested: Option<&str>,
+    requested: Option<&ModelSelection>,
     reported: Option<u64>,
     override_window: Option<u64>,
 ) -> Vec<u64> {
     let mut out = Vec::with_capacity(4);
     out.extend(reported.filter(|w| *w > 0));
     out.extend(override_window.filter(|w| *w > 0));
-    out.extend(requested.and_then(requested_window_for));
+    out.extend(requested.and_then(requested_window_for_selection));
     out.extend(model.and_then(window_for));
     out
 }

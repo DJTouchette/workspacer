@@ -16,7 +16,10 @@ use rusqlite::{params, Connection};
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::session::HookEvent;
+use crate::session::{
+    windows::{restore_persisted_model_selection, ModelSelection, PersistedModelSelection},
+    HookEvent,
+};
 
 /// Thread-safe handle to the daemon's SQLite database.
 ///
@@ -158,11 +161,40 @@ impl Db {
             "SELECT s.id, s.cwd, s.tool_call_count, s.created_at, s.last_event_at,
                     (SELECT COUNT(*) FROM events e
                        WHERE e.session_id = s.id AND e.event_type = 'UserPromptSubmit'),
-                    s.model, s.requested_model, s.transcript_path, s.config_root
+                    s.model, s.requested_model, s.transcript_path, s.config_root,
+                    s.requested_model_identity, s.requested_context_window
              FROM sessions s ORDER BY s.last_event_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
             let cwd: String = r.get(1)?;
+            let requested_model = r.get::<_, Option<String>>(7)?.filter(|m| !m.is_empty());
+            let (requested_model_identity, canonical_identity_valid) = match r.get_ref(10)? {
+                rusqlite::types::ValueRef::Null => (None, true),
+                rusqlite::types::ValueRef::Text(value) => (
+                    std::str::from_utf8(value)
+                        .ok()
+                        .filter(|model| !model.is_empty())
+                        .map(str::to_owned),
+                    true,
+                ),
+                _ => (None, false),
+            };
+            // SQLite is dynamically typed even for an INTEGER-affinity column;
+            // a hand-edited/future row can hold text here. Treat that as invalid
+            // canonical evidence and fall back instead of failing the entire
+            // restore query (which would discard every row from daemon boot).
+            let (requested_context_window, canonical_window_valid) = match r.get_ref(11)? {
+                rusqlite::types::ValueRef::Null => (None, true),
+                rusqlite::types::ValueRef::Integer(value) => (Some(value), true),
+                _ => (None, false),
+            };
+            let requested_selection = restore_persisted_model_selection(
+                (canonical_identity_valid && canonical_window_valid)
+                    .then_some(requested_model_identity.as_deref())
+                    .flatten(),
+                requested_context_window,
+                requested_model.as_deref(),
+            );
             Ok(RestoredSession {
                 id: r.get(0)?,
                 cwd: (!cwd.is_empty()).then_some(cwd),
@@ -171,7 +203,8 @@ impl Db {
                 last_event_at: r.get(4)?,
                 user_prompt_count: r.get::<_, i64>(5)?.max(0) as u64,
                 model: r.get::<_, Option<String>>(6)?.filter(|m| !m.is_empty()),
-                requested_model: r.get::<_, Option<String>>(7)?.filter(|m| !m.is_empty()),
+                requested_model,
+                requested_selection,
                 transcript_path: r.get::<_, Option<String>>(8)?.filter(|p| !p.is_empty()),
                 // No `filter(!is_empty)`: `Some("")` is the default account,
                 // which is a different fact from `None` (unknown).
@@ -193,19 +226,28 @@ impl Db {
     ///
     /// Best-effort by design, like the rest of this store's writes: a failure
     /// costs a context gauge after the next restart, not a session.
-    pub fn note_requested_model(&self, session_id: &str, model: &str) {
-        let model = model.trim();
-        if model.is_empty() {
-            return;
-        }
+    pub fn note_requested_model_selection(
+        &self,
+        session_id: &str,
+        persisted: &PersistedModelSelection,
+    ) {
         let Ok(guard) = self.conn.lock() else {
             return;
         };
         if let Err(err) = guard.execute(
-            "UPDATE sessions SET requested_model = ?2 WHERE id = ?1",
-            params![session_id, model],
+            "UPDATE sessions
+                SET requested_model = ?2,
+                    requested_model_identity = ?3,
+                    requested_context_window = ?4
+              WHERE id = ?1",
+            params![
+                session_id,
+                persisted.legacy_model,
+                persisted.selection.model,
+                persisted.selection.context_window.map(|value| value as i64),
+            ],
         ) {
-            tracing::warn!(session = %session_id, ?err, "persisting requested_model failed");
+            tracing::warn!(session = %session_id, ?err, "persisting requested model selection failed");
         }
     }
 
@@ -283,6 +325,10 @@ pub struct RestoredSession {
     /// idea it was one, and every client's gauge read ~5× too full for the rest
     /// of its life. `None` is honest for a session the daemon did not spawn.
     pub requested_model: Option<String>,
+    /// Canonical selection recovered from the new columns when valid, otherwise
+    /// lazily parsed from `requested_model`. Invalid/partial data never rejects
+    /// the surrounding session row.
+    pub requested_selection: Option<ModelSelection>,
     /// The transcript this session's usage is folded from. THE load-bearing
     /// field for cost-at-boot: `usage::usage_for_path(None)` is all zeros, so a
     /// row rehydrated without this reports $0.00 and 0 tokens no matter how much
@@ -301,8 +347,9 @@ pub struct RestoredSession {
 /// not spawn this session" is a real state and must not be written as a value.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SpawnFacts<'a> {
-    /// The model asked for, `[1m]` marker intact.
-    pub requested_model: Option<&'a str>,
+    /// Canonical + legacy pair, held together so row creation cannot write only
+    /// one side of the compatibility contract.
+    pub requested_selection: Option<&'a PersistedModelSelection>,
     /// The Claude config root, normalized — `Some("")` = the default account.
     pub config_root: Option<&'a str>,
 }
@@ -336,9 +383,15 @@ fn upsert_session_tx(
     // The model the session was ASKED for, which the transcript can never
     // report: Claude Code strips the `[1m]` marker from the id it writes.
     let requested_model = facts
-        .requested_model
-        .map(str::trim)
-        .filter(|m| !m.is_empty());
+        .requested_selection
+        .map(|selection| selection.legacy_model.as_str());
+    let requested_model_identity = facts
+        .requested_selection
+        .map(|selection| selection.selection.model.as_str());
+    let requested_context_window = facts
+        .requested_selection
+        .and_then(|selection| selection.selection.context_window)
+        .map(|value| value as i64);
     // The account this session bills against. NOT `filter(!is_empty)` — the
     // empty string is the DEFAULT account, a known answer, and dropping it to
     // NULL would relabel every default-account session "unknown".
@@ -363,14 +416,27 @@ fn upsert_session_tx(
         "INSERT INTO sessions (
             id, name, project, cwd, worktree_path, branch, base_branch, model,
             state, pid, created_at, last_event_at, tool_call_count,
-            requested_model, transcript_path, config_root
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, ?9, ?10, ?11)
+            requested_model, transcript_path, config_root,
+            requested_model_identity, requested_context_window
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0,
+                   ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(id) DO UPDATE SET
             last_event_at = excluded.last_event_at,
             cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
             model = COALESCE(sessions.model, excluded.model),
             branch = COALESCE(sessions.branch, excluded.branch),
-            requested_model = COALESCE(sessions.requested_model, excluded.requested_model),
+            -- Selection is one logical value. A supplied identity means all
+            -- three columns (including a NULL context window) replace the prior
+            -- request together; absent spawn facts leave all three untouched.
+            requested_model = CASE
+                WHEN excluded.requested_model_identity IS NOT NULL
+                THEN excluded.requested_model ELSE sessions.requested_model END,
+            requested_model_identity = CASE
+                WHEN excluded.requested_model_identity IS NOT NULL
+                THEN excluded.requested_model_identity ELSE sessions.requested_model_identity END,
+            requested_context_window = CASE
+                WHEN excluded.requested_model_identity IS NOT NULL
+                THEN excluded.requested_context_window ELSE sessions.requested_context_window END,
             transcript_path =
                 COALESCE(excluded.transcript_path, sessions.transcript_path),
             -- First non-NULL wins and then sticks. A session cannot change
@@ -388,7 +454,9 @@ fn upsert_session_tx(
             now,
             requested_model,
             transcript_path,
-            config_root
+            config_root,
+            requested_model_identity,
+            requested_context_window
         ],
     )?;
 
@@ -461,6 +529,309 @@ mod tests {
 
     fn tempfile_path() -> PathBuf {
         crate::testtmp::db_path("store-test")
+    }
+
+    fn selection(model: &str) -> PersistedModelSelection {
+        crate::session::windows::normalize_persisted_model_selection(model).unwrap()
+    }
+
+    fn raw_selection_columns(
+        db: &Db,
+        session_id: &str,
+    ) -> (Option<String>, Option<String>, Option<i64>) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT requested_model, requested_model_identity, requested_context_window
+                   FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap()
+    }
+
+    /// Test-side contract guard: a persisted selection is valid only when both
+    /// the canonical source and the legacy compatibility projection exist and
+    /// describe the same normalized request.
+    fn dual_write_guard(db: &Db, session_id: &str) -> Result<(), String> {
+        let (legacy, identity, context_window) = raw_selection_columns(db, session_id);
+        let legacy = legacy.ok_or_else(|| "legacy requested_model is missing".to_string())?;
+        let identity =
+            identity.ok_or_else(|| "canonical requested_model_identity is missing".to_string())?;
+        let canonical = restore_persisted_model_selection(Some(&identity), context_window, None)
+            .ok_or_else(|| "canonical selection is invalid".to_string())?;
+        let expected = PersistedModelSelection::from_selection(canonical);
+        if expected.legacy_model != legacy {
+            return Err(format!(
+                "legacy/canonical conflict: legacy={legacy:?}, canonical={expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn new_rows_dual_write_selectable_and_native_one_million_models() {
+        let db = Db::open(tempfile_path()).unwrap();
+        for (id, requested, legacy, identity, window) in [
+            ("opus", "opus[1m]", "opus[1m]", "opus", Some(1_000_000)),
+            (
+                "sonnet",
+                "sonnet-1m",
+                "sonnet[1m]",
+                "sonnet",
+                Some(1_000_000),
+            ),
+            ("fable", "fable", "fable", "fable", None),
+            ("mythos", "mythos", "mythos", "mythos", None),
+        ] {
+            let persisted = selection(requested);
+            db.record_event_with_spawn_facts(
+                &ev("SessionStart", id),
+                SpawnFacts {
+                    requested_selection: Some(&persisted),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                raw_selection_columns(&db, id),
+                (Some(legacy.into()), Some(identity.into()), window),
+                "{requested} must retain the right rollback representation",
+            );
+            dual_write_guard(&db, id).unwrap();
+        }
+    }
+
+    #[test]
+    fn old_legacy_rows_restore_lazily_without_backfill() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_event(&ev("SessionStart", "old")).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET requested_model = 'opus[1m]' WHERE id = 'old'",
+                [],
+            )
+            .unwrap();
+
+        let restored = db.load_recent_sessions(10).unwrap().remove(0);
+        assert_eq!(restored.requested_model.as_deref(), Some("opus[1m]"));
+        assert_eq!(
+            restored.requested_selection,
+            Some(ModelSelection {
+                model: "opus".into(),
+                context_window: Some(1_000_000),
+            })
+        );
+        assert_eq!(
+            raw_selection_columns(&db, "old"),
+            (Some("opus[1m]".into()), None, None),
+            "read compatibility is lazy and does not backfill the row",
+        );
+    }
+
+    #[test]
+    fn new_database_reopens_idempotently_and_legacy_projection_is_rollback_readable() {
+        let path = tempfile_path();
+        {
+            let db = Db::open(&path).unwrap();
+            let persisted = selection("opus[1m]");
+            db.record_event_with_spawn_facts(
+                &ev("SessionStart", "rollback"),
+                SpawnFacts {
+                    requested_selection: Some(&persisted),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        let reopened = Db::open(&path).unwrap();
+        assert_eq!(
+            reopened.load_recent_sessions(10).unwrap()[0].requested_selection,
+            Some(ModelSelection {
+                model: "opus".into(),
+                context_window: Some(1_000_000),
+            }),
+        );
+        drop(reopened);
+
+        // This is the prior schema consumer's projection: it knows only the v8
+        // stamp and requested_model, and ignores additive nullable columns.
+        let legacy = Connection::open(&path).unwrap();
+        let version: i32 = legacy
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let requested: String = legacy
+            .query_row(
+                "SELECT requested_model FROM sessions WHERE id = 'rollback'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 8);
+        assert_eq!(requested, "opus[1m]");
+    }
+
+    #[test]
+    fn canonical_read_wins_and_invalid_or_partial_data_falls_back_without_dropping_rows() {
+        let db = Db::open(tempfile_path()).unwrap();
+        for id in ["conflict", "partial", "invalid", "identity-only"] {
+            db.record_event(&ev("SessionStart", id)).unwrap();
+        }
+        let guard = db.conn.lock().unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = 'sonnet',
+                 requested_model_identity = 'opus', requested_context_window = 1000000
+               WHERE id = 'conflict'",
+                [],
+            )
+            .unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = 'sonnet[1m]',
+                 requested_context_window = 200000
+               WHERE id = 'partial'",
+                [],
+            )
+            .unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = 'fable',
+                 requested_model_identity = 'opus', requested_context_window = 'wide'
+               WHERE id = 'invalid'",
+                [],
+            )
+            .unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = 'sonnet[1m]',
+                 requested_model_identity = 'opus', requested_context_window = NULL
+               WHERE id = 'identity-only'",
+                [],
+            )
+            .unwrap();
+        drop(guard);
+
+        let restored: std::collections::HashMap<_, _> = db
+            .load_recent_sessions(10)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.id, row.requested_selection))
+            .collect();
+        assert_eq!(restored.len(), 4, "bad selection data never drops its row");
+        assert_eq!(
+            restored["conflict"],
+            Some(ModelSelection {
+                model: "opus".into(),
+                context_window: Some(1_000_000),
+            }),
+            "a valid canonical pair is authoritative over conflicting legacy data",
+        );
+        assert_eq!(
+            restored["partial"],
+            Some(ModelSelection {
+                model: "sonnet".into(),
+                context_window: Some(1_000_000),
+            }),
+            "a context without an identity is partial and falls back",
+        );
+        assert_eq!(
+            restored["invalid"],
+            Some(ModelSelection {
+                model: "fable".into(),
+                context_window: None,
+            }),
+            "a non-integer canonical window is invalid and falls back without failing restore",
+        );
+        assert_eq!(
+            restored["identity-only"],
+            Some(ModelSelection {
+                model: "opus".into(),
+                context_window: None,
+            }),
+            "NULL context is a valid unknown window when an identity exists",
+        );
+    }
+
+    #[test]
+    fn a_switch_replaces_all_three_selection_columns_and_can_clear_the_window() {
+        let db = Db::open(tempfile_path()).unwrap();
+        let initial = selection("opus[1m]");
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "switch"),
+            SpawnFacts {
+                requested_selection: Some(&initial),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let switched = selection("sonnet");
+        db.note_requested_model_selection("switch", &switched);
+        assert_eq!(
+            raw_selection_columns(&db, "switch"),
+            (Some("sonnet".into()), Some("sonnet".into()), None),
+        );
+        dual_write_guard(&db, "switch").unwrap();
+
+        // A following event carrying the same facts also uses replacement
+        // semantics, closing the best-effort UPDATE failure window.
+        db.record_event_with_spawn_facts(
+            &ev("PreToolUse", "switch"),
+            SpawnFacts {
+                requested_selection: Some(&switched),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            db.load_recent_sessions(10).unwrap()[0].requested_selection,
+            Some(switched.selection),
+        );
+    }
+
+    #[test]
+    fn dual_write_guard_detects_legacy_only_and_canonical_only_regressions() {
+        let db = Db::open(tempfile_path()).unwrap();
+        let persisted = selection("opus[1m]");
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "guard"),
+            SpawnFacts {
+                requested_selection: Some(&persisted),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        dual_write_guard(&db, "guard").unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model_identity = NULL,
+                 requested_context_window = NULL WHERE id = 'guard'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(dual_write_guard(&db, "guard")
+            .unwrap_err()
+            .contains("canonical"));
+
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = NULL,
+                 requested_model_identity = 'opus', requested_context_window = 1000000
+               WHERE id = 'guard'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(dual_write_guard(&db, "guard")
+            .unwrap_err()
+            .contains("legacy"));
     }
 
     /// THE OTHER daemon-restart drop, and the one every $0.00 came from.
@@ -693,10 +1064,12 @@ mod tests {
     fn requested_model_survives_a_daemon_restart() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
 
         // 1. Spawn records it. No row exists yet — this UPDATE hits nothing,
         //    and that is exactly the hole the second write closes.
-        db.note_requested_model("s1", "opus[1m]");
+        db.note_requested_model_selection("s1", &selection);
         let restored = db.load_recent_sessions(10).unwrap();
         assert!(
             restored.is_empty(),
@@ -707,7 +1080,7 @@ mod tests {
         db.record_event_with_spawn_facts(
             &ev("SessionStart", "s1"),
             SpawnFacts {
-                requested_model: Some("opus[1m]"),
+                requested_selection: Some(&selection),
                 ..Default::default()
             },
         )
@@ -717,6 +1090,7 @@ mod tests {
         let restored = db.load_recent_sessions(10).unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].requested_model.as_deref(), Some("opus[1m]"));
+        assert_eq!(restored[0].requested_selection, Some(selection.selection));
     }
 
     /// A session the daemon did not spawn has no requested model, and says so.
@@ -743,10 +1117,12 @@ mod tests {
     fn a_later_event_without_a_request_does_not_blank_it() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("sonnet[1m]").unwrap();
         db.record_event_with_spawn_facts(
             &ev("SessionStart", "s1"),
             SpawnFacts {
-                requested_model: Some("sonnet[1m]"),
+                requested_selection: Some(&selection),
                 ..Default::default()
             },
         )

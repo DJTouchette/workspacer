@@ -170,12 +170,17 @@ impl Usage {
 /// snapshot should use — `usage_for_path` alone can only guess the window.
 pub fn usage_for_session(state: &super::state::SessionState) -> Usage {
     let mut u = usage_for_path(state.transcript_path.as_deref());
-    u.resolve_window(
+    u.context_limit = super::windows::resolve_window_for_selection(
+        u.model.as_deref(),
+        state.requested_selection.as_ref(),
         state
             .status_line
             .as_ref()
             .and_then(|sl| sl.context_window_size),
-        state.requested_model.as_deref(),
+        u.model
+            .as_deref()
+            .and_then(super::pricing::override_window_for),
+        u.peak_context,
     );
     u
 }
