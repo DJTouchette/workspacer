@@ -406,13 +406,14 @@ func scrubBypassProfile(p *profile) *profile {
 // the wrong shape: it named --dangerously-skip-permissions and a bypass
 // --permission-mode, while --allowedTools (blanket tool auto-approval) and
 // --settings (an arbitrary settings file: permissions AND hooks) walked straight
-// through and handed the bypass back. These three are what a profile legitimately
+// through and handed the bypass back. These four are what a profile legitimately
 // pins for a remote spawn; anything else is dropped rather than reasoned about,
 // so a flag added to the CLI tomorrow is denied by default.
 var remoteSafeFlags = map[string]bool{
-	"--model":           true,
-	"--effort":          true,
-	"--permission-mode": true, // non-bypass modes only — see below
+	"--model":                true,
+	"--effort":               true,
+	"--permission-mode":      true, // non-bypass modes only — see below
+	"--append-system-prompt": true,
 }
 
 // scrubBypassArgs keeps only remoteSafeFlags (both `--flag value` and
@@ -462,6 +463,39 @@ func pinsFlag(extraArgs []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// composeAppendSystemPrompt gives Claude exactly one append-system-prompt flag.
+// Profile pins and host contracts are additive, but Claude does not define
+// repeated flags as concatenation. Preserve the profile's declaration order,
+// then host-authored fragments in the argv order that follows it, with the same
+// blank-line separator as the desktop's partitionAppendSystemPrompts.
+func composeAppendSystemPrompt(argv []string) []string {
+	withoutPrompts := make([]string, 0, len(argv))
+	prompts := make([]string, 0, 2)
+	for i := 0; i < len(argv); i++ {
+		arg := argv[i]
+		if strings.HasPrefix(arg, "--append-system-prompt=") {
+			if value := strings.TrimPrefix(arg, "--append-system-prompt="); value != "" {
+				prompts = append(prompts, value)
+			}
+			continue
+		}
+		if arg == "--append-system-prompt" {
+			if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "--") {
+				prompts = append(prompts, argv[i+1])
+				i++
+			}
+			// A valueless profile pin is invalid on its own. Drop only that
+			// broken flag rather than letting it consume a host-generated one.
+			continue
+		}
+		withoutPrompts = append(withoutPrompts, arg)
+	}
+	if len(prompts) > 0 {
+		withoutPrompts = append(withoutPrompts, "--append-system-prompt", strings.Join(prompts, "\n\n"))
+	}
+	return withoutPrompts
 }
 
 // buildArgv builds the argv claudemon should execute for a fresh Claude session,

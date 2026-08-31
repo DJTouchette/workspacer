@@ -855,6 +855,10 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		// protocol text.
 		argv = append(argv, "--append-system-prompt", workerEscalationContract)
 	}
+	// Profiles, facade instructions, and the fleet escalation contract are all
+	// additive system-prompt fragments. The PTY CLI accepts one deterministic
+	// flag, matching the desktop's buildClaudeArgv semantics.
+	argv = composeAppendSystemPrompt(argv)
 
 	id, queued, err := r.cm.spawn(ctx, spawnReq{
 		Argv:         argv,

@@ -917,7 +917,7 @@
   <p class="sec-note" style="margin-bottom:26px;"><b>The wake is the mechanism.</b> Five things can reach the manager, and they all arrive through one channel as an ordinary message it can act on:</p>
   <div class="tile tree">
     <div class="row"><span class="name">worker-finished</span><span class="desc">a dispatch went idle. The wake carries its final message, plus its validated JSON result if the dispatch asked for one. A backstop sweep catches any finish the live signal missed.</span></div>
-    <div class="row"><span class="name">worker-escalated</span><span class="desc">a worker stopped on a user decision. Its blocker, choices, recommendation and next action arrive as a validated card instead of a contradictory missing-result error</span></div>
+    <div class="row"><span class="name">worker-escalated</span><span class="desc">a worker stopped on needed authority or a decision. Its strict six-key payload — type, status, reason, requiredAuthorityOrDecision, changed, nextAction — arrives as a validated card instead of a contradictory missing-result error</span></div>
     <div class="row"><span class="name">blocked</span><span class="desc">a worker is sitting on an approval or a question. The manager can answer it, or escalate to you</span></div>
     <div class="row"><span class="name">threshold</span><span class="desc">a limit the manager armed for itself on tokens, cost, or time. In-memory and one-shot by design: it fires once, and it's gone if the app restarts</span></div>
     <div class="row"><span class="name">progress</span><span class="desc">the worker's own mid-task note, in its own words: “finished phase 1”, “the approach you gave me is wrong”. Rendered as a report, never as a finish</span></div>
@@ -969,7 +969,7 @@
     <div class="frame-cap">a worker's <code>wks-result</code>, validated before the manager sees it and rendered as a card</div>
   </a>
 
-  <p class="sec-note">You stay in the loop by default: the manager may approve a worker's prompts while the action stays inside the repo it dispatched to, and must escalate anything destructive, cross-repo or credential-touching to you. Per-project <code>yolo</code> turns prompts off for <em>that</em> project's workers only.</p>
+  <p class="sec-note">You stay in the loop by default: the manager resolves in-scope authority for actions inside the repo it dispatched to, and asks you before anything destructive, external, credential-touching, cross-repo, or otherwise unauthorized. Per-project <code>yolo</code> turns prompts off for <em>that</em> project's workers only.</p>
 </div></section>
 
 <section id="fleet"><div class="wrap">

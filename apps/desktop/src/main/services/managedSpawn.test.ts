@@ -255,6 +255,15 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect(lastMeta().transport).toBe('stream');
   });
 
+  it('serializes the configured Claude default/window pair into the daemon payload and spawn settings', async () => {
+    mockConfig = { claude: { defaultModel: 'opus', contextWindow: 1_000_000 } };
+
+    await spawnManagedAgent({ provider: 'claude', transport: 'stream', cwd: '/proj' });
+
+    expect(lastManaged().model).toBe('opus[1m]');
+    expect((lastMeta().settings as Payload).model).toBe('opus[1m]');
+  });
+
   // The stream adapter's `yolo` IS `--dangerously-skip-permissions` on the
   // headless argv, and Claude refuses a live switch to bypassPermissions without
   // it. Recording it lets the composer route "Full access" to a restart instead

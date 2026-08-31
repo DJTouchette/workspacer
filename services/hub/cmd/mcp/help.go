@@ -91,13 +91,15 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   wrongly reject). Arbitrary result schemas are desktop-owned; the headless
   brain declines resultSchema rather than accepting it without validation.
 - A fleet worker may finish with one fenced wks-escalation object instead when
-  it is blocked on a USER decision. The object names a summary, blocker,
-  attempted work, options, a recommendation, and the next action. A valid
-  escalation is a terminal alternative to wks-result and gets its own wake
-  card; a malformed block is ordinary prose and does not suppress missing or
-  invalid result errors. This fixed host-authored contract is available on
-  desktop and headless fleet dispatches even though headless declines arbitrary
-  resultSchema.
+  it is terminally blocked on authority or a decision. Its strict six-key
+  payload is type, status, reason, requiredAuthorityOrDecision, changed, and
+  nextAction. Resolve an in-scope authority or decision yourself; ask the user
+  only before destructive, external, credential, cross-repo, or otherwise
+  unauthorized action. A valid escalation is a terminal alternative to
+  wks-result and gets its own wake card; a malformed block is ordinary prose
+  and does not suppress missing or invalid result errors. This fixed
+  host-authored contract is available on desktop and headless fleet dispatches
+  even though headless declines arbitrary resultSchema.
 - template + templateParams renders a library DISPATCH TEMPLATE (kind
   'dispatch') into the first message instead of you retyping the framing.
   Discover one cheaply with list_library({kind:"dispatch", id:"ship-task"}):

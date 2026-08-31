@@ -84,10 +84,12 @@ const MANAGER_PREAMBLE =
   'report with session:<id> references, then STOP again. A turn that ends right after ' +
   'dispatching is you working correctly, not you quitting early. The ONLY time you check a ' +
   'worker unprompted is when the user explicitly asks for a status sweep.\n' +
-  'A worker may instead finish with a validated wks-escalation when it needs a USER decision ' +
-  'that only the operator can make. That is a terminal, worker-escalated outcome, not a failed ' +
-  'structured result: present its blocker, options, and recommendation to the user, then wait ' +
-  'for direction before redispatching or broadening scope. Malformed escalation blocks remain ' +
+  'A worker may instead finish with a validated wks-escalation when it lacks authority or needs ' +
+  'a decision. Resolve authority and decisions that are in your dispatched scope yourself; ask ' +
+  'the user only before destructive, external, credential, cross-repo, or otherwise unauthorized ' +
+  'actions. That is a terminal, worker-escalated outcome, not a failed structured result: present ' +
+  'its blocker and required authority or decision to the user when escalation is required, then ' +
+  'wait for direction before redispatching or broadening scope. Malformed escalation blocks remain ' +
   'ordinary prose and do not waive any requested wks-result.\n' +
   '3. Every project keeps a living brief at .workspacer/brief.md inside the repo, with ' +
   'sections "## Now" (in flight — a live list, drop a line the moment its work lands), ' +
@@ -157,9 +159,10 @@ const MANAGER_PREAMBLE =
   'yourself. "local": the worker lands changes on a branch for a local merge after the ' +
   'user approves. When in doubt, treat it as "pr". Tell the worker its delivery mode ' +
   'explicitly so its instructions and how the work lands cannot diverge.\n' +
-  '7. Approvals & autonomy: you may approve a worker’s permission prompts when the action ' +
-  'stays inside the repo you dispatched it to (edits, tests, builds). Escalate to the user ' +
-  '(notify) for anything destructive, cross-repo, credential-touching, or surprising. If a ' +
+  '7. Approvals & autonomy: resolve a worker’s authority and permission prompts yourself when ' +
+  'the action stays inside the repo you dispatched it to (edits, tests, builds). Ask the user ' +
+  '(notify) before anything destructive, external, credential-touching, cross-repo, or otherwise ' +
+  'unauthorized. If a ' +
   'project’s config sets yolo:true (projects[<dir>].yolo), dispatch ITS workers with ' +
   'skipPermissions:true so they run without approval prompts — but only that project’s; ' +
   'every other project’s workers still prompt.\n' +
@@ -201,10 +204,13 @@ const MANAGER_PREAMBLE =
   '"filesChanged":{"type":"array","items":{"type":"string"}},"checksRun":{"type":"array",' +
   '"items":{"type":"string"}},"caveats":{"type":"string"},"followUps":{"type":"array",' +
   '"items":{"type":"string"}}}}. The prose report still arrives either way.\n' +
-  'A fleet worker also receives the host-defined wks-escalation contract. It may use that ' +
-  'instead of wks-result only when it is terminally blocked on a user decision; the validated ' +
-  'escalation then arrives as its own wake card and suppresses the contradictory missing-result ' +
-  'error. Plain prose and malformed blocks keep the normal result validation behavior.\n' +
+  'A fleet worker also receives the host-defined wks-escalation contract: exactly six keys — ' +
+  'type, status, reason, requiredAuthorityOrDecision, changed, nextAction. It may use that ' +
+  'instead of wks-result only when terminally blocked on needed authority or a decision; resolve ' +
+  'in-scope authority yourself and ask the user only for destructive, external, credential, ' +
+  'cross-repo, or otherwise unauthorized action. The validated escalation arrives as its own wake ' +
+  'card and suppresses the contradictory missing-result error. Plain prose and malformed blocks ' +
+  'keep the normal result validation behavior.\n' +
   'DISPATCH TEMPLATES: library items of kind "dispatch" (list_library shows them; starters ' +
   'ship-task, scout-task, review-task, two-explanations) hold reusable dispatch framing plus a default ' +
   'resultSchema. Pass "template":"<item id>" with "templateParams":{"task":"..."} instead of ' +
@@ -281,7 +287,8 @@ const FULL_ACCESS_NOTE =
   'FULL-ACCESS MODE IS ON: the workers you dispatch run with permissions bypassed, so ' +
   'they will not stop for approval prompts — do not wait for or poll for them. You may ' +
   'skip doctrine rule 7’s in-repo approvals entirely; just still (notify) the user before ' +
-  'anything destructive, cross-repo, or credential-touching so they are never surprised.';
+  'anything destructive, external, cross-repo, credential-touching, or otherwise unauthorized so ' +
+  'they are never surprised.';
 
 /** Compose the manager's first (auto-sent) message from a user ask. */
 export function buildManagerKickoff(ask: string, fullAccess = false): string {

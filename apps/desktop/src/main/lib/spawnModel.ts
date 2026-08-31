@@ -1,7 +1,8 @@
 /**
  * What model a spawn is actually asking for, when the caller named none.
  *
- * THE DROP THIS CLOSES. `config.claude.defaultModel` ships as `opus[1m]`, and
+ * THE DROP THIS CLOSES. `config.claude.defaultModel` ships as `opus` with
+ * `claude.contextWindow: 1000000`, and
  * `SpawnAgentDialog` prefills the picker from it — so a human clicking Spawn
  * sends an explicit model and the daemon records it. Every OTHER entry point
  * leaves it undefined: `App.tsx`'s restore path, `agents.spawn` over the hub bus
@@ -44,7 +45,13 @@ export function resolveSpawnModelSelection(
 ): ModelSelection | undefined {
   const explicit = requested?.trim();
   if (explicit) {
-    if (!isForeignModel(provider, explicit)) return normalizeModelSelection(explicit);
+    if (!isForeignModel(provider, explicit)) {
+      // `[1m]` / `-1m` are Claude's legacy window syntax, not a cross-provider
+      // model-id convention. Other harnesses own their ids verbatim.
+      return provider === 'claude'
+        ? normalizeModelSelection(explicit)
+        : { model: explicit, contextWindow: null };
+    }
     console.log(
       `[spawnModel] dropping model '${explicit}' from a ${provider} spawn — it belongs to ` +
         `another harness; using ${provider}'s own default instead`,

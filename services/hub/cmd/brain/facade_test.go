@@ -140,6 +140,48 @@ func TestFleetHeadlessSpawnsReceiveWorkerEscalationContract(t *testing.T) {
 	})
 }
 
+func TestFleetClaudePTYComposesProfilePromptAndEscalationContract(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"split profile arg", []string{"--append-system-prompt", "PROFILE SPLIT"}},
+		{"equals profile arg", []string{"--append-system-prompt=PROFILE EQUALS"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newSpawnTestRegistry(t, srv.URL)
+			if err := saveProfiles([]profile{{ID: "profile", Name: "Profile", IsDefault: true, ExtraArgs: tc.args}}); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := reg.handle(context.Background(), "agents.spawn",
+				[]byte(`{"transport":"pty","cwd":"/tmp/proj","parentSessionId":"manager-1","profileId":"profile"}`)); err != nil {
+				t.Fatal(err)
+			}
+			argv := stringSlice(t, rec.calls("/sessions/spawn")[0].body["argv"])
+			count := 0
+			for _, arg := range argv {
+				if arg == "--append-system-prompt" || strings.HasPrefix(arg, "--append-system-prompt=") {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("append-system-prompt count = %d, want one: %v", count, argv)
+			}
+			prompt := valueAfterArg(t, argv, "--append-system-prompt")
+			if !strings.Contains(prompt, "PROFILE") || !strings.Contains(prompt, "wks-escalation") {
+				t.Fatalf("combined prompt missed the profile or contract: %q", prompt)
+			}
+			if strings.Index(prompt, "PROFILE") > strings.Index(prompt, "wks-escalation") {
+				t.Fatalf("profile prompt must precede host contract: %q", prompt)
+			}
+		})
+	}
+}
+
 func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 	for _, tc := range []struct {
 		name, params string

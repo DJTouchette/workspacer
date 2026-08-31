@@ -1,6 +1,7 @@
 // THE OMITTED-MODEL DROP, on the desktop side.
 //
-// `config.claude.defaultModel` ships as `opus[1m]` and SpawnAgentDialog prefills
+// `config.claude.defaultModel` ships as `opus` with `claude.contextWindow: 1000000`,
+// and SpawnAgentDialog prefills
 // the picker from it, so a human clicking Spawn sends an explicit model. Every
 // other entry point — App.tsx's restore path, `agents.spawn` over the hub bus
 // (the MCP facade, /m, a Fleet Manager dispatching a worker), jobs — left it
@@ -70,7 +71,7 @@ describe('resolveSpawnModel', () => {
  */
 describe('resolveSpawnModel — cross-harness model ids', () => {
   it('drops a claude id from a codex spawn and uses codex’s own default', () => {
-    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
     expect(resolveSpawnModel('codex', 'sonnet')).toBeUndefined();
     expect(resolveSpawnModel('codex', 'haiku')).toBeUndefined();
     expect(resolveSpawnModel('opencode', 'fable')).toBeUndefined();
@@ -80,12 +81,12 @@ describe('resolveSpawnModel — cross-harness model ids', () => {
     // Substituting the config default here would be worse than the harness's
     // own: it would silently run a DIFFERENT model than the caller named while
     // reporting success. Undefined means "the CLI's default", which is honest.
-    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
     expect(resolveSpawnModel('claude', 'gpt-5.1-codex-max')).toBeUndefined();
   });
 
   it('still forwards a model the provider DOES serve', () => {
-    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
     expect(resolveSpawnModel('claude', 'sonnet')).toBe('sonnet');
     expect(resolveSpawnModel('codex', 'gpt-5.1-codex-max')).toBe('gpt-5.1-codex-max');
     expect(resolveSpawnModel('opencode', 'anthropic/claude-sonnet-4')).toBe(
@@ -96,5 +97,22 @@ describe('resolveSpawnModel — cross-harness model ids', () => {
   it('still forwards an id no harness claims — a private deployment is a real choice', () => {
     getConfig.mockReturnValue({ claude: {} });
     expect(resolveSpawnModel('codex', 'my-finetune-v3')).toBe('my-finetune-v3');
+  });
+
+  it.each([
+    ['codex', 'gpt-5-codex-1m'],
+    ['opencode', 'openrouter/custom-1m'],
+    ['pi', 'pi-local-1m'],
+  ])('%s keeps a non-Claude -1m model id byte-for-byte unchanged', (provider, model) => {
+    expect(resolveSpawnModel(provider, model)).toBe(model);
+    expect(resolveSpawnModelSelection(provider, model)).toEqual({ model, contextWindow: null });
+  });
+
+  it('still normalizes Claude legacy ids into a canonical model/window pair', () => {
+    expect(resolveSpawnModel('claude', 'opus-1m')).toBe('opus');
+    expect(resolveSpawnModelSelection('claude', 'opus-1m')).toEqual({
+      model: 'opus',
+      contextWindow: 1_000_000,
+    });
   });
 });

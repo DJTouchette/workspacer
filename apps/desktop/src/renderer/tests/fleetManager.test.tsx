@@ -216,6 +216,13 @@ describe('buildManagerKickoff — dispatch templates', () => {
     expect(doctrine).toContain('worker-escalated');
     expect(doctrine).toMatch(/suppresses the contradictory missing-result error/);
     expect(doctrine).toMatch(/Malformed escalation blocks remain ordinary prose/);
+    expect(doctrine).toMatch(/exactly six keys/);
+    expect(doctrine).toMatch(
+      /Resolve authority and decisions that are in your dispatched scope yourself/,
+    );
+    expect(doctrine).toMatch(
+      /destructive, external, credential, cross-repo, or otherwise unauthorized/,
+    );
   });
 });
 
