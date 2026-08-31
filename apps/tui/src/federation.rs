@@ -28,7 +28,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::AppMsg;
 use crate::bus::BusClient;
-use crate::types::{Agent, AgentMode, CacheSplit, Pending, Question, Usage};
+use crate::types::{Agent, AgentMode, CacheSplit, Pending, Question, RequestedSelection, Usage};
 
 // ── the per-hub session store ───────────────────────────────────────────────
 
@@ -159,6 +159,16 @@ fn fold_row(prev: &Agent, mut next: Agent) -> Agent {
     next.provider = prev.provider.clone();
     next.label = next.label.or_else(|| prev.label.clone());
     next.usage = next.usage.or_else(|| prev.usage.clone());
+    // The owner's model facts, folded by PRESENCE like everything else here. A
+    // sparse producer that omits them is saying nothing about the selection,
+    // not retracting one: a state-only tick arriving after the row already knew
+    // its 1M window must not blank the context readout back to unknown.
+    next.requested_selection = next
+        .requested_selection
+        .or_else(|| prev.requested_selection.clone());
+    next.resolved_context_window = next
+        .resolved_context_window
+        .or(prev.resolved_context_window);
     next.last_event = next.last_event.or_else(|| prev.last_event.clone());
     next.tool_calls = next.tool_calls.max(prev.tool_calls);
     next
@@ -239,6 +249,25 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
         }),
     });
 
+    // The owner's canonical model facts. This function CONSTRUCTS an `Agent`
+    // rather than deserializing one, so the serde aliases on those fields never
+    // fire here — they have to be read out by hand or a remote row silently
+    // arrives with no selection at all. Read by presence, both spellings
+    // accepted (the hub's camelCase projection, and the daemon's own snake_case
+    // original, which the hub keeps alongside it): absent stays absent, and a
+    // selection whose window the owner never resolved keeps its silence rather
+    // than borrowing `resolvedContextWindow` from the row next to it.
+    let field = |camel: &str, snake: &str| {
+        row.get(camel)
+            .or_else(|| row.get(snake))
+            .filter(|v| !v.is_null())
+    };
+    let requested_selection = field("requestedSelection", "requested_selection")
+        .and_then(|v| serde_json::from_value::<RequestedSelection>(v.clone()).ok());
+    let resolved_context_window = field("resolvedContextWindow", "resolved_context_window")
+        .and_then(Value::as_u64)
+        .filter(|w| *w > 0);
+
     Some(Agent {
         session_id,
         cwd: str_of("cwd"),
@@ -260,6 +289,8 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
         // the local disk off it) — never carry it across the seam.
         transcript_path: None,
         usage,
+        requested_selection,
+        resolved_context_window,
         hub: Some(hub.to_string()),
         hub_offline: false,
         // The harness spells the label `name`; the real snapshot says `label`.
@@ -706,6 +737,133 @@ mod tests {
         assert!(!a.sparse);
         assert_eq!(a.label.as_deref(), Some("api refactor"));
         assert_eq!(a.tool_calls, 7);
+    }
+
+    // ── the owner's canonical model facts ───────────────────────────────────
+
+    /// A DESKTOP row: camelCase throughout, as the renderer's snapshot spells
+    /// it. `agent_from_snapshot` builds an `Agent` by hand, so nothing here is
+    /// carried by serde — a field not read out explicitly is a field the remote
+    /// fleet loses.
+    #[test]
+    fn maps_the_owner_selection_from_a_camel_desktop_row() {
+        let mut row = rich_row();
+        row["requestedSelection"] = json!({ "model": "opus", "contextWindow": 1_000_000 });
+        row["resolvedContextWindow"] = json!(1_000_000);
+
+        let a = agent_from_snapshot("work", &row).expect("mapped");
+        let sel = a.requested_selection.as_ref().expect("selection carried");
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+        assert_eq!(sel.context_window, Some(1_000_000));
+        assert_eq!(a.resolved_context_window, Some(1_000_000));
+    }
+
+    /// A HEADLESS brain row: the hub's camelCase projection layered over
+    /// claudemon's snake_case original, both present on the same row (that is
+    /// exactly what `cmd/brain/enrich.go` publishes). Either spelling alone has
+    /// to work, because a peer may be running an older brain that forwards the
+    /// daemon row with no projection on it at all.
+    #[test]
+    fn maps_the_owner_selection_from_a_headless_brain_row() {
+        let mut row = sparse_brain_row();
+        row["requested_selection"] = json!({ "model": "opus", "context_window": 1_000_000 });
+        row["requestedSelection"] = json!({ "model": "opus", "contextWindow": 1_000_000 });
+        row["resolved_context_window"] = json!(1_000_000);
+        row["resolvedContextWindow"] = json!(1_000_000);
+
+        let a = agent_from_snapshot("work", &row).expect("mapped");
+        let sel = a.requested_selection.as_ref().expect("selection carried");
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+        assert_eq!(sel.context_window, Some(1_000_000));
+        assert_eq!(a.resolved_context_window, Some(1_000_000));
+
+        // Snake-only (no projection on the row at all).
+        let mut snake = sparse_brain_row();
+        snake["requested_selection"] = json!({ "model": "sonnet", "context_window": null });
+        snake["resolved_context_window"] = json!(200_000);
+        let a = agent_from_snapshot("work", &snake).expect("mapped");
+        let sel = a.requested_selection.as_ref().expect("selection carried");
+        assert_eq!(sel.model.as_deref(), Some("sonnet"));
+        assert_eq!(
+            sel.context_window, None,
+            "an unresolved window stays unresolved — never borrowed from the resolved one"
+        );
+        assert_eq!(a.resolved_context_window, Some(200_000));
+    }
+
+    /// A row from a hub that has never heard of either field arrives with
+    /// neither — the absence a client must be able to tell from a claim.
+    #[test]
+    fn a_row_without_owner_facts_claims_neither() {
+        let a = agent_from_snapshot("work", &rich_row()).expect("mapped");
+        assert!(a.requested_selection.is_none());
+        assert_eq!(a.resolved_context_window, None);
+    }
+
+    /// The fold: a state-only tick says nothing about the selection, so it must
+    /// not RETRACT one. Before this, a sparse row landing after the rich one
+    /// blanked the context denominator and the readout fell back to unknown
+    /// mid-session.
+    #[test]
+    fn a_sparse_row_that_omits_the_owner_facts_keeps_them() {
+        let mut fleet = RemoteFleet::default();
+        let mut rich = rich_row();
+        rich["requestedSelection"] = json!({ "model": "opus", "contextWindow": 1_000_000 });
+        rich["resolvedContextWindow"] = json!(1_000_000);
+        fleet.upsert("work", agent_from_snapshot("work", &rich).unwrap());
+
+        let sparse = json!({
+            "sessionId": "r1", "sparse": true, "status": "active",
+            "ambientState": "streaming",
+            "pendingApproval": null, "pendingQuestions": null
+        });
+        fleet.upsert("work", agent_from_snapshot("work", &sparse).unwrap());
+
+        let a = &fleet.agents()[0];
+        let sel = a.requested_selection.as_ref().expect("selection survives");
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+        assert_eq!(sel.context_window, Some(1_000_000));
+        assert_eq!(a.resolved_context_window, Some(1_000_000));
+
+        // And a sparse row that DOES carry them is fresher truth (a live
+        // /model switch on the peer).
+        let switched = json!({
+            "sessionId": "r1", "sparse": true, "status": "active",
+            "ambientState": "streaming",
+            "requestedSelection": { "model": "sonnet", "contextWindow": null },
+            "resolvedContextWindow": 200_000,
+            "pendingApproval": null, "pendingQuestions": null
+        });
+        fleet.upsert("work", agent_from_snapshot("work", &switched).unwrap());
+        let a = &fleet.agents()[0];
+        assert_eq!(
+            a.requested_selection
+                .as_ref()
+                .and_then(|s| s.model.as_deref()),
+            Some("sonnet")
+        );
+        assert_eq!(a.resolved_context_window, Some(200_000));
+    }
+
+    /// The owner facts are numbers and names, and they must not smuggle in a
+    /// capability. A remote row still carries NO transcript path: that path
+    /// names a file on someone else's disk, and the runs overlay would read it
+    /// off THIS one.
+    #[test]
+    fn owner_facts_do_not_give_a_remote_row_local_filesystem_reach() {
+        let mut row = rich_row();
+        row["requestedSelection"] = json!({ "model": "opus", "contextWindow": 1_000_000 });
+        row["resolvedContextWindow"] = json!(1_000_000);
+        row["transcriptPath"] = json!("/peer/home/.claude/projects/x/r1.jsonl");
+        row["transcript_path"] = json!("/peer/home/.claude/projects/x/r1.jsonl");
+
+        let a = agent_from_snapshot("work", &row).expect("mapped");
+        assert_eq!(a.transcript_path, None, "a peer-local path never crosses");
+        assert!(a.is_remote());
+        assert!(
+            a.is_stream(),
+            "and no local PTY is implied for a remote session"
+        );
     }
 
     #[test]

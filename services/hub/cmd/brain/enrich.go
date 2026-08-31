@@ -335,6 +335,7 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	if tc, ok := m["tool_calls"]; ok {
 		m["totalToolCalls"] = tc
 	}
+	mapOwnerSelection(m)
 	// statusLine: claudemon's snake_case StatusLine → the desktop's camelCase
 	// SessionStatusLine shape (claudeSessionStore.ts). Headless (no-desktop)
 	// sessions otherwise carry only the raw `status_line`, so mobile's
@@ -390,6 +391,55 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 		return snap
 	}
 	return out
+}
+
+// mapOwnerSelection projects the DAEMON-OWNED model facts onto the camelCase
+// names every client reads, in place: `requested_selection` {model,
+// context_window} → `requestedSelection` {model, contextWindow}, and
+// `resolved_context_window` → `resolvedContextWindow`.
+//
+// A PROJECTION, never a policy. The daemon owns both values — the request is
+// what a caller asked for, and the resolved window comes from the daemon's own
+// resolver, the same one behind `usage.context_limit`. So this overlay:
+//
+//   - never SYNTHESIZES: a row without the keys leaves without them, and an
+//     absent window is never filled from the model table, from the resolved
+//     window, or from a status-line claim;
+//   - never REWRITES THE PAIR: model and window travel exactly as the daemon
+//     paired them. A model with no window keeps its silence (the sparse case a
+//     daemon publishes for an identity whose window nothing resolved yet), so a
+//     client can still tell "opus, window unknown" from "opus at 1M";
+//   - never TOUCHES THE EVIDENCE: `status_line.context_window_size` /
+//     `statusLine.contextWindowSize` stay whatever the provider said, even when
+//     the resolved window disagrees. Reconciling the two is the client's rule
+//     (the 2% drift tolerance in the TUI's derive_stats and its desktop twin),
+//     and it can only apply that rule if both claims arrive intact.
+//
+// The snake_case originals stay alongside, like every other mapping here: a
+// reader deserializing claudemon's own shape (the TUI's `Agent`) keeps working
+// off the bus rows unchanged.
+func mapOwnerSelection(m map[string]any) {
+	if sel, ok := m["requested_selection"].(map[string]any); ok {
+		// Key PRESENCE is copied, values verbatim — including an explicit null
+		// window, which is how the daemon spells "identity chosen, window not
+		// resolved". Collapsing that to an absent key would be this overlay
+		// editing the daemon's claim.
+		out := map[string]any{}
+		if model, present := sel["model"]; present {
+			out["model"] = model
+		}
+		if window, present := sel["context_window"]; present {
+			out["contextWindow"] = window
+		}
+		m["requestedSelection"] = out
+	}
+	// The resolved window follows `usage.contextLimit`'s rule above, because it
+	// is the same number from the same resolver: present-and-real is a claim,
+	// absent-or-null is the daemon's honest "I don't know", and a null on the
+	// wire would invite a client to render an unknown as a window.
+	if w, ok := m["resolved_context_window"]; ok && w != nil {
+		m["resolvedContextWindow"] = w
+	}
 }
 
 // backgroundTasksOf reads claudemon's `background_tasks` counter off a raw row.

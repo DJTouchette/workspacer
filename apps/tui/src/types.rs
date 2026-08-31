@@ -49,6 +49,31 @@ pub struct Usage {
     pub cache: Option<CacheSplit>,
 }
 
+/// The canonical model request its OWNER recorded for a session: the model
+/// identity, and the context window asked for with it. Mirrors
+/// `ModelSelection` in services/claudemon/src/session/windows.rs.
+///
+/// Both fields are optional and both are read by presence, because the pair is
+/// the daemon's claim and this client only relays it. `model: Some, window:
+/// None` is a real, common state — an identity was pinned and no window was
+/// resolved for it yet — and it must stay distinguishable from a window this
+/// client made up. The `contextWindow` alias absorbs the hub's camelCase
+/// projection of the same fact.
+/// Both halves are carried, neither is rendered yet: what a session is MEASURED
+/// against is the resolved window (see [`Agent::owner_context_window`]), and the
+/// request is the other half of the story a client needs before it can ever show
+/// the two disagreeing. Relaying it faithfully now is what makes that possible
+/// without another wire change.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RequestedSelection {
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub model: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default, alias = "contextWindow")]
+    pub context_window: Option<u64>,
+}
+
 /// The prompt-cache split claudemon carries on `usage.cache`. Mirrors
 /// `CacheSplit` in services/claudemon/src/session/usage.rs, field for field.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -209,8 +234,8 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
         .and_then(|s| s.model_display.clone())
         .or_else(|| agent.usage.as_ref().and_then(|u| u.model.clone()));
     let usage_pct = || {
+        let limit = agent.owner_context_window()?;
         agent.usage.as_ref().and_then(|u| {
-            let limit = u.context_limit?;
             (limit > 0 && u.context_tokens > 0)
                 .then(|| u.context_tokens as f64 / limit as f64 * 100.0)
         })
@@ -331,6 +356,34 @@ pub struct Agent {
     /// Absent when the daemon hasn't computed it yet (no assistant turns).
     #[serde(default)]
     pub usage: Option<Usage>,
+    /// What the session's OWNER (the daemon running it) recorded as the model
+    /// request: the identity, and the context window asked for alongside it.
+    /// Absent on every row from a daemon that predates the field, and absent
+    /// when nobody pinned a selection — which is why it is an `Option` of a
+    /// struct whose own window is an `Option` too. This client never fills in
+    /// either half: an unresolved window here means the owner resolved none,
+    /// not 200k.
+    ///
+    /// Two spellings reach this client and both are the same fact: claudemon's
+    /// own `requested_selection` (a direct `GET /sessions` row) and the hub's
+    /// `requestedSelection` projection (a bus row, local or federated). The
+    /// alias is what lets one struct read both, so a row cannot arrive with the
+    /// selection silently dropped just because it came the other way round.
+    #[serde(default, alias = "requestedSelection")]
+    pub requested_selection: Option<RequestedSelection>,
+    /// The window the owner's resolver settled on, in tokens — the same number
+    /// behind [`Usage::context_limit`], published in its own right so a row
+    /// carrying no usage block yet still says what the session is measured
+    /// against. DISPLAY ONLY: a denominator, never evidence about what the
+    /// provider claimed. When the provider's own status pair contradicts the
+    /// tokens actually held, that contradiction is still settled against the
+    /// RAW provider claim (see [`derive_stats`]), never against this.
+    ///
+    /// Aliased like the selection above, for the same reason: `GET /sessions`
+    /// spells it `resolved_context_window`, the hub's projection spells it
+    /// `resolvedContextWindow`.
+    #[serde(default, alias = "resolvedContextWindow")]
+    pub resolved_context_window: Option<u64>,
     /// Peer hub this session lives on (federation). `None` — the overwhelmingly
     /// common case, and everything claudemon returns — means local. Remote rows
     /// are built from hub-stamped `agent.snapshot` events / `sessions.snapshots`
@@ -437,6 +490,28 @@ impl Agent {
             self.mode,
             AgentMode::Input | AgentMode::Approval | AgentMode::Question
         )
+    }
+
+    /// The window to MEASURE this session's context against, in tokens, or
+    /// `None` when nothing resolved one.
+    ///
+    /// `usage.context_limit` first — it is the resolver's answer travelling
+    /// with the tokens it belongs to — then the row's own
+    /// `resolved_context_window`, which is the same resolver's answer on a row
+    /// whose usage block has not been computed yet (or was mapped away). Both
+    /// come from the OWNER; neither is inferred here.
+    ///
+    /// Deliberately NOT a source of truth about the provider: this is only ever
+    /// a denominator for display. The request (`requested_selection`) is what
+    /// was asked for and can differ; the status line's own window is raw
+    /// provider evidence and stays authoritative for the contradiction check in
+    /// [`derive_stats`].
+    pub fn owner_context_window(&self) -> Option<u64> {
+        self.usage
+            .as_ref()
+            .and_then(|u| u.context_limit)
+            .or(self.resolved_context_window)
+            .filter(|w| *w > 0)
     }
 
     /// True when this session belongs to a peer hub (federation) rather than
@@ -1897,6 +1972,152 @@ mod tests {
         assert_eq!(u.context_limit, None, "unknown, not zero");
         // And the readout omits the percentage rather than dividing by nothing.
         assert_eq!(derive_stats(&agent, None).context_pct, None);
+    }
+
+    // ── the owner's canonical model facts ───────────────────────────────────
+
+    /// Both spellings deserialize into the same fields: claudemon's own
+    /// snake_case (`GET /sessions`, the `--direct` path) and the hub's
+    /// camelCase projection (a bus row). Nothing about the session changes
+    /// because it arrived by a different road.
+    #[test]
+    fn owner_selection_parses_in_both_wire_spellings() {
+        let snake: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "input",
+            "requested_model": "opus[1m]",
+            "requested_selection": { "model": "opus", "context_window": 1_000_000 },
+            "resolved_context_window": 1_000_000
+        }))
+        .unwrap();
+        let camel: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "input",
+            "requestedSelection": { "model": "opus", "contextWindow": 1_000_000 },
+            "resolvedContextWindow": 1_000_000
+        }))
+        .unwrap();
+
+        for a in [&snake, &camel] {
+            let sel = a.requested_selection.as_ref().expect("selection");
+            assert_eq!(sel.model.as_deref(), Some("opus"));
+            assert_eq!(sel.context_window, Some(1_000_000));
+            assert_eq!(a.resolved_context_window, Some(1_000_000));
+        }
+    }
+
+    /// Absence is the common case and must stay silent: a daemon that predates
+    /// the slice, and a session nobody pinned a selection on. A sparse
+    /// selection (identity, no window) is preserved as such — this client never
+    /// completes the pair from the resolved window sitting beside it.
+    #[test]
+    fn owner_selection_tolerates_absence_and_sparseness() {
+        let bare: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "input",
+            "usage": { "model": "claude-opus-5", "context_tokens": 10, "context_limit": 200_000 }
+        }))
+        .unwrap();
+        assert!(bare.requested_selection.is_none());
+        assert_eq!(bare.resolved_context_window, None);
+        assert_eq!(
+            bare.owner_context_window(),
+            Some(200_000),
+            "the usage window still answers on its own"
+        );
+
+        let sparse: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "input",
+            "requested_selection": { "model": "opus" },
+            "resolved_context_window": 200_000
+        }))
+        .unwrap();
+        let sel = sparse.requested_selection.as_ref().expect("selection");
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+        assert_eq!(sel.context_window, None, "unresolved stays unresolved");
+    }
+
+    /// The resolved window is a DENOMINATOR, and only that. A row whose usage
+    /// block has no window of its own measures against it; a row with one keeps
+    /// using it (they are the same number from the same resolver, and the usage
+    /// one travels with the tokens it belongs to).
+    #[test]
+    fn resolved_window_is_a_display_denominator_when_usage_has_none() {
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "resolved_context_window": 1_000_000,
+            // The daemon's honest unknown: no `context_limit` key at all.
+            "usage": { "model": "claude-opus-5", "context_tokens": 250_000, "cost_usd": 1.0 }
+        }))
+        .unwrap();
+        assert_eq!(a.owner_context_window(), Some(1_000_000));
+        assert_eq!(derive_stats(&a, None).context_pct, Some(25.0));
+
+        // Nothing resolved anything: still unknown, never a guessed 200k.
+        let unknown: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "usage": { "model": "unknown-model", "context_tokens": 250_000 }
+        }))
+        .unwrap();
+        assert_eq!(unknown.owner_context_window(), None);
+        assert_eq!(derive_stats(&unknown, None).context_pct, None);
+
+        // A request is NOT a resolution: a window that was asked for but never
+        // resolved cannot become a denominator.
+        let asked: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "requested_selection": { "model": "opus", "context_window": 1_000_000 },
+            "usage": { "model": "claude-opus-5", "context_tokens": 250_000 }
+        }))
+        .unwrap();
+        assert_eq!(asked.owner_context_window(), None);
+        assert_eq!(derive_stats(&asked, None).context_pct, None);
+    }
+
+    /// The early-1M specimen, with the resolved window as the ONLY source of
+    /// the denominator: 356,380 tokens held while Claude's status line still
+    /// says 200,000 at 100%. The raw provider claim is what gets disproved (2%
+    /// drift), and the resolved window is what the readout then measures
+    /// against — it never rescues the contradicted pair, and never suppresses
+    /// the contradiction check either.
+    #[test]
+    fn resolved_window_does_not_soften_the_disproved_status_pair() {
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "requested_selection": { "model": "opus", "context_window": 1_000_000 },
+            "resolved_context_window": 1_000_000,
+            "usage": { "model": "claude-opus-5", "context_tokens": 356_380, "cost_usd": 1.0 }
+        }))
+        .unwrap();
+        let sl: StatusLine = serde_json::from_value(serde_json::json!({
+            "context_used_pct": 100.0,
+            "context_window_size": 200_000
+        }))
+        .unwrap();
+
+        let pct = derive_stats(&a, Some(&sl)).context_pct.unwrap();
+        assert!((pct - 35.638).abs() < 1e-9, "pct={pct}");
+        assert_eq!(
+            sl.context_window_size,
+            Some(200_000),
+            "the provider's own claim is untouched evidence"
+        );
+
+        // The mirror image: a status pair the tokens do NOT disprove still
+        // wins, even with a resolved window that disagrees with it.
+        let truthful: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "resolved_context_window": 1_000_000,
+            "usage": { "model": "claude-opus-5", "context_tokens": 90_000 }
+        }))
+        .unwrap();
+        let sl = StatusLine {
+            context_used_pct: Some(45.0),
+            context_window_size: Some(200_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            derive_stats(&truthful, Some(&sl)).context_pct,
+            Some(45.0),
+            "an uncontradicted provider percentage remains authoritative"
+        );
     }
 
     #[test]
