@@ -95,6 +95,36 @@ export interface SessionSpawnSettings {
   defaultEffort?: string;
 }
 
+/**
+ * The routing labels a dispatch arrived with, kept as one block because that is
+ * how the snapshot reports them and how `respawn_with` reads them back.
+ *
+ * Metadata only — nothing here grants or enforces anything on this host. The
+ * enforcement that reads `capability` (routing.yaml's per-directory ceiling)
+ * runs in the hub router BEFORE the spawn reaches this process, and `role` is
+ * enforced there too (`fresh`). What this host owes them is a faithful record.
+ *
+ * TWIN: the brain's spawnMeta Role/Capability/DecisionID (cmd/brain/enrich.go)
+ * and the `routing` block it overlays onto a headless snapshot — same three
+ * keys, same "omit what was not given" rule, so the two hosts describe a routed
+ * session identically.
+ */
+export interface SessionRouting {
+  /** The work role the routing matrix answered for (scout, implementer,
+   *  reviewer, fixer, validator, judge …). */
+  role?: string;
+  /** The model-capability tier this spawn was entitled to, AFTER the hub
+   *  router's ceiling clamp — what it actually got, not what it asked for. */
+  capability?: string;
+  /** Joins this session to the `routing.select` answer it acted on, in the
+   *  hub's append-only decision log. Stored rather than dropped so a
+   *  desktop-hosted worker can be joined back to its decision the same way a
+   *  brain-hosted one can; deliberately NOT inherited on respawn (the successor
+   *  was produced by a dispatcher's judgement, not by that decision — see
+   *  cmd/mcp/respawn.go). */
+  decisionId?: string;
+}
+
 /** Normalize a path for consistent map-key matching on Windows (backslash vs forward slash, case) */
 function normalizeCwd(cwd: string): string {
   if (!cwd) return cwd;
@@ -427,6 +457,18 @@ export interface ClaudeSessionState {
    *  shape its dispatcher asked for (shared/structuredResult). Undefined for
    *  every ordinary dispatch — a schema is opt-in and purely additive. */
   resultSchema?: Record<string, unknown>;
+  /** What the ROUTING layer said this worker is, as this host RECEIVED it (the
+   *  hub router's ceiling clamp has already run by then). Recorded at spawn
+   *  from `agents.spawn`'s role/capability/decisionId and surfaced back on the
+   *  snapshot, because two consumers read it there and nothing else records it
+   *  on this host: `respawn_with` inherits role + capability from the snapshot
+   *  (a reviewer that loses `role` loses `fresh` enforcement with nothing
+   *  announcing it), and the hub's decision log needs `decisionId` to join a
+   *  session back to the decision that produced it. Absent for every spawn that
+   *  named none of them — an unrouted row keeps its exact shape.
+   *  TWIN: the brain's enrichSnapshot overlay (cmd/brain/enrich.go), which
+   *  builds the same block from its own spawnMeta. */
+  routing?: SessionRouting;
   /** Federation: the peer hub this session lives on; absent = local. Remote
    *  sessions are fed by hub-stamped agent.snapshot events (federationBridge),
    *  never by local hooks/deltas, and skip every local side effect (history,
@@ -544,6 +586,7 @@ class ClaudeSessionStore {
       transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
       resultSchema?: Record<string, unknown>;
+      routing?: SessionRouting;
     }
   >();
   // Last-applied conversation sequence per session (gap detection for the
@@ -590,6 +633,9 @@ class ClaudeSessionStore {
       /** Structured-result schema (spawn_agent's resultSchema) — see
        *  ClaudeSessionState.resultSchema. */
       resultSchema?: Record<string, unknown>;
+      /** Routing labels this dispatch arrived with — see
+       *  ClaudeSessionState.routing. */
+      routing?: SessionRouting;
     },
   ): void {
     if (!sessionId) return;
@@ -600,6 +646,12 @@ class ClaudeSessionStore {
     // A restart-with-settings re-spawns onto an id that may still have a live
     // entry — refresh its settings in place so the pills track the request.
     const existing = this.sessions.get(sessionId);
+    // Same reason, for the routing block: `createSession` is the only other
+    // place meta is applied, and a re-spawn onto a LIVE id never reaches it, so
+    // without this the row would keep the previous life's role/capability (or
+    // none) while the new life runs under different ones. The brain has this
+    // for free — its overlay re-reads spawnMeta on every snapshot.
+    if (existing && meta.routing) existing.routing = meta.routing;
     if (existing && meta.settings) {
       existing.settings = { ...existing.settings, ...meta.settings };
       // A restart can change the window (`opus` → `opus[1m]`), and the new
@@ -610,8 +662,11 @@ class ClaudeSessionStore {
       // `settings`, so leaving it behind makes a restart-to-change-the-mode look
       // like it did nothing until the next hook happens to land.
       if (meta.settings.permissionMode) existing.livePermissionMode = undefined;
-      this.pushUpdate(existing);
     }
+    // One push for whatever this respawn changed — a settings refresh and a
+    // routing refresh arrive in the same call, and two pushes would make the
+    // renderer render the half-applied state in between.
+    if (existing && (meta.routing || meta.settings)) this.pushUpdate(existing);
   }
 
   /** Record a model a *live* switch (`claude:setModel`) asked this session to
@@ -1929,6 +1984,7 @@ class ClaudeSessionStore {
       session.transport = meta.transport;
       session.settings = meta.settings;
       session.resultSchema = meta.resultSchema;
+      session.routing = meta.routing;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

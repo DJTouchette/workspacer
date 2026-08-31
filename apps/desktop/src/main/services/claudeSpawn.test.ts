@@ -472,6 +472,34 @@ describe('spawnClaudeAgent — resultSchema', () => {
   });
 });
 
+// ── The routing block (agents.spawn role / capability / decisionId) ─────────
+describe('spawnClaudeAgent — routing', () => {
+  it('records the labels on the spawn meta, so the snapshot can answer what this worker was routed as', async () => {
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      routing: { role: 'reviewer', capability: 'frontier', decisionId: 'dec-7' },
+    });
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({
+      routing: { role: 'reviewer', capability: 'frontier', decisionId: 'dec-7' },
+    });
+  });
+
+  // Metadata, not argv: `capability` was already acted on by the hub router's
+  // ceiling clamp (which replaced model/effort before the spawn got here), so
+  // nothing on this path may re-read it into the process's command line.
+  it('puts nothing on the argv', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', routing: { role: 'reviewer', capability: 'frontier' } });
+    const argv = lastArgv().join(' ');
+    expect(argv).not.toContain('reviewer');
+    expect(argv).not.toContain('frontier');
+  });
+
+  it('records no routing key for an unrouted spawn', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).not.toHaveProperty('routing');
+  });
+});
+
 // ── The first message (spawn_agent / agents.spawn `message`) ─────────────────
 //
 // On the PTY path the two channels are unmistakably different: the result

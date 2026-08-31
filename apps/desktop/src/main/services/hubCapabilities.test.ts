@@ -1134,6 +1134,95 @@ describe('agents.spawn — dispatch', () => {
   });
 });
 
+// ── The routing wire, RECORDED and not just echoed ──────────────────────────
+//
+// role / capability / decisionId used to be destructured off the spawn, echoed
+// back in the result, and dropped — never handed to a spawner, so never stored,
+// so never on `sessions.snapshot`. That is a silent loss, twice: `respawn_with`
+// inherits role + capability FROM THE SNAPSHOT (cmd/mcp/respawn.go), so a
+// desktop-hosted reviewer lost its `fresh` marking on redispatch, and the hub's
+// decision log had no way to join a desktop session to the decision that
+// produced it. The brain has recorded them all along (cmd/brain/enrich.go), and
+// two hosts describing one session differently is the expensive failure here.
+describe('agents.spawn — records the routing labels, on every branch', () => {
+  it.each([
+    ['managed provider', { provider: 'codex', cwd: '/proj' }, () => spawnManagedAgent],
+    [
+      'claude stream',
+      { provider: 'claude', transport: 'stream', cwd: '/proj' },
+      () => spawnManagedAgent,
+    ],
+    ['claude pty', { provider: 'claude', cwd: '/proj' }, () => spawnClaudeAgent],
+  ])('hands the block to the spawner — %s', async (_name, params, spawner) => {
+    await call('agents.spawn', {
+      ...params,
+      role: 'reviewer',
+      capability: 'frontier',
+      decisionId: 'dec-7',
+    });
+    const arg = spawner().mock.calls[0][0] as { routing?: Record<string, string> };
+    expect(arg.routing).toEqual({
+      role: 'reviewer',
+      capability: 'frontier',
+      decisionId: 'dec-7',
+    });
+  });
+
+  // decisionId is stored, not just echoed: the brain records it (enrich.go
+  // overlays all three) and a desktop row that dropped it could not be joined
+  // back to its decision. It is NOT inherited on respawn — that rule lives in
+  // cmd/mcp/respawn.go, which reads role + capability off the snapshot and
+  // deliberately leaves decisionId behind.
+  it('stores decisionId as well, so a desktop row joins the decision log like a brain row', async () => {
+    await call('agents.spawn', { provider: 'codex', cwd: '/proj', decisionId: 'dec-42' });
+    const arg = spawnManagedAgent.mock.calls[0][0] as { routing?: Record<string, string> };
+    expect(arg.routing).toEqual({ decisionId: 'dec-42' });
+  });
+
+  // Same rule the brain applies per key, and the same one the echo applies:
+  // what was not given is not invented.
+  it('carries only the labels that were given', async () => {
+    await call('agents.spawn', { provider: 'codex', cwd: '/proj', role: 'scout' });
+    const arg = spawnManagedAgent.mock.calls[0][0] as { routing?: Record<string, string> };
+    expect(arg.routing).toEqual({ role: 'scout' });
+  });
+
+  it('invents no routing block for an unrouted spawn, and none in the result either', async () => {
+    const res = await call('agents.spawn', { provider: 'codex', cwd: '/proj' });
+    const arg = spawnManagedAgent.mock.calls[0][0] as { routing?: unknown };
+    expect(arg.routing).toBeUndefined();
+    expect(res).not.toHaveProperty('routing');
+  });
+
+  // Blank strings are not labels. The stored block and the echoed block come
+  // from ONE normalizer for exactly this reason — a row reading `role: ''`
+  // would look routed to every consumer while naming nothing.
+  it('treats a blank label as absent, in the store side as in the echo', async () => {
+    const res = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: '/proj',
+      role: '   ',
+      capability: 'frontier',
+    })) as Record<string, unknown>;
+    const arg = spawnManagedAgent.mock.calls[0][0] as { routing?: Record<string, string> };
+    expect(arg.routing).toEqual({ capability: 'frontier' });
+    expect(res.routing).toEqual({ capability: 'frontier' });
+  });
+
+  // The echo answers "what did this host accept"; the spawner option answers
+  // "what is this session". They must not drift — one normalizer, one shape.
+  it('echoes exactly what it recorded', async () => {
+    const res = (await call('agents.spawn', {
+      provider: 'claude',
+      cwd: '/proj',
+      role: 'validator',
+      capability: 'cheap',
+    })) as Record<string, unknown>;
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { routing?: Record<string, string> };
+    expect(res.routing).toEqual(arg.routing);
+  });
+});
+
 describe('agents.spawn — dispatch templates', () => {
   /** A library item of kind 'dispatch' as libraryService.list would return it. */
   const tpl = (over: Record<string, unknown> = {}) => ({
