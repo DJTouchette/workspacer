@@ -857,3 +857,70 @@ describe('closeSession — dismissal is a verb', () => {
     expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
   });
 });
+
+// ── The routing block (agents.spawn role / capability / decisionId) ─────────
+//
+// The desktop used to take these three off the spawn wire, echo them in the
+// spawn result and forget them. That is not a tidiness problem: `respawn_with`
+// inherits role + capability FROM THE SNAPSHOT (cmd/mcp/respawn.go), so a
+// desktop-hosted reviewer lost its `fresh` marking on redispatch, silently. The
+// shape here is the brain's — one `routing` block, only the keys that were
+// given, and NO block at all for an unrouted spawn (cmd/brain/enrich.go).
+describe('setSpawnMeta records the routing labels a dispatch arrived with', () => {
+  it('returns them on the snapshot as a routing block, for a session born after the spawn', () => {
+    const sid = uniqueId();
+    claudeSessionStore.setSpawnMeta(sid, {
+      routing: { role: 'reviewer', capability: 'frontier', decisionId: 'dec-123' },
+    });
+    hook(sid, 'SessionStart');
+
+    expect(claudeSessionStore.getSnapshot(sid)?.routing).toEqual({
+      role: 'reviewer',
+      capability: 'frontier',
+      decisionId: 'dec-123',
+    });
+  });
+
+  it('invents no routing block for a spawn that named none of them', () => {
+    const sid = uniqueId();
+    claudeSessionStore.setSpawnMeta(sid, { label: 'plain worker' });
+    hook(sid, 'SessionStart');
+
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.label).toBe('plain worker');
+    // Absent, not `{}` — an unrouted row keeps its exact shape, and a caller
+    // reading `routing.role` must get "nothing was routed", not an empty object
+    // that looks like a routed session missing a field.
+    expect(snap?.routing).toBeUndefined();
+    // And nothing survives serialization either — what a bus caller reads over
+    // sessions.snapshot has no `routing` key at all, exactly as the brain's
+    // unenriched row does.
+    expect(JSON.parse(JSON.stringify(snap))).not.toHaveProperty('routing');
+  });
+
+  it('keeps only the labels that were given', () => {
+    const sid = uniqueId();
+    claudeSessionStore.setSpawnMeta(sid, { routing: { role: 'scout' } });
+    hook(sid, 'SessionStart');
+
+    expect(claudeSessionStore.getSnapshot(sid)?.routing).toEqual({ role: 'scout' });
+  });
+
+  // A restart re-spawns onto the SAME id (resumeSessionId pins it), so the row
+  // is already live and createSession never runs again. Without an in-place
+  // refresh the snapshot would keep answering with the previous life's role
+  // while the new life runs under a different one.
+  it('refreshes the block in place when a respawn lands on a live id', () => {
+    const sid = uniqueId();
+    claudeSessionStore.setSpawnMeta(sid, { routing: { role: 'implementer' } });
+    hook(sid, 'SessionStart');
+    expect(claudeSessionStore.getSnapshot(sid)?.routing).toEqual({ role: 'implementer' });
+
+    claudeSessionStore.setSpawnMeta(sid, { routing: { role: 'reviewer', capability: 'frontier' } });
+
+    expect(claudeSessionStore.getSnapshot(sid)?.routing).toEqual({
+      role: 'reviewer',
+      capability: 'frontier',
+    });
+  });
+});

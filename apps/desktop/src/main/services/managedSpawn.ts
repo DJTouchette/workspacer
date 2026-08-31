@@ -18,7 +18,7 @@
  */
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, type SessionRouting } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
@@ -163,6 +163,15 @@ export interface ManagedSpawnOptions {
    * Purely additive — the prose report is unaffected.
    */
   resultSchema?: Record<string, unknown>;
+  /**
+   * The routing labels this dispatch arrived with (role / capability /
+   * decisionId), recorded on the session so the snapshot can report them —
+   * `respawn_with` inherits role + capability from there, and the hub's
+   * decision log joins on decisionId. Metadata only: the ceiling clamp that
+   * acts on `capability` already ran in the hub router. Omitted for an
+   * unrouted spawn. See ClaudeSessionState.routing.
+   */
+  routing?: SessionRouting;
   /**
    * The agent's FIRST PROMPT — the dispatch itself — carried by the spawn
    * instead of a separate `agents.sendMessage` once the id comes back.
@@ -414,6 +423,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     isWakeTarget: opts.manager,
     provider,
     ...(resultSchema && { resultSchema }),
+    ...(opts.routing && { routing: opts.routing }),
     // What the CARD believes before the daemon's first frame arrives. Codex
     // states both shapes (never just 'stream'-or-absent): 'pty' is now a real
     // choice a caller can have made, and an absent key would read as "unknown"
@@ -564,6 +574,11 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     // path above.
     isWakeTarget: opts.manager,
     provider: 'codex',
+    // The hybrid branch records routing too: it is reached through
+    // spawnManagedAgent (codex on transport 'pty'), so the same dispatch can
+    // land here, and a routed worker whose snapshot forgot its role is exactly
+    // the silent loss this field exists to prevent.
+    ...(opts.routing && { routing: opts.routing }),
     // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
     // it says so rather than leaving the field absent: with codex defaulting to
     // headless, "no transport recorded" would read as the default, not as this.

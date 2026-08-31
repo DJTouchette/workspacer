@@ -22,7 +22,7 @@ import * as os from 'os';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, type SessionRouting } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
@@ -112,6 +112,15 @@ export interface ClaudeSpawnOptions {
    */
   resultSchema?: Record<string, unknown>;
   /**
+   * The routing labels this dispatch arrived with (role / capability /
+   * decisionId), recorded on the session so the snapshot can report them —
+   * `respawn_with` inherits role + capability from there, and the hub's
+   * decision log joins on decisionId. Metadata only: the ceiling clamp that
+   * acts on `capability` already ran in the hub router. Omitted for an
+   * unrouted spawn. See ClaudeSessionState.routing.
+   */
+  routing?: SessionRouting;
+  /**
    * The agent's FIRST PROMPT — the dispatch itself — carried by the spawn
    * instead of by a separate `claude.message` / `agents.sendMessage` once the
    * id comes back.
@@ -198,6 +207,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     isWakeTarget: opts.manager,
     provider: 'claude',
     ...(resultSchema && { resultSchema }),
+    ...(opts.routing && { routing: opts.routing }),
     settings: {
       model: opts.model,
       effort,

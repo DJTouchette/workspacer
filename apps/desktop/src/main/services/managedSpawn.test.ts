@@ -498,6 +498,54 @@ describe('spawnManagedAgent — resultSchema', () => {
   });
 });
 
+// ── The routing block (agents.spawn role / capability / decisionId) ─────────
+describe('spawnManagedAgent — routing', () => {
+  it('records the labels on the spawn meta for a managed worker', async () => {
+    await spawnManagedAgent({
+      provider: 'opencode',
+      cwd: '/proj',
+      routing: { role: 'reviewer', capability: 'frontier', decisionId: 'dec-7' },
+    });
+    expect(lastMeta()).toMatchObject({
+      routing: { role: 'reviewer', capability: 'frontier', decisionId: 'dec-7' },
+    });
+  });
+
+  // The win32 rollout-hybrid branch (spawnCodexHybrid) writes its OWN spawn
+  // meta, so threading the field into spawnManagedAgent's meta call does not
+  // cover it. A routed worker whose snapshot forgot its role is exactly the
+  // silent loss this field exists to stop, and it should not depend on which
+  // OS the host runs.
+  it('records them on the win32 rollout-hybrid branch too, which writes its own meta', async () => {
+    const realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await spawnManagedAgent({
+        provider: 'codex',
+        transport: 'pty',
+        cwd: '/proj',
+        routing: { role: 'implementer', capability: 'balanced' },
+      });
+      // Proof this is the hybrid branch and not the shared managed one.
+      expect(spawnManagedMock).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(lastMeta().transport).toBe('pty');
+      expect(lastMeta()).toMatchObject({
+        routing: { role: 'implementer', capability: 'balanced' },
+      });
+    } finally {
+      warn.mockRestore();
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    }
+  });
+
+  it('records no routing key for an unrouted spawn', async () => {
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+    expect(lastMeta()).not.toHaveProperty('routing');
+  });
+});
+
 // ── The first message (spawn_agent / agents.spawn `message`) ─────────────────
 //
 // The dispatch prompt rides the SPAWN. Two-call dispatch has a real window:

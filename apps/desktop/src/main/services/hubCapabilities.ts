@@ -9,7 +9,11 @@ import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
+import {
+  claudeSessionStore,
+  contextTokensFromStatusLine,
+  type SessionRouting,
+} from './claudeSessionStore';
 import { DRIFT_TOLERANCE } from '../shared/modelContextWindows';
 import { buildSenderHeader } from '../shared/fleetMessages';
 import { claudemonSessionClient } from './claudemonSessionClient';
@@ -88,6 +92,29 @@ import { progressReporter } from './progressReporter';
 const RENDERED_MESSAGE_CAP = 16_000;
 
 /**
+ * The routing block, as this host will both RECORD and ECHO it: the three
+ * fields with blanks dropped, or undefined when the spawn named none of them.
+ *
+ * One normalizer on purpose. The stored block and the echoed block are answers
+ * to the same question ("what was this worker routed as"), and the expensive
+ * failure in this repo is two descriptions of one thing drifting — the brain
+ * applies exactly this rule (`if sm.Role != ""` …, per key, block omitted when
+ * all are empty) in cmd/brain/enrich.go, so a routed session reads identically
+ * whichever host answered. Idempotent: normalizing an already-normalized block
+ * returns the same shape.
+ */
+function normalizeRouting(routing: {
+  role?: string;
+  capability?: string;
+  decisionId?: string;
+}): SessionRouting | undefined {
+  const routed = Object.fromEntries(
+    Object.entries(routing).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
+  ) as SessionRouting;
+  return Object.keys(routed).length ? routed : undefined;
+}
+
+/**
  * The `agents.spawn` answer. `messageQueued` is this host's ACKNOWLEDGEMENT
  * that it took delivery of the first prompt — claudemon queues it inside the
  * spawn handler, and an unconfirmed queue raises a banner rather than being
@@ -128,10 +155,8 @@ function spawnResult(
   // answer in the same place `fullAccess` gives it: in the ANSWER, rather than
   // in a log line on a machine it cannot read. Omitted for a spawn that named
   // none of them. TWIN: cmd/brain/handlers.go spawnResult.
-  const routed = Object.fromEntries(
-    Object.entries(routing ?? {}).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
-  );
-  if (Object.keys(routed).length) out.routing = routed;
+  const routed = normalizeRouting(routing ?? {});
+  if (routed) out.routing = routed;
   // THE RENDER, echoed back — the point being that a template spawn is the one
   // case where the dispatcher does not know what it sent. Before this, checking
   // that {{task}} landed where it should meant agents.getConversation, which has
@@ -690,6 +715,12 @@ export function registerHubCapabilities(): void {
        *  answer. TWIN: cmd/brain/handlers.go spawnParams (byte-compared by
        *  parity_test.go's TestSpawnParamSurfaceMatchesDesktop).
        *
+       *  RECORDED means recorded: all three ride the spawn into setSpawnMeta
+       *  and come back on `sessions.snapshot` as a `routing` block, matching
+       *  the brain's overlay (cmd/brain/enrich.go). They are also echoed in the
+       *  spawn result, which is a different question — the echo says what this
+       *  host ACCEPTED, the snapshot says what the session IS.
+       *
        *  NAMING IS NOT FREE-FORM HERE. `tier` already means AUTHORITY in this
        *  codebase (toolScope: view | triage | operator), so the
        *  cheap/balanced/frontier axis is CAPABILITY everywhere on this wire;
@@ -897,6 +928,16 @@ export function registerHubCapabilities(): void {
     // every non-desktop path spawned a Claude manager. See lib/roleProviders
     // (TWIN: ipc.ts).
     const provider = resolveSpawnProvider({ provider: reqProvider, manager });
+    // THE ROUTING BLOCK, recorded as well as echoed. Every branch below passes
+    // this same object to its spawner, which hands it to setSpawnMeta, which
+    // puts it on the session — so `sessions.snapshot` answers "what was this
+    // worker routed as" here exactly as the brain's enrichSnapshot does on a
+    // headless node. Without it the fields arrived, were echoed back, and were
+    // then forgotten: `respawn_with` inherits role + capability FROM THE
+    // SNAPSHOT, so a desktop-hosted reviewer silently lost its `fresh` marking
+    // on redispatch, and the decision log could not join a desktop session to
+    // the decision that produced it. Neither failed loudly.
+    const routing = normalizeRouting({ role, capability, decisionId });
     if (provider !== 'claude') {
       // profileId is a Claude account concept (CLAUDE_CONFIG_DIR) with no
       // equivalent on a managed provider — same 'unsupported' classification
@@ -940,13 +981,10 @@ export function registerHubCapabilities(): void {
         cols,
         rows,
         resultSchema,
+        routing,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
-        role,
-        capability,
-        decisionId,
-      });
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -982,13 +1020,10 @@ export function registerHubCapabilities(): void {
         scrubProfileBypass,
         profileGranted: profileGranted === true,
         resultSchema,
+        routing,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
-        role,
-        capability,
-        decisionId,
-      });
+      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -1011,13 +1046,10 @@ export function registerHubCapabilities(): void {
       rows,
       mcpItemIds: busMcpItemIds,
       resultSchema,
+      routing,
       firstMessage: message,
     });
-    return spawnResult(sessionId, message, escalation(), renderedFromTemplate, {
-      role,
-      capability,
-      decisionId,
-    });
+    return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
