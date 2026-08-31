@@ -791,6 +791,18 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		}
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
+	prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted)
+	var profileArgs []string
+	if prof != nil {
+		profileArgs = prof.ExtraArgs
+	}
+	if profileModel := modelFromArgs(profileArgs); profileModel != "" {
+		// Profiles win at the Claude CLI boundary. Discard the shadowed caller
+		// pair and normalize the model that will actually execute.
+		p.Model = profileModel
+		p.ModelIdentity = ""
+		p.ContextWindow = nil
+	}
 	resolvedModel, err := r.claudeSpawnModel(p.Model, p.ModelIdentity, p.ContextWindow)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Claude model selection: %w", err)
@@ -816,8 +828,6 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// which buildArgv would append verbatim — defeating the clamp. Scrub the
 	// profile's bypass flags on this remote path too (configDir survives only a
 	// hub-verified profile grant — see remoteSpawnProfile).
-	prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted)
-
 	// Resume reopens an existing transcript; a fresh spawn pins a new id so our
 	// id, claude's id, and the transcript filename all agree.
 	resume := p.ResumeSessionID != ""

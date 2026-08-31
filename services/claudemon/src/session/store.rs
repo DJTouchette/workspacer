@@ -568,17 +568,29 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_selection = s.requested_selection.clone();
-                // Preserve the stored companion when it exists. The sessions
-                // table has no provider column, so regenerating from the pair
-                // would apply Claude's marker rule to an opaque non-Claude id
-                // such as `vendor/model-1m` after every restart. A missing
-                // companion is still healed from canonical evidence.
-                st.requested_model = s.requested_model.clone().or_else(|| {
-                    s.requested_selection.as_ref().map(|selection| {
-                        super::windows::PersistedModelSelection::from_selection(selection.clone())
-                            .legacy_model
-                    })
-                });
+                // Preserve an exact stored companion: equality with the
+                // canonical identity is the provider-neutral proof that an
+                // opaque id such as `vendor/model-1m` must stay untouched. If
+                // restore normalized a historical Claude spelling (for example
+                // `sonnet-1m` -> identity `sonnet` + 1M), derive the current
+                // executable `[1m]` projection so the next event heals SQLite.
+                st.requested_model = s.requested_selection.as_ref().map_or_else(
+                    || s.requested_model.clone(),
+                    |selection| {
+                        Some(
+                            s.requested_model
+                                .as_ref()
+                                .filter(|legacy| legacy.trim() == selection.model)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    super::windows::PersistedModelSelection::from_selection(
+                                        selection.clone(),
+                                    )
+                                    .legacy_model
+                                }),
+                        )
+                    },
+                );
                 // The transcript path, which is what `usage::usage_for_session`
                 // folds cost and tokens out of. `hydrate` could not restore it
                 // before v6 — the column did not exist — so EVERY rehydrated

@@ -64,6 +64,15 @@ func TestProfilePinnedModelNotDuplicated(t *testing.T) {
 	}
 }
 
+func TestModelFromArgsReadsTheLastExecutablePin(t *testing.T) {
+	if got := modelFromArgs([]string{"--model=opus", "--model", "sonnet[1m]"}); got != "sonnet[1m]" {
+		t.Fatalf("modelFromArgs = %q, want sonnet[1m]", got)
+	}
+	if got := modelFromArgs([]string{"--model", "--verbose"}); got != "" {
+		t.Fatalf("a valueless model flag produced %q", got)
+	}
+}
+
 func TestSkipPermissionsAddedOnce(t *testing.T) {
 	argv := buildArgv(&profile{}, "", "", true, "", "", false)
 	if !slices.Contains(argv, "--dangerously-skip-permissions") {

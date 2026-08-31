@@ -572,6 +572,8 @@ class ClaudemonSessionClient {
   ): Promise<{
     ok: boolean;
     error?: string;
+    /** Executable legacy companion accepted by the daemon/driver. */
+    model?: string;
     requestedSelection?: { model: string; contextWindow: number | null };
   }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/model`, {
@@ -586,12 +588,14 @@ class ClaudemonSessionClient {
     });
     const body = (await res.json().catch(() => ({}) as any)) as {
       error?: string;
+      model?: string;
       requested_selection?: { model: string; context_window: number | null };
     };
     if (res.ok) {
       const selection = body.requested_selection;
       return {
         ok: true,
+        ...(body.model && { model: body.model }),
         ...(selection && {
           requestedSelection: {
             model: selection.model,

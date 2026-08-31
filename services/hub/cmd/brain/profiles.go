@@ -465,6 +465,25 @@ func pinsFlag(extraArgs []string, flag string) bool {
 	return false
 }
 
+// modelFromArgs returns the last executable profile model. buildArgv lets a
+// profile pin win over the ordinary/default model, so the canonical pair sent
+// to claudemon must be derived from this same value.
+func modelFromArgs(extraArgs []string) string {
+	model := ""
+	for i := 0; i < len(extraArgs); i++ {
+		arg := extraArgs[i]
+		switch {
+		case arg == "--model" && i+1 < len(extraArgs) && !strings.HasPrefix(extraArgs[i+1], "--"):
+			model = strings.TrimSpace(extraArgs[i+1])
+		case strings.HasPrefix(arg, "--model="):
+			if value := strings.TrimSpace(strings.TrimPrefix(arg, "--model=")); value != "" {
+				model = value
+			}
+		}
+	}
+	return model
+}
+
 // composeAppendSystemPrompt gives Claude exactly one append-system-prompt flag.
 // Profile pins and host contracts are additive, but Claude does not define
 // repeated flags as concatenation. Preserve the profile's declaration order,

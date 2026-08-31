@@ -28,7 +28,7 @@ func saveGrantProfile(t *testing.T) {
 		IsDefault: true,
 		ConfigDir: "/home/user/.claude-work",
 		ExtraArgs: []string{
-			"--model", "opus",
+			"--model", "opus[1m]",
 			"--dangerously-skip-permissions",
 			"--settings", "/tmp/evil.json",
 			"--allowedTools", "Bash,Edit",
@@ -67,8 +67,11 @@ func TestGrantedSpawnKeepsConfigDirOnThePtyPath(t *testing.T) {
 			t.Errorf("%q survived onto a granted spawn's argv — the grant must not weaken the bypass scrub: %v", banned, gotBody.Argv)
 		}
 	}
-	if !containsPair(gotBody.Argv, "--model", "opus") {
+	if !containsPair(gotBody.Argv, "--model", "opus[1m]") {
 		t.Errorf("allowlisted profile flag should still ride a granted spawn, argv = %v", gotBody.Argv)
+	}
+	if gotBody.Model != "opus[1m]" || gotBody.ModelIdentity != "opus" || gotBody.ContextWindow == nil || *gotBody.ContextWindow != 1_000_000 {
+		t.Errorf("PTY profile model pair = legacy %q identity %q window %v", gotBody.Model, gotBody.ModelIdentity, gotBody.ContextWindow)
 	}
 }
 
@@ -101,6 +104,9 @@ func TestGrantedSpawnKeepsConfigDirOnTheManagedPath(t *testing.T) {
 		if containsStr(gotBody.ExtraArgs, banned) {
 			t.Errorf("%q survived onto a granted managed spawn — the grant must not weaken the bypass scrub: %v", banned, gotBody.ExtraArgs)
 		}
+	}
+	if gotBody.Model != "opus[1m]" || gotBody.ModelIdentity != "opus" || gotBody.ContextWindow == nil || *gotBody.ContextWindow != 1_000_000 {
+		t.Errorf("managed profile model pair = legacy %q identity %q window %v", gotBody.Model, gotBody.ModelIdentity, gotBody.ContextWindow)
 	}
 }
 

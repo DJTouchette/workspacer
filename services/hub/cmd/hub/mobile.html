@@ -1537,6 +1537,25 @@
     return m.replace(/^[\w.-]+\//, '').replace(/^claude-/, '').replace(/-\d{6,}$/, '');
   }
 
+  /** Pair-aware adapter for Claude catalog values. Old owners expose only a
+   * marker-bearing `value`; new owners also expose canonical model/window.
+   * Either way the menu keeps the marker solely in the compatibility field. */
+  function claudeModelWire(model, contextWindow) {
+    let identity = typeof model === 'string' ? model.trim() : '';
+    if (!identity) return null;
+    let markerWindow = null;
+    while (/(?:\[1m\]|-1m)$/i.test(identity)) {
+      identity = identity.replace(/(?:\[1m\]|-1m)$/i, '').trimEnd();
+      markerWindow = 1000000;
+    }
+    if (!identity || (contextWindow != null && contextWindow <= 0)) return null;
+    if (markerWindow != null && contextWindow != null && markerWindow !== contextWindow) return null;
+    const window = contextWindow == null ? markerWindow : contextWindow;
+    const native1m = /(?:fable|mythos)/i.test(identity);
+    const legacy = window === 1000000 && !native1m ? identity + '[1m]' : identity;
+    return { id: identity, legacy, contextWindow: window };
+  }
+
   /** How far occupancy may pass a claimed window before the claim is false.
    *  TWIN: DRIFT_TOLERANCE in modelContextWindows.ts; the authoritative
    *  desktop renderer and bus publisher both use this exact boundary. */
@@ -3335,20 +3354,19 @@
         const r = await call(qualify(s.sessionId, 'claude.listModels'), {});
         const seen = (r && r.seen) || [];
         const aliases = (r && r.aliases) || [];
-        const aliasRows = aliases.map((a) => ({
-          id: a.model || a.value,
-          legacy: a.value || a.model,
-          contextWindow: a.contextWindow == null ? null : a.contextWindow,
-        })).filter((a) => a.id);
+        const aliasRows = aliases.map((a) =>
+          claudeModelWire(a.model || a.value, a.contextWindow == null ? null : a.contextWindow)
+        ).filter(Boolean);
         const aliasIds = new Set(aliasRows.map((a) => a.id + '\u0000' + String(a.contextWindow)));
         rows = aliasRows.map((a) => ({
           label: shortModel(a.legacy) || a.legacy,
           run: () => setModel(s.sessionId, a.legacy, null, a.id, a.contextWindow),
         }));
-        rows.push(...seen.filter(Boolean).filter((id) => !aliasIds.has(id + '\u0000null')).map((id) => ({
-          label: shortModel(id) || id,
-          run: () => setModel(s.sessionId, id, null, id, null),
-        })));
+        rows.push(...seen.map((id) => claudeModelWire(id, null)).filter(Boolean)
+          .filter((m) => !aliasIds.has(m.id + '\u0000' + String(m.contextWindow))).map((m) => ({
+            label: shortModel(m.legacy) || m.legacy,
+            run: () => setModel(s.sessionId, m.legacy, null, m.id, m.contextWindow),
+          })));
       } else {
         const list = await call(qualify(s.sessionId, 'providers.listModels'), { provider: caps.provider, cwd: agentPath(s) });
         rows = (list || []).map((m) => ({ label: m.label || m.id, run: () => setModel(s.sessionId, m.id, null, m.id, null) }));

@@ -590,6 +590,18 @@
       "note": "A new receiver accepts an old sender and recovers the canonical pair from its marker."
     },
     {
+      "name": "provider casing does not disable Claude compatibility",
+      "provider": "Claude",
+      "model": "opus[1m]",
+      "modelIdentity": "opus",
+      "contextWindow": 1000000,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "opus[1m]",
+      "error": null,
+      "note": "Provider names are normalized at ingress; casing cannot turn a Claude marker into an opaque non-Claude id."
+    },
+    {
       "name": "new peer Claude one-million pair plus old companion",
       "provider": "claude",
       "model": "sonnet[1m]",

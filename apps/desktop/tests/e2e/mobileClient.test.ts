@@ -773,6 +773,24 @@ test.describe('mobile client', () => {
     await expect(page.locator('#chips button').first()).toBeDisabled();
   });
 
+  test('an old marker-only Claude catalog switches with a canonical pair and legacy companion', async ({
+    page,
+  }) => {
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await page.locator('#chips [data-chip="model"]').click();
+    await expect(page.locator('#sheet')).toContainText('opus-5[1m]');
+    await page.locator('#sheet [data-row]', { hasText: 'opus-5[1m]' }).click();
+
+    await expect.poll(() => hub.callsTo('claude.setModel').length).toBe(1);
+    expect(hub.callsTo('claude.setModel')[0].params).toMatchObject({
+      sessionId: 'ws1',
+      model: 'claude-opus-5[1m]',
+      modelIdentity: 'claude-opus-5',
+      contextWindow: 1_000_000,
+    });
+  });
+
   test('a notification deep-link opens that agent', async ({ page }) => {
     await page.setViewportSize(IPHONE);
     // ?agent= is what a tapped push notification lands on.

@@ -27,7 +27,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
-import { buildClaudeArgv } from './claudeResolver';
+import { buildClaudeArgv, modelFromExtraArgs } from './claudeResolver';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
@@ -204,13 +204,14 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   let effort = opts.effort;
   if (!effort?.trim() && opts.manager) effort = resolveManagerEffort('claude');
 
-  let requestedModel = opts.model;
+  const profileModel = modelFromExtraArgs(profile?.extraArgs);
+  let requestedModel = profileModel ?? opts.model;
   if (opts.manager && !requestedModel) requestedModel = resolveManagerModel('claude');
   const modelSelection = resolveSpawnModelSelection(
     'claude',
     requestedModel,
-    opts.modelIdentity,
-    opts.contextWindow,
+    profileModel ? undefined : opts.modelIdentity,
+    profileModel ? undefined : opts.contextWindow,
   );
   const model = modelSelection?.model;
   const serializedModel = modelSelection ? claudeArgvModel(modelSelection) : undefined;

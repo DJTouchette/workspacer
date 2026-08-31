@@ -467,6 +467,31 @@ describe('spawnClaudeAgent — profile + return value', () => {
     expect(lastArgv()).toContain('--foo');
   });
 
+  it('records the pair for the profile-pinned model that actually executes', async () => {
+    getProfile.mockReturnValue({
+      id: 'p1',
+      name: 'wide',
+      configDir: '',
+      extraArgs: ['--model', 'opus[1m]'],
+    });
+
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      profileId: 'p1',
+      model: 'sonnet',
+      modelIdentity: 'sonnet',
+      contextWindow: 200_000,
+    });
+
+    expect(lastSpawn()).toMatchObject({
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(lastArgv()).toContain('opus[1m]');
+    expect(lastArgv()).not.toContain('sonnet');
+  });
+
   it('returns the session id from claudemonSessionClient.spawn', async () => {
     const id = await spawnClaudeAgent({ cwd: '/proj' });
     expect(id).toBe('spawned-session-id');

@@ -155,7 +155,10 @@ impl App {
         let tx = self.tx.clone();
         self.set_toast("Opening terminal…");
         tokio::spawn(async move {
-            match cm.spawn(vec![shell], cwd, serde_json::Map::new(), "").await {
+            match cm
+                .spawn(vec![shell], cwd, serde_json::Map::new(), "", None)
+                .await
+            {
                 Ok(sid) => {
                     let _ = tx.send(AppMsg::ShellSpawned {
                         agent_id: id,

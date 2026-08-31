@@ -264,6 +264,33 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect((lastMeta().settings as Payload).model).toBe('opus[1m]');
   });
 
+  it('Claude stream records the profile-pinned model instead of the shadowed caller pair', async () => {
+    getProfile.mockReturnValue({
+      id: 'wide',
+      name: 'wide',
+      provider: 'claude',
+      configDir: '',
+      extraArgs: ['--model=opus[1m]'],
+    });
+
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      profileId: 'wide',
+      model: 'sonnet',
+      modelIdentity: 'sonnet',
+      contextWindow: 200_000,
+    });
+
+    expect(lastManaged()).toMatchObject({
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(lastManaged().extraArgs).toContain('--model=opus[1m]');
+  });
+
   // The stream adapter's `yolo` IS `--dangerously-skip-permissions` on the
   // headless argv, and Claude refuses a live switch to bypassPermissions without
   // it. Recording it lets the composer route "Full access" to a restart instead

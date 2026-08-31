@@ -228,7 +228,7 @@ pub fn normalize_model_input(
         .filter(|value| !value.is_empty());
     let has_canonical = model_identity.is_some() || context_window.is_some();
 
-    if provider != "claude" {
+    if !provider.eq_ignore_ascii_case("claude") {
         if context_window == Some(0) {
             return Err(ModelSelectionError::InvalidContextWindow);
         }

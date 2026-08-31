@@ -82,11 +82,12 @@ export function resolveSpawnModelInput(
   provider: string,
   input: SpawnModelInput,
 ): ResolvedSpawnModel | undefined {
+  const normalizedProvider = provider.toLowerCase();
   const legacy = input.model?.trim() || '';
   const identity = input.modelIdentity?.trim() || '';
   const hasCanonical = identity !== '' || input.contextWindow != null;
 
-  if (provider !== 'claude') {
+  if (normalizedProvider !== 'claude') {
     const contextWindow = validateWindow(input.contextWindow);
     if (!identity && !legacy) return undefined;
     if (hasCanonical && !identity && !legacy) {
@@ -102,7 +103,7 @@ export function resolveSpawnModelInput(
       );
     }
     const model = identity || legacy;
-    if (isForeignModel(provider, model)) {
+    if (isForeignModel(normalizedProvider, model)) {
       console.log(
         `[spawnModel] dropping model '${model}' from a ${provider} spawn — it belongs to ` +
           `another harness; using ${provider}'s own default instead`,
@@ -141,7 +142,7 @@ export function resolveSpawnModelInput(
     selection = normalizeModelSelection(legacy);
   }
   if (!selection) return undefined;
-  if (isForeignModel(provider, selection.model)) {
+  if (isForeignModel(normalizedProvider, selection.model)) {
     console.log(
       `[spawnModel] dropping model '${selection.model}' from a ${provider} spawn — it belongs to ` +
         `another harness; using ${provider}'s own default instead`,
@@ -164,7 +165,7 @@ export function resolveSpawnModelSelection(
   });
   if (explicit) return explicit.selection;
   if (requested?.trim() || modelIdentity?.trim() || contextWindow != null) return undefined;
-  if (provider !== 'claude') return undefined;
+  if (provider.toLowerCase() !== 'claude') return undefined;
   const configured = configService.getConfig().claude;
   if (typeof configured?.defaultModel !== 'string' || !configured.defaultModel.trim()) {
     return undefined;

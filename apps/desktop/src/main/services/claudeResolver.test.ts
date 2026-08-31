@@ -19,7 +19,7 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 // Dynamic import AFTER the mock is in place, so cached resolves on first call.
-const { buildClaudeArgv } = await import('./claudeResolver');
+const { buildClaudeArgv, modelFromExtraArgs } = await import('./claudeResolver');
 
 describe('buildClaudeArgv', () => {
   // On Linux with fs.existsSync always false, findClaudeOnPath returns null
@@ -91,6 +91,12 @@ describe('buildClaudeArgv', () => {
   });
 
   describe('--model flag injection', () => {
+    it('reads the last executable profile model for spawn metadata', () => {
+      expect(modelFromExtraArgs(['--model', 'opus[1m]'])).toBe('opus[1m]');
+      expect(modelFromExtraArgs(['--model=opus', '--model', 'sonnet[1m]'])).toBe('sonnet[1m]');
+      expect(modelFromExtraArgs(['--model', '--verbose'])).toBeUndefined();
+    });
+
     it('injects --model when model is set and profile does not pin one', () => {
       const argv = buildClaudeArgv({ model: 'claude-opus-4-8' });
       expect(argv).toContain('--model');

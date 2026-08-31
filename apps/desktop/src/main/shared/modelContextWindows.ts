@@ -75,7 +75,11 @@ export interface ModelSelection {
 }
 
 export type ModelSelectionErrorCode =
-  'empty-model' | 'invalid-model-type' | 'invalid-context-window' | 'conflicting-context-window';
+  | 'empty-model'
+  | 'invalid-model-type'
+  | 'invalid-context-window'
+  | 'conflicting-context-window'
+  | 'conflicting-model-identity';
 
 /** A stable error code lets config and wire adapters reject bad mixed-version
  *  input without depending on prose shared across three languages. */

@@ -403,6 +403,7 @@ impl Driver {
         resume_session_id: Option<String>,
     ) -> Result<String> {
         let stream = self.transport == crate::config::Transport::Stream;
+        let profile_model = crate::profiles::profile_model(profile);
         match &self.bus {
             Some(b) => {
                 let mut params = json!({
@@ -412,6 +413,17 @@ impl Driver {
                 });
                 if let Some(rid) = &resume_session_id {
                     params["resumeSessionId"] = json!(rid);
+                }
+                if let Some(model) = profile_model {
+                    crate::claudemon::add_model_wire_fields(&mut params, "claude", model);
+                    if let Some(fields) = params.as_object_mut() {
+                        if let Some(identity) = fields.remove("model_identity") {
+                            fields.insert("modelIdentity".into(), identity);
+                        }
+                        if let Some(window) = fields.remove("context_window") {
+                            fields.insert("contextWindow".into(), window);
+                        }
+                    }
                 }
                 let res = b.call("agents.spawn", params).await?;
                 res.get("sessionId")
@@ -426,7 +438,7 @@ impl Driver {
                 self.claudemon
                     .spawn_claude_stream(
                         &cwd,
-                        None,
+                        profile_model,
                         crate::profiles::profile_skips_permissions(profile),
                         &session_id,
                         resume_session_id.as_deref(),
@@ -441,7 +453,9 @@ impl Driver {
                     resume_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let argv = crate::profiles::build_argv(profile, None, false, &session_id, resume);
                 let env = crate::profiles::build_env(profile);
-                self.claudemon.spawn(argv, cwd, env, &session_id).await
+                self.claudemon
+                    .spawn(argv, cwd, env, &session_id, profile_model)
+                    .await
             }
         }
     }
@@ -833,7 +847,7 @@ mod tests {
             id: "work".into(),
             name: "Work".into(),
             config_dir: String::new(),
-            extra_args: vec![],
+            extra_args: vec!["--model".into(), "opus[1m]".into()],
             is_default: false,
         };
         let sid = bus_driver(addr)
@@ -849,6 +863,9 @@ mod tests {
         assert_eq!(method, "agents.spawn");
         assert_eq!(params["cwd"], json!("/tmp/proj"));
         assert_eq!(params["profileId"], json!("work"));
+        assert_eq!(params["model"], json!("opus[1m]"));
+        assert_eq!(params["modelIdentity"], json!("opus"));
+        assert_eq!(params["contextWindow"], json!(1_000_000_u64));
     }
 
     #[tokio::test]

@@ -425,6 +425,7 @@ impl Claudemon {
         cwd: String,
         env: Map<String, Value>,
         session_id: &str,
+        model: Option<&str>,
     ) -> Result<String> {
         let mut body = json!({
             "argv": argv,
@@ -436,6 +437,9 @@ impl Claudemon {
         // Pin the id so it matches `--session-id` in argv (empty for shells).
         if !session_id.is_empty() {
             body["session_id"] = json!(session_id);
+        }
+        if let Some(model) = model {
+            add_model_wire_fields(&mut body, "claude", model);
         }
         let resp = self.post_json("/sessions/spawn", &body).await?;
         resp.get("session_id")
@@ -512,15 +516,34 @@ pub(crate) fn add_model_wire_fields(body: &mut Value, provider: &str, model: &st
     if legacy.is_empty() {
         return;
     }
-    body["model"] = json!(legacy);
     if provider.eq_ignore_ascii_case("claude") {
-        if let Some(identity) = legacy.strip_suffix(" [1m]") {
-            body["model_identity"] = json!(identity);
-            body["context_window"] = json!(1_000_000_u64);
+        let lower = legacy.to_ascii_lowercase();
+        let (identity, one_million) = if lower.ends_with("[1m]") {
+            (legacy[..legacy.len() - 4].trim_end(), true)
+        } else if lower.ends_with("-1m") {
+            (legacy[..legacy.len() - 3].trim_end(), true)
         } else {
-            body["model_identity"] = json!(legacy);
+            (legacy, false)
+        };
+        if identity.is_empty() {
+            return;
+        }
+        let inherent_one_million = {
+            let identity = identity.to_ascii_lowercase();
+            identity.contains("fable") || identity.contains("mythos")
+        };
+        let compatibility = if one_million && !inherent_one_million {
+            format!("{identity}[1m]")
+        } else {
+            identity.to_string()
+        };
+        body["model"] = json!(compatibility);
+        body["model_identity"] = json!(identity);
+        if one_million {
+            body["context_window"] = json!(1_000_000_u64);
         }
     } else {
+        body["model"] = json!(legacy);
         body["model_identity"] = json!(legacy);
     }
 }
@@ -999,7 +1022,7 @@ mod tests {
         use std::time::Duration;
         let cm = Claudemon::new("http://127.0.0.1:7891".into());
         let sid = cm
-            .spawn(vec!["cat".into()], "/tmp".into(), Map::new(), "")
+            .spawn(vec!["cat".into()], "/tmp".into(), Map::new(), "", None)
             .await
             .expect("spawn cat");
 
@@ -1503,10 +1526,16 @@ mod tests {
     #[test]
     fn model_wire_fields_only_parse_claude_compatibility_markers() {
         let mut claude = json!({});
-        add_model_wire_fields(&mut claude, "claude", "opus [1m]");
-        assert_eq!(claude["model"], json!("opus [1m]"));
+        add_model_wire_fields(&mut claude, "claude", "opus-1M");
+        assert_eq!(claude["model"], json!("opus[1m]"));
         assert_eq!(claude["model_identity"], json!("opus"));
         assert_eq!(claude["context_window"], json!(1_000_000_u64));
+
+        let mut native_claude = json!({});
+        add_model_wire_fields(&mut native_claude, "CLAUDE", "fable[1m]");
+        assert_eq!(native_claude["model"], json!("fable"));
+        assert_eq!(native_claude["model_identity"], json!("fable"));
+        assert_eq!(native_claude["context_window"], json!(1_000_000_u64));
 
         let mut native = json!({});
         add_model_wire_fields(&mut native, "codex", "vendor/model-1m");

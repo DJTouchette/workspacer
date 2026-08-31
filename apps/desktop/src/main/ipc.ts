@@ -1027,7 +1027,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         modelIdentity,
         contextWindow,
       );
-      if (res.ok && model) claudeSessionStore.noteRequestedModel(sessionId, model);
+      const settledModel = res.model ?? model;
+      if (res.ok && settledModel) claudeSessionStore.noteRequestedModel(sessionId, settledModel);
       return res;
     },
   );

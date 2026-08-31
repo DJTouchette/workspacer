@@ -283,3 +283,20 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   }
   return argv;
 }
+
+/** Last executable `--model` value in profile argv. Profiles deliberately win
+ * over an injected/default model, so spawn metadata must use this same value. */
+export function modelFromExtraArgs(extraArgs: readonly string[] = []): string | undefined {
+  let model: string | undefined;
+  for (let i = 0; i < extraArgs.length; i++) {
+    const arg = extraArgs[i];
+    if (arg === '--model') {
+      const value = extraArgs[i + 1];
+      if (value && !value.startsWith('--') && value.trim()) model = value.trim();
+    } else if (arg.startsWith('--model=')) {
+      const value = arg.slice('--model='.length).trim();
+      if (value) model = value;
+    }
+  }
+  return model;
+}

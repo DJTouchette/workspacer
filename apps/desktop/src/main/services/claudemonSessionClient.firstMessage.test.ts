@@ -194,6 +194,7 @@ describe('setModel — pair-aware managed switch', () => {
         ({
           ok: true,
           json: async () => ({
+            model: 'opus[1m]',
             requested_selection: { model: 'opus', context_window: 1_000_000 },
           }),
         }) as Response,
@@ -204,6 +205,7 @@ describe('setModel — pair-aware managed switch', () => {
       claudemonSessionClient.setModel('s-1', 'opus[1m]', undefined, 'opus', 1_000_000),
     ).resolves.toEqual({
       ok: true,
+      model: 'opus[1m]',
       requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
     });
     expect(bodyOf(fetchMock.mock.calls[0][1] as RequestInit)).toEqual({

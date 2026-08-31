@@ -53,6 +53,7 @@ import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModelSelection } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
+import { modelFromExtraArgs } from './claudeResolver';
 import { claudeArgvModel } from '../shared/modelContextWindows';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
@@ -275,13 +276,20 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // this is the path it actually spawns on (chat-first `transport: 'stream'`),
   // so a manager model that never reached here would be a picker writing config
   // nobody reads.
+  const modelProfile =
+    isClaudeStream && opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  const profileModel = profileAppliesTo(modelProfile, provider)
+    ? modelFromExtraArgs(modelProfile?.extraArgs)
+    : undefined;
   const requestedModel =
-    opts.model?.trim() || (opts.manager ? resolveManagerModel(provider) : undefined);
+    profileModel ??
+    opts.model?.trim() ??
+    (opts.manager ? resolveManagerModel(provider) : undefined);
   const modelSelection = resolveSpawnModelSelection(
     provider,
     requestedModel,
-    opts.modelIdentity,
-    opts.contextWindow,
+    profileModel ? undefined : opts.modelIdentity,
+    profileModel ? undefined : opts.contextWindow,
   );
   const spawnModel = modelSelection?.model;
   const serializedModel =

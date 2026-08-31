@@ -167,6 +167,26 @@ pub fn profile_skips_permissions(profile: &Profile) -> bool {
         .any(|a| a == "--dangerously-skip-permissions")
 }
 
+/// Last executable model pinned by a profile. The profile argv wins over the
+/// ordinary spawn model, so callers use this for the typed pair as well as argv.
+pub fn profile_model(profile: &Profile) -> Option<&str> {
+    let mut model = None;
+    for (index, arg) in profile.extra_args.iter().enumerate() {
+        if arg == "--model" {
+            if let Some(value) = profile.extra_args.get(index + 1) {
+                if !value.starts_with("--") && !value.trim().is_empty() {
+                    model = Some(value.trim());
+                }
+            }
+        } else if let Some(value) = arg.strip_prefix("--model=") {
+            if !value.trim().is_empty() {
+                model = Some(value.trim());
+            }
+        }
+    }
+    model
+}
+
 /// The env overrides a profile implies — currently just `CLAUDE_CONFIG_DIR`,
 /// with a leading `~` expanded.
 pub fn build_env(profile: &Profile) -> serde_json::Map<String, serde_json::Value> {
@@ -293,6 +313,18 @@ mod tests {
         // dropping one would eat the next real flag.
         let p = profile_with(&["--model=opus", "--verbose"]);
         assert_eq!(stream_extra_args(&p), vec!["--verbose"]);
+    }
+
+    #[test]
+    fn profile_model_returns_the_last_executable_pin() {
+        let p = profile_with(&[
+            "--model",
+            "opus",
+            "--model=sonnet[1m]",
+            "--model",
+            "--verbose",
+        ]);
+        assert_eq!(profile_model(&p), Some("sonnet[1m]"));
     }
 
     #[test]
