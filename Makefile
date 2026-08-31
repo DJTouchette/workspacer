@@ -20,13 +20,20 @@ HUB       := services/hub
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
 ##      to force it on at launch instead.
+##
+## GPU is disabled by default in dev: Electron's GPU process segfaults 3x per
+## launch in Mesa's libgallium (observed on Arch, Mesa 26.1.x, Wayland) before
+## Chromium falls back to SwiftShader anyway — the crash-loop plus coredump
+## processing is a big part of slow boots. This jumps straight to the fallback.
+## Re-enable with `make dev WORKSPACER_DISABLE_GPU=0` to test real-GPU paths.
+WORKSPACER_DISABLE_GPU ?= 1
 dev:
-	cd $(DESKTOP) && npm run dev
+	cd $(DESKTOP) && WORKSPACER_DISABLE_GPU=$(WORKSPACER_DISABLE_GPU) npm run dev
 
 ## dev-share: like `dev` but force-enables remote sharing at launch (env var),
 ##            for testing the web/bridged client without flipping the UI toggle.
 dev-share:
-	cd $(DESKTOP) && npm run dev:share
+	cd $(DESKTOP) && WORKSPACER_DISABLE_GPU=$(WORKSPACER_DISABLE_GPU) npm run dev:share
 
 ## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first. The TUI now
 ##          defaults to the hub bus (auto-spawning the hub + brain); pass
