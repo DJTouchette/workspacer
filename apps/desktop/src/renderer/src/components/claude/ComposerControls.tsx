@@ -77,6 +77,8 @@ import {
 import { IconModel } from '../wksIcons';
 import { postNotification } from '../../lib/notificationBus';
 
+const MODEL_SWITCH_TIMEOUT_MS = 15_000;
+
 export interface RestartOverrides {
   model?: string;
   effort?: string;
@@ -409,7 +411,11 @@ export const ComposerControls: React.FC<{
       setSwitching(id);
       setSwitchQueued(false);
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
-      switchTimerRef.current = setTimeout(() => setSwitching(null), 15_000);
+      switchTimerRef.current = setTimeout(() => {
+        setSwitching(null);
+        setSwitchQueued(false);
+        switchTimerRef.current = null;
+      }, MODEL_SWITCH_TIMEOUT_MS);
       // A successful live switch must also land on the agent RECORD:
       // agent.model feeds later restarts and saved layouts (App listens).
       const recordSwitch = (accepted: {
@@ -452,6 +458,14 @@ export const ComposerControls: React.FC<{
           if (res.queued || res.disposition === 'queued') {
             setSwitchQueued(true);
             if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+            // Queue acceptance is not provider execution. Keep showing the
+            // explicit queued state for a bounded observation window, then
+            // return to the last reported model if telemetry never confirms.
+            switchTimerRef.current = setTimeout(() => {
+              setSwitching(null);
+              setSwitchQueued(false);
+              switchTimerRef.current = null;
+            }, MODEL_SWITCH_TIMEOUT_MS);
           }
           recordSwitch(res);
         })

@@ -3115,6 +3115,10 @@ mod tests {
             state.store.get("sess-1").unwrap().requested_selection,
             Some(initial.selection)
         );
+        assert!(
+            state.db.load_recent_sessions(10).unwrap().is_empty(),
+            "a caller-visible capacity refusal happens before persistence",
+        );
     }
 
     #[tokio::test]

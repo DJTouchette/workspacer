@@ -23,12 +23,49 @@ const HOOK_BROADCAST_CAPACITY: usize = 256;
 const STATUS_BROADCAST_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_CAP: usize = 256 * 1024; // 256 KiB per session
 const BYTE_BROADCAST_CAPACITY: usize = 1024;
-/// Max chat messages held per session while it isn't yet accepting input.
+/// Max deferred inputs held per session while it isn't yet accepting input.
 /// Bounds memory if a session never reaches `Input` (e.g. stuck on startup);
 /// the oldest ordinary chat is dropped (with a warning) past this, while an
-/// accepted PTY model control is retained. In practice the queue holds 0–1, so
-/// the cap only bites on a genuinely wedged session.
+/// accepted PTY model control is retained. A queue full of controls refuses
+/// new input. In practice the queue holds 0–1, so the cap only bites on a
+/// genuinely wedged session.
 const MAX_PENDING_MESSAGES: usize = 32;
+
+/// Private provenance for deferred input. This deliberately never reaches a
+/// session snapshot or SQLite: only the structural PTY model route may mint a
+/// protected entry, while ordinary chat remains ordinary regardless of text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingMessageKind {
+    Chat,
+    PtyModelControl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingMessage {
+    text: String,
+    kind: PendingMessageKind,
+}
+
+impl PendingMessage {
+    fn chat(text: String) -> Self {
+        Self {
+            text,
+            kind: PendingMessageKind::Chat,
+        }
+    }
+
+    fn pty_model_control(text: String) -> Self {
+        Self {
+            text,
+            kind: PendingMessageKind::PtyModelControl,
+        }
+    }
+
+    fn is_protected(&self) -> bool {
+        self.kind == PendingMessageKind::PtyModelControl
+    }
+}
+
 /// At most this many incompatible provider status frames are allowed to look
 /// stale after an accepted model switch. Counting frames rather than time makes
 /// the release deterministic in tests and in a suspended process. Three covers
@@ -226,7 +263,7 @@ pub struct SessionStore {
     /// single atomic `line + \r` frame. This is what makes the first message
     /// after spawn reliable instead of racing a raw PTY write against the TUI's
     /// cold-start render (the "typed but not sent" bug).
-    pending_messages: Arc<DashMap<String, Vec<String>>>,
+    pending_messages: Arc<DashMap<String, Vec<PendingMessage>>>,
     /// When each session last transitioned into `Input`. The scheduled flush
     /// settles [`FLUSH_DELAY_MS`] past this instant, so a send into a prompt
     /// that has been idle for a while injects immediately while a send racing
@@ -439,10 +476,6 @@ fn status_confirms_selection(
         Some(window) => status.context_window_size == Some(window) && model_match.unwrap_or(true),
         None => model_match == Some(true),
     }
-}
-
-fn is_protected_pty_control_message(text: &str) -> bool {
-    text.trim_start().starts_with("/model ")
 }
 
 /// Keep asynchronous provider telemetry on the epoch it can prove. A frame
@@ -2282,12 +2315,16 @@ impl SessionStore {
                 // queued one. The flush settles FLUSH_DELAY_MS past the Input
                 // transition (a no-op wait when the prompt has been idle) and
                 // then verifies the submit took.
-                self.enqueue_message(session_id, text);
+                if !self.enqueue_message(session_id, text) {
+                    return MessageOutcome::QueueFull;
+                }
                 self.schedule_pending_flush(session_id);
                 MessageOutcome::Sent
             }
             _ => {
-                self.enqueue_message(session_id, text);
+                if !self.enqueue_message(session_id, text) {
+                    return MessageOutcome::QueueFull;
+                }
                 // Guard the read-then-enqueue against a concurrent transition:
                 // if `ingest` flipped the session to `Input` after our mode read
                 // but before the enqueue, drain here. Both drains are atomic
@@ -2321,7 +2358,7 @@ impl SessionStore {
         if handle.tx.is_closed() {
             return MessageOutcome::WrapperGone;
         }
-        if !self.try_enqueue_message(session_id, text) {
+        if !self.enqueue_pending_message(session_id, PendingMessage::pty_model_control(text)) {
             return MessageOutcome::QueueFull;
         }
         if state.mode == SessionMode::Input {
@@ -2363,51 +2400,44 @@ impl SessionStore {
         if text.trim().is_empty() {
             return false;
         }
-        self.enqueue_message(session_id, text.to_string());
-        true
+        self.enqueue_message(session_id, text.to_string())
     }
 
-    fn enqueue_message(&self, session_id: &str, text: String) {
+    fn enqueue_message(&self, session_id: &str, text: String) -> bool {
+        self.enqueue_pending_message(session_id, PendingMessage::chat(text))
+    }
+
+    /// Enqueue one classified input without ever displacing an accepted model
+    /// control. At capacity, either kind may replace the oldest ordinary chat;
+    /// a queue containing only protected controls refuses the new input so the
+    /// caller can surface that no acceptance (and therefore no persistence)
+    /// occurred.
+    fn enqueue_pending_message(&self, session_id: &str, message: PendingMessage) -> bool {
         let mut q = self
             .pending_messages
             .entry(session_id.to_string())
             .or_default();
         if q.len() >= MAX_PENDING_MESSAGES {
-            // Bound memory under a stuck session. The caller was already told
-            // "queued", so this is silent loss from its perspective. A
-            // structurally accepted PTY /model control is different: the owner
-            // has already persisted its canonical selection, so a later chat
-            // send must never evict that command and split durable truth from
-            // what the CLI executes. Drop the oldest ordinary chat instead.
-            let Some(drop_index) = q
-                .iter()
-                .position(|queued| !is_protected_pty_control_message(queued))
-            else {
+            // Bound memory under a stuck session without silently losing an
+            // accepted structural control. Its owner persisted the canonical
+            // selection only after this enqueue succeeded, so later sends must
+            // never split durable truth from what the CLI executes. Reclaim an
+            // ordinary chat slot or refuse before the caller reports success.
+            let Some(drop_index) = q.iter().position(|queued| !queued.is_protected()) else {
                 tracing::warn!(
                     session_id,
-                    "pending-message queue full of accepted PTY controls; dropping new chat"
+                    "pending-message queue full of accepted PTY controls; refusing new input"
                 );
-                return;
+                return false;
             };
             let dropped = q.remove(drop_index);
             tracing::warn!(
                 session_id,
-                dropped = %dropped.chars().take(80).collect::<String>(),
+                dropped = %dropped.text.chars().take(80).collect::<String>(),
                 "pending-message queue full; dropping oldest"
             );
         }
-        q.push(text);
-    }
-
-    fn try_enqueue_message(&self, session_id: &str, text: String) -> bool {
-        let mut q = self
-            .pending_messages
-            .entry(session_id.to_string())
-            .or_default();
-        if q.len() >= MAX_PENDING_MESSAGES {
-            return false;
-        }
-        q.push(text);
+        q.push(message);
         true
     }
 
@@ -2585,6 +2615,9 @@ impl SessionStore {
             .get_mut(session_id)
             .map(|mut q| std::mem::take(&mut *q))
             .unwrap_or_default()
+            .into_iter()
+            .map(|message| message.text)
+            .collect()
     }
 
     fn clear_pending_messages(&self, session_id: &str) {
@@ -3933,6 +3966,65 @@ mod tests {
         );
         assert!(!queued.iter().any(|text| text == "chat-0"));
         assert_eq!(queued.last().map(String::as_str), Some("later-chat"));
+    }
+
+    #[test]
+    fn ordinary_model_shaped_chat_remains_evictable_at_queue_capacity() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx();
+        store.register_spawn("p1", "/tmp", h); // Unknown: every send stays queued.
+
+        for index in 0..MAX_PENDING_MESSAGES {
+            assert_eq!(
+                store.submit_message("p1", format!("/model fake chat {index}")),
+                MessageOutcome::Queued,
+            );
+        }
+        assert_eq!(
+            store.submit_message("p1", "later-chat".into()),
+            MessageOutcome::Queued,
+        );
+
+        let queued = store.take_pending_messages("p1");
+        assert_eq!(queued.len(), MAX_PENDING_MESSAGES);
+        assert_eq!(
+            queued.first().map(String::as_str),
+            Some("/model fake chat 1")
+        );
+        assert_eq!(queued.last().map(String::as_str), Some("later-chat"));
+        assert!(
+            !queued.iter().any(|text| text == "/model fake chat 0"),
+            "ordinary chat provenance, not model-shaped content, controls eviction",
+        );
+    }
+
+    #[test]
+    fn a_new_pty_model_control_reclaims_ordinary_capacity_but_not_protected_capacity() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx();
+        store.register_spawn("p1", "/tmp", h);
+
+        assert_eq!(
+            store.submit_pty_control_message("p1", "/model sonnet".into()),
+            MessageOutcome::Queued,
+        );
+        for index in 0..(MAX_PENDING_MESSAGES - 1) {
+            assert_eq!(
+                store.submit_message("p1", format!("chat-{index}")),
+                MessageOutcome::Queued,
+            );
+        }
+        assert_eq!(
+            store.submit_pty_control_message("p1", "/model opus".into()),
+            MessageOutcome::Queued,
+            "a structural control can be guaranteed by evicting ordinary chat",
+        );
+
+        let queued = store.take_pending_messages("p1");
+        assert_eq!(queued.len(), MAX_PENDING_MESSAGES);
+        assert!(queued.iter().any(|text| text == "/model sonnet"));
+        assert!(queued.iter().any(|text| text == "/model opus"));
+        assert!(!queued.iter().any(|text| text == "chat-0"));
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver

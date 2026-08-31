@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 import { ComposerControls } from '../../src/components/claude/ComposerControls';
 import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
@@ -279,6 +279,41 @@ describe('ComposerControls — claude live switches', () => {
     expect(screen.queryByText('opus…')).not.toBeInTheDocument();
   });
 
+  it('bounds a queued label while the live session remains active and keeps provider truth', async () => {
+    vi.useFakeTimers();
+    try {
+      api.claudeSetModel = vi
+        .fn()
+        .mockResolvedValue({ ok: true, queued: true, disposition: 'queued', model: 'opus' });
+      renderControls({
+        provider: 'claude',
+        snapshot: snapshot({
+          settings: { model: 'sonnet' },
+          statusLine: { modelDisplay: 'Sonnet' } as never,
+        }),
+      });
+      fireEvent.click(screen.getByText('Sonnet'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      fireEvent.click(screen.getByText('Opus'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('opus queued')).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(14_999));
+      expect(screen.getByText('opus queued')).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
+
+      expect(screen.queryByText('opus queued')).not.toBeInTheDocument();
+      expect(screen.getByText('Sonnet')).toBeInTheDocument();
+      expect(screen.queryByText(/^opus$/i)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('clears a queued label when the session stops before the queue flushes', async () => {
     api.claudeSetModel = vi
       .fn()
@@ -308,6 +343,37 @@ describe('ComposerControls — claude live switches', () => {
     );
     await waitFor(() => expect(screen.queryByText('opus queued')).not.toBeInTheDocument());
     expect(screen.getByText('sonnet')).toBeInTheDocument();
+  });
+
+  it('does not carry a queued label or its timer into another live session', async () => {
+    api.claudeSetModel = vi
+      .fn()
+      .mockResolvedValue({ ok: true, queued: true, disposition: 'queued', model: 'opus' });
+    const first = snapshot({ settings: { model: 'sonnet' } });
+    const view = render(
+      <ComposerControls
+        provider="claude"
+        sessionId="sess-1"
+        snapshot={first}
+        cwd="/repo"
+        onRestartWith={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText('sonnet'));
+    fireEvent.click(await screen.findByText('Opus'));
+    expect(await screen.findByText('opus queued')).toBeInTheDocument();
+
+    view.rerender(
+      <ComposerControls
+        provider="claude"
+        sessionId="sess-2"
+        snapshot={snapshot({ sessionId: 'sess-2', settings: { model: 'haiku' } })}
+        cwd="/repo"
+        onRestartWith={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByText('opus queued')).not.toBeInTheDocument());
+    expect(screen.getByText('haiku')).toBeInTheDocument();
   });
 
   it('switching managed Claude sends the pair plus its marker-bearing companion', async () => {

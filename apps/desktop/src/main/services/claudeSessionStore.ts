@@ -1791,6 +1791,10 @@ class ClaudeSessionStore {
       totalToolCalls: snap.totalToolCalls ?? existing?.totalToolCalls ?? 0,
       peakContext: existing?.peakContext ?? 0,
       usage: snap.usage ?? existing?.usage ?? null,
+      // The peer owns and has already fenced this telemetry. Sparse headless
+      // rows carry the camelCase projection too; preserve it verbatim instead
+      // of dropping it at this explicit mapping boundary.
+      statusLine: snap.statusLine ?? existing?.statusLine,
       label: snap.label ?? existing?.label,
       parentSessionId: snap.parentSessionId ?? existing?.parentSessionId,
       provider: snap.provider ?? existing?.provider,

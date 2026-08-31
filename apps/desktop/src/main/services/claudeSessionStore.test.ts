@@ -588,6 +588,34 @@ describe('the pending slot of a REMOTE row belongs to the peer, not to any local
     expect(claudeSessionStore.getSnapshot(sessionId)?.statusLine).toEqual(remote(5).statusLine);
   });
 
+  it('passes sparse federation model telemetry and provenance without a local fence', () => {
+    const sessionId = uniqueId();
+    const sparse = (costUSD: number) => ({
+      sessionId,
+      sparse: true,
+      status: 'active',
+      ambientState: 'idle',
+      requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+      resolvedContextWindow: 1_000_000,
+      statusLine: {
+        modelDisplay: 'Claude 3.5 Haiku',
+        contextWindowSize: 200_000,
+        contextUsedPct: 25,
+        costUSD,
+      },
+    });
+
+    claudeSessionStore.upsertRemoteSession('headless-peer', sparse(4) as never);
+    expect(claudeSessionStore.getSnapshot(sessionId)).toMatchObject({
+      requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+      resolvedContextWindow: 1_000_000,
+      statusLine: sparse(4).statusLine,
+    });
+
+    claudeSessionStore.upsertRemoteSession('headless-peer', sparse(5) as never);
+    expect(claudeSessionStore.getSnapshot(sessionId)?.statusLine).toEqual(sparse(5).statusLine);
+  });
+
   it('a re-sent identical card keeps its first timestamp (the dock hides on dismissal)', () => {
     // Peers re-publish the same parked request on unrelated state changes. The
     // full-snapshot path used to take the wire card verbatim, so a re-stamped
