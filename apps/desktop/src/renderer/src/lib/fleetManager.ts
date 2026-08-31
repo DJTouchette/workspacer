@@ -141,8 +141,11 @@ const MANAGER_PREAMBLE =
   'family and it does not inherit the same blind spots. The matrix already knows review is ' +
   'a narrower job than implementation and prices it accordingly, so take the tier it gives ' +
   'you instead of talking yourself up or down one. Review is also the shape routing marks ' +
-  'fresh: a dispatch that declares role "reviewer" may not resume an existing session, and ' +
-  'the host refuses it rather than quietly starting a new one.\n' +
+  'fresh: a role the matrix marks fresh may not be dispatched with a resume, and the host ' +
+  'refuses such a call rather than quietly starting a new one. spawn_agent always starts a ' +
+  'new session, so you cannot trip that rule yourself; it guards the callers that can ' +
+  'resume. Freshness is still yours to keep: never paste the implementer reasoning into ' +
+  'the reviewer first message.\n' +
   '6. DELIVERY MODE is per-project — read it from the projects config (get_config → ' +
   'projects[<dir>].delivery) and bake it into the ship worker’s first message. "pr" ' +
   '(the default): the worker opens a pull request for the user to review — never merge it ' +

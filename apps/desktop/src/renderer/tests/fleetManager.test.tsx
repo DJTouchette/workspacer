@@ -99,7 +99,12 @@ describe('buildManagerKickoff — reviewer independence', () => {
   });
 
   it('names review as the shape routing marks fresh, and what that refuses', () => {
-    expect(doctrine).toMatch(/may not resume an existing session/);
+    expect(doctrine).toMatch(/marks fresh/);
+    expect(doctrine).toMatch(/dispatched with a resume/);
+    expect(doctrine).toMatch(/refuses such a call/);
+    // and is honest that the manager's own wire cannot trip it, so the rule
+    // does not read as a threat to a dispatch the manager is able to make.
+    expect(doctrine).toMatch(/always starts a[\s\S]{0,10}new session/);
   });
 });
 
