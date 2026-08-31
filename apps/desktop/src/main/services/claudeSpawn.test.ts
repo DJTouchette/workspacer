@@ -459,9 +459,14 @@ describe('spawnClaudeAgent — resultSchema', () => {
     expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({ resultSchema: schema });
   });
 
-  it('adds no --append-system-prompt at all without a schema or the facade', async () => {
+  it('keeps the always-on escalation prompt without a schema or the facade', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
-    expect(lastArgv()).not.toContain('--append-system-prompt');
+    const argv = lastArgv();
+    expect(argv).toContain('--append-system-prompt');
+    expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain('wks-escalation');
+    expect(argv[argv.indexOf('--append-system-prompt') + 1]).not.toContain(
+      'STRUCTURED RESULT CONTRACT',
+    );
   });
 
   it('REFUSES a malformed schema instead of silently dropping the contract', async () => {

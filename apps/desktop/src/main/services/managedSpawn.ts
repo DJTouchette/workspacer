@@ -36,6 +36,7 @@ import {
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
+import { buildWorkerEscalationContract } from '../shared/workerEscalation';
 import {
   profileAppliesTo,
   profileConfigEnv,
@@ -457,6 +458,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           sessionId: managedId,
         })
       : '',
+    buildWorkerEscalationContract(),
     resultSchema ? buildResultContract(resultSchema) : '',
   ]
     .filter(Boolean)
@@ -512,10 +514,10 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       }),
     }),
     // First-turn instructions: the facade role note (when this session has the
-    // facade) and the structured-result contract (when the dispatch carried a
-    // schema), joined so neither overwrites the other — the daemon takes ONE
-    // instructions string. A plain worker with a schema and no facade still
-    // gets its contract, which is the common ship-task dispatch.
+    // facade), the always-on terminal escalation contract, and the optional
+    // structured-result contract, joined so none overwrites another — the
+    // daemon takes ONE instructions string. Plain workers get escalation even
+    // when no facade or resultSchema was requested.
     ...(instructions && { instructions }),
     // The dispatch prompt itself — a SEPARATE field, never folded into
     // `instructions` above, because `instructions` alone never starts a turn
@@ -612,10 +614,12 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     rows: opts.rows ?? 32,
     sessionId,
     rolloutProvider: 'codex',
-    // This branch spawns a bare TUI (no facade, no `instructions`), so the
-    // dispatch is the only host-injected text it gets — dropping it here would
-    // leave the one provider path whose worker never learns its task.
-    firstMessage: opts.firstMessage,
+    // This branch spawns a bare TUI with no system-instructions channel. Prefix
+    // the task turn so this managed-completion harness still receives the same
+    // terminal escalation contract as every adapter-driven path.
+    firstMessage: opts.firstMessage
+      ? [buildWorkerEscalationContract(), opts.firstMessage].join('\n\n')
+      : undefined,
   });
   return sessionId;
 }

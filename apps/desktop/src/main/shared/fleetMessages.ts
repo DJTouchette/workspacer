@@ -16,7 +16,7 @@
  */
 
 export type FleetMessageKind =
-  'worker-finished' | 'catch-up' | 'blocked' | 'threshold' | 'progress';
+  'worker-finished' | 'worker-escalated' | 'catch-up' | 'blocked' | 'threshold' | 'progress';
 
 export interface FleetMessageEntry {
   /** Worker label (or cwd-basename fallback). */
@@ -70,6 +70,14 @@ export interface FleetMessageEntry {
    *  worker reported nothing. Round-tripped beside `result`, so the card can
    *  say the contract was missed instead of quietly showing nothing. */
   resultError?: string;
+  /** A validated fixed-shape `wks-escalation` terminal response. Independent
+   *  from result/resultError: escalation works without resultSchema and a
+   *  normal wks-result completion continues to use its existing slot. */
+  escalation?: string;
+  /** A tagged `wks-escalation` block was present but failed validation. This
+   *  stays on an ordinary completion wake so malformed data is never silently
+   *  promoted into the distinct worker-escalated outcome. */
+  escalationError?: string;
   /** The worker's COMPLETE final assistant message, rendered as its own block
    *  below the bullet list (capped at FULL_REPLY_MAX with an explicit
    *  truncation note). Builder-side only: the parser does not round-trip it —
@@ -115,6 +123,7 @@ function renderFullReply(reply: string): string {
 /** Header lines. The bodies after them differ, so kind is the header alone. */
 const HEADERS: Record<FleetMessageKind, string> = {
   'worker-finished': '[fleet] Worker finished:',
+  'worker-escalated': '[fleet] Worker escalated — blocked and did not complete:',
   'catch-up':
     '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
   blocked: '[supervisor] An agent is now blocked on a decision:',
@@ -157,6 +166,12 @@ const TAILS: Record<FleetMessageKind, string> = {
     `need more context. Append one line to that project's .workspacer/brief.md "## Recently" ` +
     `(and adjust "## Now"), then report the outcome briefly with session:<id> references. ` +
     `If it was not one of your dispatches, a one-line acknowledgement is enough.`,
+  'worker-escalated':
+    `This is a terminal escalation, NOT a completed outcome. Read the validated ` +
+    `"worker escalation" block above and do not record the task as landed in a brief's ` +
+    `"## Recently". Resolve or obtain the named authority/decision, then either answer the ` +
+    `worker with send_message or redispatch the remaining work with respawn_with. Keep the ` +
+    `dispatch open until the task actually completes.`,
   'catch-up':
     `Review each (get_conversation with sinceSeq), update the project brief's "## Recently", ` +
     `and report the outcome with session:<id> references. Then STOP again.`,
@@ -284,6 +299,16 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
     }
   }
   for (const e of entries) {
+    if (e.escalation) {
+      extras.push(`Worker escalation — ${e.label} (session:${e.sessionId}):\n${e.escalation}`);
+    } else if (e.escalationError) {
+      extras.push(
+        `Worker escalation INVALID — ${e.label} (session:${e.sessionId}): ${e.escalationError}. ` +
+          `The terminal marker was rejected; treat the prose as an ordinary completion or refusal.`,
+      );
+    }
+  }
+  for (const e of entries) {
     if (e.fullReply) {
       extras.push(
         `Full final message — ${e.label} (session:${e.sessionId}):\n${renderFullReply(e.fullReply)}`,
@@ -323,6 +348,7 @@ function parseEntry(body: string): FleetMessageEntry | null {
 /** Where a LEGACY (pre-bullet, single-paragraph) message's entry list ends. */
 const LEGACY_TAIL_STARTS: Record<FleetMessageKind, string> = {
   'worker-finished': '. Review the result (get_conversation',
+  'worker-escalated': '\u0000no legacy worker escalation wakes exist',
   'catch-up': '. Review each (get_conversation',
   blocked: '. Run a /supervise pass',
   // 'threshold' post-dates the bullet format entirely — no legacy paragraph of
@@ -367,6 +393,10 @@ const RESULT_BLOCK_RE = /^Structured result — .+? \(session:([\w-]+)\):\n([\s\
 const RESULT_MISSING_RE =
   /^Structured result MISSING — .+? \(session:([\w-]+)\): ([\s\S]+?)\. Read the prose report below\/above instead\.$/;
 
+const ESCALATION_BLOCK_RE = /^Worker escalation — .+? \(session:([\w-]+)\):\n([\s\S]+)$/;
+const ESCALATION_INVALID_RE =
+  /^Worker escalation INVALID — .+? \(session:([\w-]+)\): ([\s\S]+?)\. The terminal marker was rejected; treat the prose as an ordinary completion or refusal\.$/;
+
 /** Where the agent-facing free-form blocks start. buildFleetMessage emits every
  *  structured-result block BEFORE the first full-reply block, and a full reply
  *  is arbitrary worker prose that may contain blank lines (so its own
@@ -396,6 +426,18 @@ function attachResultBlocks(tail: string[], entries: FleetMessageEntry[]): void 
     if (missing) {
       const entry = byId.get(missing[1]);
       if (entry) entry.resultError = missing[2];
+      continue;
+    }
+    const escalation = ESCALATION_BLOCK_RE.exec(block);
+    if (escalation) {
+      const entry = byId.get(escalation[1]);
+      if (entry) entry.escalation = escalation[2];
+      continue;
+    }
+    const invalidEscalation = ESCALATION_INVALID_RE.exec(block);
+    if (invalidEscalation) {
+      const entry = byId.get(invalidEscalation[1]);
+      if (entry) entry.escalationError = invalidEscalation[2];
     }
   }
 }

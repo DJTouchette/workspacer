@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -36,11 +37,11 @@ func TestSpawnCarriesTheFirstMessageOnTheManagedPayload(t *testing.T) {
 		t.Errorf("first_message = %v, want the dispatch text — without it the worker starts with no task", got)
 	}
 	// It must be its OWN field, never folded into `instructions`: instructions
-	// is a passive prefix the adapter prepends to the first prompt it receives
-	// and never starts a turn, so a dispatch put there waits forever for the
-	// prompt it is.
-	if got, ok := managed[0].body["instructions"]; ok {
-		t.Errorf("instructions = %v, want absent — the dispatch is not a prefix", got)
+	// is a passive prefix for host contracts and never starts a turn, so a
+	// dispatch put there waits forever for the prompt it is.
+	instructions, _ := managed[0].body["instructions"].(string)
+	if !strings.Contains(instructions, "wks-escalation") || strings.Contains(instructions, "ship the thing") {
+		t.Errorf("instructions = %q, want escalation contract without the dispatch", instructions)
 	}
 	assertMessageQueued(t, res, true)
 }

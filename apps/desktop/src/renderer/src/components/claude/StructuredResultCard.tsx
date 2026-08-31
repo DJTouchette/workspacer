@@ -416,13 +416,16 @@ const CaveatsBand: React.FC<{ field: ResultField }> = ({ field }) => (
 
 /** The contract was asked for and did not arrive — say so, quietly but
  *  plainly. The prose report is still in the wake beside it. */
-const MissingNotice: React.FC<{ reason: string }> = ({ reason }) => (
+const MissingNotice: React.FC<{ reason: string; label?: string }> = ({
+  reason,
+  label = 'no structured result',
+}) => (
   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
     <span style={{ display: 'flex', color: colors.error, paddingTop: 1 }}>
       <AlertTriangle size={11} strokeWidth={2} aria-hidden />
     </span>
     <span style={{ minWidth: 0 }}>
-      <Overline color={colors.error}>no structured result</Overline>
+      <Overline color={colors.error}>{label}</Overline>
       <span
         style={{
           display: 'block',
@@ -447,9 +450,13 @@ const MissingNotice: React.FC<{ reason: string }> = ({ reason }) => (
 const StructuredResultCardInner: React.FC<{
   json?: string;
   error?: string;
+  /** The fixed escalation payload reuses this schema-agnostic renderer under
+   *  its own heading; ordinary result callers keep the defaults. */
+  label?: string;
+  errorLabel?: string;
   /** Worker cwd, so a relative path in the result resolves to a real file. */
   cwd?: string;
-}> = ({ json, error, cwd }) => {
+}> = ({ json, error, cwd, label = 'structured result', errorLabel }) => {
   if (!json && !error) return null;
   const view = json ? buildResultView(json) : { fields: [] };
   const summary = fieldsInSlot(view, 'summary');
@@ -467,7 +474,7 @@ const StructuredResultCardInner: React.FC<{
         <span style={{ display: 'flex', color: colors.muted }}>
           <ClipboardList size={11} strokeWidth={2} aria-hidden />
         </span>
-        <Overline>structured result</Overline>
+        <Overline>{label}</Overline>
         <span style={{ flex: 1 }} />
         {json && (
           <span className="wks-hover-actions">
@@ -478,7 +485,7 @@ const StructuredResultCardInner: React.FC<{
 
       {error && (
         <div style={{ marginTop: 5 }}>
-          <MissingNotice reason={error} />
+          <MissingNotice reason={error} label={errorLabel} />
         </div>
       )}
 

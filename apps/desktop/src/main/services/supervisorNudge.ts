@@ -15,6 +15,7 @@ import type { ClaudeSessionState } from './claudeSessionStore';
 import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
 import { buildFleetMessage, excerptReply, type FleetMessageEntry } from '../shared/fleetMessages';
 import { readStructuredResult } from '../shared/structuredResult';
+import { readWorkerEscalation } from '../shared/workerEscalation';
 import { workerFailureReason } from '../shared/workerFailure';
 
 /** How long to coalesce nudges to one supervisor before sending. */
@@ -84,6 +85,15 @@ function lastAssistantReply(session: FinishedWorker): string {
  *  an empty session. Unknown conversation (untracked session) fails OPEN. */
 function hasReceivedTask(session: FinishedWorker): boolean {
   return !session.conversation || session.conversation.some((t) => t.role === 'user');
+}
+
+/** Fold the fixed terminal escalation protocol onto the same entry that keeps
+ * the worker's prose. No tag means ordinary completion; a malformed tagged
+ * block is preserved as an explicit error but never promoted to escalation. */
+function attachWorkerEscalation(entry: FleetMessageEntry, reply: string): void {
+  const outcome = readWorkerEscalation(reply);
+  if (outcome?.json) entry.escalation = outcome.json;
+  else if (outcome?.error) entry.escalationError = outcome.error;
 }
 
 class SupervisorNudge {
@@ -304,23 +314,34 @@ class SupervisorNudge {
         // missed the live wake is exactly the one most likely to book a crash
         // as an outcome.
         const failure = workerFailureReason(c, lastAssistantReply(c));
-        return {
+        const reply = lastAssistantReply(c);
+        const entry: FleetMessageEntry = {
           label: c.label || agentLabel(c.cwd),
           sessionId: c.sessionId,
           cwd: c.cwd || '?',
           ...(c.status === 'ended' ? { stopped: true } : {}),
           ...(failure ? { failed: failure } : {}),
         };
+        attachWorkerEscalation(entry, reply);
+        return entry;
       });
       void this.sendCatchUp(manager.sessionId, entries);
     }
   }
 
   private async sendCatchUp(parentId: string, entries: FleetMessageEntry[]): Promise<void> {
-    try {
-      await claudemonSessionClient.message(parentId, buildFleetMessage('catch-up', entries));
-    } catch {
-      /* still unreachable — the next sweep retries */
+    const escalated = entries.filter((entry) => entry.escalation);
+    const completed = entries.filter((entry) => !entry.escalation);
+    for (const [kind, group] of [
+      ['worker-escalated', escalated],
+      ['catch-up', completed],
+    ] as const) {
+      if (group.length === 0) continue;
+      try {
+        await claudemonSessionClient.message(parentId, buildFleetMessage(kind, group));
+      } catch {
+        /* still unreachable — the next sweep retries */
+      }
     }
   }
 
@@ -380,33 +401,45 @@ class SupervisorNudge {
         if (outcome.json) entry.result = outcome.json;
         else if (outcome.error) entry.resultError = outcome.error;
       }
+      // Independent of resultSchema: every worker was told the fixed terminal
+      // escalation contract. A valid block changes the wake kind; a malformed
+      // one stays an ordinary finish with an explicit validation error.
+      attachWorkerEscalation(entry, reply);
       // Nothing new to report: this edge produced the exact reply/status
       // already delivered for this worker — a flapping block or a re-derived
       // Stop with no fresh output (PER_TURN_WAKE_FINDING.md 1b). A genuinely
       // different reply, a fresh stop, or a newly-surfaced failure always
       // changes the signature and still wakes the parent (1a).
-      const signature = `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''}`;
+      const signature =
+        `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''} ` +
+        `${entry.escalation ? 'escalated' : entry.escalationError ? 'invalid-escalation' : ''}`;
       if (this.lastReportedReply.get(session.sessionId) === signature) continue;
       delivered.push([session.sessionId, signature]);
       entries.push(entry);
     }
     if (entries.length === 0) return;
-    const text = buildFleetMessage('worker-finished', entries);
-    try {
-      await claudemonSessionClient.message(parentId, text);
-    } catch {
-      /* the parent may have just ended — best-effort */
-      return; // NOT delivered: leave the signatures unrecorded (see below)
+    const signatureById = new Map(delivered);
+    const escalated = entries.filter((entry) => entry.escalation);
+    const completed = entries.filter((entry) => !entry.escalation);
+    for (const [kind, group] of [
+      ['worker-escalated', escalated],
+      ['worker-finished', completed],
+    ] as const) {
+      if (group.length === 0) continue;
+      try {
+        await claudemonSessionClient.message(parentId, buildFleetMessage(kind, group));
+      } catch {
+        /* the parent may have just ended — best-effort */
+        continue; // NOT delivered: leave this group's signatures unrecorded
+      }
+      // Book only entries whose distinct wake actually landed. A mixed batch
+      // emits one escalation wake and one completion wake; failure of either
+      // must not silence the next identical edge for that group.
+      for (const entry of group) {
+        const signature = signatureById.get(entry.sessionId);
+        if (signature) this.lastReportedReply.set(entry.sessionId, signature);
+      }
     }
-    // Record the signatures only once the wake is actually on the wire. The
-    // suppression means "the parent has already been told this", so booking it
-    // on a send that THREW would turn a lost wake into a permanently silenced
-    // one — the next identical edge would dedup against a report nobody ever
-    // received. The opposite symptom (wakes going missing) is as real as the
-    // duplicate this dedup exists to kill — PER_TURN_WAKE_FINDING.md — so the
-    // failure mode has to fall on the side of re-reporting.
-    for (const [sessionId, signature] of delivered)
-      this.lastReportedReply.set(sessionId, signature);
   }
 
   /** Drop the dedup signature for a worker whose life has ended, so

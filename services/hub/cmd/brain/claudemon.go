@@ -187,7 +187,7 @@ type spawnManagedReq struct {
 	// Caller-pinned session id, so every client converges on one card.
 	SessionID string `json:"session_id,omitempty"`
 	// FirstMessage is the agent's first prompt. DISTINCT from the payload's
-	// `instructions` (which the brain does not send at all): instructions is a
+	// `instructions` (which the brain uses for role/terminal contracts): it is a
 	// passive prefix the adapter prepends to whatever prompt arrives first and
 	// never starts a turn on its own, so a dispatch put there would wait
 	// forever for the prompt it is.

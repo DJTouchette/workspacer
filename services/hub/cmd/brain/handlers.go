@@ -825,11 +825,15 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	argv := buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume)
 	if facade != nil {
-		args, err := facade.claudeArgs()
+		args, err := facade.claudeArgs(workerEscalationContract)
 		if err != nil {
 			return nil, err
 		}
 		argv = append(argv, args...)
+	} else {
+		// Escalation is always available, including plain workers with no MCP
+		// facade and no caller-authored resultSchema.
+		argv = append(argv, "--append-system-prompt", workerEscalationContract)
 	}
 
 	id, queued, err := r.cm.spawn(ctx, spawnReq{
@@ -1021,10 +1025,13 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			}
 		}
 	}
+	// Always-on and independent of the facade/resultSchema. Managed adapters
+	// prepend this passive instruction prefix to the first real task prompt.
+	req.Instructions = workerEscalationContract
 	if facade != nil {
-		req.Instructions = facade.Instructions
+		req.Instructions = facade.Instructions + "\n\n" + workerEscalationContract
 		if isClaudeStream {
-			args, err := facade.claudeArgs()
+			args, err := facade.claudeArgs("")
 			if err != nil {
 				return nil, err
 			}

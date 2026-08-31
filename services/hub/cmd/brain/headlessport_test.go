@@ -176,15 +176,17 @@ func portedMethodStanding() map[string]bool {
 func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 	ts := joinTSStringLiterals(string(mustReadRepoFile(t, "apps", "desktop", "src", "main", "shared", "fleetMessages.ts")))
 	for name, want := range map[string]string{
-		"progress header":        fleetProgressHeader,
-		"threshold header":       fleetThresholdHeader,
-		"progress tail":          fleetProgressTail,
-		"threshold tail":         fleetThresholdTail,
-		"worker-finished header": fleetWorkerFinishedHeader,
-		"worker-FAILED header":   fleetWorkerFailedHeader,
-		"catch-up header":        fleetCatchUpHeader,
-		"worker-finished tail":   fleetWorkerFinishedTail,
-		"catch-up tail":          fleetCatchUpTail,
+		"progress header":         fleetProgressHeader,
+		"threshold header":        fleetThresholdHeader,
+		"progress tail":           fleetProgressTail,
+		"threshold tail":          fleetThresholdTail,
+		"worker-finished header":  fleetWorkerFinishedHeader,
+		"worker-FAILED header":    fleetWorkerFailedHeader,
+		"worker-escalated header": fleetWorkerEscalatedHeader,
+		"catch-up header":         fleetCatchUpHeader,
+		"worker-finished tail":    fleetWorkerFinishedTail,
+		"worker-escalated tail":   fleetWorkerEscalatedTail,
+		"catch-up tail":           fleetCatchUpTail,
 		// The blocked broadcast (blockwake.go). Its header is the ONE that opens
 		// `[supervisor]` rather than `[fleet]`, which is exactly the kind of
 		// detail a re-spelling would "tidy" — and every client's card parser
@@ -194,6 +196,7 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 		"failed note":             fleetFailedNote,
 		"stopped note":            fleetStoppedNote,
 		"full-reply block prefix": "Full final message — ",
+		"escalation block prefix": "Worker escalation — ",
 		// agents.sendMessage's attribution header. Split into its two fixed
 		// halves on both sides precisely so it can be pinned here: the
 		// TypeScript composes it with a template literal, which this
@@ -212,6 +215,20 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 	// only because it never ran against real text.
 	if !strings.Contains(ts, "[fleet] Worker finished:") {
 		t.Fatal("joinTSStringLiterals no longer recovers fleetMessages.ts's literals — this twin check is comparing against mush")
+	}
+}
+
+func TestMobileFleetParserAndCardIncludeWorkerEscalation(t *testing.T) {
+	mobile := string(mustReadRepoFile(t, "services", "hub", "cmd", "hub", "mobile.html"))
+	for _, want := range []string{
+		fleetWorkerEscalatedHeader,
+		"FLEET_ESCALATION_RE",
+		"entry.escalation = escalation[2]",
+		"FLEET · WORKER ESCALATED",
+	} {
+		if !strings.Contains(mobile, want) {
+			t.Errorf("mobile fleet escalation presentation is missing %q", want)
+		}
 	}
 }
 

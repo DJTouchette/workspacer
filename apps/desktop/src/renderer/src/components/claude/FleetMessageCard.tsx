@@ -36,6 +36,12 @@ const KIND_META: Record<
     icon: Check,
     tone: 'var(--wks-success)',
   },
+  'worker-escalated': {
+    badge: 'Fleet · worker escalated',
+    badgePlural: 'Fleet · workers escalated',
+    icon: AlertTriangle,
+    tone: 'var(--wks-warning)',
+  },
   'catch-up': {
     badge: 'Fleet · catch-up',
     badgePlural: 'Fleet · catch-up',
@@ -304,6 +310,13 @@ const EntryRow: React.FC<{
           one. Above the last-reply toggle on purpose: it is the scannable
           answer, and the prose excerpt is the backup. */}
       <StructuredResultCard json={entry.result} error={entry.resultError} cwd={entry.cwd} />
+      <StructuredResultCard
+        json={entry.escalation}
+        error={entry.escalationError}
+        cwd={entry.cwd}
+        label="worker escalation"
+        errorLabel="invalid worker escalation"
+      />
       {entry.lastReply && (
         <div style={{ marginTop: 4 }}>
           <button

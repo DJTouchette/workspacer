@@ -144,15 +144,19 @@ func facadeURLWithToken(rawURL, token string) (string, error) {
 	return u.String(), nil
 }
 
-func (f *sessionFacade) claudeArgs() ([]string, error) {
+func (f *sessionFacade) claudeArgs(extraInstructions string) ([]string, error) {
 	path, err := writeClaudeFacadeMCPConfig(f.SessionID, f.BaseURL, f.Token)
 	if err != nil {
 		return nil, err
 	}
+	instructions := f.Instructions
+	if strings.TrimSpace(extraInstructions) != "" {
+		instructions += "\n\n" + extraInstructions
+	}
 	return []string{
 		"--mcp-config", path,
 		"--allowedTools", "mcp__workspacer",
-		"--append-system-prompt", f.Instructions,
+		"--append-system-prompt", instructions,
 	}, nil
 }
 

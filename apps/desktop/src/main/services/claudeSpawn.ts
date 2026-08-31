@@ -38,6 +38,7 @@ import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
+import { buildWorkerEscalationContract } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
@@ -296,8 +297,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
         opts.manager ? 'manager' : undefined,
       ).token,
     });
-  const contract = resultSchema ? buildResultContract(resultSchema) : '';
-  const appendSystemPrompt = [facadeArgs ? facadeArgs.appendSystemPrompt : '', contract]
+  const resultContract = resultSchema ? buildResultContract(resultSchema) : '';
+  const appendSystemPrompt = [
+    facadeArgs ? facadeArgs.appendSystemPrompt : '',
+    buildWorkerEscalationContract(),
+    resultContract,
+  ]
     .filter(Boolean)
     .join('\n\n');
 

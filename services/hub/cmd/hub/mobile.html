@@ -2649,6 +2649,7 @@
   // other unmatched message, same as it does today.
   const FLEET_HEADERS = {
     'worker-finished': '[fleet] Worker finished:',
+    'worker-escalated': '[fleet] Worker escalated — blocked and did not complete:',
     'catch-up':
       '[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:',
     blocked: '[supervisor] An agent is now blocked on a decision:',
@@ -2679,6 +2680,9 @@
   const FLEET_RESULT_RE = /^Structured result — .+? \(session:([\w-]+)\):\n([\s\S]+)$/;
   const FLEET_RESULT_MISSING_RE =
     /^Structured result MISSING — .+? \(session:([\w-]+)\): ([\s\S]+?)\. Read the prose report below\/above instead\.$/;
+  const FLEET_ESCALATION_RE = /^Worker escalation — .+? \(session:([\w-]+)\):\n([\s\S]+)$/;
+  const FLEET_ESCALATION_INVALID_RE =
+    /^Worker escalation INVALID — .+? \(session:([\w-]+)\): ([\s\S]+?)\. The terminal marker was rejected; treat the prose as an ordinary completion or refusal\.$/;
   // buildFleetMessage emits every structured-result block BEFORE the first
   // full-reply block, and a full reply is arbitrary worker prose that may
   // contain blank lines — so its own paragraphs would otherwise be scanned as
@@ -2694,7 +2698,11 @@
       const ok = FLEET_RESULT_RE.exec(block);
       if (ok) { const entry = byId.get(ok[1]); if (entry) entry.result = ok[2]; continue; }
       const missing = FLEET_RESULT_MISSING_RE.exec(block);
-      if (missing) { const entry = byId.get(missing[1]); if (entry) entry.resultError = missing[2]; }
+      if (missing) { const entry = byId.get(missing[1]); if (entry) entry.resultError = missing[2]; continue; }
+      const escalation = FLEET_ESCALATION_RE.exec(block);
+      if (escalation) { const entry = byId.get(escalation[1]); if (entry) entry.escalation = escalation[2]; continue; }
+      const invalidEscalation = FLEET_ESCALATION_INVALID_RE.exec(block);
+      if (invalidEscalation) { const entry = byId.get(invalidEscalation[1]); if (entry) entry.escalationError = invalidEscalation[2]; }
     }
   }
 
@@ -2911,15 +2919,18 @@
   /** The card. `entry.result` is the validated object as the wake carried it;
    *  `entry.resultError` is why one could not be read. Rendering either is
    *  additive — the worker's prose (note/lastReply) sits above it untouched. */
-  function structuredResultHtml(entry, msgKey) {
-    const json = entry.result, error = entry.resultError;
+  function structuredResultHtml(entry, msgKey, escalation = false) {
+    const json = escalation ? entry.escalation : entry.result;
+    const error = escalation ? entry.escalationError : entry.resultError;
     if (!json && !error) return '';
     const view = json ? buildResultView(json) : { fields: [] };
     const summary = resultFieldsInSlot(view, 'summary');
     const caveats = resultFieldsInSlot(view, 'caveats');
     const body = resultFieldsInSlot(view, 'body');
-    let html = `<div class="fresult"><div class="frh">◧ STRUCTURED RESULT</div>`;
-    if (error) html += `<div class="fmissing">⚠ no structured result<br />${esc(error)}</div>`;
+    const heading = escalation ? 'WORKER ESCALATION' : 'STRUCTURED RESULT';
+    const missing = escalation ? 'invalid worker escalation' : 'no structured result';
+    let html = `<div class="fresult"><div class="frh">◧ ${heading}</div>`;
+    if (error) html += `<div class="fmissing">⚠ ${missing}<br />${esc(error)}</div>`;
     if (view.fallback) {
       html += `<div class="fmissing">⚠ ${esc(view.fallback.reason)} — showing it as it arrived</div>`;
       if (view.fallback.text) html += `<pre class="fraw">${esc(view.fallback.text)}</pre>`;
@@ -2933,6 +2944,7 @@
   // ── the fleet card itself, ported from FleetMessageCard.tsx ────────────────
   const FLEET_KIND_META = {
     'worker-finished': { badge: 'FLEET · WORKER FINISHED', badgePlural: 'FLEET · WORKERS FINISHED', icon: '✓', color: C.green },
+    'worker-escalated': { badge: 'FLEET · WORKER ESCALATED', badgePlural: 'FLEET · WORKERS ESCALATED', icon: '⚠', color: C.amber },
     'catch-up': { badge: 'FLEET · CATCH-UP', badgePlural: 'FLEET · CATCH-UP', icon: '↻', color: C.green },
     threshold: { badge: 'FLEET · THRESHOLD CROSSED', badgePlural: 'FLEET · THRESHOLDS CROSSED', icon: '⚠', color: C.amber },
     progress: { badge: 'FLEET · PROGRESS UPDATE', badgePlural: 'FLEET · PROGRESS UPDATES', icon: '▶', color: C.blue },
@@ -2971,6 +2983,7 @@
     // read is one that gets skipped.
     if (entry.note) html += `<div class="fnote">${esc(entry.note)}</div>`;
     html += structuredResultHtml(entry, msgKey);
+    html += structuredResultHtml(entry, msgKey, true);
     if (entry.lastReply) {
       const openKey = `${msgKey}:${entry.sessionId}:reply`;
       const open = S.openFleet.has(openKey);

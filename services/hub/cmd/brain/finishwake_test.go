@@ -292,6 +292,50 @@ func TestAWorkerFinishingWakesItsHeadlessManager(t *testing.T) {
 	}
 }
 
+func TestAWorkerEscalationGetsADistinctHeadlessWake(t *testing.T) {
+	r := newWakeRig(t)
+	r.fleet()
+	reply := "I cannot publish with read-only authority.\n\n```wks-escalation\n" + validEscalationJSON + "\n```"
+	r.d.setConv("w1", dispatched(reply))
+	r.update("w1", "/work/proj", "input")
+	r.closeWindows()
+
+	wakes := r.d.to("mgr")
+	if len(wakes) != 1 {
+		t.Fatalf("manager received %d wakes, want one escalation", len(wakes))
+	}
+	if !strings.HasPrefix(wakes[0], fleetWorkerEscalatedHeader) ||
+		!strings.Contains(wakes[0], "Worker escalation — rust worker (session:w1):") ||
+		!strings.Contains(wakes[0], `"requiredAuthorityOrDecision"`) {
+		t.Fatalf("valid escalation did not reach the distinct wake/result surface:\n%s", wakes[0])
+	}
+}
+
+func TestMalformedAndProseOnlyEscalationsStayOrdinaryHeadlessCompletions(t *testing.T) {
+	for _, tc := range []struct {
+		name, reply string
+		wantInvalid bool
+	}{
+		{"malformed tagged block", "cannot publish\n\n```wks-escalation\n{\"type\":\"worker-escalation\"}\n```", true},
+		{"ordinary prose refusal", "I cannot publish because I only have read-only authority.", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newWakeRig(t)
+			r.fleet()
+			r.d.setConv("w1", dispatched(tc.reply))
+			r.update("w1", "/work/proj", "input")
+			r.closeWindows()
+			wakes := r.d.to("mgr")
+			if len(wakes) != 1 || !strings.HasPrefix(wakes[0], fleetWorkerFinishedHeader) {
+				t.Fatalf("refusal was not an ordinary completion wake: %v", wakes)
+			}
+			if got := strings.Contains(wakes[0], "Worker escalation INVALID"); got != tc.wantInvalid {
+				t.Fatalf("invalid marker visibility = %v, want %v:\n%s", got, tc.wantInvalid, wakes[0])
+			}
+		})
+	}
+}
+
 // A parent that is not a MANAGER is not a wake target. `manager: true` at spawn
 // is the only thing that sets isWakeTarget, and without it the finish is
 // dropped — the same rule the desktop enforces.

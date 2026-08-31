@@ -365,6 +365,77 @@ describe('supervisorNudge.onFinished — structured results', () => {
   });
 });
 
+// ── Fixed terminal worker escalation (always-on; no resultSchema required) ──
+describe('supervisorNudge.onFinished — terminal escalation', () => {
+  const escalation =
+    'I cannot publish with read-only authority.\n\n```wks-escalation\n' +
+    JSON.stringify({
+      type: 'worker-escalation',
+      status: 'blocked',
+      reason: 'Publishing requires write authority.',
+      requiredAuthorityOrDecision: 'Authorize a release-capable worker to publish.',
+      changed: false,
+      nextAction: 'Review the local artifact, then redispatch publishing with release authority.',
+    }) +
+    '\n```';
+
+  it('parses the smoke-test shape and emits a distinct escalation wake/result without resultSchema', async () => {
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'publish it'], ['assistant', escalation]) }),
+      'mgr',
+      escalation,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(message).toHaveBeenCalledTimes(1);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker escalated — blocked and did not complete:');
+    expect(text).toContain('Worker escalation — alpha: fix tests (session:w1):');
+    expect(text).toContain('"requiredAuthorityOrDecision"');
+    expect(text).toContain('NOT a completed outcome');
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-escalated');
+    expect(parsed?.entries[0].escalation).toContain('"changed": false');
+    expect(parsed?.entries[0].lastReply).toContain('read-only authority');
+  });
+
+  it('does not silently accept a malformed escalation block', async () => {
+    const malformed =
+      'I cannot publish.\n\n```wks-escalation\n' +
+      '{"type":"worker-escalation","status":"blocked","reason":"no authority"}\n```';
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'publish'], ['assistant', malformed]) }),
+      'mgr',
+      malformed,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished:');
+    expect(text).toContain('Worker escalation INVALID');
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0].escalation).toBeUndefined();
+    expect(parsed?.entries[0].escalationError).toContain('requiredAuthorityOrDecision');
+  });
+
+  it('leaves an ordinary prose refusal as an ordinary completion', async () => {
+    const refusal = 'I cannot publish because I only have read-only authority.';
+    supervisorNudge.onFinished(
+      worker({ conversation: turns(['user', 'publish'], ['assistant', refusal]) }),
+      'mgr',
+      refusal,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const [, text] = message.mock.calls[0] as [string, string];
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0].escalation).toBeUndefined();
+    expect(parsed?.entries[0].escalationError).toBeUndefined();
+  });
+});
+
 // ── Wake payload honesty: finished vs FAILED ────────────────────────────────
 //
 // A worker that dies on a provider error goes idle exactly like one that

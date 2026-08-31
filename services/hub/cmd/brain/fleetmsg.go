@@ -17,12 +17,14 @@ package main
 // (headlessport_test.go), which reads fleetMessages.ts and compares the strings
 // rather than trusting this comment.
 //
-// ALL FIVE KINDS ARE PORTED:
+// ALL SIX KINDS ARE PORTED:
 //
 //   - progress        — agents.reportProgress, a worker's own mid-task line.
 //   - threshold       — agents.notifyWhen, a watch the manager armed firing once.
 //   - worker-finished — a dispatch coming home, produced by finishwake.go's own
 //                       transition watcher over claudemon's /events stream.
+//   - worker-escalated — the same terminal path, with a validated fixed-shape
+//                        wks-escalation result and an honest non-completion face.
 //   - catch-up        — the same wake under an honest header, re-sent by the
 //                       backstop sweep when the live one never landed.
 //   - blocked         — a worker STUCK on an approval or a question, broadcast
@@ -31,10 +33,8 @@ package main
 //                       bullet spends the `where` slot on the block kind
 //                       instead of a cwd.
 //
-// The `result` / `resultError` entry fields are not ported either, for the same
-// has-no-writer reason: `resultSchema` is declined by the headless spawn
-// (parity_test.go's spawnParamsDeclined), so no brain-dispatched worker ever
-// carries a structured-result contract to validate.
+// Caller-authored `result` / `resultError` remain desktop-only because the
+// brain declines resultSchema. Fixed host-authored escalation is ported below.
 
 import (
 	"fmt"
@@ -59,8 +59,9 @@ const (
 	// outcome, so an all-failed set must not use it; a MIXED set keeps the
 	// normal header and lets the bullets carry the truth, because "finished" IS
 	// accurate for the entries that did. Both parse back to the same kind.
-	fleetWorkerFinishedHeader = "[fleet] Worker finished:"
-	fleetWorkerFailedHeader   = "[fleet] Worker FAILED — did not complete:"
+	fleetWorkerFinishedHeader  = "[fleet] Worker finished:"
+	fleetWorkerFailedHeader    = "[fleet] Worker FAILED — did not complete:"
+	fleetWorkerEscalatedHeader = "[fleet] Worker escalated — blocked and did not complete:"
 
 	// fleetCatchUpHeader is HEADERS['catch-up'] — the backstop's spelling, which
 	// says out loud that the manager may already have seen this.
@@ -109,6 +110,12 @@ const (
 		"need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" " +
 		"(and adjust \"## Now\"), then report the outcome briefly with session:<id> references. " +
 		"If it was not one of your dispatches, a one-line acknowledgement is enough."
+
+	fleetWorkerEscalatedTail = "This is a terminal escalation, NOT a completed outcome. Read the validated " +
+		"\"worker escalation\" block above and do not record the task as landed in a brief's " +
+		"\"## Recently\". Resolve or obtain the named authority/decision, then either answer the " +
+		"worker with send_message or redispatch the remaining work with respawn_with. Keep the " +
+		"dispatch open until the task actually completes."
 
 	fleetCatchUpTail = "Review each (get_conversation with sinceSeq), update the project brief's \"## Recently\", " +
 		"and report the outcome with session:<id> references. Then STOP again."
@@ -252,6 +259,11 @@ type fleetEntry struct {
 	// manager AGENT, so it never has to fetch a conversation to read a report.
 	// Set only when the excerpt is lossy.
 	FullReply string
+	// Escalation is the validated fixed-shape terminal response. Error is set
+	// only when the tag existed but validation failed; that entry remains an
+	// ordinary completion so malformed data is never silently accepted.
+	Escalation      string
+	EscalationError string
 }
 
 // formatFleetEntry renders one entry's bullet BODY (no leading "- ").
@@ -327,6 +339,16 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 		if e.Stopped {
 			extras = append(extras, fleetStoppedNote)
 			break
+		}
+	}
+	for _, e := range entries {
+		if e.Escalation != "" {
+			extras = append(extras, fmt.Sprintf("Worker escalation — %s (session:%s):\n%s",
+				e.Label, e.SessionID, e.Escalation))
+		} else if e.EscalationError != "" {
+			extras = append(extras, fmt.Sprintf("Worker escalation INVALID — %s (session:%s): %s. "+
+				"The terminal marker was rejected; treat the prose as an ordinary completion or refusal.",
+				e.Label, e.SessionID, e.EscalationError))
 		}
 	}
 	for _, e := range entries {

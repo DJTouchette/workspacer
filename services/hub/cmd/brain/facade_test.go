@@ -100,6 +100,46 @@ func TestSpawnClaudePTYInjectsFacadeMCPConfig(t *testing.T) {
 	}
 }
 
+func TestPlainHeadlessSpawnsAlwaysReceiveWorkerEscalationContract(t *testing.T) {
+	for _, provider := range []string{"codex", "opencode"} {
+		t.Run(provider+" managed", func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newSpawnTestRegistry(t, srv.URL)
+			if _, err := reg.handle(context.Background(), "agents.spawn",
+				[]byte(`{"provider":"`+provider+`","cwd":"/tmp/proj"}`)); err != nil {
+				t.Fatal(err)
+			}
+			calls := rec.calls("/sessions/spawn-managed")
+			if len(calls) != 1 {
+				t.Fatalf("managed spawn calls = %d, want 1", len(calls))
+			}
+			instructions, _ := calls[0].body["instructions"].(string)
+			if !strings.Contains(instructions, "wks-escalation") || !strings.Contains(instructions, "requiredAuthorityOrDecision") {
+				t.Fatalf("plain %s worker missed escalation contract: %q", provider, instructions)
+			}
+		})
+	}
+
+	t.Run("claude pty without facade", func(t *testing.T) {
+		rec := newRecorder()
+		srv := rec.server()
+		defer srv.Close()
+		reg := newSpawnTestRegistry(t, srv.URL)
+		if _, err := reg.handle(context.Background(), "agents.spawn",
+			[]byte(`{"transport":"pty","cwd":"/tmp/proj"}`)); err != nil {
+			t.Fatal(err)
+		}
+		calls := rec.calls("/sessions/spawn")
+		argv := stringSlice(t, calls[0].body["argv"])
+		prompt := valueAfterArg(t, argv, "--append-system-prompt")
+		if !strings.Contains(prompt, "wks-escalation") {
+			t.Fatalf("plain PTY worker missed escalation contract: %v", argv)
+		}
+	})
+}
+
 func TestSpawnFacadeRequestFailsWhenBrainHasNoFacadeURL(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()

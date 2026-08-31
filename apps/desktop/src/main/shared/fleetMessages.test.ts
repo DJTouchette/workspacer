@@ -371,6 +371,42 @@ describe('structured results round-trip', () => {
   });
 });
 
+describe('worker escalation round-trip', () => {
+  const base = { label: 'release worker', sessionId: 'w7', cwd: '/w/release' };
+  const escalation = JSON.stringify(
+    {
+      type: 'worker-escalation',
+      status: 'blocked',
+      reason: 'publishing requires write authority',
+      requiredAuthorityOrDecision: 'authorize a publisher',
+      changed: false,
+      nextAction: 'review the artifact and redispatch publishing',
+    },
+    null,
+    2,
+  );
+
+  it('preserves a validated payload on the distinct wake result surface', () => {
+    const text = buildFleetMessage('worker-escalated', [{ ...base, escalation }]);
+    expect(text).toContain('[fleet] Worker escalated — blocked and did not complete:');
+    expect(text).toContain('NOT a completed outcome');
+    expect(parseFleetMessage(text)).toEqual({
+      kind: 'worker-escalated',
+      entries: [{ ...base, escalation }],
+    });
+  });
+
+  it('round-trips an invalid marker reason without promoting the wake', () => {
+    const text = buildFleetMessage('worker-finished', [
+      { ...base, escalationError: 'changed: expected boolean' },
+    ]);
+    const parsed = parseFleetMessage(text);
+    expect(parsed?.kind).toBe('worker-finished');
+    expect(parsed?.entries[0].escalation).toBeUndefined();
+    expect(parsed?.entries[0].escalationError).toBe('changed: expected boolean');
+  });
+});
+
 // The sender-attribution header (agents.sendMessage's fromSessionId). Not a
 // wake kind — deliberately not round-tripped — but the bytes are wire format
 // shared with the brain's twin (fleetSenderHeaderText, cmd/brain/fleetmsg.go),

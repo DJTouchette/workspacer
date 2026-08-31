@@ -33,9 +33,10 @@ package main
 //     which hands every ambient edge to blocks.onEdge before applying the finish
 //     rule. Sharing prevAmbient is the point: one transition, one memory of the
 //     state before it.
-//   - the structured-result half of a finish ❌ — `resultSchema` is declined by
-//     the headless spawn (parity_test.go's spawnParamsDeclined), so there is no
-//     contract to validate against. The prose report is delivered in full.
+//   - caller-authored structured result ❌ — `resultSchema` is declined by the
+//     headless spawn, so there is no arbitrary schema to validate against.
+//   - fixed worker escalation ✅ — its host-authored shape is always injected
+//     and validated here without depending on resultSchema.
 //
 // THE TWO PARTS THAT ARE EASY TO DROP, and why neither is:
 //
@@ -318,7 +319,17 @@ func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, worke
 		if reason, failed := workerFailureReason(s.outOfCredits(), reply); failed {
 			e.Failed = reason
 		}
-		sig := finishSignature(reply, e.Stopped, e.Failed)
+		if outcome := readWorkerEscalation(reply); outcome != nil {
+			e.Escalation = outcome.JSON
+			e.EscalationError = outcome.Error
+		}
+		escalationState := ""
+		if e.Escalation != "" {
+			escalationState = "escalated"
+		} else if e.EscalationError != "" {
+			escalationState = "invalid-escalation"
+		}
+		sig := finishSignature(reply, e.Stopped, e.Failed, escalationState)
 		w.mu.Lock()
 		dup := w.lastReported[id] == sig
 		w.mu.Unlock()
@@ -337,31 +348,48 @@ func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, worke
 		return
 	}
 
-	text := buildFleetMessage(fleetWorkerFinishedHeaderFor(entries), fleetWorkerFinishedTail, entries)
-	if err := w.reg.deliverFleetWake(ctx, parentID, text); err != nil {
-		// Best-effort: the parent may have ended between the check above and the
-		// send. Deliberately do NOT book the signatures — the suppression means
-		// "the parent has already been told this", so booking it on a send that
-		// FAILED would turn a lost wake into a permanently silenced one. The
-		// failure mode has to fall on the side of re-reporting.
-		log.Printf("brain: worker-finished wake to %s was not delivered: %v", parentID, err)
-		return
+	var escalated, completed []fleetEntry
+	for _, entry := range entries {
+		if entry.Escalation != "" {
+			escalated = append(escalated, entry)
+		} else {
+			completed = append(completed, entry)
+		}
 	}
-	w.mu.Lock()
-	for id, sig := range delivered {
-		w.lastReported[id] = sig
+	groups := []struct {
+		name, header, tail string
+		entries            []fleetEntry
+	}{
+		{"worker-escalated", fleetWorkerEscalatedHeader, fleetWorkerEscalatedTail, escalated},
+		{"worker-finished", fleetWorkerFinishedHeaderFor(completed), fleetWorkerFinishedTail, completed},
 	}
-	w.mu.Unlock()
+	for _, group := range groups {
+		if len(group.entries) == 0 {
+			continue
+		}
+		text := buildFleetMessage(group.header, group.tail, group.entries)
+		if err := w.reg.deliverFleetWake(ctx, parentID, text); err != nil {
+			// Best-effort: book only the group whose distinct wake actually
+			// landed. A failed send remains eligible for the next identical edge.
+			log.Printf("brain: %s wake to %s was not delivered: %v", group.name, parentID, err)
+			continue
+		}
+		w.mu.Lock()
+		for _, entry := range group.entries {
+			w.lastReported[entry.SessionID] = delivered[entry.SessionID]
+		}
+		w.mu.Unlock()
+	}
 }
 
 // finishSignature is the "have I already told the parent exactly this?" key.
 // TWIN: the `${reply} ${stopped} ${failed}` template in sendFinished.
-func finishSignature(reply string, stopped bool, failed string) string {
+func finishSignature(reply string, stopped bool, failed, escalationState string) string {
 	bit := "0"
 	if stopped {
 		bit = "1"
 	}
-	return reply + " " + bit + " " + failed
+	return reply + " " + bit + " " + failed + " " + escalationState
 }
 
 // ── the catch-up backstop ───────────────────────────────────────────────────
@@ -427,6 +455,10 @@ func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) 
 			if reason, failed := workerFailureReason(c.outOfCredits(), final.lastAssistant); failed {
 				e.Failed = reason
 			}
+			if outcome := readWorkerEscalation(final.lastAssistant); outcome != nil {
+				e.Escalation = outcome.JSON
+				e.EscalationError = outcome.Error
+			}
 			entries = append(entries, e)
 		}
 		if len(entries) == 0 {
@@ -436,7 +468,20 @@ func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) 
 		// next sweep retries. No signature is booked either — a catch-up is a
 		// re-send by definition, and suppressing the next one would re-open the
 		// dark-manager hole this exists to close.
-		_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessage(fleetCatchUpHeader, fleetCatchUpTail, entries))
+		var escalated, completed []fleetEntry
+		for _, entry := range entries {
+			if entry.Escalation != "" {
+				escalated = append(escalated, entry)
+			} else {
+				completed = append(completed, entry)
+			}
+		}
+		if len(escalated) > 0 {
+			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessage(fleetWorkerEscalatedHeader, fleetWorkerEscalatedTail, escalated))
+		}
+		if len(completed) > 0 {
+			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessage(fleetCatchUpHeader, fleetCatchUpTail, completed))
+		}
 	}
 }
 
