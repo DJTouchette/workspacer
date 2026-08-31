@@ -604,6 +604,233 @@ mod tests {
     }
 
     #[test]
+    fn persisted_model_selections_round_trip_without_losing_native_one_million() {
+        struct Case {
+            id: &'static str,
+            requested: &'static str,
+            legacy: &'static str,
+            identity: &'static str,
+            context_window: Option<i64>,
+            requested_window: Option<u64>,
+        }
+
+        // Keep this at the SQLite boundary. The selection parser alone cannot
+        // catch an INSERT/restore mismatch that loses an explicit native-1M
+        // canonical window while deriving its intentionally bare legacy value.
+        let cases = [
+            Case {
+                id: "fable-bare",
+                requested: "fable",
+                legacy: "fable",
+                identity: "fable",
+                context_window: None,
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "fable-legacy-marked",
+                requested: "fable[1m]",
+                legacy: "fable",
+                identity: "fable",
+                context_window: Some(1_000_000),
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "mythos-bare",
+                requested: "mythos",
+                legacy: "mythos",
+                identity: "mythos",
+                context_window: None,
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "mythos-legacy-marked",
+                requested: "mythos-1m",
+                legacy: "mythos",
+                identity: "mythos",
+                context_window: Some(1_000_000),
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "opus-1m",
+                requested: "opus[1m]",
+                legacy: "opus[1m]",
+                identity: "opus",
+                context_window: Some(1_000_000),
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "sonnet-1m",
+                requested: "sonnet-1m",
+                legacy: "sonnet[1m]",
+                identity: "sonnet",
+                context_window: Some(1_000_000),
+                requested_window: Some(1_000_000),
+            },
+            Case {
+                id: "opus-200k",
+                requested: "opus",
+                legacy: "opus",
+                identity: "opus",
+                context_window: Some(200_000),
+                requested_window: None,
+            },
+            Case {
+                id: "sonnet-200k",
+                requested: "sonnet",
+                legacy: "sonnet",
+                identity: "sonnet",
+                context_window: Some(200_000),
+                requested_window: None,
+            },
+            Case {
+                id: "codex",
+                requested: "gpt-5-codex",
+                legacy: "gpt-5-codex",
+                identity: "gpt-5-codex",
+                context_window: None,
+                requested_window: None,
+            },
+            Case {
+                id: "local",
+                requested: "acme-local-model",
+                legacy: "acme-local-model",
+                identity: "acme-local-model",
+                context_window: None,
+                requested_window: None,
+            },
+        ];
+        let path = tempfile_path();
+        {
+            let db = Db::open(&path).unwrap();
+            for case in &cases {
+                let persisted = PersistedModelSelection::from_selection(
+                    crate::session::windows::normalize_model_selection(
+                        case.requested,
+                        case.context_window.map(|window| window as u64),
+                    )
+                    .unwrap(),
+                );
+                db.record_event_with_spawn_facts(
+                    &ev("SessionStart", case.id),
+                    SpawnFacts {
+                        requested_selection: Some(&persisted),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    raw_selection_columns(&db, case.id),
+                    (
+                        Some(case.legacy.into()),
+                        Some(case.identity.into()),
+                        case.context_window,
+                    ),
+                    "{} canonical columns",
+                    case.id,
+                );
+            }
+        }
+
+        let db = Db::open(&path).unwrap();
+        let restored: std::collections::HashMap<_, _> = db
+            .load_recent_sessions(100)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.id, row.requested_selection))
+            .collect();
+        for case in &cases {
+            let selection = restored[case.id]
+                .as_ref()
+                .expect("persisted selection restores");
+            assert_eq!(selection.model, case.identity, "{} identity", case.id);
+            assert_eq!(
+                selection.context_window.map(|window| window as i64),
+                case.context_window,
+                "{} canonical context window",
+                case.id,
+            );
+            assert_eq!(
+                crate::session::windows::requested_window_for_selection(selection),
+                case.requested_window,
+                "{} retains the inherent/requested window after reopen",
+                case.id,
+            );
+        }
+    }
+
+    #[test]
+    fn native_one_million_canonical_pairs_match_legacy_projections_and_heal() {
+        let path = tempfile_path();
+        {
+            let db = Db::open(&path).unwrap();
+            for (id, legacy_marked) in [("fable", "fable[1m]"), ("mythos", "mythos-1m")] {
+                let persisted = selection(legacy_marked);
+                db.record_event_with_spawn_facts(
+                    &ev("SessionStart", id),
+                    SpawnFacts {
+                        requested_selection: Some(&persisted),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            }
+        }
+
+        let db = Db::open(&path).unwrap();
+        let restored = db.load_recent_sessions(10).unwrap();
+        for row in &restored {
+            assert_eq!(
+                row.requested_selection,
+                Some(ModelSelection {
+                    model: row.id.clone(),
+                    context_window: Some(1_000_000),
+                }),
+                "{} keeps the canonical native-1M pair authoritative",
+                row.id,
+            );
+        }
+
+        let store = crate::session::SessionStore::new();
+        store.hydrate(restored);
+        for id in ["fable", "mythos"] {
+            assert_eq!(
+                store.get(id).and_then(|state| state.requested_model),
+                Some(id.into()),
+                "public snapshot uses the same normalized spelling the heal will write",
+            );
+            let healed = store.requested_model_selection(id).unwrap();
+            db.record_event_with_spawn_facts(
+                &ev("PreToolUse", id),
+                SpawnFacts {
+                    requested_selection: Some(&healed),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                raw_selection_columns(&db, id),
+                (Some(id.into()), Some(id.into()), Some(1_000_000)),
+                "{} healed without losing its canonical native 1M window",
+                id,
+            );
+        }
+
+        drop(db);
+        let reopened = Db::open(&path).unwrap();
+        for row in reopened.load_recent_sessions(10).unwrap() {
+            assert_eq!(
+                row.requested_selection,
+                Some(ModelSelection {
+                    model: row.id.clone(),
+                    context_window: Some(1_000_000),
+                }),
+                "{} remains canonical after the heal and another reopen",
+                row.id,
+            );
+        }
+    }
+
+    #[test]
     fn old_legacy_rows_restore_lazily_without_backfill() {
         let db = Db::open(tempfile_path()).unwrap();
         db.record_event(&ev("SessionStart", "old")).unwrap();
@@ -856,6 +1083,13 @@ mod tests {
         // read SpawnFacts from SessionStore, then persist the next hook event.
         let store = crate::session::SessionStore::new();
         store.hydrate(restored);
+        assert_eq!(
+            store
+                .get("rollback-switch")
+                .and_then(|state| state.requested_model),
+            Some("sonnet[1m]".into()),
+            "the public snapshot normalizes the v8 spelling before the next write heals SQLite",
+        );
         let healed = store
             .requested_model_selection("rollback-switch")
             .expect("restored selection is carried into persistence");

@@ -84,13 +84,16 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // stamped above 8, even when the only change is ignorable nullable columns.
     // Keeping the stamp at 8 lets the prior binary reopen this DB and continue
     // through `requested_model`, which is the rollback contract for this slice.
-    // The catalog-checked body runs on every open, so interrupted/partial
-    // applications heal idempotently without a version marker. It still needs
-    // an IMMEDIATE transaction: without one, concurrent opens can both observe
-    // a missing column before either ALTERs it, and one then fails daemon boot
-    // with "duplicate column name".
-    unversioned_step(conn, add_session_requested_selection)
-        .context("adding rollback-compatible requested model selection columns")?;
+    // First inspect the catalog without a write transaction. The normal
+    // steady-state path must remain readable by a fully migrated v8 database
+    // opened read-only, and should not briefly take SQLite's write lock merely
+    // to discover there is no work to do. A missing/partial catalog result
+    // still goes through `unversioned_step`, whose body repeats the check while
+    // holding IMMEDIATE so concurrent openers cannot race an ALTER.
+    if !requested_selection_columns_present(conn)? {
+        unversioned_step(conn, add_session_requested_selection)
+            .context("adding rollback-compatible requested model selection columns")?;
+    }
     Ok(())
 }
 
@@ -140,6 +143,17 @@ fn unversioned_step(
             Err(err.into())
         }
     }
+}
+
+/// Whether the two rollback-compatible canonical selection columns are both
+/// already present. This deliberately runs outside the write transaction for
+/// the read-only steady state; callers that need to alter still recheck inside
+/// `add_session_requested_selection` after acquiring the transaction lock.
+fn requested_selection_columns_present(conn: &Connection) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
+    let has_identity = stmt.exists(["requested_model_identity"])?;
+    let has_window = stmt.exists(["requested_context_window"])?;
+    Ok(has_identity && has_window)
 }
 
 /// v4's body. `ALTER TABLE … ADD COLUMN` is the first non-replayable step in
@@ -256,9 +270,12 @@ fn add_session_config_root(conn: &Connection) -> rusqlite::Result<()> {
 /// SCHEMA MAINTENANCE CONTRACT: these unversioned columns are intentionally not
 /// part of a numbered step. Any future `sessions` table rebuild must explicitly
 /// copy both of them, and any new-database schema rewrite must still create them.
-/// Raising `USER_VERSION` above 8 ends the v8 rollback window because the prior
-/// daemon's downgrade guard will then refuse the database; do that only as an
-/// explicit compatibility decision, not as cleanup for these additive columns.
+/// During the v8 rollback window, `requested_model` is the only selection value
+/// a prior daemon can read or write: it cannot express the separate canonical
+/// identity/window pair, and it may retain redundant native-1M markers. Raising
+/// `USER_VERSION` above 8 ends that window because the prior daemon's downgrade
+/// guard will then refuse the database; do that only as an explicit compatibility
+/// decision, not as cleanup for these additive columns.
 fn add_session_requested_selection(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
     let has_identity = stmt.exists(["requested_model_identity"])?;
@@ -382,6 +399,7 @@ ALTER TABLE sessions ADD COLUMN requested_context_window INTEGER;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::OpenFlags;
 
     #[test]
     fn migrate_is_idempotent() {
@@ -466,6 +484,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(columns, 2, "both columns exist exactly once after reopen");
+    }
+
+    #[test]
+    fn fully_migrated_v8_database_passes_the_read_only_open_probe() {
+        let path = crate::testtmp::db_path("schema-read-only");
+        {
+            let conn = Connection::open(&path).unwrap();
+            migrate(&conn).unwrap();
+        }
+
+        let read_only = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("open fully migrated database read-only");
+        migrate(&read_only).expect("steady-state migration makes no write attempt");
     }
 
     #[test]

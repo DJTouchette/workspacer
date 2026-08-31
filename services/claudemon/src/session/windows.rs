@@ -203,11 +203,15 @@ pub fn normalize_persisted_model_selection(
     Ok(PersistedModelSelection::from_selection(selection))
 }
 
-/// Read adapter for SQLite rows. Matching valid canonical data is authoritative.
-/// When a valid legacy value disagrees, though, it is newer rollback-era evidence:
-/// a v8 daemon can update only `requested_model`, so preferring the stale canonical
-/// pair would silently undo that model switch. Missing/invalid evidence on either
-/// side falls back to the other without making the surrounding row unreadable.
+/// Read adapter for SQLite rows. Canonical data is authoritative when its
+/// backward-compatible legacy projection agrees with the legacy column. This
+/// matters for native-1M Fable/Mythos: their canonical identity is bare, while
+/// a canonical 1M window deliberately projects to a bare legacy value. When
+/// the projections genuinely differ, the legacy value is newer rollback-era
+/// evidence: a v8 daemon can update only `requested_model`, so preferring the
+/// stale canonical pair would silently undo that model switch. Missing/invalid
+/// evidence on either side falls back to the other without making the
+/// surrounding row unreadable.
 ///
 /// `context_window` is signed because SQLite can contain manually-corrupted or
 /// future values. Non-positive values are invalid canonical evidence and must
@@ -234,7 +238,12 @@ pub fn restore_persisted_model_selection(
 
     let legacy = legacy_model.and_then(|model| normalize_model_selection(model, None).ok());
     match (canonical, legacy) {
-        (Some(canonical), Some(legacy)) if canonical == legacy => Some(canonical),
+        (Some(canonical), Some(legacy))
+            if legacy_model_for_normalized_selection(&canonical)
+                == legacy_model_for_normalized_selection(&legacy) =>
+        {
+            Some(canonical)
+        }
         // A prior v8 daemon writes only requested_model. A disagreement therefore
         // means that compatibility value was written after the canonical pair.
         (_, Some(legacy)) => Some(legacy),
@@ -349,10 +358,12 @@ pub fn resolve_window(
     override_window: Option<u64>,
     peak_context: u64,
 ) -> Option<u64> {
+    let requested_spelling = requested;
     let requested = requested.and_then(|value| normalize_model_selection(value, None).ok());
-    resolve_window_for_selection(
+    resolve_window_for_selection_with_requested_spelling(
         model,
         requested.as_ref(),
+        requested_spelling,
         reported,
         override_window,
         peak_context,
@@ -369,12 +380,34 @@ pub fn resolve_window_for_selection(
     override_window: Option<u64>,
     peak_context: u64,
 ) -> Option<u64> {
+    resolve_window_for_selection_with_requested_spelling(
+        model,
+        requested,
+        requested.map(|selection| selection.model.as_str()),
+        reported,
+        override_window,
+        peak_context,
+    )
+}
+
+/// [`resolve_window_for_selection`] with the original requested-model spelling
+/// retained for diagnostics. The canonical selection is the source of window
+/// truth; the raw spelling is only surfaced in the drift warning so an operator
+/// can see the model value the caller actually supplied.
+pub(crate) fn resolve_window_for_selection_with_requested_spelling(
+    model: Option<&str>,
+    requested: Option<&ModelSelection>,
+    requested_spelling: Option<&str>,
+    reported: Option<u64>,
+    override_window: Option<u64>,
+    peak_context: u64,
+) -> Option<u64> {
     let claims = window_claims(model, requested, reported, override_window);
     for claim in claims {
         if peak_context > claim.saturating_mul(DRIFT_TOLERANCE_NUM) / DRIFT_TOLERANCE_DEN {
             tracing::warn!(
                 model = model.unwrap_or("<none>"),
-                requested = requested.map(|s| s.model.as_str()).unwrap_or("<none>"),
+                requested = requested_spelling.unwrap_or("<none>"),
                 claimed_window = claim,
                 observed_peak = peak_context,
                 "context window drift: this session holds more than a window claimed for it, \

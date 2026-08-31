@@ -567,8 +567,20 @@ impl SessionStore {
                 // carried on `RestoredSession` because the resolver's fallback
                 // rank takes a model id, and a caller that has the row already
                 // has it.
-                st.requested_model = s.requested_model.clone();
                 st.requested_selection = s.requested_selection.clone();
+                // A restored v8 row can carry an older-but-equivalent spelling
+                // such as `fable[1m]` or `sonnet-1m`. Keep the public snapshot
+                // on the same compatibility projection the next ordinary
+                // persistence write will heal into SQLite, rather than briefly
+                // exposing a spelling that disagrees with the durable pair.
+                st.requested_model = s
+                    .requested_selection
+                    .as_ref()
+                    .map(|selection| {
+                        super::windows::PersistedModelSelection::from_selection(selection.clone())
+                            .legacy_model
+                    })
+                    .or(s.requested_model.clone());
                 // The transcript path, which is what `usage::usage_for_session`
                 // folds cost and tokens out of. `hydrate` could not restore it
                 // before v6 — the column did not exist — so EVERY rehydrated
