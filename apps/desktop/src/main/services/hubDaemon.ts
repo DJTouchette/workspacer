@@ -36,6 +36,15 @@ import { notifySystem } from './systemNotice';
 
 const PORT = PORTS.hub;
 const HEALTH_TIMEOUT_MS = 5000;
+/**
+ * How long past HEALTH_TIMEOUT_MS we keep waiting for a hub whose process is
+ * still alive. A boot storm (cold caches, the GPU process crash-looping into
+ * SwiftShader, claudemon respawning every session) has been observed to delay
+ * the hub's listen by 15s+; giving up at 5s used to orphan the desktop from a
+ * hub that came up healthy moments later — permanently, because the child
+ * never exits, so the exit-driven restart path never re-arms.
+ */
+const SLOW_START_PATIENCE_MS = 120_000;
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
@@ -570,15 +579,62 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(
+  readyPromise = awaitHealthPatiently(
     `http://${dialAuthority(addr)}/health`,
-    HEALTH_TIMEOUT_MS,
-    'hub',
     healthAbort.signal,
   ).then(() => {
     backoff.reset();
   });
   return readyPromise;
+}
+
+/**
+ * Wait for /health like waitForHealth, but don't treat "slow" as "dead": if the
+ * first round times out while the child is still running, surface a warning and
+ * keep polling. The promise stays pending, so startHub()'s caller runs its
+ * post-ready chain (hub client, federation bridge, MCP facade, token sweep)
+ * whenever the hub does come up — on the old single-round wait, one slow boot
+ * rejected that chain for the whole session while a healthy hub sat unused.
+ *
+ * Still rejects on: the child exiting (signal aborts — the exit handler owns
+ * restarts) or SLOW_START_PATIENCE_MS elapsing with no health (a live-but-wedged
+ * daemon; the caller's catch reports it, same as before).
+ */
+async function awaitHealthPatiently(url: string, signal: AbortSignal): Promise<void> {
+  try {
+    await waitForHealthShared(url, HEALTH_TIMEOUT_MS, 'hub', signal);
+    return;
+  } catch (err) {
+    if (signal.aborted) throw err;
+    console.warn(`[hub] not healthy after ${HEALTH_TIMEOUT_MS}ms but still running — waiting on: ${err}`);
+    // Same key as the caller's failure notice, so whichever lands last (this
+    // warn, the recovery info below, or the caller's give-up) replaces the rest.
+    notifySystem({
+      level: 'warn',
+      key: 'hub-start',
+      title: 'Control plane (hub) is slow to start',
+      detail:
+        'Still waiting for it to come up. Plugins and remote sharing will connect automatically once it does.',
+    });
+  }
+  const deadline = Date.now() + SLOW_START_PATIENCE_MS;
+  while (Date.now() < deadline) {
+    try {
+      await waitForHealthShared(url, HEALTH_TIMEOUT_MS, 'hub', signal);
+      notifySystem({
+        level: 'info',
+        key: 'hub-start',
+        title: 'Control plane (hub) started',
+        detail: 'It was slower than usual to come up. Plugins and remote sharing are available.',
+      });
+      return;
+    } catch (err) {
+      if (signal.aborted) throw err;
+    }
+  }
+  throw new Error(
+    `hub process is running but /health never answered within ${SLOW_START_PATIENCE_MS}ms of spawn`,
+  );
 }
 
 /** Respawn after an unexpected exit, with exponential backoff. */
