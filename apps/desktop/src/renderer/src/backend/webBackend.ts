@@ -29,6 +29,7 @@ import type {
 } from '../../../main/shared/ipcTypes';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
+import { mergeSelectionSlice, readSelectionSlice } from '../../../main/shared/canonicalSelection';
 import {
   createBusConversations,
   foldConversationItemsToTurns,
@@ -174,15 +175,39 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
   /** Remember a full snapshot (from the singular `sessions.snapshot`) as the
    *  history that later windows splice onto. */
   const seedFull = (snap: ClaudeSessionSnapshot): ClaudeSessionSnapshot => {
-    richSnaps.set(snap.sessionId, snap);
-    return applyLaunch(snap);
+    const mapped = applySelection(snap, richSnaps.get(snap.sessionId));
+    richSnaps.set(mapped.sessionId, mapped);
+    return applyLaunch(mapped);
+  };
+
+  /**
+   * Carry the daemon-owned canonical selection slice across a sparse overlay.
+   *
+   * `{...prev, ...snap}` is only accidentally safe for it. The combined brain
+   * emits the camelCase pair alongside claudemon's `requested_selection` /
+   * `resolved_context_window`, but an OLDER one sends only the snake spelling
+   * (as `status_line` and `tool_calls` still do), and against that row the
+   * spread neither maps the fields NOR protects the pair a richer earlier row
+   * supplied. Mapping and presence-merging both is what makes a sparse update
+   * able to add an owner fact and unable to subtract one.
+   */
+  const applySelection = <T extends ClaudeSessionSnapshot>(
+    snap: T,
+    prev?: ClaudeSessionSnapshot,
+  ) => {
+    const slice = mergeSelectionSlice(prev, readSelectionSlice(snap));
+    return slice.requestedSelection === undefined && slice.resolvedContextWindow === undefined
+      ? snap
+      : { ...snap, ...slice };
   };
 
   const foldSparse = (
     snap: ClaudeSessionSnapshot & { sparse?: boolean },
   ): ClaudeSessionSnapshot => {
     const prev = richSnaps.get(snap.sessionId);
-    const merged = applyLaunch(snap.sparse && prev ? { ...prev, ...snap } : snap);
+    const merged = applyLaunch(
+      applySelection(snap.sparse && prev ? { ...prev, ...snap } : snap, prev),
+    );
     if (!snap.sparse) {
       // A rich row from the LIST call is a bounded window too — sessions.snapshots
       // is compacted now — and OverviewPane refetches that list up to 1/s while an
@@ -230,11 +255,14 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
       }
       return null;
     }
-    const next = {
-      ...snap,
-      conversation: outcome.conversation,
-      conversationOffset: outcome.conversationOffset,
-    } as ClaudeSessionSnapshot;
+    const next = applySelection(
+      {
+        ...snap,
+        conversation: outcome.conversation,
+        conversationOffset: outcome.conversationOffset,
+      } as ClaudeSessionSnapshot,
+      prev,
+    );
     if (next.status === 'ended') {
       richSnaps.delete(next.sessionId);
       launchTruth.delete(next.sessionId);

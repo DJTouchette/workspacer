@@ -464,6 +464,11 @@ const WORKING = {
       ],
     },
   ],
+  // The daemon-owned canonical slice, as a real fleet row carries it. Modelled
+  // here so the mobile suite exercises a row that HAS one — /m reads these off
+  // agents.list rather than re-deriving a window from contextLimit.
+  requestedSelection: { model: 'claude-fable-5', contextWindow: 1000000 },
+  resolvedContextWindow: 1000000,
   usage: {
     model: 'claude-fable-5',
     contextTokens: 330000,

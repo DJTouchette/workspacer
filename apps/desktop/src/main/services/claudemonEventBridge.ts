@@ -12,6 +12,7 @@
 import { claudeSessionStore, type ManagedPendingWire } from './claudeSessionStore';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { consumeSseStream } from '../lib/sseConsumer';
+import { readSelectionSlice } from '../shared/canonicalSelection';
 
 let abort: AbortController | null = null;
 
@@ -37,6 +38,11 @@ export async function startClaudemonEventBridge(): Promise<void> {
           pending?: ManagedPendingWire | null;
           background_tasks?: number;
           subagents?: unknown[];
+          /** claudemon's canonical selection slice, in its own spelling. Both
+           *  optional — an older daemon sends neither, which is why the reader
+           *  below reports absence rather than a default. */
+          requested_selection?: { model?: string; context_window?: number | null } | null;
+          resolved_context_window?: number | null;
         };
       };
       try {
@@ -79,6 +85,11 @@ export async function startClaudemonEventBridge(): Promise<void> {
           // Ambient background work (shells, subagents) — badge, never "Working".
           backgroundTasks: update.state?.background_tasks,
           subagents: update.state?.subagents,
+          // The daemon OWNS the canonical selection slice; this is the only
+          // channel that carries it live. Mapped snake_case → camelCase here
+          // and merged presence-aware in the store, so a frame that omits
+          // either field cannot erase what the row already knows.
+          selection: readSelectionSlice(update.state),
         });
       }
     },

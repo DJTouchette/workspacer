@@ -9,6 +9,7 @@
  */
 
 import type { ProfileProvider } from './agentProfiles';
+import type { ModelSelection } from './modelContextWindows';
 
 export type { ProfileProvider };
 
@@ -315,6 +316,15 @@ export interface ClaudeSessionSnapshot {
    *  names — 'skipPermissions', 'permissionMode', 'profileId'). Absent when
    *  nothing was taken. */
   escalationScrubbed?: string[];
+  /** The canonical `{model, contextWindow}` pair this session was ASKED for,
+   *  suffix-free — the same fact `settings.model` carries in argv syntax
+   *  (`opus[1m]`), without it. Additive: absent on every row whose owner has
+   *  not said. See main/shared/canonicalSelection.ts. */
+  requestedSelection?: ModelSelection;
+  /** The window the session's OWNER resolved for it, in tokens. Stored exactly
+   *  as received — a receiver never re-derives or discards it. Absent = nobody
+   *  has said, never a guessed 200_000. */
+  resolvedContextWindow?: number;
 }
 
 // ── Federation (federation:peers) ──

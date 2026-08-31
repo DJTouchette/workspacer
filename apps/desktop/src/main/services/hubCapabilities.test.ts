@@ -212,7 +212,7 @@ vi.mock('./gitService', () => ({
 vi.mock('./terminalShare', () => ({}));
 vi.mock('../lib/workspacerHome', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
-const { registerHubCapabilities } = await import('./hubCapabilities');
+const { registerHubCapabilities, busContextLimit } = await import('./hubCapabilities');
 // The REAL ProgressReports singleton (over the mocked store and claudemon
 // above): its refusals and its per-session budget are the capability's
 // behaviour, so mocking it would leave the wiring asserting nothing.
@@ -2490,5 +2490,60 @@ describe('brief.check — flag a stale Now line, never touch the file', () => {
 
   it('is confined to the workspace roots, exactly like its writing siblings', () => {
     expect(() => call('brief.check', { project: '/etc' })).toThrow(/outside the allowed workspace/);
+  });
+});
+
+// ── The canonical selection slice on the bus row ─────────────────────────────
+//
+// `busContextLimit` is the DISPLAY seam: the one place a raw provider window is
+// allowed to be skipped. Nothing it does changes what is stored.
+describe('busContextLimit — the raw pair, and where it falls through to', () => {
+  it('prefers the provider-reported window', () => {
+    expect(
+      busContextLimit({
+        statusLine: { contextWindowSize: 272_000 },
+        usage: { contextTokens: 10_000, contextLimit: 200_000 },
+        resolvedContextWindow: 200_000,
+      }),
+    ).toBe(272_000);
+  });
+
+  // The 178% meter: Claude Code reports `context_window_size: 200000` even for
+  // a session spawned `opus[1m]`, and a live worker holding 356,380 tokens
+  // published {contextTokens: 356380, contextLimit: 200000} to every client.
+  // Past DRIFT_TOLERANCE the raw pair is a contradiction, not provider truth,
+  // so it is skipped for display in favour of the daemon's canonical answer.
+  it('skips a reported window this session has been seen to exceed', () => {
+    expect(
+      busContextLimit({
+        statusLine: { contextWindowSize: 200_000 },
+        usage: { contextTokens: 356_380, contextLimit: null },
+        resolvedContextWindow: 1_000_000,
+      }),
+    ).toBe(1_000_000);
+  });
+
+  it('keeps the raw window inside the 2% tolerance — rounding is not drift', () => {
+    expect(
+      busContextLimit({
+        statusLine: { contextWindowSize: 200_000 },
+        usage: { contextTokens: 201_000, contextLimit: null },
+        resolvedContextWindow: 1_000_000,
+      }),
+    ).toBe(200_000);
+  });
+
+  it('falls back to usage.contextLimit for a row whose owner published no window', () => {
+    expect(
+      busContextLimit({
+        statusLine: { contextWindowSize: 200_000 },
+        usage: { contextTokens: 356_380, contextLimit: 1_000_000 },
+      }),
+    ).toBe(1_000_000);
+  });
+
+  // 0 is what every consumer of this row already reads as unknown.
+  it('answers 0 rather than a guessed 200_000 when nothing is known', () => {
+    expect(busContextLimit({ usage: null })).toBe(0);
   });
 });

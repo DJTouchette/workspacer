@@ -291,6 +291,9 @@ export async function openExternalUrl(url: string): Promise<{ ok: boolean; error
 interface WindowBearingSnapshot {
   usage?: { contextTokens?: number; contextLimit?: number | null } | null;
   statusLine?: { contextWindowSize?: number } | null;
+  /** The daemon-owned canonical window. Consulted only as a DISPLAY fallback
+   *  below; nothing here writes it. */
+  resolvedContextWindow?: number;
 }
 
 /**
@@ -310,14 +313,22 @@ interface WindowBearingSnapshot {
  * `opus[1m]`, so a live 1M worker holding 356,380 tokens published
  * `{contextTokens: 356380, contextLimit: 200000}` to /m, /app, wks-tui and
  * every federated peer: a 178% meter. Dropping the disproved claim lands on
- * `usage.contextLimit`, which is the same resolver's answer once it has fallen
- * through to the `[1m]` marker the occupancy does not contradict.
+ * `resolvedContextWindow` — the daemon's own canonical answer for this session
+ * — and then, for a row whose owner has not published one, on
+ * `usage.contextLimit`.
+ *
+ * Note what this does NOT do: the raw pair is only ever *skipped for display*.
+ * `statusLine.contextWindowSize` and `resolvedContextWindow` both stay on the
+ * row exactly as their owners wrote them. What is stored never changes because
+ * of what is drawn.
  */
 export function busContextLimit(s: WindowBearingSnapshot): number {
   const reported = s.statusLine?.contextWindowSize;
   const held = s.usage?.contextTokens ?? 0;
   const disproved = !!reported && held > reported * DRIFT_TOLERANCE;
-  return (disproved ? undefined : reported) ?? s.usage?.contextLimit ?? 0;
+  return (
+    (disproved ? undefined : reported) ?? s.resolvedContextWindow ?? s.usage?.contextLimit ?? 0
+  );
 }
 
 export function registerHubCapabilities(): void {
@@ -500,6 +511,14 @@ export function registerHubCapabilities(): void {
       // which is the same resolver's answer after the fall-through (1M, from the
       // `[1m]` marker the occupancy does not contradict).
       contextLimit: busContextLimit(s),
+      // The daemon-owned canonical slice, forwarded untouched. This is the row
+      // /m and the other reduced-row clients read, so withholding it here would
+      // leave them re-deriving a window from `contextLimit` — the second
+      // disagreeing answer this slice exists to retire. `null` for a row whose
+      // owner has said nothing, matching the omit-what-is-unknown rule the
+      // fuller `sessions.snapshots` row keeps by simply not carrying the key.
+      requestedSelection: s.requestedSelection ?? null,
+      resolvedContextWindow: s.resolvedContextWindow ?? null,
       costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.

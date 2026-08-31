@@ -57,6 +57,7 @@ describe('claudemonEventBridge', () => {
       pending: null,
       backgroundTasks: undefined,
       subagents: undefined,
+      selection: {},
     });
   });
 
@@ -75,6 +76,7 @@ describe('claudemonEventBridge', () => {
       pending: null,
       backgroundTasks: undefined,
       subagents: undefined,
+      selection: {},
     });
   });
 
@@ -99,6 +101,7 @@ describe('claudemonEventBridge', () => {
       pending,
       backgroundTasks: undefined,
       subagents: undefined,
+      selection: {},
     });
   });
 
@@ -127,7 +130,39 @@ describe('claudemonEventBridge', () => {
       pending: null,
       backgroundTasks: 1,
       subagents,
+      selection: {},
     });
+  });
+
+  // claudemon OWNS the canonical selection slice and this feed is the only
+  // channel that carries it live. The bridge maps its spelling and forwards it;
+  // a frame that says nothing forwards an empty slice, which the store reads as
+  // "leave the row's own values alone".
+  it('maps the daemon selection slice to camelCase', async () => {
+    await startClaudemonEventBridge();
+    capturedOpts.onFrame(
+      JSON.stringify({
+        event: 'Managed',
+        session_id: 's1',
+        state: {
+          mode: 'responding',
+          requested_selection: { model: 'claude-opus-5', context_window: 1_000_000 },
+          resolved_context_window: 1_000_000,
+        },
+      }),
+    );
+    expect(applyManagedMode.mock.calls[0][2].selection).toEqual({
+      requestedSelection: { model: 'claude-opus-5', contextWindow: 1_000_000 },
+      resolvedContextWindow: 1_000_000,
+    });
+  });
+
+  it('forwards an empty slice for a frame that carries neither field', async () => {
+    await startClaudemonEventBridge();
+    capturedOpts.onFrame(
+      JSON.stringify({ event: 'Managed', session_id: 's1', state: { mode: 'input' } }),
+    );
+    expect(applyManagedMode.mock.calls[0][2].selection).toEqual({});
   });
 
   it('ignores non-Managed mode-change events (Spawn / Claude-PTY updates)', async () => {

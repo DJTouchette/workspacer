@@ -631,3 +631,117 @@ describe('proactive discovery — federation.peers on start and bus (re)connect'
     expect(listFederationPeers()).toEqual([]);
   });
 });
+
+// ── The daemon-owned canonical selection slice, across the federation seam ────
+//
+// claudemon owns `requested_selection` / `resolved_context_window`. Everything
+// on this side is a receiver: it maps the spelling, presence-merges, forwards.
+// The failure mode is silent — a field that arrives once, is erased by the next
+// state tick, and leaves every client re-deriving a window it should have been
+// handed.
+//
+// The combined brain now emits the camelCase pair ALONGSIDE claudemon's snake
+// originals, so a current peer row carries both. The desktop still reads either
+// spelling on purpose: version skew across a federation link is normal (an
+// older brain, or a peer mid-upgrade, sends only the snake form), and that is
+// the case these tests pin.
+//
+// Each test primes `callHub` with the peer's fleet first: a stamped event from
+// an unknown peer implicitly seeds it, and a seed answering `[]` would drop the
+// very row under test.
+describe('canonical selection slice — federation transparency', () => {
+  const pushed = (sessionId: string) =>
+    sent.filter((s) => s.sessionId === sessionId).at(-1)!.snapshot;
+
+  const SLICE_SNAKE = {
+    requested_selection: { model: 'claude-opus-5', context_window: 1_000_000 },
+    resolved_context_window: 1_000_000,
+  };
+  const SLICE_CAMEL = {
+    requestedSelection: { model: 'claude-opus-5', contextWindow: 1_000_000 },
+    resolvedContextWindow: 1_000_000,
+  };
+
+  /** Deliver `row` as a hub-stamped snapshot, with the implicit seed answering
+   *  the same fleet so it re-upserts rather than wipes. */
+  async function deliver(row: Record<string, unknown>, hub = 'beta'): Promise<void> {
+    callHub.mockResolvedValue([row]);
+    await emitAndFlush({ type: 'agent.snapshot', hub, data: row });
+  }
+
+  it('forwards a peer desktop row unchanged, both fields', async () => {
+    const id = uid('sel');
+    await deliver(remoteSnap(id, SLICE_CAMEL));
+    expect(pushed(id).requestedSelection).toEqual(SLICE_CAMEL.requestedSelection);
+    expect(pushed(id).resolvedContextWindow).toBe(1_000_000);
+  });
+
+  // Skew safety: an older brain forwards claudemon's originals unrenamed,
+  // exactly as `status_line` and `tool_calls` already ride along. Without the
+  // mapping that peer's whole fleet arrives windowless.
+  it('maps a snake_case-only sparse row from an older headless peer', async () => {
+    const id = uid('sel');
+    await deliver(brainSparseRow(id, SLICE_SNAKE));
+    expect(pushed(id).requestedSelection).toEqual(SLICE_CAMEL.requestedSelection);
+    expect(pushed(id).resolvedContextWindow).toBe(1_000_000);
+    // The wire spellings must not leak into the renderer's snapshot.
+    expect('requested_selection' in pushed(id)).toBe(false);
+    expect('resolved_context_window' in pushed(id)).toBe(false);
+  });
+
+  // A current brain sends both spellings of the same fact; they must agree and
+  // land once, not fight.
+  it('lands one slice when a row carries both spellings', async () => {
+    const id = uid('sel');
+    await deliver(brainSparseRow(id, { ...SLICE_SNAKE, ...SLICE_CAMEL }));
+    expect(pushed(id).requestedSelection).toEqual(SLICE_CAMEL.requestedSelection);
+    expect(pushed(id).resolvedContextWindow).toBe(1_000_000);
+  });
+
+  // The whole reason the merge reads presence rather than spreading: a sparse
+  // state tick says nothing about the window, and must not erase it.
+  it('keeps the owner fact when a later sparse row omits it', async () => {
+    const id = uid('sel');
+    await deliver(brainSparseRow(id, SLICE_SNAKE));
+    await emitAndFlush({
+      type: 'agent.snapshot',
+      hub: 'beta',
+      data: brainSparseRow(id, { ambientState: 'streaming' }),
+    });
+    expect(pushed(id).ambientState).toBe('streaming');
+    expect(pushed(id).resolvedContextWindow).toBe(1_000_000);
+    expect(pushed(id).requestedSelection).toEqual(SLICE_CAMEL.requestedSelection);
+  });
+
+  // A stamped event and a reconnect seed are two deliveries of the same row and
+  // must land identically — the seed is what every client sees after a flap.
+  it('lands the same slice from a stamped event and from a peer seed', async () => {
+    const viaEvent = uid('sel');
+    const viaSeed = uid('sel');
+    await deliver(remoteSnap(viaEvent, SLICE_SNAKE));
+    callHub.mockResolvedValue([remoteSnap(viaSeed, SLICE_SNAKE)]);
+    await emitAndFlush({ type: 'hub.peer.connected', data: { peer: 'gamma' } });
+    expect(pushed(viaSeed).requestedSelection).toEqual(pushed(viaEvent).requestedSelection);
+    expect(pushed(viaSeed).resolvedContextWindow).toEqual(pushed(viaEvent).resolvedContextWindow);
+    expect(pushed(viaSeed).resolvedContextWindow).toBe(1_000_000);
+  });
+
+  // Absence is a fact: no key, rather than a null or a guessed 200_000.
+  it('omits both fields entirely for a row whose owner said nothing', async () => {
+    const id = uid('sel');
+    await deliver(remoteSnap(id));
+    expect('requestedSelection' in pushed(id)).toBe(false);
+    expect('resolvedContextWindow' in pushed(id)).toBe(false);
+  });
+
+  // The slice must not become a new way for a peer's cwd to reach the local
+  // fs.* allow-list. `hub` still refuses, whatever else the row carries.
+  it('does not let a slice-bearing remote row grant a local fs root', async () => {
+    const id = uid('sel');
+    await deliver(remoteSnap(id, SLICE_CAMEL));
+    const snap = claudeSessionStore.getSnapshot(id)!;
+    expect(snap.hub).toBe('beta');
+    expect(snap.resolvedContextWindow).toBe(1_000_000);
+    expect(snapshotGrantsFsRoot(snap)).toBe(false);
+  });
+});

@@ -1,3 +1,5 @@
+import type { ModelSelection } from '../../../main/shared/modelContextWindows';
+
 export type SessionAmbientState =
   | 'idle'
   | 'thinking'
@@ -357,4 +359,14 @@ export interface ClaudeSessionSnapshot {
   compacting?: boolean;
   lastCompactAt?: number;
   compactionCount?: number;
+  /** The canonical `{model, contextWindow}` pair this session was ASKED for,
+   *  suffix-free — the same fact `settings.model` carries in argv syntax
+   *  (`opus[1m]`), without it. Additive: absent on every row whose owner has
+   *  not said. Mapped from claudemon's `requested_selection` in either spelling
+   *  by main/shared/canonicalSelection.ts. */
+  requestedSelection?: ModelSelection;
+  /** The window this session's OWNER resolved for it, in tokens, carried
+   *  verbatim. Absent = nobody has said — every readout already hides its meter
+   *  on an absent window rather than drawing one against a guess. */
+  resolvedContextWindow?: number;
 }

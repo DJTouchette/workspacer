@@ -924,3 +924,91 @@ describe('setSpawnMeta records the routing labels a dispatch arrived with', () =
     });
   });
 });
+
+// ── The daemon-owned canonical selection slice ───────────────────────────────
+//
+// claudemon owns `requested_selection` / `resolved_context_window`. This store
+// receives them (already mapped to camelCase by claudemonEventBridge), holds
+// them verbatim and forwards them; it never re-derives them from
+// `settings.model` or from the window resolver, which is the second,
+// disagreeing answer the slice exists to retire.
+describe('applyManagedMode carries the daemon selection slice', () => {
+  function managedSession(): string {
+    const sid = uniqueId();
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 0,
+      items: [],
+      reset: false,
+    } as never);
+    return sid;
+  }
+
+  const SLICE = {
+    requestedSelection: { model: 'claude-opus-5', contextWindow: 1_000_000 },
+    resolvedContextWindow: 1_000_000,
+  };
+
+  it('stores both fields exactly as the daemon sent them', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'claude',
+      selection: SLICE,
+    });
+    const snap = claudeSessionStore.getSnapshot(sid)!;
+    expect(snap.requestedSelection).toEqual(SLICE.requestedSelection);
+    expect(snap.resolvedContextWindow).toBe(1_000_000);
+  });
+
+  // The daemon broadcasts a Managed frame on every mode transition, and most of
+  // them restate nothing about the model. A plain assignment would erase the
+  // owner's fact on the very next tick.
+  it('keeps them when a later frame says nothing about either', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', { selection: SLICE });
+    claudeSessionStore.applyManagedMode(sid, 'input', { selection: {} });
+    const snap = claudeSessionStore.getSnapshot(sid)!;
+    expect(snap.requestedSelection).toEqual(SLICE.requestedSelection);
+    expect(snap.resolvedContextWindow).toBe(1_000_000);
+  });
+
+  it('lets a live model switch move the window the daemon reports', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', { selection: SLICE });
+    claudeSessionStore.applyManagedMode(sid, 'input', {
+      selection: {
+        requestedSelection: { model: 'claude-sonnet-5', contextWindow: 200_000 },
+        resolvedContextWindow: 200_000,
+      },
+    });
+    const snap = claudeSessionStore.getSnapshot(sid)!;
+    expect(snap.requestedSelection).toEqual({
+      model: 'claude-sonnet-5',
+      contextWindow: 200_000,
+    });
+    expect(snap.resolvedContextWindow).toBe(200_000);
+  });
+
+  // A session the daemon has said nothing about carries no key at all — absent
+  // is a different fact from any number, and every readout already hides its
+  // meter on it rather than drawing one against a guess.
+  it('leaves a row that was never told about the slice without the keys', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', { provider: 'codex' });
+    const snap = claudeSessionStore.getSnapshot(sid)!;
+    expect('requestedSelection' in snap).toBe(false);
+    expect('resolvedContextWindow' in snap).toBe(false);
+  });
+
+  // Occupancy is a DISPLAY question (busContextLimit), never a storage one: the
+  // owner's number is held as given even while the raw status pair disagrees.
+  it('never rewrites the stored window on occupancy', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      selection: { resolvedContextWindow: 200_000 },
+    });
+    claudeSessionStore.applyStatusLine(sid, { contextWindowSize: 200_000, contextUsedPct: 100 });
+    claudeSessionStore.applyManagedMode(sid, 'input', { selection: {} });
+    expect(claudeSessionStore.getSnapshot(sid)!.resolvedContextWindow).toBe(200_000);
+  });
+});

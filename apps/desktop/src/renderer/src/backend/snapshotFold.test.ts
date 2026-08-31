@@ -138,6 +138,52 @@ describe('createSnapshotFold — sparse rows still overlay', () => {
     expect(out.status).toBe('ended');
   });
 
+  // ── The daemon-owned canonical selection slice ──
+  //
+  // claudemon owns `requested_selection` / `resolved_context_window`; the web
+  // backend maps and forwards them. The combined brain now emits the camelCase
+  // pair alongside the snake originals, but an older one sends only the snake
+  // form — so both are read, and a sparse tick that mentions neither must not
+  // erase what the rich row already carried.
+  it('maps the snake_case slice an older headless node still sends', () => {
+    const f = fold();
+    const out = f.foldSparse({
+      sessionId: 's1',
+      status: 'active',
+      sparse: true,
+      requested_selection: { model: 'claude-opus-5', context_window: 1_000_000 },
+      resolved_context_window: 1_000_000,
+    } as never) as Snap;
+    expect(out.requestedSelection).toEqual({ model: 'claude-opus-5', contextWindow: 1_000_000 });
+    expect(out.resolvedContextWindow).toBe(1_000_000);
+  });
+
+  it('keeps the slice when a later sparse row omits it', () => {
+    const f = fold();
+    f.seedFull(
+      snap(['a'], 0, {
+        requestedSelection: { model: 'claude-opus-5', contextWindow: 1_000_000 },
+        resolvedContextWindow: 1_000_000,
+      }) as never,
+    );
+    const out = f.foldSparse({
+      sessionId: 's1',
+      status: 'active',
+      sparse: true,
+      ambientState: 'streaming',
+    } as never) as Snap;
+    expect(out.ambientState).toBe('streaming');
+    expect(out.resolvedContextWindow).toBe(1_000_000);
+    expect(out.requestedSelection).toEqual({ model: 'claude-opus-5', contextWindow: 1_000_000 });
+  });
+
+  it('leaves both keys off a row whose owner said nothing', () => {
+    const f = fold();
+    const out = f.foldSparse(snap(['a']) as never) as Snap;
+    expect('requestedSelection' in out).toBe(false);
+    expect('resolvedContextWindow' in out).toBe(false);
+  });
+
   // Ended sessions must leave the cache or it grows for the app's lifetime.
   it('evicts an ended session from the cache', () => {
     const f = fold();

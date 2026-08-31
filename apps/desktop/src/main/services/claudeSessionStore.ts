@@ -37,6 +37,12 @@ import type { PendingFencedSession, SessionWithoutPending } from './sessionStore
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { writeHistory } from './sessionStore/analyticsWriter';
 import { revokeSessionFacadeTokens } from './remoteTokens';
+import {
+  applySelectionSlice,
+  mergeSelectionSlice,
+  readSelectionSlice,
+  type CanonicalSelectionSlice,
+} from '../shared/canonicalSelection';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -487,6 +493,28 @@ export interface ClaudeSessionState {
    * this is a federated remote session (its parent is the PEER's fact).
    */
   orphan?: { confirmedManager: boolean };
+  /**
+   * The canonical `{model, contextWindow}` pair this session was ASKED for,
+   * suffix-free. `settings.model` remains the compatibility projection older
+   * readers know (it may still spell `opus[1m]`); this is the same fact without
+   * the argv syntax, and it is what a session's OWNER publishes.
+   *
+   * For a LOCAL session this host is the owner and derives it from the request
+   * it made (see sessionStore/selectionSlice). For a managed session the daemon
+   * is, and for a federated one the peer is — both arrive on the wire and are
+   * stored verbatim. Additive: absent when nobody has said.
+   */
+  requestedSelection?: import('../shared/modelContextWindows').ModelSelection;
+  /**
+   * The window this session's owner resolved for it, in tokens.
+   *
+   * Stored EXACTLY as received. A receiver never re-derives it and never
+   * discards it on occupancy — the drift check belongs to the raw provider
+   * status pair (`statusLine.contextWindowSize` beside a measured token count)
+   * and lives at the display seam (`busContextLimit`), not here. Absent =
+   * nobody has said, which every readout already renders as "no meter".
+   */
+  resolvedContextWindow?: number;
 }
 
 // Serialisable snapshot sent over IPC
@@ -1182,10 +1210,21 @@ class ClaudeSessionStore {
       pending?: ManagedPendingWire | null;
       backgroundTasks?: number;
       subagents?: unknown[];
+      /** claudemon's canonical selection slice, already mapped to camelCase
+       *  (claudemonEventBridge). The daemon owns both fields; this process
+       *  stores them and never re-derives them. */
+      selection?: CanonicalSelectionSlice;
     },
   ): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Presence-aware: the daemon wins each field it actually carries, and a
+    // frame that omits one leaves the row's existing value alone. A plain
+    // assignment here would erase the owner's fact on every mode transition
+    // that happened not to restate it.
+    if (meta?.selection) {
+      applySelectionSlice(session, mergeSelectionSlice(session, meta.selection));
+    }
     // Ambient background work (a dev server, a poll loop, an async subagent)
     // rides its own count — the mode deliberately does not claim "working"
     // for it, so this is what the UI badges instead.
@@ -1577,6 +1616,13 @@ class ClaudeSessionStore {
       if (questions) slot.parkQuestions(questions);
       else slot.resolveQuestions();
     });
+    // The peer owns its session's canonical slice. `...snap` above already
+    // carried a camelCase pair through, but a peer running only the headless
+    // brain forwards claudemon's snake_case originals unrenamed (the same way
+    // `status_line` and `tool_calls` ride along), so map both spellings — and
+    // presence-merge, so a window push that omits the slice keeps what the
+    // previous one told us.
+    applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
     if (folded && existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
@@ -1663,6 +1709,10 @@ class ClaudeSessionStore {
       if (questions) slot.parkQuestions(questions);
       else slot.resolveQuestions();
     });
+    // Same rule as the rich path: the peer owns the slice, both spellings are
+    // accepted, and a sparse row that omits it cannot erase the richer fact a
+    // previous update supplied.
+    applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
     if (existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
