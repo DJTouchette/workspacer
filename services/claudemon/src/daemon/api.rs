@@ -21,7 +21,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::protocol::WrapperMessage;
 use crate::session::{
     transcript, usage, ConversationStore, MessageOutcome, PermissionMode, PermissionSwitchError,
-    SessionMode, SessionStore,
+    SessionMode, SessionState, SessionStore,
 };
 use crate::store::Db;
 
@@ -411,6 +411,30 @@ struct ListSessionsQuery {
     include_empty: bool,
 }
 
+/// The daemon-owned session publication shape. The canonical request rides on
+/// `SessionState` itself; the resolved window is deliberately derived from the
+/// exact same owner resolver as `usage.context_limit`, never from an occupancy
+/// percentage or a downstream guess.
+fn published_session_value(state: &SessionState, usage: &usage::Usage) -> Value {
+    let mut value = serde_json::to_value(state).unwrap_or(Value::Null);
+    if let (Some(object), Some(window)) = (value.as_object_mut(), usage.context_limit) {
+        object.insert("resolved_context_window".into(), Value::from(window));
+    }
+    value
+}
+
+fn serialize_session_update(
+    update: crate::session::store::SessionUpdate,
+) -> serde_json::Result<String> {
+    let usage = usage::usage_for_session(&update.state);
+    let state = published_session_value(&update.state, &usage);
+    let mut value = serde_json::to_value(update)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("state".into(), state);
+    }
+    serde_json::to_string(&value)
+}
+
 async fn list_sessions(
     State(store): State<SessionStore>,
     Query(q): Query<ListSessionsQuery>,
@@ -443,7 +467,7 @@ async fn list_sessions(
                     return None;
                 }
                 let u = usage::usage_for_session(&state);
-                let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
+                let mut v = published_session_value(&state, &u);
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert(
                         "usage".to_string(),
@@ -476,7 +500,7 @@ async fn get_session(
             let u = tokio::task::spawn_blocking(move || usage::usage_for_session(&for_usage))
                 .await
                 .unwrap_or_default();
-            let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
+            let mut v = published_session_value(&state, &u);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert(
                     "usage".to_string(),
@@ -1422,19 +1446,33 @@ async fn event_stream(
     State(store): State<SessionStore>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = store.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
-        Ok(update) => match serde_json::to_string(&update) {
-            Ok(json) => Some(Ok(Event::default().event("session.update").data(json))),
-            Err(err) => {
-                tracing::warn!(?err, "failed to serialize session update");
-                None
+    let stream = BroadcastStream::new(rx)
+        .then(|res| async move {
+            match res {
+                Ok(update) => {
+                    match tokio::task::spawn_blocking(move || serialize_session_update(update))
+                        .await
+                    {
+                        Ok(Ok(json)) => {
+                            Some(Ok(Event::default().event("session.update").data(json)))
+                        }
+                        Ok(Err(err)) => {
+                            tracing::warn!(?err, "failed to serialize session update");
+                            None
+                        }
+                        Err(err) => {
+                            tracing::warn!(?err, "session update serialization task panicked");
+                            None
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(?err, "sse subscriber lagged");
+                    None
+                }
             }
-        },
-        Err(err) => {
-            tracing::warn!(?err, "sse subscriber lagged");
-            None
-        }
-    });
+        })
+        .filter_map(|event| event);
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
@@ -1742,6 +1780,167 @@ mod tests {
         assert_eq!(sessions[0]["session_id"], "sess-1");
         // The additive provider field is surfaced on the wire.
         assert_eq!(sessions[0]["provider"], "codex");
+    }
+
+    #[tokio::test]
+    async fn local_snapshot_publishes_the_owner_selection_and_resolved_window() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
+        state
+            .store
+            .set_requested_model_selection("sess-1", &selection);
+
+        let (status, body) = request(state, get("/sessions/sess-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["requested_model"], "opus[1m]");
+        assert_eq!(value["requested_selection"]["model"], "opus");
+        assert_eq!(value["requested_selection"]["context_window"], 1_000_000);
+        assert_eq!(value["resolved_context_window"], 1_000_000);
+        assert_eq!(value["usage"]["context_limit"], 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn sparse_snapshot_keeps_unknown_owner_fields_absent() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+
+        let (_, body) = request(state, get("/sessions/sess-1")).await;
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert!(value.get("requested_selection").is_none(), "{value}");
+        assert!(value.get("resolved_context_window").is_none(), "{value}");
+        assert!(value.get("requested_model").is_none(), "{value}");
+    }
+
+    #[tokio::test]
+    async fn canonical_publication_survives_db_restart_and_hydration() {
+        let state = test_state();
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("sonnet[1m]").unwrap();
+        state
+            .db
+            .record_event_with_spawn_facts(
+                &crate::session::HookEvent {
+                    event: "SessionStart".into(),
+                    session_id: "restored".into(),
+                    cwd: Some("/tmp/proj".into()),
+                    timestamp: None,
+                    payload: serde_json::Map::new(),
+                },
+                crate::store::SpawnFacts {
+                    requested_selection: Some(&selection),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let restored = SessionStore::new();
+        restored.hydrate(state.db.load_recent_sessions(10).unwrap());
+        let restarted = ApiState {
+            store: restored,
+            db: state.db,
+            conv: ConversationStore::new(),
+        };
+        let (_, body) = request(restarted, get("/sessions/restored")).await;
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["requested_selection"]["model"], "sonnet");
+        assert_eq!(value["requested_selection"]["context_window"], 1_000_000);
+        assert_eq!(value["resolved_context_window"], 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn update_and_snapshot_publish_the_same_owner_fields() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
+        state
+            .store
+            .set_requested_model_selection("sess-1", &selection);
+        let session = state.store.get("sess-1").unwrap();
+        let update: Value = serde_json::from_str(
+            &serialize_session_update(crate::session::store::SessionUpdate {
+                session_id: "sess-1".into(),
+                event: "Managed".into(),
+                state: session,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let (_, body) = request(state, get("/sessions/sess-1")).await;
+        let snapshot: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            update["state"]["requested_selection"],
+            snapshot["requested_selection"]
+        );
+        assert_eq!(
+            update["state"]["resolved_context_window"],
+            snapshot["resolved_context_window"]
+        );
+    }
+
+    #[tokio::test]
+    async fn early_356380_tokens_disprove_raw_200k_without_erasing_requested_1m() {
+        let dir = crate::testtmp::dir();
+        crate::session::transcript::allow_root(&dir);
+        let transcript_path = dir.join("early-1m.jsonl");
+        let row = json!({
+            "type": "assistant",
+            "message": {
+                "id": "msg-1",
+                "model": "claude-opus-5",
+                "usage": {
+                    "input_tokens": 356_380,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1
+                }
+            }
+        });
+        std::fs::write(&transcript_path, format!("{row}\n")).unwrap();
+
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
+        state
+            .store
+            .set_requested_model_selection("sess-1", &selection);
+        state.store.ingest(crate::session::HookEvent {
+            event: "SessionStart".into(),
+            session_id: "sess-1".into(),
+            cwd: Some("/tmp/proj".into()),
+            timestamp: None,
+            payload: serde_json::from_value(json!({
+                "transcript_path": transcript_path.to_string_lossy()
+            }))
+            .unwrap(),
+        });
+        state.store.apply_status_line(
+            "sess-1",
+            crate::session::StatusLine {
+                context_window_size: Some(200_000),
+                ..Default::default()
+            },
+        );
+
+        let (_, body) = request(state, get("/sessions/sess-1")).await;
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["resolved_context_window"], 1_000_000, "{value}");
+        assert_eq!(value["usage"]["context_limit"], 1_000_000, "{value}");
+        assert_eq!(
+            value["status_line"]["context_window_size"], 200_000,
+            "raw provider evidence remains unchanged: {value}"
+        );
     }
 
     #[tokio::test]

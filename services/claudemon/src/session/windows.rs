@@ -20,6 +20,8 @@
 //! that is the whole of the "every session starts at 200k and upgrades later"
 //! complaint.
 
+use serde::{Deserialize, Serialize};
+
 /// How a table row matches a model id (already lowercased).
 ///
 /// Normative, not an implementation detail: the `o3` / `o4` rows are `Prefix`
@@ -98,7 +100,7 @@ const WINDOWS: &[WindowRow] = &[
 const DRIFT_TOLERANCE_NUM: u64 = 102;
 const DRIFT_TOLERANCE_DEN: u64 = 100;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelection {
     pub model: String,
     pub context_window: Option<u64>,
