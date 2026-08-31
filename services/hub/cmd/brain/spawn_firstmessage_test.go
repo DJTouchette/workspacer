@@ -23,7 +23,7 @@ func TestSpawnCarriesTheFirstMessageOnTheManagedPayload(t *testing.T) {
 	defer srv.Close()
 	reg := newSpawnTestRegistry(t, srv.URL)
 
-	params := []byte(`{"cwd":"/tmp","provider":"codex","transport":"stream","message":"ship the thing"}`)
+	params := []byte(`{"cwd":"/tmp","provider":"codex","transport":"stream","parentSessionId":"manager-1","message":"ship the thing"}`)
 	res, err := reg.handle(context.Background(), "agents.spawn", params)
 	if err != nil {
 		t.Fatal(err)

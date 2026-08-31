@@ -174,9 +174,43 @@ export interface ClaudeArgvOptions {
   settingsFile?: string;
 }
 
+/** Pull profile-authored append-system-prompt pins out of extraArgs so the CLI
+ * receives that option exactly once. Claude does not define repeated pins as
+ * concatenation, but profiles and host contracts both need to survive; their
+ * explicit semantics here are profile text in declaration order, then host
+ * text, separated by blank lines. */
+function partitionAppendSystemPrompts(extraArgs: string[]): {
+  argv: string[];
+  prompts: string[];
+} {
+  const argv: string[] = [];
+  const prompts: string[] = [];
+  for (let i = 0; i < extraArgs.length; i++) {
+    const arg = extraArgs[i];
+    if (arg.startsWith('--append-system-prompt=')) {
+      const value = arg.slice('--append-system-prompt='.length);
+      if (value) prompts.push(value);
+      continue;
+    }
+    if (arg === '--append-system-prompt') {
+      const value = extraArgs[i + 1];
+      if (value !== undefined && !value.startsWith('--')) {
+        prompts.push(value);
+        i++;
+      }
+      // A valueless profile pin is invalid on its own. Drop only that broken
+      // flag instead of letting it consume the host-generated option.
+      continue;
+    }
+    argv.push(arg);
+  }
+  return { argv, prompts };
+}
+
 export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   const argv = getBaseArgv();
-  if (opts.extraArgs && opts.extraArgs.length) argv.push(...opts.extraArgs);
+  const profile = partitionAppendSystemPrompts(opts.extraArgs ?? []);
+  if (profile.argv.length) argv.push(...profile.argv);
   // Our overlay settings, if enabled. `--settings` layers additively, so a
   // profile's own `--settings` (in extraArgs) still applies alongside it.
   if (opts.settingsFile) {
@@ -225,8 +259,11 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   if (opts.allowedTools && opts.allowedTools.length) {
     argv.push('--allowedTools', opts.allowedTools.join(','));
   }
-  if (opts.appendSystemPrompt) {
-    argv.push('--append-system-prompt', opts.appendSystemPrompt);
+  const appendSystemPrompt = [...profile.prompts, opts.appendSystemPrompt]
+    .filter((part): part is string => !!part)
+    .join('\n\n');
+  if (appendSystemPrompt) {
+    argv.push('--append-system-prompt', appendSystemPrompt);
   }
   if (opts.resumeSessionId) {
     argv.push('--resume', opts.resumeSessionId);

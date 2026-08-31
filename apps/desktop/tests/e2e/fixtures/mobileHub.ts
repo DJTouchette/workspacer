@@ -844,3 +844,28 @@ export const FLEET_CATCHUP_TEXT =
   '- docs sweep (session:worker-3, cwd /home/djtouchette/Work/worky/workspacer) — last reply: Landing docs realigned to source.\n\n' +
   'Review each (get_conversation with sinceSeq), update the project brief\'s "## Recently", ' +
   'and report the outcome with session:<id> references. Then STOP again.';
+
+const LONG_NEXT_ACTION =
+  'Review the locally prepared artifact, confirm the release authority boundary, and then ' +
+  'redispatch only the publishing step to a release-capable worker. '.repeat(3);
+
+/** Deliberately carries both valid terminal surfaces with the same long field
+ * name. Production asks for exactly one; the overlap is a renderer stress case
+ * proving the two cards do not share disclosure keys. */
+export const FLEET_ESCALATION_TEXT =
+  '[fleet] Worker escalated — blocked and did not complete:\n' +
+  '- release publisher (session:worker-4, cwd /home/djtouchette/Work/worky/workspacer) — last reply: Publishing requires release authority.\n\n' +
+  `Structured result — release publisher (session:worker-4):\n${JSON.stringify({ nextAction: LONG_NEXT_ACTION }, null, 2)}\n\n` +
+  `Worker escalation — release publisher (session:worker-4):\n${JSON.stringify(
+    {
+      type: 'worker-escalation',
+      status: 'blocked',
+      reason: 'Publishing requires release authority.',
+      requiredAuthorityOrDecision: 'Authorize a release-capable worker to publish.',
+      changed: false,
+      nextAction: LONG_NEXT_ACTION,
+    },
+    null,
+    2,
+  )}\n\n` +
+  'This is a terminal escalation, NOT a completed outcome. Read the validated "worker escalation" block above and do not record the task as landed.';

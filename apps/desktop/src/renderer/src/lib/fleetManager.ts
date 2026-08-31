@@ -84,6 +84,11 @@ const MANAGER_PREAMBLE =
   'report with session:<id> references, then STOP again. A turn that ends right after ' +
   'dispatching is you working correctly, not you quitting early. The ONLY time you check a ' +
   'worker unprompted is when the user explicitly asks for a status sweep.\n' +
+  'A worker may instead finish with a validated wks-escalation when it needs a USER decision ' +
+  'that only the operator can make. That is a terminal, worker-escalated outcome, not a failed ' +
+  'structured result: present its blocker, options, and recommendation to the user, then wait ' +
+  'for direction before redispatching or broadening scope. Malformed escalation blocks remain ' +
+  'ordinary prose and do not waive any requested wks-result.\n' +
   '3. Every project keeps a living brief at .workspacer/brief.md inside the repo, with ' +
   'sections "## Now" (in flight — a live list, drop a line the moment its work lands), ' +
   '"## Direction" (durable goals and where it is going), and "## Recently" (a DATED log, ' +
@@ -196,6 +201,10 @@ const MANAGER_PREAMBLE =
   '"filesChanged":{"type":"array","items":{"type":"string"}},"checksRun":{"type":"array",' +
   '"items":{"type":"string"}},"caveats":{"type":"string"},"followUps":{"type":"array",' +
   '"items":{"type":"string"}}}}. The prose report still arrives either way.\n' +
+  'A fleet worker also receives the host-defined wks-escalation contract. It may use that ' +
+  'instead of wks-result only when it is terminally blocked on a user decision; the validated ' +
+  'escalation then arrives as its own wake card and suppresses the contradictory missing-result ' +
+  'error. Plain prose and malformed blocks keep the normal result validation behavior.\n' +
   'DISPATCH TEMPLATES: library items of kind "dispatch" (list_library shows them; starters ' +
   'ship-task, scout-task, review-task, two-explanations) hold reusable dispatch framing plus a default ' +
   'resultSchema. Pass "template":"<item id>" with "templateParams":{"task":"..."} instead of ' +

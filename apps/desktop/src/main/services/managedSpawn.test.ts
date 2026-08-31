@@ -369,7 +369,7 @@ describe('spawnManagedAgent — facade tool tiers', () => {
     expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('view');
     expect(lastManaged().mcp).toBe('http://127.0.0.1:0/mcp?t=tok-abc');
     expect(lastManaged().instructions).toContain('FACADE');
-    expect(lastManaged().instructions).toContain('wks-escalation');
+    expect(lastManaged().instructions).not.toContain('wks-escalation');
   });
 
   it('claude stream + facade carries the token in a per-session config file, never payload.mcp', async () => {
@@ -388,7 +388,7 @@ describe('spawnManagedAgent — facade tool tiers', () => {
     expect(extraArgs.join(' ')).not.toContain('tok-abc');
     expect(lastManaged()).not.toHaveProperty('mcp');
     expect(lastManaged().instructions).toContain('FACADE');
-    expect(lastManaged().instructions).toContain('wks-escalation');
+    expect(lastManaged().instructions).not.toContain('wks-escalation');
   });
 
   it('legacy mcpFacade still works and defaults to operator', async () => {
@@ -403,15 +403,15 @@ describe('spawnManagedAgent — facade tool tiers', () => {
 
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
     expect(lastManaged().instructions).toContain('FACADE');
-    expect(lastManaged().instructions).toContain('wks-escalation');
+    expect(lastManaged().instructions).not.toContain('wks-escalation');
   });
 
-  it('no facade flags → no token or mcp, but the terminal escalation contract remains', async () => {
+  it('an ordinary pane with no facade gets no token, mcp, or fleet contract', async () => {
     await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
 
     expect(mintSessionFacadeToken).not.toHaveBeenCalled();
     expect(lastManaged()).not.toHaveProperty('mcp');
-    expect(lastManaged().instructions).toContain('wks-escalation');
+    expect(lastManaged()).not.toHaveProperty('instructions');
   });
 });
 
@@ -488,8 +488,12 @@ describe('spawnManagedAgent — resultSchema', () => {
     expect(lastMeta()).toMatchObject({ resultSchema: schema });
   });
 
-  it('sends only the always-on escalation contract without a schema or the facade', async () => {
-    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+  it('sends only the worker escalation contract without a schema or the facade', async () => {
+    await spawnManagedAgent({
+      provider: 'opencode',
+      cwd: '/proj',
+      parentSessionId: 'manager-1',
+    });
     expect(lastManaged().instructions).toContain('wks-escalation');
     expect(lastManaged().instructions).not.toContain('STRUCTURED RESULT CONTRACT');
   });
@@ -589,7 +593,7 @@ describe('spawnManagedAgent — firstMessage', () => {
     expect(lastManaged().firstMessage).toBeUndefined();
   });
 
-  it('rides the codex PTY-hybrid spawn too — the one path with no instructions channel', async () => {
+  it('uses Codex developer instructions on the PTY hybrid without changing the user task', async () => {
     const orig = process.platform;
     // The rollout hybrid is reached by asking for it now, not by being on
     // Windows: win32 + headless takes the managed app-server path like
@@ -600,23 +604,44 @@ describe('spawnManagedAgent — firstMessage', () => {
         provider: 'codex',
         transport: 'pty',
         cwd: '/proj',
+        parentSessionId: 'manager-1',
         firstMessage: 'ship the thing',
       });
     } finally {
       Object.defineProperty(process, 'platform', { value: orig });
     }
     expect(spawnMock).toHaveBeenCalledTimes(1);
-    const prompt = (spawnMock.mock.calls.at(-1)![0] as Payload).firstMessage as string;
-    expect(prompt).toContain('wks-escalation');
-    expect(prompt).toMatch(/ship the thing$/);
+    const payload = spawnMock.mock.calls.at(-1)![0] as Payload;
+    expect(payload.firstMessage).toBe('ship the thing');
+    const argv = payload.argv as string[];
+    expect(argv.join('\n')).toContain('developer_instructions=');
+    expect(argv.join('\n')).toContain('wks-escalation');
+  });
+
+  it('gives a fleet Codex PTY hybrid the hidden contract even with no firstMessage', async () => {
+    const orig = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await spawnManagedAgent({
+        provider: 'codex',
+        transport: 'pty',
+        cwd: '/proj',
+        parentSessionId: 'manager-1',
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: orig });
+    }
+    const payload = spawnMock.mock.calls.at(-1)![0] as Payload;
+    expect(payload.firstMessage).toBeUndefined();
+    expect((payload.argv as string[]).join('\n')).toContain('developer_instructions=');
   });
 });
 
-describe('spawnManagedAgent — always-on terminal escalation contract', () => {
+describe('spawnManagedAgent — fleet-worker terminal escalation contract', () => {
   it.each(['codex', 'copilot', 'opencode', 'pi'] as const)(
     '%s receives the contract without a facade or resultSchema',
     async (provider) => {
-      await spawnManagedAgent({ provider, cwd: '/proj' });
+      await spawnManagedAgent({ provider, cwd: '/proj', parentSessionId: 'manager-1' });
       const instructions = lastManaged().instructions as string;
       expect(instructions).toContain('STRUCTURED WORKER ESCALATION CONTRACT');
       expect(instructions).toContain('requiredAuthorityOrDecision');
@@ -625,8 +650,25 @@ describe('spawnManagedAgent — always-on terminal escalation contract', () => {
   );
 
   it('claude stream receives the same contract', async () => {
-    await spawnManagedAgent({ provider: 'claude', transport: 'stream', cwd: '/proj' });
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      parentSessionId: 'manager-1',
+    });
     expect(lastManaged().instructions).toContain('wks-escalation');
+  });
+
+  it('excludes a manager even if it accidentally carries parent metadata', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      cwd: '/proj',
+      parentSessionId: 'manager-0',
+      manager: true,
+      toolScope: 'operator',
+    });
+    expect(lastManaged().instructions).toContain('FACADE');
+    expect(lastManaged().instructions).not.toContain('wks-escalation');
   });
 });
 

@@ -1508,7 +1508,7 @@ type spawnAgentIn struct {
 	// holding spawn_agent already holds send_message, and could always have
 	// sent this exact text to the session it just created. This removes a round
 	// trip, not a check.
-	Message string `json:"message,omitempty" jsonschema:"the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up). The wks-result contract from resultSchema lands separately, not prepended into this text: an appended system prompt for the default Claude PTY provider, or prepended ahead of this message for managed/stream providers. Either way it arrives in the agent's first turn alongside this message"`
+	Message string `json:"message,omitempty" jsonschema:"the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up). Host result and escalation contracts land through a separate instruction channel, not inside this user-visible text, and arrive on the first turn even when message is omitted"`
 	// ResultSchema is the structured-result contract (the Workflow tool's
 	// agent({schema}) shape): a JSON Schema in, a validated object back on the
 	// finished wake. Modelled as map[string]any rather than a typed struct for
@@ -1518,7 +1518,7 @@ type spawnAgentIn struct {
 	// worker plus a validator run over the worker's own output, so it grants
 	// the caller nothing that writing the same sentence into the worker's first
 	// message would not.
-	ResultSchema map[string]any `json:"resultSchema,omitempty" jsonschema:"OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. Desktop-only (the headless brain declines it)"`
+	ResultSchema map[string]any `json:"resultSchema,omitempty" jsonschema:"OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. A valid terminal wks-escalation is the one alternative: it gets its own wake card without a contradictory missing-result error. Desktop-only (the headless brain declines arbitrary resultSchema, while still providing its fixed escalation contract)"`
 	// Template names a library item of kind 'dispatch' — reusable dispatch TEXT
 	// (plus a default resultSchema) the host renders into the first message.
 	// Text-only by construction: a dispatch item has no spawn-argument fields at

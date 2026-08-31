@@ -696,6 +696,14 @@ type sessionParam struct {
 // the desktop's hand-copied option literals did.
 func (p spawnParams) isWakeTarget() bool { return p.Manager }
 
+// isFleetWorker is the single authority for host-authored worker contracts.
+// parentSessionId identifies a real dispatch relationship; Manager excludes
+// the Fleet Manager itself even if a caller accidentally supplies a parent.
+// TWIN: main/shared/workerEscalation.ts isFleetDispatchedWorker.
+func (p spawnParams) isFleetWorker() bool {
+	return !p.Manager && strings.TrimSpace(p.ParentSessionID) != ""
+}
+
 func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p spawnParams
 	if err := unmarshal(raw, &p); err != nil {
@@ -825,14 +833,19 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	argv := buildArgv(prof, p.Model, p.Effort, p.skip, p.PermissionMode, sessionID, resume)
 	if facade != nil {
-		args, err := facade.claudeArgs(workerEscalationContract)
+		extraInstructions := ""
+		if p.isFleetWorker() {
+			extraInstructions = workerEscalationContract
+		}
+		args, err := facade.claudeArgs(extraInstructions)
 		if err != nil {
 			return nil, err
 		}
 		argv = append(argv, args...)
-	} else {
-		// Escalation is always available, including plain workers with no MCP
-		// facade and no caller-authored resultSchema.
+	} else if p.isFleetWorker() {
+		// A plain fleet worker still gets the contract without needing a facade
+		// or caller-authored resultSchema. Ordinary user panes get no fleet
+		// protocol text.
 		argv = append(argv, "--append-system-prompt", workerEscalationContract)
 	}
 
@@ -1025,11 +1038,8 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			}
 		}
 	}
-	// Always-on and independent of the facade/resultSchema. Managed adapters
-	// prepend this passive instruction prefix to the first real task prompt.
-	req.Instructions = workerEscalationContract
 	if facade != nil {
-		req.Instructions = facade.Instructions + "\n\n" + workerEscalationContract
+		req.Instructions = facade.Instructions
 		if isClaudeStream {
 			args, err := facade.claudeArgs("")
 			if err != nil {
@@ -1039,6 +1049,15 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		} else {
 			req.MCP = facade.URL
 		}
+	}
+	if p.isFleetWorker() {
+		// Independent of facade/resultSchema, but scoped to actual dispatches.
+		// Managed adapters prepend this passive instruction prefix to the first
+		// real task prompt and retain it if that prompt arrives later.
+		if req.Instructions != "" {
+			req.Instructions += "\n\n"
+		}
+		req.Instructions += workerEscalationContract
 	}
 	req.FirstMessage = p.Message
 	id, queued, err := r.cm.spawnManaged(ctx, req)

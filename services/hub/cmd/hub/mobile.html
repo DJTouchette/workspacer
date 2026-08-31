@@ -2929,6 +2929,10 @@
     const body = resultFieldsInSlot(view, 'body');
     const heading = escalation ? 'WORKER ESCALATION' : 'STRUCTURED RESULT';
     const missing = escalation ? 'invalid worker escalation' : 'no structured result';
+    // A malformed worker can carry both terminal blocks. Scope every
+    // disclosure by card kind as well as message/session so equal field names
+    // never open the result and escalation cards together.
+    const cardKey = `${msgKey}:${entry.sessionId}:${escalation ? 'escalation' : 'result'}`;
     let html = `<div class="fresult"><div class="frh">◧ ${heading}</div>`;
     if (error) html += `<div class="fmissing">⚠ ${missing}<br />${esc(error)}</div>`;
     if (view.fallback) {
@@ -2937,7 +2941,7 @@
     }
     if (summary.length) html += `<div class="fchips">${summary.map(resultChipHtml).join('')}</div>`;
     for (const f of caveats) html += resultCaveatsBandHtml(f);
-    if (body.length) html += `<div class="fbody">${body.map((f) => resultBodyFieldHtml(f, msgKey)).join('')}</div>`;
+    if (body.length) html += `<div class="fbody">${body.map((f) => resultBodyFieldHtml(f, cardKey)).join('')}</div>`;
     return html + `</div>`;
   }
 

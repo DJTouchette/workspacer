@@ -3,8 +3,9 @@
  * normal completion report.
  *
  * Unlike `wks-result`, this contract is host-authored and has one stable
- * shape. It is always injected into spawned harnesses, including dispatches
- * with no caller-supplied resultSchema, and is parsed independently so adding
+ * shape. It is injected into fleet-dispatched workers (a non-manager spawn
+ * carrying authoritative parent metadata), including dispatches with no
+ * caller-supplied resultSchema, and is parsed independently so adding
  * escalation cannot change ordinary structured-result behavior.
  */
 
@@ -28,6 +29,17 @@ export interface WorkerEscalationRead {
   value?: WorkerEscalation;
   /** A tagged block was present but invalid. Absence is represented by null. */
   error?: string;
+}
+
+/** Spawn metadata is the authority for whether this is a fleet worker. Labels,
+ * facade access and first-message presence are deliberately irrelevant: user
+ * panes can have tools, workers can start before their task arrives, and the
+ * Fleet Manager itself has a facade. */
+export function isFleetDispatchedWorker(meta: {
+  parentSessionId?: string;
+  manager?: boolean;
+}): boolean {
+  return !meta.manager && !!meta.parentSessionId?.trim();
 }
 
 const REQUIRED_KEYS = [

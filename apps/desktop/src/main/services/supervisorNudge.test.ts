@@ -365,7 +365,7 @@ describe('supervisorNudge.onFinished — structured results', () => {
   });
 });
 
-// ── Fixed terminal worker escalation (always-on; no resultSchema required) ──
+// ── Fixed terminal worker escalation (fleet workers; no resultSchema required) ──
 describe('supervisorNudge.onFinished — terminal escalation', () => {
   const escalation =
     'I cannot publish with read-only authority.\n\n```wks-escalation\n' +
@@ -397,6 +397,57 @@ describe('supervisorNudge.onFinished — terminal escalation', () => {
     expect(parsed?.kind).toBe('worker-escalated');
     expect(parsed?.entries[0].escalation).toContain('"changed": false');
     expect(parsed?.entries[0].lastReply).toContain('read-only authority');
+  });
+
+  it('suppresses the contradictory missing-result diagnosis when escalation is valid', async () => {
+    const schema = {
+      type: 'object',
+      required: ['commit'],
+      properties: { commit: { type: 'string' } },
+    };
+    supervisorNudge.onFinished(
+      worker({
+        resultSchema: schema,
+        conversation: turns(['user', 'publish it'], ['assistant', escalation]),
+      }),
+      'mgr',
+      escalation,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('Worker escalation — alpha: fix tests');
+    expect(text).not.toContain('Structured result MISSING');
+    const entry = parseFleetMessage(text)?.entries[0];
+    expect(entry?.escalation).toContain('worker-escalation');
+    expect(entry?.resultError).toBeUndefined();
+  });
+
+  it('keeps real result errors when the attempted escalation is malformed', async () => {
+    const malformed =
+      'I cannot publish.\n\n```wks-escalation\n' +
+      '{"type":"worker-escalation","status":"blocked","reason":"no authority"}\n```';
+    const schema = {
+      type: 'object',
+      required: ['commit'],
+      properties: { commit: { type: 'string' } },
+    };
+    supervisorNudge.onFinished(
+      worker({
+        resultSchema: schema,
+        conversation: turns(['user', 'publish'], ['assistant', malformed]),
+      }),
+      'mgr',
+      malformed,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('Worker escalation INVALID');
+    expect(text).toContain('Structured result MISSING');
+    const entry = parseFleetMessage(text)?.entries[0];
+    expect(entry?.escalationError).toContain('requiredAuthorityOrDecision');
+    expect(entry?.resultError).toContain('did not honor the result contract');
   });
 
   it('does not silently accept a malformed escalation block', async () => {

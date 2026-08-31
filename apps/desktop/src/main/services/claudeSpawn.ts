@@ -38,7 +38,7 @@ import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
-import { buildWorkerEscalationContract } from '../shared/workerEscalation';
+import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 
@@ -298,9 +298,10 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
       ).token,
     });
   const resultContract = resultSchema ? buildResultContract(resultSchema) : '';
+  const escalationContract = isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '';
   const appendSystemPrompt = [
     facadeArgs ? facadeArgs.appendSystemPrompt : '',
-    buildWorkerEscalationContract(),
+    escalationContract,
     resultContract,
   ]
     .filter(Boolean)

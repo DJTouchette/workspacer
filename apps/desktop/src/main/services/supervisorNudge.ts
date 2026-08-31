@@ -391,20 +391,23 @@ class SupervisorNudge {
       // because an error can arrive with the session still alive.
       const failure = workerFailureReason(session, reply);
       if (failure) entry.failed = failure;
+      // Escalation is the alternative terminal outcome. Parse it FIRST: a
+      // valid wks-escalation intentionally replaces wks-result for this turn,
+      // so asking the result parser to diagnose the absent completion block
+      // would produce a contradictory "MISSING" card beside the escalation.
+      // Malformed escalation does not earn that suppression and continues
+      // through normal result validation below.
+      attachWorkerEscalation(entry, reply);
       // A dispatch that asked for a machine-readable result gets it validated
       // HERE, against the schema recorded at spawn, from the same final message
       // the prose comes from. Strictly additive: success adds the object,
       // failure adds a one-line reason, and neither touches lastReply/fullReply
       // — the manager always still receives what the worker actually wrote.
-      if (session.resultSchema) {
+      if (session.resultSchema && !entry.escalation) {
         const outcome = readStructuredResult(reply, session.resultSchema);
         if (outcome.json) entry.result = outcome.json;
         else if (outcome.error) entry.resultError = outcome.error;
       }
-      // Independent of resultSchema: every worker was told the fixed terminal
-      // escalation contract. A valid block changes the wake kind; a malformed
-      // one stays an ordinary finish with an explicit validation error.
-      attachWorkerEscalation(entry, reply);
       // Nothing new to report: this edge produced the exact reply/status
       // already delivered for this worker — a flapping block or a re-derived
       // Stop with no fresh output (PER_TURN_WAKE_FINDING.md 1b). A genuinely

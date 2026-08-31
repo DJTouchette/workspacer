@@ -57,6 +57,39 @@ describe('buildClaudeArgv', () => {
     });
   });
 
+  describe('--append-system-prompt profile pins', () => {
+    it('combines profile text before host text and emits exactly one flag', () => {
+      const argv = buildClaudeArgv({
+        extraArgs: ['--foo', '--append-system-prompt', 'PROFILE ONE', '--bar'],
+        appendSystemPrompt: 'HOST CONTRACT',
+      });
+      expect(argv.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1);
+      expect(argv).not.toContain('PROFILE ONE');
+      expect(argv[argv.indexOf('--append-system-prompt') + 1]).toBe('PROFILE ONE\n\nHOST CONTRACT');
+      expect(argv).toContain('--foo');
+      expect(argv).toContain('--bar');
+    });
+
+    it('combines repeated separate/equal profile pins in declaration order', () => {
+      const argv = buildClaudeArgv({
+        extraArgs: ['--append-system-prompt=PROFILE ONE', '--append-system-prompt', 'PROFILE TWO'],
+        appendSystemPrompt: 'HOST',
+      });
+      expect(argv.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1);
+      expect(argv[argv.indexOf('--append-system-prompt') + 1]).toBe(
+        'PROFILE ONE\n\nPROFILE TWO\n\nHOST',
+      );
+    });
+
+    it('keeps a profile-only pin with the same single-flag semantics', () => {
+      const argv = buildClaudeArgv({
+        extraArgs: ['--append-system-prompt=PROFILE ONLY'],
+      });
+      expect(argv.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1);
+      expect(argv[argv.indexOf('--append-system-prompt') + 1]).toBe('PROFILE ONLY');
+    });
+  });
+
   describe('--model flag injection', () => {
     it('injects --model when model is set and profile does not pin one', () => {
       const argv = buildClaudeArgv({ model: 'claude-opus-4-8' });

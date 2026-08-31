@@ -23,6 +23,7 @@ import {
   fleetWakeSnapshot,
   FLEET_WAKE_TEXT,
   FLEET_CATCHUP_TEXT,
+  FLEET_ESCALATION_TEXT,
   type MobileHub,
 } from './fixtures/mobileHub';
 
@@ -395,6 +396,32 @@ test.describe('mobile client', () => {
     await expect(card.locator('.freply')).toHaveCount(0);
     await reply.click();
     await expect(card.locator('.freply')).toContainText('Landing docs realigned to source');
+  });
+
+  test('a worker-escalated wake executes the parser/card and keeps result toggles isolated', async ({
+    page,
+  }) => {
+    await openClient(page);
+    hub.pushSnapshot(fleetWakeSnapshot(FLEET_ESCALATION_TEXT));
+    await page.locator('.agent[data-agent="fleetwake1"] .top').click();
+
+    const card = page.locator('.fleetcard');
+    await expect(card.locator('.fch')).toContainText('FLEET · WORKER ESCALATED');
+    await expect(card.locator('.fl')).toHaveText('release publisher');
+    const terminalCards = card.locator('.fresult');
+    await expect(terminalCards).toHaveCount(2);
+    await expect(terminalCards.nth(0).locator('.frh')).toContainText('STRUCTURED RESULT');
+    await expect(terminalCards.nth(1).locator('.frh')).toContainText('WORKER ESCALATION');
+    await expect(terminalCards.nth(1)).toContainText('Publishing requires release authority');
+    await expect(card).not.toContainText('no structured result');
+
+    const resultMore = terminalCards.nth(0).locator('.fmore', { hasText: 'more' });
+    const escalationMore = terminalCards.nth(1).locator('.fmore', { hasText: 'more' });
+    await expect(resultMore).toBeVisible();
+    await expect(escalationMore).toBeVisible();
+    await resultMore.click();
+    await expect(terminalCards.nth(0).locator('.fmore')).toHaveText('less');
+    await expect(terminalCards.nth(1).locator('.fmore')).toHaveText('more');
   });
 
   test('an ordinary user message with braces still renders as a plain bubble, not a fleet card', async ({

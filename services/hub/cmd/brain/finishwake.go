@@ -35,7 +35,7 @@ package main
 //     state before it.
 //   - caller-authored structured result ❌ — `resultSchema` is declined by the
 //     headless spawn, so there is no arbitrary schema to validate against.
-//   - fixed worker escalation ✅ — its host-authored shape is always injected
+//   - fixed worker escalation ✅ — its host-authored shape is injected for fleet workers
 //     and validated here without depending on resultSchema.
 //
 // THE TWO PARTS THAT ARE EASY TO DROP, and why neither is:

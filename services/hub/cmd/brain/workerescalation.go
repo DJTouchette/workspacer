@@ -3,7 +3,8 @@ package main
 // The fixed terminal escalation contract, headless twin of
 // apps/desktop/src/main/shared/workerEscalation.ts. Unlike resultSchema this is
 // host-authored, so the brain can validate it exactly without implementing a
-// caller-authored JSON Schema engine.
+// caller-authored JSON Schema engine. It is injected only for a parented,
+// non-manager fleet worker (spawnParams.isFleetWorker).
 
 import (
 	"bytes"

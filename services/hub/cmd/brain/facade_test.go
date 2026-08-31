@@ -100,7 +100,7 @@ func TestSpawnClaudePTYInjectsFacadeMCPConfig(t *testing.T) {
 	}
 }
 
-func TestPlainHeadlessSpawnsAlwaysReceiveWorkerEscalationContract(t *testing.T) {
+func TestFleetHeadlessSpawnsReceiveWorkerEscalationContract(t *testing.T) {
 	for _, provider := range []string{"codex", "opencode"} {
 		t.Run(provider+" managed", func(t *testing.T) {
 			rec := newRecorder()
@@ -108,7 +108,7 @@ func TestPlainHeadlessSpawnsAlwaysReceiveWorkerEscalationContract(t *testing.T) 
 			defer srv.Close()
 			reg := newSpawnTestRegistry(t, srv.URL)
 			if _, err := reg.handle(context.Background(), "agents.spawn",
-				[]byte(`{"provider":"`+provider+`","cwd":"/tmp/proj"}`)); err != nil {
+				[]byte(`{"provider":"`+provider+`","cwd":"/tmp/proj","parentSessionId":"manager-1"}`)); err != nil {
 				t.Fatal(err)
 			}
 			calls := rec.calls("/sessions/spawn-managed")
@@ -128,7 +128,7 @@ func TestPlainHeadlessSpawnsAlwaysReceiveWorkerEscalationContract(t *testing.T) 
 		defer srv.Close()
 		reg := newSpawnTestRegistry(t, srv.URL)
 		if _, err := reg.handle(context.Background(), "agents.spawn",
-			[]byte(`{"transport":"pty","cwd":"/tmp/proj"}`)); err != nil {
+			[]byte(`{"transport":"pty","cwd":"/tmp/proj","parentSessionId":"manager-1"}`)); err != nil {
 			t.Fatal(err)
 		}
 		calls := rec.calls("/sessions/spawn")
@@ -138,6 +138,29 @@ func TestPlainHeadlessSpawnsAlwaysReceiveWorkerEscalationContract(t *testing.T) 
 			t.Fatalf("plain PTY worker missed escalation contract: %v", argv)
 		}
 	})
+}
+
+func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
+	for _, tc := range []struct {
+		name, params string
+	}{
+		{"ordinary pane", `{"provider":"codex","cwd":"/tmp/proj"}`},
+		{"fleet manager with accidental parent", `{"provider":"codex","cwd":"/tmp/proj","manager":true,"parentSessionId":"manager-0"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder()
+			srv := rec.server()
+			defer srv.Close()
+			reg := newSpawnTestRegistry(t, srv.URL)
+			if _, err := reg.handle(context.Background(), "agents.spawn", []byte(tc.params)); err != nil {
+				t.Fatal(err)
+			}
+			instructions, _ := rec.calls("/sessions/spawn-managed")[0].body["instructions"].(string)
+			if strings.Contains(instructions, "wks-escalation") {
+				t.Fatalf("non-worker received fleet escalation contract: %q", instructions)
+			}
+		})
+	}
 }
 
 func TestSpawnFacadeRequestFailsWhenBrainHasNoFacadeURL(t *testing.T) {

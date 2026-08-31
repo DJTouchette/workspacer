@@ -210,6 +210,13 @@ describe('buildManagerKickoff — dispatch templates', () => {
     expect(doctrine).toMatch(/unfilled required placeholder REFUSES the spawn/i);
     expect(doctrine).toMatch(/task slot is yours to write/);
   });
+
+  it('teaches worker-escalated as a terminal alternative without weakening malformed result handling', () => {
+    expect(doctrine).toContain('wks-escalation');
+    expect(doctrine).toContain('worker-escalated');
+    expect(doctrine).toMatch(/suppresses the contradictory missing-result error/);
+    expect(doctrine).toMatch(/Malformed escalation blocks remain ordinary prose/);
+  });
 });
 
 describe('deriveFleetRoot', () => {

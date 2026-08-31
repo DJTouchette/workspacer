@@ -36,7 +36,7 @@ import {
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
-import { buildWorkerEscalationContract } from '../shared/workerEscalation';
+import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import {
   profileAppliesTo,
   profileConfigEnv,
@@ -458,7 +458,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
           sessionId: managedId,
         })
       : '',
-    buildWorkerEscalationContract(),
+    isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
     resultSchema ? buildResultContract(resultSchema) : '',
   ]
     .filter(Boolean)
@@ -514,9 +514,9 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       }),
     }),
     // First-turn instructions: the facade role note (when this session has the
-    // facade), the always-on terminal escalation contract, and the optional
+    // facade), the fleet-worker terminal escalation contract, and the optional
     // structured-result contract, joined so none overwrites another — the
-    // daemon takes ONE instructions string. Plain workers get escalation even
+    // daemon takes ONE instructions string. Fleet workers get escalation even
     // when no facade or resultSchema was requested.
     ...(instructions && { instructions }),
     // The dispatch prompt itself — a SEPARATE field, never folded into
@@ -602,6 +602,13 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     bin,
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
     ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    // Codex has a real hidden instruction channel even on this PTY-only
+    // rollout path. Keep the task as the user turn (so transcript
+    // reconstruction never displays host contract text), while the contract
+    // remains present before and without a firstMessage.
+    ...(isFleetDispatchedWorker(opts)
+      ? ['-c', `developer_instructions=${JSON.stringify(buildWorkerEscalationContract())}`]
+      : []),
     ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
   ];
   await claudemonSessionClient.spawn({
@@ -614,12 +621,9 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     rows: opts.rows ?? 32,
     sessionId,
     rolloutProvider: 'codex',
-    // This branch spawns a bare TUI with no system-instructions channel. Prefix
-    // the task turn so this managed-completion harness still receives the same
-    // terminal escalation contract as every adapter-driven path.
-    firstMessage: opts.firstMessage
-      ? [buildWorkerEscalationContract(), opts.firstMessage].join('\n\n')
-      : undefined,
+    // The hidden developer_instructions config above carries host contracts;
+    // this remains exactly the user's task and therefore reconstructs cleanly.
+    firstMessage: opts.firstMessage,
   });
   return sessionId;
 }

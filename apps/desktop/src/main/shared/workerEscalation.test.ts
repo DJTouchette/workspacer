@@ -1,6 +1,9 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   buildWorkerEscalationContract,
+  isFleetDispatchedWorker,
   readWorkerEscalation,
   WORKER_ESCALATION_FENCE,
 } from './workerEscalation';
@@ -15,6 +18,30 @@ const valid = {
 } as const;
 
 describe('worker escalation terminal contract', () => {
+  it('is scoped by authoritative parent/manager metadata', () => {
+    expect(isFleetDispatchedWorker({ parentSessionId: 'manager-1' })).toBe(true);
+    expect(isFleetDispatchedWorker({ parentSessionId: '  ' })).toBe(false);
+    expect(isFleetDispatchedWorker({})).toBe(false);
+    expect(isFleetDispatchedWorker({ parentSessionId: 'manager-1', manager: true })).toBe(false);
+  });
+
+  it('is byte-for-byte identical to the Go headless contract', () => {
+    const go = fs.readFileSync(
+      path.join(__dirname, '../../../../../services/hub/cmd/brain/workerescalation.go'),
+      'utf8',
+    );
+    const expression = /workerEscalationContract\s*=([\s\S]*?)\n\)/.exec(go)?.[1];
+    expect(
+      expression,
+      'Go workerEscalationContract declaration moved or changed shape',
+    ).toBeTruthy();
+    const literals = [...expression!.matchAll(/"(?:\\.|[^"\\])*"/g)].map((match) =>
+      JSON.parse(match[0]),
+    );
+    expect(literals.length).toBeGreaterThan(5);
+    expect(literals.join('')).toBe(buildWorkerEscalationContract());
+  });
+
   it('advertises the fixed shape and its relationship to optional wks-result', () => {
     const text = buildWorkerEscalationContract();
     expect(text).toContain(`\`\`\`${WORKER_ESCALATION_FENCE}`);

@@ -459,14 +459,30 @@ describe('spawnClaudeAgent — resultSchema', () => {
     expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({ resultSchema: schema });
   });
 
-  it('keeps the always-on escalation prompt without a schema or the facade', async () => {
-    await spawnClaudeAgent({ cwd: '/proj' });
+  it('gives a parented fleet worker the escalation prompt without a schema or facade', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', parentSessionId: 'manager-1' });
     const argv = lastArgv();
     expect(argv).toContain('--append-system-prompt');
     expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain('wks-escalation');
     expect(argv[argv.indexOf('--append-system-prompt') + 1]).not.toContain(
       'STRUCTURED RESULT CONTRACT',
     );
+  });
+
+  it('does not inject the fleet contract into an ordinary pane or the Fleet Manager', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(lastArgv()).not.toContain('--append-system-prompt');
+
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      parentSessionId: 'accidental-parent',
+      manager: true,
+      toolScope: 'operator',
+    });
+    const argv = lastArgv();
+    const prompt = argv[argv.indexOf('--append-system-prompt') + 1];
+    expect(prompt).toContain('ROLE');
+    expect(prompt).not.toContain('wks-escalation');
   });
 
   it('REFUSES a malformed schema instead of silently dropping the contract', async () => {

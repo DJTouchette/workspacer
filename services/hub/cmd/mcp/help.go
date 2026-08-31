@@ -56,12 +56,13 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
 - Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is
   one call — you do not spawn, wait for the id, and then send_message. The host
   hands the prompt to the daemon as part of the spawn, so it cannot race the
-  agent coming up. The resultSchema contract below lands separately: an
-  appended system prompt for the default Claude PTY provider, prepended text
-  for managed/stream providers. Either way it reaches the agent's first turn
-  alongside the task. Use send_message for anything AFTER that first turn.
+  agent coming up. Host contracts land through a separate instruction channel,
+  not inside this user-visible task, and reach the agent's first turn even when
+  message is omitted. Use send_message for anything AFTER that first turn.
 - Pass label (short human name) and parentSessionId (your own session id) so
-  the new agent nests under you in the UI.
+  the new agent nests under you in the UI. That parent metadata, together with
+  the manager flag, is also what identifies a real fleet worker; ordinary panes,
+  managers, tours, and unmanaged sessions do not receive worker contracts.
 - Give the new agent workspacer tools only when it needs them, at the LOWEST
   tier that works: toolScope "view" for summarizer/reader workers, "triage" to
   also approve/reply/interrupt, "operator" for everything (spawning included).
@@ -87,7 +88,16 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   that skips or botches the block reports that beside its prose rather than
   failing. Validated keywords are type/properties/required/items/enum/
   additionalProperties; anything else is ignored (it can under-constrain, never
-  wrongly reject).
+  wrongly reject). Arbitrary result schemas are desktop-owned; the headless
+  brain declines resultSchema rather than accepting it without validation.
+- A fleet worker may finish with one fenced wks-escalation object instead when
+  it is blocked on a USER decision. The object names a summary, blocker,
+  attempted work, options, a recommendation, and the next action. A valid
+  escalation is a terminal alternative to wks-result and gets its own wake
+  card; a malformed block is ordinary prose and does not suppress missing or
+  invalid result errors. This fixed host-authored contract is available on
+  desktop and headless fleet dispatches even though headless declines arbitrary
+  resultSchema.
 - template + templateParams renders a library DISPATCH TEMPLATE (kind
   'dispatch') into the first message instead of you retyping the framing.
   Discover one cheaply with list_library({kind:"dispatch", id:"ship-task"}):
