@@ -12,6 +12,7 @@
 //! which would train everyone to regenerate it without reading it.
 
 use super::*;
+use crate::types::StatusLine;
 use ratatui::{backend::TestBackend, Terminal};
 
 const W: u16 = 100;
@@ -722,6 +723,63 @@ fn the_sidebar_draws_each_agent_a_coloured_project_mark() {
         buffer[(3, 4)].style().fg,
         Some(gateway_fg),
         "renaming a project must not recolour it"
+    );
+}
+
+/// The pure resolver test in `types.rs` is necessary but not sufficient: the
+/// value must survive App state and reach the actual ratatui draw path. This is
+/// the TUI half of the live 356,380-token Phase-2 specimen.
+#[test]
+fn context_render_rejects_disproved_200k_and_preserves_truthful_200k() {
+    let mut app = test_app();
+    let worker: Agent = serde_json::from_value(serde_json::json!({
+        "session_id": "context-worker",
+        "mode": "responding",
+        "cwd": "/tmp/context-worker",
+        "provider": "claude",
+        "usage": { "model": "claude-opus-5", "context_tokens": 356_380,
+                   "context_limit": 1_000_000, "cost_usd": 1.0 }
+    }))
+    .expect("agent fixture");
+    app.agents = vec![worker.clone()];
+    app.all_agents = vec![worker];
+    app.status_lines.insert(
+        "context-worker".into(),
+        StatusLine {
+            context_used_pct: Some(100.0),
+            context_window_size: Some(200_000),
+            ..Default::default()
+        },
+    );
+    app.view = View::List;
+    app.selected = 1;
+
+    let disproved = joined(&mut app);
+    assert!(
+        disproved.contains("36%"),
+        "resolved context is rendered: {disproved}"
+    );
+    assert!(
+        !disproved.contains("100%"),
+        "raw disproved percent is absent: {disproved}"
+    );
+
+    app.agents[0].usage.as_mut().unwrap().context_tokens = 90_000;
+    app.agents[0].usage.as_mut().unwrap().context_limit = Some(200_000);
+    app.all_agents = app.agents.clone();
+    app.status_lines.insert(
+        "context-worker".into(),
+        StatusLine {
+            context_used_pct: Some(45.0),
+            context_window_size: Some(200_000),
+            ..Default::default()
+        },
+    );
+
+    let truthful = joined(&mut app);
+    assert!(
+        truthful.contains("45%"),
+        "truthful 200K percent is rendered: {truthful}"
     );
 }
 

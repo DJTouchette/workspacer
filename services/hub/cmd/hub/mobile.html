@@ -1537,13 +1537,27 @@
     return m.replace(/^[\w.-]+\//, '').replace(/^claude-/, '').replace(/-\d{6,}$/, '');
   }
 
-  /** deriveSessionStats — statusLine wins over transcript-derived usage. */
+  /** How far occupancy may pass a claimed window before the claim is false.
+   *  TWIN: DRIFT_TOLERANCE in modelContextWindows.ts; the authoritative
+   *  desktop renderer and bus publisher both use this exact boundary. */
+  const CONTEXT_WINDOW_DRIFT_TOLERANCE = 1.02;
+
+  /** deriveSessionStats — statusLine wins unless its denominator is disproved. */
   function stats(s) {
     const sl = s.statusLine || {}, u = s.usage || {};
     const model = sl.modelDisplay || shortModel(u.model || (s.settings && s.settings.model) || '');
-    let ctxPct;
-    if (typeof sl.contextUsedPct === 'number') ctxPct = sl.contextUsedPct;
-    else if (u.contextLimit) ctxPct = (u.contextTokens / u.contextLimit) * 100;
+    const slWindow = sl.contextWindowSize;
+    const held = typeof u.contextTokens === 'number' ? u.contextTokens : 0;
+    // A percentage and the window it was computed against are one claim. The
+    // desktop's resolver/bus rule disqualifies that pair once observed tokens
+    // exceed its denominator past the provider-rounding tolerance, then falls
+    // back to the already-resolved usage window. This is what keeps a legacy
+    // `opus[1m]`, a canonical 1M selection, and a native-1M model truthful
+    // without promoting an unknown session merely because it crossed 200K.
+    const slWindowDisproved = !!slWindow && held > slWindow * CONTEXT_WINDOW_DRIFT_TOLERANCE;
+    const derivedPct = u.contextLimit ? (u.contextTokens / u.contextLimit) * 100 : undefined;
+    let ctxPct = slWindowDisproved ? derivedPct
+      : (typeof sl.contextUsedPct === 'number' ? sl.contextUsedPct : derivedPct);
     // A missing contextTokens against a present limit yields NaN, which every
     // `!== undefined` guard downstream would wave through — rendering "NaN%" on
     // a NaN-width bar, coloured green as if the window were healthy.
@@ -1553,7 +1567,8 @@
     return {
       model,
       ctxPct: ctxPct === undefined ? undefined : clamp(Math.round(ctxPct), 0, 100),
-      ctxTokens: u.contextTokens, ctxLimit: sl.contextWindowSize || u.contextLimit,
+      ctxTokens: u.contextTokens,
+      ctxLimit: (slWindowDisproved ? undefined : slWindow) || u.contextLimit,
       inTok, outTok,
       costUSD: sl.costUSD ?? u.costUSD,
       fiveHourPct: sl.fiveHourPct, fiveHourResetsAt: sl.fiveHourResetsAt,

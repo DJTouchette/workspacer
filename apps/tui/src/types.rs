@@ -8,6 +8,11 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde_json::Value;
 
+// TWIN: `DRIFT_TOLERANCE` in desktop modelContextWindows.ts and the
+// numerator/denominator pair in claudemon session/windows.rs.
+const CONTEXT_WINDOW_DRIFT_TOLERANCE_NUM: u64 = 102;
+const CONTEXT_WINDOW_DRIFT_TOLERANCE_DEN: u64 = 100;
+
 /// Token/cost/context usage for a session, as returned by claudemon's
 /// `GET /sessions` (and `GET /sessions/:id`) in the additive `usage` field.
 /// Fields are optional so older daemon versions that omit the block still
@@ -67,6 +72,12 @@ pub struct StatusLine {
     /// `context_window.used_percentage` (0–100).
     #[serde(default)]
     pub context_used_pct: Option<f64>,
+    /// The denominator behind `context_used_pct`, when the provider reports
+    /// one. Additive and optional so older daemon and peer payloads remain
+    /// wire-compatible. The pair is rejected together when observed usage has
+    /// disproved this window; see [`derive_stats`].
+    #[serde(default)]
+    pub context_window_size: Option<u64>,
     /// Claude's own authoritative session cost.
     #[serde(default)]
     pub cost_usd: Option<f64>,
@@ -197,13 +208,32 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
     let model = sl
         .and_then(|s| s.model_display.clone())
         .or_else(|| agent.usage.as_ref().and_then(|u| u.model.clone()));
-    let context_pct = sl.and_then(|s| s.context_used_pct).or_else(|| {
+    let usage_pct = || {
         agent.usage.as_ref().and_then(|u| {
             let limit = u.context_limit?;
             (limit > 0 && u.context_tokens > 0)
                 .then(|| u.context_tokens as f64 / limit as f64 * 100.0)
         })
-    });
+    };
+    // TWIN: DRIFT_TOLERANCE in modelContextWindows.ts and the desktop
+    // `deriveSessionStats` / `busContextLimit` consumers. A status percentage
+    // and its denominator are one claim. If the session demonstrably holds
+    // more than that denominator (past the same 2% rounding tolerance), reject
+    // both and use only the daemon's already-resolved usage window. Do not
+    // infer 1M from occupancy: a missing resolved limit stays unknown.
+    let held = agent.usage.as_ref().map(|u| u.context_tokens).unwrap_or(0);
+    let status_window_disproved = sl
+        .and_then(|s| s.context_window_size)
+        .filter(|window| *window > 0)
+        .is_some_and(|window| {
+            held > window.saturating_mul(CONTEXT_WINDOW_DRIFT_TOLERANCE_NUM)
+                / CONTEXT_WINDOW_DRIFT_TOLERANCE_DEN
+        });
+    let context_pct = if status_window_disproved {
+        usage_pct()
+    } else {
+        sl.and_then(|s| s.context_used_pct).or_else(usage_pct)
+    };
     let cost = sl
         .and_then(|s| s.cost_usd)
         .filter(|c| *c > 0.0)
@@ -1747,6 +1777,7 @@ mod tests {
         let sl = StatusLine {
             model_display: Some("Opus 4.8".into()),
             context_used_pct: Some(73.0),
+            context_window_size: Some(200_000),
             cost_usd: Some(12.5),
             ..Default::default()
         };
@@ -1754,6 +1785,91 @@ mod tests {
         assert_eq!(d.model.as_deref(), Some("Opus 4.8"));
         assert_eq!(d.context_pct, Some(73.0));
         assert_eq!(d.cost, Some(12.5));
+    }
+
+    #[test]
+    fn derive_stats_rejects_a_disproved_200k_status_pair() {
+        // This is the live Phase-2 specimen: the owner has resolved 1M from a
+        // legacy `opus[1m]` request (or the equivalent canonical pair), while
+        // Claude's raw status line still says 200K/100%. The same usage shape
+        // also covers a native-1M Fable/Mythos model: clients consume the
+        // owner's resolved window and never reverse-engineer its provenance.
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "model": "claude-opus-5", "context_tokens": 356_380,
+                       "context_limit": 1_000_000, "cost_usd": 1.0 }
+        }))
+        .unwrap();
+        let sl: StatusLine = serde_json::from_value(serde_json::json!({
+            "context_used_pct": 100.0,
+            "context_window_size": 200_000
+        }))
+        .unwrap();
+
+        assert_eq!(sl.context_window_size, Some(200_000));
+        let pct = derive_stats(&agent, Some(&sl)).context_pct.unwrap();
+        assert!((pct - 35.638).abs() < 1e-9, "pct={pct}");
+    }
+
+    #[test]
+    fn derive_stats_preserves_a_truthful_200k_status_pair() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "model": "claude-sonnet-5", "context_tokens": 90_000,
+                       "context_limit": 200_000, "cost_usd": 1.0 }
+        }))
+        .unwrap();
+        let sl = StatusLine {
+            context_used_pct: Some(45.0),
+            context_window_size: Some(200_000),
+            ..Default::default()
+        };
+
+        assert_eq!(derive_stats(&agent, Some(&sl)).context_pct, Some(45.0));
+    }
+
+    #[test]
+    fn derive_stats_does_not_promote_an_unknown_window() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "model": "unknown-model", "context_tokens": 356_380,
+                       "cost_usd": 1.0 }
+        }))
+        .unwrap();
+        let sl = StatusLine {
+            context_used_pct: Some(100.0),
+            context_window_size: Some(200_000),
+            ..Default::default()
+        };
+
+        assert_eq!(derive_stats(&agent, Some(&sl)).context_pct, None);
+    }
+
+    #[test]
+    fn derive_stats_uses_the_same_two_percent_drift_boundary_as_desktop() {
+        let at = |held: u64| {
+            let agent: Agent = serde_json::from_value(serde_json::json!({
+                "session_id": "s", "mode": "responding",
+                "usage": { "context_tokens": held, "context_limit": 1_000_000 }
+            }))
+            .unwrap();
+            let sl = StatusLine {
+                context_used_pct: Some(100.0),
+                context_window_size: Some(200_000),
+                ..Default::default()
+            };
+            derive_stats(&agent, Some(&sl)).context_pct
+        };
+
+        assert_eq!(
+            at(204_000),
+            Some(100.0),
+            "the exact boundary still trusts 200K"
+        );
+        assert_eq!(at(204_001), Some(20.4001), "one token past rejects it");
     }
 
     /// VERSION SKEW, the whole reason `context_limit` is an `Option` here.

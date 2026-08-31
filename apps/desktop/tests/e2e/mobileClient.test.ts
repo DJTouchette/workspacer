@@ -79,6 +79,101 @@ test.describe('mobile client', () => {
     await expect(page.locator('.recent')).toHaveCount(2);
   });
 
+  test('context meters reject a disproved raw 200K window without promoting unknowns', async ({
+    page,
+  }) => {
+    const base = hub.snapshots.get('ws1');
+    expect(base).toBeTruthy();
+    const snapshot = (
+      sessionId: string,
+      settings: Record<string, unknown>,
+      model: string,
+      contextTokens: number,
+      contextLimit: number | null,
+      contextUsedPct: number,
+    ) => ({
+      ...base,
+      sessionId,
+      cwd: `/tmp/${sessionId}`,
+      settings,
+      usage: {
+        ...base.usage,
+        model,
+        contextTokens,
+        contextLimit,
+      },
+      statusLine: {
+        modelDisplay: model.replace(/^claude-/, ''),
+        contextUsedPct,
+        contextWindowSize: 200_000,
+      },
+    });
+
+    // Seed every shape before the phone connects: this exercises the first
+    // sessions.snapshots render, not a later live update that could hide an
+    // ordering bug. Selection provenance remains owner-resolved in `usage`;
+    // /m must not reinterpret model ids or add a third window heuristic.
+    const cases = [
+      snapshot('ctx-legacy', { model: 'opus[1m]' }, 'claude-opus-5', 356_380, 1_000_000, 100),
+      snapshot(
+        'ctx-pair',
+        { model: 'opus', contextWindow: 1_000_000 },
+        'claude-opus-5',
+        356_380,
+        1_000_000,
+        100,
+      ),
+      snapshot('ctx-native', { model: 'fable' }, 'claude-fable-5', 356_380, 1_000_000, 100),
+      snapshot(
+        'ctx-200k',
+        { model: 'sonnet', contextWindow: 200_000 },
+        'claude-sonnet-5',
+        90_000,
+        200_000,
+        45,
+      ),
+      snapshot('ctx-unknown', { model: 'mystery' }, 'mystery-model', 356_380, null, 100),
+    ];
+    hub.snapshots.clear();
+    for (const s of cases) hub.snapshots.set(s.sessionId, s);
+
+    await openClient(page);
+
+    // Legacy marker, canonical pair, and native-1M all arrive with the same
+    // owner-resolved 1M evidence. The raw 200K/100% pair is impossible at
+    // 356,380 held tokens, so all three render about 36% immediately.
+    for (const id of ['ctx-legacy', 'ctx-pair', 'ctx-native']) {
+      const telemetry = page.locator(`.agent[data-agent="${id}"] .tele`);
+      await expect(telemetry).toContainText('36%');
+      await expect(telemetry).not.toContainText('100%');
+    }
+
+    // A genuinely selected/reported 200K session still trusts that report.
+    await expect(page.locator('.agent[data-agent="ctx-200k"] .tele')).toContainText('45%');
+
+    // Occupancy can disprove 200K, but it cannot prove 1M. With no resolved
+    // usage limit the honest result is no context meter at all.
+    const unknownTelemetry = page.locator('.agent[data-agent="ctx-unknown"] .tele');
+    await expect(unknownTelemetry).not.toContainText('%');
+
+    // The Inspector must use the same decision as the compact card, including
+    // the denominator: this caught the old split 36%-but-"/ 200k" rendering.
+    await page.locator('.agent[data-agent="ctx-legacy"] .top').click();
+    await page.locator('.pills button', { hasText: 'flow' }).click();
+    await page.locator('#segments button', { hasText: 'Usage' }).click();
+    await expect(page.locator('.ucard .ubig .v')).toHaveText('36%');
+    await expect(page.locator('.ucard .ubig .s')).toHaveText('356k / 1.0M');
+
+    // Inspector backs into that agent's chat first, then the fleet.
+    await page.locator('#backBtn').click();
+    await page.locator('#backBtn').click();
+    await page.locator('.agent[data-agent="ctx-200k"] .top').click();
+    await page.locator('.pills button', { hasText: 'flow' }).click();
+    await page.locator('#segments button', { hasText: 'Usage' }).click();
+    await expect(page.locator('.ucard .ubig .v')).toHaveText('45%');
+    await expect(page.locator('.ucard .ubig .s')).toHaveText('90k / 200k');
+  });
+
   test('fleet filters narrow by state', async ({ page }) => {
     await openClient(page);
     const total = await page.locator('.agent').count();
