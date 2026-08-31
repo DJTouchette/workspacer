@@ -15,16 +15,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
-import { ModelSelectionError } from '../shared/modelContextWindows';
+import { claudeArgvModel, ModelSelectionError } from '../shared/modelContextWindows';
 
 const getConfig = vi.fn();
 vi.mock('../services/configService', () => ({ configService: { getConfig: () => getConfig() } }));
 
-import {
-  resolveSpawnModel,
-  resolveSpawnModelInput,
-  resolveSpawnModelSelection,
-} from './spawnModel';
+import { resolveSpawnModelInput, resolveSpawnModelSelection } from './spawnModel';
+
+const resolvedModel = (
+  provider: string,
+  requested: string | null | undefined,
+): string | undefined => resolveSpawnModelSelection(provider, requested)?.model;
 
 interface InputCase {
   name: string;
@@ -65,7 +66,15 @@ describe('pair-aware spawn input contract (shared with Rust and Go)', () => {
         contextWindow: c.contextWindow,
       });
       if (c.error) throw new Error(`expected ${c.error}`);
-      expect(got, c.note).toEqual(
+      expect(
+        got
+          ? {
+              selection: got,
+              legacyModel: c.provider.toLowerCase() === 'claude' ? claudeArgvModel(got) : got.model,
+            }
+          : undefined,
+        c.note,
+      ).toEqual(
         c.expectedModel === null
           ? undefined
           : {
@@ -91,12 +100,12 @@ describe('resolveSpawnModel', () => {
   });
 
   it('fills an omitted claude model from the configured default', () => {
-    expect(resolveSpawnModel('claude', undefined)).toBe('opus');
-    expect(resolveSpawnModel('claude', null)).toBe('opus');
+    expect(resolvedModel('claude', undefined)).toBe('opus');
+    expect(resolvedModel('claude', null)).toBe('opus');
     // Blank and whitespace are omissions, not choices — a dispatch that sent
     // `model: ''` is the same "nobody said" as one that sent nothing.
-    expect(resolveSpawnModel('claude', '')).toBe('opus');
-    expect(resolveSpawnModel('claude', '   ')).toBe('opus');
+    expect(resolvedModel('claude', '')).toBe('opus');
+    expect(resolvedModel('claude', '   ')).toBe('opus');
     expect(resolveSpawnModelSelection('claude', undefined)).toEqual({
       model: 'opus',
       contextWindow: 1_000_000,
@@ -104,23 +113,23 @@ describe('resolveSpawnModel', () => {
   });
 
   it('never overrides a caller who named a model', () => {
-    expect(resolveSpawnModel('claude', 'sonnet')).toBe('sonnet');
-    expect(resolveSpawnModel('claude', '  haiku  ')).toBe('haiku');
+    expect(resolvedModel('claude', 'sonnet')).toBe('sonnet');
+    expect(resolvedModel('claude', '  haiku  ')).toBe('haiku');
   });
 
   it('leaves other providers alone — only claude has a configured default', () => {
-    expect(resolveSpawnModel('codex', undefined)).toBeUndefined();
-    expect(resolveSpawnModel('codex', 'gpt-5-codex')).toBe('gpt-5-codex');
-    expect(resolveSpawnModel('opencode', undefined)).toBeUndefined();
+    expect(resolvedModel('codex', undefined)).toBeUndefined();
+    expect(resolvedModel('codex', 'gpt-5-codex')).toBe('gpt-5-codex');
+    expect(resolvedModel('opencode', undefined)).toBeUndefined();
   });
 
   it('stays undefined when there is no configured default to fill from', () => {
     // This FILLS A BLANK; it does not invent one. A user who cleared the
     // default gets the CLI's own choice and an honest "we were not told".
     getConfig.mockReturnValue({ claude: { defaultModel: '' } });
-    expect(resolveSpawnModel('claude', undefined)).toBeUndefined();
+    expect(resolvedModel('claude', undefined)).toBeUndefined();
     getConfig.mockReturnValue({});
-    expect(resolveSpawnModel('claude', undefined)).toBeUndefined();
+    expect(resolvedModel('claude', undefined)).toBeUndefined();
   });
 });
 
@@ -138,9 +147,9 @@ describe('resolveSpawnModel', () => {
 describe('resolveSpawnModel — cross-harness model ids', () => {
   it('drops a claude id from a codex spawn and uses codex’s own default', () => {
     getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
-    expect(resolveSpawnModel('codex', 'sonnet')).toBeUndefined();
-    expect(resolveSpawnModel('codex', 'haiku')).toBeUndefined();
-    expect(resolveSpawnModel('opencode', 'fable')).toBeUndefined();
+    expect(resolvedModel('codex', 'sonnet')).toBeUndefined();
+    expect(resolvedModel('codex', 'haiku')).toBeUndefined();
+    expect(resolvedModel('opencode', 'fable')).toBeUndefined();
   });
 
   it('drops a codex id from a claude spawn — and does NOT substitute claude.defaultModel', () => {
@@ -148,21 +157,21 @@ describe('resolveSpawnModel — cross-harness model ids', () => {
     // own: it would silently run a DIFFERENT model than the caller named while
     // reporting success. Undefined means "the CLI's default", which is honest.
     getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
-    expect(resolveSpawnModel('claude', 'gpt-5.1-codex-max')).toBeUndefined();
+    expect(resolvedModel('claude', 'gpt-5.1-codex-max')).toBeUndefined();
   });
 
   it('still forwards a model the provider DOES serve', () => {
     getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
-    expect(resolveSpawnModel('claude', 'sonnet')).toBe('sonnet');
-    expect(resolveSpawnModel('codex', 'gpt-5.1-codex-max')).toBe('gpt-5.1-codex-max');
-    expect(resolveSpawnModel('opencode', 'anthropic/claude-sonnet-4')).toBe(
+    expect(resolvedModel('claude', 'sonnet')).toBe('sonnet');
+    expect(resolvedModel('codex', 'gpt-5.1-codex-max')).toBe('gpt-5.1-codex-max');
+    expect(resolvedModel('opencode', 'anthropic/claude-sonnet-4')).toBe(
       'anthropic/claude-sonnet-4',
     );
   });
 
   it('still forwards an id no harness claims — a private deployment is a real choice', () => {
     getConfig.mockReturnValue({ claude: {} });
-    expect(resolveSpawnModel('codex', 'my-finetune-v3')).toBe('my-finetune-v3');
+    expect(resolvedModel('codex', 'my-finetune-v3')).toBe('my-finetune-v3');
   });
 
   it.each([
@@ -170,12 +179,12 @@ describe('resolveSpawnModel — cross-harness model ids', () => {
     ['opencode', 'openrouter/custom-1m'],
     ['pi', 'pi-local-1m'],
   ])('%s keeps a non-Claude -1m model id byte-for-byte unchanged', (provider, model) => {
-    expect(resolveSpawnModel(provider, model)).toBe(model);
+    expect(resolvedModel(provider, model)).toBe(model);
     expect(resolveSpawnModelSelection(provider, model)).toEqual({ model, contextWindow: null });
   });
 
   it('still normalizes Claude legacy ids into a canonical model/window pair', () => {
-    expect(resolveSpawnModel('claude', 'opus-1m')).toBe('opus');
+    expect(resolvedModel('claude', 'opus-1m')).toBe('opus');
     expect(resolveSpawnModelSelection('claude', 'opus-1m')).toEqual({
       model: 'opus',
       contextWindow: 1_000_000,

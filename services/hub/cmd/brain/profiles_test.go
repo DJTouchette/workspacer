@@ -71,6 +71,9 @@ func TestModelFromArgsReadsTheLastExecutablePin(t *testing.T) {
 	if got := modelFromArgs([]string{"--model", "--verbose"}); got != "" {
 		t.Fatalf("a valueless model flag produced %q", got)
 	}
+	if got := modelFromArgs([]string{"--model=opus", "--model", "   "}); got != "opus" {
+		t.Fatalf("a blank split-form model shadowed the prior executable pin: %q", got)
+	}
 }
 
 func TestSkipPermissionsAddedOnce(t *testing.T) {

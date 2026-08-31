@@ -252,6 +252,24 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 	}
 }
 
+func TestRespawnPrefersDaemonCanonicalSelectionOverStaleDesktopLegacyModel(t *testing.T) {
+	hub := newRespawnHub()
+	hub.snapshot = `{"cwd":"/w/alpha-wt","label":"alpha: parser","provider":"claude",
+		"settings":{"model":"claude-sonnet-5"},
+		"requestedSelection":{"model":"claude-opus-5","contextWindow":1000000}}`
+	res, h := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "keep the original model selection",
+	})
+	if res.IsError {
+		t.Fatalf("stale desktop legacy state must not poison respawn: %s", resultText(res))
+	}
+	p := h.call("agents.spawn").params
+	if p["model"] != "claude-opus-5[1m]" || p["modelIdentity"] != "claude-opus-5" ||
+		p["contextWindow"] != float64(1_000_000) {
+		t.Fatalf("daemon canonical selection was not re-projected consistently: %v", p)
+	}
+}
+
 // The skew case: a provider that does not know the field answers a normal spawn
 // and drops the prompt. Without the fallback the successor sits idle with no
 // task and nothing says so — indistinguishable from a wedge, and the exact

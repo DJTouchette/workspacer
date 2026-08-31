@@ -282,8 +282,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ? modelFromExtraArgs(modelProfile?.extraArgs)
     : undefined;
   const requestedModel =
-    profileModel ??
-    opts.model?.trim() ??
+    profileModel ||
+    opts.model?.trim() ||
     (opts.manager ? resolveManagerModel(provider) : undefined);
   const modelSelection = resolveSpawnModelSelection(
     provider,

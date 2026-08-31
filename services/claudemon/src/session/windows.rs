@@ -302,7 +302,7 @@ pub fn restore_persisted_model_selection(
 ) -> Option<ModelSelection> {
     let canonical = identity.and_then(|identity| {
         let identity = identity.trim();
-        if identity.is_empty() {
+        if identity.is_empty() || canonical_identity_has_legacy_marker(identity) {
             return None;
         }
         let context_window = match context_window {
@@ -321,11 +321,14 @@ pub fn restore_persisted_model_selection(
     let legacy = legacy_model.and_then(|model| normalize_model_selection(model, None).ok());
     match (canonical, legacy) {
         // The sessions table predates provider persistence. Exact agreement is
-        // therefore the only provider-neutral proof we have, and it is enough:
-        // a non-Claude id such as `vendor/model-1m` must not be reinterpreted as
-        // Claude marker syntax during restart hydration.
+        // provider-neutral proof for opaque identities, including a genuine
+        // non-Claude `vendor/model-1m`. It is NOT sufficient for a known Claude
+        // selectable 1M identity: `opus` + 1M projects to `opus[1m]`, so a bare
+        // legacy `opus` is newer v8 rollback evidence selecting the base model.
         (Some(canonical), Some(_))
-            if legacy_model.is_some_and(|legacy| legacy.trim() == canonical.model) =>
+            if legacy_model.is_some_and(|legacy| legacy.trim() == canonical.model)
+                && (legacy_model_for_normalized_selection(&canonical) == canonical.model
+                    || !is_recognizable_claude_identity(&canonical.model)) =>
         {
             Some(canonical)
         }
@@ -341,6 +344,25 @@ pub fn restore_persisted_model_selection(
         (Some(canonical), None) => Some(canonical),
         (None, None) => None,
     }
+}
+
+fn is_recognizable_claude_identity(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.starts_with("claude-")
+        || matches!(
+            lower.as_str(),
+            "opus" | "sonnet" | "haiku" | "fable" | "mythos"
+        )
+}
+
+fn canonical_identity_has_legacy_marker(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    if lower.ends_with("[1m]") {
+        return true;
+    }
+    lower
+        .strip_suffix("-1m")
+        .is_some_and(is_recognizable_claude_identity)
 }
 
 fn legacy_model_for_normalized_selection(selection: &ModelSelection) -> String {

@@ -54,12 +54,6 @@ export interface SpawnModelInput {
   contextWindow?: number | null;
 }
 
-export interface ResolvedSpawnModel {
-  selection: ModelSelection;
-  /** Executable legacy spelling retained for old receivers and provider adapters. */
-  legacyModel: string;
-}
-
 function validateWindow(contextWindow: number | null | undefined): number | null {
   if (contextWindow == null) return null;
   if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
@@ -81,7 +75,7 @@ function validateWindow(contextWindow: number | null | undefined): number | null
 export function resolveSpawnModelInput(
   provider: string,
   input: SpawnModelInput,
-): ResolvedSpawnModel | undefined {
+): ModelSelection | undefined {
   const normalizedProvider = provider.toLowerCase();
   const legacy = input.model?.trim() || '';
   const identity = input.modelIdentity?.trim() || '';
@@ -89,13 +83,13 @@ export function resolveSpawnModelInput(
 
   if (normalizedProvider !== 'claude') {
     const contextWindow = validateWindow(input.contextWindow);
-    if (!identity && !legacy) return undefined;
     if (hasCanonical && !identity && !legacy) {
       throw new ModelSelectionError(
         'empty-model',
         'modelIdentity or legacy model is required when contextWindow is present',
       );
     }
+    if (!identity && !legacy) return undefined;
     if (identity && legacy && identity !== legacy) {
       throw new ModelSelectionError(
         'conflicting-model-identity',
@@ -110,7 +104,7 @@ export function resolveSpawnModelInput(
       );
       return undefined;
     }
-    return { selection: { model, contextWindow }, legacyModel: legacy || model };
+    return { model, contextWindow };
   }
 
   let selection: ModelSelection | undefined;
@@ -149,7 +143,7 @@ export function resolveSpawnModelInput(
     );
     return undefined;
   }
-  return { selection, legacyModel: claudeArgvModel(selection) };
+  return selection;
 }
 
 export function resolveSpawnModelSelection(
@@ -163,7 +157,7 @@ export function resolveSpawnModelSelection(
     modelIdentity,
     contextWindow,
   });
-  if (explicit) return explicit.selection;
+  if (explicit) return explicit;
   if (requested?.trim() || modelIdentity?.trim() || contextWindow != null) return undefined;
   if (provider.toLowerCase() !== 'claude') return undefined;
   const configured = configService.getConfig().claude;
@@ -171,13 +165,4 @@ export function resolveSpawnModelSelection(
     return undefined;
   }
   return normalizeModelSelection(configured.defaultModel, configured.contextWindow);
-}
-
-export function resolveSpawnModel(
-  provider: string,
-  requested: string | null | undefined,
-  modelIdentity?: string | null,
-  contextWindow?: number | null,
-): string | undefined {
-  return resolveSpawnModelSelection(provider, requested, modelIdentity, contextWindow)?.model;
 }

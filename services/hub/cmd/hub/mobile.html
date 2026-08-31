@@ -3354,16 +3354,36 @@
         const r = await call(qualify(s.sessionId, 'claude.listModels'), {});
         const seen = (r && r.seen) || [];
         const aliases = (r && r.aliases) || [];
-        const aliasRows = aliases.map((a) =>
-          claudeModelWire(a.model || a.value, a.contextWindow == null ? null : a.contextWindow)
-        ).filter(Boolean);
+        const aliasRows = aliases.map((a) => {
+          let selection = claudeModelWire(
+            a.model || a.value,
+            a.contextWindow == null ? null : a.contextWindow,
+          );
+          // Transitional owners may send a canonical `model` beside a marker-
+          // bearing legacy `value`, but no numeric contextWindow. Recover the
+          // selected window from the companion just as the desktop picker does.
+          if (selection && selection.contextWindow == null && a.value) {
+            const compatibility = claudeModelWire(a.value, null);
+            if (compatibility && compatibility.id.toLowerCase() === selection.id.toLowerCase()) {
+              selection = compatibility;
+            }
+          }
+          return selection;
+        }).filter(Boolean);
         const aliasIds = new Set(aliasRows.map((a) => a.id + '\u0000' + String(a.contextWindow)));
         rows = aliasRows.map((a) => ({
           label: shortModel(a.legacy) || a.legacy,
           run: () => setModel(s.sessionId, a.legacy, null, a.id, a.contextWindow),
         }));
+        const seenLabels = new Set();
         rows.push(...seen.map((id) => claudeModelWire(id, null)).filter(Boolean)
-          .filter((m) => !aliasIds.has(m.id + '\u0000' + String(m.contextWindow))).map((m) => ({
+          .filter((m) => !aliasIds.has(m.id + '\u0000' + String(m.contextWindow)))
+          .filter((m) => {
+            const label = shortModel(m.legacy) || m.legacy;
+            if (seenLabels.has(label)) return false;
+            seenLabels.add(label);
+            return true;
+          }).map((m) => ({
             label: shortModel(m.legacy) || m.legacy,
             run: () => setModel(s.sessionId, m.legacy, null, m.id, m.contextWindow),
           })));

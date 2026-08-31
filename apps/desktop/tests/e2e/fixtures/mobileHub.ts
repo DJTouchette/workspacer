@@ -241,10 +241,14 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
         return reply(f.id, {
           defaultModel: 'opus',
           aliases: [
-            { value: 'claude-opus-5[1m]', label: 'Opus 5 (1M)' },
+            {
+              model: 'claude-opus-5',
+              value: 'claude-opus-5[1m]',
+              label: 'Opus 5 (1M)',
+            },
             { value: 'claude-sonnet-5', label: 'Sonnet 5' },
           ],
-          seen: ['claude-fable-5'],
+          seen: ['claude-opus-5[1m]', 'claude-fable-5'],
         });
       case 'agents.spawn':
         // Mirrors a current provider: `messageQueued` acknowledges that the

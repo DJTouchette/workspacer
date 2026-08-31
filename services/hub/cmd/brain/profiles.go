@@ -474,7 +474,9 @@ func modelFromArgs(extraArgs []string) string {
 		arg := extraArgs[i]
 		switch {
 		case arg == "--model" && i+1 < len(extraArgs) && !strings.HasPrefix(extraArgs[i+1], "--"):
-			model = strings.TrimSpace(extraArgs[i+1])
+			if value := strings.TrimSpace(extraArgs[i+1]); value != "" {
+				model = value
+			}
 		case strings.HasPrefix(arg, "--model="):
 			if value := strings.TrimSpace(strings.TrimPrefix(arg, "--model=")); value != "" {
 				model = value

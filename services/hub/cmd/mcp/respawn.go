@@ -197,9 +197,18 @@ func addRespawnTool(b *build) {
 			modelIdentity := in.ModelIdentity
 			contextWindow := in.ContextWindow
 			if !modelOverridden {
-				model = snap.Settings.Model
-				modelIdentity = snap.RequestedSelection.Model
-				contextWindow = snap.RequestedSelection.ContextWindow
+				if strings.TrimSpace(snap.RequestedSelection.Model) != "" {
+					// The daemon owns the canonical requested selection. Do not pair it
+					// with the desktop card's legacy settings.model: that projection may
+					// be stale under version skew. spawnWithGrants derives a fresh legacy
+					// companion from this pair before the bus call.
+					model = ""
+					modelIdentity = snap.RequestedSelection.Model
+					contextWindow = snap.RequestedSelection.ContextWindow
+				} else {
+					// Older daemon/desktop snapshots have no canonical pair.
+					model = snap.Settings.Model
+				}
 			}
 
 			spawn := spawnAgentIn{

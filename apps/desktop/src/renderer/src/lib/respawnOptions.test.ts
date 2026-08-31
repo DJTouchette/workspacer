@@ -53,7 +53,9 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       record({
         provider: 'claude',
         profileId: 'work',
-        model: 'opus',
+        model: 'opus[1m]',
+        modelIdentity: 'opus',
+        contextWindow: 1_000_000,
         effort: 'high',
         permissionMode: 'acceptEdits',
         skipPermissions: false,
@@ -68,7 +70,9 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       cwd: '/home/u/Work',
       provider: 'claude',
       profileId: 'work',
-      model: 'opus',
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
       effort: 'high',
       permissionMode: 'acceptEdits',
       skipPermissions: false,
@@ -78,6 +82,32 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       resumeSessionId: 'sess-3',
       cols: 120,
       rows: 32,
+    });
+  });
+
+  it('preserves a native-1M canonical pair without inventing a marker', () => {
+    expect(
+      buildRespawnSpawnOptions(
+        record({ model: 'fable', modelIdentity: 'fable', contextWindow: 1_000_000 }),
+        'native-1m',
+      ),
+    ).toMatchObject({
+      model: 'fable',
+      modelIdentity: 'fable',
+      contextWindow: 1_000_000,
+    });
+  });
+
+  it('preserves a marker-bearing compatibility model beside its canonical pair', () => {
+    expect(
+      buildRespawnSpawnOptions(
+        record({ model: 'sonnet[1m]', modelIdentity: 'sonnet', contextWindow: 1_000_000 }),
+        'marked-1m',
+      ),
+    ).toMatchObject({
+      model: 'sonnet[1m]',
+      modelIdentity: 'sonnet',
+      contextWindow: 1_000_000,
     });
   });
 

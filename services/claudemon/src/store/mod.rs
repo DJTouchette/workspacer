@@ -559,15 +559,14 @@ mod tests {
         let legacy = legacy.ok_or_else(|| "legacy requested_model is missing".to_string())?;
         let identity =
             identity.ok_or_else(|| "canonical requested_model_identity is missing".to_string())?;
-        if legacy == identity {
-            return Ok(());
-        }
         let canonical = restore_persisted_model_selection(Some(&identity), context_window, None)
             .ok_or_else(|| "canonical selection is invalid".to_string())?;
-        let expected = PersistedModelSelection::from_selection(canonical);
-        if expected.legacy_model != legacy {
+        let restored =
+            restore_persisted_model_selection(Some(&identity), context_window, Some(&legacy))
+                .ok_or_else(|| "combined selection is invalid".to_string())?;
+        if restored != canonical {
             return Err(format!(
-                "legacy/canonical conflict: legacy={legacy:?}, canonical={expected:?}"
+                "legacy/canonical conflict: legacy={legacy:?}, canonical={canonical:?}, restored={restored:?}"
             ));
         }
         Ok(())
@@ -1299,6 +1298,128 @@ mod tests {
         assert!(dual_write_guard(&db, "guard")
             .unwrap_err()
             .contains("legacy"));
+
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = 'opus',
+                 requested_model_identity = 'opus', requested_context_window = 1000000
+               WHERE id = 'guard'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(dual_write_guard(&db, "guard")
+            .unwrap_err()
+            .contains("conflict"));
+
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = 'opus[1m]',
+                 requested_model_identity = 'opus[1m]', requested_context_window = 1000000
+               WHERE id = 'guard'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(dual_write_guard(&db, "guard")
+            .unwrap_err()
+            .contains("canonical selection is invalid"));
+    }
+
+    #[test]
+    fn malformed_claude_pairs_heal_without_rewriting_opaque_non_claude_identity() {
+        let db = Db::open(tempfile_path()).unwrap();
+        for id in ["bare-claude", "marked-canonical", "opaque-non-claude"] {
+            db.record_event(&ev("SessionStart", id)).unwrap();
+        }
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = 'opus',
+                 requested_model_identity = 'opus', requested_context_window = 1000000
+               WHERE id = 'bare-claude'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = 'sonnet[1m]',
+                 requested_model_identity = 'sonnet[1m]', requested_context_window = 1000000
+               WHERE id = 'marked-canonical'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE sessions SET requested_model = 'vendor/custom-1m',
+                 requested_model_identity = 'vendor/custom-1m', requested_context_window = 1000000
+               WHERE id = 'opaque-non-claude'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let restored = db.load_recent_sessions(10).unwrap();
+        let selections: std::collections::HashMap<_, _> = restored
+            .iter()
+            .map(|row| (row.id.as_str(), row.requested_selection.clone()))
+            .collect();
+        assert_eq!(
+            selections["bare-claude"],
+            Some(ModelSelection {
+                model: "opus".into(),
+                context_window: None,
+            }),
+            "a bare v8 companion is newer evidence selecting Claude's base window",
+        );
+        assert_eq!(
+            selections["marked-canonical"],
+            Some(ModelSelection {
+                model: "sonnet".into(),
+                context_window: Some(1_000_000),
+            }),
+            "legacy syntax is rejected from canonical storage but recovered from its companion",
+        );
+        assert_eq!(
+            selections["opaque-non-claude"],
+            Some(ModelSelection {
+                model: "vendor/custom-1m".into(),
+                context_window: Some(1_000_000),
+            }),
+            "a provider-neutral restore must not reinterpret an exact opaque -1m identity",
+        );
+
+        let store = crate::session::SessionStore::new();
+        store.hydrate(restored);
+        for id in ["bare-claude", "marked-canonical", "opaque-non-claude"] {
+            let healed = store.requested_model_selection(id).unwrap();
+            db.record_event_with_spawn_facts(
+                &ev("PreToolUse", id),
+                SpawnFacts {
+                    requested_selection: Some(&healed),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            dual_write_guard(&db, id).unwrap();
+        }
+        assert_eq!(
+            raw_selection_columns(&db, "bare-claude"),
+            (Some("opus".into()), Some("opus".into()), None),
+        );
+        assert_eq!(
+            raw_selection_columns(&db, "marked-canonical"),
+            (
+                Some("sonnet[1m]".into()),
+                Some("sonnet".into()),
+                Some(1_000_000),
+            ),
+        );
+        assert_eq!(
+            raw_selection_columns(&db, "opaque-non-claude"),
+            (
+                Some("vendor/custom-1m".into()),
+                Some("vendor/custom-1m".into()),
+                Some(1_000_000),
+            ),
+        );
     }
 
     /// THE OTHER daemon-restart drop, and the one every $0.00 came from.

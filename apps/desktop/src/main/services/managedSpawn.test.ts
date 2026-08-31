@@ -936,6 +936,25 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
     expect(lastManaged().model).toBe('gpt-5.1-codex-max');
   });
 
+  it.each(['', '   '])(
+    'treats a blank caller model %j as omitted and keeps the configured manager model',
+    async (model) => {
+      mockConfig = { agents: { managerModels: { codex: 'gpt-5' } } };
+      await spawnManagedAgent({
+        provider: 'codex',
+        transport: 'stream',
+        cwd: '/proj',
+        manager: true,
+        model,
+      });
+      expect(lastManaged()).toMatchObject({
+        model: 'gpt-5',
+        modelIdentity: 'gpt-5',
+        contextWindow: null,
+      });
+    },
+  );
+
   it('unset leaves the model undefined — the harness picks its own default', async () => {
     mockConfig = { agents: { managerProvider: 'codex' } };
     await spawnManagedAgent({

@@ -780,6 +780,7 @@ test.describe('mobile client', () => {
     await page.locator('.agent[data-agent="ws1"] .top').click();
     await page.locator('#chips [data-chip="model"]').click();
     await expect(page.locator('#sheet')).toContainText('opus-5[1m]');
+    await expect(page.locator('#sheet [data-row]', { hasText: 'opus-5[1m]' })).toHaveCount(1);
     await page.locator('#sheet [data-row]', { hasText: 'opus-5[1m]' }).click();
 
     await expect.poll(() => hub.callsTo('claude.setModel').length).toBe(1);

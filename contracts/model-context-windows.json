@@ -746,6 +746,18 @@
       "note": "The numeric pair may coexist with an opaque id but never rewrites it."
     },
     {
+      "name": "non-Claude context window without model identity is invalid",
+      "provider": "codex",
+      "model": null,
+      "modelIdentity": null,
+      "contextWindow": 272000,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "empty-model",
+      "note": "A context window cannot identify what model it belongs to; every provider twin must reject this partial canonical wire."
+    },
+    {
       "name": "conflicting non-Claude identity and companion is refused",
       "provider": "codex",
       "model": "gpt-5-codex",

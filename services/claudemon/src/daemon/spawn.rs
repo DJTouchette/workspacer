@@ -86,41 +86,100 @@ pub struct SpawnPayload {
 /// for callers that only send a command line: the model is exactly what says
 /// whether this session runs a 1M window (`opus[1m]`), so read it off argv
 /// rather than lose it.
-fn model_from_argv(argv: &[String]) -> Option<&str> {
-    let mut it = argv.iter();
-    while let Some(arg) = it.next() {
-        if let Some(v) = arg.strip_prefix("--model=") {
-            return Some(v);
+fn model_from_argv(argv: &[String], provider: &str) -> Option<String> {
+    let mut model = None;
+    match provider.to_ascii_lowercase().as_str() {
+        "claude" => {
+            for (index, arg) in argv.iter().enumerate() {
+                if let Some(value) = arg.strip_prefix("--model=") {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        model = Some(value.to_string());
+                    }
+                } else if arg == "--model" {
+                    let value = argv.get(index + 1).map(String::as_str).unwrap_or("");
+                    let value = value.trim();
+                    if !value.is_empty() && !value.starts_with('-') {
+                        model = Some(value.to_string());
+                    }
+                }
+            }
         }
-        if arg == "--model" {
-            return it.next().map(String::as_str);
+        "codex" => {
+            for pair in argv.windows(2) {
+                if pair[0] != "-c" {
+                    continue;
+                }
+                let Some(value) = pair[1].trim().strip_prefix("model=") else {
+                    continue;
+                };
+                let value = value.trim();
+                if value.is_empty() {
+                    continue;
+                }
+                model = serde_json::from_str::<String>(value)
+                    .ok()
+                    .or_else(|| Some(value.to_string()));
+            }
         }
+        _ => {}
     }
-    None
+    model
 }
 
 /// Make the executable argv agree with the validated wire. This is required
 /// for a new pair-only sender: canonical fields are authoritative, but the
-/// provider process still consumes the legacy `--model` spelling.
-fn set_model_in_argv(argv: &mut Vec<String>, model: &str) {
+/// provider process still consumes its own executable spelling (`--model` for
+/// Claude, `-c model=...` for the Codex rollout TUI).
+fn set_model_in_argv(argv: &mut Vec<String>, provider: &str, model: &str) {
+    let mut out = Vec::with_capacity(argv.len() + 2);
     let mut index = 0;
-    while index < argv.len() {
-        if argv[index] == "--model" {
-            if index + 1 < argv.len() {
-                argv[index + 1] = model.to_string();
-            } else {
-                argv.push(model.to_string());
+    match provider.to_ascii_lowercase().as_str() {
+        "claude" => {
+            while index < argv.len() {
+                let arg = &argv[index];
+                if arg == "--model" {
+                    // Remove its value only when it really has one. A malformed
+                    // `--model --verbose` must not eat the unrelated flag.
+                    if argv
+                        .get(index + 1)
+                        .is_some_and(|value| !value.starts_with('-'))
+                    {
+                        index += 1;
+                    }
+                } else if !arg.starts_with("--model=") {
+                    out.push(arg.clone());
+                }
+                index += 1;
             }
-            return;
+            out.extend(["--model".to_string(), model.to_string()]);
         }
-        if argv[index].starts_with("--model=") {
-            argv[index] = format!("--model={model}");
-            return;
+        "codex" => {
+            while index < argv.len() {
+                if argv[index] == "-c"
+                    && argv
+                        .get(index + 1)
+                        .is_some_and(|value| value.trim().starts_with("model="))
+                {
+                    index += 2;
+                    continue;
+                }
+                out.push(argv[index].clone());
+                index += 1;
+            }
+            out.extend([
+                "-c".to_string(),
+                format!(
+                    "model={}",
+                    serde_json::to_string(model).expect("serializing a string cannot fail")
+                ),
+            ]);
         }
-        index += 1;
+        // No other provider currently uses the PTY rollout route. Most
+        // importantly, never inject Claude's flag into an opaque provider.
+        _ => return,
     }
-    argv.push("--model".to_string());
-    argv.push(model.to_string());
+    *argv = out;
 }
 
 /// Reject a working directory no child could actually start in — the daemon-side
@@ -176,11 +235,14 @@ pub async fn handle(
         return (StatusCode::BAD_REQUEST, problem).into_response();
     }
 
+    let input_provider = payload.rollout_provider.as_deref().unwrap_or("claude");
+    let argv_model = model_from_argv(&payload.argv, input_provider);
     let legacy_model = payload
         .model
         .as_deref()
-        .or_else(|| model_from_argv(&payload.argv));
-    let input_provider = payload.rollout_provider.as_deref().unwrap_or("claude");
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .or(argv_model.as_deref());
     let persisted_selection = match normalize_model_input(
         input_provider,
         legacy_model,
@@ -191,7 +253,7 @@ pub async fn handle(
         Err(err) => return (StatusCode::BAD_REQUEST, err.code()).into_response(),
     };
     if let Some(selection) = &persisted_selection {
-        set_model_in_argv(&mut payload.argv, &selection.legacy_model);
+        set_model_in_argv(&mut payload.argv, input_provider, &selection.legacy_model);
     }
 
     // Prefer the caller-pinned id (matches `claude --session-id <uuid>`); fall
@@ -860,8 +922,8 @@ mod tests {
                 .as_deref()
                 .map(str::trim)
                 .filter(|m| !m.is_empty())
-                .or_else(|| model_from_argv(&payload.argv))
                 .map(str::to_string)
+                .or_else(|| model_from_argv(&payload.argv, "claude"))
         };
         let payload = |v: serde_json::Value| -> SpawnPayload { serde_json::from_value(v).unwrap() };
 
@@ -912,22 +974,53 @@ mod tests {
     fn model_from_argv_reads_both_spellings() {
         let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            model_from_argv(&argv(&["claude", "--model", "opus[1m]", "--verbose"])),
-            Some("opus[1m]")
+            model_from_argv(
+                &argv(&["claude", "--model", "opus[1m]", "--verbose"]),
+                "claude",
+            ),
+            Some("opus[1m]".into())
         );
         assert_eq!(
-            model_from_argv(&argv(&["claude", "--model=sonnet[1m]"])),
-            Some("sonnet[1m]")
+            model_from_argv(&argv(&["claude", "--model=sonnet[1m]"]), "claude"),
+            Some("sonnet[1m]".into())
         );
-        assert_eq!(model_from_argv(&argv(&["claude", "--resume", "x"])), None);
+        assert_eq!(
+            model_from_argv(&argv(&["claude", "--resume", "x"]), "claude"),
+            None
+        );
         // A trailing `--model` with nothing after it must not panic.
-        assert_eq!(model_from_argv(&argv(&["claude", "--model"])), None);
+        assert_eq!(
+            model_from_argv(&argv(&["claude", "--model"]), "claude"),
+            None
+        );
+        assert_eq!(
+            model_from_argv(
+                &argv(&["claude", "--model=opus", "--model", "   "]),
+                "claude",
+            ),
+            Some("opus".into()),
+            "a blank split-form flag does not shadow the prior executable value",
+        );
+        assert_eq!(
+            model_from_argv(
+                &argv(&["claude", "--model=opus", "--model", "sonnet"]),
+                "claude",
+            ),
+            Some("sonnet".into()),
+            "the CLI and every profile parser use last-wins semantics",
+        );
     }
 
     #[test]
     fn canonical_pair_rewrites_the_cli_boundary_to_its_legacy_companion() {
+        let argv = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
         let mut absent = vec!["claude".to_string(), "--verbose".to_string()];
-        set_model_in_argv(&mut absent, "opus[1m]");
+        set_model_in_argv(&mut absent, "claude", "opus[1m]");
         assert_eq!(absent, vec!["claude", "--verbose", "--model", "opus[1m]"]);
 
         let mut split = vec![
@@ -935,12 +1028,48 @@ mod tests {
             "--model".to_string(),
             "sonnet".to_string(),
         ];
-        set_model_in_argv(&mut split, "sonnet[1m]");
+        set_model_in_argv(&mut split, "claude", "sonnet[1m]");
         assert_eq!(split, vec!["claude", "--model", "sonnet[1m]"]);
 
         let mut joined = vec!["claude".to_string(), "--model=sonnet".to_string()];
-        set_model_in_argv(&mut joined, "sonnet[1m]");
-        assert_eq!(joined, vec!["claude", "--model=sonnet[1m]"]);
+        set_model_in_argv(&mut joined, "claude", "sonnet[1m]");
+        assert_eq!(joined, vec!["claude", "--model", "sonnet[1m]"]);
+
+        let mut repeated = argv(&[
+            "claude",
+            "--model=opus",
+            "--verbose",
+            "--model",
+            "sonnet",
+            "--model",
+            "--debug",
+        ]);
+        set_model_in_argv(&mut repeated, "claude", "haiku");
+        assert_eq!(
+            repeated,
+            argv(&["claude", "--verbose", "--debug", "--model", "haiku"]),
+            "all stale spellings are removed and the authoritative value wins last",
+        );
+
+        let mut codex = argv(&[
+            "codex",
+            "-c",
+            "model=\"gpt-5\"",
+            "-c",
+            "model_reasoning_effort=\"high\"",
+        ]);
+        set_model_in_argv(&mut codex, "codex", "gpt-5.6-codex");
+        assert_eq!(
+            codex,
+            argv(&[
+                "codex",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "-c",
+                "model=\"gpt-5.6-codex\"",
+            ]),
+            "a Codex rollout keeps provider config syntax and never gains --model",
+        );
     }
 
     #[test]

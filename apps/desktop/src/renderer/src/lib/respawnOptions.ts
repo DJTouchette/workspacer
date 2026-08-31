@@ -14,6 +14,8 @@ export interface RespawnSpawnOptions {
   transport?: 'pty' | 'stream';
   profileId?: string;
   model?: string;
+  modelIdentity?: string;
+  contextWindow?: number | null;
   effort?: string;
   permissionMode?: string;
   skipPermissions?: boolean;
@@ -48,6 +50,8 @@ export function buildRespawnSpawnOptions(
     transport,
     profileId: agent.profileId,
     model: agent.model,
+    modelIdentity: agent.modelIdentity,
+    contextWindow: agent.contextWindow,
     effort: agent.effort,
     permissionMode: agent.permissionMode,
     skipPermissions: agent.skipPermissions,

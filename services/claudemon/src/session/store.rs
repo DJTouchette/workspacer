@@ -1364,10 +1364,26 @@ impl SessionStore {
             // newer v8 writer and `requested_selection` already reflects it. A
             // raw legacy overwrite here would preserve the stale disagreement;
             // deriving it lets the next ordinary event heal all three columns.
-            state
-                .requested_selection
-                .clone()
-                .map(super::windows::PersistedModelSelection::from_selection)
+            state.requested_selection.clone().map(|selection| {
+                let mut persisted =
+                    super::windows::PersistedModelSelection::from_selection(selection.clone());
+                // Persistence predates provider storage. An exact legacy
+                // companion is the only durable evidence that an opaque
+                // non-Claude identity such as `vendor/model-1m` must stay
+                // byte-for-byte. Invalid bare Claude 1M companions were
+                // already resolved to their rollback-safe base selection
+                // during restore, so preserving exactness here heals both
+                // cases on the next ordinary event.
+                if let Some(legacy) = state
+                    .requested_model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|legacy| *legacy == selection.model)
+                {
+                    persisted.legacy_model = legacy.to_string();
+                }
+                persisted
+            })
         })
     }
 
