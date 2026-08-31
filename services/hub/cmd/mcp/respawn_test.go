@@ -441,3 +441,73 @@ func TestRespawnReportsAFailedSpawnInsteadOfSendingIntoTheVoid(t *testing.T) {
 		t.Error("no task should be sent when the spawn failed")
 	}
 }
+
+// ── the routing labels ──────────────────────────────────────────────────────
+
+// A worker dispatched with a role must come back with it. `role` is not
+// decoration: it is what makes a spawn get a routing decision at all, and
+// `fresh` enforcement keys off the DECLARED role — so a reviewer that loses its
+// role on respawn loses its freshness guarantee with nothing saying so.
+func TestRespawnInheritsRoleAndCapabilityFromTheOriginalSnapshot(t *testing.T) {
+	hub := newRespawnHub()
+	hub.snapshot = `{"cwd":"/w/alpha-wt","label":"alpha: parser","provider":"claude",
+		"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5","effort":"high",
+		"permissionMode":"bypassPermissions"},
+		"routing":{"role":"reviewer","capability":"deep_reviewer","decisionId":"dec-7"}}`
+
+	res, h := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "you reviewed the wrong file",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", resultText(res))
+	}
+	p := h.call("agents.spawn").params
+	if got, _ := p["role"].(string); got != "reviewer" {
+		t.Errorf("spawn role = %q, want the original's %q", got, "reviewer")
+	}
+	if got, _ := p["capability"].(string); got != "deep_reviewer" {
+		t.Errorf("spawn capability = %q, want the original's %q", got, "deep_reviewer")
+	}
+	// decisionId is NOT inherited: the successor was produced by a diagnosis of
+	// a failure, not by the select_model answer that routed the original.
+	if got, ok := p["decisionId"]; ok && got != "" {
+		t.Errorf("decisionId must not be cloned onto the successor, got %v", got)
+	}
+}
+
+// An unrouted original keeps its exact shape — no invented role, no invented
+// capability, so a plain dispatch does not become a routed one by respawning.
+func TestRespawnAddsNoRoutingWhenTheOriginalHadNone(t *testing.T) {
+	_, h := callRespawn(t, newRespawnHub(), true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	p := h.call("agents.spawn").params
+	for _, field := range []string{"role", "capability"} {
+		if got, ok := p[field]; ok && got != "" {
+			t.Errorf("spawn %s = %v, want nothing for an unrouted original", field, got)
+		}
+	}
+}
+
+// The override wins, exactly as it does for model/cwd/label — a redispatch may
+// change what the worker IS (a failed implementer sent back to diagnose).
+func TestRespawnRoleOverrideWinsOverTheOriginal(t *testing.T) {
+	hub := newRespawnHub()
+	hub.snapshot = `{"cwd":"/w/alpha-wt","label":"alpha: parser","provider":"claude",
+		"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5"},
+		"routing":{"role":"implementer","capability":"balanced"}}`
+
+	_, h := callRespawn(t, hub, true, map[string]any{
+		"sessionId":  "old-1",
+		"amendment":  "stop implementing — find out why the test fails first",
+		"role":       "diagnostician",
+		"capability": "frontier",
+	})
+	p := h.call("agents.spawn").params
+	if got, _ := p["role"].(string); got != "diagnostician" {
+		t.Errorf("spawn role = %q, want the override", got)
+	}
+	if got, _ := p["capability"].(string); got != "frontier" {
+		t.Errorf("spawn capability = %q, want the override", got)
+	}
+}

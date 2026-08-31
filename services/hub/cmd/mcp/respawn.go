@@ -37,14 +37,16 @@ import (
 // amendment is an OVERRIDE of what the original session recorded.
 type respawnWithIn struct {
 	hubArg
-	SessionID string `json:"sessionId" jsonschema:"the session to clone — usually one you have just stopped"`
-	Amendment string `json:"amendment" jsonschema:"the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again"`
-	Label     string `json:"label,omitempty" jsonschema:"label for the successor; defaults to the original's with a retry marker"`
-	Model     string `json:"model,omitempty" jsonschema:"override the model (e.g. step up for a task that proved harder than it looked); defaults to the original's"`
-	Effort    string `json:"effort,omitempty" jsonschema:"override the reasoning effort; defaults to the original's"`
-	Cwd       string `json:"cwd,omitempty" jsonschema:"override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead"`
-	ToolScope string `json:"toolScope,omitempty" jsonschema:"facade tier for the successor (view/triage/operator). NOT inherited — a session's snapshot does not record it — so restate it if the original had one"`
-	Worktree  bool   `json:"worktree,omitempty" jsonschema:"carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued"`
+	SessionID  string `json:"sessionId" jsonschema:"the session to clone — usually one you have just stopped"`
+	Amendment  string `json:"amendment" jsonschema:"the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again"`
+	Label      string `json:"label,omitempty" jsonschema:"label for the successor; defaults to the original's with a retry marker"`
+	Model      string `json:"model,omitempty" jsonschema:"override the model (e.g. step up for a task that proved harder than it looked); defaults to the original's"`
+	Effort     string `json:"effort,omitempty" jsonschema:"override the reasoning effort; defaults to the original's"`
+	Cwd        string `json:"cwd,omitempty" jsonschema:"override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead"`
+	Role       string `json:"role,omitempty" jsonschema:"override the work ROLE the successor is dispatched as (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge); defaults to the original's. Set it when the redispatch changes what the worker IS — a failed implementer respawned to diagnose is a diagnostician, not an implementer"`
+	Capability string `json:"capability,omitempty" jsonschema:"override the model CAPABILITY the successor is dispatched at (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus); defaults to the original's. Copy it from a fresh select_model answer rather than raising it by hand — the host still clamps it to the target directory's ceiling"`
+	ToolScope  string `json:"toolScope,omitempty" jsonschema:"facade tier for the successor (view/triage/operator). NOT inherited — a session's snapshot does not record it — so restate it if the original had one"`
+	Worktree   bool   `json:"worktree,omitempty" jsonschema:"carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued"`
 }
 
 func (in *respawnWithIn) takeHubField() string { return in.takeHub() }
@@ -72,6 +74,25 @@ type respawnSnapshot struct {
 	// one — the caller gets prose back where it expected a validated object,
 	// with nothing announcing the downgrade.
 	ResultSchema map[string]any `json:"resultSchema"`
+	// Routing is what the ROUTING layer said this worker is, recorded against
+	// the session at spawn time and surfaced back on the snapshot (the brain's
+	// enrichSnapshot overlay, from spawnMeta.Role/Capability/DecisionID).
+	//
+	// Inherited for the same reason resultSchema is, and one reason more.
+	// `role` is not a label: `fresh` enforcement in the routing layer keys off
+	// the DECLARED role, so a reviewer that loses its role on respawn loses its
+	// freshness guarantee with nothing announcing the loss. And a spawn that
+	// declares neither field gets no routing decision at all, so dropping them
+	// quietly demotes a routed dispatch to an unrouted one.
+	//
+	// `decisionId` is deliberately NOT inherited: it joins a worker to the
+	// select_model answer that produced it, and the successor was produced by
+	// the dispatcher's judgement about a FAILURE, not by that decision. Copying
+	// it would file the redispatch under a decision that never asked for it.
+	Routing struct {
+		Role       string `json:"role"`
+		Capability string `json:"capability"`
+	} `json:"routing"`
 }
 
 // RESPAWN_HEADING separates the inherited task from the correction. Spelled
@@ -120,7 +141,7 @@ func addRespawnTool(b *build) {
 		}
 	}
 	const name = "respawn_with"
-	const desc = "Redispatch a worker: clone a session's ORIGINAL task and cwd/model/provider/parent, append your correction, and start a fresh agent with both. The standing move for a worker that has crept out of scope — stop it (signal SIGTERM, then close_session), then respawn_with the diagnosis baked in, instead of re-authoring the whole first message by hand. Returns the new sessionId."
+	const desc = "Redispatch a worker: clone a session's ORIGINAL task and cwd/model/provider/parent/role, append your correction, and start a fresh agent with both. The standing move for a worker that has crept out of scope — stop it (signal SIGTERM, then close_session), then respawn_with the diagnosis baked in, instead of re-authoring the whole first message by hand. Returns the new sessionId."
 	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: spawnMethod, Group: b.group})
 
 	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc},
@@ -176,6 +197,8 @@ func addRespawnTool(b *build) {
 				ToolScope:       in.ToolScope,
 				Worktree:        in.Worktree,
 				ResultSchema:    snap.ResultSchema,
+				Role:            firstNonEmpty(in.Role, snap.Routing.Role),
+				Capability:      firstNonEmpty(in.Capability, snap.Routing.Capability),
 				// The composed dispatch rides the SPAWN now, rather than a
 				// follow-up sendMessage below.
 				//
@@ -241,6 +264,8 @@ func addRespawnTool(b *build) {
 				"clonedFrom": in.SessionID,
 				"cwd":        spawn.Cwd,
 				"label":      spawn.Label,
+				"role":       spawn.Role,
+				"capability": spawn.Capability,
 				"note":       "The successor was sent the original task plus your correction. Its permission mode was re-judged by the same grant check a fresh spawn_agent gets — it is not inherited.",
 			})
 			if merr != nil {
