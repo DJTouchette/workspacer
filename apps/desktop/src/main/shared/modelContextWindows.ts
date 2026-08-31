@@ -25,7 +25,7 @@
  *  rows precisely so an `o3` buried inside an unrelated id does not match, and
  *  a port that read every row as a substring would pass every lookup case in
  *  the fixture except that one. */
-export type WindowMatchKind = 'contains' | 'prefix';
+export type WindowMatchKind = 'contains' | 'prefix' | 'suffix';
 
 export interface WindowRow {
   /** Lowercased needle. */
@@ -39,8 +39,8 @@ export interface WindowRow {
 export const CONTEXT_WINDOWS: readonly WindowRow[] = [
   // Marker rows first — a statement about the WINDOW outranks a statement
   // about the family, whichever family carries it.
-  { match: '[1m]', kind: 'contains', window: 1_000_000 },
-  { match: '-1m', kind: 'contains', window: 1_000_000 },
+  { match: '[1m]', kind: 'suffix', window: 1_000_000 },
+  { match: '-1m', kind: 'suffix', window: 1_000_000 },
   // 1M-native: the max window is also the default, so these ids never carry a
   // marker. Before the generic claude row or their gauges read 5× too full.
   { match: 'fable', kind: 'contains', window: 1_000_000 },
@@ -67,6 +67,131 @@ export const CONTEXT_WINDOWS: readonly WindowRow[] = [
  *  believing the claim. Two percent absorbs the provider's own rounding. */
 export const DRIFT_TOLERANCE = 1.02;
 
+export interface ModelSelection {
+  /** Provider-native identity only. Legacy context markers never survive here. */
+  model: string;
+  /** Explicit token window, or null when the caller genuinely did not choose one. */
+  contextWindow: number | null;
+}
+
+export type ModelSelectionErrorCode =
+  'empty-model' | 'invalid-model-type' | 'invalid-context-window' | 'conflicting-context-window';
+
+/** A stable error code lets config and wire adapters reject bad mixed-version
+ *  input without depending on prose shared across three languages. */
+export class ModelSelectionError extends Error {
+  constructor(
+    readonly code: ModelSelectionErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ModelSelectionError';
+  }
+}
+
+const LEGACY_ONE_MILLION_SUFFIX = /(?:\[1m\]|-1m)$/i;
+
+/**
+ * Canonicalize a model selection at ingress.
+ *
+ * Only trailing `[1m]` / `-1m` are syntax. Unknown identities otherwise pass
+ * through untouched, and successful output can never carry either suffix.
+ */
+export function normalizeModelSelection(
+  model: string,
+  contextWindow?: number | null,
+): ModelSelection {
+  let identity = model.trim();
+  if (!identity) {
+    throw new ModelSelectionError('empty-model', 'model selection must name a model');
+  }
+
+  let legacyWindow: number | null = null;
+  while (LEGACY_ONE_MILLION_SUFFIX.test(identity)) {
+    identity = identity.replace(LEGACY_ONE_MILLION_SUFFIX, '').trimEnd();
+    legacyWindow = 1_000_000;
+  }
+  if (!identity) {
+    throw new ModelSelectionError(
+      'empty-model',
+      'model selection cannot consist only of a window marker',
+    );
+  }
+
+  const explicit = contextWindow ?? null;
+  if (explicit !== null && (!Number.isSafeInteger(explicit) || explicit <= 0)) {
+    throw new ModelSelectionError(
+      'invalid-context-window',
+      'contextWindow must be a positive integer token count',
+    );
+  }
+  if (legacyWindow !== null && explicit !== null && legacyWindow !== explicit) {
+    throw new ModelSelectionError(
+      'conflicting-context-window',
+      `legacy model marker selects ${legacyWindow} tokens but contextWindow selects ${explicit}`,
+    );
+  }
+
+  return { model: identity, contextWindow: explicit ?? legacyWindow };
+}
+
+/** Serialize a canonical selection at Claude Code's external argv boundary.
+ *  This is the sole current-output marker emitter. It normalizes defensively
+ *  so transitional callers that still pass `opus[1m]` remain idempotent. */
+export function claudeArgvModel(selection: ModelSelection): string {
+  const normalized = normalizeModelSelection(selection.model, selection.contextWindow);
+  return normalized.contextWindow === 1_000_000 &&
+    !isClaudeInherentOneMillionModel(normalized.model)
+    ? `${normalized.model}[1m]`
+    : normalized.model;
+}
+
+/** Models whose million-token window is inherent, not a selectable Claude
+ * variant. They must never receive `[1m]`: unlike Opus/Sonnet, the bare model
+ * already selects its only window and Claude Code does not expose a decorated
+ * alias for it. Shared argv fixture cases pin this list across TS, Rust and Go. */
+export function isClaudeInherentOneMillionModel(model: string): boolean {
+  const identity = normalizeModelSelection(model).model.toLowerCase();
+  return identity.includes('fable') || identity.includes('mythos');
+}
+
+/**
+ * Stable identity for a picker row. A bare model id is not enough: Opus and
+ * Sonnet each have independently selectable 200K and 1M rows. JSON keeps the
+ * pair lossless without turning the UI key itself into provider argv syntax.
+ */
+export function modelSelectionKey(selection: ModelSelection): string {
+  const normalized = normalizeModelSelection(selection.model, selection.contextWindow);
+  return JSON.stringify([normalized.model, normalized.contextWindow]);
+}
+
+/** Decode a picker key, accepting an old model-string value during rollout. */
+export function modelSelectionFromKey(key: string): ModelSelection {
+  try {
+    const parsed = JSON.parse(key) as unknown;
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === 'string' &&
+      (parsed[1] === null || typeof parsed[1] === 'number')
+    ) {
+      return normalizeModelSelection(parsed[0], parsed[1]);
+    }
+  } catch {
+    // Legacy controlled-select values were model strings, including `[1m]`.
+  }
+  return normalizeModelSelection(key);
+}
+
+export function sameModelSelection(a: ModelSelection, b: ModelSelection): boolean {
+  const left = normalizeModelSelection(a.model, a.contextWindow);
+  const right = normalizeModelSelection(b.model, b.contextWindow);
+  return (
+    left.model.toLowerCase() === right.model.toLowerCase() &&
+    left.contextWindow === right.contextWindow
+  );
+}
+
 /**
  * The table's answer for a concrete model id, or `null` when no row covers it.
  *
@@ -78,7 +203,12 @@ export function windowFor(model: string | null | undefined): number | null {
   if (!model) return null;
   const m = model.toLowerCase();
   for (const row of CONTEXT_WINDOWS) {
-    const hit = row.kind === 'prefix' ? m.startsWith(row.match) : m.includes(row.match);
+    const hit =
+      row.kind === 'prefix'
+        ? m.startsWith(row.match)
+        : row.kind === 'suffix'
+          ? m.endsWith(row.match)
+          : m.includes(row.match);
     if (hit) return row.window;
   }
   return null;
@@ -95,8 +225,14 @@ export function windowFor(model: string | null | undefined): number | null {
  */
 export function requestedWindowFor(model: string | null | undefined): number | null {
   if (!model) return null;
-  const m = model.toLowerCase();
-  if (m.includes('[1m]') || m.includes('-1m') || m.includes('fable') || m.includes('mythos')) {
+  let selection: ModelSelection;
+  try {
+    selection = normalizeModelSelection(model);
+  } catch {
+    return null;
+  }
+  const m = selection.model.toLowerCase();
+  if (selection.contextWindow === 1_000_000 || m.includes('fable') || m.includes('mythos')) {
     return 1_000_000;
   }
   return null;
@@ -209,10 +345,31 @@ function windowClaims(model: string | null | undefined, signals?: WindowSignals)
  * answers are pinned to each other by contracts/claude-model-catalog-cases.json.
  */
 export function formatClaudeAliasWindow(alias: string): string {
-  const w = windowFor(alias) ?? windowFor(`claude-${alias}`);
+  const w = claudeAliasSelection(alias).contextWindow;
   // An id the table has never heard of gets no badge rather than an invented
   // one — the same honest unknown as everywhere else.
-  if (w === null) return '';
-  if (w >= 1_000_000) return '1M';
-  return `${Math.round(w / 1000)}K`;
+  return formatContextWindow(w);
+}
+
+/**
+ * Resolve one Claude catalog alias through the shared window contract. The
+ * catalog may describe the 1M variants with legacy syntax, but its result is a
+ * canonical suffix-free identity plus an explicit window.
+ */
+export function claudeAliasSelection(alias: string): ModelSelection {
+  const normalized = normalizeModelSelection(alias);
+  return {
+    model: normalized.model,
+    contextWindow:
+      normalized.contextWindow ??
+      windowFor(normalized.model) ??
+      windowFor(`claude-${normalized.model}`),
+  };
+}
+
+/** Compact badge for an already-selected numeric window. */
+export function formatContextWindow(window: number | null | undefined): string {
+  if (window == null) return '';
+  if (window >= 1_000_000) return '1M';
+  return `${Math.round(window / 1000)}K`;
 }

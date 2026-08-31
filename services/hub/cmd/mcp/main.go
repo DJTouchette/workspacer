@@ -34,6 +34,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/redact"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1213,13 +1214,25 @@ func configDefaultModel(ctx context.Context, b *build) string {
 	}
 	var cfg struct {
 		Claude struct {
-			DefaultModel string `json:"defaultModel"`
+			DefaultModel  string  `json:"defaultModel"`
+			ContextWindow *uint64 `json:"contextWindow"`
 		} `json:"claude"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return ""
 	}
-	return cfg.Claude.DefaultModel
+	if strings.TrimSpace(cfg.Claude.DefaultModel) == "" {
+		return ""
+	}
+	selection, err := modelselection.Normalize(cfg.Claude.DefaultModel, cfg.Claude.ContextWindow)
+	if err != nil {
+		return ""
+	}
+	model, err := modelselection.ClaudeArgvModel(selection)
+	if err != nil {
+		return ""
+	}
+	return model
 }
 
 // permissionModeMeansBypass reports whether a CONFIG-CHOSEN permission mode

@@ -19,6 +19,7 @@ type modelCatalogCase struct {
 	Name   string `json:"name"`
 	Config struct {
 		DefaultModel           string   `json:"defaultModel"`
+		ContextWindow          *uint64  `json:"contextWindow"`
 		SkipPermissionsDefault bool     `json:"skipPermissionsDefault"`
 		DefaultPermissionMode  string   `json:"defaultPermissionMode"`
 		SeenModels             []string `json:"seenModels"`
@@ -46,7 +47,7 @@ func TestClaudeModelCatalogContractCases(t *testing.T) {
 	for _, c := range fx.Cases {
 		t.Run(c.Name, func(t *testing.T) {
 			tally.Ran("other")
-			got := buildListModels(c.Config.DefaultModel, c.Config.SkipPermissionsDefault,
+			got := buildListModels(c.Config.DefaultModel, c.Config.ContextWindow, c.Config.SkipPermissionsDefault,
 				c.Config.DefaultPermissionMode, c.Config.SeenModels, c.Live)
 			gotJSON, _ := json.Marshal(got)
 			wantJSON, _ := json.Marshal(c.Expected)

@@ -35,13 +35,7 @@
     "blocks": {
       "cases": {
         "why": "claude.listModels' catalog answer for a config + live-snapshot pair.",
-        "required": [
-          "name",
-          "config",
-          "live",
-          "expected",
-          "why"
-        ],
+        "required": ["name", "config", "live", "expected", "why"],
         "loaders": [
           "services/hub/cmd/brain/models_contract_test.go::TestClaudeModelCatalogContractCases(",
           "apps/desktop/src/main/services/claudeModelCatalogContract.test.ts::contracts/claude-model-catalog-cases.json"
@@ -54,6 +48,7 @@
       "name": "no models seen at all: bare alias labels, empty seen",
       "config": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "seenModels": []
@@ -61,37 +56,50 @@
       "live": [],
       "expected": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
@@ -103,6 +111,7 @@
       "name": "config fields round-trip, including the remembered permission mode",
       "config": {
         "defaultModel": "opus",
+        "contextWindow": 1000000,
         "skipPermissionsDefault": true,
         "defaultPermissionMode": "bypassPermissions",
         "seenModels": []
@@ -110,48 +119,62 @@
       "live": [],
       "expected": {
         "defaultModel": "opus",
+        "contextWindow": 1000000,
         "skipPermissionsDefault": true,
         "defaultPermissionMode": "bypassPermissions",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
         "seen": []
       },
-      "why": "defaultPermissionMode was absent from the Go result entirely, so the mode a user picked on their last spawn silently reverted to the provider default on every non-desktop client."
+      "why": "defaultPermissionMode and the selected context window both round-trip independently of the base model identity; neither is inferred from or encoded into defaultModel."
     },
     {
       "name": "the newest concrete version per family stamps the alias label and is absorbed out of seen",
       "config": {
         "defaultModel": "opus",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "seenModels": [
@@ -163,43 +186,54 @@
       "live": [],
       "expected": {
         "defaultModel": "opus",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus 4.5",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus 4.5",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku 3.5",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
-        "seen": [
-          "claude-opus-4-1-20250805"
-        ]
+        "seen": ["claude-opus-4-1-20250805"]
       },
       "why": "An alias already STANDS FOR the newest model of its family, so listing that id again is a duplicate row; the older 4.1 stays. Version comparison is numeric per segment, not lexical — 4.10 must beat 4.9."
     },
@@ -207,6 +241,7 @@
       "name": "4.10 is newer than 4.9 (numeric, not lexical)",
       "config": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "seenModels": [
@@ -217,43 +252,54 @@
       "live": [],
       "expected": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet 4.10",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet 4.10",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
-        "seen": [
-          "claude-sonnet-4-9-20250101"
-        ]
+        "seen": ["claude-sonnet-4-9-20250101"]
       },
       "why": "The one case a string comparison gets wrong in both directions at once: it would label the alias 4.9 and absorb the wrong id out of seen."
     },
@@ -261,12 +307,10 @@
       "name": "live session models merge with the persisted list, deduplicated and sorted",
       "config": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
-        "seenModels": [
-          "claude-opus-4-1-20250805",
-          "zeta-custom"
-        ]
+        "seenModels": ["claude-opus-4-1-20250805", "zeta-custom"]
       },
       "live": [
         "claude-opus-4-1-20250805",
@@ -275,45 +319,54 @@
       ],
       "expected": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus 4.5",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus 4.5",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
-        "seen": [
-          "alpha-custom",
-          "claude-opus-4-1-20250805",
-          "zeta-custom"
-        ]
+        "seen": ["alpha-custom", "claude-opus-4-1-20250805", "zeta-custom"]
       },
       "why": "Order is byte-wise sort over the merged set, and an id that does not parse as a concrete Claude model is kept verbatim."
     },
@@ -321,49 +374,58 @@
       "name": "Claude Code's <synthetic> placeholder is never offered as a model",
       "config": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
-        "seenModels": [
-          "<synthetic>",
-          "claude-haiku-3-5-20241022"
-        ]
+        "seenModels": ["<synthetic>", "claude-haiku-3-5-20241022"]
       },
-      "live": [
-        "<synthetic>"
-      ],
+      "live": ["<synthetic>"],
       "expected": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku 3.5",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],
@@ -375,46 +437,58 @@
       "name": "a [1m] suffix on a seen id is the same model as its 200K sibling",
       "config": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
-        "seenModels": [
-          "claude-opus-4-5-20251101[1m]"
-        ]
+        "seenModels": ["claude-opus-4-5-20251101[1m]"]
       },
       "live": [],
       "expected": {
         "defaultModel": "",
+        "contextWindow": null,
         "skipPermissionsDefault": false,
         "defaultPermissionMode": "",
         "aliases": [
           {
+            "model": "fable",
             "value": "fable",
             "label": "Fable",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "opus",
             "value": "opus",
             "label": "Opus 4.5",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "opus",
             "value": "opus[1m]",
             "label": "Opus 4.5",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "sonnet",
             "value": "sonnet",
             "label": "Sonnet",
+            "contextWindow": 200000,
             "context": "200K"
           },
           {
+            "model": "sonnet",
             "value": "sonnet[1m]",
             "label": "Sonnet",
+            "contextWindow": 1000000,
             "context": "1M"
           },
           {
+            "model": "haiku",
             "value": "haiku",
             "label": "Haiku",
+            "contextWindow": 200000,
             "context": "200K"
           }
         ],

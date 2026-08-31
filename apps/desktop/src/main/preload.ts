@@ -242,9 +242,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   claudeListModels: (): Promise<{
     defaultModel: string;
+    contextWindow: number | null;
     skipPermissionsDefault: boolean;
     defaultPermissionMode: string;
-    aliases: Array<{ value: string; label: string; context?: string }>;
+    aliases: Array<{
+      model?: string;
+      value?: string;
+      label: string;
+      contextWindow?: number;
+      context?: string;
+    }>;
     seen: string[];
   }> => ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
   /** One-shot conversation title for an agent's first exchange (see

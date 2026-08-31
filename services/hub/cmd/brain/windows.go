@@ -29,6 +29,7 @@ type windowMatchKind string
 const (
 	windowMatchContains windowMatchKind = "contains"
 	windowMatchPrefix   windowMatchKind = "prefix"
+	windowMatchSuffix   windowMatchKind = "suffix"
 )
 
 type windowRow struct {
@@ -44,8 +45,8 @@ type windowRow struct {
 var contextWindows = []windowRow{
 	// Marker rows first — a statement about the WINDOW outranks a statement
 	// about the family, whichever family carries it.
-	{"[1m]", windowMatchContains, 1_000_000},
-	{"-1m", windowMatchContains, 1_000_000},
+	{"[1m]", windowMatchSuffix, 1_000_000},
+	{"-1m", windowMatchSuffix, 1_000_000},
 	// 1M-native: the max window is also the default, so these ids never carry a
 	// marker. Before the generic claude row or their gauges read 5x too full.
 	{"fable", windowMatchContains, 1_000_000},
@@ -85,6 +86,8 @@ func windowForModel(model string) (uint64, bool) {
 		var hit bool
 		if row.Kind == windowMatchPrefix {
 			hit = strings.HasPrefix(m, row.Match)
+		} else if row.Kind == windowMatchSuffix {
+			hit = strings.HasSuffix(m, row.Match)
 		} else {
 			hit = strings.Contains(m, row.Match)
 		}
@@ -104,8 +107,8 @@ func windowForModel(model string) (uint64, bool) {
 // or whatever Claude Code's default becomes tomorrow; pinning a number here is
 // exactly how a wrong window gets asserted from token zero.
 func requestedWindowFor(model string) (uint64, bool) {
-	m := strings.ToLower(model)
-	if strings.Contains(m, "[1m]") || strings.Contains(m, "-1m") ||
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.HasSuffix(m, "[1m]") || strings.HasSuffix(m, "-1m") ||
 		strings.Contains(m, "fable") || strings.Contains(m, "mythos") {
 		return 1_000_000, true
 	}

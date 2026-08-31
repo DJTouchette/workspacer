@@ -8,6 +8,7 @@ import { withConfigLock } from '../lib/configLock';
 import { pruneOrphanedConfigKeys } from '../lib/orphanedConfigKeys';
 import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
 import type { ProjectIdentity } from '../shared/ipcTypes';
+import { ModelSelectionError, normalizeModelSelection } from '../shared/modelContextWindows';
 
 interface ShellOption {
   name: string;
@@ -123,8 +124,10 @@ interface Config {
     inAppToasts: boolean;
   };
   claude: {
-    /** Default `--model` for new agents ('' = Claude Code's own default). */
+    /** Default model identity for new agents ('' = Claude Code's own default). */
     defaultModel: string;
+    /** Selected token window, separate from the model identity. */
+    contextWindow: number | null;
     /** Concrete model ids observed in transcripts, to enrich the spawn dropdown. */
     seenModels: string[];
     /** Default for the spawn dialog's `--dangerously-skip-permissions` toggle. */
@@ -469,6 +472,59 @@ export function deepMerge(target: any, source: any): any {
   return result;
 }
 
+/** Normalize the Claude selection after a read and before a write. `source`
+ *  identifies which half of a partial selection the caller actually supplied,
+ *  so changing `defaultModel` alone cannot accidentally inherit the previous
+ *  model's window. The historical empty string remains a config-only adapter
+ *  for "let Claude choose"; it is not a valid ModelSelection. */
+function normalizeClaudeConfigSelection(config: Config, source?: unknown): Config {
+  const claude = config.claude as Config['claude'] & Record<string, unknown>;
+  const sourceRoot =
+    source && typeof source === 'object' ? (source as Record<string, unknown>) : null;
+  const sourceClaude =
+    sourceRoot?.claude && typeof sourceRoot.claude === 'object' && !Array.isArray(sourceRoot.claude)
+      ? (sourceRoot.claude as Record<string, unknown>)
+      : null;
+  const hasModel =
+    !!sourceClaude && Object.prototype.hasOwnProperty.call(sourceClaude, 'defaultModel');
+  const hasWindow =
+    !!sourceClaude && Object.prototype.hasOwnProperty.call(sourceClaude, 'contextWindow');
+  const rawModel = hasModel ? sourceClaude!.defaultModel : claude.defaultModel;
+  if (typeof rawModel !== 'string') {
+    throw new ModelSelectionError('invalid-model-type', 'claude.defaultModel must be a string');
+  }
+
+  if (rawModel.trim() === '') {
+    claude.defaultModel = '';
+    claude.contextWindow = null;
+  } else {
+    const rawWindow = hasWindow
+      ? sourceClaude!.contextWindow
+      : hasModel
+        ? undefined
+        : claude.contextWindow;
+    const selection = normalizeModelSelection(rawModel, rawWindow as number | null | undefined);
+    claude.defaultModel = selection.model;
+    claude.contextWindow = selection.contextWindow;
+  }
+
+  if (Array.isArray(claude.seenModels)) {
+    claude.seenModels = Array.from(
+      new Set(
+        claude.seenModels.flatMap((model) => {
+          if (typeof model !== 'string' || !model.trim()) return [];
+          try {
+            return [normalizeModelSelection(model).model];
+          } catch {
+            return [];
+          }
+        }),
+      ),
+    ).sort();
+  }
+  return config;
+}
+
 /**
  * One-time migration from the old keybindings schema (mode/leader + Ctrl-letter
  * map) to the prefix-forward scheme. The old defaults were written to disk on
@@ -693,7 +749,7 @@ export class ConfigService {
       // re-serialized by the next save forever. Strictly one key at a time —
       // see ORPHANED_CONFIG_KEYS; this is NOT unknown-key pruning.
       this.pruneOrphanedKeys(parsed as Record<string, unknown>, data, configPath);
-      const merged = deepMerge(defaults, parsed) as Config;
+      const merged = normalizeClaudeConfigSelection(deepMerge(defaults, parsed) as Config, parsed);
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
       // to the flat defaults, after which migrateFlatChords is a no-op. A modern
       // config passes migrateKeybindings untouched and migrateFlatChords then
@@ -702,6 +758,22 @@ export class ConfigService {
       this.lastBrokenBackup = null;
       return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
     } catch (err) {
+      if (err instanceof ModelSelectionError) {
+        // The YAML is valid. Preserve every unrelated setting and reset only
+        // the invalid model pair; never rename/discard a valid config as if it
+        // were a syntax failure.
+        const parsed = yaml.load(data) as Partial<Config>;
+        const merged = deepMerge(defaults, parsed) as Config;
+        merged.claude.defaultModel = defaults.claude.defaultModel;
+        merged.claude.contextWindow = defaults.claude.contextWindow;
+        this.lastBrokenBackup = null;
+        console.error(
+          `[ConfigService] invalid Claude model selection in ${configPath}; ` +
+            'using the shipped model/window default while preserving the rest of the config:',
+          err,
+        );
+        return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
+      }
       // Malformed YAML (e.g. a hand-edit left a syntax error). This must NOT
       // wipe the user's config: back the broken file up, log loudly, run on
       // defaults in memory, and block saves so nothing overwrites the file.
@@ -856,6 +928,7 @@ export class ConfigService {
       for (const path of WHOLESALE_CONFIG_PATHS) {
         applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
       }
+      normalizeClaudeConfigSelection(merged, partial);
       if (this.persistBlocked) {
         // The on-disk config failed to load (unreadable or unparseable): keep
         // the change in memory only. Writing here would replace the user's

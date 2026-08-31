@@ -50,9 +50,10 @@ import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
-import { resolveSpawnModel } from '../lib/spawnModel';
+import { resolveSpawnModel, resolveSpawnModelSelection } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
+import { claudeArgvModel } from '../shared/modelContextWindows';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -271,10 +272,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // this is the path it actually spawns on (chat-first `transport: 'stream'`),
   // so a manager model that never reached here would be a picker writing config
   // nobody reads.
-  const spawnModel = resolveSpawnModel(
-    provider,
-    opts.model?.trim() || (opts.manager ? resolveManagerModel(provider) : undefined),
-  );
+  const requestedModel =
+    opts.model?.trim() || (opts.manager ? resolveManagerModel(provider) : undefined);
+  const claudeModelSelection = isClaudeStream
+    ? resolveSpawnModelSelection('claude', requestedModel)
+    : undefined;
+  const spawnModel = isClaudeStream
+    ? claudeModelSelection?.model
+    : resolveSpawnModel(provider, requestedModel);
+  const serializedModel = claudeModelSelection ? claudeArgvModel(claudeModelSelection) : spawnModel;
   // Reasoning effort, same rule as the model above: an explicit request wins,
   // otherwise a MANAGER spawn takes the level configured for it on THIS
   // harness (agents.managerEfforts). Per-harness because the
@@ -432,7 +438,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(isClaudeStream && { transport: 'stream' as const }),
     ...(provider === 'codex' && { transport }),
     settings: {
-      model: spawnModel,
+      model: serializedModel,
       effort: spawnEffort,
       permissionMode,
       // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
@@ -466,7 +472,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const sessionId = await claudemonSessionClient.spawnManaged({
     provider,
     cwd,
-    model: spawnModel,
+    model: serializedModel,
     effort: spawnEffort,
     bin,
     yolo,

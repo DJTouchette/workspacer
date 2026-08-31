@@ -106,6 +106,16 @@ describe('buildClaudeArgv', () => {
       expect(argv[idx + 1]).toBe('claude-sonnet-4-5');
     });
 
+    it('serializes a canonical 1M selection only at the argv boundary', () => {
+      const argv = buildClaudeArgv({ model: 'opus', contextWindow: 1_000_000 });
+      expect(argv[argv.indexOf('--model') + 1]).toBe('opus[1m]');
+    });
+
+    it('keeps transitional decorated callers idempotent', () => {
+      const argv = buildClaudeArgv({ model: 'opus[1m]' });
+      expect(argv[argv.indexOf('--model') + 1]).toBe('opus[1m]');
+    });
+
     it('does NOT inject --model when model is an empty string', () => {
       const argv = buildClaudeArgv({ model: '' });
       expect(argv).not.toContain('--model');

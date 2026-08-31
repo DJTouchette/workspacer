@@ -171,7 +171,8 @@ export const CONFIG_DEFAULTS = {
     terminalCommand: 'nvim',
   },
   claude: {
-    defaultModel: 'opus[1m]',
+    defaultModel: 'opus',
+    contextWindow: 1000000,
     seenModels: [],
     skipPermissionsDefault: false,
     defaultPermissionMode: '',

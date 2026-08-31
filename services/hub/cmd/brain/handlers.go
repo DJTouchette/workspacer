@@ -15,6 +15,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 )
 
 // registry holds the dependencies the handlers close over and dispatches calls
@@ -776,6 +778,11 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if provider != "claude" {
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
+	resolvedModel, err := r.claudeSpawnModel(p.Model)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Claude model selection: %w", err)
+	}
+	p.Model = resolvedModel
 
 	// Claude on the 'stream' transport is managed too (claudemon's headless
 	// stream-json adapter, no PTY). Mirror the desktop's default resolution: an
@@ -1120,6 +1127,36 @@ func (r *registry) transportDefault(provider, requested string) string {
 		return t
 	}
 	return transportFallback[provider]
+}
+
+// claudeSpawnModel is the active headless default/request boundary. Config
+// persists a suffix-free pair; only this external Claude spawn value carries
+// the legacy marker that selects the 1M runtime.
+func (r *registry) claudeSpawnModel(requested string) (string, error) {
+	var window *uint64
+	if strings.TrimSpace(requested) == "" {
+		claude, _ := r.cfg.get()["claude"].(map[string]any)
+		requested = str(claude["defaultModel"])
+		switch value := claude["contextWindow"].(type) {
+		case int:
+			w := uint64(value)
+			window = &w
+		case uint64:
+			w := value
+			window = &w
+		case float64:
+			w := uint64(value)
+			window = &w
+		}
+	}
+	if strings.TrimSpace(requested) == "" {
+		return "", nil
+	}
+	selection, err := modelselection.Normalize(requested, window)
+	if err != nil {
+		return "", err
+	}
+	return modelselection.ClaudeArgvModel(selection)
 }
 
 // skipPermissionsConfigDefault resolves what a spawn that OMITTED

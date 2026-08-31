@@ -14,6 +14,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { claudeArgvModel } from '../shared/modelContextWindows';
 
 const PKG_NAMES = ['@anthropic-ai/claude-code', 'claude-code'];
 
@@ -124,6 +125,9 @@ export interface ClaudeArgvOptions {
   resumeSessionId?: string;
   /** Alias ('opus'/'sonnet') or full id ('claude-opus-4-8'). '' = Claude default. */
   model?: string;
+  /** Selected token window. Claude's legacy marker is reconstructed only when
+   *  this selection crosses the external argv boundary below. */
+  contextWindow?: number | null;
   /** Pass `--dangerously-skip-permissions` to bypass all permission checks. */
   skipPermissions?: boolean;
   /**
@@ -221,7 +225,10 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
     (a) => a === '--model' || a.startsWith('--model='),
   );
   if (opts.model && opts.model.trim() && !profilePinsModel) {
-    argv.push('--model', opts.model.trim());
+    argv.push(
+      '--model',
+      claudeArgvModel({ model: opts.model, contextWindow: opts.contextWindow ?? null }),
+    );
   }
   // Reasoning effort, unless the profile's extraArgs already pin one.
   const profilePinsEffort = (opts.extraArgs ?? []).some(

@@ -7,18 +7,29 @@
  */
 
 import { configService } from './configService';
-import { formatClaudeAliasWindow } from '../shared/modelContextWindows';
+import {
+  claudeAliasSelection,
+  claudeArgvModel,
+  formatContextWindow,
+  ModelSelectionError,
+  normalizeModelSelection,
+} from '../shared/modelContextWindows';
 import { claudeSessionStore } from './claudeSessionStore';
 
 export interface ClaudeModelAlias {
+  /** Canonical identity. */
+  model: string;
+  /** Legacy picker adapter; canonical identity for old value-only clients. */
   value: string;
   label: string;
+  contextWindow: number;
   /** Context-window badge, e.g. '200K' | '1M'. */
   context?: string;
 }
 
 export interface ListModelsResult {
   defaultModel: string;
+  contextWindow: number | null;
   skipPermissionsDefault: boolean;
   /** Permission mode remembered from the last spawn ('' = provider default). */
   defaultPermissionMode: string;
@@ -29,7 +40,13 @@ export interface ListModelsResult {
 /** Family + dotted version from a concrete id, e.g.
  *  "claude-opus-4-8-20250101" → { family: 'opus', version: '4.8' }. */
 function parseConcreteId(id: string): { family: string; version: string } | null {
-  const m = id.replace('[1m]', '').match(/^claude-([a-z]+)-(\d+(?:-\d+)*?)(?:-\d{6,})?$/);
+  let identity: string;
+  try {
+    identity = normalizeModelSelection(id).model;
+  } catch {
+    return null;
+  }
+  const m = identity.match(/^claude-([a-z]+)-(\d+(?:-\d+)*?)(?:-\d{6,})?$/);
   if (!m) return null;
   return { family: m[1], version: m[2].replace(/-/g, '.') };
 }
@@ -56,7 +73,17 @@ export function listClaudeModels(): ListModelsResult {
     .filter((m): m is string => !!m);
   // `<synthetic>` is Claude Code's placeholder model id on synthetic transcript
   // messages — telemetry noise, not a launchable model.
-  const seenAll = Array.from(new Set([...persisted, ...live]))
+  const seenAll = Array.from(
+    new Set(
+      [...persisted, ...live].flatMap((id) => {
+        try {
+          return [normalizeModelSelection(id).model];
+        } catch {
+          return [];
+        }
+      }),
+    ),
+  )
     .filter((id) => !id.startsWith('<'))
     .sort();
 
@@ -80,8 +107,37 @@ export function listClaudeModels(): ListModelsResult {
   const label = (family: string, base: string) =>
     newest.has(family) ? `${base} ${newest.get(family)}` : base;
 
+  const rawDefault = typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '';
+  let defaultSelection = { model: '', contextWindow: null as number | null };
+  if (rawDefault.trim()) {
+    try {
+      defaultSelection = normalizeModelSelection(rawDefault, cfg.claude?.contextWindow);
+    } catch (err) {
+      if (!(err instanceof ModelSelectionError)) throw err;
+      // Config loading already reports and isolates an invalid configured
+      // selection. Keep the catalog usable if a mixed-version/remote answer
+      // nevertheless carries one; the Go twin returns the same empty default.
+    }
+  }
+  const alias = (legacyValue: string, aliasLabel: string): ClaudeModelAlias => {
+    const selection = claudeAliasSelection(legacyValue);
+    if (selection.contextWindow === null) {
+      throw new Error(`Claude alias ${legacyValue} has no context-window contract`);
+    }
+    return {
+      model: selection.model,
+      // Old clients know only `value`, so it must remain an executable Claude
+      // selection. New clients use canonical `model` + explicit window.
+      value: claudeArgvModel(selection),
+      label: aliasLabel,
+      contextWindow: selection.contextWindow,
+      context: formatContextWindow(selection.contextWindow),
+    };
+  };
+
   return {
-    defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
+    defaultModel: defaultSelection.model,
+    contextWindow: defaultSelection.contextWindow,
     skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
     defaultPermissionMode:
       typeof cfg.claude?.defaultPermissionMode === 'string' ? cfg.claude.defaultPermissionMode : '',
@@ -96,24 +152,12 @@ export function listClaudeModels(): ListModelsResult {
       // Fable's 1M window is both its maximum AND its default — there is no 200K
       // mode to select, so (unlike Opus/Sonnet) it has no separate `[1m]` row and
       // always shows 1M.
-      { value: 'fable', label: label('fable', 'Fable'), context: formatClaudeAliasWindow('fable') },
-      { value: 'opus', label: label('opus', 'Opus'), context: formatClaudeAliasWindow('opus') },
-      {
-        value: 'opus[1m]',
-        label: label('opus', 'Opus'),
-        context: formatClaudeAliasWindow('opus[1m]'),
-      },
-      {
-        value: 'sonnet',
-        label: label('sonnet', 'Sonnet'),
-        context: formatClaudeAliasWindow('sonnet'),
-      },
-      {
-        value: 'sonnet[1m]',
-        label: label('sonnet', 'Sonnet'),
-        context: formatClaudeAliasWindow('sonnet[1m]'),
-      },
-      { value: 'haiku', label: label('haiku', 'Haiku'), context: formatClaudeAliasWindow('haiku') },
+      alias('fable', label('fable', 'Fable')),
+      alias('opus', label('opus', 'Opus')),
+      alias('opus[1m]', label('opus', 'Opus')),
+      alias('sonnet', label('sonnet', 'Sonnet')),
+      alias('sonnet[1m]', label('sonnet', 'Sonnet')),
+      alias('haiku', label('haiku', 'Haiku')),
     ],
     seen,
   };

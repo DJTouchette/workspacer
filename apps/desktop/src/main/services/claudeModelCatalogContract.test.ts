@@ -19,6 +19,7 @@ interface Case {
   name: string;
   config: {
     defaultModel: string;
+    contextWindow: number | null;
     skipPermissionsDefault: boolean;
     defaultPermissionMode: string;
     seenModels: string[];

@@ -587,6 +587,7 @@ export interface AppConfig {
   };
   claude: {
     defaultModel: string;
+    contextWindow: number | null;
     seenModels: string[];
     skipPermissionsDefault: boolean;
     defaultPermissionMode?: string;

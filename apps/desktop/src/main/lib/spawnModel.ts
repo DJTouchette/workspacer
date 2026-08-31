@@ -36,14 +36,15 @@
  */
 import { configService } from '../services/configService';
 import { isForeignModel } from '../shared/modelVocabulary';
+import { normalizeModelSelection, type ModelSelection } from '../shared/modelContextWindows';
 
-export function resolveSpawnModel(
+export function resolveSpawnModelSelection(
   provider: string,
   requested: string | null | undefined,
-): string | undefined {
+): ModelSelection | undefined {
   const explicit = requested?.trim();
   if (explicit) {
-    if (!isForeignModel(provider, explicit)) return explicit;
+    if (!isForeignModel(provider, explicit)) return normalizeModelSelection(explicit);
     console.log(
       `[spawnModel] dropping model '${explicit}' from a ${provider} spawn — it belongs to ` +
         `another harness; using ${provider}'s own default instead`,
@@ -51,7 +52,16 @@ export function resolveSpawnModel(
     return undefined;
   }
   if (provider !== 'claude') return undefined;
-  const configured = configService.getConfig().claude?.defaultModel;
-  if (typeof configured !== 'string' || !configured.trim()) return undefined;
-  return configured.trim();
+  const configured = configService.getConfig().claude;
+  if (typeof configured?.defaultModel !== 'string' || !configured.defaultModel.trim()) {
+    return undefined;
+  }
+  return normalizeModelSelection(configured.defaultModel, configured.contextWindow);
+}
+
+export function resolveSpawnModel(
+  provider: string,
+  requested: string | null | undefined,
+): string | undefined {
+  return resolveSpawnModelSelection(provider, requested)?.model;
 }

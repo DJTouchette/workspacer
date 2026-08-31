@@ -14,6 +14,7 @@ import { useProviderDetection } from '../hooks/useProviderDetection';
 import { visibleProviderOptions, type ProviderDetection } from '../lib/providerAvailability';
 import { profilesForProvider } from '../lib/profileFields';
 import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
+import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../lib/modelOptions';
 
 /**
  * What a profile chip promises, in the vocabulary of the harness it belongs to.
@@ -216,10 +217,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
-  const [aliases, setAliases] = useState<Array<{ value: string; label: string; context?: string }>>(
-    [],
-  );
-  const [seen, setSeen] = useState<string[]>([]);
+  const [aliases, setAliases] = useState<ModelOption[]>([]);
+  const [seen, setSeen] = useState<ModelOption[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
   // Permission mode ('' = provider default: claude 'default', managed 'ask').
@@ -364,8 +363,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       .claudeListModels?.()
       .then((res) => {
         if (!res) return;
-        setAliases(res.aliases ?? []);
-        setSeen(res.seen ?? []);
+        const catalog = claudeCatalogOptions(res);
+        setAliases(catalog.filter((option) => !option.seen));
+        setSeen(catalog.filter((option) => option.seen));
         // Seed the permission pill from the last spawn's saved mode, but only
         // when it's valid for the pre-selected provider (the saved value is a
         // Claude-family mode; a managed provider keeps its own default). The
@@ -382,15 +382,22 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         // Pre-select the saved default. If it's a concrete id we don't have in
         // a list, keep it as a custom entry so the saved value isn't dropped.
         const d = res.defaultModel ?? '';
+        const defaultCommand = d
+          ? modelOptionCommand({
+              key: '',
+              id: d,
+              label: d,
+              contextWindow: res.contextWindow ?? null,
+            })
+          : '';
         const known =
-          d === '' ||
-          (res.aliases ?? []).some((a) => a.value === d) ||
-          (res.seen ?? []).includes(d);
+          defaultCommand === '' ||
+          catalog.some((option) => modelOptionCommand(option) === defaultCommand);
         if (known) {
-          setModelSel(d);
+          setModelSel(defaultCommand);
         } else {
           setModelSel(CUSTOM);
-          setCustomModel(d);
+          setCustomModel(defaultCommand);
         }
       })
       .catch(() => {});
@@ -741,7 +748,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             {aliases.length > 0 && (
               <optgroup label="Latest">
                 {aliases.map((a) => (
-                  <option key={a.value} value={a.value}>
+                  <option key={a.key} value={modelOptionCommand(a)}>
                     {a.label}
                     {a.context ? ` · ${a.context}` : ''}
                   </option>
@@ -751,8 +758,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             {seen.length > 0 && (
               <optgroup label="Seen in sessions">
                 {seen.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                  <option key={m.key} value={modelOptionCommand(m)}>
+                    {m.label}
                   </option>
                 ))}
               </optgroup>

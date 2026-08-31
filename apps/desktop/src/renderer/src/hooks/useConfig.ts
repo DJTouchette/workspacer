@@ -216,6 +216,9 @@ export interface Config {
   /** Set once the user dismisses the first-run welcome; absent/false shows it. */
   onboardingDismissed?: boolean;
   claude?: {
+    /** Canonical default selection: identity and token window are independent. */
+    defaultModel?: string;
+    contextWindow?: number | null;
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
     /** How runs of tool calls render in the GUI: prose summary cards, or the

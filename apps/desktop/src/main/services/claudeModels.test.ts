@@ -19,12 +19,23 @@ describe('listClaudeModels — picker tiers', () => {
     expect(fable[0].context).toBe('1M');
   });
 
-  it('Opus and Sonnet each expose a standard (200K) and a [1m] (1M) tier', () => {
+  it('Opus and Sonnet keep canonical ids plus executable old-client values', () => {
     const { aliases } = listClaudeModels();
     for (const fam of ['opus', 'sonnet']) {
-      expect(aliases.find((a) => a.value === fam)?.context).toBe('200K');
-      expect(aliases.find((a) => a.value === `${fam}[1m]`)?.context).toBe('1M');
+      expect(aliases.find((a) => a.model === fam && a.contextWindow === 200_000)?.context).toBe(
+        '200K',
+      );
+      expect(aliases.find((a) => a.model === fam && a.contextWindow === 1_000_000)?.context).toBe(
+        '1M',
+      );
     }
+    expect(aliases.every((a) => !/(?:\[1m\]|-1m)$/i.test(a.model))).toBe(true);
+    expect(aliases.find((a) => a.model === 'opus' && a.contextWindow === 1_000_000)?.value).toBe(
+      'opus[1m]',
+    );
+    expect(aliases.find((a) => a.model === 'sonnet' && a.contextWindow === 1_000_000)?.value).toBe(
+      'sonnet[1m]',
+    );
   });
 
   it('Haiku is 200K only', () => {

@@ -71,6 +71,7 @@ let mockConfig: {
     managerEfforts?: Record<string, string>;
   };
   projects?: Record<string, { yolo?: boolean }>;
+  claude?: { defaultModel: string; contextWindow: number | null };
 };
 vi.mock('./configService', () => ({
   configService: { getConfig: () => mockConfig },
@@ -121,6 +122,7 @@ function lastSpawn(): {
   env: Record<string, string>;
   sessionId: string;
   firstMessage?: string;
+  model?: string;
 } {
   return spawnMock.mock.calls.at(-1)![0] as {
     argv: string[];
@@ -128,6 +130,7 @@ function lastSpawn(): {
     env: Record<string, string>;
     sessionId: string;
     firstMessage?: string;
+    model?: string;
   };
 }
 
@@ -139,6 +142,23 @@ beforeEach(() => {
   buildSessionMcpConfig.mockReturnValue({
     path: '/cfg/session-mcp/srv.json',
     toolNames: ['mcp__srv1'],
+  });
+});
+
+describe('spawnClaudeAgent — configured model selection', () => {
+  it('a prompt-first/no-explicit-model spawn keeps configured Opus 1M through argv and metadata', async () => {
+    mockConfig = { claude: { defaultModel: 'opus', contextWindow: 1_000_000 } };
+
+    await spawnClaudeAgent({ cwd: '/proj' });
+
+    const argv = lastArgv();
+    const modelIndex = argv.indexOf('--model');
+    expect(argv[modelIndex + 1]).toBe('opus[1m]');
+    expect(lastSpawn().model).toBe('opus[1m]');
+    expect(setSpawnMeta).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ settings: expect.objectContaining({ model: 'opus[1m]' }) }),
+    );
   });
 });
 

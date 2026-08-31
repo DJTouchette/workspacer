@@ -19,10 +19,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 	"github.com/djtouchette/workspacer-hub/internal/statelost"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -82,6 +84,121 @@ func deepMerge(target, source map[string]any) map[string]any {
 		result[k] = sv
 	}
 	return result
+}
+
+// normalizeClaudeConfigSelection is the Go twin of configService.ts. source
+// identifies which half of a partial selection was actually supplied, so a
+// defaultModel-only edit cannot inherit the previous model's window.
+func normalizeClaudeConfigSelection(config, source map[string]any) error {
+	claude, _ := config["claude"].(map[string]any)
+	if claude == nil {
+		return nil
+	}
+	var sourceClaude map[string]any
+	if source != nil {
+		sourceClaude, _ = source["claude"].(map[string]any)
+	}
+	rawModel, hasModel := any(nil), false
+	if sourceClaude != nil {
+		rawModel, hasModel = sourceClaude["defaultModel"]
+	}
+	if !hasModel {
+		rawModel = claude["defaultModel"]
+	}
+	model, ok := rawModel.(string)
+	if !ok {
+		return fmt.Errorf("claude.defaultModel must be a string")
+	}
+	if strings.TrimSpace(model) == "" {
+		// Historical config-only adapter for "let Claude choose". Empty remains
+		// invalid at the canonical model-selection API itself.
+		claude["defaultModel"] = ""
+		claude["contextWindow"] = nil
+	} else {
+		rawWindow, hasWindow := any(nil), false
+		if sourceClaude != nil {
+			rawWindow, hasWindow = sourceClaude["contextWindow"]
+		}
+		if !hasWindow && !hasModel {
+			rawWindow, hasWindow = claude["contextWindow"]
+		}
+		var window *uint64
+		var err error
+		if hasWindow {
+			window, err = configWindow(rawWindow)
+			if err != nil {
+				return err
+			}
+		}
+		selection, err := modelselection.Normalize(model, window)
+		if err != nil {
+			return err
+		}
+		claude["defaultModel"] = selection.Model
+		if selection.ContextWindow == nil {
+			claude["contextWindow"] = nil
+		} else {
+			claude["contextWindow"] = *selection.ContextWindow
+		}
+	}
+
+	seen := toStringSlice(claude["seenModels"])
+	if seen != nil {
+		uniq := map[string]struct{}{}
+		canonical := make([]string, 0, len(seen))
+		for _, raw := range seen {
+			selection, err := modelselection.Normalize(raw, nil)
+			if err != nil {
+				continue
+			}
+			if _, duplicate := uniq[selection.Model]; duplicate {
+				continue
+			}
+			uniq[selection.Model] = struct{}{}
+			canonical = append(canonical, selection.Model)
+		}
+		sort.Strings(canonical)
+		out := make([]any, len(canonical))
+		for i, model := range canonical {
+			out[i] = model
+		}
+		claude["seenModels"] = out
+	}
+	return nil
+}
+
+func configWindow(value any) (*uint64, error) {
+	if value == nil {
+		return nil, nil
+	}
+	var window uint64
+	switch v := value.(type) {
+	case uint64:
+		window = v
+	case uint:
+		window = uint64(v)
+	case int:
+		if v <= 0 {
+			return nil, modelselection.ErrInvalidContextWindow
+		}
+		window = uint64(v)
+	case int64:
+		if v <= 0 {
+			return nil, modelselection.ErrInvalidContextWindow
+		}
+		window = uint64(v)
+	case float64:
+		if v <= 0 || v != float64(uint64(v)) {
+			return nil, modelselection.ErrInvalidContextWindow
+		}
+		window = uint64(v)
+	default:
+		return nil, modelselection.ErrInvalidContextWindow
+	}
+	if window == 0 {
+		return nil, modelselection.ErrInvalidContextWindow
+	}
+	return &window, nil
 }
 
 // configService caches the merged config and serializes access, since bus calls
@@ -243,7 +360,17 @@ func (c *configService) loadFromDisk() map[string]any {
 			}
 		}
 	}
-	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(deepMerge(defaults, parsed))))
+	merged := deepMerge(defaults, parsed)
+	if err := normalizeClaudeConfigSelection(merged, parsed); err != nil {
+		log.Printf("brain: invalid Claude model selection in %s: %v", configPath(), err)
+		// Valid YAML is not a persistence/parse failure. Preserve unrelated
+		// settings and reset only the invalid selection pair, matching desktop.
+		mergedClaude, _ := merged["claude"].(map[string]any)
+		defaultClaude, _ := defaults["claude"].(map[string]any)
+		mergedClaude["defaultModel"] = defaultClaude["defaultModel"]
+		mergedClaude["contextWindow"] = defaultClaude["contextWindow"]
+	}
+	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)))
 }
 
 func (c *configService) writeDefaults(defaults map[string]any) {
@@ -599,6 +726,10 @@ func (c *configService) saveLocked(partial map[string]any) (map[string]any, erro
 				log.Printf("brain: config.save refused: %v", err)
 				return c.current, err
 			}
+		}
+		if err := normalizeClaudeConfigSelection(merged, dropped); err != nil {
+			log.Printf("brain: config.save refused invalid Claude model selection: %v", err)
+			return c.current, err
 		}
 		if c.persistBlocked {
 			// The on-disk config failed to load (unreadable or unparseable): keep

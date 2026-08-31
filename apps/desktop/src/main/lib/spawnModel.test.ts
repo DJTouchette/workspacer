@@ -15,21 +15,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const getConfig = vi.fn();
 vi.mock('../services/configService', () => ({ configService: { getConfig: () => getConfig() } }));
 
-import { resolveSpawnModel } from './spawnModel';
+import { resolveSpawnModel, resolveSpawnModelSelection } from './spawnModel';
 
 describe('resolveSpawnModel', () => {
   beforeEach(() => {
     getConfig.mockReset();
-    getConfig.mockReturnValue({ claude: { defaultModel: 'opus[1m]' } });
+    getConfig.mockReturnValue({ claude: { defaultModel: 'opus', contextWindow: 1_000_000 } });
   });
 
   it('fills an omitted claude model from the configured default', () => {
-    expect(resolveSpawnModel('claude', undefined)).toBe('opus[1m]');
-    expect(resolveSpawnModel('claude', null)).toBe('opus[1m]');
+    expect(resolveSpawnModel('claude', undefined)).toBe('opus');
+    expect(resolveSpawnModel('claude', null)).toBe('opus');
     // Blank and whitespace are omissions, not choices — a dispatch that sent
     // `model: ''` is the same "nobody said" as one that sent nothing.
-    expect(resolveSpawnModel('claude', '')).toBe('opus[1m]');
-    expect(resolveSpawnModel('claude', '   ')).toBe('opus[1m]');
+    expect(resolveSpawnModel('claude', '')).toBe('opus');
+    expect(resolveSpawnModel('claude', '   ')).toBe('opus');
+    expect(resolveSpawnModelSelection('claude', undefined)).toEqual({
+      model: 'opus',
+      contextWindow: 1_000_000,
+    });
   });
 
   it('never overrides a caller who named a model', () => {

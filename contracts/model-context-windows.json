@@ -9,13 +9,8 @@
     ],
     "blocks": {
       "windows": {
-        "why": "The table itself, IN ORDER: first match wins, so the specific rows come before the families they overlap. `kind` is 'contains' or 'prefix' and it is normative -- the o3/o4 rows are prefix rows precisely so an `o3` buried inside an unrelated id does not match, and a port that reads every row as a substring passes every lookupCase except that one.",
-        "required": [
-          "match",
-          "kind",
-          "window",
-          "note"
-        ],
+        "why": "The table itself, IN ORDER: first match wins, so the specific rows come before the families they overlap. `kind` is 'contains', 'prefix', or 'suffix' and it is normative -- model-window markers are suffix syntax only, while the o3/o4 rows are prefix rows precisely so an `o3` buried inside an unrelated id does not match.",
+        "required": ["match", "kind", "window", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::model-context-windows.json",
           "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::windows",
@@ -24,11 +19,7 @@
       },
       "lookupCases": {
         "why": "Model id -> window, through the table above. `expected: null` is a first-class answer and several cases rely on it: an unknown model must resolve to UNKNOWN, which every client already renders by hiding the meter, rather than to the 200000 that made a new model read as a familiar one.",
-        "required": [
-          "model",
-          "expected",
-          "note"
-        ],
+        "required": ["model", "expected", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::lookup_cases",
           "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::lookupCases",
@@ -37,15 +28,44 @@
       },
       "markerCases": {
         "why": "The narrower question `requestedWindowFor` answers: did the model string the session was ASKED for name a 1M window? Claude Code strips `[1m]` from the id it writes into the transcript, so the spawn request is the only carrier of that choice until the provider reports a window of its own. `expected: null` here means 'says nothing', NOT '200k' -- an unmarked alias pinning a number is how a wrong window gets asserted from token zero.",
-        "required": [
-          "requested",
-          "expected",
-          "note"
-        ],
+        "required": ["requested", "expected", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::marker_cases",
           "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::markerCases",
           "services/hub/cmd/brain/windows_test.go::MarkerCases"
+        ]
+      },
+      "selectionCases": {
+        "why": "The canonical model-selection boundary. Legacy window markers are input syntax only: successful normalization always returns a base identity plus a numeric-or-null window, conflicts and empty identities are rejected, unknown identities survive, and feeding canonical output back through the normalizer is a no-op.",
+        "required": [
+          "name",
+          "model",
+          "contextWindow",
+          "expectedModel",
+          "expectedContextWindow",
+          "error",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::selection_cases",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::selectionCases",
+          "services/hub/internal/modelselection/modelselection_test.go::SelectionCases"
+        ]
+      },
+      "claudeArgvCases": {
+        "why": "The sole allowed output marker: Claude Code still requires `[1m]` on external --model argv for selectable Opus/Sonnet 1M variants, while inherent 1M models such as Fable/Mythos and every non-1M or unspecified selection stay undecorated. The helper normalizes defensively, so a transitional legacy caller remains compatible without creating a double suffix.",
+        "required": [
+          "name",
+          "model",
+          "contextWindow",
+          "expected",
+          "error",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::claude_argv_cases",
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::claudeArgvCases",
+          "services/hub/internal/modelselection/modelselection_test.go::ClaudeArgvCases"
         ]
       },
       "resolutionCases": {
@@ -71,13 +91,13 @@
   "windows": [
     {
       "match": "[1m]",
-      "kind": "contains",
+      "kind": "suffix",
       "window": 1000000,
-      "note": "Claude Code's own 1M-context marker, as the composer spells it (`opus[1m]`). Checked before every family row: it is a statement about the WINDOW, whatever family carries it."
+      "note": "Claude Code's own 1M-context marker, as the composer spells it (`opus[1m]`). It is syntax only at the end of the identity."
     },
     {
       "match": "-1m",
-      "kind": "contains",
+      "kind": "suffix",
       "window": 1000000,
       "note": "the id-suffix spelling of the same marker"
     },
@@ -280,6 +300,11 @@
       "note": "OpenCode routes ids through a vendor prefix; the family match must still find it"
     },
     {
+      "model": "vendor/opus[1m]-preview",
+      "expected": null,
+      "note": "marker text in the middle is identity, not window syntax; only a trailing marker selects 1M"
+    },
+    {
       "model": "totally-unknown-model",
       "expected": null,
       "note": "UNKNOWN IS NULL. Not 200_000. A model no row covers renders no meter at all, which is the whole point of this fixture."
@@ -342,9 +367,181 @@
       "note": "non-Claude requests carry no marker vocabulary"
     },
     {
+      "requested": "vendor/opus[1m]-preview",
+      "expected": null,
+      "note": "trailing-only semantics are shared across normalization, table lookup, and requested-window inference"
+    },
+    {
       "requested": "",
       "expected": null,
       "note": "empty says nothing"
+    }
+  ],
+  "selectionCases": [
+    {
+      "name": "legacy bracket marker becomes an explicit window",
+      "model": " opus[1m] ",
+      "contextWindow": null,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "error": null,
+      "note": "trim first, then accept only a trailing bracket marker"
+    },
+    {
+      "name": "legacy dash marker becomes an explicit window",
+      "model": "claude-sonnet-5-1m",
+      "contextWindow": null,
+      "expectedModel": "claude-sonnet-5",
+      "expectedContextWindow": 1000000,
+      "error": null,
+      "note": "the provider-id spelling is compatibility input too"
+    },
+    {
+      "name": "canonical explicit selection is idempotent",
+      "model": "opus",
+      "contextWindow": 1000000,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "error": null,
+      "note": "normalizing canonical output changes nothing"
+    },
+    {
+      "name": "canonical unspecified window stays unspecified",
+      "model": " sonnet ",
+      "contextWindow": null,
+      "expectedModel": "sonnet",
+      "expectedContextWindow": null,
+      "error": null,
+      "note": "absence is honest unknown, never an invented 200k"
+    },
+    {
+      "name": "unknown identities survive normalization",
+      "model": "vendor/future-model-9",
+      "contextWindow": 333333,
+      "expectedModel": "vendor/future-model-9",
+      "expectedContextWindow": 333333,
+      "error": null,
+      "note": "the contract parses syntax, not an allow-list"
+    },
+    {
+      "name": "matching explicit and legacy windows agree",
+      "model": "opus[1m]",
+      "contextWindow": 1000000,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "error": null,
+      "note": "mixed-version callers may send both during rollout"
+    },
+    {
+      "name": "conflicting explicit and legacy windows are rejected",
+      "model": "opus[1m]",
+      "contextWindow": 200000,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "error": "conflicting-context-window",
+      "note": "never silently prefer one source and launch a different selection"
+    },
+    {
+      "name": "empty model is rejected",
+      "model": "   ",
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "error": "empty-model",
+      "note": "a selection must name an identity"
+    },
+    {
+      "name": "bracket suffix alone is rejected",
+      "model": "[1m]",
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "error": "empty-model",
+      "note": "stripping syntax may not manufacture an empty identity"
+    },
+    {
+      "name": "dash suffix alone is rejected",
+      "model": "-1m",
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "error": "empty-model",
+      "note": "same invalid suffix-only boundary for the provider spelling"
+    },
+    {
+      "name": "marker syntax in the middle remains identity",
+      "model": "vendor/opus[1m]-preview",
+      "contextWindow": null,
+      "expectedModel": "vendor/opus[1m]-preview",
+      "expectedContextWindow": null,
+      "error": null,
+      "note": "only trailing markers are compatibility syntax"
+    }
+  ],
+  "claudeArgvCases": [
+    {
+      "name": "one million is serialized for Claude",
+      "model": "opus",
+      "contextWindow": 1000000,
+      "expected": "opus[1m]",
+      "error": null,
+      "note": "the external Claude argv boundary is the one allowed marker emitter"
+    },
+    {
+      "name": "Sonnet one million is a selectable marked variant",
+      "model": "sonnet",
+      "contextWindow": 1000000,
+      "expected": "sonnet[1m]",
+      "error": null,
+      "note": "Opus and Sonnet expose distinct 200K and 1M selections, so their explicit 1M argv needs the marker"
+    },
+    {
+      "name": "Fable one million is inherent and stays bare",
+      "model": "fable",
+      "contextWindow": 1000000,
+      "expected": "fable",
+      "error": null,
+      "note": "Fable has no selectable 200K sibling and Claude Code exposes no fable[1m] alias"
+    },
+    {
+      "name": "Mythos one million is inherent and stays bare",
+      "model": "mythos",
+      "contextWindow": 1000000,
+      "expected": "mythos",
+      "error": null,
+      "note": "same inherent-window rule as Fable; never invent mythos[1m]"
+    },
+    {
+      "name": "two hundred thousand stays a base identity",
+      "model": "opus",
+      "contextWindow": 200000,
+      "expected": "opus",
+      "error": null,
+      "note": "only 1M has Claude marker syntax"
+    },
+    {
+      "name": "unspecified window stays a base identity",
+      "model": "future-model",
+      "contextWindow": null,
+      "expected": "future-model",
+      "error": null,
+      "note": "unknown is not silently converted to a window"
+    },
+    {
+      "name": "legacy callers remain idempotent",
+      "model": "opus[1m]",
+      "contextWindow": null,
+      "expected": "opus[1m]",
+      "error": null,
+      "note": "normalization before serialization prevents a doubled marker"
+    },
+    {
+      "name": "invalid selection is not serialized",
+      "model": "[1m]",
+      "contextWindow": null,
+      "expected": null,
+      "error": "empty-model",
+      "note": "the argv adapter shares the normalizer's rejection boundary"
     }
   ],
   "resolutionCases": [

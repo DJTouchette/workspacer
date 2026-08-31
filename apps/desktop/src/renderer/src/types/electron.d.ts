@@ -191,9 +191,16 @@ export interface ElectronAPI {
   onConfigChanged: (cb: (config: unknown) => void) => () => void;
   claudeListModels: () => Promise<{
     defaultModel: string;
+    contextWindow: number | null;
     skipPermissionsDefault: boolean;
     defaultPermissionMode: string;
-    aliases: Array<{ value: string; label: string; context?: string }>;
+    aliases: Array<{
+      model?: string;
+      value?: string;
+      label: string;
+      contextWindow?: number;
+      context?: string;
+    }>;
     seen: string[];
   }>;
   workflowAgentTranscript: (

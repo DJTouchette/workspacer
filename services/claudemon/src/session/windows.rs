@@ -30,6 +30,7 @@
 pub enum MatchKind {
     Contains,
     Prefix,
+    Suffix,
 }
 
 struct WindowRow {
@@ -55,13 +56,21 @@ const fn prefix(needle: &'static str, window: u64) -> WindowRow {
     }
 }
 
+const fn suffix(needle: &'static str, window: u64) -> WindowRow {
+    WindowRow {
+        needle,
+        kind: MatchKind::Suffix,
+        window,
+    }
+}
+
 /// THE TABLE, in order: first match wins, so the specific rows come before the
 /// families they overlap. Pinned row-for-row to the fixture's `windows` block.
 const WINDOWS: &[WindowRow] = &[
     // Marker rows first — a statement about the WINDOW outranks a statement
     // about the family, whichever family carries it.
-    contains("[1m]", 1_000_000),
-    contains("-1m", 1_000_000),
+    suffix("[1m]", 1_000_000),
+    suffix("-1m", 1_000_000),
     // 1M-native: the max window is also the default, so these ids never carry a
     // marker. Before the generic claude row or their gauges read 5× too full.
     contains("fable", 1_000_000),
@@ -89,6 +98,96 @@ const WINDOWS: &[WindowRow] = &[
 const DRIFT_TOLERANCE_NUM: u64 = 102;
 const DRIFT_TOLERANCE_DEN: u64 = 100;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSelection {
+    pub model: String,
+    pub context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelSelectionError {
+    EmptyModel,
+    InvalidContextWindow,
+    ConflictingContextWindow,
+}
+
+impl ModelSelectionError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::EmptyModel => "empty-model",
+            Self::InvalidContextWindow => "invalid-context-window",
+            Self::ConflictingContextWindow => "conflicting-context-window",
+        }
+    }
+}
+
+fn strip_legacy_one_million_suffix(model: &str) -> Option<&str> {
+    let lower = model.to_ascii_lowercase();
+    if lower.ends_with("[1m]") {
+        Some(&model[..model.len() - 4])
+    } else if lower.ends_with("-1m") {
+        Some(&model[..model.len() - 3])
+    } else {
+        None
+    }
+}
+
+/// Canonicalize legacy model-selection syntax immediately at ingress.
+/// Unknown identities are intentionally preserved; only trailing markers are
+/// syntax, and successful output never contains one.
+pub fn normalize_model_selection(
+    model: &str,
+    context_window: Option<u64>,
+) -> Result<ModelSelection, ModelSelectionError> {
+    let mut identity = model.trim();
+    if identity.is_empty() {
+        return Err(ModelSelectionError::EmptyModel);
+    }
+
+    let mut legacy_window = None;
+    while let Some(base) = strip_legacy_one_million_suffix(identity) {
+        identity = base.trim_end();
+        legacy_window = Some(1_000_000);
+    }
+    if identity.is_empty() {
+        return Err(ModelSelectionError::EmptyModel);
+    }
+    if context_window == Some(0) {
+        return Err(ModelSelectionError::InvalidContextWindow);
+    }
+    if legacy_window.is_some() && context_window.is_some() && legacy_window != context_window {
+        return Err(ModelSelectionError::ConflictingContextWindow);
+    }
+
+    Ok(ModelSelection {
+        model: identity.to_string(),
+        context_window: context_window.or(legacy_window),
+    })
+}
+
+/// Claude Code's external `--model` value. This is the one boundary allowed to
+/// reconstruct `[1m]`; normalizing first keeps legacy callers idempotent.
+pub fn claude_argv_model(selection: &ModelSelection) -> Result<String, ModelSelectionError> {
+    let normalized = normalize_model_selection(&selection.model, selection.context_window)?;
+    Ok(
+        if normalized.context_window == Some(1_000_000)
+            && !is_claude_inherent_one_million_model(&normalized.model)
+        {
+            format!("{}[1m]", normalized.model)
+        } else {
+            normalized.model
+        },
+    )
+}
+
+/// Fable/Mythos expose 1M as their inherent window, not as a selectable
+/// marker-bearing variant. The shared argv fixture pins this with the TS and
+/// Go boundaries so a port cannot invent `fable[1m]` or `mythos[1m]`.
+fn is_claude_inherent_one_million_model(model: &str) -> bool {
+    let identity = model.to_ascii_lowercase();
+    identity.contains("fable") || identity.contains("mythos")
+}
+
 /// The table's answer for a concrete model id, or `None` when no row covers it.
 ///
 /// `None` is the honest unknown and it is load-bearing: every readout in the
@@ -100,6 +199,7 @@ pub fn window_for(model: &str) -> Option<u64> {
         let hit = match row.kind {
             MatchKind::Contains => m.contains(row.needle),
             MatchKind::Prefix => m.starts_with(row.needle),
+            MatchKind::Suffix => m.ends_with(row.needle),
         };
         if hit {
             return Some(row.window);
@@ -116,8 +216,9 @@ pub fn window_for(model: &str) -> Option<u64> {
 /// 200k session or whatever Claude Code's default becomes tomorrow; pinning a
 /// number here is exactly how a wrong window gets asserted from token zero.
 pub fn requested_window_for(model: &str) -> Option<u64> {
-    let m = model.to_ascii_lowercase();
-    if m.contains("[1m]") || m.contains("-1m") || m.contains("fable") || m.contains("mythos") {
+    let selection = normalize_model_selection(model, None).ok()?;
+    let m = selection.model.to_ascii_lowercase();
+    if selection.context_window == Some(1_000_000) || m.contains("fable") || m.contains("mythos") {
         return Some(1_000_000);
     }
     None
@@ -216,6 +317,10 @@ mod tests {
         lookup_cases: Vec<LookupCase>,
         #[serde(rename = "markerCases")]
         marker_cases: Vec<MarkerCase>,
+        #[serde(rename = "selectionCases")]
+        selection_cases: Vec<SelectionCase>,
+        #[serde(rename = "claudeArgvCases")]
+        claude_argv_cases: Vec<ClaudeArgvCase>,
         #[serde(rename = "resolutionCases")]
         resolution_cases: Vec<ResolutionCase>,
     }
@@ -258,6 +363,31 @@ mod tests {
         note: String,
     }
 
+    #[derive(Deserialize)]
+    struct SelectionCase {
+        name: String,
+        model: String,
+        #[serde(rename = "contextWindow")]
+        context_window: Option<u64>,
+        #[serde(rename = "expectedModel")]
+        expected_model: Option<String>,
+        #[serde(rename = "expectedContextWindow")]
+        expected_context_window: Option<u64>,
+        error: Option<String>,
+        note: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ClaudeArgvCase {
+        name: String,
+        model: String,
+        #[serde(rename = "contextWindow")]
+        context_window: Option<u64>,
+        expected: Option<String>,
+        error: Option<String>,
+        note: String,
+    }
+
     fn fixture() -> Fixture {
         serde_json::from_str(FIXTURE).expect("model-context-windows.json parses")
     }
@@ -280,6 +410,7 @@ mod tests {
             let want_kind = match want.kind.as_str() {
                 "contains" => MatchKind::Contains,
                 "prefix" => MatchKind::Prefix,
+                "suffix" => MatchKind::Suffix,
                 other => panic!("row {i}: unknown match kind {other:?} in the fixture"),
             };
             assert_eq!(want_kind, got.kind, "row {i} ({}): match kind", want.needle);
@@ -314,6 +445,81 @@ mod tests {
                 c.requested,
                 c.note
             );
+        }
+    }
+
+    #[test]
+    fn selection_cases_follow_the_contract() {
+        let f = fixture();
+        assert!(f.selection_cases.len() >= 10, "the corpus was gutted");
+        for c in &f.selection_cases {
+            match normalize_model_selection(&c.model, c.context_window) {
+                Ok(got) => {
+                    assert!(
+                        c.error.is_none(),
+                        "{} unexpectedly succeeded — {}",
+                        c.name,
+                        c.note
+                    );
+                    assert_eq!(
+                        Some(got.model.clone()),
+                        c.expected_model,
+                        "{} — {}",
+                        c.name,
+                        c.note
+                    );
+                    assert_eq!(
+                        got.context_window, c.expected_context_window,
+                        "{} — {}",
+                        c.name, c.note
+                    );
+                    let lower = got.model.to_ascii_lowercase();
+                    assert!(!lower.ends_with("[1m]") && !lower.ends_with("-1m"));
+                    assert_eq!(
+                        normalize_model_selection(&got.model, got.context_window).unwrap(),
+                        got,
+                        "{} is not idempotent",
+                        c.name
+                    );
+                }
+                Err(err) => assert_eq!(
+                    Some(err.code()),
+                    c.error.as_deref(),
+                    "{} — {}",
+                    c.name,
+                    c.note
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn claude_argv_cases_follow_the_contract() {
+        let f = fixture();
+        assert!(f.claude_argv_cases.len() >= 4, "the corpus was gutted");
+        for c in &f.claude_argv_cases {
+            let got = claude_argv_model(&ModelSelection {
+                model: c.model.clone(),
+                context_window: c.context_window,
+            });
+            match got {
+                Ok(value) => {
+                    assert!(
+                        c.error.is_none(),
+                        "{} unexpectedly succeeded — {}",
+                        c.name,
+                        c.note
+                    );
+                    assert_eq!(Some(value), c.expected, "{} — {}", c.name, c.note);
+                }
+                Err(err) => assert_eq!(
+                    Some(err.code()),
+                    c.error.as_deref(),
+                    "{} — {}",
+                    c.name,
+                    c.note
+                ),
+            }
         }
     }
 

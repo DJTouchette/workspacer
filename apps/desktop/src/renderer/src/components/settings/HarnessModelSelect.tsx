@@ -29,7 +29,7 @@
 import React, { useEffect, useState } from 'react';
 import type { AgentProvider } from '../../types/pane';
 import { capsFor } from '../../lib/providerCaps';
-import { loadModelOptions } from '../../lib/modelOptions';
+import { loadModelOptions, modelOptionCommand } from '../../lib/modelOptions';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
 import { Row, SearchableSelect, SelectOption } from './primitives';
 
@@ -47,7 +47,12 @@ export function useModelOptions(provider: AgentProvider): {
     setOptions([]);
     void loadModelOptions(provider, capsFor(provider).modelSource).then((list) => {
       if (cancelled) return;
-      setOptions(list.map((m) => ({ value: m.id, label: m.label })));
+      setOptions(
+        list.map((m) => ({
+          value: capsFor(provider).modelSource === 'claude' ? modelOptionCommand(m) : m.id,
+          label: m.label,
+        })),
+      );
       setLoaded(true);
     });
     return () => {

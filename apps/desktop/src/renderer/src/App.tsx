@@ -107,6 +107,7 @@ import {
 // share one normalization so a repo can't key differently between them.
 import { projectKey as scriptKey, projectKey } from './lib/projectKey';
 import { touchProject } from './lib/projectRegistry';
+import { rememberedClaudeModelPatch } from './lib/modelOptions';
 
 /**
  * Pure helper — normalizes a raw saved-session blob into a canonical
@@ -1156,7 +1157,10 @@ function App() {
         window.electronAPI
           .saveConfig({
             claude: {
-              defaultModel: opts.model ?? '',
+              // Prompt-first/palette spawns intentionally omit model. Keep the
+              // saved canonical pair in that case; only an explicit picker
+              // value is allowed to rewrite it.
+              ...rememberedClaudeModelPatch(opts.model),
               skipPermissionsDefault: opts.skipPermissions === true,
               // Remember the chosen permission mode too, so the next new agent
               // reopens on it instead of snapping back to the default.
@@ -1395,7 +1399,9 @@ function App() {
         cwd,
         provider,
         transport: isClaude ? config.claude?.transport : undefined,
-        model: saved?.defaultModel || undefined,
+        // Omit the model deliberately: main resolves the configured canonical
+        // model+contextWindow pair. Re-sending only defaultModel would turn the
+        // shipped Opus 1M default into an explicit bare Opus 200K request.
         permissionMode: skipPermissions
           ? 'bypassPermissions'
           : saved?.defaultPermissionMode || undefined,

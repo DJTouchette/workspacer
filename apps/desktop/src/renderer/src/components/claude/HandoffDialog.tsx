@@ -25,7 +25,7 @@ import { ArrowRightLeft } from 'lucide-react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import type { AgentProvider } from '../../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../../lib/providerCaps';
-import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
+import { loadModelOptions, modelOptionCommand, type ModelOption } from '../../lib/modelOptions';
 import { deriveSessionStats } from '../../lib/sessionStats';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { useProviderDetection } from '../../hooks/useProviderDetection';
@@ -172,13 +172,17 @@ export const HandoffDialog: React.FC<{
   // the provider no longer lists). Keep it as a row of its own so the default
   // is never silently dropped to "provider default".
   const modelRows = useMemo(() => {
-    if (!model || models.some((m) => m.id === model)) return models;
-    return [{ id: model, label: shortModelLabel(model) || model }, ...models];
-  }, [models, model]);
+    const command = (m: ModelOption) =>
+      caps.modelSource === 'claude' ? modelOptionCommand(m) : m.id;
+    if (!model || models.some((m) => command(m) === model)) return models;
+    return [{ key: model, id: model, label: shortModelLabel(model) || model }, ...models];
+  }, [models, model, caps.modelSource]);
 
   // Codex reports supported efforts per model; prefer that over the provider
   // fallback so a level the selected model rejects is never offered.
-  const selectedModel = models.find((m) => (model ? m.id === model : m.default));
+  const selectedModel = models.find((m) =>
+    model ? (caps.modelSource === 'claude' ? modelOptionCommand(m) : m.id) === model : m.default,
+  );
   const effortLevels: EffortLevel[] =
     target === 'codex' && selectedModel?.effortLevels?.length
       ? selectedModel.effortLevels.map((id) => ({ id, label: effortLevelLabel(id) }))
@@ -226,7 +230,10 @@ export const HandoffDialog: React.FC<{
             {modelsLoading ? 'Loading models…' : `Default (${providerLabel} setting)`}
           </option>
           {modelRows.map((m) => (
-            <option key={m.id} value={m.id}>
+            <option
+              key={m.key}
+              value={caps.modelSource === 'claude' ? modelOptionCommand(m) : m.id}
+            >
               {m.label}
               {m.context ? ` · ${m.context}` : ''}
               {m.default ? '  — default' : ''}

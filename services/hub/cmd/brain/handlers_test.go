@@ -101,6 +101,9 @@ func TestSpawnDefaultProviderIsClaudeStream(t *testing.T) {
 	if managed[0].body["provider"] != "claude" {
 		t.Errorf("default provider must be claude, got %v", managed[0].body["provider"])
 	}
+	if managed[0].body["model"] != "opus[1m]" {
+		t.Errorf("configured canonical 1M default must reach requested model, got %v", managed[0].body["model"])
+	}
 }
 
 // TestSpawnCodexStreamForwardsManagedPayload: codex + transport 'stream' POSTs

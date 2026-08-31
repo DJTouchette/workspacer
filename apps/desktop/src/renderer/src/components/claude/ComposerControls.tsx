@@ -58,7 +58,12 @@ import {
 } from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
 import { remoteDisabledTitle } from '../../lib/federation';
-import { loadModelOptions, type ModelOption } from '../../lib/modelOptions';
+import {
+  loadModelOptions,
+  modelOptionCommand,
+  modelOptionMatches,
+  type ModelOption,
+} from '../../lib/modelOptions';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
 import type { ClaudeProfile } from '../../../../main/shared/ipcTypes';
@@ -619,8 +624,13 @@ export const ComposerControls: React.FC<{
     settings?.effort?.trim() ||
     undefined;
   const reportedModel = stats.model ?? settings?.model;
+  const reportedWindow = snapshot?.usage?.contextLimit ?? null;
   const currentModel = models?.find((model) =>
-    reportedModel ? model.id === reportedModel : model.default,
+    reportedModel
+      ? caps.modelSource === 'claude'
+        ? modelOptionMatches(model, reportedModel, reportedWindow)
+        : model.id === reportedModel
+      : model.default,
   );
   const effortLevels: EffortLevel[] =
     (provider ?? 'claude') === 'codex' && currentModel?.effortLevels?.length
@@ -785,24 +795,14 @@ export const ComposerControls: React.FC<{
                 <ContextMenuItem label="No models found" onClick={() => {}} disabled />
               )}
               {models?.map((m, i) => {
-                // Live telemetry reports concrete ids; aliases match by family
-                // label (e.g. "claude-sonnet-5" ↔ Sonnet, but not Sonnet 1M
-                // unless the id carries the [1m] marker).
-                // Coerce both sides to strings before the split/includes work:
-                // over the hub bus the live model can arrive non-string, and a
-                // model-list row can lack a label — either would throw here and
-                // blank the pane.
                 const stModel = typeof stats.model === 'string' ? stats.model : '';
-                const mLabel = m.label ?? '';
-                const cur = stModel
-                  ? m.id === stModel ||
-                    (shortModelLabel(stModel)
-                      .toLowerCase()
-                      .startsWith(mLabel.split(' ')[0].toLowerCase()) &&
-                      stModel.includes('[1m]') === m.id.includes('[1m]'))
-                  : false;
+                const command = caps.modelSource === 'claude' ? modelOptionCommand(m) : m.id;
+                const cur =
+                  caps.modelSource === 'claude'
+                    ? modelOptionMatches(m, stModel || settings?.model, reportedWindow)
+                    : m.id === stModel;
                 return (
-                  <React.Fragment key={m.id}>
+                  <React.Fragment key={m.key}>
                     {m.seen && !models[i - 1]?.seen && (
                       <>
                         <ContextMenuSeparator />
@@ -815,9 +815,9 @@ export const ComposerControls: React.FC<{
                         if (caps.modelSwitch === 'live') {
                           const at = { x: menu.x, y: menu.y };
                           setMenu(null);
-                          liveModelSwitch(m.id, m.label, at);
+                          liveModelSwitch(command, m.label, at);
                         } else {
-                          pickRestart({ model: m.id }, m.label);
+                          pickRestart({ model: command }, m.label);
                         }
                       }}
                     />

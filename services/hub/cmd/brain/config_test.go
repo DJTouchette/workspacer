@@ -200,6 +200,50 @@ func TestConfigSaveReloadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInvalidDefaultModelTypeResetsOnlySelectionAndKeepsPersistenceLive(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"null", "null"},
+		{"non-string", "42"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tempConfigHome(t)
+			p := filepath.Join(dir, "workspacer", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			raw := "customTop: keep-me\nui:\n  theme: light\nclaude:\n  defaultModel: " + tc.value + "\n"
+			if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			c := newConfigService()
+			cfg := c.get()
+			if cfg["customTop"] != "keep-me" || cfg["ui"].(map[string]any)["theme"] != "light" {
+				t.Fatalf("valid YAML outside the model pair was not preserved: %#v", cfg)
+			}
+			claude := cfg["claude"].(map[string]any)
+			if claude["defaultModel"] != "opus" || claude["contextWindow"] != float64(1_000_000) {
+				t.Fatalf("invalid pair did not reset to the shipped canonical pair: %#v", claude)
+			}
+			if c.persistBlocked {
+				t.Fatal("valid YAML with an invalid model pair must not block later saves")
+			}
+			if backups, err := filepath.Glob(p + ".broken-*"); err != nil || len(backups) != 0 {
+				t.Fatalf("model validation minted a broken-YAML backup: %v (%v)", backups, err)
+			}
+
+			mustSave(t, c, map[string]any{"ui": map[string]any{"fontSize": 16}})
+			fresh := newConfigService().get()
+			if fresh["customTop"] != "keep-me" || fresh["ui"].(map[string]any)["fontSize"] != 16 {
+				t.Fatalf("subsequent save was blocked or discarded valid YAML: %#v", fresh)
+			}
+		})
+	}
+}
+
 // TestConfigSaveIgnoresUpdatesFromTheBus: `updates` is host-trusted. Every
 // config.save the brain answers came off the bus (a web/remote client, a plugin,
 // an agent via the MCP facade), and updates.channel is string-concatenated into
@@ -526,9 +570,9 @@ func TestListModelsReadsConfigDefault(t *testing.T) {
 	// test only asserts that the wiring reaches it. It used to assert 4, which
 	// was the drifted number: the desktop has always returned 6, including the
 	// 1M-context opus[1m] / sonnet[1m] rows.
-	if len(res.Aliases) != len(buildListModels("", false, "", nil, nil).Aliases) {
+	if len(res.Aliases) != len(buildListModels("", nil, false, "", nil, nil).Aliases) {
 		t.Errorf("listModels returned %d aliases, want the contract's %d",
-			len(res.Aliases), len(buildListModels("", false, "", nil, nil).Aliases))
+			len(res.Aliases), len(buildListModels("", nil, false, "", nil, nil).Aliases))
 	}
 }
 

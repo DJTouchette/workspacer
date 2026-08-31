@@ -181,6 +181,75 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.claude.transport).toBe('stream');
   });
 
+  it('normalizes a legacy default model in memory and writes the canonical pair on save', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'customTop: keep-me\nclaude:\n  defaultModel: opus[1m]\n  seenModels: [claude-opus-5-1m]\n',
+    );
+    const loaded = configService.reloadConfig() as any;
+    expect(loaded.claude).toMatchObject({
+      defaultModel: 'opus',
+      contextWindow: 1_000_000,
+      seenModels: ['claude-opus-5'],
+    });
+    expect(loaded.customTop).toBe('keep-me');
+
+    mockedFs.writeFileSync.mockClear();
+    configService.saveConfig({ ui: { theme: 'light' } as any });
+    const write = mockedFs.writeFileSync.mock.calls.find(
+      ([, data]) => typeof data === 'string' && data.includes('defaultModel:'),
+    );
+    expect(write).toBeDefined();
+    const text = String(write![1]);
+    expect(text).toContain('defaultModel: opus');
+    expect(text).toContain('contextWindow: 1000000');
+    expect(text).toContain('customTop: keep-me');
+    expect(text).not.toContain('opus[1m]');
+    expect(text).not.toContain('opus-1m');
+  });
+
+  it('refuses a conflicting legacy marker and explicit config window', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'ui:\n  theme: light\nclaude:\n  defaultModel: opus[1m]\n  contextWindow: 200000\n',
+    );
+    mockedFs.copyFileSync.mockClear();
+    const cfg = configService.reloadConfig() as any;
+    expect(cfg.claude.defaultModel).toBe('opus');
+    expect(cfg.claude.contextWindow).toBe(1_000_000);
+    expect(cfg.ui.theme).toBe('light');
+    expect(mockedFs.copyFileSync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['non-string', '42'],
+  ])(
+    'treats a %s defaultModel as selection validation, preserving YAML and future saves',
+    (_name, yamlValue) => {
+      mockedFs.readFileSync.mockReturnValue(
+        `customTop: keep-me\nui:\n  theme: light\nclaude:\n  defaultModel: ${yamlValue}\n`,
+      );
+      mockedFs.copyFileSync.mockClear();
+
+      const cfg = configService.reloadConfig() as any;
+
+      expect(cfg.customTop).toBe('keep-me');
+      expect(cfg.ui.theme).toBe('light');
+      expect(cfg.claude.defaultModel).toBe('opus');
+      expect(cfg.claude.contextWindow).toBe(1_000_000);
+      expect(mockedFs.copyFileSync).not.toHaveBeenCalled();
+
+      // Valid YAML with one invalid pair must not latch persistBlocked. The
+      // next unrelated save still lands and preserves the rest of the file.
+      mockedFs.writeFileSync.mockClear();
+      configService.saveConfig({ ui: { fontSize: 16 } as any });
+      expect(mockedFs.writeFileSync).toHaveBeenCalled();
+      const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
+      expect(written).toContain('customTop: keep-me');
+      expect(written).toContain('theme: light');
+      expect(written).toContain('fontSize: 16');
+    },
+  );
+
   it('preserves unrelated top-level sections when saving a partial', () => {
     configService.saveConfig({ scripts: { '/repo': [{ name: 'x', command: 'y' }] } as any });
     const cfg = configService.getConfig();

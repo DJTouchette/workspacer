@@ -15,6 +15,9 @@ import { fileURLToPath } from 'url';
 import * as path from 'path';
 import {
   CONTEXT_WINDOWS,
+  claudeArgvModel,
+  ModelSelectionError,
+  normalizeModelSelection,
   windowFor,
   requestedWindowFor,
   resolveContextWindow,
@@ -22,7 +25,7 @@ import {
 
 interface WindowRowCase {
   match: string;
-  kind: 'contains' | 'prefix';
+  kind: 'contains' | 'prefix' | 'suffix';
   window: number;
   note: string;
 }
@@ -46,6 +49,23 @@ interface ResolutionCase {
   expected: number | null;
   note: string;
 }
+interface SelectionCase {
+  name: string;
+  model: string;
+  contextWindow: number | null;
+  expectedModel: string | null;
+  expectedContextWindow: number | null;
+  error: string | null;
+  note: string;
+}
+interface ClaudeArgvCase {
+  name: string;
+  model: string;
+  contextWindow: number | null;
+  expected: string | null;
+  error: string | null;
+  note: string;
+}
 
 // This file lives at apps/desktop/src/main/shared/ — five levels below the
 // repo root, where contracts/ sits.
@@ -64,6 +84,8 @@ const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8')) as {
   windows: WindowRowCase[];
   lookupCases: LookupCase[];
   markerCases: MarkerCase[];
+  selectionCases: SelectionCase[];
+  claudeArgvCases: ClaudeArgvCase[];
   resolutionCases: ResolutionCase[];
 };
 
@@ -72,6 +94,8 @@ describe('model context window contract (shared with Rust windows.rs and Go wind
     expect(fixture.windows.length).toBeGreaterThan(10);
     expect(fixture.lookupCases.length).toBeGreaterThanOrEqual(20);
     expect(fixture.markerCases.length).toBeGreaterThanOrEqual(8);
+    expect(fixture.selectionCases.length).toBeGreaterThanOrEqual(10);
+    expect(fixture.claudeArgvCases.length).toBeGreaterThanOrEqual(4);
     expect(fixture.resolutionCases.length).toBeGreaterThanOrEqual(12);
   });
 
@@ -96,6 +120,38 @@ describe('model context window contract (shared with Rust windows.rs and Go wind
 
   it.each(fixture.markerCases)('markerCases: $requested → $expected ($note)', (c) => {
     expect(requestedWindowFor(c.requested)).toBe(c.expected);
+  });
+
+  it.each(fixture.selectionCases)('selectionCases: $name', (c) => {
+    if (c.error) {
+      try {
+        normalizeModelSelection(c.model, c.contextWindow);
+        throw new Error(`expected ${c.error}`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ModelSelectionError);
+        expect((err as ModelSelectionError).code, c.note).toBe(c.error);
+      }
+      return;
+    }
+    const got = normalizeModelSelection(c.model, c.contextWindow);
+    expect(got, c.note).toEqual({
+      model: c.expectedModel,
+      contextWindow: c.expectedContextWindow,
+    });
+    expect(got.model).not.toMatch(/(?:\[1m\]|-1m)$/i);
+    expect(normalizeModelSelection(got.model, got.contextWindow)).toEqual(got);
+  });
+
+  it.each(fixture.claudeArgvCases)('claudeArgvCases: $name', (c) => {
+    if (c.error) {
+      expect(() => claudeArgvModel({ model: c.model, contextWindow: c.contextWindow })).toThrow(
+        ModelSelectionError,
+      );
+      return;
+    }
+    expect(claudeArgvModel({ model: c.model, contextWindow: c.contextWindow }), c.note).toBe(
+      c.expected,
+    );
   });
 
   // The block that actually pins the twins: it exercises the RESOLVER, so a

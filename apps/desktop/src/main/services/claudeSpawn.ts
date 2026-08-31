@@ -32,7 +32,7 @@ import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonD
 import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
-import { resolveSpawnModel } from '../lib/spawnModel';
+import { resolveSpawnModelSelection } from '../lib/spawnModel';
 import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
@@ -41,6 +41,7 @@ import { buildResultContract, checkResultSchema } from '../shared/structuredResu
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
+import { claudeArgvModel } from '../shared/modelContextWindows';
 
 export interface ClaudeSpawnOptions {
   cwd?: string;
@@ -200,6 +201,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   let effort = opts.effort;
   if (!effort?.trim() && opts.manager) effort = resolveManagerEffort('claude');
 
+  let requestedModel = opts.model;
+  if (opts.manager && !requestedModel) requestedModel = resolveManagerModel('claude');
+  const modelSelection = resolveSpawnModelSelection('claude', requestedModel);
+  const model = modelSelection?.model;
+  const serializedModel = modelSelection ? claudeArgvModel(modelSelection) : undefined;
+
   // Record name/parent before the session registers so adopted cards are
   // enriched from the very first hook event.
   claudeSessionStore.setSpawnMeta(sessionId, {
@@ -210,7 +217,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     ...(resultSchema && { resultSchema }),
     ...(opts.routing && { routing: opts.routing }),
     settings: {
-      model: opts.model,
+      model: serializedModel,
       effort,
       permissionMode,
       bypassAvailable,
@@ -244,7 +251,6 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     userMcp = buildSessionMcpConfig(sessionId, servers);
   }
 
-  let model = opts.model;
   // The Fleet Manager's own coordinator model. Resolved per HARNESS
   // (lib/roleModels) rather than read straight off one flat field:
   // `agents.managerProvider` shipped with no model twin at all, so the manager
@@ -252,13 +258,11 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // rather than at the renderer entry point so it lands on every way a manager
   // starts — the Overview hero, the palette, a respawn of a stopped card, a
   // headless bus spawn — instead of only the one that remembered to read it.
-  if (opts.manager && !model) model = resolveManagerModel('claude');
   // Then the general default, so an omitted model is RESOLVED rather than left
   // to Claude Code's own internal choice. It goes on the argv AND (below) into
   // the spawn payload, which is what lets the daemon know this session's window
   // from token zero instead of guessing 200k off a marker-stripped transcript
   // id. See lib/spawnModel.
-  model = resolveSpawnModel('claude', model);
   // The Fleet Manager's invocable skills (/bearings, /stow) — parity with the
   // stream path (managedSpawn), where the manager normally runs.
   if (opts.manager) {
@@ -311,6 +315,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     extraArgs: profile?.extraArgs,
     resumeSessionId: opts.resumeSessionId,
     model,
+    contextWindow: modelSelection?.contextWindow,
     effort,
     settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
     skipPermissions,
@@ -352,7 +357,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     // prior life's model without re-stating it, and the daemon's argv sniffing
     // would find nothing to record for exactly the sessions that have the most
     // history to mis-measure.
-    model,
+    model: serializedModel,
     firstMessage: opts.firstMessage,
   });
 }
