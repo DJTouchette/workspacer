@@ -584,10 +584,9 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   check('the model the refused capability chose did not survive', got.model !== 'fable', JSON.stringify(got));
   // STRONGER THAN "dropped", and deliberately. Dropping `model` leaves the
   // PROVIDER to resolve its own configured default, one layer below anything the
-  // ceiling can see — and the desktop's Claude default (`opus[1m]`) is a model
-  // the matrix never mentions, so the named-model arm would not catch it on the
-  // way back round either. So the clamp must NAME what the permitted capability
-  // resolves to and leave no hole for a default to fill.
+  // ceiling can see, so the clamp must NAME what the permitted capability
+  // resolves to and leave no hole for a default to fill. (That default is
+  // `opus[1m]`, which the named-model arm can read now as well — see 2c.)
   check('the clamp left no hole for a provider default to fill', typeof got.model === 'string' && got.model.length > 0, JSON.stringify(got));
   check('the replacement model is what the PERMITTED capability resolves to', got.model === 'sonnet', JSON.stringify(got));
   check('the replacement carries its own effort', got.effort === 'high', JSON.stringify(got));
@@ -607,6 +606,26 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   check('a spawn under the ceiling keeps its capability', under.capability === 'cheap', JSON.stringify(under));
   check('a spawn under the ceiling keeps its model', under.model === 'gpt-5.6-luna', JSON.stringify(under));
   check('a spawn under the ceiling reports nothing scrubbed', under.escalationScrubbed === undefined, JSON.stringify(under));
+
+  // 2c. THE CONTEXT-WINDOW SUFFIX, judged rather than waved through. `opus[1m]`
+  //     is `opus` with a 1M window instead of the standard 200K, and it is the
+  //     desktop's shipped `claude.defaultModel` — so while the named-model arm
+  //     compared raw strings, the strongest model on the Claude path was
+  //     reachable from inside a capped directory by spelling it the way the
+  //     matrix does not, or by omitting `model` entirely and letting the
+  //     provider fill that default in below the gate. The arm now compares on
+  //     the model with the window suffix taken off.
+  await operator.call('agents.spawn', { cwd: CEILED_DIR, provider: 'claude', model: 'opus[1m]' });
+  const suffixed = seen[seen.length - 1] ?? {};
+  check('a window-suffixed model is judged by the named-model arm', suffixed.capability === 'balanced', JSON.stringify(suffixed));
+  check('the suffixed model did not survive the clamp', suffixed.model !== 'opus[1m]', JSON.stringify(suffixed));
+  check('its replacement is what the PERMITTED capability resolves to', suffixed.model === 'sonnet', JSON.stringify(suffixed));
+  check('the refused 1M request did not ride along onto the replacement', !String(suffixed.model ?? '').includes('[1m]'), JSON.stringify(suffixed));
+  check(
+    'the suffixed clamp is named in escalationScrubbed too',
+    Array.isArray(suffixed.escalationScrubbed) && suffixed.escalationScrubbed.includes('model'),
+    JSON.stringify(suffixed),
+  );
 
   // 2b. THE SYMLINK. CeilingFor is a LEXICAL ancestor match, so a spawn whose
   //     cwd merely NAMES the capped directory through a link must still be
@@ -629,6 +648,17 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   await operator.call('agents.spawn', { cwd: tmp, capability: 'frontier_plus', model: 'fable', toolScope: 'operator' });
   const outside = seen[seen.length - 1] ?? {};
   check('the SAME request outside the capped tree is admitted', outside.capability === 'frontier_plus' && outside.model === 'fable', JSON.stringify(outside));
+
+  // 3b. AND THE SUFFIX SURVIVES TO THE PROVIDER. This is the half that would be
+  //     worse to get wrong than the gap it closes: the ceiling normalizes the
+  //     window suffix away for its COMPARISON only, so a spawn the ceiling
+  //     admits has to arrive at the provider spelled exactly as it was sent.
+  //     Strip it here and every dispatch silently drops from 1M to 200K, and
+  //     nothing surfaces that until an agent runs out of room.
+  await operator.call('agents.spawn', { cwd: tmp, provider: 'claude', model: 'opus[1m]' });
+  const kept = seen[seen.length - 1] ?? {};
+  check('an admitted model reaches the provider carrying its window request', kept.model === 'opus[1m]', JSON.stringify(kept));
+  check('and the admitted spawn reports nothing scrubbed', kept.escalationScrubbed === undefined, JSON.stringify(kept));
 
   // 5. FRESHNESS. The shipped matrix marks reviewer, deep_reviewer and
   //    frontier_plus `fresh: true`, and a fresh worker that inherits the

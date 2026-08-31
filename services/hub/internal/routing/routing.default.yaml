@@ -450,11 +450,18 @@ modes:
 #     deep_reviewer OR frontier_max, so under a `frontier` ceiling it is refused
 #     — a caller must not get the cheapest interpretation of an ask the provider
 #     is free to run at its strongest. Naming `effort: high` narrows the reading
-#     and it is admitted. A model this file never mentions is not judged at all;
+#     and it is admitted. A model this file never mentions is not judged at all.
+#     A CONTEXT-WINDOW SUFFIX IS NOT ANOTHER MODEL: `opus[1m]` is `opus` with a
+#     1M window instead of 200K, and it is judged as `opus`. Write either
+#     spelling on an entry below, quoted (`model: "opus[1m]"`), and it still
+#     matches the other, so one model wants one row;
 #   * the MODEL THE CLAMP LEAVES BEHIND. When it lowers a capability it also
 #     names what the permitted one resolves to and writes that onto the spawn,
 #     because an OMITTED model is not a weak model — it is the provider's own
-#     configured default, chosen below anything this file can see.
+#     configured default, chosen below anything this file can see. The
+#     replacement is the entry above VERBATIM, so it runs the window that entry
+#     asks for and not the one the refused model asked for; a dropped `[1m]` is
+#     stated in the refusal rather than left silent.
 #
 # A CEILING VALUE THIS FILE CANNOT READ REFUSES THE SPAWN. A `max_capability`
 # that `capability_ranks:` does not rank, or a `max_tool_scope` that is not
@@ -499,9 +506,11 @@ modes:
 # it here, or per directory, if a worker in a given tree should never be able to
 # approve, spawn or write.
 #
-# IT DOES NOT CAP a model this file never mentions. `opus[1m]` is not `opus` as
-# far as the matrix is concerned, and a provider's own configured default is
-# reached below this layer except on the clamp path described above.
+# IT DOES NOT CAP a model this file never mentions, and there is no matrix
+# opinion to apply to one. It DOES cap `opus[1m]`, which is `opus` with a 1M
+# context window and used to be read as a stranger: that is the desktop's
+# shipped `claude.defaultModel`, so it was the model a spawn reached by leaving
+# `model` out altogether.
 #
 # IT DOES NOT CAP the local desktop spawn dialog, a human running the CLI
 # directly, or anything that does not come over the bus.

@@ -886,13 +886,20 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 		//
 		// Deleting alone was the hole. `model` absent does not mean a weak model;
 		// it means the PROVIDER picks, from its own configured default, below
-		// anything this gate can see — and the desktop's Claude default
-		// (`opus[1m]`) is a model the routing matrix never mentions, so it would
-		// not be judged on the way back round either. A clamp that turns "an
-		// explicit strong model" into "a default that is just as strong" has
-		// relabelled the spawn rather than limited it. So when the routing layer
-		// can say what the PERMITTED capability resolves to, that tuple is
-		// written here, and the provider is left no hole to fill.
+		// anything this gate can see — and the desktop's Claude default is
+		// `opus[1m]`. A clamp that turns "an explicit strong model" into "a
+		// default that is just as strong" has relabelled the spawn rather than
+		// limited it. So when the routing layer can say what the PERMITTED
+		// capability resolves to, that tuple is written here, and the provider
+		// is left no hole to fill.
+		//
+		// The routing layer now also READS that default when a caller names it
+		// outright: `opus[1m]` is `opus` with a 1M context window, and the
+		// named-model arm compares with the window suffix taken off. Note what
+		// this gate does with the suffix, which is nothing at all — the
+		// normalization is the matrix's, for its own lookup. An admitted spawn
+		// forwards `model` byte-for-byte, so the window request survives; only
+		// the refusal path writes a model, and it writes the matrix entry.
 		for _, key := range []string{"model", "effort"} {
 			if _, had := m[key]; had {
 				delete(m, key)

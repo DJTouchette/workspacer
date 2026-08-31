@@ -144,12 +144,16 @@ type CeilingVerdict struct {
 	//
 	// Deleting the refused model was not enough. Every provider resolves an
 	// OMITTED model to its own configured default, and the desktop's Claude
-	// default is `opus[1m]` — a model the matrix never mentions, so the
-	// named-model arm cannot judge it either. So a ceiling that refused
-	// `frontier_plus`/`fable` handed the spawn back to a default that is
-	// plausibly just as strong, one layer below where the ceiling could see it.
-	// The fix is to leave no hole: the clamp names what the permitted capability
-	// actually resolves to, and the enforcement site WRITES it.
+	// default is `opus[1m]`. So a ceiling that refused `frontier_plus`/`fable`
+	// handed the spawn back to a default that is plausibly just as strong, one
+	// layer below where the ceiling could see it. The fix is to leave no hole:
+	// the clamp names what the permitted capability actually resolves to, and
+	// the enforcement site WRITES it.
+	//
+	// (`opus[1m]` used to walk past the named-model arm as well, because the
+	// matrix spells that model `opus` and the two strings are not equal. The
+	// arm now compares on the model WITHOUT its context-window suffix, so the
+	// default is judged as the `opus` it is. See modelid.go.)
 	//
 	// Empty when the matrix cannot route the permitted capability on the
 	// provider this spawn is for — a provider it holds no profile entry for
@@ -226,6 +230,10 @@ func (v CeilingVerdict) Refused() bool {
 //
 // A model that appears nowhere in the matrix is still not judged at all: the
 // matrix makes no claim about it, and inventing one would be a classification.
+// A model that appears there under a different CONTEXT WINDOW does appear:
+// `opus[1m]` is judged as `opus`, because the suffix asks for a bigger window on
+// the same model rather than naming another one. That was the last hole in this
+// arm, and it was the one an omitted `model` fell through by default.
 //
 // UNRANKED FAILS CLOSED IN BOTH DIRECTIONS. A spawn naming a capability the file
 // does not rank cannot be shown to be under the ceiling, so it is CLAMPED; a
@@ -352,11 +360,18 @@ func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVe
 // the judgement, which is what the old code did and what let one unranked
 // profile entry disable the model arm for that model everywhere.
 //
+// THE CONTEXT-WINDOW SUFFIX IS NOT PART OF THE MODEL. Both sides of the
+// comparison are matched with `[1m]` / `-1m` taken off, so `opus[1m]` is read as
+// the `opus` the matrix has entries for. It is a request for a bigger window on
+// the same model, and before this the mismatch meant the desktop's own shipped
+// default was the one Claude model no ceiling could judge. Nothing is rewritten:
+// see modelid.go for why the suffix survives to the spawn.
+//
 // `ok` is false only when the matrix has NO reading at all: an unknown model, or
 // none named. A matrix that never mentions a model makes no claim about it.
 func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, capability string, ok bool) {
 	p := normalizeProvider(provider)
-	mo := strings.ToLower(strings.TrimSpace(model))
+	mo := matchableModel(model)
 	ef := strings.ToLower(strings.TrimSpace(effort))
 	if p == "" || mo == "" {
 		return 0, "", false
@@ -365,7 +380,7 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 	for _, pname := range sortedKeys(m.Profiles) {
 		for _, cname := range sortedKeys(m.Profiles[pname]) {
 			a := m.Profiles[pname][cname]
-			if normalizeProvider(a.Provider) != p || strings.ToLower(strings.TrimSpace(a.Model)) != mo {
+			if normalizeProvider(a.Provider) != p || matchableModel(a.Model) != mo {
 				continue
 			}
 			if ef != "" && strings.ToLower(strings.TrimSpace(a.Effort)) != ef {
@@ -389,12 +404,21 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 // WITHOUT THIS, THE CLAMP IS A RELABELLING. The enforcement site used to delete
 // `model` and `effort` when it lowered `capability`, on the reasoning that
 // keeping the model a refused capability chose would change a label rather than
-// apply a limit. True as far as it goes — and then the provider resolved the
+// apply a limit. True as far as it goes, and then the provider resolved the
 // now-omitted model to its OWN configured default, one layer below where any
-// ceiling can see it, and the desktop's Claude default (`opus[1m]`) is a model
-// this matrix never mentions, so even the named-model arm would not have caught
-// it on the way back round. A ceiling that turns "an explicit strong model" into
-// "an omitted model that defaults to a strong model" has relabelled.
+// ceiling can see it. A ceiling that turns "an explicit strong model" into "an
+// omitted model that defaults to a strong model" has relabelled.
+//
+// THE REPLACEMENT CARRIES THE MATRIX ENTRY'S OWN WINDOW, not the refused
+// request's. A spawn asking for `opus[1m]` and clamped to `balanced` is answered
+// with what routing.yaml spells for balanced, verbatim, so the substituted model
+// gets the context window its own entry implies. Grafting the refused `[1m]`
+// onto it would invent an id the matrix never named and the load-time catalog
+// check never validated, and it would be nonsense the moment the replacement
+// lands on a provider with no such vocabulary. Write the suffix on the profile
+// entry if a capped directory should still run 1M. The drop is stated in
+// Because rather than left silent, on the same no-silent-downgrades rule the
+// rest of this verdict follows.
 //
 // WHICH PROVIDER, and why the answer is not simply "the one the active profile
 // prefers". Substituting the provider is a bigger change than substituting the
@@ -444,6 +468,30 @@ func (m *Matrix) routeSafely(req SpawnRequest, capability string, v *CeilingVerd
 	v.Because = append(v.Because, fmt.Sprintf(
 		"the spawn is routed to %s %s%s instead, which is what profile %s resolves %s to — the ceiling NAMES the replacement rather than dropping the model, because an omitted model resolves to the provider's own configured default and that default is not something this ceiling can see",
 		v.Provider, v.Model, effortSuffix(v.Effort), from, capability))
+	noteWindowNotCarried(req.Model, v)
+}
+
+// noteWindowNotCarried says out loud that a context-window request did not
+// survive a substitution.
+//
+// A refused `opus[1m]` is answered with whatever routing.yaml spells for the
+// permitted capability, verbatim, so the replacement runs the window ITS OWN
+// entry implies. That is the right rule (see routeSafely), and it is still a
+// second thing the caller asked for and did not get, on an axis nothing else in
+// the verdict mentions: `escalationScrubbed` records that `model` was taken, not
+// that a 1M window went with it. So it gets a sentence, for the same reason
+// every other refusal here does.
+func noteWindowNotCarried(requested string, v *CeilingVerdict) {
+	_, want := splitModelWindowSuffix(requested)
+	if want == "" {
+		return
+	}
+	if _, got := splitModelWindowSuffix(v.Model); got != "" {
+		return // the replacement asks for a window of its own
+	}
+	v.Because = append(v.Because, fmt.Sprintf(
+		"the %s context-window request on %q does not carry over: a substituted model runs the window its own routing.yaml entry implies, not the one the REFUSED model asked for, because pasting %s onto %q would invent an id the matrix never names and the load-time catalog check never validated. Spell the suffix on the profiles: entry if a capped directory should still run that window",
+		want, strings.TrimSpace(requested), want, v.Model))
 }
 
 // providerOfModel is the provider a model plainly belongs to in this matrix, or
@@ -451,9 +499,11 @@ func (m *Matrix) routeSafely(req SpawnRequest, capability string, v *CeilingVerd
 //
 // It exists for exactly one job: keeping a clamp on a spawn that named a model
 // but no provider from silently changing which harness runs. `model: fable`
-// means claude whether or not the caller said so.
+// means claude whether or not the caller said so, and `model: opus[1m]` means
+// claude for the same reason it means `opus`: the comparison ignores the
+// context-window suffix on both sides.
 func (m *Matrix) providerOfModel(model string) string {
-	mo := strings.ToLower(strings.TrimSpace(model))
+	mo := matchableModel(model)
 	if m == nil || mo == "" {
 		return ""
 	}
@@ -461,7 +511,7 @@ func (m *Matrix) providerOfModel(model string) string {
 	for _, pname := range sortedKeys(m.Profiles) {
 		for _, cname := range sortedKeys(m.Profiles[pname]) {
 			a := m.Profiles[pname][cname]
-			if strings.ToLower(strings.TrimSpace(a.Model)) != mo {
+			if matchableModel(a.Model) != mo {
 				continue
 			}
 			p := normalizeProvider(a.Provider)
