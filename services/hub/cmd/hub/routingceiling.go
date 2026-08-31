@@ -13,6 +13,14 @@ package main
 // thin — every judgement below is made by routing.Matrix.CheckSpawn; nothing
 // here decides anything.
 //
+// TWO JUDGEMENTS TRAVEL THIS WIRE, not one. The ceiling clamps how much
+// capability and authority a directory allows. The FRESHNESS arm refuses a
+// spawn that declared review work and also asked to resume the session it is
+// meant to be reviewing. They share this resolver because they share the
+// enforcement site, and the enforcement site is the single spawn-path function
+// that is not a twin; splitting them into two injected hooks would mean two
+// resolvers reading the same matrix on the same call.
+//
 // THE CANONICALIZATION IS THE ROUTER'S, NOT OURS, and that is not an accident of
 // layering. CeilingFor is a LEXICAL ancestor match: hand it a caller's spelling
 // and a symlink walks straight around the ceiling. The router resolves the cwd
@@ -57,12 +65,15 @@ func routingSpawnCeiling(svc *routing.Service) bus.SpawnCeilingFunc {
 			log.Printf("[routing] agents.spawn: the spawn's cwd could not be canonicalized, so the %q ceiling applies rather than any per-directory one", routing.CeilingDefaultKey)
 		}
 		v := m.CheckSpawn(routing.SpawnRequest{
-			CanonicalCwd: req.CanonicalCwd,
-			Capability:   req.Capability,
-			ToolScope:    req.ToolScope,
-			Provider:     req.Provider,
-			Model:        req.Model,
-			Effort:       req.Effort,
+			CanonicalCwd:    req.CanonicalCwd,
+			Capability:      req.Capability,
+			Role:            req.Role,
+			Resuming:        req.Resuming,
+			ResumeSessionID: req.ResumeSessionID,
+			ToolScope:       req.ToolScope,
+			Provider:        req.Provider,
+			Model:           req.Model,
+			Effort:          req.Effort,
 		})
 		return bus.SpawnCeilingVerdict{
 			Key:               v.Key,
@@ -75,6 +86,8 @@ func routingSpawnCeiling(svc *routing.Service) bus.SpawnCeilingFunc {
 			Provider:          v.Provider,
 			Model:             v.Model,
 			Effort:            v.Effort,
+			ResumeRefused:     v.ResumeRefused,
+			FreshCapability:   v.FreshCapability,
 			Denied:            v.Denied,
 			Because:           v.Because,
 		}
@@ -109,6 +122,8 @@ func routingSpawnAudit(logf *routing.DecisionLog) bus.SpawnAuditFunc {
 			Provider:          r.Ceiling.Provider,
 			Model:             r.Ceiling.Model,
 			Effort:            r.Ceiling.Effort,
+			ResumeRefused:     r.Ceiling.ResumeRefused,
+			FreshCapability:   r.Ceiling.FreshCapability,
 			Denied:            r.Ceiling.Denied,
 			Because:           r.Ceiling.Because,
 		}

@@ -117,9 +117,38 @@ the ticket, the acceptance criteria, the diff, the relevant source and the test
 results, and does not get the implementer's reasoning history. A reviewer that
 inherits the implementer's reasoning is not reviewing it.
 
-`fresh` is reported on the decision (`fresh: true` in the answer) and is **not**
-enforced by the spawn gate. Acting on it belongs to whatever dispatches the
-review.
+`fresh` is reported on the decision (`fresh: true` in the answer) and it is
+**enforced**. A bus `agents.spawn` that declares a `role` or a `capability`
+whose entry in the active profile carries `fresh: true` may not also carry a
+`resumeSessionId`. The hub refuses the call, and the error names the session the
+spawn would have inherited. It refuses rather than clamping because there is no
+weaker value of "continue that session": dropping the field would start a new
+session while the caller went on believing it had continued one, which is the
+quieter failure of the two.
+
+Three things follow from how the check reads a spawn.
+
+- A spawn that declares no role and no capability makes no freshness claim, so
+  it resumes normally. A role or capability the matrix does not name is the same
+  answer, because the matrix expresses no opinion about it.
+- A role is read at its strongest. The resume is refused if the capability under
+  `roles:` is fresh, or if any capability a `mode_shifts:` entry would move that
+  role onto is fresh. The gate cannot know which mode the caller decided under,
+  and being wrong in this direction costs only continuity.
+- The active profile decides. Writing `fresh: false` on its reviewer entry is
+  honoured, and a flag in a profile you have not selected refuses nothing.
+
+The rule is keyed off what the spawn declares rather than off the `decisionId`
+it quotes, which is safe here in a way it would not be for the ceiling. Refusing
+a resume only ever gives a caller less, so a caller who lies about its role gains
+nothing it could not have had by declaring no role at all. The same rule binds on
+a federated spawn: enforcement lives in `sanitizeSpawnParams`, the one spawn-path
+function both the local and the federated call paths share, so the peer applies
+it to what arrives.
+
+Choosing what to hand a fresh worker instead still belongs to whatever dispatches
+the review: the ticket, the acceptance criteria, the diff, the relevant source
+and the test results.
 
 ## The blocks
 

@@ -630,6 +630,71 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   const outside = seen[seen.length - 1] ?? {};
   check('the SAME request outside the capped tree is admitted', outside.capability === 'frontier_plus' && outside.model === 'fable', JSON.stringify(outside));
 
+  // 5. FRESHNESS. The shipped matrix marks reviewer, deep_reviewer and
+  //    frontier_plus `fresh: true`, and a fresh worker that inherits the
+  //    previous agent's conversation is not fresh. So a spawn declaring that
+  //    work and carrying a `resumeSessionId` is REFUSED — not stripped, because
+  //    stripping would start a new session the caller believes is a
+  //    continuation. Asserted against the live hub for the same reason the
+  //    ceiling is: the guarantee is about what the provider is handed.
+  const refused = async (params) => {
+    const before = seen.length;
+    let err = null;
+    try {
+      await operator.call('agents.spawn', params);
+    } catch (e) {
+      err = e?.message ?? String(e);
+    }
+    return { err, reached: seen.length > before };
+  };
+
+  const reviewerResume = await refused({
+    cwd: tmp,
+    role: 'reviewer',
+    resumeSessionId: 'implementer-sess-1',
+  });
+  check('a reviewer asking to RESUME a session is refused', typeof reviewerResume.err === 'string', JSON.stringify(reviewerResume));
+  check(
+    'the refusal names the session it would have inherited',
+    (reviewerResume.err ?? '').includes('implementer-sess-1'),
+    reviewerResume.err ?? '',
+  );
+  check(
+    'the refusal names `fresh` as the reason, in the ANSWER and not only a log',
+    /fresh/.test(reviewerResume.err ?? ''),
+    reviewerResume.err ?? '',
+  );
+  check('the refused reviewer never reached the provider', !reviewerResume.reached, JSON.stringify(reviewerResume));
+
+  // A capability declared DIRECTLY, with no role at all — the shape a routed
+  // dispatch has when it copies the decision's capability onto the spawn.
+  const capResume = await refused({ cwd: tmp, capability: 'deep_reviewer', resumeSessionId: 'sess-2' });
+  check('a fresh CAPABILITY declared without a role is refused too', typeof capResume.err === 'string', JSON.stringify(capResume));
+
+  // …and inside the capped directory, where the ceiling also bites, so the two
+  // refusals are proven not to be the same mechanism wearing two names.
+  const bothRefused = await refused({
+    cwd: CEILED_DIR,
+    role: 'reviewer',
+    capability: 'frontier_plus',
+    resumeSessionId: 'sess-3',
+  });
+  check('the freshness refusal fires inside a capped directory as well', typeof bothRefused.err === 'string', JSON.stringify(bothRefused));
+
+  // THE OTHER SIDE, and the reason the cases above measure the rule rather than
+  // a hub that refuses every resume.
+  await operator.call('agents.spawn', { cwd: tmp, role: 'implementer', resumeSessionId: 'sess-ok-1' });
+  const ordinary = seen[seen.length - 1] ?? {};
+  check('an implementer keeps its resume', ordinary.resumeSessionId === 'sess-ok-1', JSON.stringify(ordinary));
+
+  await operator.call('agents.spawn', { cwd: tmp, resumeSessionId: 'sess-ok-2' });
+  const unlabelled = seen[seen.length - 1] ?? {};
+  check('a spawn declaring no role and no capability keeps its resume', unlabelled.resumeSessionId === 'sess-ok-2', JSON.stringify(unlabelled));
+
+  await operator.call('agents.spawn', { cwd: tmp, role: 'reviewer', capability: 'deep_reviewer' });
+  const freshStart = seen[seen.length - 1] ?? {};
+  check('a reviewer starting a NEW session is admitted', freshStart.role === 'reviewer' && freshStart.capability === 'deep_reviewer', JSON.stringify(freshStart));
+
   // 4. The spawn is recorded, and it joins the decision that produced it.
   const joined = await waitFor(async () => {
     const rows = readDecisionLog();

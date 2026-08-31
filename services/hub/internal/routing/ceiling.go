@@ -75,6 +75,17 @@ type SpawnRequest struct {
 	// which a routed dispatch copies from the decision it is acting on. Empty is
 	// ordinary: nothing declared one before this feature existed.
 	Capability string
+	// Role is the spawn's declared `role` param — one of the names under
+	// `roles:`. It is read by the FRESHNESS arm only (see fresh.go), never by
+	// the ceiling: a ceiling that a caller could raise by relabelling its role
+	// would be a ceiling made of a caller-supplied string.
+	Role string
+	// Resuming says the spawn carries a `resumeSessionId`, so it would CONTINUE
+	// an existing conversation rather than start one. ResumeSessionID is the id
+	// itself, quoted back in the refusal so the caller can see which session it
+	// asked to inherit.
+	Resuming        bool
+	ResumeSessionID string
 	// ToolScope is the AUTHORITY tier the spawn asks for the child to hold, or
 	// "operator" spelled as the legacy `mcpFacade: true`.
 	ToolScope string
@@ -149,6 +160,15 @@ type CeilingVerdict struct {
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
 
+	// ResumeRefused says this spawn declared work the matrix marks `fresh: true`
+	// and asked to RESUME a session, which the two cannot both be. Like Denied it
+	// stops the spawn rather than clamping it, and for a reason a clamp cannot
+	// express: dropping `resumeSessionId` would hand back a NEW session that the
+	// caller believes is a continuation, which is a worse failure than a refusal.
+	// FreshCapability names the entry whose flag refused it. See fresh.go.
+	ResumeRefused   bool   `json:"resumeRefused,omitempty"`
+	FreshCapability string `json:"freshCapability,omitempty"`
+
 	// Denied refuses the spawn OUTRIGHT rather than clamping it, and it is the
 	// answer to the one question a clamp cannot express: what to do when the
 	// CEILING ITSELF cannot be read.
@@ -169,7 +189,9 @@ type CeilingVerdict struct {
 }
 
 // Refused reports whether this verdict takes anything away.
-func (v CeilingVerdict) Refused() bool { return v.CapabilityRefused || v.ToolScopeRefused || v.Denied }
+func (v CeilingVerdict) Refused() bool {
+	return v.CapabilityRefused || v.ToolScopeRefused || v.Denied || v.ResumeRefused
+}
 
 // CheckSpawn judges one spawn against the ceiling that governs its directory.
 //
@@ -216,6 +238,12 @@ func (m *Matrix) CheckSpawn(req SpawnRequest) CeilingVerdict {
 	if m == nil {
 		return v
 	}
+	// THE FRESHNESS ARM IS NOT A CEILING ARM, and it runs FIRST so that it runs
+	// at all: the ceiling lookup below returns early for a matrix with no
+	// `ceilings:` block, and a reviewer's independence does not depend on
+	// whether anyone capped the directory it works in. See fresh.go.
+	m.checkFresh(req, &v)
+
 	ceiling, key := m.CeilingFor(req.CanonicalCwd)
 	v.Key, v.MaxCapability, v.MaxToolScope = key, ceiling.MaxCapability, ceiling.MaxToolScope
 	if key == "" {

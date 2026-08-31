@@ -87,7 +87,8 @@ version: 1
 #
 # A single-family profile cannot buy that diversity, so it compensates with
 # `fresh: true` on its review capabilities. See the `profiles:` block for what
-# fresh means and why every profile here sets it.
+# fresh means, why every profile here sets it, and how the spawn gate enforces
+# it against a spawn that asks to resume an existing session.
 active_profile: mixed
 
 # ---------------------------------------------------------------------------
@@ -191,9 +192,18 @@ roles:
 #             implementer's reasoning history. Set on every same-family
 #             reviewer, because a Sol reviewer that inherits the Sol
 #             implementer's reasoning is not a reviewer. It RIDES ON THE ANSWER
-#             (`fresh: true`) for whatever dispatches the review to act on; the
-#             spawn gate does not enforce it, because "start a new session"
-#             is not a limit the gate can impose on a caller.
+#             (`fresh: true`) for whatever dispatches the review to act on, AND
+#             the spawn gate ENFORCES it: a bus agents.spawn that declares a
+#             role or a capability marked fresh here may not also carry a
+#             `resumeSessionId`, and the call is refused with the session id it
+#             would have inherited named in the answer. Refused rather than
+#             stripped, because a dropped resume would start a new session the
+#             caller believes is a continuation. A role is judged at its
+#             strongest reading, so a `mode_shifts:` entry that moves the role
+#             onto a fresh capability refuses the resume too. A spawn declaring
+#             neither a role nor a capability makes no freshness claim and
+#             resumes normally, and `fresh: false` on the ACTIVE profile is
+#             honoured.
 #   enabled   set to false to take an entry out of service. Omitting it is not
 #             the same thing — a deep merge cannot delete, by design.
 profiles:

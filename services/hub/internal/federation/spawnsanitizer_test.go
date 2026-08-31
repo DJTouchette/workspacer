@@ -68,6 +68,14 @@ func twoHubs(t *testing.T, ctx context.Context, linkYolo bool) spawnHubs {
 			v.ToolScopeRefused, v.ToolScope = true, "view"
 			v.Because = append(v.Because, "the peer caps this directory at the view tier")
 		}
+		// The peer's own FRESHNESS rule, the non-ceiling half of the same
+		// resolver. It refuses rather than clamps, so a spawn that trips it
+		// never reaches the peer's provider at all.
+		if req.Resuming && req.Role == "reviewer" {
+			v.ResumeRefused, v.FreshCapability = true, "reviewer"
+			v.Because = append(v.Because,
+				"the peer marks capability reviewer `fresh: true`, so session "+req.ResumeSessionID+" may not be inherited")
+		}
 		return v
 	}, nil)
 	peerSrv := httptest.NewServer(peerBus.Handler())
@@ -264,5 +272,45 @@ func TestAFullAccessGrantedLinkIsStampedByThePeer(t *testing.T) {
 	got := peerParams(t, h)
 	if got["yoloGranted"] != true {
 		t.Errorf("a link minted WITH the full-access grant was not stamped by the peer: %v", got)
+	}
+}
+
+// 5. THE PEER'S OWN FRESHNESS RULE REFUSES A RESUME. The local hub has no
+// routing layer wired, so this refusal was reached entirely by the second
+// router — and it is the arm that a fake forwarder cannot show, because the
+// party that must say no is the machine the reviewer would actually run on.
+//
+// A reviewer that could inherit the implementer's conversation by naming
+// `hub:work/agents.spawn` would be one hop away from walking around the whole
+// guarantee, which is exactly why the enforcement lives in the sanitizer table
+// both call paths share rather than in either one of them.
+func TestThePeerRefusesAFederatedResumeForAFreshRole(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	h := twoHubs(t, ctx, false)
+
+	f := spawnAcross(t, ctx, h, `{"cwd":"/x","role":"reviewer","resumeSessionId":"implementer-sess-1"}`)
+	if f.Op != "error" {
+		t.Fatalf("a federated reviewer inherited a session across the hop: %+v", f)
+	}
+	if !strings.Contains(f.Error, "implementer-sess-1") || !strings.Contains(f.Error, "fresh") {
+		t.Errorf("the peer's refusal did not come back to the local caller with its reason: %q", f.Error)
+	}
+	nothingReached(t, h)
+}
+
+// …and the same hop with no fresh role attached still carries its resume, so the
+// case above measures the rule rather than a federated spawn that simply cannot
+// resume anything.
+func TestAnOrdinaryFederatedResumeStillReachesThePeer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	h := twoHubs(t, ctx, false)
+
+	if f := spawnAcross(t, ctx, h, `{"cwd":"/x","role":"implementer","resumeSessionId":"sess-7"}`); f.Op != "result" {
+		t.Fatalf("an ordinary federated resume was refused: %+v", f)
+	}
+	if got := peerParams(t, h); got["resumeSessionId"] != "sess-7" {
+		t.Errorf("an ordinary resume lost its session id across the hop: %v", got)
 	}
 }

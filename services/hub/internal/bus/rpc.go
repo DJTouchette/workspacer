@@ -407,6 +407,15 @@ type SpawnCeilingRequest struct {
 
 	// Capability is the spawn's declared `capability` param.
 	Capability string
+	// Role is the spawn's declared `role` param. It feeds the FRESHNESS arm
+	// only: a role is a caller-supplied label, and declaring one can only ever
+	// cost the caller continuity, never buy it authority.
+	Role string
+	// Resuming says the spawn carries a `resumeSessionId`, so it would continue
+	// an existing conversation instead of starting one; ResumeSessionID is that
+	// id, quoted back in the refusal.
+	Resuming        bool
+	ResumeSessionID string
 	// ToolScope is the AUTHORITY tier asked for, already folded together with the
 	// legacy `mcpFacade: true` spelling.
 	ToolScope string
@@ -445,6 +454,18 @@ type SpawnCeilingVerdict struct {
 	Model    string
 	Effort   string
 
+	// ResumeRefused says the routing layer will not let this spawn resume a
+	// session: it declared a role or capability the matrix marks `fresh: true`,
+	// and a fresh worker that inherits the previous agent's conversation is not
+	// fresh. FreshCapability names the entry whose flag refused it.
+	//
+	// It STOPS the spawn rather than clamping it, and that is the deliberate
+	// half. Dropping `resumeSessionId` would start a NEW session while the
+	// caller believes it continued one, which is a quieter and worse failure
+	// than a refusal naming its own reason.
+	ResumeRefused   bool
+	FreshCapability string
+
 	// Denied refuses the spawn OUTRIGHT instead of clamping it. The routing
 	// layer sets it when the CEILING ITSELF cannot be read — a row naming an
 	// unrankable capability or a tier the security model does not have. A
@@ -458,7 +479,7 @@ type SpawnCeilingVerdict struct {
 
 // Refused reports whether this verdict takes anything away.
 func (v SpawnCeilingVerdict) Refused() bool {
-	return v.CapabilityRefused || v.ToolScopeRefused || v.Denied
+	return v.CapabilityRefused || v.ToolScopeRefused || v.Denied || v.ResumeRefused
 }
 
 // SpawnCeilingFunc resolves the routing ceiling for one spawn. Injected at
@@ -618,6 +639,16 @@ func toolScopeRank(scope string) (int, bool) {
 //     a spawn that declares nothing and simply NAMES a reserved model, judged at
 //     the STRONGEST reading the matrix has for it.
 //
+//     5b. THE FRESHNESS REFUSAL. A spawn that declares a `role` or `capability`
+//     whose matrix entry carries `fresh: true` — reviewer, deep_reviewer,
+//     frontier_plus in every shipped profile — may not carry a
+//     `resumeSessionId`. It is REFUSED rather than clamped: there is no weaker
+//     value of "continue that session", and silently dropping the field would
+//     start a new session the caller goes on believing is a continuation. This
+//     is the one rule here that is not about authority, and it is keyed off the
+//     DECLARED label on purpose — refusing a resume only ever gives a caller
+//     less, so there is nothing to gain by lying about a role.
+//
 //  6. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
 //     only, same as the stamps above) and re-stamped with what THIS router took
 //     away — `profileId`, and now the two clamps' fields. NO SILENT DOWNGRADES:
@@ -717,7 +748,7 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 	return out, nil
 }
 
-// clampSpawnAuthority applies items 4 and 5 above and records the spawn, in
+// clampSpawnAuthority applies items 4, 5 and 5b above and records the spawn, in
 // place, returning the field names it took away.
 //
 // It runs on EVERY bus agents.spawn, including one with no routing layer wired
@@ -764,10 +795,17 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 			CanonicalCwd: canonical,
 			CwdResolved:  resolved,
 			Capability:   str("capability"),
-			ToolScope:    wantScope,
-			Provider:     str("provider"),
-			Model:        str("model"),
-			Effort:       str("effort"),
+			Role:         str("role"),
+			// A spawn that names a session to continue is the whole input to
+			// the freshness arm. Read here rather than inside the resolver for
+			// the same reason the cwd is: the bus hands over facts about the
+			// call, and the routing layer never sees the params object.
+			Resuming:        str("resumeSessionId") != "",
+			ResumeSessionID: str("resumeSessionId"),
+			ToolScope:       wantScope,
+			Provider:        str("provider"),
+			Model:           str("model"),
+			Effort:          str("effort"),
 		})
 	}
 
@@ -879,6 +917,23 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 			verdict.Capability, verdict.Model, caller.tokenID, strings.Join(verdict.Because, " | "))
 	}
 
+	// ---- freshness: a `fresh` role may not inherit a conversation -----------
+	//
+	// NOT A CLAMP, AND NOT A DROP. The two clamps above lower what was asked
+	// for and forward the rest, because a lower tier and a weaker model are
+	// still a spawn the caller can use. There is no lower value of "resume this
+	// session": deleting `resumeSessionId` would start a NEW session that the
+	// caller goes on believing is a continuation, and it would do so silently
+	// on the one axis where the caller cannot tell by looking. So the spawn is
+	// REFUSED below, next to the ceiling's own denial, and the sentence the
+	// routing layer wrote comes back in the error rather than staying in a log
+	// on a machine the caller cannot read.
+	//
+	// It is not an authority refusal, which is why it needs no provenance: the
+	// declared role is taken at face value because lying about it can only cost
+	// the caller its resume, and a caller that wanted the resume could simply
+	// have declared no role at all.
+
 	// THE DENIAL, recorded before it is returned. A spawn refused because the
 	// policy file is unreadable is exactly the spawn an operator will come
 	// looking for in the log, and a refusal that left no row would be the one
@@ -908,7 +963,7 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 	}
 	record()
 
-	if verdict.Denied {
+	if verdict.Denied || verdict.ResumeRefused {
 		reasons := strings.Join(verdict.Because, " | ")
 		log.Printf("SECURITY: agents.spawn REFUSED for caller %s in %q: %s", caller.tokenID, canonical, reasons)
 		return nil, fmt.Errorf("agents.spawn refused: %s", reasons)
