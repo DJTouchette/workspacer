@@ -98,10 +98,81 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   sent back as "renderedMessage" (with renderedMessageTruncated:true if it was
   clipped), so verifying the render costs nothing — do not call
   get_conversation just to see what your own dispatch said.
+- role, capability and decisionId carry a select_model answer onto the dispatch,
+  alongside the provider, model and effort it named. role is what the work IS
+  (implementer, reviewer, scout and the rest); capability is the model tier the
+  answer chose, which you copy and never raise; decisionId joins this worker to
+  that decision in the host's routing log. A dispatch that declares no role is
+  routed by nobody: it gets no decision recorded, gives the directory ceiling no
+  capability to judge, and makes no freshness claim, so a reviewer sent without
+  one loses the guarantee that it never saw the implementation. The routing
+  topic covers what to ask for and what binds whether you asked or not.
+- YOUR ANSWER MAY COME BACK CLAMPED, and escalationScrubbed on the spawn result
+  is where you see it: a list of the fields the host took away (capability,
+  model, effort, toolScope, profileId are the ones you can cause). It is stamped
+  by the host, which deletes any value you sent under that name first, so it
+  reports what THIS spawn lost and nothing else. A clamped capability takes the
+  model and effort you named with it and substitutes the permitted capability's
+  own. Read it on every spawn rather than assuming you got what you asked for,
+  tell the user what was narrowed, and do not retry the same request: only a
+  person with a text editor can raise a ceiling.
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
   list_agents rows). The peer clamps remote spawns itself — permission bypass
   is refused there — and driving the new agent needs the same hub value.`),
+	"routing": strings.TrimSpace(`
+select_model is the ask-before-you-dispatch tool. You name the ROLE the work is
+(scout, mechanical, implementer, reviewer, deep_reviewer, fixer, complex_fixer,
+validator, diagnostician, judge) and the project directory as cwd, and the hub
+resolves that role through its routing matrix and the live subscription capacity
+into a concrete provider, model and effort. You never name a model yourself: the
+matrix is the only place model names live, so a vendor rename is one file rather
+than every dispatch site.
+What comes back, and what to do with it:
+- provider, model, effort: pass them to spawn_agent exactly as named.
+- capability (the tier chosen) and baseCapability (what the role asks for before
+  the routing mode moved it). Copy capability onto the spawn; there is no way to
+  ask for one above what the answer gave.
+- decisionId: pass it on the spawn so the worker and the decision are joined.
+- mode (normal, conserve or spend_down), the capacity it judged, the ceiling it
+  resolved under, and a reason list saying why. The reasons are what you quote to
+  the user, not your own guess at them.
+- eligible:false means the matrix found nothing spawnable for that role under
+  that constraint: a provider held out of service, no profile pairing that
+  capability with a provider you asked for, or a ceiling whose configured value
+  cannot be read. model is empty and the reason list says which. Do not
+  substitute a model of your own; report the reason it gave.
+- previousProvider (the harness the previous worker ran on) is worth passing when
+  you route a review, so the answer can land on a different model family; the
+  answer reports independentFamily honestly when it could not.
+ROUTING IS NOT AUTOMATIC, AND ASKING IS YOUR JOB. select_model is a read-only
+question and nothing asks it for you: the host does not consult routing when it
+spawns, so a dispatch that never asked carries no decision and appears nowhere in
+the decision log. Believing your spawn was routed when you never asked is the way
+to misread its result.
+Two rules DO bind on every spawn the host receives, asked or not, because they
+live in the spawn sanitizer rather than in routing:
+- THE CEILING is per directory (longest matching ancestor wins, default
+  otherwise) and caps two axes: the capability, and the tool tier a worker there
+  may hold. A spawn above it is clamped rather than refused. The capability drops
+  and takes the model and effort you named with it, replaced by the permitted
+  capability's own; the tool tier is lowered the same way; escalationScrubbed on
+  the result names what went. select_model applies the SAME ceiling before it
+  answers, so a capped answer arrives already capped, with the ceiling and the
+  reason on it, instead of being taken away afterwards.
+- FRESHNESS is a refusal, not a downgrade. Every shipped profile marks its review
+  capabilities fresh, and a spawn declaring a role or capability the active
+  profile marks fresh may not also carry a resumeSessionId. The host refuses the
+  call and names the session it would have inherited, because dropping the field
+  would start a new session the caller went on believing was a continuation.
+  spawn_agent carries no resumeSessionId field at all, so your own dispatches
+  cannot trip it; the rule binds the bus spawn paths that do carry one. What a
+  fresh reviewer gets instead is yours to compose: the task, the acceptance
+  criteria, the diff, the files and the test results, and never the implementer's
+  reasoning.
+docs/limit-aware-routing.md in the workspacer repo is the full reference: the
+matrix file, the profiles, the modes and the thresholds, and how to raise a
+ceiling. Nothing on this wire edits any of it.`),
 	"drive": strings.TrimSpace(`
 send_message queues a prompt for an agent (delivered when it can accept input).
 approve resolves a pending permission prompt (yes/no/always — "always" persists

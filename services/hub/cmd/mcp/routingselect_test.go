@@ -114,3 +114,94 @@ func TestSelectModelCarriesExpectedWork(t *testing.T) {
 		}
 	})
 }
+
+// TestHelpRoutingTopic pins the help side of the routing wire: the doctrine
+// tells a manager to call help before it uses the tools and to route before it
+// dispatches, so a `routing` topic that did not exist (or a `spawn` topic that
+// never named role/capability/decisionId) left the manager's first instruction
+// documented nowhere. It also pins the honest part: routing is a question the
+// caller has to ask, while the ceiling and the freshness refusal bind whether or
+// not anyone asked.
+func TestHelpRoutingTopic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := busclient.New("ws://127.0.0.1:0/bus", "")
+	server := newServer(client, authtoken.ScopeOperator)
+	cT, sT := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(ctx, sT, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	mc := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "v1"}, nil)
+	cs, err := mc.Connect(ctx, cT, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	help := func(topic string) string {
+		t.Helper()
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "help", Arguments: map[string]any{"topic": topic}})
+		if err != nil {
+			t.Fatalf("help %s: %v", topic, err)
+		}
+		return textOf(res)
+	}
+
+	// The overview offers the topic at all, and it is rendered from the registry
+	// like every other one, so it names the tool it documents.
+	overview, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "help", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("help overview: %v", err)
+	}
+	if !strings.Contains(textOf(overview), "routing: select_model") {
+		t.Errorf("the operator overview does not offer the routing topic:\n%s", textOf(overview))
+	}
+
+	routing := help("routing")
+	for _, want := range []string{
+		"select_model",
+		"decisionId",
+		"eligible:false",
+		"escalationScrubbed", // clamps are reported on the spawn result
+		"resumeSessionId",    // the freshness refusal
+		"docs/limit-aware-routing.md",
+	} {
+		if !strings.Contains(routing, want) {
+			t.Errorf("the routing topic never mentions %q:\n%s", want, routing)
+		}
+	}
+	if !strings.Contains(routing, "nothing asks it for you") {
+		t.Errorf("the routing topic must say routing is not consulted on a spawn:\n%s", routing)
+	}
+
+	// The spawn topic carries the three fields a decision rides on, and points
+	// at the topic that explains them.
+	spawn := help("spawn")
+	for _, want := range []string{"role", "capability", "decisionId", "escalationScrubbed", "The routing\n  topic"} {
+		if !strings.Contains(spawn, want) {
+			t.Errorf("the spawn topic never mentions %q:\n%s", want, spawn)
+		}
+	}
+
+	// A view tier holds neither the tool nor the topic: help renders from the
+	// tier's own registry, so this follows rather than being a second rule.
+	viewServer := newServer(busclient.New("ws://127.0.0.1:0/bus", ""), authtoken.ScopeView)
+	vcT, vsT := mcp.NewInMemoryTransports()
+	if _, err := viewServer.Connect(ctx, vsT, nil); err != nil {
+		t.Fatalf("view server connect: %v", err)
+	}
+	vmc := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "v1"}, nil)
+	vcs, err := vmc.Connect(ctx, vcT, nil)
+	if err != nil {
+		t.Fatalf("view client connect: %v", err)
+	}
+	defer vcs.Close()
+	res, err := vcs.CallTool(ctx, &mcp.CallToolParams{Name: "help", Arguments: map[string]any{"topic": "routing"}})
+	if err != nil {
+		t.Fatalf("view help routing: %v", err)
+	}
+	if !strings.Contains(textOf(res), "unknown topic") {
+		t.Errorf("the view tier should not hold the routing topic:\n%s", textOf(res))
+	}
+}

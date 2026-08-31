@@ -603,21 +603,29 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[createTerminalIn](b, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
-	// Limit-aware routing. Placed in the SPAWN group because it lights up
-	// exactly where spawn_agent does and is only useful immediately before one:
-	// ask which model this piece of work should get, then dispatch it.
+	addTool[openTerminalIn](b, "open_terminal",
+		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
+		"terminals.open")
+
+	// ── Routing ────────────────────────────────────────────────────────────
+	//
+	// Its OWN group, registered beside spawn because it lights up exactly where
+	// spawn_agent does and is only useful immediately before one: ask which
+	// model this piece of work should get, then dispatch it. The group exists so
+	// there is a `routing` help topic, because a topic is the only unit help
+	// renders and the manager doctrine now tells every manager to route before
+	// it dispatches. Grouping it under `spawn` left the doctrine's first
+	// instruction documented nowhere.
 	//
 	// NOT named `escalate` or anything in that family — "escalation" already
 	// means two other things in this codebase (a worker asking its manager for
 	// help, and the permission-bypass escalation sanitizeSpawnParams scrubs) and
 	// a third meaning is how a doctrine sentence ends up true of the wrong
 	// mechanism.
+	b.group = "routing"
 	addTool[routingSelectIn](b, "select_model",
-		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer can be a different model family from the implementer), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent.",
+		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer can be a different model family from the implementer), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent. See help topic 'routing'.",
 		"routing.select")
-	addTool[openTerminalIn](b, "open_terminal",
-		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
-		"terminals.open")
 
 	// ── Drive ──────────────────────────────────────────────────────────────
 	b.group = "drive"
