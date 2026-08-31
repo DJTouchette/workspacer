@@ -94,13 +94,14 @@ export async function applyLiveModel(
   if (!sessionId) return { ok: false, error: 'requires a session' };
   try {
     const request = normalizedRequest(sessionId, input);
-    if (!request.selection && !input.effort?.trim()) {
+    const effort = input.effort?.trim() || undefined;
+    if (!request.selection && !effort) {
       return { ok: false, error: 'requires a model and/or effort' };
     }
     const snapshot = claudeSessionStore.getSnapshot(sessionId);
     if (
       request.selection &&
-      input.effort !== undefined &&
+      effort !== undefined &&
       (snapshot?.provider ?? 'claude').toLowerCase() === 'claude' &&
       snapshot?.transport !== 'stream'
     ) {
@@ -112,7 +113,7 @@ export async function applyLiveModel(
     const result = await claudemonSessionClient.setModel(
       sessionId,
       request.legacyModel,
-      input.effort,
+      effort,
       request.selection?.model,
       request.selection?.contextWindow,
     );

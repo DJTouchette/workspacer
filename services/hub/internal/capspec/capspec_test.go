@@ -47,6 +47,13 @@ func TestIsPathScoped(t *testing.T) {
 	}
 }
 
+func TestSetModelCapspecNamesTheLegacyCompatibilitySpelling(t *testing.T) {
+	reason := unscopedByDecision["claude.setModel"]
+	if !strings.Contains(reason, "legacy compatibility spelling") {
+		t.Fatalf("claude.setModel capspec obscures the marker-bearing boundary: %q", reason)
+	}
+}
+
 func TestLooksPathBearingAndMissingSpec(t *testing.T) {
 	cases := []struct {
 		method      string

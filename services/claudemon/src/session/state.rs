@@ -797,10 +797,19 @@ pub struct SessionState {
     #[serde(skip)]
     pub model_telemetry_epoch: u64,
     /// The accepted selection whose provider confirmation is still pending.
-    /// Ephemeral by design; hydration recreates the fence from durable owner
-    /// truth without a schema change.
+    /// Ephemeral by design; hydration may recreate the fence from durable owner
+    /// truth without a schema change, but only with the same finite evidence
+    /// budget as a live acceptance.
     #[serde(skip)]
     pub pending_model_confirmation: Option<super::windows::ModelSelection>,
+    /// How many more incompatible provider status frames may have their
+    /// model/window fields withheld. This is a frame-count bound, not a timer:
+    /// every arriving status frame is evidence that the provider has advanced
+    /// after the switch, even when its display name can never equal the request.
+    /// Reaching zero releases the fence after suppressing that frame, so the
+    /// next frame (and every later truthful divergence) is visible.
+    #[serde(skip)]
+    pub model_confirmation_suppressions_remaining: u8,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -842,6 +851,7 @@ impl SessionState {
             model_selection_epoch: 0,
             model_telemetry_epoch: 0,
             pending_model_confirmation: None,
+            model_confirmation_suppressions_remaining: 0,
         }
     }
 

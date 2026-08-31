@@ -1043,6 +1043,16 @@ async fn post_model(
         )
             .into_response();
     }
+    // Blank effort is the wire spelling of absence, not an effort request.
+    // Normalize once before transport branching so Claude PTY accepts a model
+    // paired with `"   "`, while any substantive effort remains a hard refusal
+    // because `/model` cannot apply it.
+    let effort = payload
+        .effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let Some(state) = store.get(&id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -1066,7 +1076,7 @@ async fn post_model(
                 .into_response();
         }
     };
-    if persisted_selection.is_none() && payload.effort.is_none() {
+    if persisted_selection.is_none() && effort.is_none() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "ok": false, "error": "empty-model" })),
@@ -1082,7 +1092,7 @@ async fn post_model(
                 &id,
                 crate::session::ModelSwitch {
                     model: provider_model.clone(),
-                    effort: payload.effort.clone(),
+                    effort: effort.clone(),
                 },
             )
             .map(|()| false)
@@ -1094,7 +1104,7 @@ async fn post_model(
             StatusCode::CONFLICT,
             "only Claude PTY sessions support compatibility model switching".to_string(),
         ))
-    } else if payload.effort.is_some() {
+    } else if effort.is_some() {
         Err((
             StatusCode::CONFLICT,
             "claude-pty-effort-unsupported: the PTY model command cannot deliver effort"
@@ -1139,7 +1149,7 @@ async fn post_model(
                 "queued": queued,
                 "disposition": if queued { "queued" } else { "accepted" },
                 "model": provider_model,
-                "effort": payload.effort,
+                "effort": effort,
                 "requested_selection": persisted_selection.map(|selection| selection.selection),
             }))
             .into_response()
@@ -2891,7 +2901,12 @@ mod tests {
 
     #[tokio::test]
     async fn post_model_rejects_control_bytes_before_pty_construction_without_mutation() {
-        for model in ["opus\n/help", "opus\u{1b}[201~/help"] {
+        for model in [
+            "opus\n/help",
+            "opus\u{1b}[201~/help",
+            "opus\u{2028}/help",
+            "opus\u{2029}/help",
+        ] {
             let state = test_state();
             let (h, mut rx) = wrapper();
             state.store.register_wrapper("sess-1", "/w", h);
@@ -2912,6 +2927,37 @@ mod tests {
                 .is_none());
             assert!(state.db.load_recent_sessions(10).unwrap().is_empty());
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn post_model_treats_blank_effort_as_absent_for_claude_pty() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json(
+            "/sessions/sess-1/model",
+            json!({ "model": "opus", "effort": "  \t " }),
+        );
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["effort"], Value::Null);
+        assert_eq!(
+            state
+                .store
+                .get("sess-1")
+                .unwrap()
+                .requested_selection
+                .unwrap()
+                .model,
+            "opus"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        assert_eq!(
+            next_input(&mut rx),
+            b"\x1b[200~/model opus\x1b[201~\r".to_vec()
+        );
     }
 
     #[tokio::test]
@@ -3114,7 +3160,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepted_pty_selection_fences_stale_telemetry_through_snapshot_and_restart() {
+    async fn accepted_pty_selection_uses_a_bounded_evidence_fence_through_restart() {
         let state = test_state();
         state
             .db
@@ -3172,34 +3218,9 @@ mod tests {
         assert_eq!(snapshot["requested_selection"]["context_window"], 1_000_000);
         assert!(snapshot["status_line"].get("context_window_size").is_none());
 
-        let rows = state.db.load_recent_sessions(10).unwrap();
-        let restored_store = SessionStore::new();
-        restored_store.hydrate(rows);
-        restored_store.apply_status_line(
-            "sess-1",
-            crate::session::StatusLine {
-                model_display: Some("Sonnet".into()),
-                context_window_size: Some(200_000),
-                context_used_pct: Some(25.0),
-                cost_usd: Some(4.0),
-                ..Default::default()
-            },
-        );
-        let restored = restored_store.get("sess-1").unwrap();
-        assert_eq!(
-            restored
-                .requested_selection
-                .as_ref()
-                .unwrap()
-                .context_window,
-            Some(1_000_000)
-        );
-        assert_eq!(
-            restored.status_line.as_ref().unwrap().context_window_size,
-            None
-        );
-
-        restored_store.apply_status_line(
+        // A compatible provider frame clears early; no need to spend the full
+        // mismatch budget when the new epoch can be proved directly.
+        state.store.apply_status_line(
             "sess-1",
             crate::session::StatusLine {
                 model_display: Some("Opus".into()),
@@ -3208,7 +3229,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let confirmed = restored_store.get("sess-1").unwrap();
+        let confirmed = state.store.get("sess-1").unwrap();
         assert_eq!(
             confirmed.status_line.as_ref().unwrap().context_window_size,
             Some(1_000_000)
@@ -3219,7 +3240,7 @@ mod tests {
             confirmed.model_selection_epoch
         );
 
-        restored_store.apply_status_line(
+        state.store.apply_status_line(
             "sess-1",
             crate::session::StatusLine {
                 model_display: Some("Sonnet".into()),
@@ -3228,7 +3249,8 @@ mod tests {
             },
         );
         assert_eq!(
-            restored_store
+            state
+                .store
                 .get("sess-1")
                 .unwrap()
                 .status_line
@@ -3236,6 +3258,74 @@ mod tests {
                 .context_window_size,
             Some(200_000),
             "after compatible confirmation, later provider truth is visible",
+        );
+
+        let rows = state.db.load_recent_sessions(10).unwrap();
+        let restored_store = SessionStore::new();
+        restored_store.hydrate(rows);
+        // Rehydration may conservatively re-arm, but only for the same three
+        // incompatible status frames. A Haiku-style concrete display name can
+        // never match the persisted Opus alias; this is the reproduced shape
+        // that used to hide truthful telemetry forever.
+        for frame in 1..=3 {
+            restored_store.apply_status_line(
+                "sess-1",
+                crate::session::StatusLine {
+                    model_display: Some("Claude 3.5 Haiku".into()),
+                    context_window_size: Some(200_000),
+                    context_used_pct: Some(25.0),
+                    cost_usd: Some(3.0 + f64::from(frame)),
+                    ..Default::default()
+                },
+            );
+            let restored = restored_store.get("sess-1").unwrap();
+            assert_eq!(
+                restored
+                    .requested_selection
+                    .as_ref()
+                    .unwrap()
+                    .context_window,
+                Some(1_000_000)
+            );
+            assert_eq!(restored.status_line.as_ref().unwrap().model_display, None);
+            assert_eq!(
+                restored.status_line.as_ref().unwrap().cost_usd,
+                Some(3.0 + f64::from(frame)),
+                "unrelated telemetry flows while restart fence frame {frame} is suppressed",
+            );
+        }
+        assert!(
+            restored_store
+                .get("sess-1")
+                .unwrap()
+                .pending_model_confirmation
+                .is_none(),
+            "the finite fence releases after exactly three incompatible frames",
+        );
+
+        restored_store.apply_status_line(
+            "sess-1",
+            crate::session::StatusLine {
+                model_display: Some("Claude 3.5 Haiku".into()),
+                context_window_size: Some(200_000),
+                context_used_pct: Some(30.0),
+                ..Default::default()
+            },
+        );
+        let released = restored_store.get("sess-1").unwrap();
+        assert_eq!(
+            released
+                .status_line
+                .as_ref()
+                .unwrap()
+                .model_display
+                .as_deref(),
+            Some("Claude 3.5 Haiku")
+        );
+        assert_eq!(
+            released.status_line.as_ref().unwrap().context_window_size,
+            Some(200_000),
+            "the first frame after the documented bound is visible",
         );
     }
 

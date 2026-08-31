@@ -279,6 +279,37 @@ describe('ComposerControls — claude live switches', () => {
     expect(screen.queryByText('opus…')).not.toBeInTheDocument();
   });
 
+  it('clears a queued label when the session stops before the queue flushes', async () => {
+    api.claudeSetModel = vi
+      .fn()
+      .mockResolvedValue({ ok: true, queued: true, disposition: 'queued', model: 'opus' });
+    const active = snapshot({ settings: { model: 'sonnet' } });
+    const view = render(
+      <ComposerControls
+        provider="claude"
+        sessionId="sess-1"
+        snapshot={active}
+        cwd="/repo"
+        onRestartWith={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText('sonnet'));
+    fireEvent.click(await screen.findByText('Opus'));
+    expect(await screen.findByText('opus queued')).toBeInTheDocument();
+
+    view.rerender(
+      <ComposerControls
+        provider="claude"
+        sessionId="sess-1"
+        snapshot={{ ...active, status: 'ended' }}
+        cwd="/repo"
+        onRestartWith={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByText('opus queued')).not.toBeInTheDocument());
+    expect(screen.getByText('sonnet')).toBeInTheDocument();
+  });
+
   it('switching managed Claude sends the pair plus its marker-bearing companion', async () => {
     api.claudeListModels = vi.fn().mockResolvedValue({
       defaultModel: 'sonnet',

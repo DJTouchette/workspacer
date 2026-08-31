@@ -305,6 +305,7 @@ export const ComposerControls: React.FC<{
   const [switchQueued, setSwitchQueued] = useState(false);
   const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelAtSwitchRef = useRef<string | undefined>(undefined);
+  const switchingSessionRef = useRef(sessionId);
 
   // Clear the "switching…" state once the reported model actually changes
   // (statusLine catches up), so the pill returns to showing truth.
@@ -320,6 +321,18 @@ export const ComposerControls: React.FC<{
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
     }
   }, [stats.model, switching, switchQueued, snapshot?.statusLine?.modelDisplay]);
+  // A queued PTY control normally clears when provider telemetry catches up,
+  // but a session can stop before the daemon ever flushes the queue. That is a
+  // terminal outcome too: never leave "queued" stuck on an ended row or carry
+  // it into a different session reusing this component instance.
+  useEffect(() => {
+    const sessionChanged = switchingSessionRef.current !== sessionId;
+    switchingSessionRef.current = sessionId;
+    if (!sessionChanged && snapshot?.status !== 'ended') return;
+    setSwitching(null);
+    setSwitchQueued(false);
+    if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+  }, [sessionId, snapshot?.status]);
   useEffect(
     () => () => {
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);

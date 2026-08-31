@@ -37,8 +37,8 @@ type Resolved struct {
 // Claude alone owns [1m]/-1m syntax. Other providers' ids are opaque, so a
 // non-Claude id ending in -1m survives byte-for-byte.
 func ResolveInput(provider, legacyModel, modelIdentity string, contextWindow *uint64) (*Resolved, error) {
-	if strings.TrimSpace(legacyModel) != "" && strings.IndexFunc(legacyModel, unicode.IsControl) >= 0 ||
-		strings.TrimSpace(modelIdentity) != "" && strings.IndexFunc(modelIdentity, unicode.IsControl) >= 0 {
+	if strings.TrimSpace(legacyModel) != "" && strings.IndexFunc(legacyModel, unsafeModelIdentityRune) >= 0 ||
+		strings.TrimSpace(modelIdentity) != "" && strings.IndexFunc(modelIdentity, unsafeModelIdentityRune) >= 0 {
 		return nil, ErrInvalidModelIdentity
 	}
 	legacy := strings.TrimSpace(legacyModel)
@@ -119,12 +119,16 @@ func ResolveInput(provider, legacyModel, modelIdentity string, contextWindow *ui
 
 // Normalize accepts only trailing [1m] and -1m as legacy syntax. Unknown
 // identities otherwise survive byte-for-byte after outer whitespace trimming.
+func unsafeModelIdentityRune(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
 func Normalize(model string, contextWindow *uint64) (Selection, error) {
 	identity := strings.TrimSpace(model)
 	if identity == "" {
 		return Selection{}, ErrEmptyModel
 	}
-	if strings.IndexFunc(model, unicode.IsControl) >= 0 {
+	if strings.IndexFunc(model, unsafeModelIdentityRune) >= 0 {
 		return Selection{}, ErrInvalidModelIdentity
 	}
 

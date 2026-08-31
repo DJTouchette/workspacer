@@ -286,6 +286,27 @@ func TestSetModelDoesNotClaimAnOwnerRefusedPTYEffort(t *testing.T) {
 	}
 }
 
+func TestSetModelTreatsBlankEffortAsAbsent(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude","transport":"pty"}`))
+
+	if _, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus","effort":"  \t "}`)); err != nil {
+		t.Fatal(err)
+	}
+	hits := rec.calls("/sessions/s1/model")
+	if len(hits) != 1 {
+		t.Fatalf("setModel calls = %d, want 1", len(hits))
+	}
+	if _, present := hits[0].body["effort"]; present {
+		t.Fatalf("blank effort reached claudemon as substantive input: %+v", hits[0].body)
+	}
+}
+
 func TestSetModelForwardsCanonicalPairAndMarkerCompanion(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()

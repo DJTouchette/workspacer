@@ -160,6 +160,10 @@ fn strip_legacy_one_million_suffix(model: &str) -> Option<&str> {
     }
 }
 
+fn unsafe_model_identity_char(ch: char) -> bool {
+    ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}')
+}
+
 /// Canonicalize legacy model-selection syntax immediately at ingress.
 /// Unknown identities are intentionally preserved; only trailing markers are
 /// syntax, and successful output never contains one.
@@ -171,7 +175,7 @@ pub fn normalize_model_selection(
     if identity.is_empty() {
         return Err(ModelSelectionError::EmptyModel);
     }
-    if model.chars().any(char::is_control) {
+    if model.chars().any(unsafe_model_identity_char) {
         return Err(ModelSelectionError::InvalidModelIdentity);
     }
 
@@ -229,7 +233,7 @@ pub fn normalize_model_input(
         .into_iter()
         .chain(model_identity)
         .filter(|value| !value.trim().is_empty())
-        .any(|value| value.chars().any(char::is_control))
+        .any(|value| value.chars().any(unsafe_model_identity_char))
     {
         return Err(ModelSelectionError::InvalidModelIdentity);
     }

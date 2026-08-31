@@ -116,6 +116,7 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 		}
 		return nil, fmt.Errorf("claude.setModel requires { sessionId, model and/or effort }")
 	}
+	effort := strings.TrimSpace(p.Effort)
 	provider := r.sessionProvider(ctx, p.SessionID)
 	resolved, err := modelselection.ResolveInput(
 		provider,
@@ -133,7 +134,7 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 		identity = resolved.Selection.Model
 		window = resolved.Selection.ContextWindow
 	}
-	accepted, err := r.cm.setModel(ctx, p.SessionID, model, p.Effort, identity, window)
+	accepted, err := r.cm.setModel(ctx, p.SessionID, model, effort, identity, window)
 	if err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})
 	}
@@ -148,7 +149,7 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 		acceptedModel = model
 	}
 	if !accepted.Queued {
-		r.noteLiveControl(p.SessionID, "", acceptedModel, p.Effort)
+		r.noteLiveControl(p.SessionID, "", acceptedModel, effort)
 	}
 	return jsonResult(liveControlResult{
 		OK: true, Model: acceptedModel, RequestedSelection: selection,

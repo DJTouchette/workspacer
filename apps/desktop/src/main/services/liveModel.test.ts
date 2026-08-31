@@ -97,6 +97,11 @@ describe('applyLiveModel', () => {
     expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
 
+  it('treats blank effort as absent while switching a Claude PTY model', async () => {
+    await applyLiveModel('s1', { model: 'opus', effort: '  \t ' });
+    expect(setModel).toHaveBeenCalledWith('s1', 'opus', undefined, 'opus', null);
+  });
+
   it('still delivers combined model and effort structurally for Claude stream', async () => {
     getSnapshot.mockReturnValue({ provider: 'claude', transport: 'stream' });
     await applyLiveModel('s1', { model: 'opus', effort: 'high' });
@@ -110,11 +115,13 @@ describe('applyLiveModel', () => {
     expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
 
-  it('rejects control bytes before reaching the owner or mirror', async () => {
-    const result = await applyLiveModel('s1', { model: 'opus\u001b[201~/help' });
-    expect(result).toEqual({ ok: false, error: 'invalid-model-identity' });
-    expect(setModel).not.toHaveBeenCalled();
-    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+  it('rejects controls and Unicode line separators before reaching the owner or mirror', async () => {
+    for (const model of ['opus\u001b[201~/help', 'opus\u2028/help', 'opus\u2029/help']) {
+      const result = await applyLiveModel('s1', { model });
+      expect(result).toEqual({ ok: false, error: 'invalid-model-identity' });
+      expect(setModel).not.toHaveBeenCalled();
+      expect(noteRequestedModelSelection).not.toHaveBeenCalled();
+    }
   });
 
   it('does not claim compatibility with a pre-Phase-5 PTY owner', async () => {

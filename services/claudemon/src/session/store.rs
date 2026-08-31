@@ -25,9 +25,17 @@ const OUTPUT_BUFFER_CAP: usize = 256 * 1024; // 256 KiB per session
 const BYTE_BROADCAST_CAPACITY: usize = 1024;
 /// Max chat messages held per session while it isn't yet accepting input.
 /// Bounds memory if a session never reaches `Input` (e.g. stuck on startup);
-/// the oldest is dropped (with a warning) past this. In practice the queue
-/// holds 0–1, so the cap only bites on a genuinely wedged session.
+/// the oldest ordinary chat is dropped (with a warning) past this, while an
+/// accepted PTY model control is retained. In practice the queue holds 0–1, so
+/// the cap only bites on a genuinely wedged session.
 const MAX_PENDING_MESSAGES: usize = 32;
+/// At most this many incompatible provider status frames are allowed to look
+/// stale after an accepted model switch. Counting frames rather than time makes
+/// the release deterministic in tests and in a suspended process. Three covers
+/// repeated status ticks already in flight without letting an unmatchable
+/// display name (for example a concrete Haiku label after an alias switch) hide
+/// provider truth indefinitely.
+const MODEL_CONFIRMATION_MAX_SUPPRESSIONS: u8 = 3;
 /// Delay between an `Input` transition and the pending-message flush. The
 /// transition is announced by a *hook* (Stop / SessionStart), and Claude Code
 /// runs hooks while the turn is still closing — its composer isn't back at the
@@ -433,6 +441,10 @@ fn status_confirms_selection(
     }
 }
 
+fn is_protected_pty_control_message(text: &str) -> bool {
+    text.trim_start().starts_with("/model ")
+}
+
 /// Keep asynchronous provider telemetry on the epoch it can prove. A frame
 /// with no command id cannot overwrite an accepted owner selection merely by
 /// arriving later; incompatible model/window fields are withheld while cost,
@@ -446,11 +458,26 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
     if status_confirms_selection(status, pending) {
         session.model_telemetry_epoch = session.model_selection_epoch;
         session.pending_model_confirmation = None;
+        session.model_confirmation_suppressions_remaining = 0;
         return;
     }
+
+    // The frame is incompatible, so it may still have been emitted before the
+    // accepted switch reached the provider. Suppress only the bounded stale
+    // budget. This frame still counts when model/window fields are absent:
+    // providers are not required to report a comparable display name or a
+    // window, and waiting for evidence they cannot produce recreates the
+    // permanent fence this bound exists to prevent.
     status.model_display = None;
     status.context_window_size = None;
     status.context_used_pct = None;
+    session.model_confirmation_suppressions_remaining = session
+        .model_confirmation_suppressions_remaining
+        .saturating_sub(1);
+    if session.model_confirmation_suppressions_remaining == 0 {
+        session.model_telemetry_epoch = session.model_selection_epoch;
+        session.pending_model_confirmation = None;
+    }
 }
 
 impl SessionStore {
@@ -623,9 +650,12 @@ impl SessionStore {
                 if let Some(selection) = s.requested_selection.clone() {
                     // A restarted daemon has durable owner truth but no proof
                     // that a newly arriving status frame belongs to it. Re-arm
-                    // the same confirmation fence used by a live acceptance.
+                    // the same FINITE confirmation fence used by a live
+                    // acceptance; hydration never extends its bound.
                     st.model_selection_epoch = 1;
                     st.pending_model_confirmation = Some(selection);
+                    st.model_confirmation_suppressions_remaining =
+                        MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
                 }
                 // Preserve an exact stored companion: equality with the
                 // canonical identity is the provider-neutral proof that an
@@ -1381,6 +1411,7 @@ impl SessionStore {
             entry.requested_selection = Some(persisted.selection.clone());
             entry.model_selection_epoch = entry.model_selection_epoch.saturating_add(1);
             entry.pending_model_confirmation = Some(persisted.selection.clone());
+            entry.model_confirmation_suppressions_remaining = MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
             if let Some(status) = entry.status_line.as_mut() {
                 status.model_display = None;
                 status.context_window_size = None;
@@ -2343,9 +2374,22 @@ impl SessionStore {
             .or_default();
         if q.len() >= MAX_PENDING_MESSAGES {
             // Bound memory under a stuck session. The caller was already told
-            // "queued", so this is silent loss from its perspective — warn so
-            // a wedged session is at least visible in the daemon log.
-            let dropped = q.remove(0);
+            // "queued", so this is silent loss from its perspective. A
+            // structurally accepted PTY /model control is different: the owner
+            // has already persisted its canonical selection, so a later chat
+            // send must never evict that command and split durable truth from
+            // what the CLI executes. Drop the oldest ordinary chat instead.
+            let Some(drop_index) = q
+                .iter()
+                .position(|queued| !is_protected_pty_control_message(queued))
+            else {
+                tracing::warn!(
+                    session_id,
+                    "pending-message queue full of accepted PTY controls; dropping new chat"
+                );
+                return;
+            };
+            let dropped = q.remove(drop_index);
             tracing::warn!(
                 session_id,
                 dropped = %dropped.chars().take(80).collect::<String>(),
@@ -3857,6 +3901,38 @@ mod tests {
             store.take_pending_messages("p1"),
             vec!["do the thing".to_string()]
         );
+    }
+
+    #[test]
+    fn accepted_pty_model_control_survives_later_chat_at_queue_capacity() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx();
+        store.register_spawn("p1", "/tmp", h); // Unknown: every send stays queued.
+
+        for index in 0..(MAX_PENDING_MESSAGES - 1) {
+            assert_eq!(
+                store.submit_message("p1", format!("chat-{index}")),
+                MessageOutcome::Queued
+            );
+        }
+        assert_eq!(
+            store.submit_pty_control_message("p1", "/model opus[1m]".into()),
+            MessageOutcome::Queued,
+            "the owner accepted the control into the last queue slot"
+        );
+
+        assert_eq!(
+            store.submit_message("p1", "later-chat".into()),
+            MessageOutcome::Queued
+        );
+        let queued = store.take_pending_messages("p1");
+        assert_eq!(queued.len(), MAX_PENDING_MESSAGES);
+        assert!(
+            queued.iter().any(|text| text == "/model opus[1m]"),
+            "later chat must not evict an already-accepted model control"
+        );
+        assert!(!queued.iter().any(|text| text == "chat-0"));
+        assert_eq!(queued.last().map(String::as_str), Some("later-chat"));
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver

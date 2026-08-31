@@ -589,7 +589,18 @@ interface ModelTelemetryProvenance {
   acceptedEpoch: number;
   telemetryEpoch: number;
   selection: import('../shared/modelContextWindows').ModelSelection;
+  /** Maximum number of incompatible status frames still allowed to look
+   * stale. Frames, not wall time, are the evidence: this remains deterministic
+   * across suspension and releases even when a provider never reports a model
+   * name/window that can equal the requested selection. */
+  suppressionsRemaining: number;
 }
+
+/** Mirrors claudemon's owner bound. The owner may already have sanitized these
+ * frames before the desktop sees them, so every incompatible status tick counts
+ * even when its model/window fields are absent; both fences then expire on the
+ * same fourth frame instead of extending one another. */
+const MODEL_CONFIRMATION_MAX_SUPPRESSIONS = 3;
 
 function sameSelection(
   left: import('../shared/modelContextWindows').ModelSelection | undefined,
@@ -758,6 +769,7 @@ class ClaudeSessionStore {
       acceptedEpoch: (current?.acceptedEpoch ?? 0) + 1,
       telemetryEpoch: current?.telemetryEpoch ?? 0,
       selection: { ...accepted },
+      suppressionsRemaining: MODEL_CONFIRMATION_MAX_SUPPRESSIONS,
     });
   }
 
@@ -769,14 +781,23 @@ class ClaudeSessionStore {
     if (!provenance || provenance.telemetryEpoch === provenance.acceptedEpoch) return statusLine;
     if (statusConfirmsSelection(statusLine, provenance.selection)) {
       provenance.telemetryEpoch = provenance.acceptedEpoch;
+      provenance.suppressionsRemaining = 0;
       return statusLine;
     }
-    return {
+    const suppressed = {
       ...statusLine,
       modelDisplay: undefined,
       contextWindowSize: undefined,
       contextUsedPct: undefined,
     };
+    provenance.suppressionsRemaining = Math.max(0, provenance.suppressionsRemaining - 1);
+    if (provenance.suppressionsRemaining === 0) {
+      // This frame consumes the final stale allowance and stays suppressed;
+      // the next frame is necessarily visible, including a truthful Haiku-
+      // style display name that can never match the requested alias.
+      provenance.telemetryEpoch = provenance.acceptedEpoch;
+    }
+    return suppressed;
   }
 
   noteRequestedModelSelection(
@@ -1712,10 +1733,10 @@ class ClaudeSessionStore {
     // presence-merge, so a window push that omits the slice keeps what the
     // previous one told us.
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
-    this.advanceModelSelectionEpoch(sessionId, session.requestedSelection, false);
-    if (session.statusLine) {
-      session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
-    }
+    // Federation is a mirror, never a second owner. The peer already applied
+    // its own stale-frame fence before publishing this status/provenance, so
+    // pass both through unchanged and never mint a local confirmation epoch.
+    this.modelTelemetryProvenance.delete(sessionId);
     if (folded && existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);
@@ -1806,10 +1827,9 @@ class ClaudeSessionStore {
     // accepted, and a sparse row that omits it cannot erase the richer fact a
     // previous update supplied.
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
-    this.advanceModelSelectionEpoch(sessionId, session.requestedSelection, false);
-    if (session.statusLine) {
-      session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
-    }
+    // Same ownership rule as the rich path: a federated update is already
+    // sanitized owner truth and must not arm or extend a local fence.
+    this.modelTelemetryProvenance.delete(sessionId);
     if (existing) this.carryConversationAnchors(existing, session);
     this.sessions.set(sessionId, session);
     this.pushUpdate(session);

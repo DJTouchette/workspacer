@@ -3281,15 +3281,20 @@
     const caps = capsFor(s);
     const t = stats(s);
     const live = canSwitch();
+    // Claude effort uses a different delivering capability than model changes
+    // (`claude.setEffort`, not `claude.setModel`). A token may be allowed one
+    // without the other, so the effort chip must gate on the method it calls.
+    // Managed effort still rides claude.setModel structurally.
+    const effortLive = canEffortSwitch(caps);
     const model = t.model || shortModel((s.settings && s.settings.model) || '') || 'default';
     const effort = (s.settings && s.settings.effort) || '';
     const mode = s.livePermissionMode || (s.settings && s.settings.permissionMode) || caps.modes[0].id;
     const chips = [`<button data-chip="model">${esc(model)}${live ? ' ▾' : ''}</button>`];
-    if (caps.effort && (effort || live)) chips.push(`<button data-chip="effort">${esc(effort || 'effort')}${live ? ' ▾' : ''}</button>`);
+    if (caps.effort && (effort || effortLive)) chips.push(`<button data-chip="effort">${esc(effort || 'effort')}${effortLive ? ' ▾' : ''}</button>`);
     chips.push(`<button data-chip="perm" class="${mode === 'default' || mode === 'ask' ? 'amber' : ''}">${esc(modeLabel(caps, mode))}${live ? ' ▾' : ''}</button>`);
     chipsEl.innerHTML = chips.join('');
     for (const b of chipsEl.querySelectorAll('[data-chip]')) {
-      b.disabled = !live;
+      b.disabled = b.dataset.chip === 'effort' ? !effortLive : !live;
       b.onclick = () => openChipSheet(b.dataset.chip, s);
     }
     sendBtn.disabled = !isLive(s);
@@ -3318,6 +3323,9 @@
   // offering a menu that can only fail.
   let switchUnsupported = false;
   const canSwitch = () => isOperator() && can('claude.setModel') && !switchUnsupported;
+  const canEffortSwitch = (caps) => isOperator() &&
+    can(caps.provider === 'claude' ? 'claude.setEffort' : 'claude.setModel') &&
+    !switchUnsupported;
   function noteSwitchFailure(e) {
     const m = errText(e);
     if (/no provider|unknown method|not authorized/i.test(m)) {

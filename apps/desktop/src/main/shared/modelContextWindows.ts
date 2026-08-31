@@ -95,7 +95,7 @@ export class ModelSelectionError extends Error {
 }
 
 const LEGACY_ONE_MILLION_SUFFIX = /(?:\[1m\]|-1m)$/i;
-const MODEL_CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
+const MODEL_CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 /** Reject terminal/control-protocol bytes before an identity can become argv,
  * a PTY slash command, or a durable compatibility value. */
@@ -103,7 +103,7 @@ export function assertSafeModelIdentity(model: string): void {
   if (MODEL_CONTROL_CHAR.test(model)) {
     throw new ModelSelectionError(
       'invalid-model-identity',
-      'model identity must not contain control characters',
+      'model identity must not contain control characters or Unicode line separators',
     );
   }
 }

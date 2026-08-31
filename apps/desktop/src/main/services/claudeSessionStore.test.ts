@@ -562,6 +562,32 @@ describe('the pending slot of a REMOTE row belongs to the peer, not to any local
     expect(claudeSessionStore.getSnapshot('sess-remote-1')?.pendingApproval).toBeNull();
   });
 
+  it('passes the remote owner model status and provenance through unchanged', () => {
+    const sessionId = uniqueId();
+    const remote = (costUSD: number) =>
+      remoteApproval({
+        sessionId,
+        pendingApproval: null,
+        ambientState: 'idle',
+        requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+        resolvedContextWindow: 1_000_000,
+        statusLine: {
+          modelDisplay: 'Claude 3.5 Haiku',
+          contextWindowSize: 200_000,
+          contextUsedPct: 25,
+          costUSD,
+        },
+      });
+
+    claudeSessionStore.upsertRemoteSession('laptop', remote(4) as never);
+    expect(claudeSessionStore.getSnapshot(sessionId)?.statusLine).toEqual(remote(4).statusLine);
+
+    // An update carrying the same owner provenance must not mint (or extend) a
+    // local desktop fence either.
+    claudeSessionStore.upsertRemoteSession('laptop', remote(5) as never);
+    expect(claudeSessionStore.getSnapshot(sessionId)?.statusLine).toEqual(remote(5).statusLine);
+  });
+
   it('a re-sent identical card keeps its first timestamp (the dock hides on dismissal)', () => {
     // Peers re-publish the same parked request on unrelated state changes. The
     // full-snapshot path used to take the wire card verbatim, so a re-stamped
@@ -1040,6 +1066,46 @@ describe('applyManagedMode carries the daemon selection slice', () => {
       200_000,
       'truthful later provider changes remain visible after confirmation',
     );
+  });
+
+  it('releases a hydrated fence after three unmatchable Haiku-style frames', () => {
+    const sid = managedSession();
+    // First owner slice after this process starts is the desktop hydration
+    // shape: conservatively fenced, but with the same finite bound as a local
+    // accepted switch.
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'claude',
+      selection: {
+        requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+        resolvedContextWindow: 1_000_000,
+      },
+    });
+
+    for (const costUSD of [1, 2, 3]) {
+      claudeSessionStore.applyStatusLine(sid, {
+        modelDisplay: 'Claude 3.5 Haiku',
+        contextWindowSize: 200_000,
+        contextUsedPct: 20,
+        costUSD,
+      });
+      expect(claudeSessionStore.getSnapshot(sid)?.statusLine).toMatchObject({
+        modelDisplay: undefined,
+        contextWindowSize: undefined,
+        contextUsedPct: undefined,
+        costUSD,
+      });
+    }
+
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'Claude 3.5 Haiku',
+      contextWindowSize: 200_000,
+      contextUsedPct: 25,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.statusLine).toMatchObject({
+      modelDisplay: 'Claude 3.5 Haiku',
+      contextWindowSize: 200_000,
+      contextUsedPct: 25,
+    });
   });
 
   // A session the daemon has said nothing about carries no key at all — absent
