@@ -568,19 +568,17 @@ impl SessionStore {
                 // rank takes a model id, and a caller that has the row already
                 // has it.
                 st.requested_selection = s.requested_selection.clone();
-                // A restored v8 row can carry an older-but-equivalent spelling
-                // such as `fable[1m]` or `sonnet-1m`. Keep the public snapshot
-                // on the same compatibility projection the next ordinary
-                // persistence write will heal into SQLite, rather than briefly
-                // exposing a spelling that disagrees with the durable pair.
-                st.requested_model = s
-                    .requested_selection
-                    .as_ref()
-                    .map(|selection| {
+                // Preserve the stored companion when it exists. The sessions
+                // table has no provider column, so regenerating from the pair
+                // would apply Claude's marker rule to an opaque non-Claude id
+                // such as `vendor/model-1m` after every restart. A missing
+                // companion is still healed from canonical evidence.
+                st.requested_model = s.requested_model.clone().or_else(|| {
+                    s.requested_selection.as_ref().map(|selection| {
                         super::windows::PersistedModelSelection::from_selection(selection.clone())
                             .legacy_model
                     })
-                    .or(s.requested_model.clone());
+                });
                 // The transcript path, which is what `usage::usage_for_session`
                 // folds cost and tokens out of. `hydrate` could not restore it
                 // before v6 — the column did not exist — so EVERY rehydrated
@@ -3350,6 +3348,40 @@ mod tests {
             live.mode,
             SessionMode::Stopped,
             "live entry must win over hydrate"
+        );
+    }
+
+    #[test]
+    fn hydrate_preserves_an_opaque_non_claude_dash_one_m_companion() {
+        let store = SessionStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "opaque".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: Some("vendor/custom-1m".into()),
+            requested_selection: Some(crate::session::windows::ModelSelection {
+                model: "vendor/custom-1m".into(),
+                context_window: Some(1_000_000),
+            }),
+            transcript_path: None,
+            config_root: None,
+        }]);
+
+        let restored = store.get("opaque").unwrap();
+        assert_eq!(
+            restored.requested_model.as_deref(),
+            Some("vendor/custom-1m")
+        );
+        assert_eq!(
+            restored.requested_selection,
+            Some(crate::session::windows::ModelSelection {
+                model: "vendor/custom-1m".into(),
+                context_window: Some(1_000_000),
+            })
         );
     }
 

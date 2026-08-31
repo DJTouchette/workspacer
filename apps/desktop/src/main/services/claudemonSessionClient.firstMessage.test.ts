@@ -123,6 +123,22 @@ describe('spawnManaged — first message', () => {
     expect(bodyOf(calls[0][1]).first_message).toBeUndefined();
     expect(notifySystem).not.toHaveBeenCalled();
   });
+
+  it('serializes a managed model pair in snake_case beside the legacy model', async () => {
+    const calls = stubFetch({ session_id: 'm-1' });
+    await claudemonSessionClient.spawnManaged({
+      provider: 'claude',
+      cwd: '/proj',
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(bodyOf(calls[0][1])).toMatchObject({
+      model: 'opus[1m]',
+      model_identity: 'opus',
+      context_window: 1_000_000,
+    });
+  });
 });
 
 describe('spawn (PTY) — first message', () => {
@@ -151,5 +167,49 @@ describe('spawn (PTY) — first message', () => {
       'http://127.0.0.1:9999/sessions/spawn',
       'http://127.0.0.1:9999/sessions/p-1/message',
     ]);
+  });
+
+  it('serializes a PTY model pair in snake_case beside the executable argv', async () => {
+    const calls = stubFetch({ session_id: 'p-1' });
+    await claudemonSessionClient.spawn({
+      argv: ['claude', '--model', 'opus[1m]'],
+      cwd: '/proj',
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(bodyOf(calls[0][1])).toMatchObject({
+      argv: ['claude', '--model', 'opus[1m]'],
+      model: 'opus[1m]',
+      model_identity: 'opus',
+      context_window: 1_000_000,
+    });
+  });
+});
+
+describe('setModel — pair-aware managed switch', () => {
+  it('posts the snake_case pair and maps the daemon-owned result', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            requested_selection: { model: 'opus', context_window: 1_000_000 },
+          }),
+        }) as Response,
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      claudemonSessionClient.setModel('s-1', 'opus[1m]', undefined, 'opus', 1_000_000),
+    ).resolves.toEqual({
+      ok: true,
+      requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+    });
+    expect(bodyOf(fetchMock.mock.calls[0][1] as RequestInit)).toEqual({
+      model: 'opus[1m]',
+      model_identity: 'opus',
+      context_window: 1_000_000,
+    });
   });
 });

@@ -15,11 +15,100 @@ var (
 	ErrEmptyModel               = errors.New("empty-model")
 	ErrInvalidContextWindow     = errors.New("invalid-context-window")
 	ErrConflictingContextWindow = errors.New("conflicting-context-window")
+	ErrConflictingModelIdentity = errors.New("conflicting-model-identity")
 )
 
 type Selection struct {
 	Model         string  `json:"model"`
 	ContextWindow *uint64 `json:"contextWindow"`
+}
+
+type Resolved struct {
+	Selection   Selection
+	LegacyModel string
+}
+
+// ResolveInput consumes the additive wire shared by spawn and managed model
+// switch. A canonical pair wins when present, while LegacyModel keeps old
+// peers executable. Both generations must agree when both are sent.
+//
+// Claude alone owns [1m]/-1m syntax. Other providers' ids are opaque, so a
+// non-Claude id ending in -1m survives byte-for-byte.
+func ResolveInput(provider, legacyModel, modelIdentity string, contextWindow *uint64) (*Resolved, error) {
+	legacy := strings.TrimSpace(legacyModel)
+	identity := strings.TrimSpace(modelIdentity)
+	hasCanonical := identity != "" || contextWindow != nil
+
+	if strings.ToLower(strings.TrimSpace(provider)) != "claude" {
+		if contextWindow != nil && *contextWindow == 0 {
+			return nil, ErrInvalidContextWindow
+		}
+		if hasCanonical && identity == "" && legacy == "" {
+			return nil, ErrEmptyModel
+		}
+		if identity != "" && legacy != "" && identity != legacy {
+			return nil, ErrConflictingModelIdentity
+		}
+		model := identity
+		if model == "" {
+			model = legacy
+		}
+		if model == "" {
+			return nil, nil
+		}
+		if legacy == "" {
+			legacy = model
+		}
+		return &Resolved{Selection: Selection{Model: model, ContextWindow: cloneWindow(contextWindow)}, LegacyModel: legacy}, nil
+	}
+
+	var selection Selection
+	var err error
+	if hasCanonical {
+		if identity == "" && legacy == "" {
+			return nil, ErrEmptyModel
+		}
+		canonicalIdentity := identity
+		if canonicalIdentity == "" {
+			canonicalIdentity = legacy
+		}
+		selection, err = Normalize(canonicalIdentity, contextWindow)
+		if err != nil {
+			return nil, err
+		}
+		if identity != "" && selection.Model != identity {
+			return nil, ErrConflictingModelIdentity
+		}
+		if identity != "" && legacy != "" {
+			companion, err := Normalize(legacy, nil)
+			if err != nil {
+				return nil, err
+			}
+			expectedLegacy, err := ClaudeArgvModel(selection)
+			if err != nil {
+				return nil, err
+			}
+			expectedCompanion, err := Normalize(expectedLegacy, nil)
+			if err != nil {
+				return nil, err
+			}
+			if companion.Model != expectedCompanion.Model || !selectionWindowsEqual(companion.ContextWindow, expectedCompanion.ContextWindow) {
+				return nil, ErrConflictingModelIdentity
+			}
+		}
+	} else if legacy != "" {
+		selection, err = Normalize(legacy, nil)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, nil
+	}
+	legacy, err = ClaudeArgvModel(selection)
+	if err != nil {
+		return nil, err
+	}
+	return &Resolved{Selection: selection, LegacyModel: legacy}, nil
 }
 
 // Normalize accepts only trailing [1m] and -1m as legacy syntax. Unknown
@@ -90,9 +179,15 @@ func ErrorCode(err error) string {
 		return ErrInvalidContextWindow.Error()
 	case errors.Is(err, ErrConflictingContextWindow):
 		return ErrConflictingContextWindow.Error()
+	case errors.Is(err, ErrConflictingModelIdentity):
+		return ErrConflictingModelIdentity.Error()
 	default:
 		return ""
 	}
+}
+
+func selectionWindowsEqual(a, b *uint64) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 func cloneWindow(window *uint64) *uint64 {

@@ -12,11 +12,77 @@
 // the id it writes into the transcript).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import * as path from 'path';
+import { ModelSelectionError } from '../shared/modelContextWindows';
 
 const getConfig = vi.fn();
 vi.mock('../services/configService', () => ({ configService: { getConfig: () => getConfig() } }));
 
-import { resolveSpawnModel, resolveSpawnModelSelection } from './spawnModel';
+import {
+  resolveSpawnModel,
+  resolveSpawnModelInput,
+  resolveSpawnModelSelection,
+} from './spawnModel';
+
+interface InputCase {
+  name: string;
+  provider: string;
+  model: string | null;
+  modelIdentity: string | null;
+  contextWindow: number | null;
+  expectedModel: string | null;
+  expectedContextWindow: number | null;
+  expectedLegacyModel: string | null;
+  error: string | null;
+  note: string;
+}
+
+const fixturePath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'contracts',
+  'model-context-windows.json',
+);
+const inputCases = (JSON.parse(readFileSync(fixturePath, 'utf-8')) as { inputCases: InputCase[] })
+  .inputCases;
+
+describe('pair-aware spawn input contract (shared with Rust and Go)', () => {
+  it('keeps a nontrivial skew/conflict corpus', () => {
+    expect(inputCases.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it.each(inputCases)('$name', (c) => {
+    try {
+      const got = resolveSpawnModelInput(c.provider, {
+        model: c.model,
+        modelIdentity: c.modelIdentity,
+        contextWindow: c.contextWindow,
+      });
+      if (c.error) throw new Error(`expected ${c.error}`);
+      expect(got, c.note).toEqual(
+        c.expectedModel === null
+          ? undefined
+          : {
+              selection: {
+                model: c.expectedModel,
+                contextWindow: c.expectedContextWindow,
+              },
+              legacyModel: c.expectedLegacyModel,
+            },
+      );
+    } catch (err) {
+      if (!c.error) throw err;
+      expect(err).toBeInstanceOf(ModelSelectionError);
+      expect((err as ModelSelectionError).code, c.note).toBe(c.error);
+    }
+  });
+});
 
 describe('resolveSpawnModel', () => {
   beforeEach(() => {

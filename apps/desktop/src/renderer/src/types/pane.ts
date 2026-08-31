@@ -163,6 +163,9 @@ export interface AgentWorkspace {
   profileId?: string;
   /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
   model?: string;
+  /** Canonical requested pair retained across renderer restart/respawn. */
+  modelIdentity?: string;
+  contextWindow?: number | null;
   /** Harness-specific reasoning-effort level. Re-passed on respawn. */
   effort?: string;
   /** Permission mode: claude default/acceptEdits/plan/bypassPermissions, managed

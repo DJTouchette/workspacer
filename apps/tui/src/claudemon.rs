@@ -179,6 +179,7 @@ impl Claudemon {
         let mut body = json!({});
         if let Some(m) = model {
             body["model"] = json!(m);
+            body["model_identity"] = json!(m);
         }
         if let Some(e) = effort {
             body["effort"] = json!(e);
@@ -238,7 +239,7 @@ impl Claudemon {
     ) -> Result<String> {
         let mut body = json!({ "provider": provider, "cwd": cwd, "yolo": yolo });
         if let Some(m) = model {
-            body["model"] = json!(m);
+            add_model_wire_fields(&mut body, provider, m);
         }
         if let Some(e) = effort {
             body["effort"] = json!(e);
@@ -281,7 +282,7 @@ impl Claudemon {
         if let Some(m) = model {
             let m = m.trim();
             if !m.is_empty() {
-                body["model"] = json!(m);
+                add_model_wire_fields(&mut body, "claude", m);
             }
         }
         match resume {
@@ -500,6 +501,27 @@ impl Claudemon {
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).await?;
         parse_http_status(&raw)
+    }
+}
+
+/// Add the additive Phase 4 model pair while retaining the old executable
+/// spelling. Only Claude owns the `[1m]` compatibility suffix; provider-native
+/// identifiers such as `vendor/model-1m` remain opaque everywhere else.
+pub(crate) fn add_model_wire_fields(body: &mut Value, provider: &str, model: &str) {
+    let legacy = model.trim();
+    if legacy.is_empty() {
+        return;
+    }
+    body["model"] = json!(legacy);
+    if provider.eq_ignore_ascii_case("claude") {
+        if let Some(identity) = legacy.strip_suffix(" [1m]") {
+            body["model_identity"] = json!(identity);
+            body["context_window"] = json!(1_000_000_u64);
+        } else {
+            body["model_identity"] = json!(legacy);
+        }
+    } else {
+        body["model_identity"] = json!(legacy);
     }
 }
 
@@ -1330,6 +1352,7 @@ mod tests {
         assert_eq!(method, "POST");
         assert_eq!(path, "/sessions/s1/model");
         assert_eq!(body["model"], json!("gpt-5"));
+        assert_eq!(body["model_identity"], json!("gpt-5"));
         assert_eq!(body["effort"], json!("high"));
     }
 
@@ -1470,9 +1493,26 @@ mod tests {
         let (_, path, body) = srv.await.unwrap();
         assert_eq!(path, "/sessions/spawn-managed");
         assert_eq!(body["provider"], json!("codex"));
+        assert_eq!(body["model"], json!("gpt-5"));
+        assert_eq!(body["model_identity"], json!("gpt-5"));
         assert_eq!(body["cwd"], json!("/w"));
         assert_eq!(body["yolo"], json!(true));
         assert_eq!(body["session_id"], json!("pin-1"));
+    }
+
+    #[test]
+    fn model_wire_fields_only_parse_claude_compatibility_markers() {
+        let mut claude = json!({});
+        add_model_wire_fields(&mut claude, "claude", "opus [1m]");
+        assert_eq!(claude["model"], json!("opus [1m]"));
+        assert_eq!(claude["model_identity"], json!("opus"));
+        assert_eq!(claude["context_window"], json!(1_000_000_u64));
+
+        let mut native = json!({});
+        add_model_wire_fields(&mut native, "codex", "vendor/model-1m");
+        assert_eq!(native["model"], json!("vendor/model-1m"));
+        assert_eq!(native["model_identity"], json!("vendor/model-1m"));
+        assert!(native.get("context_window").is_none());
     }
 
     #[tokio::test]

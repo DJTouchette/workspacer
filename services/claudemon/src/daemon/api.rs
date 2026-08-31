@@ -1010,6 +1010,10 @@ struct ModelSwitchPayload {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    model_identity: Option<String>,
+    #[serde(default)]
+    context_window: Option<u64>,
+    #[serde(default)]
     effort: Option<String>,
 }
 
@@ -1027,7 +1031,7 @@ async fn post_model(
     Path(id): Path<String>,
     Json(payload): Json<ModelSwitchPayload>,
 ) -> impl IntoResponse {
-    if payload.model.is_none() && payload.effort.is_none() {
+    if payload.model.is_none() && payload.model_identity.is_none() && payload.effort.is_none() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "ok": false, "error": "provide `model` and/or `effort`" })),
@@ -1041,23 +1045,33 @@ async fn post_model(
         )
             .into_response();
     }
-    let persisted_selection = match payload.model.as_deref() {
-        Some(model) => match crate::session::windows::normalize_persisted_model_selection(model) {
-            Ok(selection) => Some(selection),
-            Err(err) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "ok": false, "error": err.code() })),
-                )
-                    .into_response();
-            }
-        },
-        None => None,
+    let provider = store
+        .get(&id)
+        .map(|state| state.provider)
+        .unwrap_or_else(|| "claude".to_string());
+    let persisted_selection = match crate::session::windows::normalize_model_input(
+        &provider,
+        payload.model.as_deref(),
+        payload.model_identity.as_deref(),
+        payload.context_window,
+    ) {
+        Ok(selection) => selection,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": err.code() })),
+            )
+                .into_response();
+        }
     };
+    let provider_model = persisted_selection
+        .as_ref()
+        .map(|selection| selection.legacy_model.clone())
+        .or(payload.model.clone());
     match store.set_managed_model(
         &id,
         crate::session::ModelSwitch {
-            model: payload.model.clone(),
+            model: provider_model.clone(),
             effort: payload.effort.clone(),
         },
     ) {
@@ -1070,8 +1084,13 @@ async fn post_model(
                 store.set_requested_model_selection(&id, selection);
                 db.note_requested_model_selection(&id, selection);
             }
-            Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort }))
-                .into_response()
+            Json(json!({
+                "ok": true,
+                "model": provider_model,
+                "effort": payload.effort,
+                "requested_selection": persisted_selection.map(|selection| selection.selection),
+            }))
+            .into_response()
         }
         Err(err) => (
             StatusCode::CONFLICT,
@@ -2864,6 +2883,82 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn post_model_prefers_a_valid_claude_pair_and_persists_it() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        state
+            .db
+            .record_event(&crate::session::HookEvent {
+                event: "SessionStart".into(),
+                session_id: "sess-1".into(),
+                cwd: Some("/tmp/proj".into()),
+                timestamp: None,
+                payload: serde_json::Map::new(),
+            })
+            .unwrap();
+        let _in = mark_managed(&state.store, "sess-1");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ModelSwitch>();
+        state.store.register_managed_model_switch("sess-1", tx);
+
+        let req = post_json(
+            "/sessions/sess-1/model",
+            json!({
+                "model": "opus[1m]",
+                "model_identity": "opus",
+                "context_window": 1_000_000,
+            }),
+        );
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["model"], "opus[1m]");
+        assert_eq!(value["requested_selection"]["model"], "opus");
+        assert_eq!(value["requested_selection"]["context_window"], 1_000_000);
+
+        let switch = rx.try_recv().unwrap();
+        assert_eq!(switch.model.as_deref(), Some("opus[1m]"));
+        let restored = state.db.load_recent_sessions(10).unwrap();
+        assert_eq!(restored[0].requested_model.as_deref(), Some("opus[1m]"));
+        assert_eq!(
+            restored[0].requested_selection,
+            Some(crate::session::windows::ModelSelection {
+                model: "opus".into(),
+                context_window: Some(1_000_000),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn post_model_refuses_conflicting_generations_before_the_driver() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "claude");
+        let _in = mark_managed(&state.store, "sess-1");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ModelSwitch>();
+        state.store.register_managed_model_switch("sess-1", tx);
+
+        let req = post_json(
+            "/sessions/sess-1/model",
+            json!({
+                "model": "opus[1m]",
+                "model_identity": "sonnet",
+                "context_window": 1_000_000,
+            }),
+        );
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(value["error"], "conflicting-model-identity");
+        assert!(
+            rx.try_recv().is_err(),
+            "invalid input reached the live driver"
+        );
+    }
+
     // --- /handoff -----------------------------------------------------------
 
     #[tokio::test]
@@ -2910,6 +3005,44 @@ mod tests {
         let (status, body) = request(test_state(), req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, b"argv must not be empty");
+    }
+
+    #[tokio::test]
+    async fn pty_spawn_refuses_a_conflicting_pair_before_forking() {
+        let req = post_json(
+            "/sessions/spawn",
+            json!({
+                "argv": ["wks-must-not-run", "--model", "opus[1m]"],
+                "cwd": std::env::temp_dir(),
+                "model": "opus[1m]",
+                "model_identity": "sonnet",
+                "context_window": 1_000_000,
+            }),
+        );
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"conflicting-model-identity");
+    }
+
+    #[tokio::test]
+    async fn managed_spawn_refuses_a_conflicting_pair_before_registration() {
+        let state = test_state();
+        let req = post_json(
+            "/sessions/spawn-managed",
+            json!({
+                "provider": "claude",
+                "cwd": std::env::temp_dir(),
+                "bin": "wks-must-not-run",
+                "session_id": "pair-conflict",
+                "model": "opus[1m]",
+                "model_identity": "sonnet",
+                "context_window": 1_000_000,
+            }),
+        );
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"conflicting-model-identity");
+        assert!(state.store.get("pair-conflict").is_none());
     }
 
     #[tokio::test]

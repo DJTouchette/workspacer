@@ -68,6 +68,26 @@
           "services/hub/internal/modelselection/modelselection_test.go::ClaudeArgvCases"
         ]
       },
+      "inputCases": {
+        "why": "The additive spawn/live-switch wire during mixed-version rollout. New receivers prefer the canonical modelIdentity/contextWindow pair, validate it against the old model companion, and derive an executable companion when only the pair is present. Legacy-only callers remain valid. Claude markers are syntax only for Claude; non-Claude ids ending in -1m are opaque and unchanged.",
+        "required": [
+          "name",
+          "provider",
+          "model",
+          "modelIdentity",
+          "contextWindow",
+          "expectedModel",
+          "expectedContextWindow",
+          "expectedLegacyModel",
+          "error",
+          "note"
+        ],
+        "loaders": [
+          "services/claudemon/src/session/windows.rs::input_cases",
+          "apps/desktop/src/main/lib/spawnModel.test.ts::inputCases",
+          "services/hub/internal/modelselection/modelselection_test.go::InputCases"
+        ]
+      },
       "resolutionCases": {
         "why": "THE BLOCK THAT PINS THE TWINS, because it exercises the RESOLVER rather than the table: provider-reported > user override > requested-model marker > table > unknown, plus the drift alarm. Order is the whole design. Two arms are deliberate reversals of what shipped before: an explicit model-rates.json context_limit now outranks the [1m] marker (it was a max(), so a coarse alias could silently overrule what the user wrote), and exceeding the claimed window no longer PROMOTES it to 1M -- it disarms the window to unknown and logs, because a table that is demonstrably wrong about this model should not be trusted to guess the right replacement.",
         "required": [
@@ -542,6 +562,188 @@
       "expected": null,
       "error": "empty-model",
       "note": "the argv adapter shares the normalizer's rejection boundary"
+    }
+  ],
+  "inputCases": [
+    {
+      "name": "absent fields remain absent",
+      "provider": "claude",
+      "model": null,
+      "modelIdentity": null,
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": null,
+      "note": "The input resolver does not invent a default. Each caller resolves its own configured default before this boundary."
+    },
+    {
+      "name": "old peer marker-only Claude request",
+      "provider": "claude",
+      "model": "opus[1m]",
+      "modelIdentity": null,
+      "contextWindow": null,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "opus[1m]",
+      "error": null,
+      "note": "A new receiver accepts an old sender and recovers the canonical pair from its marker."
+    },
+    {
+      "name": "new peer Claude one-million pair plus old companion",
+      "provider": "claude",
+      "model": "sonnet[1m]",
+      "modelIdentity": "sonnet",
+      "contextWindow": 1000000,
+      "expectedModel": "sonnet",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "sonnet[1m]",
+      "error": null,
+      "note": "New readers use the pair while old readers still receive an executable marker-bearing model."
+    },
+    {
+      "name": "explicit Claude 200K pair",
+      "provider": "claude",
+      "model": "opus",
+      "modelIdentity": "opus",
+      "contextWindow": 200000,
+      "expectedModel": "opus",
+      "expectedContextWindow": 200000,
+      "expectedLegacyModel": "opus",
+      "error": null,
+      "note": "An explicit standard window stays numeric in canonical state and needs no compatibility marker."
+    },
+    {
+      "name": "canonical-only Claude pair derives legacy companion",
+      "provider": "claude",
+      "model": null,
+      "modelIdentity": "opus",
+      "contextWindow": 1000000,
+      "expectedModel": "opus",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "opus[1m]",
+      "error": null,
+      "note": "A new receiver can execute a pair-only request and still create the old carrier for its provider adapter."
+    },
+    {
+      "name": "native one-million Fable remains bare",
+      "provider": "claude",
+      "model": "fable",
+      "modelIdentity": "fable",
+      "contextWindow": 1000000,
+      "expectedModel": "fable",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "fable",
+      "error": null,
+      "note": "Fable is inherently 1M and must never acquire a selectable-variant marker."
+    },
+    {
+      "name": "native one-million Mythos remains bare",
+      "provider": "claude",
+      "model": "mythos",
+      "modelIdentity": "mythos",
+      "contextWindow": 1000000,
+      "expectedModel": "mythos",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "mythos",
+      "error": null,
+      "note": "Mythos follows the same native-window rule as Fable."
+    },
+    {
+      "name": "legacy model plus explicit window supports partial rollout",
+      "provider": "claude",
+      "model": "sonnet",
+      "modelIdentity": null,
+      "contextWindow": 1000000,
+      "expectedModel": "sonnet",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "sonnet[1m]",
+      "error": null,
+      "note": "A sender that learned contextWindow before modelIdentity remains executable and is healed to the full pair."
+    },
+    {
+      "name": "canonical Claude identity cannot contain a marker",
+      "provider": "claude",
+      "model": "opus[1m]",
+      "modelIdentity": "opus[1m]",
+      "contextWindow": 1000000,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "conflicting-model-identity",
+      "note": "Markers belong only to the legacy carrier and CLI boundary, never canonical selection or persistence."
+    },
+    {
+      "name": "conflicting Claude pair and companion is refused",
+      "provider": "claude",
+      "model": "opus[1m]",
+      "modelIdentity": "sonnet",
+      "contextWindow": 1000000,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "conflicting-model-identity",
+      "note": "Otherwise old and new peers would execute different models from the same request."
+    },
+    {
+      "name": "conflicting Claude marker and explicit window is refused",
+      "provider": "claude",
+      "model": "opus[1m]",
+      "modelIdentity": null,
+      "contextWindow": 200000,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "conflicting-context-window",
+      "note": "Even a partial-rollout input must not reinterpret a marker as a different numeric window."
+    },
+    {
+      "name": "zero context window is invalid",
+      "provider": "claude",
+      "model": "opus",
+      "modelIdentity": "opus",
+      "contextWindow": 0,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "invalid-context-window",
+      "note": "Zero is corrupted input, not the spelling of unknown."
+    },
+    {
+      "name": "non-Claude legacy id ending in dash-one-m is opaque",
+      "provider": "codex",
+      "model": "gpt-5-codex-1m",
+      "modelIdentity": null,
+      "contextWindow": null,
+      "expectedModel": "gpt-5-codex-1m",
+      "expectedContextWindow": null,
+      "expectedLegacyModel": "gpt-5-codex-1m",
+      "error": null,
+      "note": "Claude compatibility syntax must not leak into another provider's namespace."
+    },
+    {
+      "name": "non-Claude pair preserves exact one-m id",
+      "provider": "opencode",
+      "model": "openrouter/custom-1m",
+      "modelIdentity": "openrouter/custom-1m",
+      "contextWindow": 1000000,
+      "expectedModel": "openrouter/custom-1m",
+      "expectedContextWindow": 1000000,
+      "expectedLegacyModel": "openrouter/custom-1m",
+      "error": null,
+      "note": "The numeric pair may coexist with an opaque id but never rewrites it."
+    },
+    {
+      "name": "conflicting non-Claude identity and companion is refused",
+      "provider": "codex",
+      "model": "gpt-5-codex",
+      "modelIdentity": "gpt-5.6-codex",
+      "contextWindow": null,
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "conflicting-model-identity",
+      "note": "Opaque does not mean ambiguous: both generations still have to name the same provider id."
     }
   ],
   "resolutionCases": [

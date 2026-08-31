@@ -169,6 +169,9 @@ func TestSetModelOmitsFieldsItWasNotGiven(t *testing.T) {
 	if len(hits) != 1 || hits[0].body["model"] != "gpt-5.5" {
 		t.Fatalf("want one /model post, got %+v", hits)
 	}
+	if hits[0].body["model_identity"] != "gpt-5.5" {
+		t.Fatalf("legacy-only input was not healed to a canonical identity: %+v", hits[0].body)
+	}
 	if _, present := hits[0].body["effort"]; present {
 		t.Errorf("an empty effort was sent: %+v", hits[0].body)
 	}
@@ -176,6 +179,57 @@ func TestSetModelOmitsFieldsItWasNotGiven(t *testing.T) {
 	if _, err := reg.handle(context.Background(), "claude.setModel",
 		json.RawMessage(`{"sessionId":"s1"}`)); err == nil {
 		t.Error("claude.setModel accepted a call naming neither a model nor an effort")
+	}
+}
+
+func TestSetModelForwardsCanonicalPairAndMarkerCompanion(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus[1m]","modelIdentity":"opus","contextWindow":1000000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := rec.calls("/sessions/s1/model")
+	if len(hits) != 1 || hits[0].body["model"] != "opus[1m]" ||
+		hits[0].body["model_identity"] != "opus" || hits[0].body["context_window"] != float64(1_000_000) {
+		t.Fatalf("pair/companion drifted on the managed switch wire: %+v", hits)
+	}
+	var out liveControlResult
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.RequestedSelection == nil || out.RequestedSelection.Model != "opus" ||
+		out.RequestedSelection.ContextWindow == nil || *out.RequestedSelection.ContextWindow != 1_000_000 {
+		t.Fatalf("canonical result missing: %+v", out)
+	}
+}
+
+func TestSetModelRefusesConflictingPairBeforeClaudemon(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus[1m]","modelIdentity":"sonnet","contextWindow":1000000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out liveControlResult
+	_ = json.Unmarshal(res, &out)
+	if out.OK || out.Error != "conflicting-model-identity" {
+		t.Fatalf("want a stable pair conflict, got %+v", out)
+	}
+	if hits := rec.calls("/sessions/s1/model"); len(hits) != 0 {
+		t.Fatalf("conflicting generations reached claudemon: %+v", hits)
 	}
 }
 

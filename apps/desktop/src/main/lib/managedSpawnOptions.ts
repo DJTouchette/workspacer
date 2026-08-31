@@ -53,6 +53,10 @@ export interface AgentSpawnRequest {
    *  its workers run with permissions bypassed. */
   fleetFullAccess?: boolean;
   model?: string;
+  /** Canonical suffix-free identity paired with contextWindow. `model` remains
+   *  the marker-bearing compatibility spelling for old main/peer versions. */
+  modelIdentity?: string;
+  contextWindow?: number | null;
   effort?: string;
   permissionMode?: string;
   skipPermissions?: boolean;
@@ -98,6 +102,8 @@ export const SPAWN_REQUEST_FIELDS = {
   manager: { kind: 'forward' },
   fleetFullAccess: { kind: 'forward' },
   model: { kind: 'forward' },
+  modelIdentity: { kind: 'forward' },
+  contextWindow: { kind: 'forward' },
   effort: { kind: 'forward' },
   permissionMode: { kind: 'derived', into: 'skipPermissions' },
   skipPermissions: { kind: 'forward' },
@@ -158,6 +164,8 @@ export function managedOptionsFromRequest(
     // request is ANNOUNCED above rather than vanishing, which is this module's rule.
     ...(provider === 'codex' && req.transport && { transport: req.transport }),
     model: req.model,
+    modelIdentity: req.modelIdentity,
+    contextWindow: req.contextWindow,
     effort: req.effort,
     // Managed providers have only ask/yolo, so an explicit bypass mode folds
     // into the boolean instead of being dropped. permissionModeMeansBypass is

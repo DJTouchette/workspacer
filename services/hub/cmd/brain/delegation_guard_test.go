@@ -178,11 +178,11 @@ func TestMainOwnedCapabilitiesDoNotCollideWithTheBrain(t *testing.T) {
 		// three — both providers POST the same claudemon endpoints, and the
 		// brain applies the SAME escalation clamp on setPermissionMode
 		// (isPermissionEscalation, pinned to lib/permissionBypass.ts) — but the
-		// desktop ALSO writes an optimistic note into its own in-memory session
-		// store, and the brain has no way to reach that store. So the adopted
-		// configuration keeps the behaviour and loses the eagerness.
+		// desktop ALSO writes optimistic notes into renderer/main-process state,
+		// and the brain has no way to reach those stores. The daemon remains the
+		// durable selection owner; adopted providers lose only local eagerness.
 		"claude.setPermissionMode": {true, "both POST claudemon /sessions/:id/permission-mode under the same bypass clamp, but the brain cannot call claudeSessionStore.notePermissionMode — the desktop's livePermissionMode follows the daemon's telemetry instead of flipping on the confirmed reply"},
-		"claude.setModel":          {true, "both POST claudemon /sessions/:id/model; the brain cannot call noteRequestedModel, so the desktop's context-window figure does not follow an `opus[1m]` switch until the status line confirms it"},
+		"claude.setModel":          {true, "both POST the canonical pair plus legacy companion to claudemon /sessions/:id/model, whose accepted switch updates its owner-authored requested_selection and durable dual-write; the desktop also updates its renderer-local optimistic card immediately"},
 		"claude.setEffort":         {true, "same mechanism on both (claude: the `/effort <level>` message; managed: the /model endpoint) — but noteEffort is the CLAUDE pill's only truth (effective effort appears in no hook, status line or init frame), so an adopted hub's effort pill does not move at all"},
 		"claude.handoffBrief":      {false, "both POST claudemon /sessions/:id/handoff and return its markdown+path verbatim; the daemon composes the brief and chooses the filename on either side"},
 

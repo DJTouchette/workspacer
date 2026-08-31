@@ -379,7 +379,12 @@ export const ComposerControls: React.FC<{
   // the menu as the restart confirm with its reason — same flow as the
   // permission pill.
   const liveModelSwitch = useCallback(
-    (id: string, label: string, at: { x: number; y: number }) => {
+    (
+      id: string,
+      label: string,
+      at: { x: number; y: number },
+      selection?: { model: string; contextWindow: number | null },
+    ) => {
       if (!sessionId) return;
       modelAtSwitchRef.current = stats.model;
       setSwitching(id);
@@ -393,7 +398,14 @@ export const ComposerControls: React.FC<{
       // agent.model feeds later restarts and saved layouts (App listens).
       const recordSwitch = () =>
         window.dispatchEvent(
-          new CustomEvent('agent:model-switched', { detail: { sessionId, model: id } }),
+          new CustomEvent('agent:model-switched', {
+            detail: {
+              sessionId,
+              model: id,
+              modelIdentity: selection?.model ?? id,
+              contextWindow: selection?.contextWindow,
+            },
+          }),
         );
       if (caps.modelSource === 'claude' && transport !== 'stream') {
         window.electronAPI
@@ -437,7 +449,7 @@ export const ComposerControls: React.FC<{
         return;
       }
       window.electronAPI
-        .claudeSetModel(sessionId, id)
+        .claudeSetModel(sessionId, id, undefined, selection?.model ?? id, selection?.contextWindow)
         .then((res) => {
           if (!res.ok) {
             setSwitching(null);
@@ -815,7 +827,10 @@ export const ComposerControls: React.FC<{
                         if (caps.modelSwitch === 'live') {
                           const at = { x: menu.x, y: menu.y };
                           setMenu(null);
-                          liveModelSwitch(command, m.label, at);
+                          liveModelSwitch(command, m.label, at, {
+                            model: m.id,
+                            contextWindow: m.contextWindow ?? null,
+                          });
                         } else {
                           pickRestart({ model: command }, m.label);
                         }

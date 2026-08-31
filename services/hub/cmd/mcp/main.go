@@ -989,8 +989,29 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	// the only spawn surface leaking a Claude id into a non-Claude provider.
 	// Omitted here means omitted on the wire: the provider's own CLI default
 	// applies, which is what a caller who named no model asked for.
-	if in.Model == "" && providerIsClaude(in.Provider) {
-		in.Model = configDefaultModel(ctx, b)
+	var resolved *modelselection.Resolved
+	var modelErr error
+	if providerIsClaude(in.Provider) && in.Model == "" && in.ModelIdentity == "" && in.ContextWindow == nil {
+		resolved = configDefaultModelSelection(ctx, b)
+	} else {
+		provider := strings.ToLower(strings.TrimSpace(in.Provider))
+		if provider == "" {
+			provider = "claude"
+		}
+		resolved, modelErr = modelselection.ResolveInput(
+			provider,
+			in.Model,
+			in.ModelIdentity,
+			in.ContextWindow,
+		)
+	}
+	if modelErr != nil {
+		return toolError("spawn_agent: invalid model selection (" + modelselection.ErrorCode(modelErr) + ")")
+	}
+	if resolved != nil {
+		in.Model = resolved.LegacyModel
+		in.ModelIdentity = resolved.Selection.Model
+		in.ContextWindow = resolved.Selection.ContextWindow
 	}
 	// Full-access grant, enforced HERE for the SAME structural reason as
 	// the profile check above: the hub stamps `yoloGranted` for the
@@ -1207,10 +1228,10 @@ func providerIsClaude(provider string) bool {
 // same as configSkipPermissionsDefault, so the facade and the provider can't
 // disagree about the config. Fail closed to "" (no default, `claude` picks its
 // own) on an unreachable or garbled config — never invent a model id.
-func configDefaultModel(ctx context.Context, b *build) string {
+func configDefaultModelSelection(ctx context.Context, b *build) *modelselection.Resolved {
 	raw, err := b.call(ctx, "config.get", nil)
 	if err != nil {
-		return ""
+		return nil
 	}
 	var cfg struct {
 		Claude struct {
@@ -1219,20 +1240,21 @@ func configDefaultModel(ctx context.Context, b *build) string {
 		} `json:"claude"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return ""
+		return nil
 	}
 	if strings.TrimSpace(cfg.Claude.DefaultModel) == "" {
-		return ""
+		return nil
 	}
-	selection, err := modelselection.Normalize(cfg.Claude.DefaultModel, cfg.Claude.ContextWindow)
+	selection, err := modelselection.ResolveInput(
+		"claude",
+		cfg.Claude.DefaultModel,
+		"",
+		cfg.Claude.ContextWindow,
+	)
 	if err != nil {
-		return ""
+		return nil
 	}
-	model, err := modelselection.ClaudeArgvModel(selection)
-	if err != nil {
-		return ""
-	}
-	return model
+	return selection
 }
 
 // permissionModeMeansBypass reports whether a CONFIG-CHOSEN permission mode
@@ -1500,6 +1522,8 @@ type spawnAgentIn struct {
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (structured GUI only, no terminal view), 'pty' runs the terminal UI (claude: the classic TUI; codex: the hybrid TUI+GUI). Omit for the workspacer config default for that harness — codex defaults to 'stream'"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
 	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). For a CLAUDE spawn, omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on; a bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one, so append '[1m]' to request the larger window explicitly. For codex/opencode/pi, omit to get THAT provider's own configured default — the claude config default is never applied to them, since a Claude model id is not a model those providers can run"`
+	ModelIdentity   string   `json:"modelIdentity,omitempty" jsonschema:"canonical provider model identity without a Claude [1m] marker. Pair with contextWindow. During mixed-version rollout model is also sent as the legacy executable companion; omit both to use the configured/provider default"`
+	ContextWindow   *uint64  `json:"contextWindow,omitempty" jsonschema:"explicit selected context window in tokens (Claude: 200000 or 1000000). Pair with modelIdentity; 1000000 retains a marker-bearing model companion for old peers while canonical state stays suffix-free"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
 	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`

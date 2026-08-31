@@ -3335,11 +3335,23 @@
         const r = await call(qualify(s.sessionId, 'claude.listModels'), {});
         const seen = (r && r.seen) || [];
         const aliases = (r && r.aliases) || [];
-        const ids = [...new Set([...aliases.map((a) => a.value), ...seen])].filter(Boolean);
-        rows = ids.map((id) => ({ label: shortModel(id) || id, run: () => setModel(s.sessionId, id) }));
+        const aliasRows = aliases.map((a) => ({
+          id: a.model || a.value,
+          legacy: a.value || a.model,
+          contextWindow: a.contextWindow == null ? null : a.contextWindow,
+        })).filter((a) => a.id);
+        const aliasIds = new Set(aliasRows.map((a) => a.id + '\u0000' + String(a.contextWindow)));
+        rows = aliasRows.map((a) => ({
+          label: shortModel(a.legacy) || a.legacy,
+          run: () => setModel(s.sessionId, a.legacy, null, a.id, a.contextWindow),
+        }));
+        rows.push(...seen.filter(Boolean).filter((id) => !aliasIds.has(id + '\u0000null')).map((id) => ({
+          label: shortModel(id) || id,
+          run: () => setModel(s.sessionId, id, null, id, null),
+        })));
       } else {
         const list = await call(qualify(s.sessionId, 'providers.listModels'), { provider: caps.provider, cwd: agentPath(s) });
-        rows = (list || []).map((m) => ({ label: m.label || m.id, run: () => setModel(s.sessionId, m.id) }));
+        rows = (list || []).map((m) => ({ label: m.label || m.id, run: () => setModel(s.sessionId, m.id, null, m.id, null) }));
       }
     } catch (e) { rows = [{ label: 'Could not load models: ' + errText(e), disabled: true }]; }
     if (gen !== sheetGen) return;   // dismissed while loading
@@ -3984,9 +3996,11 @@
       .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch mode') : 'Mode: ' + mode))
       .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
   }
-  function setModel(id, model, effort) {
+  function setModel(id, model, effort, modelIdentity, contextWindow) {
     const params = { sessionId: id };
     if (model) params.model = model;
+    if (modelIdentity) params.modelIdentity = modelIdentity;
+    if (contextWindow != null) params.contextWindow = contextWindow;
     if (effort) params.effort = effort;
     call(qualify(id, 'claude.setModel'), params)
       .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch') : (model ? 'Model: ' + shortModel(model) : 'Effort: ' + effort)))

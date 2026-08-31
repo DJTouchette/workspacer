@@ -147,6 +147,8 @@ export interface ElectronAPI {
     transport?: 'pty' | 'stream';
     profileId?: string;
     model?: string;
+    modelIdentity?: string;
+    contextWindow?: number | null;
     effort?: string;
     permissionMode?: string;
     skipPermissions?: boolean;
@@ -259,6 +261,8 @@ export interface ElectronAPI {
     sessionId: string,
     model?: string,
     effort?: string,
+    modelIdentity?: string,
+    contextWindow?: number | null,
   ) => Promise<{ ok: boolean; error?: string }>;
   claudeHandoffBrief: (
     sessionId: string,

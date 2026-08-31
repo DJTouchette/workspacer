@@ -105,12 +105,17 @@ class ClaudemonSessionClient {
      *  daemon cannot know a 1M session from a 200k one until the provider
      *  speaks, which on the stream transport is a whole turn away. */
     model?: string;
+    /** Canonical selection fields. `model` remains the compatibility value. */
+    modelIdentity?: string;
+    contextWindow?: number | null;
   }): Promise<string> {
     const {
       portChannel = 'claude:port',
       sessionId: pinnedId,
       rolloutProvider,
       firstMessage,
+      modelIdentity,
+      contextWindow,
       ...rest
     } = args;
     // claudemon's SpawnPayload uses snake_case.
@@ -118,6 +123,8 @@ class ClaudemonSessionClient {
       ...rest,
       ...(pinnedId ? { session_id: pinnedId } : {}),
       ...(rolloutProvider ? { rollout_provider: rolloutProvider } : {}),
+      ...(modelIdentity ? { model_identity: modelIdentity } : {}),
+      ...(contextWindow != null ? { context_window: contextWindow } : {}),
       ...(firstMessage ? { first_message: firstMessage } : {}),
     };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn`, {
@@ -193,6 +200,9 @@ class ClaudemonSessionClient {
     provider: 'opencode' | 'codex' | 'copilot' | 'pi' | 'claude';
     cwd: string;
     model?: string;
+    /** Canonical selection fields. `model` remains the compatibility value. */
+    modelIdentity?: string;
+    contextWindow?: number | null;
     /** Reasoning-effort level (Claude/Codex); other providers ignore it. */
     effort?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
@@ -239,6 +249,8 @@ class ClaudemonSessionClient {
       resumeSessionId,
       extraArgs,
       firstMessage,
+      modelIdentity,
+      contextWindow,
       ...rest
     } = args;
     // claudemon's SpawnManagedPayload uses snake_case for multi-word fields;
@@ -249,6 +261,8 @@ class ClaudemonSessionClient {
       ...(permissionMode ? { permission_mode: permissionMode } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       ...(extraArgs?.length ? { extra_args: extraArgs } : {}),
+      ...(modelIdentity ? { model_identity: modelIdentity } : {}),
+      ...(contextWindow != null ? { context_window: contextWindow } : {}),
       ...(firstMessage ? { first_message: firstMessage } : {}),
     };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn-managed`, {
@@ -545,22 +559,47 @@ class ClaudemonSessionClient {
    * Live-switch a managed session's model (and/or reasoning effort) without a
    * restart — codex applies it to the running thread (`thread/settings/update`).
    * `ok: false` means the provider can't do it live (opencode/pi, codex rollout
-   * fallback) and the caller should offer the restart path. Claude sessions
-   * don't use this — they switch via the `/model` slash command on the message
-   * path.
+   * fallback) and the caller should offer the restart path. Claude PTY sessions
+   * still switch via the `/model` slash command on the message path; managed
+   * Claude stream sessions use this structural endpoint.
    */
   async setModel(
     sessionId: string,
     model?: string,
     effort?: string,
-  ): Promise<{ ok: boolean; error?: string }> {
+    modelIdentity?: string,
+    contextWindow?: number | null,
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    requestedSelection?: { model: string; contextWindow: number | null };
+  }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/model`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, effort }),
+      body: JSON.stringify({
+        model,
+        effort,
+        ...(modelIdentity ? { model_identity: modelIdentity } : {}),
+        ...(contextWindow != null ? { context_window: contextWindow } : {}),
+      }),
     });
-    const body = (await res.json().catch(() => ({}) as any)) as { error?: string };
-    if (res.ok) return { ok: true };
+    const body = (await res.json().catch(() => ({}) as any)) as {
+      error?: string;
+      requested_selection?: { model: string; context_window: number | null };
+    };
+    if (res.ok) {
+      const selection = body.requested_selection;
+      return {
+        ok: true,
+        ...(selection && {
+          requestedSelection: {
+            model: selection.model,
+            contextWindow: selection.context_window,
+          },
+        }),
+      };
+    }
     return { ok: false, error: body.error ?? `HTTP ${res.status}` };
   }
 

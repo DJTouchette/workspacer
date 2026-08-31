@@ -202,6 +202,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Manager only: full-access dispatch grant (config agents.fleetFullAccess). */
     fleetFullAccess?: boolean;
     model?: string;
+    modelIdentity?: string;
+    contextWindow?: number | null;
     effort?: string;
     permissionMode?: string;
     skipPermissions?: boolean;
@@ -323,8 +325,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sessionId: string,
     model?: string,
     effort?: string,
+    modelIdentity?: string,
+    contextWindow?: number | null,
   ): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke(IPC.CLAUDE_SET_MODEL, sessionId, model, effort),
+    ipcRenderer.invoke(
+      IPC.CLAUDE_SET_MODEL,
+      sessionId,
+      model,
+      effort,
+      modelIdentity,
+      contextWindow,
+    ),
   claudeHandoffBrief: (
     sessionId: string,
   ): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> =>

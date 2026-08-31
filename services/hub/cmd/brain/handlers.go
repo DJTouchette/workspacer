@@ -539,6 +539,10 @@ type spawnParams struct {
 	Transport string `json:"transport"`
 	Cwd       string `json:"cwd"`
 	Model     string `json:"model"`
+	// Canonical suffix-free pair. Model remains the marker-bearing companion
+	// that old providers/peers execute.
+	ModelIdentity string  `json:"modelIdentity"`
+	ContextWindow *uint64 `json:"contextWindow"`
 	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
 	Effort    string `json:"effort"`
 	ProfileID string `json:"profileId"`
@@ -776,13 +780,26 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// agents.spawn so this path can't silently fall back to spawning Claude.
 	provider := r.roleProviderDefault(p)
 	if provider != "claude" {
+		resolved, err := modelselection.ResolveInput(provider, p.Model, p.ModelIdentity, p.ContextWindow)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s model selection: %w", provider, err)
+		}
+		if resolved != nil {
+			p.Model = resolved.LegacyModel
+			p.ModelIdentity = resolved.Selection.Model
+			p.ContextWindow = resolved.Selection.ContextWindow
+		}
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
-	resolvedModel, err := r.claudeSpawnModel(p.Model)
+	resolvedModel, err := r.claudeSpawnModel(p.Model, p.ModelIdentity, p.ContextWindow)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Claude model selection: %w", err)
 	}
-	p.Model = resolvedModel
+	if resolvedModel != nil {
+		p.Model = resolvedModel.LegacyModel
+		p.ModelIdentity = resolvedModel.Selection.Model
+		p.ContextWindow = resolvedModel.Selection.ContextWindow
+	}
 
 	// Claude on the 'stream' transport is managed too (claudemon's headless
 	// stream-json adapter, no PTY). Mirror the desktop's default resolution: an
@@ -861,13 +878,16 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	argv = composeAppendSystemPrompt(argv)
 
 	id, queued, err := r.cm.spawn(ctx, spawnReq{
-		Argv:         argv,
-		Cwd:          cwd,
-		Cols:         cols,
-		Rows:         rows,
-		Env:          buildEnv(prof),
-		SessionID:    sessionID,
-		FirstMessage: p.Message,
+		Argv:          argv,
+		Cwd:           cwd,
+		Cols:          cols,
+		Rows:          rows,
+		Env:           buildEnv(prof),
+		SessionID:     sessionID,
+		Model:         p.Model,
+		ModelIdentity: p.ModelIdentity,
+		ContextWindow: p.ContextWindow,
+		FirstMessage:  p.Message,
 	})
 	if err != nil {
 		return nil, err
@@ -999,12 +1019,14 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	r.noteLaunch(sessionID, provider, p)
 
 	req := spawnManagedReq{
-		Provider:  provider,
-		Cwd:       cwd,
-		Model:     p.Model,
-		Effort:    p.Effort,
-		Bin:       r.resolveSpawnBin(provider),
-		SessionID: sessionID,
+		Provider:      provider,
+		Cwd:           cwd,
+		Model:         p.Model,
+		ModelIdentity: p.ModelIdentity,
+		ContextWindow: p.ContextWindow,
+		Effort:        p.Effort,
+		Bin:           r.resolveSpawnBin(provider),
+		SessionID:     sessionID,
 		// Post-clamp: false for every bus caller except a hub-stamped
 		// yoloGranted spawn (spawn() zeroes the resolved skip otherwise).
 		Yolo: p.skip,
@@ -1136,9 +1158,8 @@ func (r *registry) transportDefault(provider, requested string) string {
 // claudeSpawnModel is the active headless default/request boundary. Config
 // persists a suffix-free pair; only this external Claude spawn value carries
 // the legacy marker that selects the 1M runtime.
-func (r *registry) claudeSpawnModel(requested string) (string, error) {
-	var window *uint64
-	if strings.TrimSpace(requested) == "" {
+func (r *registry) claudeSpawnModel(requested, identity string, window *uint64) (*modelselection.Resolved, error) {
+	if strings.TrimSpace(requested) == "" && strings.TrimSpace(identity) == "" && window == nil {
 		claude, _ := r.cfg.get()["claude"].(map[string]any)
 		requested = str(claude["defaultModel"])
 		switch value := claude["contextWindow"].(type) {
@@ -1153,14 +1174,7 @@ func (r *registry) claudeSpawnModel(requested string) (string, error) {
 			window = &w
 		}
 	}
-	if strings.TrimSpace(requested) == "" {
-		return "", nil
-	}
-	selection, err := modelselection.Normalize(requested, window)
-	if err != nil {
-		return "", err
-	}
-	return modelselection.ClaudeArgvModel(selection)
+	return modelselection.ResolveInput("claude", requested, identity, window)
 }
 
 // skipPermissionsConfigDefault resolves what a spawn that OMITTED

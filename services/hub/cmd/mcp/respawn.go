@@ -37,16 +37,18 @@ import (
 // amendment is an OVERRIDE of what the original session recorded.
 type respawnWithIn struct {
 	hubArg
-	SessionID  string `json:"sessionId" jsonschema:"the session to clone — usually one you have just stopped"`
-	Amendment  string `json:"amendment" jsonschema:"the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again"`
-	Label      string `json:"label,omitempty" jsonschema:"label for the successor; defaults to the original's with a retry marker"`
-	Model      string `json:"model,omitempty" jsonschema:"override the model (e.g. step up for a task that proved harder than it looked); defaults to the original's"`
-	Effort     string `json:"effort,omitempty" jsonschema:"override the reasoning effort; defaults to the original's"`
-	Cwd        string `json:"cwd,omitempty" jsonschema:"override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead"`
-	Role       string `json:"role,omitempty" jsonschema:"override the work ROLE the successor is dispatched as (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge); defaults to the original's. Set it when the redispatch changes what the worker IS — a failed implementer respawned to diagnose is a diagnostician, not an implementer"`
-	Capability string `json:"capability,omitempty" jsonschema:"override the model CAPABILITY the successor is dispatched at (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus); defaults to the original's. Copy it from a fresh select_model answer rather than raising it by hand — the host still clamps it to the target directory's ceiling"`
-	ToolScope  string `json:"toolScope,omitempty" jsonschema:"facade tier for the successor (view/triage/operator). NOT inherited — a session's snapshot does not record it — so restate it if the original had one"`
-	Worktree   bool   `json:"worktree,omitempty" jsonschema:"carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued"`
+	SessionID     string  `json:"sessionId" jsonschema:"the session to clone — usually one you have just stopped"`
+	Amendment     string  `json:"amendment" jsonschema:"the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again"`
+	Label         string  `json:"label,omitempty" jsonschema:"label for the successor; defaults to the original's with a retry marker"`
+	Model         string  `json:"model,omitempty" jsonschema:"override the model (e.g. step up for a task that proved harder than it looked); defaults to the original's"`
+	ModelIdentity string  `json:"modelIdentity,omitempty" jsonschema:"canonical provider model identity override; pair with contextWindow. The legacy model companion is derived for old peers"`
+	ContextWindow *uint64 `json:"contextWindow,omitempty" jsonschema:"canonical context-window override in tokens; pair with modelIdentity"`
+	Effort        string  `json:"effort,omitempty" jsonschema:"override the reasoning effort; defaults to the original's"`
+	Cwd           string  `json:"cwd,omitempty" jsonschema:"override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead"`
+	Role          string  `json:"role,omitempty" jsonschema:"override the work ROLE the successor is dispatched as (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge); defaults to the original's. Set it when the redispatch changes what the worker IS — a failed implementer respawned to diagnose is a diagnostician, not an implementer"`
+	Capability    string  `json:"capability,omitempty" jsonschema:"override the model CAPABILITY the successor is dispatched at (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus); defaults to the original's. Copy it from a fresh select_model answer rather than raising it by hand — the host still clamps it to the target directory's ceiling"`
+	ToolScope     string  `json:"toolScope,omitempty" jsonschema:"facade tier for the successor (view/triage/operator). NOT inherited — a session's snapshot does not record it — so restate it if the original had one"`
+	Worktree      bool    `json:"worktree,omitempty" jsonschema:"carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued"`
 }
 
 func (in *respawnWithIn) takeHubField() string { return in.takeHub() }
@@ -67,6 +69,10 @@ type respawnSnapshot struct {
 		PermissionMode string `json:"permissionMode"`
 	} `json:"settings"`
 	LivePermissionMode string `json:"livePermissionMode"`
+	RequestedSelection struct {
+		Model         string  `json:"model"`
+		ContextWindow *uint64 `json:"contextWindow"`
+	} `json:"requestedSelection"`
 	// ResultSchema is the structured-result contract the original was spawned
 	// with (spawn_agent's resultSchema, recorded on the snapshot by
 	// setSpawnMeta). Without inheriting it, "stop it, respawn with the
@@ -185,12 +191,25 @@ func addRespawnTool(b *build) {
 				return toolError(fmt.Sprintf("respawn_with: %s has no first user message to clone — it was never given a task. Use spawn_agent to dispatch fresh.", in.SessionID))
 			}
 
+			modelOverridden := strings.TrimSpace(in.Model) != "" ||
+				strings.TrimSpace(in.ModelIdentity) != "" || in.ContextWindow != nil
+			model := in.Model
+			modelIdentity := in.ModelIdentity
+			contextWindow := in.ContextWindow
+			if !modelOverridden {
+				model = snap.Settings.Model
+				modelIdentity = snap.RequestedSelection.Model
+				contextWindow = snap.RequestedSelection.ContextWindow
+			}
+
 			spawn := spawnAgentIn{
 				Hub:             peer,
 				Provider:        snap.Provider,
 				Transport:       snap.Transport,
 				Cwd:             firstNonEmpty(in.Cwd, snap.Cwd),
-				Model:           firstNonEmpty(in.Model, snap.Settings.Model),
+				Model:           model,
+				ModelIdentity:   modelIdentity,
+				ContextWindow:   contextWindow,
 				Effort:          firstNonEmpty(in.Effort, snap.Settings.Effort),
 				Label:           firstNonEmpty(in.Label, retryLabel(snap.Label)),
 				ParentSessionId: snap.ParentSessionID,

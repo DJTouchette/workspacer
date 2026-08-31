@@ -133,6 +133,7 @@ pub enum ModelSelectionError {
     EmptyModel,
     InvalidContextWindow,
     ConflictingContextWindow,
+    ConflictingModelIdentity,
 }
 
 impl ModelSelectionError {
@@ -141,6 +142,7 @@ impl ModelSelectionError {
             Self::EmptyModel => "empty-model",
             Self::InvalidContextWindow => "invalid-context-window",
             Self::ConflictingContextWindow => "conflicting-context-window",
+            Self::ConflictingModelIdentity => "conflicting-model-identity",
         }
     }
 }
@@ -205,6 +207,81 @@ pub fn normalize_persisted_model_selection(
     Ok(PersistedModelSelection::from_selection(selection))
 }
 
+/// Resolve the additive launch/switch wire. `legacy_model` is the executable
+/// spelling older receivers understand; `model_identity` + `context_window`
+/// are the canonical pair. A present pair is authoritative, but its companion
+/// must agree so old and new receivers cannot launch different selections.
+///
+/// Claude alone assigns syntax to trailing `[1m]` / `-1m`. Other providers'
+/// ids are opaque, so an id such as `vendor/model-1m` remains byte-for-byte.
+pub fn normalize_model_input(
+    provider: &str,
+    legacy_model: Option<&str>,
+    model_identity: Option<&str>,
+    context_window: Option<u64>,
+) -> Result<Option<PersistedModelSelection>, ModelSelectionError> {
+    let legacy = legacy_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let identity = model_identity
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let has_canonical = model_identity.is_some() || context_window.is_some();
+
+    if provider != "claude" {
+        if context_window == Some(0) {
+            return Err(ModelSelectionError::InvalidContextWindow);
+        }
+        if has_canonical && identity.is_none() && legacy.is_none() {
+            return Err(ModelSelectionError::EmptyModel);
+        }
+        if let (Some(identity), Some(legacy)) = (identity, legacy) {
+            if identity != legacy {
+                return Err(ModelSelectionError::ConflictingModelIdentity);
+            }
+        }
+        let Some(model) = identity.or(legacy) else {
+            return Ok(None);
+        };
+        return Ok(Some(PersistedModelSelection {
+            selection: ModelSelection {
+                model: model.to_string(),
+                context_window,
+            },
+            legacy_model: legacy.unwrap_or(model).to_string(),
+        }));
+    }
+
+    let selection = if has_canonical {
+        let identity = identity.or(legacy).ok_or(ModelSelectionError::EmptyModel)?;
+        let canonical = normalize_model_selection(identity, context_window)?;
+        // The canonical field must actually be canonical; accepting a marker
+        // here would immediately reintroduce it into persistence/snapshots.
+        let identity_was_canonical = model_identity
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if identity_was_canonical && canonical.model != identity {
+            return Err(ModelSelectionError::ConflictingModelIdentity);
+        }
+        if identity_was_canonical {
+            if let Some(legacy) = legacy {
+                let companion = normalize_model_selection(legacy, None)?;
+                let expected_legacy = legacy_model_for_normalized_selection(&canonical);
+                let expected_companion = normalize_model_selection(&expected_legacy, None)?;
+                if companion != expected_companion {
+                    return Err(ModelSelectionError::ConflictingModelIdentity);
+                }
+            }
+        }
+        canonical
+    } else if let Some(legacy) = legacy {
+        normalize_model_selection(legacy, None)?
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(PersistedModelSelection::from_selection(selection)))
+}
+
 /// Read adapter for SQLite rows. Canonical data is authoritative when its
 /// backward-compatible legacy projection agrees with the legacy column. This
 /// matters for native-1M Fable/Mythos: their canonical identity is bare, while
@@ -232,14 +309,26 @@ pub fn restore_persisted_model_selection(
             Some(value) => Some(u64::try_from(value).ok().filter(|value| *value > 0)?),
             None => None,
         };
-        let normalized = normalize_model_selection(identity, context_window).ok()?;
-        // A canonical identity never carries legacy syntax. Treat a marker here
-        // as invalid canonical data and try the compatibility column instead.
-        (normalized.model == identity).then_some(normalized)
+        Some(ModelSelection {
+            // Canonical provider identities are opaque. A non-Claude model may
+            // legitimately end in `-1m`; only provider-aware ingress is allowed
+            // to interpret Claude compatibility syntax.
+            model: identity.to_string(),
+            context_window,
+        })
     });
 
     let legacy = legacy_model.and_then(|model| normalize_model_selection(model, None).ok());
     match (canonical, legacy) {
+        // The sessions table predates provider persistence. Exact agreement is
+        // therefore the only provider-neutral proof we have, and it is enough:
+        // a non-Claude id such as `vendor/model-1m` must not be reinterpreted as
+        // Claude marker syntax during restart hydration.
+        (Some(canonical), Some(_))
+            if legacy_model.is_some_and(|legacy| legacy.trim() == canonical.model) =>
+        {
+            Some(canonical)
+        }
         (Some(canonical), Some(legacy))
             if legacy_model_for_normalized_selection(&canonical)
                 == legacy_model_for_normalized_selection(&legacy) =>
@@ -461,6 +550,8 @@ mod tests {
         selection_cases: Vec<SelectionCase>,
         #[serde(rename = "claudeArgvCases")]
         claude_argv_cases: Vec<ClaudeArgvCase>,
+        #[serde(rename = "inputCases")]
+        input_cases: Vec<InputCase>,
         #[serde(rename = "resolutionCases")]
         resolution_cases: Vec<ResolutionCase>,
     }
@@ -524,6 +615,25 @@ mod tests {
         #[serde(rename = "contextWindow")]
         context_window: Option<u64>,
         expected: Option<String>,
+        error: Option<String>,
+        note: String,
+    }
+
+    #[derive(Deserialize)]
+    struct InputCase {
+        name: String,
+        provider: String,
+        model: Option<String>,
+        #[serde(rename = "modelIdentity")]
+        model_identity: Option<String>,
+        #[serde(rename = "contextWindow")]
+        context_window: Option<u64>,
+        #[serde(rename = "expectedModel")]
+        expected_model: Option<String>,
+        #[serde(rename = "expectedContextWindow")]
+        expected_context_window: Option<u64>,
+        #[serde(rename = "expectedLegacyModel")]
+        expected_legacy_model: Option<String>,
         error: Option<String>,
         note: String,
     }
@@ -625,6 +735,62 @@ mod tests {
                 Err(err) => assert_eq!(
                     Some(err.code()),
                     c.error.as_deref(),
+                    "{} — {}",
+                    c.name,
+                    c.note
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn input_cases_follow_the_contract() {
+        let f = fixture();
+        assert!(f.input_cases.len() >= 12, "the input corpus was gutted");
+        for c in &f.input_cases {
+            match normalize_model_input(
+                &c.provider,
+                c.model.as_deref(),
+                c.model_identity.as_deref(),
+                c.context_window,
+            ) {
+                Ok(got) => {
+                    assert!(
+                        c.error.is_none(),
+                        "{} unexpectedly succeeded — {}",
+                        c.name,
+                        c.note
+                    );
+                    match (&c.expected_model, got) {
+                        (None, None) => {}
+                        (Some(expected_model), Some(got)) => {
+                            assert_eq!(
+                                &got.selection.model, expected_model,
+                                "{} — {}",
+                                c.name, c.note
+                            );
+                            assert_eq!(
+                                got.selection.context_window, c.expected_context_window,
+                                "{} — {}",
+                                c.name, c.note
+                            );
+                            assert_eq!(
+                                Some(got.legacy_model),
+                                c.expected_legacy_model,
+                                "{} — {}",
+                                c.name,
+                                c.note
+                            );
+                        }
+                        (_, got) => panic!(
+                            "{}: got {got:?}, expected model {:?} — {}",
+                            c.name, c.expected_model, c.note
+                        ),
+                    }
+                }
+                Err(err) => assert_eq!(
+                    Some(err.code().to_string()),
+                    c.error,
                     "{} — {}",
                     c.name,
                     c.note

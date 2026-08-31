@@ -50,7 +50,7 @@ import { installManagerSkills } from './managerSkills';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
-import { resolveSpawnModel, resolveSpawnModelSelection } from '../lib/spawnModel';
+import { resolveSpawnModelSelection } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
 import { claudeArgvModel } from '../shared/modelContextWindows';
@@ -99,6 +99,9 @@ export interface ManagedSpawnOptions {
   transport?: AgentTransport;
   cwd?: string;
   model?: string;
+  /** Additive canonical pair; `model` remains the old-peer/provider spelling. */
+  modelIdentity?: string;
+  contextWindow?: number | null;
   /** Reasoning-effort level (Claude `--effort`, Codex config); others ignore it. */
   effort?: string;
   /** YOLO / auto-approve every command and file change. */
@@ -274,13 +277,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // nobody reads.
   const requestedModel =
     opts.model?.trim() || (opts.manager ? resolveManagerModel(provider) : undefined);
-  const claudeModelSelection = isClaudeStream
-    ? resolveSpawnModelSelection('claude', requestedModel)
-    : undefined;
-  const spawnModel = isClaudeStream
-    ? claudeModelSelection?.model
-    : resolveSpawnModel(provider, requestedModel);
-  const serializedModel = claudeModelSelection ? claudeArgvModel(claudeModelSelection) : spawnModel;
+  const modelSelection = resolveSpawnModelSelection(
+    provider,
+    requestedModel,
+    opts.modelIdentity,
+    opts.contextWindow,
+  );
+  const spawnModel = modelSelection?.model;
+  const serializedModel =
+    isClaudeStream && modelSelection ? claudeArgvModel(modelSelection) : spawnModel;
   // Reasoning effort, same rule as the model above: an explicit request wins,
   // otherwise a MANAGER spawn takes the level configured for it on THIS
   // harness (agents.managerEfforts). Per-harness because the
@@ -473,6 +478,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     provider,
     cwd,
     model: serializedModel,
+    modelIdentity: modelSelection?.model,
+    contextWindow: modelSelection?.contextWindow,
     effort: spawnEffort,
     bin,
     yolo,
@@ -557,10 +564,13 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // Codex carries no configured default of its own, so this is opts.model
   // trimmed today — the call is here so a future codex.defaultModel lands on
   // both spawn paths at once instead of one.
-  const spawnModel = resolveSpawnModel(
+  const hybridSelection = resolveSpawnModelSelection(
     'codex',
     opts.model?.trim() || (opts.manager ? resolveManagerModel('codex') : undefined),
+    opts.modelIdentity,
+    opts.contextWindow,
   );
+  const spawnModel = hybridSelection?.model;
   // …and the same for effort: a manager spawn with none requested takes the
   // level configured for it on codex (agents.managerEfforts).
   const spawnEffort =
@@ -623,6 +633,8 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     // Explicit, not sniffed off the argv: the daemon records the requested
     // model from this field, and a Codex resume puts nothing on the argv.
     model: spawnModel,
+    modelIdentity: hybridSelection?.model,
+    contextWindow: hybridSelection?.contextWindow,
     cols: opts.cols ?? 120,
     rows: opts.rows ?? 32,
     sessionId,

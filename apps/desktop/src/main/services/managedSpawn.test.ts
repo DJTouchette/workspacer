@@ -863,9 +863,27 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
       manager: true,
     });
     expect(lastManaged().model).toBe('gpt-5');
+    expect(lastManaged().modelIdentity).toBe('gpt-5');
+    expect(lastManaged().contextWindow).toBeNull();
     // …and it is recorded, not just passed: the daemon can only report what it
     // was told, and the card/pill read it from there.
     expect((lastMeta().settings as Payload).model).toBe('gpt-5');
+  });
+
+  it('carries a Claude 1M pair and its marker-bearing old-daemon companion', async () => {
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(lastManaged()).toMatchObject({
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
   });
 
   it('never crosses harnesses — a claude manager takes the claude entry', async () => {

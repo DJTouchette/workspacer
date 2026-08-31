@@ -491,6 +491,10 @@ impl Driver {
                 let mut params = json!({ "sessionId": sid });
                 if let Some(m) = model {
                     params["model"] = json!(m);
+                    // Structural switches reach managed non-Claude providers;
+                    // their ids are opaque, so the canonical identity is the
+                    // exact same spelling as the legacy companion.
+                    params["modelIdentity"] = json!(m);
                 }
                 if let Some(e) = effort {
                     params["effort"] = json!(e);
@@ -560,7 +564,15 @@ impl Driver {
             Some(b) => {
                 let mut params = json!({ "provider": provider, "cwd": cwd });
                 if let Some(m) = model {
-                    params["model"] = json!(m);
+                    crate::claudemon::add_model_wire_fields(&mut params, provider, m);
+                    if let Some(fields) = params.as_object_mut() {
+                        if let Some(identity) = fields.remove("model_identity") {
+                            fields.insert("modelIdentity".into(), identity);
+                        }
+                        if let Some(window) = fields.remove("context_window") {
+                            fields.insert("contextWindow".into(), window);
+                        }
+                    }
                 }
                 if let Some(e) = effort {
                     params["effort"] = json!(e);
@@ -857,6 +869,7 @@ mod tests {
         assert_eq!(method, "claude.setModel");
         assert_eq!(params["sessionId"], json!("s1"));
         assert_eq!(params["model"], json!("gpt-5"));
+        assert_eq!(params["modelIdentity"], json!("gpt-5"));
         assert_eq!(params["effort"], json!("high"));
     }
 
@@ -978,6 +991,8 @@ mod tests {
         assert_eq!(params["provider"], json!("codex"));
         assert_eq!(params["cwd"], json!("/w"));
         assert_eq!(params["model"], json!("gpt-5"));
+        assert_eq!(params["modelIdentity"], json!("gpt-5"));
+        assert_eq!(params["model_identity"], Value::Null);
     }
 
     #[tokio::test]

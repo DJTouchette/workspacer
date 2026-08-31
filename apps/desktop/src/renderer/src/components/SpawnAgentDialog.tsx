@@ -15,6 +15,7 @@ import { visibleProviderOptions, type ProviderDetection } from '../lib/providerA
 import { profilesForProvider } from '../lib/profileFields';
 import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
 import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../lib/modelOptions';
+import { normalizeModelSelection } from '../../../main/shared/modelContextWindows';
 
 /**
  * What a profile chip promises, in the vocabulary of the harness it belongs to.
@@ -86,6 +87,8 @@ interface SpawnAgentDialogProps {
     transport?: 'pty' | 'stream';
     profileId?: string;
     model?: string;
+    modelIdentity?: string;
+    contextWindow?: number | null;
     effort?: string;
     permissionMode?: string;
     skipPermissions?: boolean;
@@ -585,6 +588,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     const resolvedMode = permissionMode || defaultModeFor(provider);
     const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
     const initialPrompt = prompt.trim() || undefined;
+    const claudeSelection = resolvedModel ? normalizeModelSelection(resolvedModel) : undefined;
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(
@@ -595,6 +599,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             transport,
             profileId: profileId || undefined,
             model: resolvedModel || undefined,
+            modelIdentity: claudeSelection?.model,
+            contextWindow: claudeSelection?.contextWindow,
             effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,
@@ -613,6 +619,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         : {
             cwd: cwd.trim(),
             name: name.trim() || undefined,
+            model: resolvedProviderModel || undefined,
+            modelIdentity: resolvedProviderModel || undefined,
+            contextWindow: resolvedProviderModel ? null : undefined,
             provider,
             // The harness's own profile — its config root (CODEX_HOME /
             // COPILOT_HOME), extra argv, `-p` preset and, for Copilot, the
@@ -624,7 +633,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             // non-default would leave "hybrid" indistinguishable from "the user
             // said nothing" — which main resolves to the configured default.
             transport: provider === 'codex' ? transport : undefined,
-            model: resolvedProviderModel || undefined,
             effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,

@@ -123,6 +123,8 @@ function lastSpawn(): {
   sessionId: string;
   firstMessage?: string;
   model?: string;
+  modelIdentity?: string;
+  contextWindow?: number | null;
 } {
   return spawnMock.mock.calls.at(-1)![0] as {
     argv: string[];
@@ -131,6 +133,8 @@ function lastSpawn(): {
     sessionId: string;
     firstMessage?: string;
     model?: string;
+    modelIdentity?: string;
+    contextWindow?: number | null;
   };
 }
 
@@ -155,10 +159,29 @@ describe('spawnClaudeAgent — configured model selection', () => {
     const modelIndex = argv.indexOf('--model');
     expect(argv[modelIndex + 1]).toBe('opus[1m]');
     expect(lastSpawn().model).toBe('opus[1m]');
+    expect(lastSpawn().modelIdentity).toBe('opus');
+    expect(lastSpawn().contextWindow).toBe(1_000_000);
     expect(setSpawnMeta).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ settings: expect.objectContaining({ model: 'opus[1m]' }) }),
     );
+  });
+
+  it('an explicit canonical pair retains its marker only on argv and the legacy companion', async () => {
+    await spawnClaudeAgent({
+      cwd: '/proj',
+      model: 'sonnet[1m]',
+      modelIdentity: 'sonnet',
+      contextWindow: 1_000_000,
+    });
+
+    expect(lastSpawn()).toMatchObject({
+      model: 'sonnet[1m]',
+      modelIdentity: 'sonnet',
+      contextWindow: 1_000_000,
+    });
+    const argv = lastArgv();
+    expect(argv[argv.indexOf('--model') + 1]).toBe('sonnet[1m]');
   });
 });
 

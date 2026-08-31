@@ -194,6 +194,9 @@ func TestSpawnAgentOmittedModelResolvesConfigDefault(t *testing.T) {
 	if params["model"] != "opus[1m]" {
 		t.Fatalf("omitted model must resolve to the config default %q, got %v", "opus[1m]", params)
 	}
+	if params["modelIdentity"] != "opus" || params["contextWindow"] != float64(1_000_000) {
+		t.Fatalf("omitted default must forward its canonical pair beside the old companion, got %v", params)
+	}
 }
 
 // TestSpawnAgentExplicitModelBeatsTheConfigDefault: a caller that names a
@@ -281,5 +284,43 @@ func TestSpawnAgentExplicitModelSurvivesForAManagedProvider(t *testing.T) {
 	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "provider": "codex", "model": "gpt-5.1-codex"})
 	if params["model"] != "gpt-5.1-codex" {
 		t.Fatalf("explicit model must survive for a managed provider, got %v", params)
+	}
+	if params["modelIdentity"] != "gpt-5.1-codex" {
+		t.Fatalf("legacy managed input must be healed to a canonical identity, got %v", params)
+	}
+}
+
+func TestSpawnAgentForwardsCanonicalPairAndLegacyCompanion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "haiku"})
+	params := spawnEchoParams(t, ctx, cs, map[string]any{
+		"cwd": "/tmp", "provider": "claude", "model": "opus[1m]",
+		"modelIdentity": "opus", "contextWindow": 1_000_000,
+	})
+	if params["model"] != "opus[1m]" || params["modelIdentity"] != "opus" ||
+		params["contextWindow"] != float64(1_000_000) {
+		t.Fatalf("pair/companion drifted through the MCP facade: %v", params)
+	}
+}
+
+func TestSpawnAgentRefusesConflictingPairBeforeTheBus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{"defaultModel": "haiku"})
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "spawn_agent",
+		Arguments: map[string]any{
+			"cwd": "/tmp", "provider": "claude", "model": "opus[1m]",
+			"modelIdentity": "sonnet", "contextWindow": 1_000_000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(textOf(res), "conflicting-model-identity") {
+		t.Fatalf("conflicting generations should be a stable tool error, got %q", textOf(res))
 	}
 }

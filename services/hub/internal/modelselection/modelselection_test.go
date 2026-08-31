@@ -9,6 +9,18 @@ import (
 )
 
 type contract struct {
+	InputCases []struct {
+		Name                  string  `json:"name"`
+		Provider              string  `json:"provider"`
+		Model                 *string `json:"model"`
+		ModelIdentity         *string `json:"modelIdentity"`
+		ContextWindow         *uint64 `json:"contextWindow"`
+		ExpectedModel         *string `json:"expectedModel"`
+		ExpectedContextWindow *uint64 `json:"expectedContextWindow"`
+		ExpectedLegacyModel   *string `json:"expectedLegacyModel"`
+		Error                 *string `json:"error"`
+		Note                  string  `json:"note"`
+	} `json:"inputCases"`
 	SelectionCases []struct {
 		Name                  string  `json:"name"`
 		Model                 string  `json:"model"`
@@ -38,10 +50,48 @@ func loadContract(t *testing.T) contract {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.SelectionCases) < 10 || len(c.ClaudeArgvCases) < 4 {
+	if len(c.InputCases) < 12 || len(c.SelectionCases) < 10 || len(c.ClaudeArgvCases) < 4 {
 		t.Fatal("the model-selection contract corpus was gutted")
 	}
 	return c
+}
+
+func TestInputCases(t *testing.T) {
+	for _, tc := range loadContract(t).InputCases {
+		stringValue := func(value *string) string {
+			if value == nil {
+				return ""
+			}
+			return *value
+		}
+		got, err := ResolveInput(
+			tc.Provider,
+			stringValue(tc.Model),
+			stringValue(tc.ModelIdentity),
+			tc.ContextWindow,
+		)
+		if tc.Error != nil {
+			if ErrorCode(err) != *tc.Error {
+				t.Errorf("%s: error %q, want %q — %s", tc.Name, ErrorCode(err), *tc.Error, tc.Note)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v — %s", tc.Name, err, tc.Note)
+			continue
+		}
+		if tc.ExpectedModel == nil {
+			if got != nil {
+				t.Errorf("%s: got %#v, want no selection — %s", tc.Name, got, tc.Note)
+			}
+			continue
+		}
+		if got == nil || got.Selection.Model != *tc.ExpectedModel ||
+			!sameWindow(got.Selection.ContextWindow, tc.ExpectedContextWindow) ||
+			tc.ExpectedLegacyModel == nil || got.LegacyModel != *tc.ExpectedLegacyModel {
+			t.Errorf("%s: got %#v, want model %v/window %v/legacy %v — %s", tc.Name, got, tc.ExpectedModel, tc.ExpectedContextWindow, tc.ExpectedLegacyModel, tc.Note)
+		}
+	}
 }
 
 func TestSelectionCases(t *testing.T) {

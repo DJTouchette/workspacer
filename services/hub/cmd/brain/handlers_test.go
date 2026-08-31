@@ -104,6 +104,9 @@ func TestSpawnDefaultProviderIsClaudeStream(t *testing.T) {
 	if managed[0].body["model"] != "opus[1m]" {
 		t.Errorf("configured canonical 1M default must reach requested model, got %v", managed[0].body["model"])
 	}
+	if managed[0].body["model_identity"] != "opus" || managed[0].body["context_window"] != float64(1_000_000) {
+		t.Errorf("configured canonical pair was not forwarded beside the companion: %+v", managed[0].body)
+	}
 }
 
 // TestSpawnCodexStreamForwardsManagedPayload: codex + transport 'stream' POSTs

@@ -610,6 +610,8 @@ export function registerHubCapabilities(): void {
       cwd,
       profileId,
       model,
+      modelIdentity,
+      contextWindow,
       effort,
       permissionMode: reqMode,
       skipPermissions: reqSkip,
@@ -642,6 +644,9 @@ export function registerHubCapabilities(): void {
       cwd?: string;
       profileId?: string;
       model?: string;
+      /** Canonical suffix-free pair; model remains the old-peer companion. */
+      modelIdentity?: string;
+      contextWindow?: number | null;
       effort?: string;
       permissionMode?: string;
       skipPermissions?: boolean;
@@ -984,6 +989,8 @@ export function registerHubCapabilities(): void {
         // configured default there, once, for every entry point.
         ...(provider === 'codex' && reqTransport && { transport: reqTransport }),
         model,
+        modelIdentity,
+        contextWindow,
         effort,
         skipPermissions,
         resumeSessionId,
@@ -1023,6 +1030,8 @@ export function registerHubCapabilities(): void {
         // so a remote stream spawn silently ignored the chosen profile/servers.
         profileId,
         model,
+        modelIdentity,
+        contextWindow,
         effort,
         permissionMode,
         skipPermissions,
@@ -1052,6 +1061,8 @@ export function registerHubCapabilities(): void {
       scrubProfileBypass,
       profileGranted: profileGranted === true,
       model,
+      modelIdentity,
+      contextWindow,
       effort,
       permissionMode,
       skipPermissions,
@@ -1282,16 +1293,24 @@ export function registerHubCapabilities(): void {
   // confirms the switch on the status line, but the requested model is noted
   // eagerly so the context window follows an `opus[1m]` switch immediately.
   registerCapability('claude.setModel', async (params: unknown) => {
-    const { sessionId, model, effort } = (params ?? {}) as {
+    const { sessionId, model, effort, modelIdentity, contextWindow } = (params ?? {}) as {
       sessionId?: string;
       model?: string;
       effort?: string;
+      modelIdentity?: string;
+      contextWindow?: number | null;
     };
-    if (!sessionId || (!model && !effort)) {
+    if (!sessionId || (!model && !modelIdentity && !effort)) {
       throw new Error('claude.setModel requires { sessionId, model and/or effort }');
     }
-    const res = await claudemonSessionClient.setModel(sessionId, model, effort);
-    if (model) claudeSessionStore.noteRequestedModel(sessionId, model);
+    const res = await claudemonSessionClient.setModel(
+      sessionId,
+      model,
+      effort,
+      modelIdentity,
+      contextWindow,
+    );
+    if (res.ok && model) claudeSessionStore.noteRequestedModel(sessionId, model);
     return res;
   });
 

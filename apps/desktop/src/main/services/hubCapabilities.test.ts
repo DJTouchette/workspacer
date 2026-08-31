@@ -1635,7 +1635,23 @@ describe('claude control pass-throughs', () => {
 
   it('claude.setModel forwards model + effort to claudemon', async () => {
     await call('claude.setModel', { sessionId: 's1', model: 'gpt', effort: 'high' });
-    expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high');
+    expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high', undefined, undefined);
+  });
+
+  it('claude.setModel forwards the canonical pair beside its legacy companion', async () => {
+    await call('claude.setModel', {
+      sessionId: 's1',
+      model: 'opus[1m]',
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(clientMock.setModel).toHaveBeenCalledWith(
+      's1',
+      'opus[1m]',
+      undefined,
+      'opus',
+      1_000_000,
+    );
   });
 
   it('claude.setModel rejects when neither model nor effort is given', async () => {

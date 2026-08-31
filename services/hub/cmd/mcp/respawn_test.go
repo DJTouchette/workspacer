@@ -193,8 +193,9 @@ func callRespawn(t *testing.T, hub *respawnHub, yolo bool, args map[string]any) 
 func newRespawnHub() *respawnHub {
 	return &respawnHub{
 		snapshot: `{"cwd":"/w/alpha-wt","label":"alpha: parser","provider":"claude",
-			"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5","effort":"high",
-			"permissionMode":"bypassPermissions"}}`,
+			"parentSessionId":"mgr-1","settings":{"model":"claude-opus-5[1m]","effort":"high",
+			"permissionMode":"bypassPermissions"},
+			"requestedSelection":{"model":"claude-opus-5","contextWindow":1000000}}`,
 		conv: `{"seq":4,"items":[{"kind":"user_message","text":"SHIP TASK — fix the parser"}]}`,
 	}
 }
@@ -215,7 +216,7 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 	// Everything the manager would otherwise have had to remember.
 	for field, want := range map[string]string{
 		"cwd":             "/w/alpha-wt",
-		"model":           "claude-opus-5",
+		"model":           "claude-opus-5[1m]",
 		"effort":          "high",
 		"provider":        "claude",
 		"parentSessionId": "mgr-1",
@@ -224,6 +225,12 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 		if got, _ := spawn.params[field].(string); got != want {
 			t.Errorf("spawn %s = %q, want %q", field, got, want)
 		}
+	}
+	if got := spawn.params["modelIdentity"]; got != "claude-opus-5" {
+		t.Errorf("respawn dropped the owner-authored canonical identity: %v", got)
+	}
+	if got := spawn.params["contextWindow"]; got != float64(1_000_000) {
+		t.Errorf("respawn dropped the owner-authored selected window: %v", got)
 	}
 
 	// The composed dispatch rides the SPAWN ITSELF now — no round trip, and no
@@ -382,6 +389,12 @@ func TestRespawnOverridesWinOverTheOriginal(t *testing.T) {
 		if p[field] != want {
 			t.Errorf("spawn %s = %v, want %v", field, p[field], want)
 		}
+	}
+	if p["modelIdentity"] != "claude-sonnet-5" {
+		t.Errorf("model override inherited the original identity instead of resolving its own: %v", p)
+	}
+	if _, present := p["contextWindow"]; present {
+		t.Errorf("bare model override inherited the original 1M window: %v", p)
 	}
 }
 

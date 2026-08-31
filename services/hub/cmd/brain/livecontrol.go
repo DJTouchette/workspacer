@@ -35,6 +35,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 )
 
 // liveControlResult is the shared `{ok, error?}` envelope the three switches
@@ -42,10 +44,11 @@ import (
 // reason — not a transport error — so the client can offer the restart path.
 // The desktop's three handlers return exactly these shapes.
 type liveControlResult struct {
-	OK     bool   `json:"ok"`
-	Mode   string `json:"mode,omitempty"`
-	Effort string `json:"effort,omitempty"`
-	Error  string `json:"error,omitempty"`
+	OK                 bool                      `json:"ok"`
+	Mode               string                    `json:"mode,omitempty"`
+	Effort             string                    `json:"effort,omitempty"`
+	Error              string                    `json:"error,omitempty"`
+	RequestedSelection *modelselection.Selection `json:"requestedSelection,omitempty"`
 }
 
 // setPermissionMode live-switches an already-running session's permission mode.
@@ -88,28 +91,52 @@ func (r *registry) setPermissionMode(ctx context.Context, raw json.RawMessage) (
 }
 
 // setModel live-switches a managed session's model and/or reasoning effort.
-// Claude sessions do not use this endpoint (they switch via the `/model` slash
-// command on the message path); the daemon answers for the providers that can.
+// Claude PTY sessions do not use this endpoint (they switch via the `/model`
+// slash command on the message path). Managed Claude stream and other capable
+// managed providers use the daemon's structural switch endpoint.
 func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
-		SessionID string `json:"sessionId"`
-		Model     string `json:"model"`
-		Effort    string `json:"effort"`
+		SessionID     string  `json:"sessionId"`
+		Model         string  `json:"model"`
+		ModelIdentity string  `json:"modelIdentity"`
+		ContextWindow *uint64 `json:"contextWindow"`
+		Effort        string  `json:"effort"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if p.SessionID == "" || (p.Model == "" && p.Effort == "") {
+	if p.SessionID == "" || (p.Model == "" && p.ModelIdentity == "" && p.Effort == "") {
 		return nil, fmt.Errorf("claude.setModel requires { sessionId, model and/or effort }")
 	}
-	if err := r.cm.setModel(ctx, p.SessionID, p.Model, p.Effort); err != nil {
+	provider := r.sessionProvider(ctx, p.SessionID)
+	resolved, err := modelselection.ResolveInput(
+		provider,
+		p.Model,
+		p.ModelIdentity,
+		p.ContextWindow,
+	)
+	if err != nil {
+		return jsonResult(liveControlResult{OK: false, Error: modelselection.ErrorCode(err)})
+	}
+	model, identity := p.Model, p.ModelIdentity
+	window := p.ContextWindow
+	if resolved != nil {
+		model = resolved.LegacyModel
+		identity = resolved.Selection.Model
+		window = resolved.Selection.ContextWindow
+	}
+	if err := r.cm.setModel(ctx, p.SessionID, model, p.Effort, identity, window); err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})
 	}
 	// Noted eagerly so the context-window figure follows an `opus[1m]` switch
 	// immediately — the provider confirms on its own status line, which
 	// supersedes this.
-	r.noteLiveControl(p.SessionID, "", p.Model, p.Effort)
-	return jsonResult(liveControlResult{OK: true})
+	r.noteLiveControl(p.SessionID, "", model, p.Effort)
+	var selection *modelselection.Selection
+	if resolved != nil {
+		selection = &resolved.Selection
+	}
+	return jsonResult(liveControlResult{OK: true, RequestedSelection: selection})
 }
 
 // setEffort live-switches reasoning effort. TWIN: services/liveEffort.ts, and
@@ -149,7 +176,7 @@ func (r *registry) setEffort(ctx context.Context, raw json.RawMessage) (json.Raw
 		r.noteLiveControl(p.SessionID, "", "", level)
 		return jsonResult(liveControlResult{OK: true, Effort: level})
 	}
-	if err := r.cm.setModel(ctx, p.SessionID, "", level); err != nil {
+	if err := r.cm.setModel(ctx, p.SessionID, "", level, "", nil); err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})
 	}
 	// codex confirms with its own thread/settings/updated on the status line,

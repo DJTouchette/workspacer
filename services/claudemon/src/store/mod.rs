@@ -559,6 +559,9 @@ mod tests {
         let legacy = legacy.ok_or_else(|| "legacy requested_model is missing".to_string())?;
         let identity =
             identity.ok_or_else(|| "canonical requested_model_identity is missing".to_string())?;
+        if legacy == identity {
+            return Ok(());
+        }
         let canonical = restore_persisted_model_selection(Some(&identity), context_window, None)
             .ok_or_else(|| "canonical selection is invalid".to_string())?;
         let expected = PersistedModelSelection::from_selection(canonical);
@@ -756,6 +759,43 @@ mod tests {
                 case.id,
             );
         }
+    }
+
+    #[test]
+    fn opaque_non_claude_dash_one_m_round_trips_with_an_explicit_window() {
+        let path = tempfile_path();
+        let db = Db::open(&path).unwrap();
+        let persisted = PersistedModelSelection {
+            selection: ModelSelection {
+                model: "vendor/custom-1m".into(),
+                context_window: Some(1_000_000),
+            },
+            legacy_model: "vendor/custom-1m".into(),
+        };
+        db.record_event_with_spawn_facts(
+            &ev("SessionStart", "opaque-1m"),
+            SpawnFacts {
+                requested_selection: Some(&persisted),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            raw_selection_columns(&db, "opaque-1m"),
+            (
+                Some("vendor/custom-1m".into()),
+                Some("vendor/custom-1m".into()),
+                Some(1_000_000),
+            )
+        );
+        dual_write_guard(&db, "opaque-1m").unwrap();
+
+        let restored = db.load_recent_sessions(1).unwrap().remove(0);
+        assert_eq!(
+            restored.requested_model.as_deref(),
+            Some("vendor/custom-1m")
+        );
+        assert_eq!(restored.requested_selection, Some(persisted.selection));
     }
 
     #[test]

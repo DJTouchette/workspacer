@@ -267,6 +267,36 @@ describe('ComposerControls — claude live switches', () => {
     expect(api.claudeSetModel).not.toHaveBeenCalled();
   });
 
+  it('switching managed Claude sends the pair plus its marker-bearing companion', async () => {
+    api.claudeListModels = vi.fn().mockResolvedValue({
+      defaultModel: 'sonnet',
+      contextWindow: 200_000,
+      aliases: [
+        {
+          model: 'opus',
+          value: 'opus[1m]',
+          label: 'Opus · 1M',
+          contextWindow: 1_000_000,
+        },
+      ],
+      seen: [],
+    });
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ transport: 'stream', settings: { model: 'sonnet' } }),
+    });
+    fireEvent.click(screen.getByText('sonnet'));
+    fireEvent.click(await screen.findByText('Opus · 1M'));
+    expect(api.claudeSetModel).toHaveBeenCalledWith(
+      'sess-1',
+      'opus[1m]',
+      undefined,
+      'opus',
+      1_000_000,
+    );
+    expect(api.claudeMessage).not.toHaveBeenCalled();
+  });
+
   it('switching a claude permission mode calls claudeSetPermissionMode with the mode id', async () => {
     renderControls({
       provider: 'claude',
@@ -520,7 +550,7 @@ describe('ComposerControls — managed provider (codex)', () => {
     fireEvent.click(screen.getByText('gpt-5-codex'));
     const o3 = await screen.findByText('o3');
     fireEvent.click(o3);
-    expect(api.claudeSetModel).toHaveBeenCalledWith('sess-1', 'o3');
+    expect(api.claudeSetModel).toHaveBeenCalledWith('sess-1', 'o3', undefined, 'o3', null);
     expect(api.claudeMessage).not.toHaveBeenCalled();
   });
 

@@ -28,6 +28,8 @@ const FULL_REQUEST: Required<AgentSpawnRequest> = {
   manager: true,
   fleetFullAccess: true,
   model: 'gpt-5.5',
+  modelIdentity: 'gpt-5.5',
+  contextWindow: 272_000,
   effort: 'high',
   permissionMode: 'yolo',
   skipPermissions: true,

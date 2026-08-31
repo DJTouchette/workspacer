@@ -30,6 +30,7 @@ import { markSessionTerminated, clearSessionTerminated } from '../lib/terminated
 import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
 import { buildRespawnSpawnOptions } from '../lib/respawnOptions';
 import { requestRecentSessionsRefresh } from '../lib/watchBus';
+import { normalizeModelSelection } from '../../../main/shared/modelContextWindows';
 
 let nextId = 1;
 
@@ -229,6 +230,9 @@ export function useAgentManager() {
       transport?: 'pty' | 'stream';
       profileId?: string;
       model?: string;
+      /** Canonical selection pair. `model` stays the old-main companion. */
+      modelIdentity?: string;
+      contextWindow?: number | null;
       /** Harness-specific reasoning-effort level (Claude or Codex). */
       effort?: string;
       /** Permission mode (claude default/acceptEdits/plan/bypassPermissions, managed ask/yolo). */
@@ -310,6 +314,8 @@ export function useAgentManager() {
           transport: opts.transport,
           profileId: opts.profileId,
           model: opts.model,
+          modelIdentity: opts.modelIdentity,
+          contextWindow: opts.contextWindow,
           effort: opts.effort,
           permissionMode: opts.permissionMode,
           skipPermissions: opts.skipPermissions,
@@ -352,6 +358,8 @@ export function useAgentManager() {
         transport: opts.transport,
         profileId: opts.profileId,
         model: opts.model,
+        modelIdentity: opts.modelIdentity,
+        contextWindow: opts.contextWindow,
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         skipPermissions: opts.skipPermissions,
@@ -495,7 +503,18 @@ export function useAgentManager() {
       // Remote agents can't be closed-and-respawned locally (the pills that
       // reach this path are disabled for them; this is the backstop).
       if (agent.hub) return;
-      const model = overrides.model ?? agent.model;
+      const hasModelOverride = overrides.model !== undefined;
+      const model = hasModelOverride ? overrides.model || undefined : agent.model;
+      const overrideSelection =
+        hasModelOverride && overrides.model
+          ? resolveProvider(agent.provider) === 'claude'
+            ? normalizeModelSelection(overrides.model)
+            : { model: overrides.model, contextWindow: null }
+          : undefined;
+      const modelIdentity = hasModelOverride ? overrideSelection?.model : agent.modelIdentity;
+      const contextWindow = hasModelOverride
+        ? overrideSelection?.contextWindow
+        : agent.contextWindow;
       const effort = overrides.effort ?? agent.effort;
       const permissionMode = overrides.permissionMode ?? agent.permissionMode;
       // A profile switch re-homes the session on another login ('' = back to
@@ -534,6 +553,8 @@ export function useAgentManager() {
           transport: agent.transport,
           profileId,
           model,
+          modelIdentity,
+          contextWindow,
           effort,
           permissionMode,
           skipPermissions,
@@ -575,6 +596,8 @@ export function useAgentManager() {
       mutateAgent(agent.id, (a) => ({
         ...a,
         model,
+        modelIdentity,
+        contextWindow,
         effort,
         permissionMode,
         skipPermissions,
@@ -976,9 +999,16 @@ export function useAgentManager() {
   /** Record a LIVE model switch (claudemon /model — no respawn) on the agent
    *  card. agent.model feeds every later restart and saved layout; without
    *  this a restart quietly reverted to the spawn-time model. */
-  const setAgentModel = useCallback((sessionId: string, model: string) => {
-    setAgents((prev) => prev.map((a) => (a.sessionId === sessionId ? { ...a, model } : a)));
-  }, []);
+  const setAgentModel = useCallback(
+    (sessionId: string, model: string, modelIdentity?: string, contextWindow?: number | null) => {
+      setAgents((prev) =>
+        prev.map((a) =>
+          a.sessionId === sessionId ? { ...a, model, modelIdentity, contextWindow } : a,
+        ),
+      );
+    },
+    [],
+  );
 
   /** Mark the agent owning this session as stopped — its session died mid-run
    *  (SessionEnd arrived). Same shape as reconcileAgents so the sidebar flips

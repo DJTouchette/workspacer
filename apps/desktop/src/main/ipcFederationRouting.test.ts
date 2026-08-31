@@ -79,6 +79,7 @@ vi.mock('./services/claudeSessionStore', () => ({
     getSnapshot: (sessionId: string) => getSnapshot(sessionId),
     clearPendingQuestions: (sessionId: string) => clearPendingQuestions(sessionId),
     notePermissionMode: vi.fn(),
+    noteRequestedModel: vi.fn(),
   },
 }));
 vi.mock('./services/claudeModels', () => ({ listClaudeModels: vi.fn() }));
@@ -218,6 +219,17 @@ describe('local sessions keep the claudemon path untouched', () => {
     expect(sessionClient.message).toHaveBeenCalledWith('sess-local', 'hi');
     expect(callHub).not.toHaveBeenCalled();
     expect(res).toEqual({ ok: true, mode: 'input' });
+  });
+
+  it('claude:setModel forwards the canonical pair beside the legacy companion', async () => {
+    await invoke('claude:setModel', 'sess-local', 'opus[1m]', undefined, 'opus', 1_000_000);
+    expect(sessionClient.setModel).toHaveBeenCalledWith(
+      'sess-local',
+      'opus[1m]',
+      undefined,
+      'opus',
+      1_000_000,
+    );
   });
 
   it('an unknown session (no store entry) stays on the local path', async () => {

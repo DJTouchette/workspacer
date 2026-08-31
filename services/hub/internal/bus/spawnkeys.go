@@ -82,6 +82,8 @@ var spawnParamKeys = []string{
 	// ── the capability axis (the routing ceiling clamps these) ──────────────
 	"capability",
 	"model",
+	"modelIdentity",
+	"contextWindow",
 	"effort",
 	"provider",
 	"transport",

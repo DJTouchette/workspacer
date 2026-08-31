@@ -125,6 +125,10 @@ type spawnReq struct {
 	Rows      int               `json:"rows,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	SessionID string            `json:"session_id,omitempty"`
+	// Canonical requested pair plus the marker-bearing Model companion.
+	Model         string  `json:"model,omitempty"`
+	ModelIdentity string  `json:"model_identity,omitempty"`
+	ContextWindow *uint64 `json:"context_window,omitempty"`
 	// FirstMessage is the agent's first prompt, queued by the daemon INSIDE its
 	// spawn handler (before the 200) rather than posted by us afterwards. The
 	// two-call form races: the daemon hands back an addressable id for a
@@ -157,9 +161,11 @@ func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, bool
 // claude: spawn-managed claude IS the stream adapter, so only codex's headless
 // 'stream' transport is spelled out on the wire.
 type spawnManagedReq struct {
-	Provider string `json:"provider"`
-	Cwd      string `json:"cwd"`
-	Model    string `json:"model,omitempty"`
+	Provider      string  `json:"provider"`
+	Cwd           string  `json:"cwd"`
+	Model         string  `json:"model,omitempty"`
+	ModelIdentity string  `json:"model_identity,omitempty"`
+	ContextWindow *uint64 `json:"context_window,omitempty"`
 	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
 	Effort string `json:"effort,omitempty"`
 	// Resolved launcher binary (falls back to the provider name daemon-side).
@@ -430,13 +436,23 @@ func (c *claudemonClient) setPermissionMode(ctx context.Context, id, mode string
 // fields are OMITTED rather than sent as "": the daemon reads a present-but-
 // empty model as a request to switch to a model with no name.
 // TWIN: claudemonSessionClient.setModel.
-func (c *claudemonClient) setModel(ctx context.Context, id, model, effort string) error {
+func (c *claudemonClient) setModel(
+	ctx context.Context,
+	id, model, effort, modelIdentity string,
+	contextWindow *uint64,
+) error {
 	body := map[string]any{}
 	if model != "" {
 		body["model"] = model
 	}
 	if effort != "" {
 		body["effort"] = effort
+	}
+	if modelIdentity != "" {
+		body["model_identity"] = modelIdentity
+	}
+	if contextWindow != nil {
+		body["context_window"] = *contextWindow
 	}
 	return c.postJSON(ctx, "/sessions/"+id+"/model", body, nil)
 }

@@ -27,9 +27,7 @@ use uuid::Uuid;
 
 use crate::protocol::WrapperMessage;
 use crate::session::store::WrapperHandle;
-use crate::session::{
-    windows::normalize_persisted_model_selection, ConversationStore, SessionStore,
-};
+use crate::session::{windows::normalize_model_input, ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +73,12 @@ pub struct SpawnPayload {
     /// away on the PTY path, a whole turn away on the stream one.
     #[serde(default)]
     pub model: Option<String>,
+    /// Canonical provider identity. `model` remains the executable legacy
+    /// companion so an older daemon still launches the same selection.
+    #[serde(default)]
+    pub model_identity: Option<String>,
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 /// The value of a `--model` flag in a spawn's argv, in either spelling
@@ -93,6 +97,30 @@ fn model_from_argv(argv: &[String]) -> Option<&str> {
         }
     }
     None
+}
+
+/// Make the executable argv agree with the validated wire. This is required
+/// for a new pair-only sender: canonical fields are authoritative, but the
+/// provider process still consumes the legacy `--model` spelling.
+fn set_model_in_argv(argv: &mut Vec<String>, model: &str) {
+    let mut index = 0;
+    while index < argv.len() {
+        if argv[index] == "--model" {
+            if index + 1 < argv.len() {
+                argv[index + 1] = model.to_string();
+            } else {
+                argv.push(model.to_string());
+            }
+            return;
+        }
+        if argv[index].starts_with("--model=") {
+            argv[index] = format!("--model={model}");
+            return;
+        }
+        index += 1;
+    }
+    argv.push("--model".to_string());
+    argv.push(model.to_string());
 }
 
 /// Reject a working directory no child could actually start in — the daemon-side
@@ -138,7 +166,7 @@ pub async fn handle(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
     State(db): State<crate::store::Db>,
-    Json(payload): Json<SpawnPayload>,
+    Json(mut payload): Json<SpawnPayload>,
 ) -> impl IntoResponse {
     if payload.argv.is_empty() {
         return (StatusCode::BAD_REQUEST, "argv must not be empty").into_response();
@@ -146,6 +174,24 @@ pub async fn handle(
     // Before the fork, which is the only place this can still be reported.
     if let Some(problem) = cwd_problem(&payload.cwd) {
         return (StatusCode::BAD_REQUEST, problem).into_response();
+    }
+
+    let legacy_model = payload
+        .model
+        .as_deref()
+        .or_else(|| model_from_argv(&payload.argv));
+    let input_provider = payload.rollout_provider.as_deref().unwrap_or("claude");
+    let persisted_selection = match normalize_model_input(
+        input_provider,
+        legacy_model,
+        payload.model_identity.as_deref(),
+        payload.context_window,
+    ) {
+        Ok(selection) => selection,
+        Err(err) => return (StatusCode::BAD_REQUEST, err.code()).into_response(),
+    };
+    if let Some(selection) = &persisted_selection {
+        set_model_in_argv(&mut payload.argv, &selection.legacy_model);
     }
 
     // Prefer the caller-pinned id (matches `claude --session-id <uuid>`); fall
@@ -284,19 +330,6 @@ pub async fn handle(
     // `SpawnPayload::model`. Recorded unconditionally when either is present:
     // the guard used to be "a model appeared on argv", which is empty for every
     // resume and for every spawn that let the CLI pick.
-    let persisted_selection = payload
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .or_else(|| model_from_argv(&payload.argv))
-        .and_then(|model| match normalize_persisted_model_selection(model) {
-            Ok(selection) => Some(selection),
-            Err(err) => {
-                tracing::warn!(session = %session_id, model, error = err.code(), "not persisting invalid requested model");
-                None
-            }
-        });
     if let Some(selection) = &persisted_selection {
         store.set_requested_model_selection(&session_id, selection);
         db.note_requested_model_selection(&session_id, selection);
@@ -354,6 +387,12 @@ pub struct SpawnManagedPayload {
     /// Optional model override (provider-specific id).
     #[serde(default)]
     pub model: Option<String>,
+    /// Canonical provider identity + optional selected window. `model` is kept
+    /// as the old-daemon/provider compatibility spelling.
+    #[serde(default)]
+    pub model_identity: Option<String>,
+    #[serde(default)]
+    pub context_window: Option<u64>,
     /// Optional reasoning-effort level. Codex maps it to the
     /// `model_reasoning_effort` config override; other providers ignore it.
     #[serde(default)]
@@ -426,7 +465,7 @@ pub async fn handle_managed(
     State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
     State(db): State<crate::store::Db>,
-    Json(payload): Json<SpawnManagedPayload>,
+    Json(mut payload): Json<SpawnManagedPayload>,
 ) -> impl IntoResponse {
     if !matches!(
         payload.provider.as_str(),
@@ -443,6 +482,20 @@ pub async fn handle_managed(
     // here or it becomes a card nobody can talk to.
     if let Some(problem) = cwd_problem(&payload.cwd) {
         return (StatusCode::BAD_REQUEST, problem).into_response();
+    }
+    let persisted_selection = match normalize_model_input(
+        &payload.provider,
+        payload.model.as_deref(),
+        payload.model_identity.as_deref(),
+        payload.context_window,
+    ) {
+        Ok(selection) => selection,
+        Err(err) => return (StatusCode::BAD_REQUEST, err.code()).into_response(),
+    };
+    // Canonical-only new clients still need an executable provider spelling;
+    // old clients already supplied the same value in `model`.
+    if let Some(selection) = &persisted_selection {
+        payload.model = Some(selection.legacy_model.clone());
     }
     // Resuming a claude stream session keeps the CLI's *prior* session id (see
     // the claude_stream module contract — `--resume` is not re-pinnable), so an
@@ -487,18 +540,6 @@ pub async fn handle_managed(
         .is_some_and(|text| store.queue_first_message(&session_id, text));
     // Before the driver starts, so the very first snapshot knows this session's
     // window instead of guessing 200k from the marker-stripped transcript id.
-    let persisted_selection = payload
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .and_then(|model| match normalize_persisted_model_selection(model) {
-            Ok(selection) => Some(selection),
-            Err(err) => {
-                tracing::warn!(session = %session_id, model, error = err.code(), "not persisting invalid requested model");
-                None
-            }
-        });
     if let Some(selection) = &persisted_selection {
         store.set_requested_model_selection(&session_id, selection);
         // Persisted too, so a daemon restart rehydrates a 1M session as 1M
@@ -881,6 +922,25 @@ mod tests {
         assert_eq!(model_from_argv(&argv(&["claude", "--resume", "x"])), None);
         // A trailing `--model` with nothing after it must not panic.
         assert_eq!(model_from_argv(&argv(&["claude", "--model"])), None);
+    }
+
+    #[test]
+    fn canonical_pair_rewrites_the_cli_boundary_to_its_legacy_companion() {
+        let mut absent = vec!["claude".to_string(), "--verbose".to_string()];
+        set_model_in_argv(&mut absent, "opus[1m]");
+        assert_eq!(absent, vec!["claude", "--verbose", "--model", "opus[1m]"]);
+
+        let mut split = vec![
+            "claude".to_string(),
+            "--model".to_string(),
+            "sonnet".to_string(),
+        ];
+        set_model_in_argv(&mut split, "sonnet[1m]");
+        assert_eq!(split, vec!["claude", "--model", "sonnet[1m]"]);
+
+        let mut joined = vec!["claude".to_string(), "--model=sonnet".to_string()];
+        set_model_in_argv(&mut joined, "sonnet[1m]");
+        assert_eq!(joined, vec!["claude", "--model=sonnet[1m]"]);
     }
 
     #[test]

@@ -2247,9 +2247,16 @@ function App() {
   // reverted a live-switched agent to its spawn-time model.
   useEffect(() => {
     const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail as { sessionId?: string; model?: string } | undefined;
+      const d = (e as CustomEvent).detail as
+        | {
+            sessionId?: string;
+            model?: string;
+            modelIdentity?: string;
+            contextWindow?: number | null;
+          }
+        | undefined;
       if (!d?.sessionId || !d.model) return;
-      setAgentModel(d.sessionId, d.model);
+      setAgentModel(d.sessionId, d.model, d.modelIdentity, d.contextWindow);
     };
     window.addEventListener('agent:model-switched', handler);
     return () => window.removeEventListener('agent:model-switched', handler);

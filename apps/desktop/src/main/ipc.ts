@@ -232,6 +232,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         transport: opts.transport,
         cwd: opts.cwd,
         model: opts.model,
+        modelIdentity: opts.modelIdentity,
+        contextWindow: opts.contextWindow,
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         label: opts.label,
@@ -295,6 +297,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         cwd: opts.cwd,
         profileId: opts.profileId,
         model: opts.model,
+        modelIdentity: opts.modelIdentity,
+        contextWindow: opts.contextWindow,
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         skipPermissions: opts.skipPermissions,
@@ -316,6 +320,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       cwd: opts.cwd,
       profileId: opts.profileId,
       model: opts.model,
+      modelIdentity: opts.modelIdentity,
+      contextWindow: opts.contextWindow,
       effort: opts.effort,
       permissionMode: opts.permissionMode,
       skipPermissions: opts.skipPermissions,
@@ -1005,10 +1011,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // keep drawing the context bar against a 200k window.
   ipcMain.handle(
     IPC.CLAUDE_SET_MODEL,
-    async (_event, sessionId: string, model?: string, effort?: string) => {
+    async (
+      _event,
+      sessionId: string,
+      model?: string,
+      effort?: string,
+      modelIdentity?: string,
+      contextWindow?: number | null,
+    ) => {
       assertLocalSession(sessionId, 'Model switch');
-      const res = await claudemonSessionClient.setModel(sessionId, model, effort);
-      if (model) claudeSessionStore.noteRequestedModel(sessionId, model);
+      const res = await claudemonSessionClient.setModel(
+        sessionId,
+        model,
+        effort,
+        modelIdentity,
+        contextWindow,
+      );
+      if (res.ok && model) claudeSessionStore.noteRequestedModel(sessionId, model);
       return res;
     },
   );

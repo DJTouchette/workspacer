@@ -37,27 +37,133 @@
  */
 import { configService } from '../services/configService';
 import { isForeignModel } from '../shared/modelVocabulary';
-import { normalizeModelSelection, type ModelSelection } from '../shared/modelContextWindows';
+import {
+  claudeArgvModel,
+  ModelSelectionError,
+  normalizeModelSelection,
+  sameModelSelection,
+  type ModelSelection,
+} from '../shared/modelContextWindows';
 
-export function resolveSpawnModelSelection(
+export interface SpawnModelInput {
+  /** Marker-bearing compatibility spelling understood by old peers/daemons. */
+  model?: string | null;
+  /** Canonical provider identity. Never marker-decorated by a new writer. */
+  modelIdentity?: string | null;
+  /** Explicit selected window. Absence remains unknown, never implicit 200K. */
+  contextWindow?: number | null;
+}
+
+export interface ResolvedSpawnModel {
+  selection: ModelSelection;
+  /** Executable legacy spelling retained for old receivers and provider adapters. */
+  legacyModel: string;
+}
+
+function validateWindow(contextWindow: number | null | undefined): number | null {
+  if (contextWindow == null) return null;
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+    // Reuse the shared error/code boundary rather than grow a second validator.
+    normalizeModelSelection('model', contextWindow);
+  }
+  return contextWindow;
+}
+
+/**
+ * Resolve the additive spawn wire. A present canonical pair wins, while a
+ * marker-only legacy caller remains valid. When both generations are present
+ * they must describe the same selection: otherwise a new receiver and an old
+ * receiver would launch different agents from the same request.
+ *
+ * Claude alone owns `[1m]` syntax. Other providers keep ids such as
+ * `vendor/model-1m` byte-for-byte and never acquire a Claude marker.
+ */
+export function resolveSpawnModelInput(
   provider: string,
-  requested: string | null | undefined,
-): ModelSelection | undefined {
-  const explicit = requested?.trim();
-  if (explicit) {
-    if (!isForeignModel(provider, explicit)) {
-      // `[1m]` / `-1m` are Claude's legacy window syntax, not a cross-provider
-      // model-id convention. Other harnesses own their ids verbatim.
-      return provider === 'claude'
-        ? normalizeModelSelection(explicit)
-        : { model: explicit, contextWindow: null };
+  input: SpawnModelInput,
+): ResolvedSpawnModel | undefined {
+  const legacy = input.model?.trim() || '';
+  const identity = input.modelIdentity?.trim() || '';
+  const hasCanonical = identity !== '' || input.contextWindow != null;
+
+  if (provider !== 'claude') {
+    const contextWindow = validateWindow(input.contextWindow);
+    if (!identity && !legacy) return undefined;
+    if (hasCanonical && !identity && !legacy) {
+      throw new ModelSelectionError(
+        'empty-model',
+        'modelIdentity or legacy model is required when contextWindow is present',
+      );
     }
+    if (identity && legacy && identity !== legacy) {
+      throw new ModelSelectionError(
+        'conflicting-model-identity',
+        'modelIdentity conflicts with the legacy model companion',
+      );
+    }
+    const model = identity || legacy;
+    if (isForeignModel(provider, model)) {
+      console.log(
+        `[spawnModel] dropping model '${model}' from a ${provider} spawn — it belongs to ` +
+          `another harness; using ${provider}'s own default instead`,
+      );
+      return undefined;
+    }
+    return { selection: { model, contextWindow }, legacyModel: legacy || model };
+  }
+
+  let selection: ModelSelection | undefined;
+  if (hasCanonical) {
+    if (!identity && !legacy) {
+      throw new ModelSelectionError(
+        'empty-model',
+        'modelIdentity or legacy model is required when contextWindow is present',
+      );
+    }
+    selection = normalizeModelSelection(identity || legacy, input.contextWindow);
+    if (identity && selection.model !== identity) {
+      throw new ModelSelectionError(
+        'conflicting-model-identity',
+        'modelIdentity must be canonical and cannot contain a legacy marker',
+      );
+    }
+    if (identity && legacy) {
+      const compatibility = normalizeModelSelection(legacy);
+      const expectedCompatibility = normalizeModelSelection(claudeArgvModel(selection));
+      if (!sameModelSelection(expectedCompatibility, compatibility)) {
+        throw new ModelSelectionError(
+          'conflicting-model-identity',
+          'canonical model selection conflicts with the legacy model companion',
+        );
+      }
+    }
+  } else if (legacy) {
+    selection = normalizeModelSelection(legacy);
+  }
+  if (!selection) return undefined;
+  if (isForeignModel(provider, selection.model)) {
     console.log(
-      `[spawnModel] dropping model '${explicit}' from a ${provider} spawn — it belongs to ` +
+      `[spawnModel] dropping model '${selection.model}' from a ${provider} spawn — it belongs to ` +
         `another harness; using ${provider}'s own default instead`,
     );
     return undefined;
   }
+  return { selection, legacyModel: claudeArgvModel(selection) };
+}
+
+export function resolveSpawnModelSelection(
+  provider: string,
+  requested: string | null | undefined,
+  modelIdentity?: string | null,
+  contextWindow?: number | null,
+): ModelSelection | undefined {
+  const explicit = resolveSpawnModelInput(provider, {
+    model: requested,
+    modelIdentity,
+    contextWindow,
+  });
+  if (explicit) return explicit.selection;
+  if (requested?.trim() || modelIdentity?.trim() || contextWindow != null) return undefined;
   if (provider !== 'claude') return undefined;
   const configured = configService.getConfig().claude;
   if (typeof configured?.defaultModel !== 'string' || !configured.defaultModel.trim()) {
@@ -69,6 +175,8 @@ export function resolveSpawnModelSelection(
 export function resolveSpawnModel(
   provider: string,
   requested: string | null | undefined,
+  modelIdentity?: string | null,
+  contextWindow?: number | null,
 ): string | undefined {
-  return resolveSpawnModelSelection(provider, requested)?.model;
+  return resolveSpawnModelSelection(provider, requested, modelIdentity, contextWindow)?.model;
 }

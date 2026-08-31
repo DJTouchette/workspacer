@@ -48,6 +48,9 @@ export interface ClaudeSpawnOptions {
   /** Claude profile (CLAUDE_CONFIG_DIR + extraArgs). */
   profileId?: string;
   model?: string;
+  /** Additive canonical pair; `model` stays the executable legacy companion. */
+  modelIdentity?: string;
+  contextWindow?: number | null;
   /** Reasoning-effort level (`--effort <level>`). Re-passed on respawn. */
   effort?: string;
   /**
@@ -203,7 +206,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
 
   let requestedModel = opts.model;
   if (opts.manager && !requestedModel) requestedModel = resolveManagerModel('claude');
-  const modelSelection = resolveSpawnModelSelection('claude', requestedModel);
+  const modelSelection = resolveSpawnModelSelection(
+    'claude',
+    requestedModel,
+    opts.modelIdentity,
+    opts.contextWindow,
+  );
   const model = modelSelection?.model;
   const serializedModel = modelSelection ? claudeArgvModel(modelSelection) : undefined;
 
@@ -358,6 +366,8 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     // would find nothing to record for exactly the sessions that have the most
     // history to mis-measure.
     model: serializedModel,
+    modelIdentity: modelSelection?.model,
+    contextWindow: modelSelection?.contextWindow,
     firstMessage: opts.firstMessage,
   });
 }
