@@ -697,17 +697,27 @@ class ClaudeSessionStore {
     if (existing && (meta.routing || meta.settings)) this.pushUpdate(existing);
   }
 
-  /** Record a model a *live* switch (`claude:setModel`) asked this session to
-   *  move to. Optimistic by necessity — the provider confirms asynchronously on
-   *  the status line — but leaving `settings.model` pinned to the spawn value
-   *  is strictly worse: it would keep claiming a 1M window after a switch down
-   *  to a 200k model (and vice-versa) until telemetry catches up. No-op for
-   *  unknown ids. */
-  noteRequestedModel(sessionId: string, model: string): void {
-    if (!sessionId || !model) return;
+  /** Record the canonical selection the OWNER accepted for a live switch.
+   *  The previous status frame describes the previous model, so invalidate its
+   *  model/window fields while preserving cost, tokens, and rate limits. */
+  noteRequestedModelSelection(
+    sessionId: string,
+    selection: import('../shared/modelContextWindows').ModelSelection,
+    legacyModel?: string,
+  ): void {
+    if (!sessionId || !selection?.model) return;
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    session.settings = { ...session.settings, model };
+    session.requestedSelection = selection;
+    session.settings = { ...session.settings, model: legacyModel ?? selection.model };
+    if (session.statusLine) {
+      session.statusLine = {
+        ...session.statusLine,
+        modelDisplay: undefined,
+        contextWindowSize: undefined,
+        contextUsedPct: undefined,
+      };
+    }
     SessionUsageAccumulator.refreshContextLimit(session);
     this.pushUpdate(session);
   }

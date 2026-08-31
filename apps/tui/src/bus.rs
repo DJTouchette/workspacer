@@ -491,12 +491,13 @@ impl Driver {
         }
     }
 
-    /// Live model/effort switch for a managed session. On the bus this is
-    /// `claude.setModel`; a capability cliff (opencode/pi, or a PTY session) comes
-    /// back as `{ ok:false, error }`, surfaced as an `Err`. REST otherwise.
+    /// Live model/effort switch. On the bus this is `claude.setModel`, qualified
+    /// for remote sessions; REST otherwise. The canonical pair is derived by the
+    /// same Rust contract as spawn while the marker stays in `model` only.
     pub async fn set_model(
         &self,
         sid: &str,
+        provider: &str,
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<()> {
@@ -504,18 +505,21 @@ impl Driver {
             Some(b) => {
                 let mut params = json!({ "sessionId": sid });
                 if let Some(m) = model {
-                    params["model"] = json!(m);
-                    // Structural switches reach managed non-Claude providers;
-                    // their ids are opaque, so the canonical identity is the
-                    // exact same spelling as the legacy companion.
-                    params["modelIdentity"] = json!(m);
+                    let mut wire = json!({});
+                    crate::claudemon::add_model_wire_fields(&mut wire, provider, m);
+                    params["model"] = wire["model"].clone();
+                    params["modelIdentity"] = wire["model_identity"].clone();
+                    if let Some(window) = wire.get("context_window") {
+                        params["contextWindow"] = window.clone();
+                    }
                 }
                 if let Some(e) = effort {
                     params["effort"] = json!(e);
                 }
-                check_ok(b.call("claude.setModel", params).await?).map(|_| ())
+                check_ok(b.call(&self.method("claude.setModel"), params).await?).map(|_| ())
             }
-            None => self.claudemon.set_model(sid, model, effort).await,
+            None if self.hub.is_some() => Err(anyhow!("remote session but no hub bus connection")),
+            None => self.claudemon.set_model(sid, provider, model, effort).await,
         }
     }
 
@@ -875,7 +879,7 @@ mod tests {
         let mut rx = recording_hub(listener, json!({ "ok": true, "model": "gpt-5" }));
 
         bus_driver(addr)
-            .set_model("s1", Some("gpt-5"), Some("high"))
+            .set_model("s1", "codex", Some("gpt-5"), Some("high"))
             .await
             .expect("set_model ok");
 
@@ -891,13 +895,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remote_claude_model_switch_is_qualified_and_pair_aware() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(
+            listener,
+            json!({
+                "ok": true,
+                "model": "opus[1m]",
+                "requestedSelection": {"model": "opus", "contextWindow": 1_000_000_u64},
+            }),
+        );
+        let mut driver = bus_driver(addr);
+        driver.hub = Some("work".into());
+
+        driver
+            .set_model("s1", "claude", Some("opus[1m]"), None)
+            .await
+            .expect("remote set_model ok");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "hub:work/claude.setModel");
+        assert_eq!(params["model"], json!("opus[1m]"));
+        assert_eq!(params["modelIdentity"], json!("opus"));
+        assert_eq!(params["contextWindow"], json!(1_000_000_u64));
+    }
+
+    #[tokio::test]
     async fn driver_set_model_surfaces_capability_error() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let _rx = recording_hub(listener, json!({ "ok": false, "error": "no model switch" }));
 
         let err = bus_driver(addr)
-            .set_model("s1", Some("x"), None)
+            .set_model("s1", "codex", Some("x"), None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no model switch"), "got {err}");

@@ -263,7 +263,12 @@ export interface ElectronAPI {
     effort?: string,
     modelIdentity?: string,
     contextWindow?: number | null,
-  ) => Promise<{ ok: boolean; error?: string }>;
+  ) => Promise<{
+    ok: boolean;
+    error?: string;
+    model?: string;
+    requestedSelection?: { model: string; contextWindow: number | null };
+  }>;
   claudeHandoffBrief: (
     sessionId: string,
   ) => Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }>;

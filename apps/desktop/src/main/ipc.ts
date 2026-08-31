@@ -42,6 +42,7 @@ import { resolveTransport } from './lib/spawnTransport';
 import { resolveSpawnProvider } from './lib/roleProviders';
 import { spawnClaudeAgent } from './services/claudeSpawn';
 import { applyLiveEffort } from './services/liveEffort';
+import { acceptLiveModelResult, applyLiveModel } from './services/liveModel';
 import { logsDir } from './services/logFile';
 import { installWorkspacerCli } from './services/cliInstall';
 import { ensureSupervisorHome } from './lib/workspacerHome';
@@ -477,7 +478,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const remoteHubOf = (sessionId: string): string | undefined =>
     claudeSessionStore.getSnapshot(sessionId)?.hub || undefined;
   // Things that CANNOT work remotely v1 (terminal attach/resize, respawn,
-  // model/effort/permission-mode switches, handoff, close/gate) refuse loudly
+  // effort/permission-mode switches, handoff, close/gate) refuse loudly
   // instead of acting on a wrong local session.
   const assertLocalSession = (sessionId: string, what: string): void => {
     const hub = remoteHubOf(sessionId);
@@ -1004,11 +1005,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     assertLocalSession(sessionId, 'Effort switch');
     return applyLiveEffort(sessionId, effort);
   });
-  // Live model switch for managed providers (no restart). Confirmation flows
-  // back through the status line (codex broadcasts thread/settings/updated),
-  // but the *requested* model is noted in the store right away: it is the only
-  // carrier of the `[1m]` marker, so without it a switch to `opus[1m]` would
-  // keep drawing the context bar against a 200k window.
+  // Live model switch (no restart). The local daemon or qualified remote owner
+  // returns the canonical pair it accepted; only that result updates the mirror.
   ipcMain.handle(
     IPC.CLAUDE_SET_MODEL,
     async (
@@ -1019,17 +1017,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       modelIdentity?: string,
       contextWindow?: number | null,
     ) => {
-      assertLocalSession(sessionId, 'Model switch');
-      const res = await claudemonSessionClient.setModel(
-        sessionId,
-        model,
-        effort,
-        modelIdentity,
-        contextWindow,
-      );
-      const settledModel = res.model ?? model;
-      if (res.ok && settledModel) claudeSessionStore.noteRequestedModel(sessionId, settledModel);
-      return res;
+      const input = { model, effort, modelIdentity, contextWindow };
+      const hub = remoteHubOf(sessionId);
+      if (hub) {
+        const result = (await callHub(`hub:${hub}/claude.setModel`, {
+          sessionId,
+          ...input,
+        })) as import('./services/liveModel').LiveModelSwitchResult;
+        return acceptLiveModelResult(sessionId, input, result);
+      }
+      return applyLiveModel(sessionId, input);
     },
   );
   // Cross-provider handoff: daemon distills the session's conversation into a

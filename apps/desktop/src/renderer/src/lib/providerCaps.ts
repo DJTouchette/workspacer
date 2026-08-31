@@ -5,7 +5,7 @@
  * the composer and the spawn dialog can't drift.
  *
  * Switch semantics:
- *  - 'live'    — applied to the running session (claude: `/model` is submitted
+ *  - 'live'    — applied to the running session (claude: claudemon submits `/model`
  *                through the normal message path, indistinguishable from typing
  *                it).
  *  - 'restart' — the session is respawned with the new setting. Claude resumes

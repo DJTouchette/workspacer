@@ -399,6 +399,9 @@ pub enum MessageOutcome {
     NoWrapper,
     /// The wrapper's channel is closed (process gone).
     WrapperGone,
+    /// The bounded PTY queue is full. Control operations use this outcome
+    /// instead of evicting an already-accepted chat message.
+    QueueFull,
 }
 
 impl SessionStore {
@@ -1304,6 +1307,38 @@ impl SessionStore {
         }
     }
 
+    /// Commit an accepted live model switch to observable session state.
+    ///
+    /// Provider status is authoritative once it reports the *new* selection,
+    /// but the last status frame belongs to the old selection. Clear only the
+    /// model/window fields at this ownership hand-off so stale telemetry cannot
+    /// undo the accepted canonical pair while cost and rate-limit readings stay
+    /// available. No-op for unknown ids.
+    pub fn accept_requested_model_selection(
+        &self,
+        session_id: &str,
+        persisted: &super::windows::PersistedModelSelection,
+    ) {
+        let state = self.states.get_mut(session_id).map(|mut entry| {
+            entry.requested_model = Some(persisted.legacy_model.clone());
+            entry.requested_selection = Some(persisted.selection.clone());
+            if let Some(status) = entry.status_line.as_mut() {
+                status.model_display = None;
+                status.context_window_size = None;
+                status.context_used_pct = None;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        });
+        if let Some(state) = state {
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "ModelSwitch".to_string(),
+                state,
+            });
+        }
+    }
+
     /// Record the Claude config root this session was SPAWNED with — the
     /// spawn env's `CLAUDE_CONFIG_DIR`, or the daemon's own default when the
     /// spawn set none. Stored normalized (`""` = the default account).
@@ -2175,6 +2210,40 @@ impl SessionStore {
         }
     }
 
+    /// Accept a Claude PTY compatibility command without routing it through a
+    /// managed provider and without silently displacing an earlier message.
+    /// The caller may persist its structural meaning only after this returns
+    /// `Sent` or `Queued`.
+    pub fn submit_pty_control_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        let Some(state) = self.states.get(session_id).map(|state| state.clone()) else {
+            return MessageOutcome::NoSession;
+        };
+        if state.transport != Transport::Pty || self.is_managed(session_id) {
+            return MessageOutcome::Rejected(state.mode);
+        }
+        if state.mode == SessionMode::Stopped {
+            return MessageOutcome::Rejected(SessionMode::Stopped);
+        }
+        let Some(handle) = self.wrapper(session_id) else {
+            return MessageOutcome::NoWrapper;
+        };
+        if handle.tx.is_closed() {
+            return MessageOutcome::WrapperGone;
+        }
+        if !self.try_enqueue_message(session_id, text) {
+            return MessageOutcome::QueueFull;
+        }
+        if state.mode == SessionMode::Input {
+            self.schedule_pending_flush(session_id);
+            MessageOutcome::Sent
+        } else {
+            if self.states.get(session_id).map(|state| state.mode) == Some(SessionMode::Input) {
+                self.schedule_pending_flush(session_id);
+            }
+            MessageOutcome::Queued
+        }
+    }
+
     /// Queue a spawn's FIRST MESSAGE — the dispatch prompt that rode the spawn
     /// payload (`first_message`) instead of a separate `POST /message` after
     /// the id came back.
@@ -2224,6 +2293,18 @@ impl SessionStore {
             );
         }
         q.push(text);
+    }
+
+    fn try_enqueue_message(&self, session_id: &str, text: String) -> bool {
+        let mut q = self
+            .pending_messages
+            .entry(session_id.to_string())
+            .or_default();
+        if q.len() >= MAX_PENDING_MESSAGES {
+            return false;
+        }
+        q.push(text);
+        true
     }
 
     /// Bump the session's flush generation, invalidating any in-flight

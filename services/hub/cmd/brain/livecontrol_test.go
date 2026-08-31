@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -207,6 +209,35 @@ func TestSetModelForwardsCanonicalPairAndMarkerCompanion(t *testing.T) {
 	if out.RequestedSelection == nil || out.RequestedSelection.Model != "opus" ||
 		out.RequestedSelection.ContextWindow == nil || *out.RequestedSelection.ContextWindow != 1_000_000 {
 		t.Fatalf("canonical result missing: %+v", out)
+	}
+}
+
+func TestSetModelForwardsDaemonAcceptedOwnerSelection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions/s1/model" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"model":"fable","requested_selection":{"model":"fable","context_window":1000000}}`))
+	}))
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	reg.store = newSessionStore()
+	reg.store.set("s1", json.RawMessage(`{"session_id":"s1","provider":"claude"}`))
+
+	res, err := reg.handle(context.Background(), "claude.setModel",
+		json.RawMessage(`{"sessionId":"s1","model":"opus[1m]","modelIdentity":"opus","contextWindow":1000000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out liveControlResult
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Model != "fable" || out.RequestedSelection == nil ||
+		out.RequestedSelection.Model != "fable" || out.RequestedSelection.ContextWindow == nil ||
+		*out.RequestedSelection.ContextWindow != 1_000_000 {
+		t.Fatalf("brain guessed instead of forwarding owner truth: %+v", out)
 	}
 }
 

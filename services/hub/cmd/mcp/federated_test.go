@@ -143,7 +143,7 @@ func TestFleetToolsMergeAcrossHubs(t *testing.T) {
 	peerURL := strings.Replace(peerSrv.URL, "http", "ws", 1) + "/bus"
 	peerEcho := echoAnswer("peer")
 	machineProvider(t, ctx, peerURL,
-		[]string{"agents.list", "sessions.snapshots", "sessions.snapshot", "sessions.transcript", "agents.spawn", "agents.sendMessage"},
+		[]string{"agents.list", "sessions.snapshots", "sessions.snapshot", "sessions.transcript", "agents.spawn", "agents.sendMessage", "claude.setModel"},
 		func(method string, params json.RawMessage) any {
 			switch method {
 			case "agents.list":
@@ -226,12 +226,30 @@ func TestFleetToolsMergeAcrossHubs(t *testing.T) {
 		t.Errorf("spawn hub param leaked into the forwarded params: %s", text)
 	}
 
+	// Pair-aware live model switching follows the same qualified route and the
+	// routing-only hub field never reaches the owner capability.
+	res = callTool(t, ctx, cs, "set_model", map[string]any{
+		"sessionId":     "remote-1",
+		"hub":           "work",
+		"model":         "opus[1m]",
+		"modelIdentity": "opus",
+		"contextWindow": 1_000_000,
+	})
+	text = textOf(res)
+	if res.IsError || !strings.Contains(text, `"machine":"peer"`) || !strings.Contains(text, `"method":"claude.setModel"`) {
+		t.Fatalf("set_model with hub did not reach the peer owner: %s", text)
+	}
+	if strings.Contains(text, `"hub"`) || !strings.Contains(text, `"modelIdentity":"opus"`) ||
+		!strings.Contains(text, `"contextWindow":1000000`) {
+		t.Errorf("set_model pair/routing params drifted: %s", text)
+	}
+
 	// ── the hub input rides the schema (embedded hubArg flattens) ──────────
 	tools, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	for _, want := range []string{"get_snapshot", "spawn_agent", "send_message"} {
+	for _, want := range []string{"get_snapshot", "spawn_agent", "send_message", "set_model"} {
 		found := false
 		for _, tl := range tools.Tools {
 			if tl.Name != want {

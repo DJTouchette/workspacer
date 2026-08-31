@@ -298,7 +298,7 @@ pub struct PickerItem {
 #[derive(Debug, Clone)]
 pub enum PickerKind {
     /// Live model switch for `session_id`. `provider` decides how it applies:
-    /// a managed provider POSTs `/model`; `claude` sends a `/model` slash command
+    /// all providers POST the structural `/model` endpoint; claudemon sends any Claude PTY command
     /// on the message path (its PTY 409s the endpoint). `effort` rides along for
     /// providers that map it (codex).
     Model {

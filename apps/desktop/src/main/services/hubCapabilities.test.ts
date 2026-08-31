@@ -84,7 +84,7 @@ vi.mock('./claudemonSessionClient', () => ({ claudemonSessionClient: clientMock 
 const notePermissionMode = vi.fn();
 const getAllSnapshots = vi.fn(() => [] as unknown[]);
 const getSnapshot = vi.fn(() => null as unknown);
-const noteRequestedModel = vi.fn();
+const noteRequestedModelSelection = vi.fn();
 const clearPendingQuestions = vi.fn();
 const reparentChildren = vi.fn(() => ({ moved: [] as string[], pending: [] as string[] }));
 const orphanCandidates = vi.fn(() => [] as unknown[]);
@@ -97,7 +97,7 @@ vi.mock('./claudeSessionStore', async (importOriginal) => {
       notePermissionMode: (...a: unknown[]) => notePermissionMode(...a),
       getAllSnapshots: (...a: unknown[]) => getAllSnapshots(...a),
       getSnapshot: (...a: unknown[]) => getSnapshot(...a),
-      noteRequestedModel: (...a: unknown[]) => noteRequestedModel(...a),
+      noteRequestedModelSelection: (...a: unknown[]) => noteRequestedModelSelection(...a),
       clearPendingQuestions: (...a: unknown[]) => clearPendingQuestions(...a),
       reparentChildren: (...a: unknown[]) => reparentChildren(...a),
       orphanCandidates: (...a: unknown[]) => orphanCandidates(...a),
@@ -1635,7 +1635,7 @@ describe('claude control pass-throughs', () => {
 
   it('claude.setModel forwards model + effort to claudemon', async () => {
     await call('claude.setModel', { sessionId: 's1', model: 'gpt', effort: 'high' });
-    expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high', undefined, undefined);
+    expect(clientMock.setModel).toHaveBeenCalledWith('s1', 'gpt', 'high', 'gpt', null);
   });
 
   it('claude.setModel forwards the canonical pair beside its legacy companion', async () => {
@@ -1933,11 +1933,11 @@ describe('error propagation', () => {
     );
   });
 
-  it('propagates a rejection from claudemon.setModel', async () => {
+  it('returns a transport rejection from claudemon.setModel without mutating state', async () => {
     clientMock.setModel.mockRejectedValueOnce(new Error('daemon down'));
-    await expect(
-      async () => await call('claude.setModel', { sessionId: 's1', model: 'x' }),
-    ).rejects.toThrow('daemon down');
+    const result = await call('claude.setModel', { sessionId: 's1', model: 'x' });
+    expect(result).toEqual({ ok: false, error: 'daemon down' });
+    expect(noteRequestedModelSelection).not.toHaveBeenCalled();
   });
 });
 

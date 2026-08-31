@@ -48,6 +48,7 @@ type liveControlResult struct {
 	Mode               string                    `json:"mode,omitempty"`
 	Effort             string                    `json:"effort,omitempty"`
 	Error              string                    `json:"error,omitempty"`
+	Model              string                    `json:"model,omitempty"`
 	RequestedSelection *modelselection.Selection `json:"requestedSelection,omitempty"`
 }
 
@@ -90,10 +91,8 @@ func (r *registry) setPermissionMode(ctx context.Context, raw json.RawMessage) (
 	return jsonResult(liveControlResult{OK: true, Mode: mode})
 }
 
-// setModel live-switches a managed session's model and/or reasoning effort.
-// Claude PTY sessions do not use this endpoint (they switch via the `/model`
-// slash command on the message path). Managed Claude stream and other capable
-// managed providers use the daemon's structural switch endpoint.
+// setModel live-switches a session's model and/or reasoning effort. Claudemon
+// owns both managed provider controls and the Claude PTY compatibility command.
 func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		SessionID     string  `json:"sessionId"`
@@ -125,18 +124,24 @@ func (r *registry) setModel(ctx context.Context, raw json.RawMessage) (json.RawM
 		identity = resolved.Selection.Model
 		window = resolved.Selection.ContextWindow
 	}
-	if err := r.cm.setModel(ctx, p.SessionID, model, p.Effort, identity, window); err != nil {
+	accepted, err := r.cm.setModel(ctx, p.SessionID, model, p.Effort, identity, window)
+	if err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})
 	}
-	// Noted eagerly so the context-window figure follows an `opus[1m]` switch
-	// immediately — the provider confirms on its own status line, which
-	// supersedes this.
-	r.noteLiveControl(p.SessionID, "", model, p.Effort)
-	var selection *modelselection.Selection
-	if resolved != nil {
+	// A current daemon returns owner truth. Fall back to the locally normalized
+	// request only for a mixed-version daemon that predates the additive result.
+	selection := accepted.RequestedSelection
+	if selection == nil && resolved != nil {
 		selection = &resolved.Selection
 	}
-	return jsonResult(liveControlResult{OK: true, RequestedSelection: selection})
+	acceptedModel := accepted.Model
+	if acceptedModel == "" {
+		acceptedModel = model
+	}
+	r.noteLiveControl(p.SessionID, "", acceptedModel, p.Effort)
+	return jsonResult(liveControlResult{
+		OK: true, Model: acceptedModel, RequestedSelection: selection,
+	})
 }
 
 // setEffort live-switches reasoning effort. TWIN: services/liveEffort.ts, and
@@ -176,7 +181,7 @@ func (r *registry) setEffort(ctx context.Context, raw json.RawMessage) (json.Raw
 		r.noteLiveControl(p.SessionID, "", "", level)
 		return jsonResult(liveControlResult{OK: true, Effort: level})
 	}
-	if err := r.cm.setModel(ctx, p.SessionID, "", level, "", nil); err != nil {
+	if _, err := r.cm.setModel(ctx, p.SessionID, "", level, "", nil); err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})
 	}
 	// codex confirms with its own thread/settings/updated on the status line,

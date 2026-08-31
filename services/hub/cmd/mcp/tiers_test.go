@@ -58,7 +58,7 @@ func TestTierToolFiltering(t *testing.T) {
 			t.Errorf("view tier missing %q", want)
 		}
 	}
-	for _, banned := range []string{"spawn_agent", "send_message", "approve", "write_file", "read_file", "save_config", "create_terminal", "terminal_input", "signal", "notify", "list_jobs", "propose_job", "run_job", "remove_job", "job_history",
+	for _, banned := range []string{"spawn_agent", "send_message", "approve", "set_model", "write_file", "read_file", "save_config", "create_terminal", "terminal_input", "signal", "notify", "list_jobs", "propose_job", "run_job", "remove_job", "job_history",
 		// The Fleet Manager tools. A view SCOUT is dispatched read-only and
 		// must not be able to append to the user's briefs, dismiss sessions,
 		// redispatch workers, arm wakes at other sessions, or move another
@@ -76,7 +76,7 @@ func TestTierToolFiltering(t *testing.T) {
 			t.Errorf("triage tier missing %q", want)
 		}
 	}
-	for _, banned := range []string{"spawn_agent", "create_terminal", "write_file", "read_file", "save_config", "terminal_input", "answer", "list_jobs", "propose_job", "run_job", "remove_job", "job_history",
+	for _, banned := range []string{"spawn_agent", "create_terminal", "write_file", "read_file", "save_config", "terminal_input", "answer", "set_model", "list_jobs", "propose_job", "run_job", "remove_job", "job_history",
 		// Same for triage: it may act on ATTENTION (approve, reply, interrupt)
 		// and nothing else. respawn_with in particular composes agents.spawn,
 		// so admitting it here would hand triage the spawn it is defined not to
@@ -89,7 +89,7 @@ func TestTierToolFiltering(t *testing.T) {
 	}
 
 	// Operator: everything, help included.
-	for _, want := range []string{"spawn_agent", "write_file", "save_config", "terminal_input", "answer", "help",
+	for _, want := range []string{"spawn_agent", "write_file", "save_config", "terminal_input", "answer", "set_model", "help",
 		"list_jobs", "job_history", "propose_job", "run_job", "remove_job",
 		"brief_append", "brief_archive", "brief_check", "close_session", "respawn_with", "notify_when", "project_status",
 		"adopt_workers", "list_orphans"} {

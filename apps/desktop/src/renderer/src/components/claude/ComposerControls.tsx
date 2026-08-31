@@ -4,8 +4,8 @@
  * mode, and in the pane's bottom status bar in terminal mode. What each pill
  * can do comes from lib/providerCaps.ts:
  *
- *  - Model:  claude switches live (`/model <id>` submitted through the normal
- *    message path); codex switches live too (claudemon applies
+ *  - Model: claude switches live through claudemon's structural endpoint
+ *    (which owns PTY `/model` compatibility); codex switches live too (claudemon applies
  *    `thread/settings/update` to the running thread — falls back to the
  *    restart confirm when the daemon says it can't, e.g. rollout fallback);
  *    opencode/pi restart with the new model.
@@ -371,9 +371,8 @@ export const ComposerControls: React.FC<{
       void loadModels();
   };
 
-  // Live model switch. Claude: the `/model` slash command through the normal
-  // message path. Managed (codex): claudemon's `/sessions/:id/model`, which
-  // applies `thread/settings/update` to the running thread. Either way the
+  // Live model switch. Claudemon's structural endpoint owns both the Claude
+  // PTY compatibility command and managed provider controls. In either case the
   // pill shows "switching…" until telemetry reports the new model. When the
   // daemon says it can't be done live (rollout fallback, opencode/pi), reopen
   // the menu as the restart confirm with its reason — same flow as the
@@ -390,64 +389,28 @@ export const ComposerControls: React.FC<{
       setSwitching(id);
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
       switchTimerRef.current = setTimeout(() => setSwitching(null), 15_000);
-      // PTY Claude only: `/model` is a TUI slash command, typed through the
-      // normal message path. A stream-transport (headless) Claude session has
-      // no TUI to interpret it — the text would land as a literal prompt — so
-      // it takes the structural endpoint below like the managed providers.
       // A successful live switch must also land on the agent RECORD:
       // agent.model feeds later restarts and saved layouts (App listens).
-      const recordSwitch = () =>
+      const recordSwitch = (accepted: {
+        model?: string;
+        requestedSelection?: { model: string; contextWindow: number | null };
+      }) => {
+        const ownerSelection = accepted.requestedSelection ??
+          selection ?? {
+            model: id,
+            contextWindow: null,
+          };
         window.dispatchEvent(
           new CustomEvent('agent:model-switched', {
             detail: {
               sessionId,
-              model: id,
-              modelIdentity: selection?.model ?? id,
-              contextWindow: selection?.contextWindow,
+              model: accepted.model ?? id,
+              modelIdentity: ownerSelection.model,
+              contextWindow: ownerSelection.contextWindow,
             },
           }),
         );
-      if (caps.modelSource === 'claude' && transport !== 'stream') {
-        window.electronAPI
-          .claudeMessage(sessionId, `/model ${id}`)
-          .then((res) => {
-            // claudeMessage resolves {ok:false, mode} on a 409 (session ended /
-            // not taking input). Ignoring it left the pill spinning for the
-            // full 15s and silently reverting — fall back to the restart
-            // confirm like the structural path below (same as liveEffort.ts).
-            if (!res?.ok) {
-              setSwitching(null);
-              setMenu({
-                kind: 'model',
-                x: at.x,
-                y: at.y,
-                confirm: {
-                  overrides: { model: id },
-                  label,
-                  reason: res?.mode
-                    ? `this session can't take input right now (${res.mode})`
-                    : undefined,
-                },
-              });
-              return;
-            }
-            recordSwitch();
-          })
-          .catch((err) => {
-            setSwitching(null);
-            setMenu({
-              kind: 'model',
-              x: at.x,
-              y: at.y,
-              confirm: {
-                overrides: { model: id },
-                label,
-                reason: noteSwitchFailure('model', err),
-              },
-            });
-          });
-        return;
-      }
+      };
       window.electronAPI
         .claudeSetModel(sessionId, id, undefined, selection?.model ?? id, selection?.contextWindow)
         .then((res) => {
@@ -461,7 +424,7 @@ export const ComposerControls: React.FC<{
             });
             return;
           }
-          recordSwitch();
+          recordSwitch(res);
         })
         .catch((err) => {
           setSwitching(null);

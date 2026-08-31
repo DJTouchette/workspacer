@@ -844,7 +844,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         effort,
       }),
     claudeSetModel: (sessionId, model, effort, modelIdentity, contextWindow) =>
-      client.call<{ ok: boolean; error?: string }>('claude.setModel', {
+      client.call<{
+        ok: boolean;
+        error?: string;
+        model?: string;
+        requestedSelection?: { model: string; contextWindow: number | null };
+      }>(qualify(sessionId, 'claude.setModel'), {
         sessionId,
         model,
         effort,

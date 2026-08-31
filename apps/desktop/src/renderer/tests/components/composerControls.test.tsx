@@ -9,7 +9,7 @@ import type { AgentProvider } from '../../src/types/pane';
  * ComposerControls renders the model / effort / permission pills and owns the
  * live-switch vs restart decision per provider (see lib/providerCaps.ts). The
  * pills must reflect the session's reported state, and the live-switch paths
- * must call the exact daemon endpoints — claudeMessage("/model …") for claude,
+ * must call the exact owner endpoints — claudeSetModel for every model switch,
  * claudeSetPermissionMode for the permission mode.
  */
 
@@ -256,15 +256,14 @@ describe('ComposerControls — a refused escalation is shown, not logged', () =>
 });
 
 describe('ComposerControls — claude live switches', () => {
-  it('switching a claude model sends "/model <id>" through the message path', async () => {
+  it('switching a PTY claude model uses the structural owner endpoint', async () => {
     renderControls({ provider: 'claude', snapshot: snapshot({ settings: { model: 'sonnet' } }) });
     // Open the model menu (the pill shows the current model label).
     fireEvent.click(screen.getByText('sonnet'));
     const opus = await screen.findByText('Opus');
     fireEvent.click(opus);
-    expect(api.claudeMessage).toHaveBeenCalledWith('sess-1', '/model opus');
-    // claude never routes a model change through the managed endpoint.
-    expect(api.claudeSetModel).not.toHaveBeenCalled();
+    expect(api.claudeSetModel).toHaveBeenCalledWith('sess-1', 'opus', undefined, 'opus', 200_000);
+    expect(api.claudeMessage).not.toHaveBeenCalled();
   });
 
   it('switching managed Claude sends the pair plus its marker-bearing companion', async () => {
@@ -709,10 +708,8 @@ describe('ComposerControls — a rejected live switch fails loudly', () => {
     expect(onRestartWith).toHaveBeenCalledWith(expect.objectContaining({ model: 'o3' }));
   });
 
-  it('model (claude slash-command path): a rejected send is not swallowed either', async () => {
-    api.claudeMessage = vi
-      .fn()
-      .mockRejectedValue(new Error('hub call timeout: agents.sendMessage'));
+  it('model (claude PTY structural path): an owner rejection is not swallowed either', async () => {
+    api.claudeSetModel = vi.fn().mockRejectedValue(new Error('hub call timeout: claude.setModel'));
     const { onRestartWith } = renderControls({
       provider: 'claude',
       snapshot: snapshot({ settings: { model: 'sonnet' } }),

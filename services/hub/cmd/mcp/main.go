@@ -639,6 +639,9 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addHubTool[answerIn](b, "answer",
 		"Answer an agent's AskUserQuestion picker by option number, free text, or a list of answers.",
 		"claude.answer")
+	addHubTool[setModelIn](b, "set_model",
+		"Switch a running agent's model without restarting it. Pass the model compatibility spelling; optionally also pass the canonical modelIdentity and contextWindow pair from list_agents. The result is the canonical pair the owning daemon accepted.",
+		"claude.setModel")
 	addHubTool[signalIn](b, "signal",
 		"Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
 		"claude.signal")
@@ -1670,6 +1673,15 @@ type answerIn struct {
 	Option    *int     `json:"option,omitempty" jsonschema:"the numeric option to pick"`
 	Text      *string  `json:"text,omitempty" jsonschema:"a free-text answer"`
 	Answers   []string `json:"answers,omitempty" jsonschema:"a list of answers for a multi-part question"`
+}
+
+type setModelIn struct {
+	hubArg
+	SessionID     string  `json:"sessionId" jsonschema:"the target session id"`
+	Model         string  `json:"model,omitempty" jsonschema:"legacy-compatible model spelling, e.g. opus[1m]; retained for mixed-version peers"`
+	ModelIdentity string  `json:"modelIdentity,omitempty" jsonschema:"canonical provider model identity without a context marker"`
+	ContextWindow *uint64 `json:"contextWindow,omitempty" jsonschema:"canonical selected context window in tokens; pair with modelIdentity"`
+	Effort        string  `json:"effort,omitempty" jsonschema:"optional reasoning-effort level to apply with the model"`
 }
 
 type signalIn struct {

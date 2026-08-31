@@ -638,7 +638,11 @@ async fn opening_a_remote_agent_is_transcript_only_and_gates_local_ops() {
     app.open_runs();
     assert!(app.runs_open.is_none());
     app.open_model_picker();
-    assert!(app.picker.is_none());
+    assert!(
+        app.picker.is_some(),
+        "remote model switches are hub-qualified"
+    );
+    app.picker = None;
     app.open_rename();
     assert!(app.rename.is_none());
     app.respawn();

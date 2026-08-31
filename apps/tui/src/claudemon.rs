@@ -165,21 +165,18 @@ impl Claudemon {
 
     // ── provider parity (model / permission-mode / handoff / managed spawn) ──
 
-    /// Live model/effort switch for a *managed* session (`POST /sessions/:id/model`).
-    /// PTY (claude) sessions 409 here — they switch via the `/model` slash command
-    /// on the message path, so callers route those to `message` instead. Surfaces
-    /// the daemon's `{ ok:false, error }` (409 for opencode/pi capability cliffs)
-    /// as an `Err` with the message.
+    /// Live model/effort switch (`POST /sessions/:id/model`). Claudemon owns the
+    /// Claude PTY compatibility command as well as managed provider controls.
     pub async fn set_model(
         &self,
         session_id: &str,
+        provider: &str,
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<()> {
         let mut body = json!({});
         if let Some(m) = model {
-            body["model"] = json!(m);
-            body["model_identity"] = json!(m);
+            add_model_wire_fields(&mut body, provider, m);
         }
         if let Some(e) = effort {
             body["effort"] = json!(e);
@@ -1368,7 +1365,7 @@ mod tests {
     async fn set_model_posts_body_and_succeeds() {
         let (base, srv) = mock_server(200, "OK", r#"{"ok":true,"model":"gpt-5"}"#).await;
         Claudemon::new(base)
-            .set_model("s1", Some("gpt-5"), Some("high"))
+            .set_model("s1", "codex", Some("gpt-5"), Some("high"))
             .await
             .expect("ok");
         let (method, path, body) = srv.await.unwrap();
@@ -1377,6 +1374,25 @@ mod tests {
         assert_eq!(body["model"], json!("gpt-5"));
         assert_eq!(body["model_identity"], json!("gpt-5"));
         assert_eq!(body["effort"], json!("high"));
+    }
+
+    #[tokio::test]
+    async fn set_model_normalizes_a_claude_marker_to_the_canonical_pair() {
+        let (base, srv) = mock_server(
+            200,
+            "OK",
+            r#"{"ok":true,"model":"opus[1m]","requested_selection":{"model":"opus","context_window":1000000}}"#,
+        )
+        .await;
+        Claudemon::new(base)
+            .set_model("s1", "claude", Some("opus[1m]"), None)
+            .await
+            .expect("ok");
+        let (_, path, body) = srv.await.unwrap();
+        assert_eq!(path, "/sessions/s1/model");
+        assert_eq!(body["model"], json!("opus[1m]"));
+        assert_eq!(body["model_identity"], json!("opus"));
+        assert_eq!(body["context_window"], json!(1_000_000_u64));
     }
 
     /// The stream spawn decomposes a profile into typed payload fields rather
@@ -1455,7 +1471,7 @@ mod tests {
         )
         .await;
         let err = Claudemon::new(base)
-            .set_model("s1", Some("x"), None)
+            .set_model("s1", "opencode", Some("x"), None)
             .await
             .unwrap_err();
         assert!(

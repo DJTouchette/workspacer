@@ -4041,7 +4041,11 @@
     if (contextWindow != null) params.contextWindow = contextWindow;
     if (effort) params.effort = effort;
     call(qualify(id, 'claude.setModel'), params)
-      .then((r) => toast(r && r.ok === false ? (r.error || 'Could not switch') : (model ? 'Model: ' + shortModel(model) : 'Effort: ' + effort)))
+      .then((r) => {
+        if (r && r.ok === false) { toast(r.error || 'Could not switch'); return; }
+        const acceptedModel = (r && (r.model || (r.requestedSelection && r.requestedSelection.model))) || model;
+        toast(acceptedModel ? 'Model: ' + shortModel(acceptedModel) : 'Effort: ' + effort);
+      })
       .catch((e) => toast('Failed: ' + noteSwitchFailure(e)));
   }
 

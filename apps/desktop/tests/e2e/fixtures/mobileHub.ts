@@ -267,7 +267,13 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
       case 'claude.setPermissionMode':
         return reply(f.id, { ok: true, mode: params.mode });
       case 'claude.setModel':
-        return reply(f.id, { ok: true });
+        return reply(f.id, {
+          ok: true,
+          model: params.model,
+          requestedSelection: params.modelIdentity
+            ? { model: params.modelIdentity, contextWindow: params.contextWindow ?? null }
+            : undefined,
+        });
       default:
         return reply(f.id, { ok: true });
     }

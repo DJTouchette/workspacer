@@ -556,12 +556,9 @@ class ClaudemonSessionClient {
   }
 
   /**
-   * Live-switch a managed session's model (and/or reasoning effort) without a
-   * restart — codex applies it to the running thread (`thread/settings/update`).
-   * `ok: false` means the provider can't do it live (opencode/pi, codex rollout
-   * fallback) and the caller should offer the restart path. Claude PTY sessions
-   * still switch via the `/model` slash command on the message path; managed
-   * Claude stream sessions use this structural endpoint.
+   * Live-switch a session's model (and/or reasoning effort) without a restart.
+   * The daemon owns both managed structural switching and Claude PTY command
+   * compatibility, and returns the canonical pair it accepted.
    */
   async setModel(
     sessionId: string,

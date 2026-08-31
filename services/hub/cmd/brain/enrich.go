@@ -544,7 +544,7 @@ func (s *metaStore) reparentChildren(fromID, toID string, isLive func(string) bo
 
 // noteLiveControl records a live switch this brain confirmed with the daemon —
 // the brain's counterpart of claudeSessionStore's notePermissionMode /
-// noteRequestedModel / noteEffort.
+// noteRequestedModelSelection / noteEffort.
 //
 // WHY IT IS NEEDED AND WHY IT LIVES HERE. There is no hook, status line or init
 // frame for the switch itself, so between the daemon's confirmation and the

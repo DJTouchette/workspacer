@@ -18,6 +18,7 @@ import { DRIFT_TOLERANCE } from '../shared/modelContextWindows';
 import { buildSenderHeader } from '../shared/fleetMessages';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { applyLiveEffort } from './liveEffort';
+import { applyLiveModel } from './liveModel';
 import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
@@ -356,9 +357,9 @@ export function registerHubCapabilities(): void {
   //     cannot call claudeSessionStore.notePermissionMode, so THIS process's
   //     `livePermissionMode` is not updated eagerly. The mode pill follows the
   //     daemon's own telemetry instead of flipping on the confirmed reply.
-  //   ADOPTED-DEGRADED: claude.setModel — same shape: the requested model is
-  //     not noted eagerly (noteRequestedModel), so the context-window figure
-  //     does not follow an `opus[1m]` switch until the status line confirms it.
+  //   claude.setModel is NOT degraded: claudemon publishes the accepted
+  //     canonical pair in its session update, and the brain forwards the same
+  //     pair in the call result while it waits for that owner snapshot.
   //   ADOPTED-DEGRADED: claude.setEffort — same again for noteEffort, and this
   //     one is the most visible: for a CLAUDE session that note is the pill's
   //     ONLY truth (effective effort appears in no hook, status line or init
@@ -1288,10 +1289,8 @@ export function registerHubCapabilities(): void {
     return applyLiveEffort(sessionId, effort);
   });
 
-  // Control: live model/effort switch for managed providers (no restart).
-  // Remote counterpart of the `claude:setModel` IPC handler; the provider
-  // confirms the switch on the status line, but the requested model is noted
-  // eagerly so the context window follows an `opus[1m]` switch immediately.
+  // Control: live model/effort switch (no restart). The daemon returns the
+  // accepted owner pair; the shared body records it only after acceptance.
   registerCapability('claude.setModel', async (params: unknown) => {
     const { sessionId, model, effort, modelIdentity, contextWindow } = (params ?? {}) as {
       sessionId?: string;
@@ -1303,16 +1302,7 @@ export function registerHubCapabilities(): void {
     if (!sessionId || (!model && !modelIdentity && !effort)) {
       throw new Error('claude.setModel requires { sessionId, model and/or effort }');
     }
-    const res = await claudemonSessionClient.setModel(
-      sessionId,
-      model,
-      effort,
-      modelIdentity,
-      contextWindow,
-    );
-    const settledModel = res.model ?? model;
-    if (res.ok && settledModel) claudeSessionStore.noteRequestedModel(sessionId, settledModel);
-    return res;
+    return applyLiveModel(sessionId, { model, effort, modelIdentity, contextWindow });
   });
 
   // Control: build a cross-provider handoff brief (persisted under

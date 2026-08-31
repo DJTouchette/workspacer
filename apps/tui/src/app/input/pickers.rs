@@ -6,19 +6,13 @@ use super::*;
 impl App {
     /// Open the live model-switch picker for the target session. Managed
     /// sessions (codex/opencode/pi this TUI spawned) fetch their launchable
-    /// models from the daemon; claude/unknown sessions get a free-text field
-    /// (their model switches via a `/model` slash command on the message path).
+    /// models from the daemon; Claude and remote sessions allow free text.
     pub(in crate::app) fn open_model_picker(&mut self) {
         let Some(sid) = self.target_session() else {
             self.set_toast("no agent selected");
             return;
         };
-        // `claude.setModel` / provider model lists aren't routed across
-        // federation — hidden rather than failing on apply.
-        if self.is_remote_session(&sid) {
-            self.set_toast("remote session — switch its model on its own machine");
-            return;
-        }
+        let remote = self.is_remote_session(&sid);
         let provider = self.provider_for(&sid);
         let managed = provider != "claude";
         let cwd = self
@@ -36,10 +30,10 @@ impl App {
             items: Vec::new(),
             matched: Vec::new(),
             selected: 0,
-            pending: managed,
+            pending: managed && !remote,
             allow_free_text: true,
         });
-        if managed {
+        if managed && !remote {
             let cm = self.claudemon.clone();
             let tx = self.tx.clone();
             tokio::spawn(async move {
@@ -167,9 +161,8 @@ impl App {
         }
     }
 
-    /// Push a model switch: managed providers hit `POST /model`; claude/unknown
-    /// sessions send a `/model <id>` slash command on the message path (their PTY
-    /// 409s the endpoint).
+    /// Push every model switch through the structural owner endpoint. Claudemon
+    /// alone translates an accepted Claude PTY selection to `/model <marker>`.
     pub(in crate::app) fn apply_model_switch(
         &mut self,
         sid: String,
@@ -177,18 +170,11 @@ impl App {
         effort: Option<String>,
         model: String,
     ) {
-        let drv = self.driver();
-        if provider == "claude" {
-            let msg = format!("/model {model}");
-            self.dispatch(
-                "Model switch sent",
-                async move { drv.message(&sid, &msg).await },
-            );
-        } else {
-            self.dispatch("Model switched", async move {
-                drv.set_model(&sid, Some(&model), effort.as_deref()).await
-            });
-        }
+        let drv = self.driver_for(&sid);
+        self.dispatch("Model switched", async move {
+            drv.set_model(&sid, &provider, Some(&model), effort.as_deref())
+                .await
+        });
     }
 
     /// Build a handoff brief from `sid`, then spawn `target` (in `cwd`) primed to

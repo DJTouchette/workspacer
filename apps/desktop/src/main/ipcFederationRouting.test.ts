@@ -18,7 +18,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { handlers, callHub, sessionClient, getSnapshot, clearPendingQuestions } = vi.hoisted(() => ({
+const {
+  handlers,
+  callHub,
+  sessionClient,
+  getSnapshot,
+  clearPendingQuestions,
+  noteRequestedModelSelection,
+} = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
   callHub: vi.fn(async (): Promise<unknown> => ({ ok: true })),
   sessionClient: {
@@ -37,6 +44,7 @@ const { handlers, callHub, sessionClient, getSnapshot, clearPendingQuestions } =
   },
   getSnapshot: vi.fn((_sessionId: string): unknown => null),
   clearPendingQuestions: vi.fn(),
+  noteRequestedModelSelection: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -79,7 +87,7 @@ vi.mock('./services/claudeSessionStore', () => ({
     getSnapshot: (sessionId: string) => getSnapshot(sessionId),
     clearPendingQuestions: (sessionId: string) => clearPendingQuestions(sessionId),
     notePermissionMode: vi.fn(),
-    noteRequestedModel: vi.fn(),
+    noteRequestedModelSelection: (...args: unknown[]) => noteRequestedModelSelection(...args),
   },
 }));
 vi.mock('./services/claudeModels', () => ({ listClaudeModels: vi.fn() }));
@@ -153,6 +161,7 @@ const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)!(n
 beforeEach(() => {
   callHub.mockClear();
   clearPendingQuestions.mockClear();
+  noteRequestedModelSelection.mockClear();
   for (const fn of Object.values(sessionClient)) (fn as ReturnType<typeof vi.fn>).mockClear();
   // Default: sess-remote lives on peer "work"; anything else is local.
   getSnapshot.mockImplementation((sessionId: string) =>
@@ -244,7 +253,6 @@ describe('local-only operations refuse loudly for remote sessions', () => {
   it.each([
     ['claude:setPermissionMode', ['sess-remote', 'plan'], 'setPermissionMode'],
     ['claude:setEffort', ['sess-remote', 'high'], null],
-    ['claude:setModel', ['sess-remote', 'opus'], 'setModel'],
     ['claude:handoffBrief', ['sess-remote'], 'handoffBrief'],
     ['claude:resize', ['sess-remote', 80, 24], 'resize'],
     ['claude:close', ['sess-remote'], 'close'],
@@ -264,6 +272,43 @@ describe('local-only operations refuse loudly for remote sessions', () => {
       expect(callHub).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('remote model switching follows owner truth', () => {
+  it('routes a qualified pair request and records the pair the owner accepted', async () => {
+    callHub.mockResolvedValueOnce({
+      ok: true,
+      model: 'fable',
+      requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
+    });
+
+    const result = await invoke(
+      'claude:setModel',
+      'sess-remote',
+      'opus[1m]',
+      undefined,
+      'opus',
+      1_000_000,
+    );
+
+    expect(callHub).toHaveBeenCalledWith('hub:work/claude.setModel', {
+      sessionId: 'sess-remote',
+      model: 'opus[1m]',
+      effort: undefined,
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(sessionClient.setModel).not.toHaveBeenCalled();
+    expect(noteRequestedModelSelection).toHaveBeenCalledWith(
+      'sess-remote',
+      { model: 'fable', contextWindow: 1_000_000 },
+      'fable',
+    );
+    expect(result).toMatchObject({
+      model: 'fable',
+      requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
+    });
+  });
 });
 
 describe('pane housekeeping adopts or no-ops for remote sessions', () => {

@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 )
 
 type claudemonClient struct {
@@ -431,8 +433,12 @@ func (c *claudemonClient) setPermissionMode(ctx context.Context, id, mode string
 	return res, nil
 }
 
-// setModel live-switches a managed session's model and/or reasoning effort
-// (codex applies it to the running thread via thread/settings/update). Empty
+type modelSwitchResult struct {
+	Model              string                    `json:"model"`
+	RequestedSelection *modelselection.Selection `json:"requested_selection"`
+}
+
+// setModel live-switches a session's model and/or reasoning effort. Empty
 // fields are OMITTED rather than sent as "": the daemon reads a present-but-
 // empty model as a request to switch to a model with no name.
 // TWIN: claudemonSessionClient.setModel.
@@ -440,7 +446,7 @@ func (c *claudemonClient) setModel(
 	ctx context.Context,
 	id, model, effort, modelIdentity string,
 	contextWindow *uint64,
-) error {
+) (modelSwitchResult, error) {
 	body := map[string]any{}
 	if model != "" {
 		body["model"] = model
@@ -454,7 +460,24 @@ func (c *claudemonClient) setModel(
 	if contextWindow != nil {
 		body["context_window"] = *contextWindow
 	}
-	return c.postJSON(ctx, "/sessions/"+id+"/model", body, nil)
+	var wire struct {
+		Model              string `json:"model"`
+		RequestedSelection *struct {
+			Model         string  `json:"model"`
+			ContextWindow *uint64 `json:"context_window"`
+		} `json:"requested_selection"`
+	}
+	if err := c.postJSON(ctx, "/sessions/"+id+"/model", body, &wire); err != nil {
+		return modelSwitchResult{}, err
+	}
+	result := modelSwitchResult{Model: wire.Model}
+	if wire.RequestedSelection != nil {
+		result.RequestedSelection = &modelselection.Selection{
+			Model:         wire.RequestedSelection.Model,
+			ContextWindow: wire.RequestedSelection.ContextWindow,
+		}
+	}
+	return result, nil
 }
 
 // handoffResult is claudemon's cross-provider handoff brief: the markdown and

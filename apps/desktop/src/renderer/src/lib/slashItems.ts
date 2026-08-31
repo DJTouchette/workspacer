@@ -3,7 +3,7 @@
  *
  * When a Claude agent runs on the headless `stream` transport there is no TUI to
  * type `/foo` into and get Claude Code's own slash/skill menu — the text would
- * land as a literal prompt (see ComposerControls' `/model` note). So the GUI
+ * land as a literal prompt. So the GUI
  * composer surfaces its own picker: type `/`, get a filtered list of skills and
  * reusable prompts, pick one to drop its content into the composer. The items
  * come from the existing Library (`library.list`), so this needs no new backend.

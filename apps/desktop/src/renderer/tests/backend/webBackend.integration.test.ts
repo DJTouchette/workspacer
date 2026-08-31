@@ -8,6 +8,7 @@ const busMock = vi.hoisted(() => {
     source: string;
     time: string;
     data?: unknown;
+    hub?: string;
   }) => void;
 
   class FakeHubBusClient {
@@ -67,8 +68,8 @@ const busMock = vi.hoisted(() => {
       return () => handlers.delete(handler);
     }
 
-    emit(type: string, data: unknown) {
-      const ev = { id: 'e1', type, source: 'test', time: new Date(0).toISOString(), data };
+    emit(type: string, data: unknown, hub?: string) {
+      const ev = { id: 'e1', type, source: 'test', time: new Date(0).toISOString(), data, hub };
       for (const [topic, handlers] of this.subscriptions) {
         if (
           topic === '*' ||
@@ -141,6 +142,37 @@ describe('web backend bus integration', () => {
     expect(changed).toHaveBeenCalledWith({
       version: 5,
       data: { agents: [{ id: 'agent-b', sessionId: 's1', tabs: [] }], activeAgentId: 'agent-b' },
+    });
+    unsubscribe();
+  });
+
+  it('routes a remote model pair to its owning hub and forwards owner truth', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    const unsubscribe = api.onClaudeSessionUpdate(vi.fn());
+    client().emit(
+      'agent.snapshot',
+      { sessionId: 'remote-1', status: 'active', ambientState: 'idle' },
+      'work',
+    );
+    client().results.set('hub:work/claude.setModel', {
+      ok: true,
+      model: 'fable',
+      requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
+    });
+
+    const result = await api.claudeSetModel('remote-1', 'opus[1m]', undefined, 'opus', 1_000_000);
+
+    expect(call('hub:work/claude.setModel').at(-1)?.params).toEqual({
+      sessionId: 'remote-1',
+      model: 'opus[1m]',
+      effort: undefined,
+      modelIdentity: 'opus',
+      contextWindow: 1_000_000,
+    });
+    expect(result).toEqual({
+      ok: true,
+      model: 'fable',
+      requestedSelection: { model: 'fable', contextWindow: 1_000_000 },
     });
     unsubscribe();
   });

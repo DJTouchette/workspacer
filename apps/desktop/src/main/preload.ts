@@ -327,7 +327,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     effort?: string,
     modelIdentity?: string,
     contextWindow?: number | null,
-  ): Promise<{ ok: boolean; error?: string }> =>
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    model?: string;
+    requestedSelection?: { model: string; contextWindow: number | null };
+  }> =>
     ipcRenderer.invoke(
       IPC.CLAUDE_SET_MODEL,
       sessionId,
