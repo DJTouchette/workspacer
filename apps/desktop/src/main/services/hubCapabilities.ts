@@ -121,7 +121,9 @@ function spawnResult(
   if (escalation.scrubbed.length) out.escalationScrubbed = escalation.scrubbed;
   // THE ROUTING FIELDS, ECHOED — what this host ACCEPTED, not what was sent.
   // The hub router clamps `capability` to routing.yaml's per-directory ceiling
-  // before the call arrives (dropping model and effort with it), so a
+  // before the call arrives (replacing model and effort with what the permitted
+  // capability resolves to, rather than dropping them and letting this
+  // process's own default fill the hole), so a
   // dispatcher that asked for frontier_plus and reads back `frontier` has its
   // answer in the same place `fullAccess` gives it: in the ANSWER, rather than
   // in a log line on a machine it cannot read. Omitted for a spawn that named
@@ -700,9 +702,12 @@ export function registerHubCapabilities(): void {
       /** The model-capability this spawn is entitled to, from the routing
        *  decision. IT IS READ, and by the only code that can enforce it: the
        *  hub router clamps it to routing.yaml's `ceilings.<dir>.max_capability`
-       *  BEFORE this call arrives, dropping `model` and `effort` with it and
-       *  naming all three in `escalationScrubbed`. A value that reaches this
-       *  handler is one the ceiling allowed. TWIN: rpc.go sanitizeSpawnParams. */
+       *  BEFORE this call arrives, REPLACING `model` and `effort` with what the
+       *  permitted capability resolves to (an omitted model is not a weak model
+       *  — it is whatever THIS process would default to, below where any ceiling
+       *  can see) and naming all three in `escalationScrubbed`. A value that
+       *  reaches this handler is one the ceiling allowed. TWIN: rpc.go
+       *  sanitizeSpawnParams. */
       capability?: string;
       /** Joins this spawn to the `routing.select` answer it acted on, in the
        *  hub's append-only decision log (routing-decisions.jsonl, beside

@@ -348,20 +348,36 @@ modes:
 # CLAMPED and the caller is told what was taken, in the spawn's own answer, so a
 # manager learns its dispatch was narrowed instead of quietly getting less.
 #
-# `max_capability` binds two things, and the second is what stops the first from
-# being a label:
+# `routing.select` APPLIES THE SAME CEILING BEFORE IT ANSWERS. It looks up the
+# ceiling for the directory you name and caps its answer to it, so it can never
+# advise a model the spawn gate will then take away. The gate still clamps
+# independently — it is the security boundary, and it must refuse a caller that
+# ignored routing entirely — but under normal use the two agree because they run
+# the same code against the same canonical path.
+#
+# `max_capability` binds three things, and the last two are what stop the first
+# from being a label:
 #
 #   * the spawn's declared `capability` (what a dispatch acting on a routing
-#     decision copies from that decision), and
-#   * the capability the MODEL it names resolves to in the `profiles:` above —
-#     but only when that reading is unambiguous. `fable` is only ever
-#     frontier_plus and is refused under a `frontier` ceiling; `opus` with no
-#     effort could be frontier, deep_reviewer OR frontier_max, so it is allowed.
-#     A model this file never mentions is not judged at all.
+#     decision copies from that decision);
+#   * the capability the MODEL it names resolves to in the `profiles:` above,
+#     read at its STRONGEST. `opus` with no `effort` could be frontier,
+#     deep_reviewer OR frontier_max, so under a `frontier` ceiling it is refused
+#     — a caller must not get the cheapest interpretation of an ask the provider
+#     is free to run at its strongest. Naming `effort: high` narrows the reading
+#     and it is admitted. A model this file never mentions is not judged at all;
+#   * the MODEL THE CLAMP LEAVES BEHIND. When it lowers a capability it also
+#     names what the permitted one resolves to and writes that onto the spawn,
+#     because an OMITTED model is not a weak model — it is the provider's own
+#     configured default, chosen below anything this file can see.
 #
-# When it clamps, the spawn's `model` and `effort` go with it: keeping the model
-# a refused capability chose would make the ceiling a relabelling. The provider
-# then starts on its own configured default.
+# A CEILING VALUE THIS FILE CANNOT READ REFUSES THE SPAWN. A `max_capability`
+# that `capability_ranks:` does not rank, or a `max_tool_scope` that is not
+# view/triage/operator, used to be reported at load and then ignored — so one
+# typo silently deleted the protection for that whole tree and looked exactly
+# like a directory nobody had capped. Such a row now denies, quoting the value
+# to fix. An OMITTED key is different and still means "this row does not cap
+# that axis".
 #
 # The LOCAL desktop spawn dialog is deliberately NOT clamped. That is a human at
 # the machine clicking Spawn, not an agent granting itself capability.
@@ -371,16 +387,47 @@ modes:
 # bus, fs.write, config.save. With approvals on, an edit to this file raises a
 # prompt you see. With full access on, it does not. A ceiling is not a sandbox.
 #
-# THE SHIPPED `default` IS DELIBERATELY PERMISSIVE — it admits everything this
-# matrix can answer — and that is a decision rather than an oversight. A default
-# that capped at `frontier` would refuse the matrix's OWN `judge` role, which
-# `roles:` puts at frontier_plus: routing.select would answer "Fable", the spawn
-# gate would take the model away, and every judge dispatch would arrive as an
-# unexplained downgrade. A ceiling that refuses the policy it sits under is not a
-# ceiling, it is a disagreement. Capping is a per-directory act; uncomment the
-# example below and it binds on the next tick.
+# ---------------------------------------------------------------------------
+# WHAT THE SHIPPED `default` DOES AND DOES NOT CAP. Read this before assuming
+# you are protected, and before assuming you are not.
+#
+# IT DOES cap the model axis at `frontier` for every directory you have not
+# given an entry of its own. In practice:
+#
+#   * `frontier_plus` — the RESERVED escalation tier, Fable under `mixed` and
+#     `anthropic_only` — is refused everywhere by default. The `judge` role sits
+#     at frontier_plus, so a judge dispatch resolves to `frontier` instead:
+#     under `mixed` that is codex gpt-5.6-sol at high effort. routing.select
+#     says so in its reason list rather than answering Fable and having the
+#     answer taken away.
+#   * `frontier_max` (Sol xhigh / Opus max) is refused too, which matters most
+#     under SPEND_DOWN: that mode promotes implementer, complex_fixer and
+#     diagnostician to frontier_max, and under this default those promotions
+#     land back on `frontier`. If spending expiring capacity on the top tier is
+#     the point of your setup, raise the default or cap per directory instead.
+#   * everything at or below `frontier` — cheap, balanced, reviewer,
+#     deep_reviewer, frontier — is untouched. Ordinary implementation and review
+#     work is not affected.
+#
+# IT DOES NOT CAP AUTHORITY AT ALL by default: `max_tool_scope: operator` is the
+# top tier, so a spawn may still be handed the full workspacer tool set. Lower
+# it here, or per directory, if a worker in a given tree should never be able to
+# approve, spawn or write.
+#
+# IT DOES NOT CAP a model this file never mentions. `opus[1m]` is not `opus` as
+# far as the matrix is concerned, and a provider's own configured default is
+# reached below this layer except on the clamp path described above.
+#
+# IT DOES NOT CAP the local desktop spawn dialog, a human running the CLI
+# directly, or anything that does not come over the bus.
+#
+# ONE LINE CAPS A PROJECT. That is the act this block is really for — the
+# default is a floor, not a policy:
+#
+#   /home/you/Work/some-client-repo: { max_capability: balanced, max_tool_scope: triage }
+#
 ceilings:
-  default: { max_capability: frontier_plus, max_tool_scope: operator }
+  default: { max_capability: frontier, max_tool_scope: operator }
   # Per-project overrides look like this — an absolute directory as the key. The
   # longest matching ancestor wins, so one entry covers a whole tree:
   #

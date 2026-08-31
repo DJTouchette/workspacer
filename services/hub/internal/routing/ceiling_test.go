@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/limits"
 )
 
 // shippedMatrix is the compiled-in default with the fallback wired, which is
@@ -18,52 +21,134 @@ func shippedMatrix(t *testing.T) *Matrix {
 	return m
 }
 
-// TestTheShippedMatrixNeverRefusesItsOwnAnswer is the coherence test, and it is
-// the one that changed a shipped default.
+// TestTheShippedMatrixNeverAdvisesWhatItsOwnCeilingRefuses is the coherence
+// test, and it is the one that decides what the shipped default may be.
 //
 // A ceiling that refuses the policy it sits under is not a ceiling, it is a
-// disagreement: routing.select would answer "Fable for the judge", the spawn
-// gate would take the model away, and the dispatch would arrive as an
-// unexplained downgrade every single time. So EVERY role this matrix answers,
-// in EVERY profile, and under EVERY mode shift, must pass the matrix's own
-// `default` ceiling. Capping is a per-directory act — see the sibling tests,
-// which configure one and watch it bind.
+// disagreement: routing.select answers "Fable for the judge", the spawn gate
+// takes the model away, and the dispatch arrives as an unexplained downgrade
+// every single time.
 //
-// It also covers the case that made the capability ladder necessary at all:
-// `capabilities:` lists reviewer and deep_reviewer AFTER frontier while they
-// resolve to Sonnet High and Opus High, so reading list position as strength
-// would refuse a reviewer for being "above" a model that costs more than it.
-func TestTheShippedMatrixNeverRefusesItsOwnAnswer(t *testing.T) {
+// IT USED TO BE STATED ONE LEVEL LOWER, and that is why the shipped default had
+// to be permissive. The old assertion was "CheckSpawn never refuses
+// ResolveCapability's answer" — a claim about the raw profile table, which
+// forced `default: frontier_plus` because `roles.judge` is frontier_plus. The
+// claim that actually matters is about the ADVICE: Select consults the ceiling
+// before it resolves a capability to a model, so it caps its own answer and the
+// gate has nothing left to disagree with. Restated at that level, a protective
+// default and a self-consistent matrix stop being in tension — and the test is
+// strictly stronger, because it exercises the tuple a dispatch will really
+// carry, mode shifts and provider constraints included.
+func TestTheShippedMatrixNeverAdvisesWhatItsOwnCeilingRefuses(t *testing.T) {
 	m := shippedMatrix(t)
+	const dir = "/home/someone/project"
 
-	check := func(what, profile, capability string) {
+	check := func(what, profile, role string, mode Mode) {
 		t.Helper()
-		a, err := m.ResolveCapability(profile, capability)
-		if err != nil {
-			t.Fatalf("%s: %v", what, err)
+		d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+			Role: role, Profile: profile, CanonicalCwd: dir,
+		})
+		if !d.Eligible {
+			t.Errorf("%s: routing.select answered NOTHING SPAWNABLE under the shipped default ceiling: %s",
+				what, strings.Join(d.Reason, " | "))
+			return
 		}
 		v := m.CheckSpawn(SpawnRequest{
-			CanonicalCwd: "/home/someone/project",
-			Capability:   capability,
-			Provider:     a.Provider,
-			Model:        a.Model,
-			Effort:       a.Effort,
+			CanonicalCwd: dir,
+			Capability:   d.Capability,
+			Provider:     d.Provider,
+			Model:        d.Model,
+			Effort:       d.Effort,
 		})
-		if v.CapabilityRefused {
-			t.Errorf("%s (capability %s, %s %s) is REFUSED by this matrix's own default ceiling: %s",
-				what, capability, a.Provider, a.Model, strings.Join(v.Because, " | "))
+		if v.Refused() {
+			t.Errorf("%s: routing.select advised capability %s / %s %s%s and this matrix's OWN default ceiling refuses it: %s",
+				what, d.Capability, d.Provider, d.Model, effortSuffix(d.Effort), strings.Join(v.Because, " | "))
 		}
 	}
 
 	for profile := range m.Profiles {
-		for role, capability := range m.Roles {
-			check("role "+role+" under profile "+profile, profile, capability)
+		for role := range m.Roles {
+			check("role "+role+" under profile "+profile, profile, role, ModeNormal)
 		}
 		for mode, byRole := range m.ModeShifts {
-			for role, capability := range byRole {
-				check("role "+role+" shifted by "+mode+" under profile "+profile, profile, capability)
+			for role := range byRole {
+				check("role "+role+" under profile "+profile+" (mode_shifts."+mode+")", profile, role, Mode(mode))
 			}
 		}
+	}
+}
+
+// THE JUDGE, NAMED. `roles.judge` is frontier_plus (rank 5) and the shipped
+// default caps at frontier (rank 3), so this is the collision the coherence test
+// above generalizes — and the one behaviour a user meets first. Pinned by name
+// so a change to it is a decision somebody made rather than a number that
+// drifted.
+func TestWhatAJudgeGetsUnderTheShippedDefaultCeiling(t *testing.T) {
+	m := shippedMatrix(t)
+	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+		Role: "judge", CanonicalCwd: "/home/someone/project",
+	})
+	if !d.Eligible {
+		t.Fatalf("a judge dispatch resolved to nothing: %s", strings.Join(d.Reason, " | "))
+	}
+	if d.BaseCapability != "frontier_plus" {
+		t.Errorf("the role table no longer puts judge at frontier_plus (%q) — this test is describing something else now", d.BaseCapability)
+	}
+	if d.Capability != "frontier" {
+		t.Errorf("a judge under the shipped default ceiling resolved to capability %q, want frontier", d.Capability)
+	}
+	// mixed is the shipped active profile, and its frontier is codex Sol High.
+	if d.Provider != "codex" || d.Model != "gpt-5.6-sol" || d.Effort != "high" {
+		t.Errorf("a judge under the shipped default got %s %s%s; the shipped `mixed` profile resolves frontier to codex gpt-5.6-sol high",
+			d.Provider, d.Model, effortSuffix(d.Effort))
+	}
+	if d.Ceiling == nil || !d.Ceiling.CapabilityRefused {
+		t.Fatalf("the decision does not report that a ceiling lowered it: %+v", d.Ceiling)
+	}
+	// NOT SILENT. The whole complaint about the old arrangement was an
+	// unexplained downgrade; the explanation has to be in the answer.
+	if !strings.Contains(strings.Join(d.Reason, " | "), "ceilings.default") {
+		t.Errorf("the downgrade is not explained in the decision's own reason list: %v", d.Reason)
+	}
+}
+
+// A directory with its OWN ceiling caps harder than the default, and Select
+// honours it — the per-directory act the default is only a floor for.
+func TestSelectHonoursAPerDirectoryCeiling(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  /home/someone/locked: { max_capability: cheap, max_tool_scope: view }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+		Role: "implementer", CanonicalCwd: "/home/someone/locked/sub/dir",
+	})
+	if !d.Eligible {
+		t.Fatalf("nothing spawnable under a cheap ceiling: %s", strings.Join(d.Reason, " | "))
+	}
+	if d.Capability != "cheap" {
+		t.Errorf("an implementer inside a directory capped at cheap resolved to %q", d.Capability)
+	}
+	if d.BaseCapability != "frontier" {
+		t.Errorf("the base capability should still record what the ROLE asked for; got %q", d.BaseCapability)
+	}
+}
+
+// A ceiling row nobody can parse makes Select REFUSE rather than advise. The
+// gate would deny that spawn, so advising it would be the advise-then-refuse
+// contradiction pointing the other way.
+func TestSelectRefusesUnderAnUnreadableCeiling(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontierr, max_tool_scope: operator }\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+		Role: "implementer", CanonicalCwd: "/x",
+	})
+	if d.Eligible {
+		t.Fatalf("routing advised %s %s under a ceiling it cannot read", d.Provider, d.Model)
+	}
+	if !strings.Contains(strings.Join(d.Reason, " | "), "frontierr") {
+		t.Errorf("the refusal does not name the value to fix: %v", d.Reason)
 	}
 }
 

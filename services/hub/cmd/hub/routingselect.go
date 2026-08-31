@@ -246,7 +246,16 @@ type routingDecisionEvent struct {
 	ModeManual bool     `json:"modeManual"`
 	Health     string   `json:"health,omitempty"`
 	Reason     []string `json:"reason,omitempty"`
-	DecidedAt  int64    `json:"decidedAt"`
+	// CeilingCapped / CeilingMaxCapability report that a DIRECTORY CEILING
+	// lowered this answer, and to what. The ceiling's KEY — an absolute project
+	// directory — deliberately does NOT ride: this topic is open-by-decision, so
+	// a view-tier phone receives it, and "which directory is capped" is a fact
+	// about the user's disk. The key is in the decision log, which is 0600 in the
+	// hub's own state directory. Without these two, a client watching the event
+	// plane would see a capability change with no reason present in the payload.
+	CeilingCapped        bool   `json:"ceilingCapped,omitempty"`
+	CeilingMaxCapability string `json:"ceilingMaxCapability,omitempty"`
+	DecidedAt            int64  `json:"decidedAt"`
 }
 
 // routingSelect is the `routing.select` handler: read the matrix in force, take
@@ -282,6 +291,21 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 			return nil, fmt.Errorf("routing.select: role is required — routing answers in ROLES and CAPABILITIES, never in model names (see routing.yaml's roles: block for the vocabulary)")
 		}
 
+		// THE SAME CANONICALIZING WALK THE SPAWN GATE USES, and that is the point
+		// of borrowing it from internal/bus rather than writing one here. The
+		// ceiling lookup on the other side is a LEXICAL ancestor match, so a
+		// ceiling looked up on the caller's spelling is a ceiling a symlink walks
+		// around — and if routing.select resolved paths even slightly differently
+		// from the gate, the two would cap different directories and the
+		// advise-then-refuse contradiction would come straight back.
+		//
+		// An unresolvable or unnamed cwd leaves this EMPTY, which selects the
+		// `default` ceiling, exactly as it does at the gate. "We could not resolve
+		// it" must not read as "unconstrained" on either side.
+		if canonical, ok := bus.CanonicalizeRoot(req.Cwd); ok {
+			req.CanonicalCwd = canonical
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), usageDecisionWait)
 		defer cancel()
 
@@ -309,9 +333,22 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 				ModeManual: d.ModeManual,
 				Health:     string(d.Capacity.Health),
 				Reason:     d.Reason,
-				DecidedAt:  d.DecidedAt,
+				CeilingCapped: d.Ceiling != nil &&
+					(d.Ceiling.CapabilityRefused || d.Ceiling.ToolScopeRefused || d.Ceiling.Denied),
+				CeilingMaxCapability: ceilingMax(d.Ceiling),
+				DecidedAt:            d.DecidedAt,
 			}))
 		}
 		return d, nil
 	}
+}
+
+// ceilingMax is the verdict's max_capability, nil-safe. A named function rather
+// than an inline conditional because the event literal above is already long
+// enough to hide a nil dereference in.
+func ceilingMax(v *routing.CeilingVerdict) string {
+	if v == nil {
+		return ""
+	}
+	return v.MaxCapability
 }

@@ -421,6 +421,15 @@ type Request struct {
 	Account   string `json:"account,omitempty"`
 	ProfileID string `json:"profileId,omitempty"`
 	Cwd       string `json:"cwd,omitempty"`
+	// CanonicalCwd is Cwd symlink-resolved, and it is `json:"-"` on purpose: no
+	// caller supplies it. The HANDLER fills it in using the same canonicalizing
+	// walk the spawn gate uses (bus.CanonicalizeRoot), because the ceiling lookup
+	// is a LEXICAL ancestor match and a ceiling looked up on the caller's
+	// spelling is a ceiling a symlink walks around. Empty — an unresolvable or
+	// unnamed directory — selects the `default` ceiling, exactly as it does at
+	// the gate. Two canonicalizers that could disagree would put routing.select
+	// and the spawn gate back into the contradiction this field exists to end.
+	CanonicalCwd string `json:"-"`
 
 	// ForecastDemandBeforeResetPct is the caller's own estimate of how much of
 	// the allowance the work ahead will consume. A POINTER because 0 is a real
@@ -493,6 +502,16 @@ type Decision struct {
 	// Eligible is false when nothing spawnable was found; Model is then empty
 	// and Reason says why.
 	Eligible bool `json:"eligible"`
+
+	// Ceiling is the directory ceiling this answer was resolved UNDER, and its
+	// presence is what stops routing.select from advising something the spawn
+	// gate will refuse. Nil when no ceiling row governs the target directory.
+	//
+	// It is reported whether or not it bit: "your project is capped at frontier
+	// and this answer is under it" is as useful as the capping itself, and a
+	// field that appeared only on the refusal path would leave a caller unable to
+	// tell an uncapped directory from a lucky one.
+	Ceiling *CeilingVerdict `json:"ceiling,omitempty"`
 
 	Mode       Mode          `json:"mode"`
 	ModeManual bool          `json:"modeManual"`
@@ -644,6 +663,45 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	// and it is worse in exactly the direction this feature exists to prevent.
 	if shifted, ok := m.ShiftFor(string(d.Mode), d.Role); ok && shifted != d.Capability {
 		d.applyShift(m, snap, snapErr, now, req, profile, subject, constrained, shifted)
+	}
+
+	// 7b. THE CEILING, APPLIED HERE RATHER THAN LEFT TO THE GATE.
+	//
+	// The spawn gate clamps every bus agents.spawn to the ceiling configured for
+	// its directory. Until this step existed, routing.select did not know that:
+	// it would answer "Fable for the judge" in a directory capped at frontier,
+	// the gate would take the model away, and the dispatch arrived as an
+	// unexplained downgrade — a system contradicting itself once per judge.
+	//
+	// The tempting fix was to let a caller relay a decision id and have the gate
+	// stand aside for it. That is unsound: `decisionId` is caller-supplied,
+	// published on an open-by-decision event, forgeable and replayable, and a
+	// ceiling a caller can talk past by asserting the system told it to is worse
+	// than no ceiling, because it reads as protective. The contradiction is
+	// removed at the SOURCE instead — the advice is capped, so there is nothing
+	// for the gate to disagree with. The gate keeps clamping regardless: it is
+	// the security boundary and it must still refuse a caller that ignored
+	// routing entirely. Belt and braces.
+	//
+	// The SAME function the gate calls (CheckSpawn) answers here, against the
+	// same canonical directory, so "capped identically" is a property of there
+	// being one implementation rather than of two staying in agreement.
+	if v := m.CheckSpawn(SpawnRequest{
+		CanonicalCwd:           req.CanonicalCwd,
+		Capability:             d.Capability,
+		Provider:               subject,
+		SkipReplacementRouting: true, // step 8 below resolves the capped capability itself
+	}); v.Key != "" {
+		d.Ceiling = &v
+		if v.Denied {
+			d.Reason = append(d.Reason, v.Because...)
+			d.Reason = append(d.Reason, "the ceiling governing this directory cannot be read, so there is no answer that is safe to act on — routing REFUSES rather than advising something the spawn gate would also refuse")
+			return d
+		}
+		if v.CapabilityRefused {
+			d.Reason = append(d.Reason, v.Because...)
+			d.Capability = v.Capability
+		}
 	}
 
 	// 8. Resolve the capability to something spawnable, honouring the provider

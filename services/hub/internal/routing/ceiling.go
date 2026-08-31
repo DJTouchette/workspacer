@@ -84,6 +84,18 @@ type SpawnRequest struct {
 	Provider string
 	Model    string
 	Effort   string
+
+	// SkipReplacementRouting suppresses the safe routed tuple a refusal
+	// otherwise carries. It exists for ONE caller: Select, which consults the
+	// ceiling before resolving a capability to a model and then does that
+	// resolution itself, through the profile and provider logic the uncapped
+	// answer used. Letting the verdict also name a model there would put a
+	// second, differently-derived tuple in the explanation of one decision.
+	//
+	// FALSE IS THE SAFE DEFAULT, deliberately: the SPAWN GATE must never forget
+	// to ask for the replacement, because for it "no replacement" means an
+	// omitted model and an omitted model is the provider's own default.
+	SkipReplacementRouting bool
 }
 
 // CeilingVerdict is the whole answer for one spawn: what the ceiling is, what it
@@ -373,7 +385,7 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 // there was never anything on that axis for the ceiling to protect. Silently
 // moving such a spawn onto codex would be a far worse surprise than the delete.
 func (m *Matrix) routeSafely(req SpawnRequest, capability string, v *CeilingVerdict) {
-	if m == nil || strings.TrimSpace(capability) == "" {
+	if m == nil || req.SkipReplacementRouting || strings.TrimSpace(capability) == "" {
 		return
 	}
 	profile, _ := m.ActiveProfileName()

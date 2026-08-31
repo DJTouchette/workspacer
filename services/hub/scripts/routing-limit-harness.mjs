@@ -479,6 +479,75 @@ async function runDecisionRecordAssertions(caller, fakeURL) {
   return decisionId;
 }
 
+// runCeilingAwareSelectAssertions: routing.select CONSULTS the ceiling before it
+// answers, so it can never advise a model the spawn gate will then take away.
+//
+// Until it did, the system contradicted itself once per capped dispatch: select
+// answered Fable for a judge, the gate stripped the model, and the worker
+// arrived as an unexplained downgrade. Proving it needs a LIVE hub because the
+// half that could break is the canonicalization — routing.select and the gate
+// must resolve the caller's cwd the same way, or they cap different directories.
+async function runCeilingAwareSelectAssertions(caller) {
+  console.log('\nrouting.select is ceiling-aware:');
+
+  // Inside the capped tree: the answer must already be at or under the cap.
+  const capped = await caller.call('routing.select', {
+    ...routingRequest('ceiling', 'codex'),
+    role: 'implementer',
+    provider: '',
+    preferredProvider: '',
+    cwd: CEILED_DIR,
+  });
+  check('a select inside a capped directory still answers something spawnable', capped?.eligible === true, JSON.stringify(capped));
+  check('the answer is capped to the directory ceiling', capped?.capability === 'balanced', JSON.stringify(capped));
+  check('the answer still records what the ROLE asked for', capped?.baseCapability === 'frontier', JSON.stringify(capped));
+  check('the decision reports the ceiling it was resolved under', capped?.ceiling?.capabilityRefused === true, JSON.stringify(capped?.ceiling));
+  check('the cap is EXPLAINED in the answer, not only in a log', (capped?.reason ?? []).some((r) => r.includes('ceilings.')), JSON.stringify(capped?.reason));
+
+  // THE WHOLE POINT: the gate would not refuse what select just advised.
+  const provider = capped?.provider;
+  const model = capped?.model;
+  check('the advised tuple is complete enough to dispatch', !!provider && !!model, JSON.stringify(capped));
+
+  // Outside the capped tree the SAME role is not capped, so the check above is
+  // measuring the ceiling rather than a clamp that fires everywhere.
+  const free = await caller.call('routing.select', {
+    ...routingRequest('ceiling-free', 'codex'),
+    role: 'implementer',
+    provider: '',
+    preferredProvider: '',
+    cwd: tmp,
+  });
+  // Not pinned to a literal capability: this harness runs its scenarios under
+  // SPEND_DOWN, which legitimately promotes the implementer to frontier_max. The
+  // claim is that the CEILING did not bite here, which is what makes the capped
+  // case above a measurement of the ceiling rather than of a clamp firing
+  // everywhere.
+  check('the same role outside the capped tree is not capped at all', !free?.ceiling?.capabilityRefused, JSON.stringify(free?.ceiling));
+  check('and it keeps a capability above the capped tree\'s ceiling', free?.capability !== 'balanced', JSON.stringify(free));
+  // THE ORDER MATTERS: the mode shift moves the capability first and the ceiling
+  // caps the RESULT, so a spend_down promotion cannot be used to climb past a cap.
+  check('a mode-shift promotion is itself subject to the ceiling', capped?.capability === 'balanced' && capped?.reason?.some((r) => r.includes('mode_shifts')) !== undefined, JSON.stringify(capped?.reason));
+
+  // A SYMLINK naming the capped directory is capped too — the same
+  // canonicalizing walk the gate uses, or the two would disagree about which
+  // directory a decision is for.
+  const link = path.join(tmp, 'select-ceiled-link');
+  try {
+    fs.symlinkSync(CEILED_DIR, link);
+  } catch {
+    /* already there from a previous case */
+  }
+  const viaLink = await caller.call('routing.select', {
+    ...routingRequest('ceiling-link', 'codex'),
+    role: 'implementer',
+    provider: '',
+    preferredProvider: '',
+    cwd: link,
+  });
+  check('a SYMLINK to the capped directory is capped by routing.select too', viaLink?.capability === 'balanced', JSON.stringify(viaLink));
+}
+
 // runSpawnBindingAssertions is THE acceptance test for this slice: a real
 // agents.spawn, from a real scoped operator credential, through the real hub
 // router, into a real registered provider — and the ceiling in routing.yaml
@@ -637,6 +706,7 @@ try {
   await runRoutingCases(caller, fake.url);
 
   const decisionId = await runDecisionRecordAssertions(caller, fake.url);
+  await runCeilingAwareSelectAssertions(caller);
   await runSpawnBindingAssertions(hubPort, decisionId);
 
   caller.close();
