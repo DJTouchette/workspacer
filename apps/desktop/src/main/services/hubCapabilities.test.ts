@@ -285,6 +285,29 @@ describe('registerHubCapabilities — registration', () => {
 // claudeSessionStore's `contextTokensFromStatusLine` doc comment — so this
 // must fall back to `statusLine` or every non-Claude row reports all-zero.
 describe('agents.list — statusLine fallback for managed providers', () => {
+  it('keeps unknown canonical owner facts absent and forwards present ones', () => {
+    getAllSnapshots.mockReturnValue([
+      {
+        sessionId: 'unknown-selection',
+        cwd: '/proj',
+        ambientState: 'idle',
+      },
+      {
+        sessionId: 'known-selection',
+        cwd: '/proj',
+        ambientState: 'idle',
+        requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
+        resolvedContextWindow: 1_000_000,
+      },
+    ] as never);
+
+    const [unknown, known] = call('agents.list') as Record<string, unknown>[];
+    expect('requestedSelection' in unknown).toBe(false);
+    expect('resolvedContextWindow' in unknown).toBe(false);
+    expect(known.requestedSelection).toEqual({ model: 'opus', contextWindow: 1_000_000 });
+    expect(known.resolvedContextWindow).toBe(1_000_000);
+  });
+
   it('reads model/context/cost from usage when present (Claude-shaped session)', () => {
     getAllSnapshots.mockReturnValue([
       {

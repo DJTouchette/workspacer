@@ -495,11 +495,12 @@ impl Agent {
     /// The window to MEASURE this session's context against, in tokens, or
     /// `None` when nothing resolved one.
     ///
-    /// `usage.context_limit` first — it is the resolver's answer travelling
-    /// with the tokens it belongs to — then the row's own
-    /// `resolved_context_window`, which is the same resolver's answer on a row
-    /// whose usage block has not been computed yet (or was mapped away). Both
-    /// come from the OWNER; neither is inferred here.
+    /// The dedicated `resolved_context_window` first, then the compatibility
+    /// `usage.context_limit`. Both come from the OWNER; neither is inferred
+    /// here. The dedicated fact must win because a sparse live event can carry
+    /// a newer resolution while [`crate::federation::fold_row`] deliberately
+    /// retains the previous rich usage block. Reversing the order makes the
+    /// stale compatibility value hide the fresher canonical one.
     ///
     /// Deliberately NOT a source of truth about the provider: this is only ever
     /// a denominator for display. The request (`requested_selection`) is what
@@ -507,10 +508,8 @@ impl Agent {
     /// provider evidence and stays authoritative for the contradiction check in
     /// [`derive_stats`].
     pub fn owner_context_window(&self) -> Option<u64> {
-        self.usage
-            .as_ref()
-            .and_then(|u| u.context_limit)
-            .or(self.resolved_context_window)
+        self.resolved_context_window
+            .or_else(|| self.usage.as_ref().and_then(|u| u.context_limit))
             .filter(|w| *w > 0)
     }
 
@@ -2034,10 +2033,9 @@ mod tests {
         assert_eq!(sel.context_window, None, "unresolved stays unresolved");
     }
 
-    /// The resolved window is a DENOMINATOR, and only that. A row whose usage
-    /// block has no window of its own measures against it; a row with one keeps
-    /// using it (they are the same number from the same resolver, and the usage
-    /// one travels with the tokens it belongs to).
+    /// The resolved window is a DENOMINATOR, and only that. It is the current
+    /// canonical owner fact; `usage.context_limit` remains the compatibility
+    /// fallback when the dedicated field is absent.
     #[test]
     fn resolved_window_is_a_display_denominator_when_usage_has_none() {
         let a: Agent = serde_json::from_value(serde_json::json!({
@@ -2069,6 +2067,23 @@ mod tests {
         .unwrap();
         assert_eq!(asked.owner_context_window(), None);
         assert_eq!(derive_stats(&asked, None).context_pct, None);
+
+        // A sparse event may update only the dedicated fact while federation
+        // retains the previous rich usage block. The new owner fact must not be
+        // hidden by that stale compatibility value.
+        let refreshed: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s", "mode": "responding",
+            "resolved_context_window": 1_000_000,
+            "usage": {
+                "model": "claude-opus-5",
+                "context_tokens": 356_380,
+                "context_limit": 200_000
+            }
+        }))
+        .unwrap();
+        assert_eq!(refreshed.owner_context_window(), Some(1_000_000));
+        let pct = derive_stats(&refreshed, None).context_pct.unwrap();
+        assert!((pct - 35.638).abs() < 1e-9, "pct={pct}");
     }
 
     /// The early-1M specimen, with the resolved window as the ONLY source of

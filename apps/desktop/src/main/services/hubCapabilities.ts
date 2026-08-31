@@ -507,18 +507,22 @@ export function registerHubCapabilities(): void {
       // `context_window_size: 200000` even for a session spawned `opus[1m]`, so
       // a live worker holding 356380 tokens shipped `{contextTokens: 356380,
       // contextLimit: 200000}` to /m, /app, wks-tui and every federated peer —
-      // a 178% meter. Dropping the disproved claim lands on `usage.contextLimit`,
-      // which is the same resolver's answer after the fall-through (1M, from the
-      // `[1m]` marker the occupancy does not contradict).
+      // a 178% meter. Dropping the disproved claim lands first on the daemon's
+      // dedicated `resolvedContextWindow`, then on the compatibility
+      // `usage.contextLimit` for an older owner.
       contextLimit: busContextLimit(s),
       // The daemon-owned canonical slice, forwarded untouched. This is the row
-      // /m and the other reduced-row clients read, so withholding it here would
-      // leave them re-deriving a window from `contextLimit` — the second
-      // disagreeing answer this slice exists to retire. `null` for a row whose
-      // owner has said nothing, matching the omit-what-is-unknown rule the
-      // fuller `sessions.snapshots` row keeps by simply not carrying the key.
-      requestedSelection: s.requestedSelection ?? null,
-      resolvedContextWindow: s.resolvedContextWindow ?? null,
+      // /m and the other reduced-row clients read, so withholding a value the
+      // owner DID publish would leave them re-deriving a window from
+      // `contextLimit` — the second disagreeing answer this slice exists to
+      // retire. Unknown stays ABSENT, matching the optional contract and the
+      // fuller `sessions.snapshots` row; `null` would be a new receiver claim.
+      ...(s.requestedSelection !== undefined
+        ? { requestedSelection: s.requestedSelection }
+        : {}),
+      ...(s.resolvedContextWindow !== undefined
+        ? { resolvedContextWindow: s.resolvedContextWindow }
+        : {}),
       costUSD: s.usage?.costUSD ?? s.statusLine?.costUSD ?? 0,
       // What the agent is blocked on, if anything — lets a remote client show
       // the actual approval/question instead of a generic "waiting" badge.
