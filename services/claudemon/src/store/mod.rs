@@ -676,12 +676,27 @@ mod tests {
     }
 
     #[test]
-    fn canonical_read_wins_and_invalid_or_partial_data_falls_back_without_dropping_rows() {
+    fn rollback_legacy_wins_conflicts_while_matching_or_invalid_data_falls_back_safely() {
         let db = Db::open(tempfile_path()).unwrap();
-        for id in ["conflict", "partial", "invalid", "identity-only"] {
+        for id in [
+            "conflict",
+            "matching",
+            "partial",
+            "invalid",
+            "null-context-conflict",
+            "canonical-only",
+        ] {
             db.record_event(&ev("SessionStart", id)).unwrap();
         }
         let guard = db.conn.lock().unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = 'sonnet-1m',
+                 requested_model_identity = 'sonnet', requested_context_window = 1000000
+               WHERE id = 'matching'",
+                [],
+            )
+            .unwrap();
         guard
             .execute(
                 "UPDATE sessions SET requested_model = 'sonnet',
@@ -710,7 +725,15 @@ mod tests {
             .execute(
                 "UPDATE sessions SET requested_model = 'sonnet[1m]',
                  requested_model_identity = 'opus', requested_context_window = NULL
-               WHERE id = 'identity-only'",
+               WHERE id = 'null-context-conflict'",
+                [],
+            )
+            .unwrap();
+        guard
+            .execute(
+                "UPDATE sessions SET requested_model = NULL,
+                 requested_model_identity = 'opus', requested_context_window = NULL
+               WHERE id = 'canonical-only'",
                 [],
             )
             .unwrap();
@@ -722,14 +745,22 @@ mod tests {
             .into_iter()
             .map(|row| (row.id, row.requested_selection))
             .collect();
-        assert_eq!(restored.len(), 4, "bad selection data never drops its row");
+        assert_eq!(restored.len(), 6, "bad selection data never drops its row");
+        assert_eq!(
+            restored["matching"],
+            Some(ModelSelection {
+                model: "sonnet".into(),
+                context_window: Some(1_000_000),
+            }),
+            "matching normalized canonical and legacy values keep the canonical answer",
+        );
         assert_eq!(
             restored["conflict"],
             Some(ModelSelection {
-                model: "opus".into(),
-                context_window: Some(1_000_000),
+                model: "sonnet".into(),
+                context_window: None,
             }),
-            "a valid canonical pair is authoritative over conflicting legacy data",
+            "a valid legacy disagreement is newer evidence from a v8 rollback writer",
         );
         assert_eq!(
             restored["partial"],
@@ -748,13 +779,175 @@ mod tests {
             "a non-integer canonical window is invalid and falls back without failing restore",
         );
         assert_eq!(
-            restored["identity-only"],
+            restored["null-context-conflict"],
+            Some(ModelSelection {
+                model: "sonnet".into(),
+                context_window: Some(1_000_000),
+            }),
+            "NULL context is valid canonical evidence, but a legacy disagreement is still newer",
+        );
+        assert_eq!(
+            restored["canonical-only"],
             Some(ModelSelection {
                 model: "opus".into(),
                 context_window: None,
             }),
-            "NULL context is a valid unknown window when an identity exists",
+            "valid canonical data remains authoritative when legacy evidence is absent",
         );
+    }
+
+    /// The real rollback sequence, with the old side using the exact SQL from
+    /// v8's `Db::note_requested_model`: new dual-write -> old read/switch -> new
+    /// reopen -> next event. The event must heal all three columns rather than
+    /// carrying the raw legacy value forward and preserving divergence.
+    #[test]
+    fn v8_legacy_only_switch_wins_then_the_next_new_daemon_write_heals_the_row() {
+        let path = tempfile_path();
+        let initial = selection("opus[1m]");
+        {
+            let db = Db::open(&path).unwrap();
+            db.record_event_with_spawn_facts(
+                &ev("SessionStart", "rollback-switch"),
+                SpawnFacts {
+                    requested_selection: Some(&initial),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            dual_write_guard(&db, "rollback-switch").unwrap();
+        }
+
+        // Prior v8 daemon: it accepts the unchanged version, reads only the
+        // compatibility column, then a live /model switch updates only that
+        // column. Keep this statement identical to the v8 implementation.
+        {
+            let old = Connection::open(&path).unwrap();
+            let version: i32 = old
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            let before: String = old
+                .query_row(
+                    "SELECT requested_model FROM sessions WHERE id = 'rollback-switch'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, 8, "the v8 rollback window remains open");
+            assert_eq!(before, "opus[1m]");
+            old.execute(
+                "UPDATE sessions SET requested_model = ?2 WHERE id = ?1",
+                params!["rollback-switch", "sonnet-1m"],
+            )
+            .unwrap();
+        }
+
+        let reopened = Db::open(&path).unwrap();
+        let restored = reopened.load_recent_sessions(10).unwrap();
+        assert_eq!(
+            restored[0].requested_selection,
+            Some(ModelSelection {
+                model: "sonnet".into(),
+                context_window: Some(1_000_000),
+            }),
+            "the legacy-only v8 switch is newer than the stale canonical pair",
+        );
+
+        // This is the production path after restart: hydrate canonical memory,
+        // read SpawnFacts from SessionStore, then persist the next hook event.
+        let store = crate::session::SessionStore::new();
+        store.hydrate(restored);
+        let healed = store
+            .requested_model_selection("rollback-switch")
+            .expect("restored selection is carried into persistence");
+        assert_eq!(
+            healed.legacy_model, "sonnet[1m]",
+            "normal writers derive the compatibility spelling instead of preserving raw v8 input",
+        );
+        reopened
+            .record_event_with_spawn_facts(
+                &ev("PreToolUse", "rollback-switch"),
+                SpawnFacts {
+                    requested_selection: Some(&healed),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        dual_write_guard(&reopened, "rollback-switch").unwrap();
+        drop(reopened);
+
+        // The healed projection is still a valid v8 value on a subsequent
+        // rollback; the compatibility write never strands the older daemon.
+        let old = Connection::open(&path).unwrap();
+        let requested: String = old
+            .query_row(
+                "SELECT requested_model FROM sessions WHERE id = 'rollback-switch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(requested, "sonnet[1m]");
+    }
+
+    #[test]
+    fn concurrent_db_opens_create_or_recover_compatibility_columns_once() {
+        use std::sync::{Arc, Barrier};
+
+        for missing in ["both", "context-only", "identity-only"] {
+            let path = tempfile_path();
+            {
+                let db = Db::open(&path).unwrap();
+                let conn = db.conn.lock().unwrap();
+                if missing != "identity-only" {
+                    conn.execute(
+                        "ALTER TABLE sessions DROP COLUMN requested_context_window",
+                        [],
+                    )
+                    .unwrap();
+                }
+                if missing != "context-only" {
+                    conn.execute(
+                        "ALTER TABLE sessions DROP COLUMN requested_model_identity",
+                        [],
+                    )
+                    .unwrap();
+                }
+            }
+
+            const OPENERS: usize = 12;
+            let start = Arc::new(Barrier::new(OPENERS));
+            let handles: Vec<_> = (0..OPENERS)
+                .map(|_| {
+                    let path = path.clone();
+                    let start = Arc::clone(&start);
+                    std::thread::spawn(move || {
+                        start.wait();
+                        Db::open(path)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .expect("open thread panicked")
+                    .expect("concurrent Db::open must not fail");
+            }
+
+            let db = Db::open(&path).unwrap();
+            let conn = db.conn.lock().unwrap();
+            let columns: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions')
+                      WHERE name IN ('requested_model_identity', 'requested_context_window')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let version: i32 = conn
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(columns, 2, "{missing}: each column exists exactly once");
+            assert_eq!(version, 8, "{missing}: compatibility migration stays v8");
+        }
     }
 
     #[test]

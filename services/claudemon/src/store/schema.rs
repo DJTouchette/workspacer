@@ -85,8 +85,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // Keeping the stamp at 8 lets the prior binary reopen this DB and continue
     // through `requested_model`, which is the rollback contract for this slice.
     // The catalog-checked body runs on every open, so interrupted/partial
-    // applications heal idempotently without a version marker.
-    add_session_requested_selection(conn)
+    // applications heal idempotently without a version marker. It still needs
+    // an IMMEDIATE transaction: without one, concurrent opens can both observe
+    // a missing column before either ALTERs it, and one then fails daemon boot
+    // with "duplicate column name".
+    unversioned_step(conn, add_session_requested_selection)
         .context("adding rollback-compatible requested model selection columns")?;
     Ok(())
 }
@@ -113,6 +116,28 @@ fn step(
             // saving and the original error is the one worth reporting.
             let _ = conn.execute_batch("ROLLBACK");
             Err(anyhow::Error::new(err).context(format!("applying schema v{version}")))
+        }
+    }
+}
+
+/// Run an unversioned compatibility migration under the same database-wide
+/// write lock as a versioned step. The body acquires the lock *before* checking
+/// the catalog, so concurrent `Db::open` calls serialize their check-and-ALTER
+/// sequence. There is deliberately no `user_version` write here: keeping v8 is
+/// what lets the previous daemon reopen the additive schema during rollback.
+fn unversioned_step(
+    conn: &Connection,
+    body: impl FnOnce(&Connection) -> rusqlite::Result<()>,
+) -> Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    match body(conn) {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(err.into())
         }
     }
 }
@@ -227,6 +252,13 @@ fn add_session_config_root(conn: &Connection) -> rusqlite::Result<()> {
 /// Nullable canonical model-selection columns. Each column is checked
 /// independently so a database interrupted after the first `ALTER TABLE`
 /// repairs itself on reopen.
+///
+/// SCHEMA MAINTENANCE CONTRACT: these unversioned columns are intentionally not
+/// part of a numbered step. Any future `sessions` table rebuild must explicitly
+/// copy both of them, and any new-database schema rewrite must still create them.
+/// Raising `USER_VERSION` above 8 ends the v8 rollback window because the prior
+/// daemon's downgrade guard will then refuse the database; do that only as an
+/// explicit compatibility decision, not as cleanup for these additive columns.
 fn add_session_requested_selection(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?;
     let has_identity = stmt.exists(["requested_model_identity"])?;

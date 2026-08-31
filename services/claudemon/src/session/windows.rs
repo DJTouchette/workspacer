@@ -203,9 +203,11 @@ pub fn normalize_persisted_model_selection(
     Ok(PersistedModelSelection::from_selection(selection))
 }
 
-/// Read adapter for SQLite rows. A valid canonical identity wins even when the
-/// legacy column disagrees. Missing/invalid canonical data falls back to the
-/// retained legacy value without rewriting either source.
+/// Read adapter for SQLite rows. Matching valid canonical data is authoritative.
+/// When a valid legacy value disagrees, though, it is newer rollback-era evidence:
+/// a v8 daemon can update only `requested_model`, so preferring the stale canonical
+/// pair would silently undo that model switch. Missing/invalid evidence on either
+/// side falls back to the other without making the surrounding row unreadable.
 ///
 /// `context_window` is signed because SQLite can contain manually-corrupted or
 /// future values. Non-positive values are invalid canonical evidence and must
@@ -230,7 +232,15 @@ pub fn restore_persisted_model_selection(
         (normalized.model == identity).then_some(normalized)
     });
 
-    canonical.or_else(|| legacy_model.and_then(|model| normalize_model_selection(model, None).ok()))
+    let legacy = legacy_model.and_then(|model| normalize_model_selection(model, None).ok());
+    match (canonical, legacy) {
+        (Some(canonical), Some(legacy)) if canonical == legacy => Some(canonical),
+        // A prior v8 daemon writes only requested_model. A disagreement therefore
+        // means that compatibility value was written after the canonical pair.
+        (_, Some(legacy)) => Some(legacy),
+        (Some(canonical), None) => Some(canonical),
+        (None, None) => None,
+    }
 }
 
 fn legacy_model_for_normalized_selection(selection: &ModelSelection) -> String {

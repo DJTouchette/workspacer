@@ -1337,16 +1337,15 @@ impl SessionStore {
             .map(|entry| entry.clone())
             .unwrap_or_else(|| session_id.to_string());
         self.states.get(&canonical).and_then(|state| {
-            let mut persisted = super::windows::PersistedModelSelection::from_selection(
-                state.requested_selection.clone()?,
-            );
-            // Preserve a legacy value recovered from an old/corrupt row rather
-            // than rewriting it merely because another hook arrived. Normal
-            // writers always set this to the derived compatibility spelling.
-            if let Some(legacy) = &state.requested_model {
-                persisted.legacy_model.clone_from(legacy);
-            }
-            Some(persisted)
+            // Always derive the compatibility projection from canonical memory.
+            // On restore, a disagreement means the legacy value came from a
+            // newer v8 writer and `requested_selection` already reflects it. A
+            // raw legacy overwrite here would preserve the stale disagreement;
+            // deriving it lets the next ordinary event heal all three columns.
+            state
+                .requested_selection
+                .clone()
+                .map(super::windows::PersistedModelSelection::from_selection)
         })
     }
 
