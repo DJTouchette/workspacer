@@ -377,6 +377,43 @@ remaining GUI-owned areas are:
 Also: saved-session `save` persists the blob as given. It skips the desktop's
 terminal-cwd enrichment, which needs the GUI's in-process PTY-to-cwd map.
 
+## Limit-aware routing
+
+The hub picks the model and reasoning effort for a spawned agent from a matrix
+plus the live subscription limits, and caps what any bus spawn may be given in a
+given directory. Full reference:
+[`docs/limit-aware-routing.md`](../../docs/limit-aware-routing.md). The shipped
+matrix, `internal/routing/routing.default.yaml`, is the reference for whoever
+edits the file and is compiled into the binary.
+
+- **The file** is `<user-config-dir>/workspacer-hub/routing.yaml`, mode `0600`,
+  beside `jobs.json` (`--routing-file` moves it; `--routing-file ""` runs on the
+  compiled-in defaults and writes nothing). Seeded once with its comments
+  intact, deep merged over the compiled-in defaults key by key, re-read on a
+  30-second content hash. A file that cannot be read or does not parse leaves the
+  running matrix as it was and logs.
+- **The ask surface** is `routing.select`, the only method this layer registers.
+  It is read-only and there is no routing write RPC; that, plus the file guard
+  refusing the hub's state directory, is what makes the `ceilings:` block
+  enforceable. The MCP facade exposes it as `select_model`, operator tier only.
+- **Capacity** comes from one `GET /usage/report` against claudemon. The poller
+  is dormant until something asks and winds down 15 minutes after the last ask.
+  A window whose reset time has passed reads UNKNOWN, never a stale percentage
+  (`internal/limits/window.go` is the guard, by type rather than by a sign check).
+- **The ceiling** is applied in `internal/bus`'s `sanitizeSpawnParams`, the one
+  spawn-path function here that is not a twin, so it covers the federated hop
+  through `methodSanitizers`. The policy lives in `internal/routing`; the two
+  are wired together in `cmd/hub/routingceiling.go` and neither package imports
+  the other.
+- **The audit trail** is `routing-decisions.jsonl` beside the matrix, `0600`,
+  append only, rotated at 8 MiB. Two row kinds, `decision` and `spawn`, joined by
+  a `decisionId` the spawn quotes on the wire.
+- **Runtime harness:** `make test-routing-harness`
+  (`scripts/routing-limit-harness.mjs`), a real hub against a fake claudemon that
+  serves stale, boundary and unreadable usage states. Set
+  `ROUTING_HARNESS_REQUIRE_ROUTING=1` to make a parked assertion a failure.
+
+
 ## Headless server (`cmd/workspacer`)
 
 `workspacer` is the product face of headless mode: one thin launcher that

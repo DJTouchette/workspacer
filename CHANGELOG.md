@@ -9,6 +9,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Limit-aware agent routing.** The hub now reads how much of each
+  provider's subscription allowance is actually left and resolves the *kind*
+  of work being dispatched into a concrete model and reasoning effort, so
+  work moves off a provider whose window is tight instead of draining it.
+  Whatever dispatches names a role (`scout`, `implementer`, `reviewer`,
+  `judge` and the rest); a matrix resolves the role to a capability and a
+  profile resolves the capability to a `(provider, model, effort)`. Nothing
+  outside that file names a model, so a vendor rename is one edit. An
+  operator-tier agent gets it as the `select_model` tool, which is read-only:
+  it answers and starts nothing.
+
+  The matrix is `routing.yaml` in the hub's own state directory, beside
+  `jobs.json`. It is written there on first run with its comments intact,
+  deep merged over the compiled-in defaults so anything you omit still
+  resolves, and re-read on the same 30-second tick jobs use, so a saved edit
+  applies with nothing restarted. A file that does not parse leaves the
+  running matrix exactly as it was. Three profiles ship: `mixed` (the
+  default, and the recommendation whenever both subscriptions exist, because
+  it draws two allowances down in parallel and gives review a different model
+  family from the implementer), `codex_only` and `anthropic_only`.
+
+  The rule the whole thing rests on: **a usage reading is believed only while
+  its reset time is still in the future.** A window that has already reset
+  reads as *unknown* rather than as a stale percentage, because one expired
+  row is wrong twice over. It makes a provider with a fresh allowance look
+  two-thirds spent, and its reset look imminent when it already happened.
+
+  `routing.yaml` also carries per-directory **ceilings**: the most capability
+  and the most authority a spawn started in a given tree may be given,
+  matched on the resolved path by longest ancestor. Every `agents.spawn` over
+  the bus is clamped to it, and the clamp is reported back in the spawn's own
+  answer rather than applied silently. The shipped default caps capability at
+  `frontier` and leaves authority at `operator`, which is what a `judge`
+  dispatch meets first: the role asks for `frontier_plus`, so out of the box
+  it resolves to `frontier` and says so, and raising the ceiling is the way to
+  get the reserved tier. Every decision and every clamped spawn is appended to
+  `routing-decisions.jsonl` beside the matrix, joined by a decision id.
+  Documented on the docs site and in `docs/limit-aware-routing.md`; there is
+  no UI for the matrix, which is what keeps a ceiling out of reach of the
+  agents it governs.
+
 ### Changed
 - **Keep-warm knows Codex's window without a Codex session.** Warming a
   5-hour window starts by asking whether one is already running, and for

@@ -55,13 +55,39 @@
 # and `claude` (plus `copilot`, `opencode`, `pi`). `openai` and `anthropic` are
 # accepted here as aliases and normalized at load with a log line, so a matrix
 # pasted out of the spec still works.
+#
+# ---------------------------------------------------------------------------
+# THE OTHER FILE IN THIS DIRECTORY
+#
+# routing-decisions.jsonl, beside this one, 0600 and append-only. It holds one
+# row for every answer routing.select gave and one for every spawn the
+# `ceilings:` block at the bottom judged, joined by a decision id the spawn
+# quotes on the wire. It is where "why did this worker come up on that model"
+# has an answer tomorrow, and on a headless machine it is the only such record.
+# It rotates at 8 MiB keeping one previous generation, and nothing about it is
+# fatal: a disk that cannot be written complains once and routing keeps
+# deciding.
+#
+# The prose reference for everything below is docs/limit-aware-routing.md in the
+# workspacer repository, and the "limit-aware routing" section of the docs site.
+# `make test-routing-harness` exercises the whole layer against usage states you
+# cannot reproduce on demand.
 
 version: 1
 
 # Which profile resolves capabilities right now. One of the keys under
-# `profiles:` below. `mixed` is the recommended default when both subscriptions
-# are available: it distributes consumption across two providers AND buys
-# model-family diversity on review, which is the point of section 23.
+# `profiles:` below.
+#
+# `mixed` is the recommended default when both subscriptions are available, and
+# it earns that for two separate reasons. It draws TWO ALLOWANCES DOWN IN
+# PARALLEL rather than exhausting one. And it buys MODEL-FAMILY DIVERSITY ON
+# REVIEW: a reviewer from a different family does not carry the implementer's
+# blind spots. The second reason holds even when nothing is scarce, which is why
+# the recommendation is not only about capacity.
+#
+# A single-family profile cannot buy that diversity, so it compensates with
+# `fresh: true` on its review capabilities. See the `profiles:` block for what
+# fresh means and why every profile here sets it.
 active_profile: mixed
 
 # ---------------------------------------------------------------------------
@@ -124,6 +150,13 @@ capability_ranks:
 # ---------------------------------------------------------------------------
 # ROLES — what each kind of worker needs, as a capability. This is the clean
 # part: the profiles below merely resolve the aliases.
+#
+# THESE NAMES ARE THE VOCABULARY ON THE WIRE. `routing.select` takes one of them
+# as its `role`, and an agent holding the workspacer tools at the operator tier
+# names one through the `select_model` tool. A role nothing here defines cannot
+# be answered, so adding a kind of worker means adding a row here first. Editing
+# a row changes what that kind of work is worth WITHOUT touching a model name
+# anywhere.
 roles:
   # NOT CONSULTED YET. The Fleet Manager's own model is chosen before there is a
   # manager to ask, and it is a user-facing setting: Settings -> Fleet Manager
@@ -152,9 +185,15 @@ roles:
 #             interchangeable: claude is low|medium|high|xhigh|max, codex is
 #             minimal|low|medium|high|xhigh. The spec's "Sol Max" is codex's
 #             `xhigh` — codex has no level named `max`.
-#   fresh     the worker must NOT inherit the previous agent's conversation.
-#             Set on every same-family reviewer, because a Sol reviewer that
-#             inherits the Sol implementer's reasoning is not a reviewer.
+#   fresh     the worker must NOT inherit the previous agent's conversation: it
+#             gets the ticket, the acceptance criteria, the architecture rules,
+#             the diff, the relevant source and the test results, and not the
+#             implementer's reasoning history. Set on every same-family
+#             reviewer, because a Sol reviewer that inherits the Sol
+#             implementer's reasoning is not a reviewer. It RIDES ON THE ANSWER
+#             (`fresh: true`) for whatever dispatches the review to act on; the
+#             spawn gate does not enforce it, because "start a new session"
+#             is not a limit the gate can impose on a caller.
 #   enabled   set to false to take an entry out of service. Omitting it is not
 #             the same thing — a deep merge cannot delete, by design.
 profiles:
@@ -210,6 +249,15 @@ profiles:
 #                 information: `yellow` is the conservative default for a
 #                 metered provider (do not pretend to know), `unmetered` means
 #                 the question does not apply and the provider stays eligible.
+#   enabled       set to false to hold a provider out of service ENTIRELY. It is
+#                 checked before any capacity is read and again on the provider a
+#                 cross-profile resolution lands on, so no answer can name a
+#                 disabled provider. Routing then REFUSES rather than quietly
+#                 substituting another one, because a weaker model on a provider
+#                 you did not ask for is not an answer to the question you asked.
+#                 A provider with no entry here at all is NOT disabled: this block
+#                 describes capacity, and a provider named only under `profiles:`
+#                 must still be routable.
 providers:
   codex: { metered: true, when_unknown: yellow }
   claude: { metered: true, when_unknown: yellow }
@@ -231,6 +279,14 @@ thresholds:
     max_forecast_pct_of_remaining: 30
   # Health from the worst applicable limit bucket. A provider is not GREEN just
   # because its short window is healthy while the weekly one is not.
+  #
+  # WHAT EACH BAND ACTUALLY DOES, because the two are not symmetrical. RED (and
+  # EXHAUSTED) forces CONSERVE outright. YELLOW forces nothing: it is the band
+  # that says "do not spend this down", so it blocks the spend-down arm and
+  # otherwise leaves the matrix's ordinary answer alone. Lowering
+  # `yellow_at_used_pct` therefore makes the router stop TOPPING UP earlier;
+  # lowering `red_at_used_pct` makes it start ECONOMIZING earlier. They are two
+  # different decisions and are worth moving separately.
   health:
     yellow_at_used_pct: 70
     red_at_used_pct: 90
@@ -239,6 +295,25 @@ thresholds:
 # FORECAST WEIGHTS — how much premium demand a ticket in each phase implies.
 # Static on purpose; historical usage replaces these later, not machine
 # learning.
+#
+# WHAT THEY DO TODAY, stated plainly because a weight that looks like it moves
+# the mode and does not would be worse than no weight at all. A caller that
+# describes the work still AHEAD as phase counts gets it weighted, and the
+# answer reports the arithmetic (`demand.units`, `demand.phases`). Those
+# weighted units do NOT become a percentage of an allowance: the conversion
+# needs a cost model this project does not have yet, and inventing one would
+# produce a number that looks like evidence and is not. So a work-only forecast
+# leaves demand UNKNOWN for the mode rules, which is the conservative direction
+# on both counts, since it can neither promote nor conserve on it.
+#
+# The ONE form the mode rules act on is an explicit share of the allowance
+# (`forecastDemandBeforeResetPct` on the request), which the caller measured or
+# is asserting. Zero is a real value there, meaning "nothing more is coming",
+# and it is exactly what unlocks spend-down.
+#
+# A phase this block has no weight for is REPORTED back as unweighted rather
+# than counted as free, so a name nobody assigned a weight to shows up instead
+# of quietly reading as no demand.
 forecast_weights:
   scouting: 1
   implementation: 4

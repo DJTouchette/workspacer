@@ -155,6 +155,20 @@ remote/web/phone clients all view and drive the same fleet.
 | Security | Remote cwds grant no local fs roots (snapshotGrantsFsRoot fail-closed); peer tokens are the link ceiling | 🔵 Working |
 | Known limits | Headless-brain-only peers invisible to desktop/TUI (sparse rows); desktop remote chat renders snapshot window only; no nested federation; a peer's remote worker nodes (e.g. Fly nodes) do not forward and are silently invisible, connect via remote-client mode to see them | 🔵 Working |
 
+## 9c. Limit-aware agent routing (hub)
+
+| Feature | Notes | Status |
+|---|---|---|
+| Routing matrix | `<config>/workspacer-hub/routing.yaml` (0600, beside `jobs.json`): roles → capabilities → per-profile `(provider, model, effort)`. Shipped defaults compiled into the hub, seeded once with comments, deep merged over per key, re-read on a 30s content hash; an unparseable file keeps the matrix already loaded | 🔵 Working |
+| Capacity reading | One `GET /usage/report` per decision; poller dormant until first ask and winds down 15 min after the last. Health folded from the worst applicable window, bands from `thresholds:` | 🔵 Working |
+| Window currency | A reading is used only while its reset is still in the future; an expired window yields UNKNOWN, never a stale percentage or a negative time-to-reset. Enforced by type in `internal/limits/window.go` | 🟢 Solid |
+| Modes | `normal` / `conserve` / `spend_down` from the thresholds, or pinned per provider in `modes:`. `mode_shifts:` moves a role's capability; a cross-provider shift reads the landing provider's own capacity and is refused if that one is conserving | 🔵 Working |
+| `routing.select` | The one method the layer registers, read-only; `select_model` in the MCP facade, operator tier only. Publishes `routing.decision` (no cwd, no account) | 🔵 Working |
+| Per-directory ceilings | `ceilings:` caps capability and tool scope by absolute directory, longest ancestor wins, matched on the canonicalized path. Clamped in `sanitizeSpawnParams` so the federated hop is covered; `routing.select` applies the same function so it never advises what the gate refuses. Unreadable ceiling value denies rather than skips | 🟢 Solid |
+| Decision log | `routing-decisions.jsonl` beside the matrix, 0600, append-only, rotates at 8 MiB. `decision` + `spawn` rows joined by `decisionId`; the only record on a headless node | 🔵 Working |
+| Runtime harness | `make test-routing-harness`: a real hub + fake claudemon over stale/boundary/403/absent usage states, plus ceiling and symlink cases | 🟢 Solid |
+| Known limits | No UI, by design (no routing write RPC is what makes a ceiling enforceable). `forecast_weights` produce weighted units, not a share of an allowance, so a work-only forecast leaves demand UNKNOWN for the mode rules; `difficulty`/`risk`/`decisionDensity` are accepted and not yet acted on; `fresh` rides on the answer and is not gate-enforced; `roles.supervisor` is not consulted (the manager's own model comes from `agents.managerProvider`/`managerModels`) | 🟡 Partial |
+
 ## 10. MCP facade ("Ask the fleet" backend)
 
 | Feature | What it does | Maturity |
