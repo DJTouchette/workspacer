@@ -1194,7 +1194,7 @@ class LibraryService {
           title: 'Ship task (dispatch)',
           kind: 'dispatch',
           description:
-            'Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR.',
+            'Delivery-mode boilerplate + reporting contract for a worker that changes code. Fill {{task}}; {{delivery}} defaults to opening a PR. Dispatch with role "implementer".',
           tags: ['dispatch', 'ship'],
           resultSchema: {
             type: 'object',
@@ -1224,12 +1224,50 @@ class LibraryService {
         },
       },
       {
+        id: 'review-task',
+        item: {
+          title: 'Review task (dispatch)',
+          kind: 'dispatch',
+          description:
+            'Independent review of a ship task the worker did not do: it gets the criteria, the diff, the files and the test results, and never the implementer’s reasoning. Fill {{task}} and {{handoff}} (the implementer’s own closing handoff). Dispatch with role "reviewer".',
+          tags: ['dispatch', 'review'],
+          resultSchema: {
+            type: 'object',
+            required: ['verdict'],
+            properties: {
+              verdict: { type: 'string' },
+              blocking: { type: 'array', items: { type: 'string' } },
+              findings: { type: 'array', items: { type: 'string' } },
+              checksRun: { type: 'array', items: { type: 'string' } },
+              caveats: { type: 'string' },
+            },
+          },
+          body: [
+            'REVIEW TASK in {{cwd}}. Review only: do not fix what you find, and do not push anything.',
+            '',
+            'You are grading work you did not do, in a session that never saw it being done. That independence is the whole value of this dispatch: the reasoning that wrote the code cannot grade it. Nobody has handed you the implementer’s plan, its reasoning or its transcript, and you should not go looking for them.',
+            '',
+            'What was asked for, and the acceptance criteria it had to meet:',
+            '{{task}}',
+            '',
+            'What was delivered. The branch or commit and its diff, the files to read first, the architectural constraints the work had to respect, the checks that were run and what their output said, and anything the implementer could not prove:',
+            '{{handoff}}',
+            '',
+            'Read the diff against the criteria. {{focus:Weigh correctness first, then whether the change fits the code around it, then test coverage, then the rest.}} Verify what you can rather than taking a claim on trust: re-run a check instead of believing a line that says it passed, and keep track of which conclusions you established by RUNNING something and which you only read.',
+            '',
+            'Rank what you find by severity (blocking, should-fix, minor) and REPORT it. Do not fix it: the manager decides what is worth a follow-up ship task, and a reviewer that starts editing has stopped being independent. If the work meets the criteria, say so plainly rather than manufacturing findings.',
+            '',
+            'End your turn with the verdict and the ranked findings. That final message reaches your manager automatically; do not try to message anyone, just finish.',
+          ].join('\n'),
+        },
+      },
+      {
         id: 'scout-task',
         item: {
           title: 'Scout task (dispatch)',
           kind: 'dispatch',
           description:
-            'Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/.',
+            'Read-only investigation framing + report-to-file contract. Fill {{task}}; {{reportPath}} defaults to a dated file under .workspacer/reports/. Dispatch with role "scout".',
           tags: ['dispatch', 'scout'],
           resultSchema: {
             type: 'object',
@@ -1255,7 +1293,7 @@ class LibraryService {
           title: 'Two explanations (dispatch)',
           kind: 'dispatch',
           description:
-            'Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything.',
+            'Diagnose-before-fixing scaffold: name two opposite explanations for a symptom and make the worker establish which holds before changing anything. Dispatch with role "diagnostician".',
           tags: ['dispatch', 'diagnose'],
           resultSchema: {
             type: 'object',

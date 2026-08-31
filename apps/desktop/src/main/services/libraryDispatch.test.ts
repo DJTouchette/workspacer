@@ -153,7 +153,7 @@ describe('dispatch items — the no-spawn-args pin', () => {
 });
 
 describe('dispatch items — seeding', () => {
-  it('the first-run seed ships the three starter templates with schemas', () => {
+  it('the first-run seed ships the four starter templates with schemas', () => {
     // The singleton seeded into the hoisted configDir at import time.
     const seedDir = path.join(
       (h.configDir = h.configDir), // beforeEach re-pointed configDir; read the seeded one
@@ -163,7 +163,7 @@ describe('dispatch items — seeding', () => {
     // once at import, so exercise the seeder directly.
     (libraryService as unknown as { seedGlobalStarters: () => void }).seedGlobalStarters();
     const names = fs.readdirSync(seedDir);
-    for (const want of ['ship-task.md', 'scout-task.md', 'two-explanations.md']) {
+    for (const want of ['ship-task.md', 'review-task.md', 'scout-task.md', 'two-explanations.md']) {
       expect(names).toContain(want);
     }
     const items = libraryService.list();
@@ -179,6 +179,13 @@ describe('dispatch items — seeding', () => {
     const two = items.find((i) => i.id === 'two-explanations');
     expect(two!.body).toContain('{{explanationA}}');
     expect(two!.body).toContain('{{explanationB}}');
+    // The review starter makes the fresh-context contract structural: both the
+    // criteria and the implementer's handoff are REQUIRED slots, so a review
+    // cannot be dispatched without the material that makes it independent.
+    const review = items.find((i) => i.id === 'review-task');
+    expect(review!.resultSchema).toMatchObject({ required: ['verdict'] });
+    expect(review!.params).toContainEqual({ name: 'task', required: true });
+    expect(review!.params).toContainEqual({ name: 'handoff', required: true });
   });
 });
 

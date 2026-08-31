@@ -86,10 +86,89 @@ describe('buildManagerKickoff — reviewer independence', () => {
     );
   });
 
-  it('prefers a different model family and keeps the reviewer tier cheap', () => {
-    expect(doctrine).toMatch(/different model FAMILY/);
-    expect(doctrine).toMatch(/list_models/);
-    expect(doctrine).toMatch(/doubles your worker count/);
+  it('routes the reviewer through select_model instead of hand-picking its model', () => {
+    // The family-diversity argument survives; what changed is who acts on it.
+    // previousProvider is the field that lets the matrix answer with a family
+    // the implementer did not run on, so the manager states it rather than
+    // shopping list_models itself.
+    expect(doctrine).toMatch(/role "reviewer"/);
+    expect(doctrine).toMatch(/deep_reviewer/);
+    expect(doctrine).toMatch(/previousProvider/);
+    expect(doctrine).toMatch(/different model[\s\S]{0,20}family/i);
+    expect(doctrine).not.toMatch(/list_models/);
+  });
+
+  it('names review as the shape routing marks fresh, and what that refuses', () => {
+    expect(doctrine).toMatch(/may not resume an existing session/);
+  });
+});
+
+describe('buildManagerKickoff — routing', () => {
+  // The loop this closes: routing.select is a read-only RPC nothing calls on a
+  // spawn, so the matrix decides a dispatch only when the manager asks it to.
+  // Before this, the doctrine picked models by hand and never named the tool,
+  // which made limit-aware routing inert for the whole fleet.
+  const doctrine = buildManagerKickoff('go');
+
+  it('tells the manager to consult select_model before every dispatch', () => {
+    expect(doctrine).toContain('SELECT_MODEL FIRST');
+    expect(doctrine).toMatch(/never pick a model, an effort or a harness by hand/);
+    expect(doctrine).toMatch(/call select_model with the ROLE/);
+  });
+
+  it('names the role vocabulary the matrix answers to', () => {
+    for (const role of [
+      'scout',
+      'implementer',
+      'reviewer',
+      'deep_reviewer',
+      'fixer',
+      'complex_fixer',
+      'validator',
+      'diagnostician',
+      'mechanical',
+      'judge',
+    ]) {
+      expect(doctrine).toContain(`"${role}"`);
+    }
+  });
+
+  it('carries the answer onto the spawn call: role, capability, decisionId', () => {
+    expect(doctrine).toMatch(/plus role, capability and decisionId/);
+    expect(doctrine).toContain('"decisionId"');
+    expect(doctrine).toMatch(/Copy the capability, never raise it/);
+    // A dispatch that declares no role gets no decision and no freshness.
+    expect(doctrine).toMatch(/declares no role/);
+  });
+
+  it('names no model family at all, which is what the matrix exists to remove', () => {
+    // The doctrine used to say "haiku-class" and "claude is the default", while
+    // the shipped mixed profile puts cheap on codex and the implementer on
+    // codex. A model noun in the doctrine is the second file a rename has to
+    // find.
+    expect(doctrine).not.toMatch(/haiku/i);
+    expect(doctrine).not.toMatch(/Never burn a frontier model on a chore/);
+    expect(doctrine).not.toMatch(/claude is the default/);
+  });
+
+  it('handles the two answers that are not a model', () => {
+    expect(doctrine).toMatch(/eligible:false/);
+    expect(doctrine).toMatch(/If select_model is not available/);
+  });
+
+  it('makes the manager read escalationScrubbed off the spawn result', () => {
+    expect(doctrine).toContain('escalationScrubbed');
+    expect(doctrine).toMatch(/routing ceiling caps that directory/);
+    expect(doctrine).toMatch(/only a person with a text editor can[\s\S]{0,20}raise a ceiling/);
+  });
+
+  it('does not promise an operator tier a ceiling may take away', () => {
+    // fleetManager's server-runner sentence promised operator outright. A
+    // per-directory max_tool_scope can clamp it to triage, and the only signal
+    // is toolScope appearing in escalationScrubbed.
+    expect(doctrine).toMatch(/ASK for that tier/);
+    expect(doctrine).toMatch(/can lower the tier/);
+    expect(doctrine).toMatch(/"toolScope" appearing in the spawn answer’s escalationScrubbed/);
   });
 });
 
@@ -112,6 +191,14 @@ describe('buildManagerKickoff — dispatch templates', () => {
 
   it('says the default resultSchema applies unless the call passes its own', () => {
     expect(doctrine).toMatch(/default resultSchema unless you pass your own/);
+  });
+
+  it('lists review-task among the starters and says the role rides the call', () => {
+    // A dispatch item is text-only by construction, so a template can never
+    // carry a role; the starter descriptions name it and the manager passes it.
+    expect(doctrine).toContain('review-task');
+    expect(doctrine).toMatch(/A template carries no spawn arguments at all/);
+    expect(doctrine).toMatch(/each starter’s description[\s\S]{0,40}names the role/);
   });
 
   it('states the hard rule: unfilled required placeholder refuses the spawn, the task slot is the manager’s', () => {
@@ -217,10 +304,11 @@ describe('spawnFleetManager', () => {
     expect(kickoff).toContain('"parentSessionId"');
     expect(kickoff).toContain('"sinceSeq"');
     expect(kickoff).toContain('"decision":"yes"');
-    // …and model economics: cheap models for chores, frontier only when earned.
-    expect(kickoff).toContain('list_models');
-    expect(kickoff).toContain('haiku-class');
-    expect(kickoff).toContain('Never burn a frontier model on a chore');
+    // …and model economics, which is now a routing call rather than a habit:
+    // the matrix answers which model a role is worth, and the manager copies it.
+    expect(kickoff).toContain('select_model');
+    expect(kickoff).toContain('capability');
+    expect(kickoff).toContain('escalationScrubbed');
     // The anti-poll rule must be a hard STOP, not a soft "stay idle" — a
     // monitoring loop hangs the manager and locks the user out (the reported bug).
     expect(kickoff).toContain('NEVER POLL');

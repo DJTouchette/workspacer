@@ -1308,6 +1308,7 @@ describe('libraryService — the global seed is additive per item', () => {
         'careful-refactor.md',
         'context7-mcp.md',
         'make-workspacer-plugin.md',
+        'review-task.md',
         'scout-task.md',
         'ship-task.md',
         'summarize-and-plan.md',
@@ -1317,7 +1318,7 @@ describe('libraryService — the global seed is additive per item', () => {
     // …and every id it wrote is recorded, or the next start would re-offer them.
     const marker = JSON.parse(fs.readFileSync(markerPath(), 'utf-8')) as { seeded: string[] };
     expect(marker.seeded).toContain('ship-task');
-    expect(marker.seeded).toHaveLength(7);
+    expect(marker.seeded).toHaveLength(8);
   });
 
   it('ends the ship task with a reviewer handoff, not with the worker grading itself', () => {
@@ -1346,6 +1347,46 @@ describe('libraryService — the global seed is additive per item', () => {
     expect(body).toMatch(/Leave your plan and your reasoning out of it/);
   });
 
+  it('ships a review starter that carries the fresh-context contract in its body', () => {
+    // Review is the one dispatch shape the routing matrix marks `fresh`, and
+    // before this it was the only shape with no starter: the manager composed
+    // it freehand from doctrine every time, which is the copy most likely to
+    // lose the half that matters. The Go twin (library_test.go) pins the same
+    // lines.
+    seed();
+    const body = fs.readFileSync(path.join(libDir(), 'review-task.md'), 'utf-8');
+
+    // What it is given, and what it is withheld on purpose.
+    expect(body).toMatch(/session that never saw it being done/);
+    expect(body).toMatch(/plan, its reasoning or its transcript/);
+    expect(body).toContain('{{task}}');
+    expect(body).toContain('{{handoff}}');
+    expect(body).toMatch(/acceptance criteria/);
+    expect(body).toMatch(/branch or commit and its diff/);
+    expect(body).toMatch(/files to read first/);
+
+    // It reports; it does not fix.
+    expect(body).toMatch(/Rank what you find by severity/);
+    expect(body).toMatch(/Do not fix it/);
+
+    const item = libraryService.list().find((i) => i.id === 'review-task')!;
+    expect(item.kind).toBe('dispatch');
+    expect(item.resultSchema).toMatchObject({ type: 'object', required: ['verdict'] });
+  });
+
+  it('names each dispatch template’s routing role in its description', () => {
+    // A dispatch item is text-only by construction (no spawn-argument fields at
+    // all), so `role` can never ride the template. It rides the spawn call.
+    // The description is what list_library returns, so it is where the manager
+    // reads which role to select_model for.
+    seed();
+    const byId = Object.fromEntries(libraryService.list().map((i) => [i.id, i]));
+    expect(byId['ship-task'].description).toContain('role "implementer"');
+    expect(byId['scout-task'].description).toContain('role "scout"');
+    expect(byId['review-task'].description).toContain('role "reviewer"');
+    expect(byId['two-explanations'].description).toContain('role "diagnostician"');
+  });
+
   it('seeds a NEW starter into a populated pre-marker library', () => {
     // The exact shape of the install that surfaced this: two of the four
     // originals kept, two deleted, no marker, no dispatch templates.
@@ -1358,7 +1399,7 @@ describe('libraryService — the global seed is additive per item', () => {
 
     seed();
 
-    for (const want of ['ship-task.md', 'scout-task.md', 'two-explanations.md']) {
+    for (const want of ['ship-task.md', 'review-task.md', 'scout-task.md', 'two-explanations.md']) {
       expect(names()).toContain(want);
     }
     // The dispatch templates land as real dispatch items, schema and all —

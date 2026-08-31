@@ -45,7 +45,10 @@ vendors rename things; the matrix is the only place that has to know.
 One bus method exposes it, `routing.select`, and it is read-only. Agents holding
 the workspacer tools at the operator tier see it as `select_model`. It decides
 nothing on its own: a caller passes the answer's provider, model and effort to
-`agents.spawn` itself.
+`agents.spawn` itself. Nothing calls it on the caller's behalf, so a dispatch
+that never asks gets no decision and appears nowhere in the decision log. The
+Fleet Manager doctrine is what makes the fleet ask; the desktop spawn dialog and
+the web resume paths do not, and are not routed.
 
 ## The file
 
@@ -137,6 +140,17 @@ Three things follow from how the check reads a spawn.
   and being wrong in this direction costs only continuity.
 - The active profile decides. Writing `fresh: false` on its reviewer entry is
   honoured, and a flag in a profile you have not selected refuses nothing.
+
+Which callers can reach the rule today, plainly. The MCP facade's `spawn_agent`
+is the only wire that carries `role` and `capability`, and it has no
+`resumeSessionId` field at all, so a Fleet Manager cannot ask for a resume and
+can never be refused one. The wires that do carry `resumeSessionId` are the
+desktop provider's `agents.spawn` (reached by the web `/app` and `/m` clients
+over the bus) and the renderer's resume-a-recent-session path, and none of them
+declares a role or a capability, which the check correctly reads as no freshness
+claim. So the refusal is live code on a path nothing currently walks. It starts
+biting when a caller both declares a review role and asks to resume, which is
+what the Fleet Manager doctrine now teaches it never to do.
 
 The rule is keyed off what the spawn declares rather than off the `decisionId`
 it quotes, which is safe here in a way it would not be for the ceiling. Refusing

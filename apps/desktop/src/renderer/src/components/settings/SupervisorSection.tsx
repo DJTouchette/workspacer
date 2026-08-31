@@ -114,8 +114,10 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
           <>
             The model the manager’s own conversation runs on, from the models the CLI above actually
             offers. Keep this strong — it reasons about your whole fleet and writes the dispatches.
-            Each CLI remembers its own choice, so switching back and forth doesn’t lose it.{' '}
-            <strong>Applies to the next manager you start.</strong>
+            Each CLI remembers its own choice, so switching back and forth doesn’t lose it. This is
+            the only place the manager’s own model is chosen: the routing matrix picks the models
+            for the workers it dispatches, and its <code>roles.supervisor</code> row is not
+            consulted for this one. <strong>Applies to the next manager you start.</strong>
           </>
         }
       />
