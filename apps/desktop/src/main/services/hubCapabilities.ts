@@ -517,9 +517,7 @@ export function registerHubCapabilities(): void {
       // `contextLimit` — the second disagreeing answer this slice exists to
       // retire. Unknown stays ABSENT, matching the optional contract and the
       // fuller `sessions.snapshots` row; `null` would be a new receiver claim.
-      ...(s.requestedSelection !== undefined
-        ? { requestedSelection: s.requestedSelection }
-        : {}),
+      ...(s.requestedSelection !== undefined ? { requestedSelection: s.requestedSelection } : {}),
       ...(s.resolvedContextWindow !== undefined
         ? { resolvedContextWindow: s.resolvedContextWindow }
         : {}),
