@@ -78,7 +78,19 @@ export interface PluginSettingDef {
 /** One capability entry in a manifest: a bus method the plugin may call, with
  *  optional filesystem scoping (the object form the hub serves for path-scoped
  *  methods). Mirrors the hub's `capspec` Capability. */
-export type PluginCapability = string | { method: string; paths?: string[] };
+export type PluginCapability =
+  | string
+  | {
+      method: string;
+      paths?: string[];
+      /** CHILD DELEGATION, on `agents.spawn` only: the highest workspacer tool
+       *  tier (view | triage | operator) a worker this plugin spawns may be
+       *  handed. Absent means NONE — the plugin may start an agent, and that
+       *  agent gets no workspacer tools. Disclosed as its own permission line,
+       *  because "may dispatch agents" and "may dispatch agents holding the full
+       *  first-party tool set" are different consents. */
+      childToolScope?: string;
+    };
 
 /** The method name of a capability entry, whichever form it takes. */
 export function capabilityMethod(c: PluginCapability): string {
@@ -88,6 +100,11 @@ export function capabilityMethod(c: PluginCapability): string {
 /** The declared filesystem roots of a capability entry (empty for verb-only). */
 export function capabilityPaths(c: PluginCapability): string[] {
   return typeof c === 'string' ? [] : (c.paths ?? []);
+}
+
+/** The declared child-delegation tier of a capability entry ('' for none). */
+export function capabilityChildToolScope(c: PluginCapability): string {
+  return typeof c === 'string' ? '' : (c.childToolScope ?? '');
 }
 
 /** One MCP tool a plugin contributes to the agent facade (manifest `tools`). */

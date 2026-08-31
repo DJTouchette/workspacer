@@ -117,6 +117,23 @@ type Manifest struct {
 type Capability struct {
 	Method string   `json:"method"`
 	Paths  []string `json:"paths,omitempty"`
+	// ChildToolScope is the CHILD-DELEGATION grant on `agents.spawn`:
+	//
+	//	{ "method": "agents.spawn", "childToolScope": "view" }
+	//
+	// It names the highest workspacer tool tier (view | triage | operator) a
+	// worker this plugin spawns may be handed. OMITTED MEANS NONE: the spawn
+	// still happens, but `toolScope`, the legacy `mcpFacade` flag and
+	// `pluginTools` are stripped from it, so the child gets no facade at all.
+	//
+	// WHY IT IS SEPARATE FROM `agents.spawn` ITSELF. Consenting to agents.spawn
+	// says a plugin may START an agent. It does not say it may mint one holding
+	// first-party operator tools — approve, spawn, config, terminals — which is
+	// what `mcpFacade: true` used to mean, unclamped, because a plugin has no
+	// rung on the authority ladder to compare against. This is that rung, and
+	// it is consent-pinned like every other declaration: adding it to
+	// plugin.json after install is dropped until the user re-consents.
+	ChildToolScope string `json:"childToolScope,omitempty"`
 }
 
 // ToolDef is one MCP tool a plugin contributes to the workspacer facade: a
@@ -408,6 +425,14 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("capability %q: %w", c.Method, err)
 			}
 		}
+		if c.ChildToolScope != "" {
+			if c.Method != "agents.spawn" {
+				return fmt.Errorf("capability %q declares \"childToolScope\" — that grant is only meaningful on \"agents.spawn\", which is the only method that hands a child a tool tier", c.Method)
+			}
+			if !IsChildToolScope(c.ChildToolScope) {
+				return fmt.Errorf("capability %q: childToolScope %q is not a workspacer tool tier (view, triage, operator)", c.Method, c.ChildToolScope)
+			}
+		}
 	}
 	for _, p := range m.Provides {
 		if err := validateProvides(m.ID, p); err != nil {
@@ -664,4 +689,19 @@ func LoadDir(dir string) ([]Manifest, []error) {
 		manifests = append(manifests, m)
 	}
 	return manifests, errs
+}
+
+// IsChildToolScope reports whether s names a workspacer tool tier.
+//
+// A closed three-valued vocabulary, defined by the security model
+// (internal/authtoken) rather than by any manifest — a plugin that could invent
+// a fourth tier would be inventing a token scope. TWIN of routing.ToolScopeRank
+// and internal/bus toolScopeRank; three values, and the duplication is one
+// switch rather than an import that would drag the bus into the loader.
+func IsChildToolScope(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "view", "triage", "operator":
+		return true
+	}
+	return false
 }

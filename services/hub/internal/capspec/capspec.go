@@ -1262,6 +1262,19 @@ func MissingSpec(method string) bool {
 type Grant struct {
 	Method  string
 	FSRoots []string
+	// ChildToolScope is the CHILD-DELEGATION grant, and it is meaningful on
+	// exactly one method: agents.spawn. It names the highest facade tier
+	// (view/triage/operator) a spawn this plugin starts may hand its child.
+	//
+	// EMPTY MEANS NONE, and that is the whole point. Consent to call
+	// agents.spawn says "this plugin may start an agent"; it does not say "this
+	// plugin may mint an agent holding first-party operator tools". A plugin has
+	// no rung on the view/triage/operator ladder, so there was nothing to clamp
+	// it against and it was left unclamped — a plugin could request
+	// `mcpFacade: true` (whose legacy meaning is OPERATOR) and get a child with
+	// far more authority than its own token holds. This field is the rung: an
+	// explicit, separately-consented declaration, absent by default.
+	ChildToolScope string
 }
 
 // EventGrants is a plugin token's pub/sub + provider surface — the event side of

@@ -107,6 +107,11 @@ type pluginIdent struct {
 // confine (driving, observation, notifications, …).
 type capGrant struct {
 	fsRoots []string
+	// childToolScope is the CHILD-DELEGATION grant, meaningful only on
+	// agents.spawn: the highest facade tier a worker this plugin spawns may be
+	// handed. Empty means NONE — the spawn still runs, but its toolScope,
+	// mcpFacade and pluginTools are stripped. See callerToolScopeCeiling.
+	childToolScope string
 }
 
 // ScopedIdent is the identity a capability-scoped user token resolves to: a
@@ -309,7 +314,19 @@ func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Gr
 			log.Printf("[bus] SECURITY: refusing to grant %q to plugin %q — it is named like a filesystem capability but has no internal/capspec.PathParam entry, so it would run unconfined. Add it to capspec (with the params field carrying its path) before granting it.", g.Method, pluginID)
 			continue
 		}
-		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots, pluginID, g.Method)}
+		child := strings.ToLower(strings.TrimSpace(g.ChildToolScope))
+		if child != "" {
+			if g.Method != spawnMethod {
+				log.Printf("[bus] plugin %q: ignoring childToolScope %q on %q — that grant only means anything on %q, the one method that hands a child a tool tier", pluginID, child, g.Method, spawnMethod)
+				child = ""
+			} else if _, ok := toolScopeRank(child); !ok {
+				// FAIL CLOSED on a tier nobody can rank: an unreadable
+				// delegation grant is no delegation grant, never an unclamped one.
+				log.Printf("[bus] SECURITY: plugin %q: refusing childToolScope %q on %q — it is not a tool tier (view, triage, operator), so it cannot be compared and the plugin delegates NO tools", pluginID, child, g.Method)
+				child = ""
+			}
+		}
+		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots, pluginID, g.Method), childToolScope: child}
 	}
 	s.ptMu.Lock()
 	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set, events: events}

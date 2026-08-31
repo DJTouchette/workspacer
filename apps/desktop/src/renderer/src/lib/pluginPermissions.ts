@@ -5,7 +5,7 @@
 // plugins manager, so an install click is informed consent.
 
 import type { PluginManifest, PluginCapability } from '../types/plugin';
-import { capabilityMethod, capabilityPaths } from '../types/plugin';
+import { capabilityMethod, capabilityPaths, capabilityChildToolScope } from '../types/plugin';
 
 export type PermissionSeverity = 'sensitive' | 'normal';
 
@@ -293,6 +293,29 @@ function describeScope(path: string): ScopeInfo {
   return { label: `${path} (outside its own folder)`, escapes: true };
 }
 
+/** CHILD DELEGATION is its own line, and always SENSITIVE.
+ *
+ *  Consent to `agents.spawn` says a plugin may start an agent. It does not say
+ *  it may start one holding workspacer's own tools — approve, dispatch,
+ *  terminals, config — which is what `childToolScope: operator` asks for. The
+ *  hub strips every tool field from a plugin spawn that has no such grant, so a
+ *  plugin that HAS one is asking for something strictly extra, and an install
+ *  click can only be informed consent if the dialog says which tier. */
+function childDelegationLine(c: PluginCapability): PermissionLine | undefined {
+  const tier = capabilityChildToolScope(c).trim().toLowerCase();
+  if (!tier) return undefined;
+  const detail: Record<string, string> = {
+    view: 'observe-only tools',
+    triage: 'observe, approve, reply and interrupt',
+    operator: 'the FULL workspacer tool set',
+  };
+  return {
+    label: `Give the agents it dispatches workspacer tools at the ${tier} tier`,
+    detail: detail[tier] ?? 'an unrecognized tier — the hub will grant no tools',
+    severity: 'sensitive',
+  };
+}
+
 export function capLine(c: PluginCapability): PermissionLine {
   const method = capabilityMethod(c);
   const known = CAP_LABELS[method];
@@ -498,7 +521,14 @@ export function pluginPermissions(m: PluginManifest): PermissionGroup[] {
     groups.push({
       key: 'call',
       title: 'Can',
-      lines: caps.map(capLine),
+      // The child-delegation grant rides beside the capability that carries it
+      // rather than replacing its line: "may dispatch agents" and "may hand
+      // those agents the full workspacer tool set" are two consents, and folding
+      // them into one row would hide the second behind the first.
+      lines: caps.flatMap((c) => {
+        const child = childDelegationLine(c);
+        return child ? [capLine(c), child] : [capLine(c)];
+      }),
     });
   }
 

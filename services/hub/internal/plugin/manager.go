@@ -47,7 +47,11 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 		if c.Method == "" {
 			continue
 		}
-		out = append(out, capspec.Grant{Method: c.Method, FSRoots: resolveRoots(c.Paths, bindings)})
+		out = append(out, capspec.Grant{
+			Method:         c.Method,
+			FSRoots:        resolveRoots(c.Paths, bindings),
+			ChildToolScope: c.ChildToolScope,
+		})
 	}
 	return out
 }

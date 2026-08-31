@@ -418,4 +418,47 @@ describe('event-topic registry — cross-language contract', () => {
     expect(topicRuleFor('workflow.*')?.disposition).toBe('open-by-decision');
     expect(topicRuleFor('myplugin.tick')).toBeUndefined();
   });
+
+  // CHILD DELEGATION IS ITS OWN LINE. The hub strips every tool field from a
+  // plugin spawn that has no `childToolScope` grant, so a plugin that HAS one is
+  // asking for something strictly beyond "may dispatch agents" — and a consent
+  // dialog that folded the two into one row would hide the second behind the
+  // first.
+  it('discloses a child-tool-delegation grant separately from the spawn grant', () => {
+    const lines = pluginPermissions(
+      mf({ capabilities: [{ method: 'agents.spawn', childToolScope: 'operator' }] }),
+    ).find((g) => g.key === 'call')!.lines;
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0].label).toBe(CAP_LABELS['agents.spawn'].label);
+    expect(lines[1].label).toContain('operator');
+    expect(lines[1].detail).toContain('FULL');
+    expect(lines[1].severity).toBe('sensitive');
+  });
+
+  it('adds no delegation line to a bare spawn grant', () => {
+    const lines = pluginPermissions(mf({ capabilities: ['agents.spawn'] })).find(
+      (g) => g.key === 'call',
+    )!.lines;
+    expect(lines).toHaveLength(1);
+  });
+
+  it('names the tier for each rung, and warns on one it does not know', () => {
+    for (const [tier, detail] of [
+      ['view', 'observe-only'],
+      ['triage', 'approve'],
+    ] as const) {
+      const line = capLineFor(tier);
+      expect(line.label).toContain(tier);
+      expect(line.detail).toContain(detail);
+    }
+    expect(capLineFor('superuser').detail).toContain('no tools');
+  });
 });
+
+/** The delegation line for one tier, pulled out of the rendered consent group. */
+function capLineFor(tier: string): PermissionLine {
+  return pluginPermissions(
+    mf({ capabilities: [{ method: 'agents.spawn', childToolScope: tier }] }),
+  ).find((g) => g.key === 'call')!.lines[1];
+}

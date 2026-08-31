@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // THE GRANT PIN — the consented authority of a plugin, recorded OUTSIDE the one
@@ -189,8 +190,17 @@ func withNoAuthority(mf Manifest) Manifest {
 // new is dropped whole.
 func narrowToPin(mf Manifest, pin grantPin) Manifest {
 	pinned := map[string][]string{}
+	// The CHILD-DELEGATION grant is pinned separately from the paths, and it has
+	// to be: `{"method":"agents.spawn","childToolScope":"operator"}` added to
+	// plugin.json after install would otherwise ride in on a consent the user
+	// gave to a bare agents.spawn — the exact write-then-interpret crossing this
+	// whole file exists to close, on the one field that mints child authority.
+	pinnedChildScope := map[string]string{}
 	for _, c := range pin.Capabilities {
 		pinned[c.Method] = append(pinned[c.Method], c.Paths...)
+		if c.ChildToolScope != "" {
+			pinnedChildScope[c.Method] = c.ChildToolScope
+		}
 	}
 	caps := make([]Capability, 0, len(mf.Capabilities))
 	for _, c := range mf.Capabilities {
@@ -198,6 +208,11 @@ func narrowToPin(mf Manifest, pin grantPin) Manifest {
 		if !ok {
 			log.Printf("SECURITY: plugin %s: dropping capability %q — it is not in the grant pin, so it was added to plugin.json AFTER the user consented to this plugin. Reinstall (or explicitly reload) to re-obtain consent.", mf.ID, c.Method)
 			continue
+		}
+		if c.ChildToolScope != "" && !strings.EqualFold(c.ChildToolScope, pinnedChildScope[c.Method]) {
+			log.Printf("SECURITY: plugin %s: dropping childToolScope %q from capability %q — the grant pin records %q, so this child-delegation grant was added to (or widened in) plugin.json AFTER the user consented. The plugin may still spawn; its workers get no workspacer tools. Reinstall (or explicitly reload) to re-obtain consent.",
+				mf.ID, c.ChildToolScope, c.Method, pinnedChildScope[c.Method])
+			c.ChildToolScope = pinnedChildScope[c.Method]
 		}
 		kept := make([]string, 0, len(c.Paths))
 		for _, p := range c.Paths {

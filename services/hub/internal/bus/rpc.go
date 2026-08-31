@@ -523,11 +523,17 @@ func (s *Server) SetSpawnCeiling(ceiling SpawnCeilingFunc, audit SpawnAuditFunc)
 //     the desktop, the brain, the MCP facade. A process holding it could rewrite
 //     tokens.json, so clamping it here would be theater, exactly as it is for
 //     mayUseProfile.
-//   - A PLUGIN token has no tier at all, so there is nothing to compare against.
-//     It is left alone here rather than clamped to a guess; a plugin reaching
-//     agents.spawn needs the capability granted at install, and what it may then
-//     hand a child is a question for the consent dialog, not for a ladder it has
-//     no rung on. Recorded as a known gap rather than closed by assumption.
+//   - A PLUGIN token now brings its OWN rung, declared in the manifest and
+//     consent-pinned: `{"method":"agents.spawn","childToolScope":"view"}`. It
+//     used to be exempt on the reasoning that a plugin has no place on the
+//     view/triage/operator ladder and clamping it would be a guess — true, and
+//     the consequence was that a plugin consented merely to START an agent could
+//     request `mcpFacade: true` (legacy spelling of OPERATOR) and mint a child
+//     holding the full first-party tool set, well beyond anything its own token
+//     held. The guess is replaced by a declaration rather than by an assumption,
+//     and its ABSENCE is a real answer: no facade at all. Fail closed, because
+//     "the manifest says nothing about delegating tools" must not read as
+//     "delegate anything".
 //   - An OPERATOR-tier scoped record reaches this with cn.scope EMPTY, because
 //     the handshake promotes ScopeOperator to `trusted` and only the narrower
 //     tiers keep their name (bus.go handleBus). That produces the right answer
@@ -536,15 +542,22 @@ func (s *Server) SetSpawnCeiling(ceiling SpawnCeilingFunc, audit SpawnAuditFunc)
 //     clamp. The DIRECTORY ceiling still applies to it — see the caller of this
 //     function, which takes the lower of the two.
 //
-// Returns "" when this connection imposes no tier ceiling.
-func (cn *conn) callerToolScopeCeiling() string {
+// Returns ("", true) when this connection imposes no tier ceiling, and
+// (_, false) when it may delegate NOTHING — a plugin with no child-delegation
+// grant. The two are not the same answer and collapsing them onto the empty
+// string is how the plugin hole stayed open: "" read as "no ceiling".
+func (cn *conn) callerToolScopeCeiling() (string, bool) {
 	if cn.pluginID != "" {
-		return ""
+		g, held := cn.caps[spawnMethod]
+		if !held || g.childToolScope == "" {
+			return "", false
+		}
+		return g.childToolScope, true
 	}
 	if !cn.viaScopedToken {
-		return "" // host token: the control plane
+		return "", true // host token: the control plane
 	}
-	return strings.ToLower(strings.TrimSpace(cn.scope))
+	return strings.ToLower(strings.TrimSpace(cn.scope)), true
 }
 
 // toolScopeRank orders the three authority tiers. TWIN of routing's
@@ -764,7 +777,29 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 	if !verdict.ToolScopeRefused {
 		effectiveMax = ""
 	}
-	if callerMax := caller.callerToolScopeCeiling(); callerMax != "" && wantScope != "" {
+	callerMax, mayDelegate := caller.callerToolScopeCeiling()
+	if !mayDelegate {
+		// NO CHILD TOOLS AT ALL. Today this is exactly one credential shape: a
+		// plugin whose manifest declares agents.spawn without a `childToolScope`.
+		// Every tool-bearing field goes, not just `toolScope` — a clamp that left
+		// `mcpFacade` behind would be walked around by one boolean, and
+		// `pluginTools` is a grant list that only means anything alongside a
+		// facade, so leaving it would be recording an intent nothing honours.
+		for _, key := range []string{"toolScope", "mcpFacade", "pluginTools"} {
+			if _, had := m[key]; had {
+				delete(m, key)
+				scrubbed = append(scrubbed, key)
+			}
+		}
+		if wantScope != "" || len(scrubbed) > 0 {
+			log.Printf("SECURITY: agents.spawn: caller %s (plugin %s) asked to hand its child the %q tool tier and holds no child-delegation grant — every tool field is stripped. Declare {\"method\":\"agents.spawn\",\"childToolScope\":\"view\"} in the plugin manifest and reinstall to re-obtain consent; consent to SPAWN is not consent to mint an agent holding workspacer's own tools",
+				caller.tokenID, caller.pluginID, wantScope)
+		}
+		verdict.ToolScopeRefused, verdict.ToolScope = true, ""
+		verdict.Because = append(verdict.Because, "the calling plugin holds no childToolScope grant, so its workers get no workspacer tools")
+		wantScope, effectiveMax = "", ""
+	}
+	if callerMax != "" && wantScope != "" {
 		want, wantOK := toolScopeRank(wantScope)
 		cmax, cmaxOK := toolScopeRank(callerMax)
 		if wantOK && cmaxOK && want > cmax {
