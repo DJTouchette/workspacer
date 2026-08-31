@@ -248,7 +248,11 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
             },
             { value: 'claude-sonnet-5', label: 'Sonnet 5' },
           ],
-          seen: ['claude-opus-5[1m]', 'claude-fable-5'],
+          // `claude-collision-5` and `collision-5` are distinct catalog ids
+          // that collapse to the same phone label. Keep both here so the /m
+          // regression explicitly proves its display-label dedupe remains
+          // load-bearing after canonical pair identity has done its own work.
+          seen: ['claude-opus-5[1m]', 'claude-fable-5', 'claude-collision-5', 'collision-5'],
         });
       case 'agents.spawn':
         // Mirrors a current provider: `messageQueued` acknowledges that the

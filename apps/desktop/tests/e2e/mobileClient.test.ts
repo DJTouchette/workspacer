@@ -773,15 +773,21 @@ test.describe('mobile client', () => {
     await expect(page.locator('#chips button').first()).toBeDisabled();
   });
 
-  test('an old marker-only Claude catalog switches with a canonical pair and legacy companion', async ({
+  test('a transitional Claude alias recovers its window from the legacy companion', async ({
     page,
   }) => {
     await openClient(page);
     await page.locator('.agent[data-agent="ws1"] .top').click();
     await page.locator('#chips [data-chip="model"]').click();
     await expect(page.locator('#sheet')).toContainText('opus-5[1m]');
-    await expect(page.locator('#sheet [data-row]', { hasText: 'opus-5[1m]' })).toHaveCount(1);
-    await page.locator('#sheet [data-row]', { hasText: 'opus-5[1m]' }).click();
+    // The alias's canonical model is intentionally sent without a numeric
+    // window; recovery from its marker-bearing legacy companion must turn it
+    // into the same pair as `seen`, leaving no unwindowed duplicate behind.
+    await expect(page.locator('#sheet [data-row] .l', { hasText: /^opus-5$/ })).toHaveCount(0);
+    await expect(page.locator('#sheet [data-row] .l', { hasText: /^opus-5\[1m\]$/ })).toHaveCount(
+      1,
+    );
+    await page.locator('#sheet [data-row] .l', { hasText: /^opus-5\[1m\]$/ }).click();
 
     await expect.poll(() => hub.callsTo('claude.setModel').length).toBe(1);
     expect(hub.callsTo('claude.setModel')[0].params).toMatchObject({
@@ -790,6 +796,19 @@ test.describe('mobile client', () => {
       modelIdentity: 'claude-opus-5',
       contextWindow: 1_000_000,
     });
+  });
+
+  test('a Claude catalog deduplicates distinct seen ids that share a display label', async ({
+    page,
+  }) => {
+    await openClient(page);
+    await page.locator('.agent[data-agent="ws1"] .top').click();
+    await page.locator('#chips [data-chip="model"]').click();
+
+    // `claude-collision-5` and `collision-5` are different selections, so
+    // pair-based alias dedupe cannot remove either. Only the display-label
+    // guard keeps this sheet from offering two indistinguishable choices.
+    await expect(page.locator('#sheet [data-row] .l', { hasText: /^collision-5$/ })).toHaveCount(1);
   });
 
   test('a notification deep-link opens that agent', async ({ page }) => {
