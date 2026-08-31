@@ -547,6 +547,14 @@ func toolScopeRank(scope string) (int, bool) {
 // sanitizeSpawnParams enforces the profile-dispatch grant on an agents.spawn's
 // params, at the router's single dispatch point:
 //
+//  0. THE SPELLING GATE, before anything below can be walked around. Every rule
+//     in this function matches a field name EXACTLY; every provider that decodes
+//     the result matches field names CASE-INSENSITIVELY. So the call is REFUSED
+//     outright when a top-level key case-folds to a spawn param the hub knows
+//     about without being spelled as one — `YoloGranted`, `Capability`,
+//     `MCPFacade`, `ToolScope` — or when two keys fold together. Without this
+//     step every numbered rule below is advisory: see spawnkeys.go.
+//
 //  1. `profileGranted` is DELETED from every incoming call. It is hub-stamped
 //     only — a provider seeing it true knows the hub verified the caller, and
 //     no caller (spoofing included) can be its source.
@@ -605,13 +613,22 @@ func toolScopeRank(scope string) (int, bool) {
 // own scrubs (configDir never comes from the wire; the profile id resolves
 // against the provider's LOCAL profile store), so this is an additional gate in
 // front of them, not a replacement.
-func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return raw
+		return raw, nil
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
-		return raw
+		return raw, nil
+	}
+	// BEFORE ANY EXACT-KEY DECISION BELOW. Every delete, stamp and clamp in this
+	// function matches a field name exactly; the providers that decode the result
+	// match case-insensitively. See internal/bus/spawnkeys.go for the bypass that
+	// gap is, and why the answer is a refusal at this boundary rather than a
+	// second guard inside one provider.
+	if err := rejectAliasedSpawnKeys(m); err != nil {
+		log.Printf("SECURITY: %v (caller %s)", err, caller.tokenID)
+		return nil, err
 	}
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
@@ -653,9 +670,9 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) json.Ra
 	if err != nil {
 		// Cannot happen for a map of valid RawMessages; fail closed anyway by
 		// refusing to forward the un-sanitized original's profile fields.
-		return json.RawMessage("{}")
+		return json.RawMessage("{}"), nil
 	}
-	return out
+	return out, nil
 }
 
 // clampSpawnAuthority applies items 4 and 5 above and records the spawn, in
@@ -822,24 +839,24 @@ func mustJSON(s string) json.RawMessage {
 // the control plane, and the facade in particular multiplexes every session over
 // one host-token connection, so it is the only party that CAN name the session
 // (from the token record it resolved). Non-object params pass through untouched.
-func (rt *router) sanitizeReportProgressParams(caller *conn, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeReportProgressParams(caller *conn, raw json.RawMessage) (json.RawMessage, error) {
 	if caller.trusted || len(raw) == 0 {
-		return raw
+		return raw, nil
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
-		return raw
+		return raw, nil
 	}
 	if _, ok := m["callerSessionId"]; !ok {
-		return raw
+		return raw, nil
 	}
 	delete(m, "callerSessionId")
 	out, err := json.Marshal(m)
 	if err != nil {
 		// Cannot happen for a map of valid RawMessages; fail closed anyway.
-		return json.RawMessage("{}")
+		return json.RawMessage("{}"), nil
 	}
-	return out
+	return out, nil
 }
 
 // paramSanitizer rewrites a call's params based on the VERIFIED caller. Keyed
@@ -848,7 +865,7 @@ func (rt *router) sanitizeReportProgressParams(caller *conn, raw json.RawMessage
 // It takes the router because a sanitizer may need something the hub injected at
 // wiring time — the spawn ceiling and the audit sink — and the alternative was a
 // package-level variable, which is a second, invisible dispatch table.
-type paramSanitizer func(rt *router, caller *conn, raw json.RawMessage) json.RawMessage
+type paramSanitizer func(rt *router, caller *conn, raw json.RawMessage) (json.RawMessage, error)
 
 // methodSanitizers is the single source of truth for which capabilities have
 // caller-identity fields the router must strip or stamp rather than forward
@@ -867,11 +884,11 @@ var methodSanitizers = map[string]paramSanitizer{
 
 // sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
-func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) json.RawMessage {
+func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) (json.RawMessage, error) {
 	if s, ok := methodSanitizers[method]; ok {
 		return s(rt, caller, raw)
 	}
-	return raw
+	return raw, nil
 }
 
 // call routes a caller's invocation to the registered provider.
@@ -900,7 +917,17 @@ func (rt *router) call(caller *conn, f Frame) {
 	// (profile dispatch, the reportProgress session stamp, ...): strip/stamp
 	// them based on the VERIFIED caller, before either dispatch path (local or
 	// provider) can see them. See [methodSanitizers].
-	f.Params = rt.sanitizeCallParams(caller, f.Method, f.Params)
+	//
+	// A sanitizer may REFUSE rather than rewrite. Today exactly one thing does:
+	// an agents.spawn naming an authority field in a spelling the gate matches
+	// and the provider's decoder does not (spawnkeys.go). The caller gets the
+	// error, and nothing reaches a provider.
+	sanitized, sErr := rt.sanitizeCallParams(caller, f.Method, f.Params)
+	if sErr != nil {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: sErr.Error()})
+		return
+	}
+	f.Params = sanitized
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
 	// providers. Run off the read loop so a slow handler can't stall the caller's
@@ -1040,7 +1067,14 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 	// it. A hand-listed pair here that forgot one entry is exactly how
 	// agents.reportProgress's callerSessionId briefly rode across ungated: see
 	// TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
-	f.Params = rt.sanitizeCallParams(caller, bare, f.Params)
+	sanitized, sErr := rt.sanitizeCallParams(caller, bare, f.Params)
+	if sErr != nil {
+		// A refusal is the same refusal on both sides of the hop: an aliased
+		// authority key must not be repaired into a peer's provider either.
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: sErr.Error()})
+		return
+	}
+	f.Params = sanitized
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the
 	// federated hop rather than an ambiguous local deadline.
