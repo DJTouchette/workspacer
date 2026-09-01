@@ -54,7 +54,7 @@ type conversationHub struct {
 	visible func(sessionID string) bool
 
 	mu     sync.Mutex
-	wanted map[string]bool
+	wanted map[string]*conversationDemand
 	// cancel stops the live SSE consumer; nil when none is running (nothing is
 	// wanted). The consumer is started on the first demand and stopped on the
 	// last release, so an idle fleet holds no connection to claudemon at all.
@@ -62,8 +62,24 @@ type conversationHub struct {
 	parent context.Context
 }
 
+// conversationDemand is the per-session ready-handshake state machine.
+//
+// A fresh demand enters announcing with ready open. The stream may already be
+// running (it is fleet-wide), so forwarders wait on ready without holding mu.
+// After announceReady returns, setDemand changes the SAME demand to active and
+// closes ready. Release/reset instead remove it and close ready; a woken
+// forwarder then fails the pointer+active check and drops the stale delta.
+//
+// The pointer identity is the generation token. An off/on pair may replace a
+// demand while an earlier announceReady call is in external delivery; that old
+// call can neither activate the replacement nor satisfy its barrier.
+type conversationDemand struct {
+	ready  chan struct{}
+	active bool
+}
+
 func newConversationHub(ctx context.Context, cm *claudemonClient, publish func(string, json.RawMessage), visible func(string) bool) *conversationHub {
-	return &conversationHub{cm: cm, publish: publish, visible: visible, parent: ctx, wanted: map[string]bool{}}
+	return &conversationHub{cm: cm, publish: publish, visible: visible, parent: ctx, wanted: map[string]*conversationDemand{}}
 }
 
 // setDemand starts or stops forwarding one session's deltas. Idempotent in both
@@ -75,7 +91,12 @@ func (h *conversationHub) setDemand(sessionID string, on bool) {
 	}
 	h.mu.Lock()
 	if !on {
-		delete(h.wanted, sessionID)
+		if demand := h.wanted[sessionID]; demand != nil {
+			delete(h.wanted, sessionID)
+			if !demand.active {
+				close(demand.ready)
+			}
+		}
 		if len(h.wanted) == 0 && h.cancel != nil {
 			h.cancel()
 			h.cancel = nil
@@ -83,8 +104,12 @@ func (h *conversationHub) setDemand(sessionID string, on bool) {
 		h.mu.Unlock()
 		return
 	}
-	fresh := !h.wanted[sessionID]
-	h.wanted[sessionID] = true
+	if h.wanted[sessionID] != nil {
+		h.mu.Unlock()
+		return
+	}
+	demand := &conversationDemand{ready: make(chan struct{})}
+	h.wanted[sessionID] = demand
 	start := h.cancel == nil
 	if start {
 		ctx, cancel := context.WithCancel(h.parent)
@@ -92,9 +117,18 @@ func (h *conversationHub) setDemand(sessionID string, on bool) {
 		go h.run(ctx)
 	}
 	h.mu.Unlock()
-	if fresh {
-		h.announceReady(sessionID)
+
+	// External delivery must never run under mu. A stream callback that arrived
+	// after the goroutine was launched is parked on demand.ready until this
+	// returns, making the ready frame the strict happens-before edge.
+	h.announceReady(sessionID)
+
+	h.mu.Lock()
+	if h.wanted[sessionID] == demand {
+		demand.active = true
+		close(demand.ready)
 	}
+	h.mu.Unlock()
 }
 
 // announceReady publishes the handshake frame: proof, to the client, that the
@@ -127,7 +161,12 @@ func (h *conversationHub) announceReady(sessionID string) {
 func (h *conversationHub) reset() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.wanted = map[string]bool{}
+	for _, demand := range h.wanted {
+		if !demand.active {
+			close(demand.ready)
+		}
+	}
+	h.wanted = map[string]*conversationDemand{}
 	if h.cancel != nil {
 		h.cancel()
 		h.cancel = nil
@@ -147,7 +186,7 @@ func (h *conversationHub) run(ctx context.Context) {
 			if name != "conversation.delta" && name != "" {
 				return
 			}
-			h.forward(data)
+			h.forward(ctx, data)
 		})
 		if ctx.Err() != nil {
 			return
@@ -175,7 +214,10 @@ func (h *conversationHub) run(ctx context.Context) {
 // against claudemon's own item vocabulary — the same shapes the desktop bridge
 // and the TUI consume — and a re-shaping here would be a third dialect to keep
 // in step.
-func (h *conversationHub) forward(data []byte) {
+func (h *conversationHub) forward(ctx context.Context, data []byte) {
+	if ctx.Err() != nil {
+		return
+	}
 	var d struct {
 		SessionID string `json:"session_id"`
 	}
@@ -183,7 +225,24 @@ func (h *conversationHub) forward(data []byte) {
 		return
 	}
 	h.mu.Lock()
-	want := h.wanted[d.SessionID]
+	demand := h.wanted[d.SessionID]
+	h.mu.Unlock()
+	if demand == nil {
+		return
+	}
+	// Do not hold mu while waiting for the external ready delivery. Release and
+	// reset also close this channel, so neither can deadlock behind a stalled
+	// announcement.
+	select {
+	case <-demand.ready:
+	case <-ctx.Done():
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	h.mu.Lock()
+	want := h.wanted[d.SessionID] == demand && demand.active
 	h.mu.Unlock()
 	if !want {
 		return

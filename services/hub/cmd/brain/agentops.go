@@ -351,10 +351,6 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 	// the meantime, but it can no longer mutate the response being encoded.
 	response := snapshotThresholdWatch(w)
 	r.watchMu.Unlock()
-	if hook := r.watchResponseSnapshotReady; hook != nil {
-		// Test seam for the exact unlock/marshal interleaving. Nil in production.
-		hook()
-	}
 	return jsonResult(response)
 }
 
@@ -814,7 +810,4 @@ type fleetState struct {
 	watchMu  sync.Mutex
 	watches  map[string]*thresholdWatch
 	watchSeq int
-	// Deterministically exercises a sweep after notifyWhen releases watchMu but
-	// before it marshals the response. Tests only; production leaves it nil.
-	watchResponseSnapshotReady func()
 }

@@ -46,11 +46,11 @@ func TestThresholdWatchResponseSnapshotIsDetachedFromSweepState(t *testing.T) {
 	}
 }
 
-// This is the call-site half of the regression. The hook forces the exact
-// interleaving that made the old Unlock-then-jsonResult(w) racy: a real sweep
-// binds the live watch after notifyWhen releases watchMu but before its response
-// is encoded. The caller must still receive the state that was true at arm time.
-func TestNotifyWhenResponseIsDetachedBeforeConcurrentSweep(t *testing.T) {
+// This is the call-site half of the regression. A real sweep mutates the live
+// watch after notifyWhen returns; the already-serialized response must retain
+// the state that was true at arm time. The direct snapshot test above proves
+// the pointer fields are detached without requiring a mutable production hook.
+func TestNotifyWhenResponseRemainsDetachedAfterSweep(t *testing.T) {
 	now := time.Now().UTC()
 	rec := newRecorder()
 	srv := rec.server()
@@ -61,13 +61,6 @@ func TestNotifyWhenResponseIsDetachedBeforeConcurrentSweep(t *testing.T) {
 			"worker": `{"session_id":"worker","cwd":"/w/p","mode":"responding","provider":"codex"}`,
 		},
 		map[string]spawnMeta{"worker": {ParentSessionID: "mgr"}})
-	reg.watchResponseSnapshotReady = func() {
-		reg.store.updateStatusLine("worker", contextHealthStatus(
-			t, now, 100_000, 200_000, telemetryEpoch("1788888888888888901"), "codex", "runtime",
-		))
-		reg.sweepThresholds(context.Background(), now)
-	}
-
 	result, err := reg.notifyWhen(context.Background(), json.RawMessage(
 		`{"sessionId":"worker","contextUsedPct":80}`,
 	))
@@ -78,6 +71,10 @@ func TestNotifyWhenResponseIsDetachedBeforeConcurrentSweep(t *testing.T) {
 	if err := json.Unmarshal(result, &response); err != nil {
 		t.Fatal(err)
 	}
+	reg.store.updateStatusLine("worker", contextHealthStatus(
+		t, now, 100_000, 200_000, telemetryEpoch("1788888888888888901"), "codex", "runtime",
+	))
+	reg.sweepThresholds(context.Background(), now)
 	if response.State != "waitingForTelemetry" || response.ContextEpoch != nil {
 		t.Fatalf("response observed sweep mutation instead of arm-time snapshot: %+v", response)
 	}

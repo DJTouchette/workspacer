@@ -52,6 +52,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   agents it governs.
 
 ### Changed
+- **Context health now reports only active, runtime-confirmed occupancy.** Legacy
+  Codex telemetry that has no last-request usage now shows context waiting
+  instead of inventing a percentage; Copilot occupancy uses
+  prompt/input tokens rather than adding completion output; and
+  `contextUsedPct` watches wait for runtime-confirmed active occupancy before
+  they arm or fire.
 - **Keep-warm knows Codex's window without a Codex session.** Warming a
   5-hour window starts by asking whether one is already running, and for
   Codex that question used to be put to whatever live sessions happened to
