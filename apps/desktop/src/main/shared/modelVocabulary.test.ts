@@ -10,91 +10,56 @@
  * can name.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import * as path from 'path';
 import { servesModel, providersServing, isForeignModel } from './modelVocabulary';
 
-describe('servesModel', () => {
-  it('claims claude aliases (case-insensitively) and concrete claude ids', () => {
-    for (const id of ['haiku', 'sonnet', 'sonnet[1m]', 'opus', 'opusplan', 'fable', 'default']) {
-      expect(servesModel('claude', id)).toBe(true);
-    }
-    expect(servesModel('claude', 'Sonnet')).toBe(true);
-    expect(servesModel('claude', 'claude-opus-4-5-20251101')).toBe(true);
-    // `[1m]` on a concrete id is still a claude id.
-    expect(servesModel('claude', 'claude-opus-4-5[1m]')).toBe(true);
+interface VocabularyOwnershipCase {
+  name: string;
+  model: string;
+  owners: string[];
+  note: string;
+}
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fixture = JSON.parse(
+  readFileSync(
+    path.resolve(here, '../../../../../contracts/model-vocabulary-ownership-cases.json'),
+    'utf8',
+  ),
+) as { ownershipCases: VocabularyOwnershipCase[] };
+
+const PROVIDERS = ['claude', 'codex', 'copilot', 'opencode', 'pi'];
+
+describe('Fleet Manager model vocabulary ownership contract shared with Hub', () => {
+  it('keeps the corpus substantive', () => {
+    expect(fixture.ownershipCases.length).toBeGreaterThanOrEqual(20);
   });
 
-  it('claims codex families', () => {
-    for (const id of ['gpt-5.1-codex-max', 'gpt-5', 'o3', 'o1-preview', 'codex-mini', 'gpt4']) {
-      expect(servesModel('codex', id)).toBe(true);
-    }
-  });
+  for (const testCase of fixture.ownershipCases) {
+    it(testCase.name, () => {
+      const owners = [...testCase.owners].sort();
+      expect(providersServing(testCase.model).sort(), testCase.note).toEqual(owners);
 
-  it('claims the provider/model form for opencode and pi', () => {
-    expect(servesModel('opencode', 'anthropic/claude-sonnet-4')).toBe(true);
-    expect(servesModel('pi', 'google/gemini-2.5-pro')).toBe(true);
-  });
+      for (const provider of PROVIDERS) {
+        const ownedHere = owners.includes(provider);
+        expect(servesModel(provider, testCase.model), `${testCase.note} (${provider})`).toBe(
+          ownedHere,
+        );
+        expect(isForeignModel(provider, testCase.model), `${testCase.note} (${provider})`).toBe(
+          owners.length > 0 && !ownedHere,
+        );
+      }
+    });
+  }
+});
 
-  it('is false for a blank model, an unknown provider, and a cross-harness id', () => {
-    expect(servesModel('claude', '')).toBe(false);
-    expect(servesModel('claude', '   ')).toBe(false);
+describe('model vocabulary boundary inputs', () => {
+  it('does not claim an absent id or an unknown harness', () => {
     expect(servesModel('claude', undefined)).toBe(false);
     expect(servesModel('nosuchharness', 'sonnet')).toBe(false);
-    expect(servesModel('codex', 'sonnet')).toBe(false);
-    expect(servesModel('claude', 'gpt-5')).toBe(false);
-  });
-
-  it('trims before matching, so a config value with stray whitespace still resolves', () => {
-    expect(servesModel('claude', '  sonnet  ')).toBe(true);
-  });
-});
-
-describe('providersServing', () => {
-  it('names the owner of an id', () => {
-    expect(providersServing('sonnet')).toEqual(['claude']);
-    expect(providersServing('gpt-5.1-codex-max')).toEqual(['codex']);
-  });
-
-  it('reports BOTH slash-form harnesses, because the string genuinely cannot tell them apart', () => {
-    expect(providersServing('anthropic/claude-sonnet-4').sort()).toEqual(['opencode', 'pi']);
-  });
-
-  it('is empty for an id nobody claims — ignorance, not invalidity', () => {
-    expect(providersServing('my-finetune-v3')).toEqual([]);
-    expect(providersServing('')).toEqual([]);
-  });
-});
-
-describe('isForeignModel', () => {
-  it('catches the exact bugs this exists for', () => {
-    // `supervisor.summarizerModel` / `agents.autoTitle.model` ship claude ids.
-    expect(isForeignModel('codex', 'sonnet')).toBe(true);
-    expect(isForeignModel('codex', 'haiku')).toBe(true);
-    expect(isForeignModel('opencode', 'fable')).toBe(true);
-    // …and the reverse, which a codex-configured field would produce.
-    expect(isForeignModel('claude', 'gpt-5.1-codex-max')).toBe(true);
-    expect(isForeignModel('claude', 'o3')).toBe(true);
-  });
-
-  it('is false for a model this harness serves', () => {
-    expect(isForeignModel('claude', 'sonnet')).toBe(false);
-    expect(isForeignModel('codex', 'gpt-5')).toBe(false);
-    expect(isForeignModel('opencode', 'anthropic/claude-sonnet-4')).toBe(false);
-  });
-
-  it('PASSES THROUGH an id nobody claims — a private deployment is not a bug', () => {
-    expect(isForeignModel('codex', 'my-finetune-v3')).toBe(false);
-    expect(isForeignModel('claude', 'internal-eval-model')).toBe(false);
-  });
-
-  it('is false for a blank model — there is nothing to be wrong about', () => {
-    expect(isForeignModel('codex', '')).toBe(false);
-    expect(isForeignModel('codex', '   ')).toBe(false);
-    expect(isForeignModel('codex', undefined)).toBe(false);
+    expect(providersServing(undefined)).toEqual([]);
     expect(isForeignModel('codex', null)).toBe(false);
-  });
-
-  it('does NOT call a slash id foreign to opencode or pi (they share the form)', () => {
-    expect(isForeignModel('opencode', 'google/gemini-2.5-pro')).toBe(false);
-    expect(isForeignModel('pi', 'anthropic/claude-sonnet-4')).toBe(false);
   });
 });

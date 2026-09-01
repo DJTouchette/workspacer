@@ -1,0 +1,147 @@
+{
+  "_comment": [
+    "The Fleet Manager persists a model under a provider key. The desktop's",
+    "main/shared/modelVocabulary.ts and the Hub's internal/modelselection/manager.go",
+    "both independently decide which provider(s) positively own that id before",
+    "allowing it through. Unknown ids must remain unclaimed so future/private",
+    "models pass through; a claimed id must be rejected under every other provider.",
+    "",
+    "Each row is a model-to-owner assertion. Both loaders also derive the complete",
+    "provider x model foreignness matrix from it, so adding a provider or changing",
+    "a matcher cannot silently leave a cross-provider acceptance hole."
+  ],
+  "vocabulary": {
+    "blocks": {
+      "ownershipCases": {
+        "why": "The positive ownership vocabulary that makes the Fleet Manager's per-provider model map safe without turning an evolving CLI catalog into a closed whitelist.",
+        "required": ["name", "model", "owners", "note"],
+        "loaders": [
+          "apps/desktop/src/main/shared/modelVocabulary.test.ts::model-vocabulary-ownership-cases.json",
+          "services/hub/internal/modelselection/manager_test.go::TestManagerModelVocabularyOwnershipCases"
+        ]
+      }
+    }
+  },
+  "ownershipCases": [
+    {
+      "name": "Claude default alias",
+      "model": "default",
+      "owners": ["claude"],
+      "note": "The legacy default alias remains Claude-owned."
+    },
+    {
+      "name": "Claude Haiku alias",
+      "model": "haiku",
+      "owners": ["claude"],
+      "note": "A Claude alias cannot reach a non-Claude manager."
+    },
+    {
+      "name": "Claude Sonnet alias",
+      "model": "sonnet",
+      "owners": ["claude"],
+      "note": "The common legacy manager model is Claude-owned."
+    },
+    {
+      "name": "Claude one-million Sonnet alias",
+      "model": "sonnet[1m]",
+      "owners": ["claude"],
+      "note": "The context-marker alias remains a Claude model identity at this boundary."
+    },
+    {
+      "name": "Claude Opus alias",
+      "model": "opus",
+      "owners": ["claude"],
+      "note": "The standard Opus shorthand is Claude-owned."
+    },
+    {
+      "name": "Claude OpusPlan alias",
+      "model": "opusplan",
+      "owners": ["claude"],
+      "note": "The planning alias remains part of Claude's vocabulary."
+    },
+    {
+      "name": "Claude Fable alias",
+      "model": "fable",
+      "owners": ["claude"],
+      "note": "Fable is Claude-owned even though its context behavior is separately modeled."
+    },
+    {
+      "name": "concrete Claude id",
+      "model": "claude-opus-4-5-20251101",
+      "owners": ["claude"],
+      "note": "Concrete Claude ids are covered by the prefix, not by the alias list."
+    },
+    {
+      "name": "Codex GPT family",
+      "model": "gpt-5.1-codex-max",
+      "owners": ["codex"],
+      "note": "The normal Codex GPT spelling is Codex-owned."
+    },
+    {
+      "name": "Codex o-number family",
+      "model": "o3",
+      "owners": ["codex"],
+      "note": "An o-number model is Codex-owned."
+    },
+    {
+      "name": "Codex o-number variant",
+      "model": "o1-preview",
+      "owners": ["codex"],
+      "note": "The o-number matcher covers variants as well as the bare id."
+    },
+    {
+      "name": "Codex prefix family",
+      "model": "codex-mini",
+      "owners": ["codex"],
+      "note": "Codex-prefixed ids remain Codex-owned."
+    },
+    {
+      "name": "legacy compact GPT spelling",
+      "model": "gpt4",
+      "owners": ["codex"],
+      "note": "The compact GPT spelling is still a Codex id."
+    },
+    {
+      "name": "trimmed case-insensitive Codex id",
+      "model": " GPT-5 ",
+      "owners": ["codex"],
+      "note": "Config whitespace and casing must not change ownership."
+    },
+    {
+      "name": "Copilot auto",
+      "model": " AUTO ",
+      "owners": ["copilot"],
+      "note": "Copilot's account-gated catalog has exactly one portable explicit id."
+    },
+    {
+      "name": "shared provider-model form",
+      "model": "anthropic/claude-sonnet-4",
+      "owners": ["opencode", "pi"],
+      "note": "The string alone cannot distinguish OpenCode from Pi, so both honestly claim it."
+    },
+    {
+      "name": "provider-model form with a colon suffix",
+      "model": "openai/gpt-5:reasoning",
+      "owners": ["opencode", "pi"],
+      "note": "The slash-form vocabulary permits a colon in the model component."
+    },
+    {
+      "name": "unknown private model",
+      "model": "my-finetune-v3",
+      "owners": [],
+      "note": "No positive owner is not invalid: every provider passes a private or future id through."
+    },
+    {
+      "name": "blank model",
+      "model": "   ",
+      "owners": [],
+      "note": "There is no model id to own or reject."
+    },
+    {
+      "name": "incomplete provider-model form",
+      "model": "anthropic/",
+      "owners": [],
+      "note": "A malformed slash form is unclaimed rather than guessed at."
+    }
+  ]
+}

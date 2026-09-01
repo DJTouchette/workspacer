@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
 
 type managerPreferenceCase struct {
@@ -81,7 +83,68 @@ func TestManagerPreferenceCases(t *testing.T) {
 	}
 }
 
+type managerVocabularyOwnershipCase struct {
+	Name   string   `json:"name"`
+	Model  string   `json:"model"`
+	Owners []string `json:"owners"`
+	Note   string   `json:"note"`
+}
+
+func managerVocabularyOwnershipCases(t *testing.T) []managerVocabularyOwnershipCase {
+	t.Helper()
+	raw, err := sweepguard.ReadRepoFile("contracts", "model-vocabulary-ownership-cases.json")
+	if err != nil {
+		if errors.Is(err, sweepguard.ErrNoCheckout) {
+			t.Skipf("not a monorepo checkout, so this cross-repo cross-check has nothing to read: %v", err)
+		}
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []managerVocabularyOwnershipCase `json:"ownershipCases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Cases) < 20 {
+		t.Fatal("manager model vocabulary ownership contract corpus was gutted")
+	}
+	return fixture.Cases
+}
+
+func TestManagerModelVocabularyOwnershipCases(t *testing.T) {
+	for _, tc := range managerVocabularyOwnershipCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			wantOwners := map[string]bool{}
+			for _, provider := range tc.Owners {
+				wantOwners[provider] = true
+			}
+			if got := modelOwners(tc.Model); !boolMapsEqual(got, wantOwners) {
+				t.Fatalf("owners %v, want %v — %s", got, wantOwners, tc.Note)
+			}
+
+			for _, provider := range []string{"claude", "codex", "copilot", "opencode", "pi"} {
+				wantForeign := len(wantOwners) > 0 && !wantOwners[provider]
+				if got := foreignManagerModel(provider, tc.Model); got != wantForeign {
+					t.Errorf("foreign(%q, %q) = %t, want %t — %s", provider, tc.Model, got, wantForeign, tc.Note)
+				}
+			}
+		})
+	}
+}
+
 func stringMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func boolMapsEqual(a, b map[string]bool) bool {
 	if len(a) != len(b) {
 		return false
 	}
