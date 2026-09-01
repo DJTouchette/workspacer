@@ -149,6 +149,19 @@ What comes back, and what to do with it:
 - mode (normal, conserve or spend_down), the capacity it judged, the ceiling it
   resolved under, and a reason list saying why. The reasons are what you quote to
   the user, not your own guess at them.
+- capacity.pace, when the host has pacing on: the allowance judged against the
+  CLOCK rather than as a level. A window is not just 60% used, it is 60% used
+  with half its life left, and the ratio of the two is what says whether the
+  fleet will run dry before the reset. pace.state is on_track, ahead,
+  overspending or unknown; pace.ratio is consumed-over-expected (1.0 is exactly
+  on the curve); pace.window names which window bound, and capacity.paceWindows
+  shows what the others said. For a provider with two readable windows the WORSE
+  one binds. Pace can turn a decision CONSERVE that health alone would have
+  called normal, and it can block a spend_down; it never promotes anything and
+  it never overrides a red or exhausted allowance. unknown (no window length
+  reported, or nothing readable) changes nothing. Quote pace.because when you
+  explain a conserve to the user — "we are 1.6x over the five-hour curve" is the
+  sentence, and inventing your own number for it is not.
 - eligible:false means the matrix found nothing spawnable for that role under
   that constraint: a provider held out of service, no profile pairing that
   capability with a provider you asked for, or a ceiling whose configured value

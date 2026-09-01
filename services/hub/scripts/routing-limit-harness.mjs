@@ -389,6 +389,96 @@ async function runRoutingCases(caller, fakeURL) {
   }
 }
 
+// runPacingAssertions: WINDOW PROGRESS, against a live hub.
+//
+// The claim pacing makes cannot be checked from a used-percentage alone, which
+// is exactly why it needs a runtime harness: every scenario below is a CURRENT
+// window with ordinary health, and the only thing separating them is how far
+// through the window the reading is. If the window LENGTH ever stops arriving
+// from the daemon — which is the fragile half, since the Anthropic endpoint
+// never states it and the daemon asserts it — every one of these silently
+// reverts to "unknown" and the checks here fail rather than passing quietly.
+async function runPacingAssertions(caller, fakeURL) {
+  console.log('\nwindow-progress (pacing) assertions:');
+
+  const ask = async (scenario, ticket) => {
+    await setScenario(fakeURL, scenario, true);
+    const eventStart = caller.events.length;
+    const result = await caller.call('routing.select', {
+      ...routingRequest(scenario, 'claude'),
+      role: 'implementer',
+      ticketId: ticket,
+    });
+    return { result, events: caller.events.slice(eventStart) };
+  };
+
+  // 1. The Anthropic window LENGTHS reach the hub, which is requirement one of
+  //    this feature and the precondition for everything below.
+  const report = await fakeJSON(fakeURL, '/usage/report');
+  const claudeWindows = provider(report, 'claude')?.accounts?.[0]?.windows ?? {};
+  check('claude 5h window carries its 300-minute length', claudeWindows.five_hour?.window_minutes === 300, JSON.stringify(claudeWindows.five_hour));
+  check('claude 7d window carries its 10080-minute length', claudeWindows.seven_day?.window_minutes === 10080, JSON.stringify(claudeWindows.seven_day));
+  check('claude monthly window carries NO length (a calendar month is not fixed)', claudeWindows.monthly?.window_minutes == null, JSON.stringify(claudeWindows.monthly));
+
+  // 2. On pace: a healthy, on-schedule provider is paced and left alone.
+  const healthy = await ask('healthy-current', 'HARNESS-PACE-OK');
+  const okPace = healthy.result?.capacity?.pace;
+  check('a current claude window is PACED at all (the length arrived end to end)', okPace?.known === true, JSON.stringify(okPace));
+  check('an on-schedule provider is on_track', okPace?.state === 'on_track', JSON.stringify(okPace));
+  check('an on-schedule provider is not conserved by pace', healthy.result?.mode !== 'conserve', JSON.stringify(healthy.result?.reason));
+
+  // 3. Overspending: the case the used-percentage ladder cannot see. 80% of a
+  //    five-hour window with half the window left is YELLOW health and a fleet
+  //    that will be out of allowance within the hour.
+  const over = await ask('claude-overpace', 'HARNESS-PACE-OVER');
+  const pace = over.result?.capacity?.pace;
+  check('an over-curve window is OVERSPENDING', pace?.state === 'overspending', JSON.stringify(pace));
+  check('the binding window is named', pace?.window === 'five_hour', JSON.stringify(pace));
+  check('the ratio is above the shipped 1.25 band', typeof pace?.ratio === 'number' && pace.ratio > 1.25, JSON.stringify(pace));
+  check('health alone would NOT have conserved this (it is yellow, not red)', over.result?.capacity?.health === 'yellow', JSON.stringify(over.result?.capacity?.health));
+  check('the decision is CONSERVE', over.result?.mode === 'conserve', JSON.stringify(over.result?.reason));
+  check(
+    'the conserve is EXPLAINED in the answer, not merely asserted',
+    (over.result?.reason ?? []).some((r) => r.includes('faster than it refills')),
+    JSON.stringify(over.result?.reason),
+  );
+  check('every window\'s pace is reported, not only the binding one', Array.isArray(over.result?.capacity?.paceWindows) && over.result.capacity.paceWindows.length >= 2, JSON.stringify(over.result?.capacity?.paceWindows));
+
+  // 4. The event plane carries the pace, so a fleet display can caption a mode
+  //    change without parsing prose.
+  const ev = await waitFor(
+    async () => over.events.concat(caller.events.slice(-20)).find((e) => e?.type === 'routing.decision' && e?.data?.decisionId === over.result?.decisionId),
+    5000,
+  );
+  check('the routing.decision event carries the pace state', ev?.data?.pace === 'overspending', JSON.stringify(ev?.data));
+  check('the routing.decision event carries the ratio and the window', ev?.data?.paceRatio > 1.25 && ev?.data?.paceWindow === 'five_hour', JSON.stringify(ev?.data));
+
+  // 5. The middle band: ahead of the curve blocks a spend-down WITHOUT
+  //    conserving. Before pacing this scenario is a textbook spend-down.
+  const blocked = await ask('claude-pace-blocks-spend-down', 'HARNESS-PACE-BLOCK');
+  const blockPace = blocked.result?.capacity?.pace;
+  check('a week running ahead of the curve is AHEAD, not overspending', blockPace?.state === 'ahead', JSON.stringify(blockPace));
+  check('the spend-down is blocked', blocked.result?.mode !== 'spend_down', JSON.stringify(blocked.result?.reason));
+  check('blocking a spend-down is not conserving', blocked.result?.mode === 'normal', JSON.stringify(blocked.result?.reason));
+  check(
+    'the block is explained',
+    (blocked.result?.reason ?? []).some((r) => r.includes('not going to expire unused')),
+    JSON.stringify(blocked.result?.reason),
+  );
+
+  // 6. A provider with no window length is untouched: copilot publishes nothing
+  //    and must stay conservative rather than being paced against a
+  //    denominator nobody reported.
+  await setScenario(fakeURL, 'copilot-403', true);
+  const dark = await caller.call('routing.select', {
+    ...routingRequest('copilot-pace', 'copilot'),
+    role: 'implementer',
+  });
+  check('a provider that publishes no window is pace-UNKNOWN', dark?.capacity?.pace?.known !== true, JSON.stringify(dark?.capacity?.pace));
+  check('and it is still explained rather than silently dropped', typeof dark?.capacity?.pace?.because === 'string' && dark.capacity.pace.because.length > 0, JSON.stringify(dark?.capacity?.pace));
+  check('an unpaceable provider is not conserved by pace', !(dark?.reason ?? []).some((r) => r.includes('faster than it refills')), JSON.stringify(dark?.reason));
+}
+
 // ---------------------------------------------------------------------------
 // THE BINDING HALF
 // ---------------------------------------------------------------------------
@@ -799,6 +889,8 @@ try {
 
   await clearFakeRequests(fake.url);
   await runRoutingCases(caller, fake.url);
+
+  await runPacingAssertions(caller, fake.url);
 
   const decisionId = await runDecisionRecordAssertions(caller, fake.url);
   await runCeilingAwareSelectAssertions(caller);

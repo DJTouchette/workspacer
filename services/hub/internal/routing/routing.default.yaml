@@ -300,6 +300,78 @@ thresholds:
   health:
     yellow_at_used_pct: 70
     red_at_used_pct: 90
+  # PACING — the same allowance, against the clock.
+  #
+  # `health:` above answers HOW MUCH is gone. It cannot answer whether that is a
+  # lot for a Tuesday morning, and it is the same 40% that is comfortable six
+  # days into a seven-day window and is a fleet about to run dry six hours into
+  # one. Pacing supplies the missing term: how far THROUGH the window the
+  # reading is, which needs the window's LENGTH — claudemon reports one for
+  # Codex's two windows and for Anthropic's two, and none for the monthly
+  # overage window (a calendar month is not a fixed number of minutes).
+  #
+  #   elapsed  = (length - time_to_reset) / length
+  #   expected = the curve's share of the allowance that should be gone by now
+  #   ratio    = (used_percent / 100) / expected
+  #
+  # WHAT PACE MAY DO, AND WHAT IT MAY NOT. It may ADD conserve, and it may BLOCK
+  # a spend-down. It may never talk a RED or EXHAUSTED provider back down to
+  # normal — a provider that is nearly out is nearly out however elegantly it
+  # got there — and it never promotes anything on its own.
+  #
+  # `enabled: false` reproduces the pre-pacing answers exactly. It is the switch
+  # to reach for if a fleet's rhythm does not fit a curve.
+  pacing:
+    enabled: true
+    # THE BANDS, as ratios of consumed-to-expected. 1.0 is exactly on the curve.
+    #   conserve_at_ratio          at or above this, the mode becomes CONSERVE.
+    #   block_spend_down_at_ratio  at or above this, being near a reset with
+    #                              capacity left stops licensing a spend-down.
+    # The second is never above the first: a band that conserved without
+    # blocking spend-down would be asking for both modes at once.
+    conserve_at_ratio: 1.25
+    block_spend_down_at_ratio: 1.0
+    # THE START OF A WINDOW is where this arithmetic lies. One percent used
+    # against a fifth of a percent elapsed is a ratio of five, so:
+    #   min_elapsed_pct      below this share elapsed, no verdict is taken at
+    #                        all — pace is UNKNOWN, which conserves nothing.
+    #   expected_offset_pct  percentage points added to the expected share
+    #                        before the division, so the denominator is never
+    #                        nearly zero.
+    bootstrap:
+      min_elapsed_pct: 5
+      expected_offset_pct: 2
+    # THE SHAPE OF THE WEEK, for the seven-day window only. A five-hour window
+    # has no weekday shape to have an opinion about.
+    #
+    #   curve: calendar   linear in wall-clock time. SHIPPED, because a fleet
+    #                     that works at the weekend would otherwise be told to
+    #                     conserve on Saturday for no reason.
+    #   curve: workdays   weekend hours are budgeted at `weekend_weight` of a
+    #                     weekday hour, so a week's allowance spent across five
+    #                     working days is ON PLAN rather than 40% over it.
+    #
+    # `weekend_weight` MUST BE POSITIVE and is validated. At zero, a window that
+    # ends over a weekend has no expected progress at all and every weekend hour
+    # reads as infinite overspend; 0.25–0.5 is the useful range.
+    #
+    # `timezone: local` is the host's own zone. A weekend is a local fact and a
+    # curve computed in UTC for a fleet in UTC+13 is wrong by most of a day.
+    #
+    #   weekend: spend_tail   nothing is held back; whatever is left when the
+    #                         working week ends may be spent over the weekend.
+    #   weekend: reserve      `weekend_reserve_pct` of the allowance is kept
+    #                         against the curve, which makes the pacer start
+    #                         saying "overspending" earlier during the week.
+    #
+    # A reserve under `spend_tail` is IGNORED and reported, rather than sitting
+    # in the file looking as though it does something.
+    seven_day:
+      curve: calendar
+      timezone: local
+      weekend_weight: 0.5
+      weekend: spend_tail
+      weekend_reserve_pct: 0
 
 # ---------------------------------------------------------------------------
 # FORECAST WEIGHTS — how much premium demand a ticket in each phase implies.

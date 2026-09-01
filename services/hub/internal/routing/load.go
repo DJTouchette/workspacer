@@ -443,6 +443,9 @@ func validate(m *Matrix) []Issue {
 	if _, ok := m.Ceilings[CeilingDefaultKey]; !ok {
 		add("ceilings", "no %q entry — a directory with no entry of its own would have no ceiling", CeilingDefaultKey)
 	}
+	// The pacing block, whose validation is long enough to live beside the code
+	// that reads it (pacing.go) rather than in the middle of this function.
+	issues = append(issues, validatePacing(m.Thresholds.Pacing)...)
 	return issues
 }
 

@@ -255,7 +255,35 @@ type routingDecisionEvent struct {
 	// plane would see a capability change with no reason present in the payload.
 	CeilingCapped        bool   `json:"ceilingCapped,omitempty"`
 	CeilingMaxCapability string `json:"ceilingMaxCapability,omitempty"`
-	DecidedAt            int64  `json:"decidedAt"`
+	// Pace / PaceRatio / PaceWindow are the WINDOW-PROGRESS half of the answer:
+	// the state (on_track | ahead | overspending | unknown), how far over or
+	// under the curve consumption is running, and which window that ratio came
+	// off. They ride for the same reason `health` does — a client watching the
+	// event plane would otherwise see a mode change to CONSERVE with the reason
+	// present only as prose, and "codex 5h at 1.6x" is exactly the caption a
+	// fleet display wants. They are aggregate capacity facts about the user's
+	// own subscription: no path, no credential, no account key. All three are
+	// ABSENT when pacing is switched off, so an event never carries a pace the
+	// decision did not use.
+	Pace       string  `json:"pace,omitempty"`
+	PaceRatio  float64 `json:"paceRatio,omitempty"`
+	PaceWindow string  `json:"paceWindow,omitempty"`
+	DecidedAt  int64   `json:"decidedAt"`
+}
+
+// paceOf projects a decision's pace onto the event's three fields. A decision
+// with no pace (pacing off, or nothing readable) contributes nothing, which is
+// what keeps `enabled: false` producing the pre-pacing event as well as the
+// pre-pacing answer.
+func paceOf(d routing.Decision) (state string, ratio float64, window string) {
+	p := d.Capacity.Pace
+	if p == nil {
+		return "", 0, ""
+	}
+	if !p.Known {
+		return string(p.State), 0, ""
+	}
+	return string(p.State), p.Ratio, p.Window
 }
 
 // routingSelect is the `routing.select` handler: read the matrix in force, take
@@ -318,6 +346,7 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 
 		logf.Decision(d)
 		if pub != nil {
+			paceState, paceRatio, paceWindow := paceOf(d)
 			pub(event.New(routingDecisionTopic, "routing", routingDecisionEvent{
 				DecisionID: d.DecisionID,
 				TicketID:   d.TicketID,
@@ -336,6 +365,9 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 				CeilingCapped: d.Ceiling != nil &&
 					(d.Ceiling.CapabilityRefused || d.Ceiling.ToolScopeRefused || d.Ceiling.Denied),
 				CeilingMaxCapability: ceilingMax(d.Ceiling),
+				Pace:                 paceState,
+				PaceRatio:            paceRatio,
+				PaceWindow:           paceWindow,
 				DecidedAt:            d.DecidedAt,
 			}))
 		}

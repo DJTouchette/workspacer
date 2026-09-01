@@ -114,6 +114,21 @@ type Capacity struct {
 	Metered bool                  `json:"metered"`
 	Buckets []limits.BucketReport `json:"buckets,omitempty"`
 
+	// Pace is the WINDOW-PROGRESS verdict this decision acted on: the worst
+	// (highest) consumed-to-expected ratio across this account's judgeable
+	// windows, which is what makes an Anthropic answer "the worse of the
+	// five-hour and the seven-day pace" without either window being named in
+	// the policy.
+	//
+	// NIL WHEN PACING IS SWITCHED OFF, and that is deliberate rather than a
+	// tidy-up: `thresholds.pacing.enabled: false` must reproduce the
+	// pre-pacing answer exactly, and an answer carrying a pace field it did
+	// not use is not that answer.
+	Pace *limits.PaceReport `json:"pace,omitempty"`
+	// PaceWindows is every window's pace, in window order, so a reader can see
+	// which one bound and what the others said. Same nil rule as Pace.
+	PaceWindows []limits.PaceReport `json:"paceWindows,omitempty"`
+
 	// Because is the sentence behind Health.
 	Because string `json:"because"`
 	// Note is the daemon's own explanation for a provider carrying no accounts,
@@ -160,6 +175,15 @@ func ReadCapacity(m *Matrix, snap limits.Snapshot, provider, account string, now
 	if known {
 		rep := limits.ForProvider(buckets, provider, resolved, bands)
 		cap.Health, cap.Because, cap.Metered, cap.Buckets = rep.Health, rep.Because, rep.Metered, rep.Buckets
+		// PACE, from the SAME judged buckets and the same instant. It is read
+		// here rather than in DecideMode because this is where a currency-guarded
+		// limits.Bucket still exists: BucketReport has already dropped the
+		// Reading, and a pace computed off a report would be a second path to a
+		// number the currency guard is supposed to be the only door to.
+		if pcfg := m.PaceConfig(); pcfg.Enabled {
+			worst, all := limits.PaceForAccount(buckets, provider, resolved, pcfg)
+			cap.Pace, cap.PaceWindows = &worst, all
+		}
 		for _, b := range buckets {
 			if b.Provider == provider && b.AccountKnown && b.Account == resolved && b.ObservedAt != nil {
 				at := b.ObservedAt.Unix()
@@ -187,6 +211,16 @@ func ReadCapacity(m *Matrix, snap limits.Snapshot, provider, account string, now
 			if assumed, ok := parseWhenUnknown(pol.WhenUnknown); ok {
 				cap.AssumedHealth, cap.EffectiveHealth = assumed, assumed
 			}
+		}
+	}
+	// A provider with no attributable row still gets a pace REPORT, saying
+	// unknown and why. Unknown conserves nothing and unlocks nothing, so this
+	// changes no answer — it stops a provider from vanishing out of the pace
+	// half of the explanation, which is the cheapest detection this feature has.
+	if cap.Pace == nil && m.PaceConfig().Enabled {
+		cap.Pace = &limits.PaceReport{
+			State:   limits.PaceUnknown,
+			Because: fmt.Sprintf("%s has no readable window to pace: %s", provider, cap.Because),
 		}
 	}
 	return cap
@@ -234,18 +268,36 @@ type ModeVerdict struct {
 // Otherwise:
 //
 //	CONSERVE   effective health is RED or EXHAUSTED, or the forecast demand
-//	           before the reset exceeds what is actually left.
+//	           before the reset exceeds what is actually left, or the allowance
+//	           is being consumed faster than the window refills it (PACE).
 //	SPEND_DOWN every arm holds: the provider is GREEN overall (§33 — a healthy
 //	           five-hour window does not license spending down against a
-//	           constrained weekly one), some readable bucket resets within the
-//	           configured window, that bucket has at least the configured
-//	           remaining share, and the forecast is KNOWN and small relative to
-//	           what remains.
+//	           constrained weekly one), the pace is not already ahead of the
+//	           curve, some readable bucket resets within the configured window,
+//	           that bucket has at least the configured remaining share, and the
+//	           forecast is KNOWN and small relative to what remains.
 //	NORMAL     everything else, which includes every UNKNOWN.
 //
 // An unknown forecast cannot satisfy either rule's demand arm, and that is the
 // conservative direction on both counts: no promotion, and no phantom
 // conservation.
+//
+// WHERE PACE SITS, AND WHY IT SITS THERE. It is read AFTER the health arms and
+// BEFORE the spend-down arms, which is exactly the range in which it is allowed
+// to matter:
+//
+//   - It can never reach a RED or EXHAUSTED provider, because those return
+//     CONSERVE above. A provider that is nearly out is nearly out however
+//     elegantly it got there, and a flattering ratio must not be able to talk a
+//     scarce allowance back to normal.
+//   - It can ADD conserve to a GREEN or YELLOW provider whose window is being
+//     drained faster than it refills — the case health cannot see at all.
+//   - It can BLOCK a spend-down without conserving, which is the middle band:
+//     being ahead of the curve is a reason not to spend the remainder early,
+//     and is not yet a reason to economize.
+//   - An UNKNOWN or DISABLED pace does neither. A provider whose windows carry
+//     no length (copilot, an Anthropic monthly overage window, anything absent
+//     from the report) is answered exactly as it was before pacing existed.
 func DecideMode(cap Capacity, demand limits.Demand, th Thresholds, manual string) ModeVerdict {
 	if m, ok := ParseMode(manual); ok && m != ModeAuto {
 		return ModeVerdict{Mode: m, Manual: true, Reason: []string{
@@ -279,6 +331,29 @@ func DecideMode(cap Capacity, demand limits.Demand, th Thresholds, manual string
 		return v
 	}
 
+	// PACE — the scarcity arm health cannot see. Reached only by a provider
+	// that is NOT already red or exhausted, so this can only ever add conserve;
+	// there is no arm here that can remove one.
+	//
+	// Dereferenced into a VALUE, so every arm below is safe on a capacity that
+	// carries no pace at all (pacing off, or a provider nobody could read). The
+	// zero PaceReport is Known: false, which conserves nothing and blocks
+	// nothing — the same answer this function gave before pacing existed.
+	var pace limits.PaceReport
+	if cap.Pace != nil {
+		pace = *cap.Pace
+	}
+	if pace.State != "" && pace.State != limits.PaceDisabled {
+		v.Reason = append(v.Reason, fmt.Sprintf("%s window pace: %s", cap.Provider, pace.Because))
+	}
+	if pace.Conserves() {
+		v.Mode = ModeConserve
+		v.Reason = append(v.Reason, fmt.Sprintf(
+			"consumption is running at %.2fx the %s curve's expected share of the %s window, so the allowance is being drained faster than it refills — conserving now is what stops it running out before the reset",
+			pace.Ratio, pace.Curve, pace.Window))
+		return v
+	}
+
 	// SPEND_DOWN — every arm, or nothing.
 	spend := th.SpendDown
 	switch {
@@ -296,6 +371,17 @@ func DecideMode(cap Capacity, demand limits.Demand, th Thresholds, manual string
 		return v
 	case spend.TimeToResetMinutes <= 0 || spend.MinRemainingPct <= 0:
 		v.Reason = append(v.Reason, "not spending down: routing.yaml's thresholds.spend_down is not configured with a usable window and floor")
+		return v
+	}
+
+	// PACE, second half: being ahead of the curve blocks the spend-down without
+	// conserving. Spend-down converts allowance that would expire unused into
+	// confidence, and allowance being consumed faster than it refills is not
+	// going to expire unused.
+	if pace.BlocksSpendDown() {
+		v.Reason = append(v.Reason, fmt.Sprintf(
+			"not spending down: consumption is at %.2fx the expected share of the %s window, so what is left is not going to expire unused — it is already spoken for",
+			pace.Ratio, pace.Window))
 		return v
 	}
 
@@ -782,6 +868,12 @@ func capacityFor(m *Matrix, snap limits.Snapshot, snapErr error, provider, accou
 		Because:  fmt.Sprintf("claudemon's usage report could not be read (%v), so no provider's capacity is knowable right now", snapErr),
 	}
 	cap.EffectiveHealth = cap.Health
+	if m.PaceConfig().Enabled {
+		cap.Pace = &limits.PaceReport{
+			State:   limits.PaceUnknown,
+			Because: fmt.Sprintf("no usage document could be read, so nothing can be paced (%v)", snapErr),
+		}
+	}
 	if pol, ok := m.ProviderPolicy(provider); ok {
 		if assumed, ok := parseWhenUnknown(pol.WhenUnknown); ok {
 			cap.AssumedHealth, cap.EffectiveHealth = assumed, assumed

@@ -38,6 +38,11 @@ type winSpec struct {
 	resets time.Duration
 	// noReset omits resets_at entirely.
 	noReset bool
+	// minutes is the window's declared LENGTH. Zero means the source reported
+	// none, which is what every case written before pacing existed says — and
+	// a window with no length can never be paced, which is why those cases are
+	// unaffected by the pacing block.
+	minutes int64
 }
 
 func snapshotOf(t *testing.T, provider, account string, windows map[string]winSpec) limits.Snapshot {
@@ -52,6 +57,9 @@ func snapshotOfProviders(t *testing.T, account string, byProvider map[string]map
 	t.Helper()
 	wire := func(w winSpec) map[string]any {
 		out := map[string]any{"window_minutes": nil, "is_current": nil}
+		if w.minutes > 0 {
+			out["window_minutes"] = w.minutes
+		}
 		if w.used < 0 {
 			out["used_percent"] = map[string]any{"state": "unavailable", "reason": "this provider will never publish a window"}
 		} else {

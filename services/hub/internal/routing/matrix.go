@@ -95,11 +95,82 @@ type Health struct {
 	RedAtUsedPct    float64 `yaml:"red_at_used_pct" json:"redAtUsedPct"`
 }
 
+// Pacing is the WINDOW-PROGRESS rule: how much of the allowance should be gone
+// by now, and what to do when more of it is.
+//
+// It is a separate block from `health:` because it answers a different
+// question. Health is a level — 40% used is 40% used. Pace is a level against
+// the clock, and the same 40% is comfortable six days into a seven-day window
+// and is a fleet about to run dry six hours into one. The two are combined
+// rather than merged: pace may ADD conserve and may BLOCK spend-down, and it
+// can never talk a RED or EXHAUSTED provider back down, because a provider that
+// is nearly out is nearly out however elegantly it got there.
+//
+// EVERY VALUE HERE IS READ. `enabled: false` is the switch that reproduces the
+// pre-pacing answers exactly, the two ratios are the bands, `bootstrap:` is
+// what stops the first minutes of a window reading as a crisis, and
+// `seven_day:` is the shape of the week. See limits/pace.go for the arithmetic
+// and docs/limit-aware-routing.md for the prose.
+type Pacing struct {
+	// Enabled is a POINTER for the same reason every other flag in this file
+	// is: a deep merge cannot delete, so switching pacing off has to be
+	// something a user WRITES. Absent means enabled, matching the shipped file.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// ConserveAtRatio is the ratio (consumed / expected-by-now) at or above
+	// which the mode becomes CONSERVE.
+	ConserveAtRatio float64 `yaml:"conserve_at_ratio" json:"conserveAtRatio"`
+	// BlockSpendDownAtRatio is where being ahead of the curve stops licensing
+	// spend-down. Never above ConserveAtRatio; validate() says so.
+	BlockSpendDownAtRatio float64         `yaml:"block_spend_down_at_ratio" json:"blockSpendDownAtRatio"`
+	Bootstrap             PacingBootstrap `yaml:"bootstrap" json:"bootstrap"`
+	SevenDay              SevenDayPacing  `yaml:"seven_day" json:"sevenDay"`
+}
+
+// IsEnabled reports whether pacing is in force. Absent means yes.
+func (p Pacing) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
+
+// PacingBootstrap is the start-of-window guard. Without it, one percent used
+// against a fifth of a percent elapsed is a ratio of five, and every window
+// would open in CONSERVE for its first few minutes.
+type PacingBootstrap struct {
+	// MinElapsedPct is the floor: below this share of the window elapsed, no
+	// pace verdict is taken at all.
+	MinElapsedPct float64 `yaml:"min_elapsed_pct" json:"minElapsedPct"`
+	// ExpectedOffsetPct is added, in percentage points, to the expected share
+	// before the division — so the denominator is never nearly zero.
+	ExpectedOffsetPct float64 `yaml:"expected_offset_pct" json:"expectedOffsetPct"`
+}
+
+// SevenDayPacing is the shape of the week, and it applies to the seven-day
+// window only: a five-hour window has no weekday shape to have an opinion
+// about.
+type SevenDayPacing struct {
+	// Curve is `calendar` (linear in wall-clock time) or `workdays` (weekend
+	// hours weighted down). Calendar ships, because a fleet that works at the
+	// weekend would otherwise be told to conserve on Saturday for no reason.
+	Curve string `yaml:"curve" json:"curve"`
+	// Timezone is `local` (the host's own) or an IANA name. A weekend is a
+	// local fact: a curve computed in UTC for a fleet in UTC+13 is wrong by
+	// most of a day.
+	Timezone string `yaml:"timezone" json:"timezone"`
+	// WeekendWeight is one weekend hour's share of one weekday hour's budget.
+	// It must be strictly positive — see validate() and limits.PaceConfig.
+	WeekendWeight float64 `yaml:"weekend_weight" json:"weekendWeight"`
+	// Weekend is what the weekend is for: `spend_tail` (nothing held back) or
+	// `reserve` (WeekendReservePct of the allowance kept against the curve).
+	Weekend string `yaml:"weekend" json:"weekend"`
+	// WeekendReservePct is the held-back share under `reserve`. It is IGNORED
+	// under `spend_tail`, and the explanation says so rather than leaving a
+	// number in a file that changes nothing.
+	WeekendReservePct float64 `yaml:"weekend_reserve_pct" json:"weekendReservePct"`
+}
+
 // Thresholds are the mode rules, kept as configuration rather than as constants
 // buried in Go.
 type Thresholds struct {
 	SpendDown SpendDown `yaml:"spend_down" json:"spendDown"`
 	Health    Health    `yaml:"health" json:"health"`
+	Pacing    Pacing    `yaml:"pacing" json:"pacing"`
 }
 
 // Modes is the manual override: "auto" defers to Thresholds.

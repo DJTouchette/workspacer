@@ -33,12 +33,25 @@ const COPILOT_403 =
   'GitHub exposes no local quota record, and copilot_internal/v2/token answers ' +
   '403 to a gh OAuth token (probed live against copilot CLI v1.0.81)';
 
+// The Anthropic window lengths the real daemon now stamps on every OAuth
+// reading (services/claudemon/src/session/usage_report.rs). The endpoint never
+// states them; the window names assert them, and without them a Claude window
+// could report a utilization and a reset but never how far THROUGH the window
+// that utilization was — which is the one term pacing needs.
+const CLAUDE_FIVE_HOUR_MINUTES = 300;
+const CLAUDE_SEVEN_DAY_MINUTES = 10080;
+
 const SCENARIOS = Object.freeze([
   'healthy-current',
   'stale-codex',
   'reset-now',
   'copilot-403',
   'absent-opencode-pi',
+  // Pacing scenarios. Both are CURRENT windows with ordinary health — the whole
+  // point is that the used-percentage ladder cannot tell them apart from
+  // 'healthy-current' and the clock can.
+  'claude-overpace',
+  'claude-pace-blocks-spend-down',
 ]);
 
 const args = process.argv.slice(2);
@@ -140,8 +153,26 @@ function account({
   };
 }
 
-function claudeProvider(now) {
+function claudeProvider(now, scenario) {
   const noMonthly = unavailable('extra usage (monthly overage) is not enabled on this account');
+  // Healthy and ON PACE: 12% of the five-hour window gone with an hour left
+  // (80% elapsed), 40% of the week gone three days in.
+  let fiveHour = { usedPercent: 12.0, resetsAt: now + 60 * 60, windowMinutes: CLAUDE_FIVE_HOUR_MINUTES };
+  let sevenDay = { usedPercent: 40.0, resetsAt: now + 4 * 24 * 60 * 60, windowMinutes: CLAUDE_SEVEN_DAY_MINUTES };
+
+  if (scenario === 'claude-overpace') {
+    // 80% of a five-hour window gone with half the window left: YELLOW on the
+    // health ladder (the 90% red band is untouched) and 1.6x over the curve.
+    fiveHour = { usedPercent: 80.0, resetsAt: now + 150 * 60, windowMinutes: CLAUDE_FIVE_HOUR_MINUTES };
+    sevenDay = { usedPercent: 10.0, resetsAt: now + 4 * 24 * 60 * 60, windowMinutes: CLAUDE_SEVEN_DAY_MINUTES };
+  } else if (scenario === 'claude-pace-blocks-spend-down') {
+    // The five-hour window resets within the spend-down window with 80% of it
+    // left — a textbook spend-down — while the WEEK is running 1.15x over the
+    // curve, so what is left is already spoken for.
+    fiveHour = { usedPercent: 20.0, resetsAt: now + 60 * 60, windowMinutes: CLAUDE_FIVE_HOUR_MINUTES };
+    sevenDay = { usedPercent: 60.0, resetsAt: now + 3.5 * 24 * 60 * 60, windowMinutes: CLAUDE_SEVEN_DAY_MINUTES };
+  }
+
   return {
     provider: 'claude',
     accounts: [
@@ -153,8 +184,10 @@ function claudeProvider(now) {
         observedAt: now - 30,
         fresh: true,
         windows: {
-          five_hour: windowReport({ usedPercent: 12.0, resetsAt: now + 60 * 60, windowMinutes: null }, now),
-          seven_day: windowReport({ usedPercent: 40.0, resetsAt: now + 4 * 24 * 60 * 60, windowMinutes: null }, now),
+          five_hour: windowReport(fiveHour, now),
+          seven_day: windowReport(sevenDay, now),
+          // No length on the monthly window, ever: a calendar month is not a
+          // fixed number of minutes, so it is never paced.
           monthly: missingWindow(noMonthly),
         },
         spendReport: spend('estimated', ok(0)),
@@ -244,7 +277,7 @@ function usageReportFor(scenario) {
   return {
     generated_at: now,
     providers: [
-      claudeProvider(now),
+      claudeProvider(now, scenario),
       codexProvider(now, scenario),
       copilotProvider(now),
       // Deliberately no opencode or pi rows. The real usage_report.rs only

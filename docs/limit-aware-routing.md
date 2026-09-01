@@ -222,6 +222,8 @@ rather than as constants in Go.
   all of which must hold. Unused subscription capacity is worth nothing after the
   reset, so near one, with capacity left and little demand coming, it buys
   confidence instead of expiring.
+- `pacing:` is the same allowance judged against the clock rather than as a
+  level. It has its own section below.
 
 **`forecast_weights:`** weights how much premium demand a ticket in each phase
 implies: `scouting: 1`, `implementation: 4`, `review: 2`, `fixing: 2`,
@@ -305,6 +307,141 @@ Two consequences to expect when reading an answer:
 The usage poller is dormant until something asks for a routing decision, and it
 winds down again 15 minutes after the last ask. An ordinary install that never
 consults routing takes no readings at all.
+
+## Pacing: the allowance against the clock
+
+`health:` answers **how much** of an allowance is gone. It cannot answer whether
+that is a lot for a Tuesday morning, and it is the same 40% that is comfortable
+six days into a seven-day window and is a fleet about to run dry six hours into
+one. Pacing supplies the missing term.
+
+The arithmetic is one division:
+
+```
+elapsed  = (window_length - time_to_reset) / window_length
+expected = the curve's share of the allowance that should be gone by now
+ratio    = (used_percent / 100) / expected
+```
+
+`window_length` is what makes this possible and is the piece that was missing.
+Codex has always reported one per window (300 and 10080 minutes); claudemon now
+reports the two Anthropic lengths as well, because the window names
+(`five_hour`, `seven_day`) assert them and the OAuth endpoint never states them.
+The **monthly** overage window deliberately keeps no length: a calendar month is
+not a fixed number of minutes and the endpoint does not say which month a
+reading belongs to, so it is never paced.
+
+Everything above is read through the same currency guard as everything else. A
+window that has rolled over has no length, no reset and no percentage available
+to it, so it cannot be paced at all — the pace ratio is one more thing a stale
+reading must not be able to reach.
+
+### What pace may do
+
+- It may **add** `conserve` to a provider whose window is being drained faster
+  than it refills. That is the case `health:` cannot see: 80% of a five-hour
+  window gone with half the window left is only YELLOW on the ladder.
+- It may **block** a `spend_down` without conserving. Spend-down converts
+  allowance that would expire unused into confidence, and allowance already
+  running ahead of the curve is not going to expire unused.
+- It may **never** override RED or EXHAUSTED health. The pace arms sit after the
+  health arms, so a flattering ratio can never talk a nearly-spent allowance
+  back down to normal.
+- It **never promotes anything.** There is no pace state that unlocks a stronger
+  model.
+
+For a provider with more than one readable window, the **worse** (highest) ratio
+binds, and the answer names which window it came from. That is what makes an
+Anthropic decision "the worse of the five-hour and the seven-day pace" with no
+per-provider rule anywhere: both Anthropic windows carry a length now, so both
+are judged. Codex's five-hour reading is frequently stale, so in practice its
+seven-day pace is what answers for it — by the currency guard, not by a special
+case. A provider whose windows carry no length at all (Copilot, anything absent
+from the report) is UNKNOWN, which conserves nothing and unlocks nothing.
+
+### The knobs
+
+```yaml
+thresholds:
+  pacing:
+    enabled: true
+    conserve_at_ratio: 1.25
+    block_spend_down_at_ratio: 1.0
+    bootstrap:
+      min_elapsed_pct: 5
+      expected_offset_pct: 2
+    seven_day:
+      curve: calendar
+      timezone: local
+      weekend_weight: 0.5
+      weekend: spend_tail
+      weekend_reserve_pct: 0
+```
+
+**`enabled: false` reproduces the pre-pacing answers exactly**, including the
+absence of the `pace` fields on the answer and on the `routing.decision` event.
+It is the switch to reach for if a fleet's rhythm does not fit a curve.
+
+**The bands** are ratios of consumed-to-expected; 1.0 is exactly on the curve.
+`block_spend_down_at_ratio` is never above `conserve_at_ratio` — a band that
+conserved without blocking spend-down would be asking for two modes at once, and
+the file is reported as an issue if it says so.
+
+**The bootstrap block** is where this arithmetic would otherwise lie. One
+percent used against a fifth of a percent elapsed is a ratio of five, so
+`min_elapsed_pct` refuses to take a verdict at all in the first stretch of a
+window (pace is UNKNOWN there, which conserves nothing), and
+`expected_offset_pct` widens the denominator by that many percentage points so
+an ordinary opening burst does not divide by nearly zero.
+
+**The seven-day curve** applies to the weekly window only; a five-hour window
+has no weekday shape to have an opinion about.
+
+- `curve: calendar` is linear in wall-clock time and is what ships. A fleet that
+  works at the weekend would otherwise be told to conserve on Saturday for no
+  reason.
+- `curve: workdays` budgets a weekend hour at `weekend_weight` of a weekday
+  hour, so a week's allowance spent across five working days is **on plan**
+  instead of 40% over it. The weight must be strictly positive — at zero, a
+  window that ends over a weekend has no expected progress at all and every
+  weekend hour reads as infinite overspend — and the load-time validation says
+  so, while the arithmetic falls back to the calendar curve and states the
+  fallback in the answer rather than dividing by zero.
+- `timezone: local` is the host's own zone. A weekend is a local fact and a
+  curve computed in UTC for a fleet in UTC+13 is wrong by most of a day. Any
+  IANA name works; one this host's tzdata cannot resolve is reported and falls
+  back to the calendar curve.
+- `weekend: spend_tail` holds nothing back: whatever is left when the working
+  week ends may be spent over the weekend. `weekend: reserve` keeps
+  `weekend_reserve_pct` of the allowance against the curve, which makes the
+  pacer start saying "overspending" earlier during the week. A reserve written
+  under `spend_tail` is ignored, and both the load-time issue and the answer's
+  own explanation say so, rather than leaving a number in the file that looks
+  like it does something.
+
+### What pacing does not do yet
+
+Claude's stream transport publishes a rate-limit **status** as well as a
+utilization: `status: allowed_warning` on a `rate_limit_event`, which is the
+provider's own "you are close to this limit". It is not folded into pace, and
+that is deliberate rather than an oversight. The warning arrives session-scoped
+and latest-wins (`AgentUpdate::RateLimitStatus`), carrying a rendered sentence
+and neither the window it describes nor that window's reset time, and
+`/usage/report` does not carry it at all. Associating it with a
+currency-guarded window would mean retaining the event's `rateLimitType` and
+`resetsAt` through the account store and publishing it per window in the report
+— a claudemon data-model change, not a routing one. Attaching it to a window on
+a guess is the exact shape of the bug this layer exists to refuse, so it stays
+a follow-up.
+
+### Reading a paced answer
+
+`routing.select` returns `capacity.pace` (the window that bound, its ratio, the
+terms of the division and a sentence) and `capacity.paceWindows` (every window,
+so you can see what the others said). The `reason` list carries the same
+sentence in prose, and the `routing.decision` event carries `pace`, `paceRatio`
+and `paceWindow` so a fleet display can caption a mode change without reading
+the reasons. All of those are absent when pacing is off.
 
 ## Ceilings
 
@@ -484,12 +621,18 @@ make test-routing-harness
 
 It starts a real hub against a fake claudemon that serves usage states you cannot
 reproduce on demand: a stale Codex window, a window resetting exactly now, a
-Copilot 403, providers absent from the document entirely. It asserts that stale
-readings come back UNKNOWN rather than choosing a mode, that the decision and its
-spawn both reach the log, that a capped directory caps `routing.select` and the
-spawn gate identically, and that a symlink into that directory does not walk
-around either. `ROUTING_HARNESS_REQUIRE_ROUTING=1` makes a parked assertion a
-failure rather than a note.
+Copilot 403, providers absent from the document entirely, and two **pacing**
+states that are indistinguishable from a healthy one by used-percentage alone.
+It asserts that stale readings come back UNKNOWN rather than choosing a mode,
+that the Anthropic window lengths arrive end to end and produce a real pace
+ratio, that an over-curve window conserves while a YELLOW health alone would
+not, that a provider running ahead of the curve blocks a spend-down without
+conserving, that the `routing.decision` event carries the pace, that a provider
+publishing no window stays pace-UNKNOWN, that the decision and its spawn both
+reach the log, that a capped directory caps `routing.select` and the spawn gate
+identically, and that a symlink into that directory does not walk around either.
+`ROUTING_HARNESS_REQUIRE_ROUTING=1` makes a parked assertion a failure rather
+than a note.
 
 The Go unit tests cover the merge, the validation, the mode rules and the ceiling
 arms:

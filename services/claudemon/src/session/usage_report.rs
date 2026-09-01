@@ -346,6 +346,26 @@ fn label_for_root(root: &str) -> String {
         .unwrap_or_else(|| root.to_string())
 }
 
+/// The Anthropic rate-limit window lengths, in minutes.
+///
+/// `/api/oauth/usage` names its windows (`five_hour`, `seven_day`) and never
+/// states how long they are, so until now every Claude window went out with
+/// `window_minutes: null` and a consumer could read a utilization and a reset
+/// but never how far THROUGH the window that utilization was. That is the one
+/// missing term in "are we spending this faster than it refills", so the two
+/// lengths the window names already assert are stated here rather than left
+/// for a client to hardcode.
+///
+/// These are FACTS ABOUT THE PRODUCT, not readings: they are not derived from
+/// the response and they do not change with it. The monthly overage window
+/// deliberately gets no constant — it is a calendar month, which is not a fixed
+/// number of minutes, and the endpoint does not say which month a reading
+/// belongs to.
+const ANTHROPIC_FIVE_HOUR_MINUTES: u64 = 5 * 60;
+/// Seven days, matching the `seven_day` window's own name (and the value Codex
+/// reports for its weekly window, 10080).
+const ANTHROPIC_SEVEN_DAY_MINUTES: u64 = 7 * 24 * 60;
+
 fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderReport {
     // Configured roots, unioned with any root the store has an opinion about,
     // so an account that only ever produced a FAILURE still gets a row saying
@@ -378,18 +398,33 @@ fn claude_report(store: &SessionStore, now: time::OffsetDateTime) -> ProviderRep
                     .to_string(),
                 (None, Some(_)) => "the usage endpoint did not report this window".to_string(),
             };
-            let window = |pct: Option<f64>, resets: Option<i64>| WindowReport {
-                used_percent: Measured::from_option(pct, why.clone()),
-                resets_at: resets,
-                window_minutes: None,
-                is_current: resets.map(|r| r > now.unix_timestamp()),
-            };
+            let window =
+                |pct: Option<f64>, resets: Option<i64>, minutes: Option<u64>| WindowReport {
+                    used_percent: Measured::from_option(pct, why.clone()),
+                    resets_at: resets,
+                    window_minutes: minutes,
+                    is_current: resets.map(|r| r > now.unix_timestamp()),
+                };
             let windows = match &reading {
                 Some(u) => WindowsReport {
-                    five_hour: window(u.five_hour_pct, u.five_hour_resets_at),
-                    seven_day: window(u.seven_day_pct, u.seven_day_resets_at),
+                    five_hour: window(
+                        u.five_hour_pct,
+                        u.five_hour_resets_at,
+                        Some(ANTHROPIC_FIVE_HOUR_MINUTES),
+                    ),
+                    seven_day: window(
+                        u.seven_day_pct,
+                        u.seven_day_resets_at,
+                        Some(ANTHROPIC_SEVEN_DAY_MINUTES),
+                    ),
                     monthly: match u.monthly_pct {
-                        Some(_) => window(u.monthly_pct, u.monthly_resets_at),
+                        // The overage window's length is NOT stated here. It is
+                        // a calendar month — 28 to 31 days — and the endpoint
+                        // does not say which one this reading belongs to, so a
+                        // fixed number would be a guess that a pace calculation
+                        // would then divide by. `None` is the honest answer and
+                        // the consumer treats an unknown length as no pace.
+                        Some(_) => window(u.monthly_pct, u.monthly_resets_at, None),
                         // Not a gap in our reading: the account has extra usage
                         // switched off, so there is no monthly window to be at
                         // 0% of. Rendering one would pin a permanent empty
@@ -1063,6 +1098,49 @@ mod tests {
             default.windows.monthly.used_percent,
             Measured::Unavailable { .. }
         ));
+    }
+
+    /// The Anthropic window LENGTHS ride out with a reading, because a
+    /// utilization without one cannot say how far through the window it is —
+    /// which is the whole input to pace-aware routing. The endpoint never
+    /// states them; the window names do, so the daemon asserts them.
+    ///
+    /// The monthly overage window deliberately keeps NO length: it is a
+    /// calendar month, not a fixed number of minutes.
+    #[test]
+    fn anthropic_windows_carry_their_known_lengths_and_monthly_does_not() {
+        let store = SessionStore::new();
+        store.set_account_usage(
+            "",
+            account_usage::parse_usage_response(&serde_json::json!({
+                "five_hour": { "utilization": 12.0, "resets_at": 4102444800i64 },
+                "seven_day": { "utilization": 40.0, "resets_at": 4102444800i64 },
+                "extra_usage": { "is_enabled": true, "utilization": 3.0,
+                                 "resets_at": 4102444800i64 },
+            })),
+        );
+        let r = build(&store);
+        let default = r.providers[0]
+            .accounts
+            .iter()
+            .find(|a| a.is_default)
+            .unwrap();
+        assert_eq!(default.windows.five_hour.window_minutes, Some(300));
+        assert_eq!(default.windows.seven_day.window_minutes, Some(10080));
+        assert_eq!(
+            default.windows.monthly.window_minutes, None,
+            "a calendar month is not a fixed number of minutes, so guessing one \
+             would hand a pace calculation a denominator nobody measured",
+        );
+        // A length is not a reading: it must not resurrect a window whose
+        // utilization the poller never produced.
+        let cold = build(&SessionStore::new());
+        let cold_default = cold.providers[0]
+            .accounts
+            .iter()
+            .find(|a| a.is_default)
+            .unwrap();
+        assert_eq!(cold_default.windows.five_hour.window_minutes, None);
     }
 
     /// Copilot quota is the type case for UNAVAILABLE, and the reason travels
