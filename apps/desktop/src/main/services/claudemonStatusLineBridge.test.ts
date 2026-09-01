@@ -52,6 +52,7 @@ describe('claudemonStatusLineBridge', () => {
           model_display: 'Opus',
           context_used_pct: 42,
           context_window_size: 200000,
+          context_usage_state: 'waiting_for_runtime_usage',
           context_health: {
             used_tokens: 84000,
             window_tokens: 200000,
@@ -80,6 +81,7 @@ describe('claudemonStatusLineBridge', () => {
       modelDisplay: 'Opus',
       contextUsedPct: 42,
       contextWindowSize: 200000,
+      contextUsageState: 'waitingForRuntimeUsage',
       contextHealth: {
         usedTokens: 84000,
         windowTokens: 200000,

@@ -23,14 +23,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const contract = JSON.parse(
   readFileSync(path.resolve(here, '../../../../../contracts/context-health-cases.json'), 'utf-8'),
 ) as {
+  vocabulary: {
+    blocks: Record<string, { loaders: string[] }>;
+  };
   formatPctCases: Array<{ input: number; expected: string }>;
-  unsupportedProviders: string[];
-  cumulativeCodex: {
+  unsupportedProviders: Array<{ provider: string }>;
+  cumulativeCodex: Array<{
     inputTokens: number;
     outputTokens: number;
     windowTokens: number;
     thresholdPct: number;
-  };
+  }>;
 };
 
 const session = (over: Partial<WatchableSession> = {}): WatchableSession => ({
@@ -170,8 +173,8 @@ describe('contextUsedPct health semantics', () => {
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 
-  it('lets a hook-adopted Claude row wait, then fires when its first trustworthy result arrives', () => {
-    const target = session({ provider: 'claude', usage: null, statusLine: {} });
+  it('treats an empty hook-adopted provider as absent, then binds its first trustworthy Claude result', () => {
+    const target = session({ provider: '  ', usage: null, statusLine: {} });
     const { watcher, deliver } = rig([mgr(), target]);
     expect(
       watcher.arm({
@@ -277,8 +280,9 @@ describe('contextUsedPct health semantics', () => {
     expect(watcher.list()).toHaveLength(1);
   });
 
-  it('mutation-proves cumulative legacy Codex input cannot fire an 80% watch', () => {
-    const c = contract.cumulativeCodex;
+  it('keeps a post-switch watch waiting on legacy Codex totals until a new runtime pair arrives', () => {
+    const c = contract.cumulativeCodex[0];
+    expect(c, 'cumulativeCodex contract case').toBeDefined();
     const target = session({
       provider: 'codex',
       usage: null,
@@ -300,10 +304,41 @@ describe('contextUsedPct health semantics', () => {
     expect(c.inputTokens / c.windowTokens).toBeGreaterThan(c.thresholdPct / 100);
     expect(deliver).not.toHaveBeenCalled();
     expect(watcher.list()).toHaveLength(1);
+
+    // This is the successor epoch's first trustworthy pair. Until it exists,
+    // the exact 180000/200000 cumulative legacy values above cannot wake the
+    // manager; once it exists, the one-shot may fire normally.
+    target.statusLine!.contextHealth = {
+      usedTokens: c.inputTokens,
+      windowTokens: c.windowTokens,
+      usedPct: (c.inputTokens / c.windowTokens) * 100,
+      windowSource: 'runtime',
+      observedAt: new Date(now + 1_000).toISOString(),
+      epoch: NEXT_EPOCH,
+      provider: 'codex',
+    };
+    watcher.sweep(now + 1_000);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(watcher.list()).toHaveLength(0);
+  });
+
+  it('normalizes provider comparisons and binds the canonical telemetry spelling', () => {
+    const target = withHealth(now, 170_000, 200_000, { provider: ' CoDeX ' });
+    target.provider = ' CODEX ';
+    const { watcher, deliver } = rig([mgr(), target]);
+    const armed = watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    expect(armed.contextProvider).toBe('codex');
+    watcher.sweep(now);
+    expect(deliver).toHaveBeenCalledTimes(1);
   });
 
   it('refuses structurally unsupported and unproven future providers without consuming slots', () => {
-    for (const provider of contract.unsupportedProviders) {
+    for (const { provider } of contract.unsupportedProviders) {
       const { watcher } = rig([mgr(), session({ provider })]);
       expect(() =>
         watcher.arm({
@@ -342,6 +377,18 @@ describe('contextUsedPct health semantics', () => {
 });
 
 describe('shared context formatting contract', () => {
+  it('declares every block-level consumer so removing one loader is visible', () => {
+    expect(contract.vocabulary.blocks.unsupportedProviders.loaders).toEqual([
+      'apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders',
+      'services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders',
+    ]);
+    expect(contract.vocabulary.blocks.cumulativeCodex.loaders).toEqual([
+      'services/claudemon/src/providers/codex.rs::cumulativeCodex',
+      'apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex',
+      'services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex',
+    ]);
+  });
+
   it('renders the same bounded one-decimal percentages as Hub', () => {
     for (const c of contract.formatPctCases) expect(formatContextPct(c.input)).toBe(c.expected);
   });

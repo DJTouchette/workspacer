@@ -263,6 +263,7 @@ func TestCompatSnapshotCarriesCachedInputTokens(t *testing.T) {
 			"model_display":       "gpt-5-codex",
 			"total_input_tokens":  4402946,
 			"cached_input_tokens": 3733376,
+			"context_usage_state": "waiting_for_runtime_usage",
 		},
 	})
 
@@ -276,6 +277,9 @@ func TestCompatSnapshotCarriesCachedInputTokens(t *testing.T) {
 	}
 	if got, _ := sl["cachedInputTokens"].(float64); got != 3733376 {
 		t.Errorf("cachedInputTokens = %v, want 3733376", sl["cachedInputTokens"])
+	}
+	if got := sl["contextUsageState"]; got != "waitingForRuntimeUsage" {
+		t.Errorf("contextUsageState = %v, want waitingForRuntimeUsage", got)
 	}
 }
 

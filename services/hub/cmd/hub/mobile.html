@@ -1574,8 +1574,9 @@
     // `opus[1m]`, a canonical 1M selection, and a native-1M model truthful
     // without promoting an unknown session merely because it crossed 200K.
     const slWindowDisproved = !!slWindow && held > slWindow * CONTEXT_WINDOW_DRIFT_TOLERANCE;
+    const contextWaiting = sl.contextUsageState === 'waitingForRuntimeUsage';
     const derivedPct = u.contextLimit ? (u.contextTokens / u.contextLimit) * 100 : undefined;
-    let ctxPct = slWindowDisproved ? derivedPct
+    let ctxPct = contextWaiting ? undefined : slWindowDisproved ? derivedPct
       : (typeof sl.contextUsedPct === 'number' ? sl.contextUsedPct : derivedPct);
     // A missing contextTokens against a present limit yields NaN, which every
     // `!== undefined` guard downstream would wave through — rendering "NaN%" on
@@ -1585,6 +1586,7 @@
     const outTok = sl.totalOutputTokens ?? u.totalOutputTokens;
     return {
       model,
+      contextWaiting,
       ctxPct: ctxPct === undefined ? undefined : clamp(Math.round(ctxPct), 0, 100),
       ctxTokens: u.contextTokens,
       ctxLimit: (slWindowDisproved ? undefined : slWindow) || u.contextLimit,
@@ -2374,6 +2376,8 @@
     if (t.model) tele.push(`<span class="m">${esc(t.model)}</span>`);
     if (t.ctxPct !== undefined) {
       tele.push(`<span style="display:flex;align-items:center;gap:6px">${barHtml(t.ctxPct, ctxColor(t.ctxPct), 34)}<span style="color:${ctxColor(t.ctxPct)}">${t.ctxPct}%</span></span>`);
+    } else if (t.contextWaiting) {
+      tele.push('<span title="Waiting for current-request telemetry; cumulative billed tokens are not active occupancy">ctx waiting</span>');
     }
     if (t.costUSD) tele.push(`<span>${esc(fmtUSD(t.costUSD))}</span>`);
     const flowLbl = flow ? `<span style="color:${C.blue}">flow: ${esc(flow.name || 'workflow')}</span>` : '';
@@ -2649,6 +2653,7 @@
     const bits = [];
     if (t.costUSD) bits.push(fmtUSD(t.costUSD));
     if (t.ctxPct !== undefined) bits.push(`${t.ctxPct}% ctx`);
+    else if (t.contextWaiting) bits.push('ctx waiting');
     pills.push(`<button data-seg="usage">${bits.length ? esc(bits.join(' · ')) : 'Usage'}</button>`);
     // The chat header can only fit a name and a path, so this is where the
     // project gets to say its name in full — the pills rail scrolls, so a long
@@ -3582,6 +3587,12 @@
         <div class="ubig"><span class="v">${t.ctxPct}%</span>
           ${t.ctxLimit ? `<span class="s">${esc(fmtTokens(t.ctxTokens || 0))} / ${esc(fmtTokens(t.ctxLimit))}</span>` : ''}</div>
         <div class="bar" style="height:7px;border-radius:4px"><span style="width:${t.ctxPct}%;background:${ctxColor(t.ctxPct)};border-radius:4px"></span></div>
+      </div>`);
+    } else if (t.contextWaiting) {
+      parts.push(`<div class="ucard">
+        <div class="ucap">CONTEXT${t.model ? ' · ' + esc(t.model) : ''}</div>
+        <div class="ubig"><span class="s">Waiting for current-request telemetry</span></div>
+        <div class="usub">Cumulative billed tokens are not active occupancy.</div>
       </div>`);
     }
     if (t.rateLimitWarning) parts.push(`<div class="warn"><span>⚠</span><span>${esc(t.rateLimitWarning)}</span></div>`);

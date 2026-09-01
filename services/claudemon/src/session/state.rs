@@ -496,6 +496,13 @@ pub struct StatusLine {
     pub context_used_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window_size: Option<u64>,
+    /// Why a provider-reported window has no active-occupancy percentage yet.
+    /// Legacy Codex token-usage frames carry only cumulative billing counters,
+    /// so presenting those as the numerator would manufacture a false meter.
+    /// The explicit state lets clients say they are waiting for a current
+    /// request instead of silently drawing nothing (or, worse, guessing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_state: Option<ContextUsageState>,
     /// A context-occupancy sample that is safe to use for health decisions.
     /// Unlike the display fields above, this exists only when the provider
     /// supplied the active numerator and effective denominator together. The
@@ -602,6 +609,14 @@ pub struct ContextHealth {
     pub provider: String,
 }
 
+/// Explicit display state for a context window whose current occupancy is not
+/// yet available. Absence means no special state, not that usage is zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextUsageState {
+    WaitingForRuntimeUsage,
+}
+
 /// Claude's account windows are named by their length rather than carrying it:
 /// `five_hour` is 300 minutes and `seven_day` is 10080. Nothing on Claude's
 /// wire spells the duration out, so the daemon stamps it from the window's own
@@ -651,6 +666,7 @@ impl StatusLine {
             context_window_size: cw
                 .and_then(|c| c.get("context_window_size"))
                 .and_then(Value::as_u64),
+            context_usage_state: None,
             context_health: {
                 let window = cw
                     .and_then(|c| c.get("context_window_size"))

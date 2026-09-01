@@ -8,6 +8,28 @@
           "apps/desktop/src/main/services/thresholdWatch.test.ts::formatPctCases",
           "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases"
         ]
+      },
+      "unsupportedProviders": {
+        "why": "Providers with no runtime context-window carrier must refuse context health watches without consuming slots.",
+        "required": ["provider"],
+        "loaders": [
+          "apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders",
+          "services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders"
+        ]
+      },
+      "cumulativeCodex": {
+        "why": "Legacy flat Codex counters are cumulative billing totals; every Rust, Go, and TypeScript consumer must keep them out of active occupancy before and after an epoch boundary.",
+        "required": [
+          "inputTokens",
+          "outputTokens",
+          "windowTokens",
+          "thresholdPct"
+        ],
+        "loaders": [
+          "services/claudemon/src/providers/codex.rs::cumulativeCodex",
+          "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
+          "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex"
+        ]
       }
     }
   },
@@ -23,11 +45,13 @@
     { "input": 99.99, "expected": "100.0" },
     { "input": 105, "expected": "100.0" }
   ],
-  "unsupportedProviders": ["opencode", "pi"],
-  "cumulativeCodex": {
-    "inputTokens": 230000,
-    "outputTokens": 200,
-    "windowTokens": 272000,
-    "thresholdPct": 80
-  }
+  "unsupportedProviders": [{ "provider": "opencode" }, { "provider": "pi" }],
+  "cumulativeCodex": [
+    {
+      "inputTokens": 180000,
+      "outputTokens": 200,
+      "windowTokens": 200000,
+      "thresholdPct": 80
+    }
+  ]
 }

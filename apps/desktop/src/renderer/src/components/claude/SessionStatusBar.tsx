@@ -184,6 +184,8 @@ export const SessionStatusBar: React.FC<Props> = ({
   const recorded = useRecordedUsage(snapshot?.sessionId ?? sessionId);
   const stats = withRecordedUsage(deriveSessionStats(snapshot), recorded);
   const { model, ctxPct, billedTokens, costUSD: cost } = stats;
+  const contextWaiting =
+    snapshot?.statusLine?.contextUsageState === 'waitingForRuntimeUsage' && ctxPct === undefined;
   // Every window the provider actually reported, in order. Empty for a session
   // whose provider sends none, where the group renders nothing at all.
   const windows = usageWindows(stats);
@@ -219,6 +221,7 @@ export const SessionStatusBar: React.FC<Props> = ({
     plan ||
     snapshot?.compacting ||
     ctxPct !== undefined ||
+    contextWaiting ||
     billedTokens !== undefined ||
     cost !== undefined ||
     windows.length > 0;
@@ -322,6 +325,18 @@ export const SessionStatusBar: React.FC<Props> = ({
             <span style={{ color: 'var(--wks-text-muted)' }}>ctx</span>
             <Track pct={ctxPct} color={ctxColor(ctxPct)} />
             {Math.round(ctxPct)}%
+          </span>
+        </>
+      )}
+      {contextWaiting && (
+        <>
+          <Sep />
+          <span
+            data-testid="session-status-context-waiting"
+            title="The provider reported a context window but not current-request usage; cumulative billed tokens are not active occupancy."
+            style={{ color: 'var(--wks-text-muted)', fontVariantNumeric: 'tabular-nums' }}
+          >
+            ctx waiting for current request
           </span>
         </>
       )}

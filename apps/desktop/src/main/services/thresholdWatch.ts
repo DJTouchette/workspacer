@@ -120,6 +120,8 @@ export function contextHealthReading(
 ): ContextHealthReading | null {
   const h = s.statusLine?.contextHealth;
   if (!h || h.windowSource !== 'runtime') return null;
+  const healthProvider = normalizedProvider(h.provider);
+  const sessionProvider = normalizedProvider(s.provider);
   const observedAtMs = Date.parse(h.observedAt);
   if (
     !Number.isFinite(h.usedTokens) ||
@@ -134,8 +136,8 @@ export function contextHealthReading(
     h.usedTokens > h.windowTokens ||
     h.usedPct < 0 ||
     h.usedPct > 100 ||
-    !h.provider ||
-    (s.provider !== undefined && h.provider !== s.provider) ||
+    !healthProvider ||
+    (sessionProvider !== undefined && healthProvider !== sessionProvider) ||
     observedAtMs > now + CONTEXT_HEALTH_FUTURE_SKEW_MS ||
     now - observedAtMs > CONTEXT_HEALTH_MAX_AGE_MS
   ) {
@@ -143,7 +145,7 @@ export function contextHealthReading(
   }
   const computed = (h.usedTokens / h.windowTokens) * 100;
   if (Math.abs(computed - h.usedPct) > 0.01) return null;
-  return { ...h, observedAtMs };
+  return { ...h, provider: healthProvider, observedAtMs };
 }
 
 /** Total tokens a session has burned — the number the manager means by "how big
@@ -223,12 +225,20 @@ function contextCrossing(threshold: number, h: ContextHealthReading): string {
   );
 }
 
+function normalizedProvider(provider?: string): string | undefined {
+  return provider?.trim().toLowerCase() || undefined;
+}
+
 function providerName(provider?: string): string {
-  return provider?.trim().toLowerCase() || 'unknown';
+  return normalizedProvider(provider) ?? 'unknown';
 }
 
 function assertContextWatchCanArm(s: WatchableSession, now: number): void {
-  const provider = providerName(s.provider);
+  const provider = normalizedProvider(s.provider);
+  // Hook-adopted Claude rows can exist before their provider enrichment lands.
+  // Absence is not an unknown provider: keep the watch waiting and bind it only
+  // when a trustworthy correlated sample names its owner.
+  if (!provider) return;
   if (NO_CONTEXT_WINDOW_PROVIDERS.has(provider)) {
     throw new Error(
       `agents.notifyWhen: contextUsedPct is unavailable for provider ${provider}: it cannot emit a runtime context window`,
@@ -252,10 +262,15 @@ function contextWatchCrossing(
   now: number,
 ): string | null {
   const targetProvider = providerName(s.provider);
-  if (watch.contextProvider && targetProvider !== providerName(watch.contextProvider)) {
+  const targetIdentity = normalizedProvider(s.provider);
+  if (
+    watch.contextProvider &&
+    targetIdentity &&
+    targetIdentity !== normalizedProvider(watch.contextProvider)
+  ) {
     return `monitoring invalidated: contextUsedPct ${formatContextPct(watch.contextUsedPct!)}% watch crossed a provider/session boundary (${watch.contextProvider} → ${targetProvider}); re-arm after a confirmed sample`;
   }
-  if (NO_CONTEXT_WINDOW_PROVIDERS.has(targetProvider)) {
+  if (targetIdentity && NO_CONTEXT_WINDOW_PROVIDERS.has(targetIdentity)) {
     return `monitoring invalidated: contextUsedPct ${formatContextPct(watch.contextUsedPct!)}% is unavailable for provider ${targetProvider}; re-arm only on a provider with runtime context telemetry`;
   }
   const health = contextHealthReading(s, now);
@@ -383,7 +398,7 @@ export class ThresholdWatcher {
       ...predicate,
     };
     if (predicate.contextUsedPct !== undefined) {
-      watch.contextProvider = target.provider?.toLowerCase() ?? health?.provider;
+      watch.contextProvider = normalizedProvider(target.provider) ?? health?.provider;
       watch.contextEpoch = health?.epoch;
       watch.state = health
         ? health.usedPct >= predicate.contextUsedPct

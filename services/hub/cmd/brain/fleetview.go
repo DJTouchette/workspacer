@@ -148,8 +148,13 @@ func (s fleetSession) contextHealth(now time.Time) *contextHealthReading {
 		copy := *s.StatusLine.ContextHealth
 		h = &copy
 	}
-	if h == nil || h.WindowSource != "runtime" || h.Provider == "" ||
-		(s.Provider != "" && h.Provider != s.Provider) || h.WindowTokens <= 0 ||
+	if h == nil {
+		return nil
+	}
+	healthProvider := providerIdentity(h.Provider)
+	sessionProvider := providerIdentity(s.Provider)
+	if h.WindowSource != "runtime" || healthProvider == "" ||
+		(sessionProvider != "" && healthProvider != sessionProvider) || h.WindowTokens <= 0 ||
 		h.UsedTokens < 0 || h.UsedTokens > h.WindowTokens || h.Epoch == "" ||
 		math.IsNaN(h.UsedPct) || math.IsInf(h.UsedPct, 0) || h.UsedPct < 0 || h.UsedPct > 100 {
 		return nil
@@ -162,6 +167,7 @@ func (s fleetSession) contextHealth(now time.Time) *contextHealthReading {
 	if math.Abs(computed-h.UsedPct) > 0.01 {
 		return nil
 	}
+	h.Provider = healthProvider
 	return h
 }
 

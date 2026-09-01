@@ -423,6 +423,13 @@ const ContextPane: React.FC<ContextPaneProps> = ({
           </div>
         )}
 
+        {ctxPct === undefined && sl?.contextUsageState === 'waitingForRuntimeUsage' && (
+          <div style={{ margin: '16px 0 6px', fontSize: '0.74rem', color: colors.muted }}>
+            Context occupancy unavailable — waiting for current-request telemetry. Cumulative billed
+            tokens are not active occupancy.
+          </div>
+        )}
+
         {ctxPct !== undefined && (
           <div style={{ margin: '16px 0 6px' }}>
             <div

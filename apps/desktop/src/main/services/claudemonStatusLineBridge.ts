@@ -90,6 +90,10 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           effort: sl.effort,
           contextUsedPct: sl.context_used_pct,
           contextWindowSize: sl.context_window_size,
+          contextUsageState:
+            sl.context_usage_state === 'waiting_for_runtime_usage'
+              ? 'waitingForRuntimeUsage'
+              : undefined,
           contextHealth:
             sl.context_health && mapTelemetryEpoch(sl.context_health.epoch)
               ? {

@@ -365,6 +365,9 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 			"capabilities":        sl["capabilities"],
 			"receivedAt":          sl["received_at"],
 		}
+		if sl["context_usage_state"] == "waiting_for_runtime_usage" {
+			compat["contextUsageState"] = "waitingForRuntimeUsage"
+		}
 		if health, ok := sl["context_health"].(map[string]any); ok {
 			compat["contextHealth"] = map[string]any{
 				"usedTokens":   health["used_tokens"],

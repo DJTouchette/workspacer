@@ -250,11 +250,11 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		return nil, fmt.Errorf("agents.notifyWhen: session %s has already ended — nothing left to watch", p.SessionID)
 	}
 	if p.ContextUsedPct != nil {
-		provider := normalizedProvider(target.Provider)
+		provider := providerIdentity(target.Provider)
 		if noContextWindowProviders[provider] {
 			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct is unavailable for provider %s: it cannot emit a runtime context window", provider)
 		}
-		if !contextHealthProviders[provider] && target.contextHealth(time.Now()) == nil {
+		if provider != "" && !contextHealthProviders[provider] && target.contextHealth(time.Now()) == nil {
 			// Future providers remain extensible when they prove the contract with
 			// a correlated sample. Otherwise waiting would leak a permanent slot.
 			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct cannot wait for unknown provider %s without a fresh runtime context sample", provider)
@@ -304,7 +304,7 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		ArmedAt:          now.UnixMilli(),
 	}
 	if p.ContextUsedPct != nil {
-		w.ContextProvider = target.Provider
+		w.ContextProvider = providerIdentity(target.Provider)
 		if health := target.contextHealth(now); health != nil {
 			w.ContextProvider = health.Provider
 			w.ContextEpoch = &health.Epoch
@@ -374,11 +374,18 @@ func crossedBy(w *thresholdWatch, s fleetSession, now time.Time) string {
 }
 
 func normalizedProvider(provider string) string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
+	provider = providerIdentity(provider)
 	if provider == "" {
 		return "unknown"
 	}
 	return provider
+}
+
+// providerIdentity normalizes a real provider while preserving absence. Empty
+// hook-adopted rows are not an "unknown provider" refusal: a context watch may
+// wait and bind once correlated telemetry names its owner.
+func providerIdentity(provider string) string {
+	return strings.ToLower(strings.TrimSpace(provider))
 }
 
 // Canonical desktop/Hub wake percentage: bounded and exactly one decimal.
@@ -393,19 +400,16 @@ func formatContextPct(v float64) string {
 	return strconv.FormatFloat(v, 'f', 1, 64)
 }
 
-func formatNumber(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
-}
-
 // contextWatchCrossing is the single authoritative context predicate used by
 // production sweeps and direct tests. Ownership invalidation is part of the
 // predicate; it cannot be bypassed by an epoch-blind numeric-only branch.
 func contextWatchCrossing(w *thresholdWatch, s fleetSession, now time.Time) string {
 	targetProvider := normalizedProvider(s.Provider)
-	if w.ContextProvider != "" && targetProvider != normalizedProvider(w.ContextProvider) {
+	targetIdentity := providerIdentity(s.Provider)
+	if w.ContextProvider != "" && targetIdentity != "" && targetIdentity != providerIdentity(w.ContextProvider) {
 		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed a provider/session boundary (%s → %s); re-arm after a confirmed sample", formatContextPct(*w.ContextUsedPct), w.ContextProvider, targetProvider)
 	}
-	if noContextWindowProviders[targetProvider] {
+	if targetIdentity != "" && noContextWindowProviders[targetIdentity] {
 		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% is unavailable for provider %s; re-arm only on a provider with runtime context telemetry", formatContextPct(*w.ContextUsedPct), targetProvider)
 	}
 	health := s.contextHealth(now)

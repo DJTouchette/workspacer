@@ -132,6 +132,8 @@ pub(super) fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
     }
     if let Some(p) = stats.context_pct {
         s.push_str(&format!("  {p:.0}% ctx"));
+    } else if stats.context_waiting {
+        s.push_str("  ctx waiting");
     }
     if let Some(c) = stats.cost {
         s.push_str(&format!("  ${c:.2}"));
@@ -139,6 +141,7 @@ pub(super) fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
     // No usage/statusLine yet — fall back to a raw tool-call count.
     if stats.model.is_none()
         && stats.context_pct.is_none()
+        && !stats.context_waiting
         && stats.cost.is_none()
         && a.tool_calls > 0
     {
@@ -315,6 +318,7 @@ mod tests {
         DerivedStats {
             model: model.map(str::to_string),
             context_pct: ctx,
+            context_waiting: false,
             cost,
         }
     }

@@ -71,4 +71,15 @@ describe('both exact context-bar consumers use the shared runtime-confirmed sele
     expect(screen.getByTestId('session-status-context-bar')).toHaveAccessibleName(/50%/);
     expect(screen.getByTestId('session-status-context-bar')).not.toHaveTextContent('75M');
   });
+
+  it('names legacy Codex occupancy as waiting and never turns cumulative usage into a bar', () => {
+    const waiting = snapshot(true);
+    waiting.statusLine.contextUsageState = 'waitingForRuntimeUsage';
+    const view = render(<SessionStatusBar snapshot={waiting} />);
+    expect(screen.queryByTestId('session-status-context-bar')).toBeNull();
+    expect(screen.getByTestId('session-status-context-waiting')).toHaveTextContent(
+      'ctx waiting for current request',
+    );
+    expect(view.container).not.toHaveTextContent('50%');
+  });
 });

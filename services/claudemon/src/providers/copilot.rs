@@ -1817,6 +1817,78 @@ mod tests {
     }
 
     #[test]
+    fn copilot_split_health_requires_both_explicit_model_identities() {
+        let (_, events) = replay_capture();
+        let start = events
+            .iter()
+            .find(|event| event["type"] == "model.turn_started")
+            .expect("captured turn start")
+            .clone();
+        let success = events
+            .iter()
+            .find(|event| event["type"] == "model.model_call_success")
+            .expect("captured model success")
+            .clone();
+
+        let run = |first: Value, second: Value| {
+            let store = SessionStore::new();
+            store.register_managed("copilot-identities", "/tmp", "copilot");
+            let conv = ConversationStore::new();
+            let mut mode = SessionMode::Input;
+            let mut acc = UsageAcc::new();
+            acc.additive();
+            acc.correlate_runtime_window_by_model();
+            apply_updates(
+                &store,
+                &conv,
+                "copilot-identities",
+                translate(&first),
+                &mut mode,
+                &mut acc,
+            );
+            apply_updates(
+                &store,
+                &conv,
+                "copilot-identities",
+                translate(&second),
+                &mut mode,
+                &mut acc,
+            );
+            store
+                .get("copilot-identities")
+                .unwrap()
+                .status_line
+                .unwrap()
+        };
+
+        let mut ownerless_window = start.clone();
+        ownerless_window["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        assert!(
+            run(ownerless_window, success.clone())
+                .context_health
+                .is_none(),
+            "a named usage event may not borrow a window whose event had no model identity"
+        );
+
+        let mut ownerless_usage = success;
+        ownerless_usage["data"]["modelCall"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        ownerless_usage["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        assert!(
+            run(start, ownerless_usage).context_health.is_none(),
+            "an unnamed usage event may not borrow a named window via the accumulator's prior model"
+        );
+    }
+
+    #[test]
     fn the_captures_models_are_all_priceable() {
         // Copilot's catalog spans four vendors. A model the pricing table can't
         // match yields a blank cost readout, so the ids the CLI actually reports

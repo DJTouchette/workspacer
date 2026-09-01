@@ -218,8 +218,9 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
       : undefined;
   const held = usage?.contextTokens ?? 0;
   const slWindowDisproved = !!slWindow && held > slWindow * DRIFT_TOLERANCE;
+  const waitingForRuntimeUsage = sl?.contextUsageState === 'waitingForRuntimeUsage';
   const ctxPct =
-    slWindow && !slWindowDisproved
+    slWindow && !slWindowDisproved && !waitingForRuntimeUsage
       ? sl?.contextUsedPct !== undefined
         ? sl.contextUsedPct
         : held > 0
@@ -232,9 +233,9 @@ export function deriveSessionStats(snapshot?: SessionStatsSource | null): Derive
   // never from a window the line above just disproved, since pct × a wrong
   // window is how an absurd token count gets manufactured downstream.
   const contextTokens =
-    !slWindowDisproved && sl?.contextUsedPct !== undefined && slWindow
+    !waitingForRuntimeUsage && !slWindowDisproved && sl?.contextUsedPct !== undefined && slWindow
       ? Math.round((sl.contextUsedPct / 100) * slWindow)
-      : usage && usage.contextTokens > 0
+      : !waitingForRuntimeUsage && usage && usage.contextTokens > 0
         ? usage.contextTokens
         : undefined;
 

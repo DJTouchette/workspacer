@@ -1138,6 +1138,12 @@ export const InspectorCard: React.FC<{
                   <UsageBar label="Context window" pct={ctxPct} />
                 </div>
               )}
+              {ctxPct === undefined && sl?.contextUsageState === 'waitingForRuntimeUsage' && (
+                <div style={{ fontSize: '0.7rem', color: colors.muted, lineHeight: 1.45 }}>
+                  Context occupancy unavailable — waiting for current-request telemetry. Cumulative
+                  billed tokens are not the active context window.
+                </div>
+              )}
               {/* One bar per window the provider actually reported. See
                   `usageWindows`. Codex has no monthly window and Claude has one
                   only while extra usage is enabled, so the list is built from

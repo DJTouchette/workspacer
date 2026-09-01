@@ -190,6 +190,13 @@ export const UsageDetailDialog: React.FC<{
         : `${Math.round(stats.ctxPct)}%`,
     });
   }
+  if (
+    sessionScoped &&
+    stats.ctxPct === undefined &&
+    sl?.contextUsageState === 'waitingForRuntimeUsage'
+  ) {
+    facts.push({ label: 'Context used', value: 'Waiting for current-request telemetry' });
+  }
   if (sessionScoped && sl?.totalInputTokens !== undefined)
     facts.push({ label: 'Input tokens', value: fmtTokens(sl.totalInputTokens) });
   if (sessionScoped && sl?.totalOutputTokens !== undefined)

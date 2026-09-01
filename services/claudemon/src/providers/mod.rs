@@ -43,8 +43,8 @@ use tokio::sync::mpsc;
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, ContextHealth, Pending, PendingOwner, PendingWrite, Plan, PlanStatus, PlanStep,
-    SessionMode, StatusLine, SubagentUpdate,
+    Capabilities, ContextHealth, ContextUsageState, Pending, PendingOwner, PendingWrite, Plan,
+    PlanStatus, PlanStep, SessionMode, StatusLine, SubagentUpdate,
 };
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
@@ -497,6 +497,11 @@ pub struct UsageAcc {
     cost: Option<f64>,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
+    /// Explicitly distinguishes "the provider has not reported a current
+    /// request yet" from a real 0% reading. In particular, legacy Codex flat
+    /// usage has a window beside cumulative billing totals but no active
+    /// numerator.
+    context_usage_state: Option<ContextUsageState>,
     /// Model that owned the last provider-reported context window. Copilot
     /// reports the window at `model.turn_started` and the prompt numerator at
     /// `model.model_call_success`; matching this owner lets that adjacent pair
@@ -581,6 +586,10 @@ impl UsageAcc {
         context_tokens: Option<u64>,
         context_window: Option<u64>,
     ) {
+        // Keep the identity carried by THIS observation separate from the
+        // accumulator's display model. A seeded/previous model is useful for a
+        // label but cannot prove that two split Copilot events belong together.
+        let observation_model = model.clone();
         if model.is_some() {
             self.model = model;
         }
@@ -616,10 +625,15 @@ impl UsageAcc {
         }
         // context_tokens / context_window stay latest-wins in BOTH modes — never
         // summed (see the type doc): they feed occupancy, and compaction shrinks it.
+        let model_owners_match = self
+            .context_window_model
+            .as_deref()
+            .zip(observation_model.as_deref())
+            .is_some_and(|(window_model, usage_model)| window_model == usage_model);
         let health_window = context_window.or_else(|| {
             (self.correlate_runtime_window_by_model
                 && context_tokens.is_some()
-                && self.context_window_model == self.model)
+                && model_owners_match)
                 .then_some(self.context_window)
                 .flatten()
         });
@@ -641,12 +655,25 @@ impl UsageAcc {
                 _ => None,
             };
         }
-        if context_tokens.is_some() {
+        let context_tokens_displayable = !self.correlate_runtime_window_by_model
+            || context_window.is_some()
+            || model_owners_match;
+        if context_tokens.is_some() && context_tokens_displayable {
             self.context_tokens = context_tokens; // latest, not max — compaction shrinks it
+            self.context_usage_state = None;
+        } else if context_window.is_some()
+            || (context_tokens.is_some() && self.correlate_runtime_window_by_model)
+        {
+            // A window-only tick cannot keep an older request's numerator. The
+            // common case is a legacy Codex flat frame: its input counter is
+            // cumulative billing, not active occupancy. A split Copilot usage
+            // event with no explicit matching model is equally unproven.
+            self.context_tokens = None;
+            self.context_usage_state = Some(ContextUsageState::WaitingForRuntimeUsage);
         }
         if context_window.is_some() {
             self.context_window = context_window;
-            self.context_window_model = self.model.clone();
+            self.context_window_model = observation_model;
         }
     }
 
@@ -732,6 +759,7 @@ impl UsageAcc {
             model_display: self.model.clone(),
             context_used_pct: pct,
             context_window_size: window,
+            context_usage_state: self.context_usage_state,
             context_health: self.context_health.clone(),
             context_health_updated,
             total_input_tokens: self.input,

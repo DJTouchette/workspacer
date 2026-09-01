@@ -103,6 +103,10 @@ pub struct StatusLine {
     /// disproved this window; see [`derive_stats`].
     #[serde(default)]
     pub context_window_size: Option<u64>,
+    /// Explicitly says a window is known but current-request occupancy is not.
+    /// The camelCase alias covers Hub compatibility snapshots.
+    #[serde(default, alias = "contextUsageState")]
+    pub context_usage_state: Option<String>,
     /// Claude's own authoritative session cost.
     #[serde(default)]
     pub cost_usd: Option<f64>,
@@ -149,6 +153,7 @@ pub struct StatusLine {
 pub struct DerivedStats {
     pub model: Option<String>,
     pub context_pct: Option<f64>,
+    pub context_waiting: bool,
     pub cost: Option<f64>,
 }
 
@@ -254,7 +259,13 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
             held > window.saturating_mul(CONTEXT_WINDOW_DRIFT_TOLERANCE_NUM)
                 / CONTEXT_WINDOW_DRIFT_TOLERANCE_DEN
         });
-    let context_pct = if status_window_disproved {
+    let context_waiting = sl.is_some_and(|s| {
+        s.context_usage_state.as_deref() == Some("waiting_for_runtime_usage")
+            || s.context_usage_state.as_deref() == Some("waitingForRuntimeUsage")
+    });
+    let context_pct = if context_waiting {
+        None
+    } else if status_window_disproved {
         usage_pct()
     } else {
         sl.and_then(|s| s.context_used_pct).or_else(usage_pct)
@@ -272,6 +283,7 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
     DerivedStats {
         model,
         context_pct,
+        context_waiting,
         cost,
     }
 }
@@ -1902,6 +1914,25 @@ mod tests {
         };
 
         assert_eq!(derive_stats(&agent, Some(&sl)).context_pct, Some(45.0));
+    }
+
+    #[test]
+    fn derive_stats_names_legacy_context_as_waiting_instead_of_using_cumulative_usage() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "context_tokens": 180_000, "context_limit": 200_000,
+                       "total_input_tokens": 180_000, "total_output_tokens": 200 }
+        }))
+        .unwrap();
+        let sl: StatusLine = serde_json::from_value(serde_json::json!({
+            "context_window_size": 200_000,
+            "context_usage_state": "waiting_for_runtime_usage"
+        }))
+        .unwrap();
+        let stats = derive_stats(&agent, Some(&sl));
+        assert!(stats.context_waiting);
+        assert_eq!(stats.context_pct, None);
     }
 
     #[test]

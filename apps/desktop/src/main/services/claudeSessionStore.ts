@@ -249,6 +249,9 @@ export interface SessionStatusLine {
   effort?: string;
   contextUsedPct?: number;
   contextWindowSize?: number;
+  /** The provider knows the window but has not reported a current-request
+   * numerator. Legacy Codex flat usage is cumulative billing only. */
+  contextUsageState?: 'waitingForRuntimeUsage';
   /** Correlated active occupancy and effective window, emitted only from
    * runtime provider evidence. Automatic health decisions must use this
    * carrier, never the display-oriented fields above. */
@@ -773,6 +776,7 @@ class ClaudeSessionStore {
             modelDisplay: undefined,
             contextWindowSize: undefined,
             contextUsedPct: undefined,
+            contextUsageState: undefined,
             contextHealth: undefined,
             receivedAt: undefined,
           }
@@ -842,7 +846,7 @@ class ClaudeSessionStore {
     }
     // Codex's configured window is a request. Its first runtime-reported
     // effective window is the correction we are waiting for, not a stale frame.
-    const provider = this.sessions.get(sessionId)?.provider?.toLowerCase();
+    const provider = this.sessions.get(sessionId)?.provider?.trim().toLowerCase();
     if (
       provider === 'codex' &&
       statusLine.contextWindowSize !== undefined &&
@@ -857,6 +861,7 @@ class ClaudeSessionStore {
       modelDisplay: undefined,
       contextWindowSize: undefined,
       contextUsedPct: undefined,
+      contextUsageState: undefined,
       contextHealth: undefined,
     };
     provenance.suppressionsRemaining = Math.max(0, provenance.suppressionsRemaining - 1);

@@ -4,18 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
 type contextHealthContract struct {
+	Vocabulary struct {
+		Blocks map[string]struct {
+			Loaders []string `json:"loaders"`
+		} `json:"blocks"`
+	} `json:"vocabulary"`
 	FormatPctCases []struct {
 		Input    float64 `json:"input"`
 		Expected string  `json:"expected"`
 	} `json:"formatPctCases"`
-	UnsupportedProviders []string `json:"unsupportedProviders"`
-	CumulativeCodex      struct {
+	UnsupportedProviders []struct {
+		Provider string `json:"provider"`
+	} `json:"unsupportedProviders"`
+	CumulativeCodex []struct {
 		InputTokens  float64 `json:"inputTokens"`
 		OutputTokens float64 `json:"outputTokens"`
 		WindowTokens float64 `json:"windowTokens"`
@@ -29,8 +37,30 @@ func loadContextHealthContract(t *testing.T) contextHealthContract {
 	if err := json.Unmarshal(mustReadRepoFile(t, "contracts", "context-health-cases.json"), &c); err != nil {
 		t.Fatalf("parse contracts/context-health-cases.json: %v", err)
 	}
-	if len(c.FormatPctCases) == 0 || len(c.UnsupportedProviders) == 0 {
+	if len(c.FormatPctCases) == 0 || len(c.UnsupportedProviders) == 0 || len(c.CumulativeCodex) == 0 {
 		t.Fatal("context-health contract decoded empty; a key was renamed or the corpus was gutted")
+	}
+	for i, provider := range c.UnsupportedProviders {
+		if strings.TrimSpace(provider.Provider) == "" {
+			t.Fatalf("unsupportedProviders[%d] decoded without provider", i)
+		}
+	}
+	requiredLoaders := map[string][]string{
+		"unsupportedProviders": {
+			"apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders",
+			"services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders",
+		},
+		"cumulativeCodex": {
+			"services/claudemon/src/providers/codex.rs::cumulativeCodex",
+			"apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
+			"services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
+		},
+	}
+	for block, want := range requiredLoaders {
+		got := c.Vocabulary.Blocks[block].Loaders
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("vocabulary.blocks.%s.loaders = %v, want %v", block, got, want)
+		}
 	}
 	return c
 }
@@ -45,7 +75,8 @@ func TestContextHealthFormattingMatchesDesktopContract(t *testing.T) {
 
 func TestContextWatchRejectsUnsupportedProvidersWithoutUsingSlots(t *testing.T) {
 	c := loadContextHealthContract(t)
-	for _, provider := range c.UnsupportedProviders {
+	for _, unsupported := range c.UnsupportedProviders {
+		provider := unsupported.Provider
 		t.Run(provider, func(t *testing.T) {
 			rec := newRecorder()
 			srv := rec.server()
@@ -66,7 +97,11 @@ func TestContextWatchRejectsUnsupportedProvidersWithoutUsingSlots(t *testing.T) 
 }
 
 func TestCumulativeCodexContractCannotFireContextWatch(t *testing.T) {
-	c := loadContextHealthContract(t).CumulativeCodex
+	cases := loadContextHealthContract(t).CumulativeCodex
+	if len(cases) != 1 {
+		t.Fatalf("cumulativeCodex must carry exactly one laundering regression, got %d", len(cases))
+	}
+	c := cases[0]
 	if c.InputTokens/c.WindowTokens*100 <= c.ThresholdPct {
 		t.Fatal("fixture no longer mutation-proves the cumulative fallback")
 	}
@@ -87,6 +122,21 @@ func TestCumulativeCodexContractCannotFireContextWatch(t *testing.T) {
 	}
 	if len(reg.watches) != 1 {
 		t.Fatalf("missing telemetry should leave one watch waiting, got %d", len(reg.watches))
+	}
+
+	// The successor epoch's first runtime-confirmed pair is the only event that
+	// may turn the waiting post-switch watch into a wake.
+	now := time.Now().UTC()
+	reg.store.updateStatusLine("worker", contextHealthStatus(
+		t, now, c.InputTokens, c.WindowTokens,
+		telemetryEpoch("1788888888888888902"), "codex", "runtime",
+	))
+	reg.sweepThresholds(ctx, now)
+	if got := len(rec.calls("/sessions/mgr/message")); got != 1 {
+		t.Fatalf("fresh successor pair produced %d context wake(s), want 1", got)
+	}
+	if len(reg.watches) != 0 {
+		t.Fatalf("fresh pair did not consume the one-shot watch: %d remain", len(reg.watches))
 	}
 }
 

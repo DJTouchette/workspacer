@@ -2880,7 +2880,20 @@ mod tests {
             "../../../../contracts/context-health-cases.json"
         ))
         .unwrap();
-        let c = &fixture["cumulativeCodex"];
+        assert_eq!(
+            fixture["vocabulary"]["blocks"]["cumulativeCodex"]["loaders"],
+            json!([
+                "services/claudemon/src/providers/codex.rs::cumulativeCodex",
+                "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
+                "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex"
+            ]),
+            "every Rust/TypeScript/Go cumulativeCodex consumer must stay declared"
+        );
+        let cases = fixture["cumulativeCodex"]
+            .as_array()
+            .expect("cumulativeCodex case block");
+        assert_eq!(cases.len(), 1, "one laundering regression case");
+        let c = &cases[0];
         let input = c["inputTokens"].as_u64().unwrap();
         let output = c["outputTokens"].as_u64().unwrap();
         let window = c["windowTokens"].as_u64().unwrap();
@@ -2905,10 +2918,141 @@ mod tests {
         assert_eq!(line.total_input_tokens, Some(input));
         assert_eq!(line.total_output_tokens, Some(output));
         assert_eq!(line.context_window_size, Some(window));
+        assert_eq!(
+            line.context_usage_state,
+            Some(crate::session::state::ContextUsageState::WaitingForRuntimeUsage)
+        );
         assert!(
             line.context_health.is_none(),
             "restoring the legacy fallback would create an >80% false health sample"
         );
+    }
+
+    #[test]
+    fn legacy_flat_usage_cannot_cross_a_model_epoch_until_a_fresh_pair_arrives() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/context-health-cases.json"
+        ))
+        .unwrap();
+        let c = &fixture["cumulativeCodex"][0];
+        let input = c["inputTokens"].as_u64().unwrap();
+        let output = c["outputTokens"].as_u64().unwrap();
+        let window = c["windowTokens"].as_u64().unwrap();
+        let legacy = json!({ "usage": {
+            "input_tokens": input,
+            "output_tokens": output,
+            "model_context_window": window
+        }});
+        let modern = json!({ "tokenUsage": {
+            "total": { "inputTokens": input, "outputTokens": output },
+            "last": { "inputTokens": input },
+            "modelContextWindow": window
+        }});
+
+        let store = SessionStore::new();
+        store.register_managed("epoch", "/tmp", "codex");
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+
+        apply_updates(
+            &store,
+            &conv,
+            "epoch",
+            translate("thread/tokenUsage/updated", &legacy),
+            &mut mode,
+            &mut acc,
+        );
+        let waiting = store.get("epoch").unwrap().status_line.unwrap();
+        assert!(waiting.context_health.is_none());
+        assert_eq!(
+            waiting.context_usage_state,
+            Some(crate::session::state::ContextUsageState::WaitingForRuntimeUsage)
+        );
+
+        // Establish the exact pre-switch 180000/200000 pair that the old flat
+        // fallback manufactured, then cross a model boundary.
+        apply_updates(
+            &store,
+            &conv,
+            "epoch",
+            translate("thread/tokenUsage/updated", &modern),
+            &mut mode,
+            &mut acc,
+        );
+        assert_eq!(
+            store
+                .get("epoch")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .context_health
+                .unwrap()
+                .used_tokens,
+            input
+        );
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("gpt-5.5-codex").unwrap();
+        store.accept_requested_model_selection("epoch", &selection);
+        let successor_epoch = store.get("epoch").unwrap().context_telemetry_epoch;
+
+        // Model-only app-server ticks exercise the real UsageAcc publication
+        // path. Its cached predecessor sample must not reappear even after the
+        // bounded selection fence has fully expired.
+        let settings = json!({ "threadSettings": { "model": "other-model" } });
+        for _ in 0..5 {
+            apply_updates(
+                &store,
+                &conv,
+                "epoch",
+                translate("thread/settings/updated", &settings),
+                &mut mode,
+                &mut acc,
+            );
+            assert!(store
+                .get("epoch")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .context_health
+                .is_none());
+        }
+
+        // The real legacy flat frame remains cumulative-only and explicitly
+        // waiting. Only a new runtime-confirmed last/window pair may publish in
+        // the successor epoch.
+        apply_updates(
+            &store,
+            &conv,
+            "epoch",
+            translate("thread/tokenUsage/updated", &legacy),
+            &mut mode,
+            &mut acc,
+        );
+        assert!(store
+            .get("epoch")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .is_none());
+        apply_updates(
+            &store,
+            &conv,
+            "epoch",
+            translate("thread/tokenUsage/updated", &modern),
+            &mut mode,
+            &mut acc,
+        );
+        let fresh = store
+            .get("epoch")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .unwrap();
+        assert_eq!(fresh.epoch, successor_epoch);
+        assert_eq!(fresh.used_tokens, input);
     }
 
     #[test]

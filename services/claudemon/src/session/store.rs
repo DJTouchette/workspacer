@@ -519,6 +519,7 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
     status.model_display = None;
     status.context_window_size = None;
     status.context_used_pct = None;
+    status.context_usage_state = None;
     status.context_health = None;
     session.model_confirmation_suppressions_remaining = session
         .model_confirmation_suppressions_remaining
@@ -541,7 +542,14 @@ fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
         .status_line
         .as_ref()
         .and_then(|sl| sl.context_health.clone());
-    if let Some(sample) = status.context_health.as_mut() {
+    if !explicitly_updated {
+        // SessionStore is the sole authority for context-less ticks. UsageAcc
+        // intentionally retains its last correlated sample for display ticks,
+        // but that cached inbound value may belong to the pre-switch epoch.
+        // Always replace it with the store-fenced value — including None — so
+        // exhausting a model fence cannot launder old health into a new life.
+        status.context_health = previous;
+    } else if let Some(sample) = status.context_health.as_mut() {
         let valid = sample.window_source == "runtime"
             && sample.window_tokens > 0
             && sample.used_tokens <= sample.window_tokens
@@ -556,10 +564,6 @@ fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
             sample.provider = session.provider.clone();
             sample.epoch = session.context_telemetry_epoch;
         }
-    } else if !explicitly_updated && session.pending_model_confirmation.is_none() {
-        // Rate-limit/cost-only ticks must not erase the latest confirmed
-        // occupancy. Freshness is judged from the sample's own observed_at.
-        status.context_health = previous;
     }
     // The marker is meaningful only while reconciling this inbound tick. It is
     // neither durable state nor part of the public status-line contract.
@@ -1527,6 +1531,7 @@ impl SessionStore {
                 status.model_display = None;
                 status.context_window_size = None;
                 status.context_used_pct = None;
+                status.context_usage_state = None;
                 status.context_health = None;
             }
             entry.updated_at = OffsetDateTime::now_utc();
@@ -3815,6 +3820,7 @@ mod tests {
                 epoch: 0,
                 provider: String::new(),
             }),
+            context_health_updated: true,
             ..Default::default()
         };
         let first = store
@@ -3864,6 +3870,80 @@ mod tests {
             switched.context_telemetry_epoch
         );
         assert!(restarted.status_line.is_none());
+    }
+
+    #[test]
+    fn contextless_ticks_cannot_republish_cached_health_after_a_model_fence() {
+        let store = SessionStore::new();
+        let initial = store.register_managed("c1", "/tmp", "codex");
+        let stale = ContextHealth {
+            used_tokens: 180_000,
+            window_tokens: 200_000,
+            used_pct: 90.0,
+            window_source: "runtime".into(),
+            observed_at: OffsetDateTime::now_utc(),
+            epoch: 0,
+            provider: String::new(),
+        };
+        let before = store
+            .apply_status_line(
+                "c1",
+                StatusLine {
+                    context_health: Some(stale.clone()),
+                    context_health_updated: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            before.status_line.unwrap().context_health.unwrap().epoch,
+            initial.context_telemetry_epoch
+        );
+
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("gpt-5.5-codex").unwrap();
+        store.accept_requested_model_selection("c1", &selection);
+        let switched = store.get("c1").unwrap();
+        let next_epoch = switched.context_telemetry_epoch;
+        assert!(switched.status_line.unwrap().context_health.is_none());
+
+        // UsageAcc status ticks include its cached health value even when no
+        // new context observation was merged. More ticks than the bounded
+        // model fence proves that expiry cannot stamp the cached sample into
+        // the successor epoch.
+        for _ in 0..5 {
+            let state = store
+                .apply_status_line(
+                    "c1",
+                    StatusLine {
+                        context_health: Some(stale.clone()),
+                        context_health_updated: false,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert!(state.status_line.unwrap().context_health.is_none());
+        }
+
+        let fresh = store
+            .apply_status_line(
+                "c1",
+                StatusLine {
+                    context_health: Some(ContextHealth {
+                        used_tokens: 20_000,
+                        window_tokens: 200_000,
+                        used_pct: 10.0,
+                        observed_at: OffsetDateTime::now_utc(),
+                        ..stale
+                    }),
+                    context_health_updated: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let health = fresh.status_line.unwrap().context_health.unwrap();
+        assert_eq!(health.epoch, next_epoch);
+        assert_eq!(health.used_tokens, 20_000);
     }
 
     #[test]

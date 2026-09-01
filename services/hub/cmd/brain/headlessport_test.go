@@ -611,6 +611,41 @@ func TestNotifyWhenContextHealthParity(t *testing.T) {
 	}
 }
 
+func TestNotifyWhenHookAdoptedProviderWaitsAndBindsNormalizedTelemetry(t *testing.T) {
+	now := time.Now().UTC()
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	worker := `{"session_id":"worker","cwd":"/w/p","mode":"responding","provider":"  "}`
+	reg := fleetReg(t, srv.URL,
+		map[string]string{"mgr": row("mgr", "/w", "input"), "worker": worker},
+		map[string]spawnMeta{"worker": {ParentSessionID: "mgr"}})
+	ctx := context.Background()
+
+	res, err := reg.handle(ctx, "agents.notifyWhen", json.RawMessage(`{"sessionId":"worker","contextUsedPct":80}`))
+	if err != nil {
+		t.Fatalf("absent hook-adopted provider should wait, not refuse: %v", err)
+	}
+	var armed thresholdWatch
+	_ = json.Unmarshal(res, &armed)
+	if armed.State != "waitingForTelemetry" || armed.ContextProvider != "" {
+		t.Fatalf("absent provider was not left waiting and unbound: %+v", armed)
+	}
+
+	reg.store.updateStatusLine("worker", contextHealthStatus(
+		t, now, 180000, 200000, telemetryEpoch("1788888888888888941"), " Claude ", "runtime",
+	))
+	reg.sweepThresholds(ctx, now)
+	msgs := rec.calls("/sessions/mgr/message")
+	if len(msgs) != 1 {
+		t.Fatalf("normalized first Claude sample produced %d wakes", len(msgs))
+	}
+	text, _ := msgs[0].body["text"].(string)
+	if !strings.Contains(text, "runtime-confirmed by claude") {
+		t.Fatalf("wake did not bind canonical provider identity:\n%s", text)
+	}
+}
+
 func TestNotifyWhenContextCompactionCumulativeSeparationAndEpochInvalidation(t *testing.T) {
 	now := time.Now().UTC()
 	rec := newRecorder()
