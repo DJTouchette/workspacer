@@ -69,7 +69,8 @@ export interface ThresholdWatch extends ThresholdPredicate {
   armedAt: number;
   /** Health watches bind to the target's provider/telemetry life. */
   contextProvider?: string;
-  contextEpoch?: number;
+  /** Exact decimal wire value; nanosecond-seeded epochs exceed JS safe integer. */
+  contextEpoch?: string;
   state?: 'armed' | 'alreadySatisfied' | 'waitingForTelemetry';
 }
 
@@ -104,7 +105,7 @@ export interface ContextHealthSample {
   usedPct: number;
   windowSource: 'runtime' | string;
   observedAt: string;
-  epoch: number;
+  epoch: string;
   provider: string;
 }
 
@@ -124,14 +125,15 @@ export function contextHealthReading(
     !Number.isFinite(h.usedTokens) ||
     !Number.isFinite(h.windowTokens) ||
     !Number.isFinite(h.usedPct) ||
-    !Number.isFinite(h.epoch) ||
+    typeof h.epoch !== 'string' ||
+    !/^[1-9]\d{0,19}$/.test(h.epoch) ||
+    (h.epoch.length === 20 && h.epoch > '18446744073709551615') ||
     !Number.isFinite(observedAtMs) ||
     h.usedTokens < 0 ||
     h.windowTokens <= 0 ||
     h.usedTokens > h.windowTokens ||
     h.usedPct < 0 ||
     h.usedPct > 100 ||
-    h.epoch <= 0 ||
     !h.provider ||
     (s.provider !== undefined && h.provider !== s.provider) ||
     observedAtMs > now + CONTEXT_HEALTH_FUTURE_SKEW_MS ||
@@ -208,11 +210,9 @@ export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: numbe
 /** Canonical desktop/Hub wake percentage: bounded and exactly one decimal. */
 export function formatContextPct(value: number): string {
   const bounded = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
-  return bounded.toLocaleString('en-US', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-    useGrouping: false,
-  });
+  // Spell out decimal half-up rounding so V8/Intl and Go do not disagree on
+  // binary half-ties such as 80.05 and 12.35.
+  return (Math.round(bounded * 10) / 10).toFixed(1);
 }
 
 function contextCrossing(threshold: number, h: ContextHealthReading): string {

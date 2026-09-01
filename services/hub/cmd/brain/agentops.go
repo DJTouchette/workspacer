@@ -188,17 +188,17 @@ var noContextWindowProviders = map[string]bool{"opencode": true, "pi": true}
 // thresholdWatch is one armed, ONE-SHOT watch. A re-arming watch would be a
 // poll with extra steps.
 type thresholdWatch struct {
-	ID               string   `json:"id"`
-	SessionID        string   `json:"sessionId"`
-	WatcherSessionID string   `json:"watcherSessionId"`
-	Tokens           *float64 `json:"tokens,omitempty"`
-	USD              *float64 `json:"usd,omitempty"`
-	IdleSeconds      *float64 `json:"idleSeconds,omitempty"`
-	ContextUsedPct   *float64 `json:"contextUsedPct,omitempty"`
-	ArmedAt          int64    `json:"armedAt"`
-	ContextProvider  string   `json:"contextProvider,omitempty"`
-	ContextEpoch     *float64 `json:"contextEpoch,omitempty"`
-	State            string   `json:"state,omitempty"`
+	ID               string          `json:"id"`
+	SessionID        string          `json:"sessionId"`
+	WatcherSessionID string          `json:"watcherSessionId"`
+	Tokens           *float64        `json:"tokens,omitempty"`
+	USD              *float64        `json:"usd,omitempty"`
+	IdleSeconds      *float64        `json:"idleSeconds,omitempty"`
+	ContextUsedPct   *float64        `json:"contextUsedPct,omitempty"`
+	ArmedAt          int64           `json:"armedAt"`
+	ContextProvider  string          `json:"contextProvider,omitempty"`
+	ContextEpoch     *telemetryEpoch `json:"contextEpoch,omitempty"`
+	State            string          `json:"state,omitempty"`
 }
 
 // notifyWhen arms a one-shot threshold watch. It STARTS NOTHING and changes no
@@ -387,6 +387,9 @@ func formatContextPct(v float64) string {
 		v = 0
 	}
 	v = math.Max(0, math.Min(100, v))
+	// Decimal half-ties are rounded upward on the bounded non-negative domain,
+	// matching the desktop's explicit Math.round implementation.
+	v = math.Round(v*10) / 10
 	return strconv.FormatFloat(v, 'f', 1, 64)
 }
 
@@ -410,7 +413,7 @@ func contextWatchCrossing(w *thresholdWatch, s fleetSession, now time.Time) stri
 		return ""
 	}
 	if w.ContextEpoch != nil && *w.ContextEpoch != health.Epoch {
-		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed telemetry epoch %s → %s; re-arm after the confirmed %s sample", formatContextPct(*w.ContextUsedPct), formatNumber(*w.ContextEpoch), formatNumber(health.Epoch), health.Provider)
+		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed telemetry epoch %s → %s; re-arm after the confirmed %s sample", formatContextPct(*w.ContextUsedPct), *w.ContextEpoch, health.Epoch, health.Provider)
 	}
 	if w.ContextProvider == "" {
 		w.ContextProvider = health.Provider
@@ -429,7 +432,7 @@ func contextCrossing(threshold float64, h *contextHealthReading) string {
 	return fmt.Sprintf(
 		"contextUsedPct active context %s%% ≥ %s%% (%s / %s tokens; runtime-confirmed by %s; observed %s; epoch %s)",
 		formatContextPct(h.UsedPct), formatContextPct(threshold), groupThousands(h.UsedTokens),
-		groupThousands(h.WindowTokens), h.Provider, h.ObservedAt, formatNumber(h.Epoch),
+		groupThousands(h.WindowTokens), h.Provider, h.ObservedAt, h.Epoch,
 	)
 }
 

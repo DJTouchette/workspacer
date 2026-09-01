@@ -44,6 +44,9 @@ const session = (over: Partial<WatchableSession> = {}): WatchableSession => ({
   ...over,
 });
 
+const EPOCH = '1788888888888888901';
+const NEXT_EPOCH = '1788888888888888902';
+
 const mgr = (): WatchableSession => ({
   sessionId: 'mgr',
   label: 'Fleet Manager',
@@ -74,7 +77,7 @@ function withHealth(
         usedPct: (usedTokens / windowTokens) * 100,
         windowSource: 'runtime',
         observedAt: new Date(now).toISOString(),
-        epoch: 7,
+        epoch: EPOCH,
         provider: 'codex',
         ...over,
       },
@@ -129,7 +132,7 @@ describe('contextUsedPct health semantics', () => {
     expect(text).toContain('contextUsedPct active context 80.0% ≥ 80.0%');
     expect(text).toContain('160,000 / 200,000 tokens');
     expect(text).toContain('runtime-confirmed by codex');
-    expect(text).toContain('epoch 7');
+    expect(text).toContain(`epoch ${EPOCH}`);
     expect(watcher.list()).toHaveLength(0);
   });
 
@@ -155,9 +158,13 @@ describe('contextUsedPct health semantics', () => {
     target.statusLine!.contextHealth!.observedAt = new Date(now).toISOString();
     target.statusLine!.contextHealth!.usedPct = 10;
     watcher.sweep(now);
+    target.statusLine!.contextHealth!.usedPct = 90;
+    target.statusLine!.contextHealth!.epoch = 1_788_888_888_888_888_901 as never;
+    watcher.sweep(now);
     expect(deliver).not.toHaveBeenCalled();
     expect(watcher.list()).toHaveLength(1);
 
+    target.statusLine!.contextHealth!.epoch = EPOCH;
     target.statusLine!.contextHealth!.usedPct = 90;
     watcher.sweep(now);
     expect(deliver).toHaveBeenCalledTimes(1);
@@ -177,7 +184,7 @@ describe('contextUsedPct health semantics', () => {
 
     target.statusLine!.contextHealth = withHealth(now + 1_000, 170_000, 200_000, {
       provider: 'claude',
-      epoch: 41,
+      epoch: '1788888888888888941',
     }).statusLine!.contextHealth;
     watcher.sweep(now + 1_000);
     expect(deliver).toHaveBeenCalledTimes(1);
@@ -214,16 +221,16 @@ describe('contextUsedPct health semantics', () => {
       now,
     });
     target.statusLine!.contextHealth = withHealth(now + 1_000, 170_000, 200_000, {
-      epoch: 8,
+      epoch: NEXT_EPOCH,
     }).statusLine!.contextHealth;
     watcher.sweep(now + 1_000);
-    expect(deliver.mock.calls[0][1]).toContain('telemetry epoch 7 → 8');
+    expect(deliver.mock.calls[0][1]).toContain(`telemetry epoch ${EPOCH} → ${NEXT_EPOCH}`);
     expect(deliver.mock.calls[0][1]).toContain('re-arm');
     expect(watcher.list()).toHaveLength(0);
 
     const second = rig(sessions);
     target.statusLine!.contextHealth = withHealth(now + 2_000, 100_000, 200_000, {
-      epoch: 8,
+      epoch: NEXT_EPOCH,
     }).statusLine!.contextHealth;
     second.watcher.arm({
       sessionId: 'w1',
@@ -239,7 +246,7 @@ describe('contextUsedPct health semantics', () => {
     target.provider = 'claude';
     target.statusLine!.contextHealth = withHealth(now + 4_000, 100_000, 200_000, {
       provider: 'claude',
-      epoch: 9,
+      epoch: '1788888888888888903',
     }).statusLine!.contextHealth;
     third.watcher.arm({
       sessionId: 'w1',

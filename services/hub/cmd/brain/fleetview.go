@@ -14,30 +14,67 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const contextHealthMaxAge = 2 * time.Minute
 
+const maxExactJSONInteger = uint64(9_007_199_254_740_991)
+
+// telemetryEpoch is a decimal string on the current wire. Its source is a
+// nanosecond-seeded Rust u64, far beyond float64/JavaScript's exact integer
+// range; keeping the digits as text is what makes adjacent increments distinct.
+// Legacy numeric epochs are accepted only when they were exactly representable.
+type telemetryEpoch string
+
+func (e *telemetryEpoch) UnmarshalJSON(data []byte) error {
+	*e = ""
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		if validTelemetryEpoch(text) {
+			*e = telemetryEpoch(text)
+		}
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return nil
+	}
+	value, err := strconv.ParseUint(number.String(), 10, 64)
+	if err == nil && value > 0 && value <= maxExactJSONInteger {
+		*e = telemetryEpoch(number.String())
+	}
+	return nil
+}
+
+func validTelemetryEpoch(value string) bool {
+	if value == "" || value[0] == '0' {
+		return false
+	}
+	_, err := strconv.ParseUint(value, 10, 64)
+	return err == nil
+}
+
 type contextHealthReading struct {
-	UsedTokens   float64 `json:"usedTokens"`
-	WindowTokens float64 `json:"windowTokens"`
-	UsedPct      float64 `json:"usedPct"`
-	WindowSource string  `json:"windowSource"`
-	ObservedAt   string  `json:"observedAt"`
-	Epoch        float64 `json:"epoch"`
-	Provider     string  `json:"provider"`
+	UsedTokens   float64        `json:"usedTokens"`
+	WindowTokens float64        `json:"windowTokens"`
+	UsedPct      float64        `json:"usedPct"`
+	WindowSource string         `json:"windowSource"`
+	ObservedAt   string         `json:"observedAt"`
+	Epoch        telemetryEpoch `json:"epoch"`
+	Provider     string         `json:"provider"`
 }
 
 type rawContextHealthReading struct {
-	UsedTokens   float64 `json:"used_tokens"`
-	WindowTokens float64 `json:"window_tokens"`
-	UsedPct      float64 `json:"used_pct"`
-	WindowSource string  `json:"window_source"`
-	ObservedAt   string  `json:"observed_at"`
-	Epoch        float64 `json:"epoch"`
-	Provider     string  `json:"provider"`
+	UsedTokens   float64        `json:"used_tokens"`
+	WindowTokens float64        `json:"window_tokens"`
+	UsedPct      float64        `json:"used_pct"`
+	WindowSource string         `json:"window_source"`
+	ObservedAt   string         `json:"observed_at"`
+	Epoch        telemetryEpoch `json:"epoch"`
+	Provider     string         `json:"provider"`
 }
 
 // fleetSession is one session as the fleet verbs read it.
@@ -113,7 +150,7 @@ func (s fleetSession) contextHealth(now time.Time) *contextHealthReading {
 	}
 	if h == nil || h.WindowSource != "runtime" || h.Provider == "" ||
 		(s.Provider != "" && h.Provider != s.Provider) || h.WindowTokens <= 0 ||
-		h.UsedTokens < 0 || h.UsedTokens > h.WindowTokens || h.Epoch <= 0 ||
+		h.UsedTokens < 0 || h.UsedTokens > h.WindowTokens || h.Epoch == "" ||
 		math.IsNaN(h.UsedPct) || math.IsInf(h.UsedPct, 0) || h.UsedPct < 0 || h.UsedPct > 100 {
 		return nil
 	}

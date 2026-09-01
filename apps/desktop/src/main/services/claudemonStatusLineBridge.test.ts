@@ -58,7 +58,7 @@ describe('claudemonStatusLineBridge', () => {
             used_pct: 42,
             window_source: 'runtime',
             observed_at: '2026-08-31T20:10:00Z',
-            epoch: 7,
+            epoch: '1788888888888888901',
             provider: 'claude',
           },
           total_input_tokens: 100,
@@ -86,7 +86,7 @@ describe('claudemonStatusLineBridge', () => {
         usedPct: 42,
         windowSource: 'runtime',
         observedAt: '2026-08-31T20:10:00Z',
-        epoch: 7,
+        epoch: '1788888888888888901',
         provider: 'claude',
       },
       totalInputTokens: 100,
@@ -106,6 +106,27 @@ describe('claudemonStatusLineBridge', () => {
     const [id, sl] = applyStatusLine.mock.calls[0];
     expect(id).toBe('s1');
     expect(sl.modelDisplay).toBeUndefined();
+  });
+
+  it('fails closed on an unsafe legacy numeric telemetry epoch', async () => {
+    await startClaudemonStatusLineBridge();
+    capturedOpts.onFrame(
+      JSON.stringify({
+        session_id: 's1',
+        status_line: {
+          context_health: {
+            used_tokens: 1,
+            window_tokens: 2,
+            used_pct: 50,
+            window_source: 'runtime',
+            observed_at: '2026-08-31T20:10:00Z',
+            epoch: 1_788_888_888_888_888_901,
+            provider: 'claude',
+          },
+        },
+      }),
+    );
+    expect(applyStatusLine.mock.calls[0][1].contextHealth).toBeUndefined();
   });
 
   it('skips malformed JSON without calling the store', async () => {

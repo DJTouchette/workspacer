@@ -634,8 +634,11 @@ fn tool_result_text(data: &Value) -> Option<String> {
 ///     cumulative (two calls in one turn reported 17515 then 17997 prompt
 ///     tokens), hence [`UsageAcc::additive`] in the driver.
 ///
-/// `context_tokens` is the call's `total_tokens` — the occupancy of the window
-/// at that moment, which is latest-wins in `UsageAcc` even in additive mode.
+/// `context_tokens` is the call's `prompt_tokens`: the input/cache side that is
+/// actually resident when the call begins. `total_tokens` also includes this
+/// call's output (and provider reasoning detail), neither of which belongs in
+/// the active numerator until a later call sends it back as prompt input. This
+/// is the same convention as Claude and Codex.
 fn usage_from(data: &Value) -> Option<AgentUpdate> {
     let model = data
         .get("model")
@@ -655,9 +658,7 @@ fn usage_from(data: &Value) -> Option<AgentUpdate> {
     let cached = usage
         .and_then(|u| u.pointer("/prompt_tokens_details/cached_tokens"))
         .and_then(Value::as_u64);
-    let context_tokens = usage
-        .and_then(|u| u.get("total_tokens"))
-        .and_then(Value::as_u64);
+    let context_tokens = input;
 
     if model.is_none() && context_window.is_none() && input.is_none() && output.is_none() {
         return None;
@@ -1139,6 +1140,11 @@ async fn run_session(
     // they sum (see `usage_from`).
     let mut acc = UsageAcc::new();
     acc.additive();
+    // Copilot splits the trustworthy runtime pair across adjacent events:
+    // model.turn_started reports modelInfo's window, then model_call_success
+    // reports the same model's per-call prompt_tokens. The accumulator requires
+    // the model identity to match before correlating them.
+    acc.correlate_runtime_window_by_model();
     acc.estimate_costs();
     acc.seed_model(model.as_deref());
     // Role instructions to prepend to the first turn only (supervisors).
@@ -1688,12 +1694,14 @@ mod tests {
                     model,
                     input_tokens,
                     output_tokens,
+                    context_tokens,
                     context_window,
                     ..
                 } => Some((
                     model.clone(),
                     *input_tokens,
                     *output_tokens,
+                    *context_tokens,
                     *context_window,
                 )),
                 _ => None,
@@ -1705,14 +1713,21 @@ mod tests {
         );
         // Copilot's own window for the model it used — not the table's guess.
         assert!(
-            usages.iter().any(|(_, _, _, w)| *w == Some(144_000)),
+            usages.iter().any(|(_, _, _, _, w)| *w == Some(144_000)),
             "model.turn_started must surface Copilot's max_context_window_tokens"
         );
         // Real per-call token counts, and every one names its model.
         assert!(usages
             .iter()
-            .any(|(_, i, o, _)| i.is_some_and(|v| v > 0) && o.is_some_and(|v| v > 0)));
-        assert!(usages.iter().all(|(m, _, _, _)| m.is_some()));
+            .any(|(_, i, o, _, _)| i.is_some_and(|v| v > 0) && o.is_some_and(|v| v > 0)));
+        assert!(usages.iter().all(|(m, _, _, _, _)| m.is_some()));
+        assert!(
+            usages
+                .iter()
+                .filter(|(_, input, _, _, _)| input.is_some())
+                .all(|(_, input, _, context, _)| context == input),
+            "Copilot health must use per-call prompt input, never total_tokens"
+        );
         // Cost is never claimed from the wire: Copilot bills AI credits.
         assert!(updates.iter().all(|u| !matches!(
             u,
@@ -1721,6 +1736,84 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn copilot_health_correlates_runtime_window_and_excludes_output_reasoning() {
+        let (_, events) = replay_capture();
+        let start = events
+            .iter()
+            .find(|event| event["type"] == "model.turn_started")
+            .expect("captured turn start");
+        let success = events
+            .iter()
+            .find(|event| event["type"] == "model.model_call_success")
+            .expect("captured model success");
+
+        let store = SessionStore::new();
+        store.register_managed("copilot-health", "/tmp", "copilot");
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        acc.additive();
+        acc.correlate_runtime_window_by_model();
+
+        apply_updates(
+            &store,
+            &conv,
+            "copilot-health",
+            translate(start),
+            &mut mode,
+            &mut acc,
+        );
+        assert!(store
+            .get("copilot-health")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .is_none());
+
+        apply_updates(
+            &store,
+            &conv,
+            "copilot-health",
+            translate(success),
+            &mut mode,
+            &mut acc,
+        );
+        let health = store
+            .get("copilot-health")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .expect("same-model runtime window + prompt pair");
+        assert_eq!(health.used_tokens, 17_563);
+        assert_eq!(health.window_tokens, 144_000);
+        assert_ne!(health.used_tokens, 17_741, "total_tokens includes output");
+        assert_eq!(health.provider, "copilot");
+
+        let mut mismatch = success.clone();
+        mismatch["data"]["modelCall"]["model"] = Value::String("different-model".into());
+        apply_updates(
+            &store,
+            &conv,
+            "copilot-health",
+            translate(&mismatch),
+            &mut mode,
+            &mut acc,
+        );
+        assert!(
+            store
+                .get("copilot-health")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .context_health
+                .is_none(),
+            "a prompt may not borrow another model's runtime window"
+        );
     }
 
     #[test]
@@ -1898,7 +1991,8 @@ mod tests {
                 cached_input_tokens: Some(11560),
                 // AI credits are the only figure on the wire — never a dollar.
                 cost_usd: None,
-                context_tokens: Some(17883),
+                // Active context is the call's prompt, not prompt + completion.
+                context_tokens: Some(17515),
                 context_window: None,
             }]
         );

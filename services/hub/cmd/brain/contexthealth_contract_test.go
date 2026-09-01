@@ -89,3 +89,32 @@ func TestCumulativeCodexContractCannotFireContextWatch(t *testing.T) {
 		t.Fatalf("missing telemetry should leave one watch waiting, got %d", len(reg.watches))
 	}
 }
+
+func TestTelemetryEpochKeepsAdjacentProductionValuesDistinct(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	decode := func(epoch string) fleetSession {
+		t.Helper()
+		var session fleetSession
+		raw := fmt.Sprintf(`{"provider":"codex","status_line":{"context_health":{"used_tokens":1,"window_tokens":2,"used_pct":50,"window_source":"runtime","observed_at":%q,"epoch":%q,"provider":"codex"}}}`, now, epoch)
+		if err := json.Unmarshal([]byte(raw), &session); err != nil {
+			t.Fatal(err)
+		}
+		return session
+	}
+	first := decode("1788888888888888901").contextHealth(time.Now())
+	second := decode("1788888888888888902").contextHealth(time.Now())
+	if first == nil || second == nil || first.Epoch == second.Epoch {
+		t.Fatalf("adjacent production epochs collapsed: first=%+v second=%+v", first, second)
+	}
+
+	// A numeric legacy value above 2^53 may already have lost digits before it
+	// reaches this process. Reject that sample without dropping the session row.
+	var unsafe fleetSession
+	raw := fmt.Sprintf(`{"provider":"codex","status_line":{"context_health":{"used_tokens":1,"window_tokens":2,"used_pct":50,"window_source":"runtime","observed_at":%q,"epoch":1788888888888888901,"provider":"codex"}}}`, now)
+	if err := json.Unmarshal([]byte(raw), &unsafe); err != nil {
+		t.Fatal(err)
+	}
+	if unsafe.contextHealth(time.Now()) != nil {
+		t.Fatal("unsafe numeric telemetry epoch was accepted")
+	}
+}

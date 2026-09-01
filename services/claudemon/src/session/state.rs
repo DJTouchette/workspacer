@@ -2,6 +2,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
+/// JSON numbers cannot carry the nanosecond-seeded telemetry epoch through Go's
+/// `float64` or JavaScript's `number` without collapsing adjacent values. Keep
+/// the in-process value as `u64`, but put its decimal digits on the wire.
+mod u64_decimal_string {
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Accept the old numeric form when Rust reads an in-memory/legacy row;
+        // every newly serialized public value is the exact string form above.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            String(String),
+            Number(u64),
+        }
+        match Wire::deserialize(deserializer)? {
+            Wire::String(value) => value.parse().map_err(de::Error::custom),
+            Wire::Number(value) => Ok(value),
+        }
+    }
+}
+
 /// Every hook event name that claudemon handles (or is registered for).
 ///
 /// The serialized form is PascalCase — identical to the string literals that
@@ -559,8 +591,12 @@ pub struct ContextHealth {
     /// future producer introduces requested/catalog/provisional provenance.
     pub window_source: String,
     #[serde(with = "time::serde::rfc3339")]
+    /// When claudemon received/constructed this sample. This is a freshness
+    /// clock, not a provider-origin ordering key: Claude statusLine and live
+    /// Codex app-server usage do not expose a trustworthy source timestamp.
     pub observed_at: OffsetDateTime,
     /// Advances at provider/session/model ownership boundaries.
+    #[serde(with = "u64_decimal_string")]
     pub epoch: u64,
     /// Provider that owned this sample (for example `codex` or `claude`).
     pub provider: String,
@@ -622,11 +658,24 @@ impl StatusLine {
                 let current = cw
                     .and_then(|c| c.get("current_usage"))
                     .and_then(Value::as_object);
-                let used = current.map(|u| {
-                    let get = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
-                    get("input_tokens")
-                        + get("cache_creation_input_tokens")
-                        + get("cache_read_input_tokens")
+                let used = current.and_then(|u| {
+                    let keys = [
+                        "input_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                    ];
+                    // `{}` is Claude's other unconfirmed startup shape. Require
+                    // at least one recognized counter, and reject a recognized
+                    // counter with the wrong type instead of coercing it to 0.
+                    keys.iter()
+                        .any(|key| u.contains_key(*key))
+                        .then(|| {
+                            keys.iter().try_fold(0u64, |sum, key| match u.get(*key) {
+                                Some(value) => value.as_u64().and_then(|n| sum.checked_add(n)),
+                                None => Some(sum),
+                            })
+                        })
+                        .flatten()
                 });
                 match (used, window) {
                     (Some(used), Some(window)) if window > 0 && used <= window => {
@@ -1424,6 +1473,12 @@ mod tests {
                 "used_percentage": 0, "context_window_size": 200_000,
                 "current_usage": null
             }}),
+            // Also observed before the first confirmed model call. Empty is not
+            // a trustworthy zero-token measurement.
+            serde_json::json!({ "context_window": {
+                "used_percentage": 0, "context_window_size": 200_000,
+                "current_usage": {}
+            }}),
             serde_json::json!({ "context_window": {
                 "used_percentage": 60, "context_window_size": 200_000
             }}),
@@ -1447,6 +1502,24 @@ mod tests {
         assert!(wire.get("context_telemetry_epoch").is_none());
         let restored: SessionState = serde_json::from_value(wire).unwrap();
         assert_eq!(restored.context_telemetry_epoch, 0);
+    }
+
+    #[test]
+    fn context_health_epoch_is_an_exact_production_scale_wire_string() {
+        let epoch = 1_788_888_888_888_888_901u64;
+        let health = ContextHealth {
+            used_tokens: 1,
+            window_tokens: 2,
+            used_pct: 50.0,
+            window_source: "runtime".into(),
+            observed_at: OffsetDateTime::now_utc(),
+            epoch,
+            provider: "codex".into(),
+        };
+        let wire = serde_json::to_value(&health).unwrap();
+        assert_eq!(wire["epoch"], epoch.to_string());
+        let restored: ContextHealth = serde_json::from_value(wire).unwrap();
+        assert_eq!(restored.epoch, epoch);
     }
 
     /// Claude never spells a window's length out, so the daemon stamps it from

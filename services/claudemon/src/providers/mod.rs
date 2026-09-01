@@ -497,9 +497,16 @@ pub struct UsageAcc {
     cost: Option<f64>,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
-    /// Latest active-occupancy/effective-window pair received in one provider
-    /// update. Unlike the display window, this is never filled from a model
-    /// table and is therefore safe to publish as health evidence.
+    /// Model that owned the last provider-reported context window. Copilot
+    /// reports the window at `model.turn_started` and the prompt numerator at
+    /// `model.model_call_success`; matching this owner lets that adjacent pair
+    /// be correlated without ever falling back to the catalog.
+    context_window_model: Option<String>,
+    correlate_runtime_window_by_model: bool,
+    /// Latest active-occupancy/effective-window pair received together, or from
+    /// an explicitly enabled same-model runtime correlation. Unlike the display
+    /// window, this is never filled from a model table and is therefore safe to
+    /// publish as health evidence.
     context_health: Option<ContextHealth>,
     /// Whether the newest provider update addressed context health at all.
     /// This distinguishes an unrelated cost/rate tick from an explicit newer
@@ -556,6 +563,13 @@ impl UsageAcc {
     pub fn additive(&mut self) {
         self.additive = true;
     }
+
+    /// Allow a per-call numerator to pair with the latest provider-reported
+    /// window only when both name the same model. Copilot's captured wire splits
+    /// those two facts across the start/success events of one model call.
+    pub fn correlate_runtime_window_by_model(&mut self) {
+        self.correlate_runtime_window_by_model = true;
+    }
     #[allow(clippy::too_many_arguments)]
     fn merge(
         &mut self,
@@ -602,9 +616,16 @@ impl UsageAcc {
         }
         // context_tokens / context_window stay latest-wins in BOTH modes — never
         // summed (see the type doc): they feed occupancy, and compaction shrinks it.
+        let health_window = context_window.or_else(|| {
+            (self.correlate_runtime_window_by_model
+                && context_tokens.is_some()
+                && self.context_window_model == self.model)
+                .then_some(self.context_window)
+                .flatten()
+        });
         if context_tokens.is_some() || context_window.is_some() {
             self.context_health_updated = true;
-            self.context_health = match (context_tokens, context_window) {
+            self.context_health = match (context_tokens, health_window) {
                 (Some(used), Some(window)) if window > 0 && used <= window => Some(ContextHealth {
                     used_tokens: used,
                     window_tokens: window,
@@ -625,6 +646,7 @@ impl UsageAcc {
         }
         if context_window.is_some() {
             self.context_window = context_window;
+            self.context_window_model = self.model.clone();
         }
     }
 

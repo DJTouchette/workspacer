@@ -171,7 +171,8 @@ export interface SessionStatusLine {
     usedPct: number;
     windowSource: 'runtime';
     observedAt: string;
-    epoch: number;
+    /** Exact decimal wire value; never coerce to a JavaScript number. */
+    epoch: string;
     provider: string;
   };
   totalInputTokens?: number;

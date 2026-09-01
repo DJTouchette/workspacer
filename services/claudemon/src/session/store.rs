@@ -529,9 +529,12 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
     }
 }
 
-/// Bind a correlated runtime context sample to the session life that owns it,
-/// retain a newer sample across unrelated status ticks, and drop malformed or
-/// out-of-order evidence. Display telemetry remains unaffected.
+/// Bind the latest received correlated runtime context sample to the session
+/// life that owns it, retain it across unrelated status ticks, and drop malformed
+/// evidence. `observed_at` is a receipt/freshness clock, not a provider-origin
+/// sequence: the supported providers do not all expose such a timestamp, so it
+/// must not pretend to reject source-order inversions. Display telemetry remains
+/// unaffected.
 fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
     let explicitly_updated = status.context_health_updated;
     let previous = session
@@ -552,13 +555,6 @@ fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
         } else {
             sample.provider = session.provider.clone();
             sample.epoch = session.context_telemetry_epoch;
-            if previous.as_ref().is_some_and(|old| {
-                old.provider == sample.provider
-                    && old.epoch == sample.epoch
-                    && old.observed_at >= sample.observed_at
-            }) {
-                status.context_health = previous;
-            }
         }
     } else if !explicitly_updated && session.pending_model_confirmation.is_none() {
         // Rate-limit/cost-only ticks must not erase the latest confirmed
@@ -3805,7 +3801,7 @@ mod tests {
     }
 
     #[test]
-    fn context_health_is_stamped_ordered_and_cleared_at_a_new_life() {
+    fn context_health_is_stamped_latest_received_and_cleared_at_a_new_life() {
         let store = SessionStore::new();
         let initial = store.register_managed("c1", "/tmp", "codex");
         let observed = OffsetDateTime::now_utc();
@@ -3829,7 +3825,10 @@ mod tests {
         assert_eq!(health.epoch, initial.context_telemetry_epoch);
         assert!(health.epoch > 0);
 
-        // An out-of-order lower sample cannot roll the accepted observation back.
+        // Provider-origin timestamps are not universally available (Claude's
+        // statusLine and live Codex app-server usage omit them). The receipt
+        // timestamp is therefore freshness metadata only: latest received wins,
+        // and a lower reading may be a real compaction.
         let late = store
             .apply_status_line("c1", sample(20_000, observed - time::Duration::SECOND))
             .unwrap();
@@ -3839,7 +3838,7 @@ mod tests {
                 .context_health
                 .unwrap()
                 .used_tokens,
-            120_000
+            20_000
         );
 
         // A model switch advances ownership and clears the old model's sample.

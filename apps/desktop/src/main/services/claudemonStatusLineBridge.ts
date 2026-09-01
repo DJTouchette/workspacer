@@ -48,6 +48,18 @@ function mapInventory(inv: any): import('./claudeSessionStore').ContextInventory
   };
 }
 
+/** Preserve the daemon's u64 epoch exactly. A legacy numeric daemon is accepted
+ * only while its value is still exactly representable in JavaScript. */
+function mapTelemetryEpoch(value: unknown): string | undefined {
+  if (typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value)) {
+    if (value.length < 20 || value <= '18446744073709551615') return value;
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+    return String(value);
+  }
+  return undefined;
+}
+
 export async function startClaudemonStatusLineBridge(): Promise<void> {
   // Idempotent: if already running, skip re-starting.
   if (abort) return;
@@ -78,17 +90,18 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           effort: sl.effort,
           contextUsedPct: sl.context_used_pct,
           contextWindowSize: sl.context_window_size,
-          contextHealth: sl.context_health
-            ? {
-                usedTokens: sl.context_health.used_tokens,
-                windowTokens: sl.context_health.window_tokens,
-                usedPct: sl.context_health.used_pct,
-                windowSource: sl.context_health.window_source,
-                observedAt: sl.context_health.observed_at,
-                epoch: sl.context_health.epoch,
-                provider: sl.context_health.provider,
-              }
-            : undefined,
+          contextHealth:
+            sl.context_health && mapTelemetryEpoch(sl.context_health.epoch)
+              ? {
+                  usedTokens: sl.context_health.used_tokens,
+                  windowTokens: sl.context_health.window_tokens,
+                  usedPct: sl.context_health.used_pct,
+                  windowSource: sl.context_health.window_source,
+                  observedAt: sl.context_health.observed_at,
+                  epoch: mapTelemetryEpoch(sl.context_health.epoch)!,
+                  provider: sl.context_health.provider,
+                }
+              : undefined,
           totalInputTokens: sl.total_input_tokens,
           totalOutputTokens: sl.total_output_tokens,
           // Cache-read subset of the input, when the provider reports one
