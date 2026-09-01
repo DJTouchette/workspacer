@@ -45,6 +45,7 @@ import {
   sameModelSelection,
   type ModelSelection,
 } from '../shared/modelContextWindows';
+import { validateProviderContextRequest } from '../shared/providerContext';
 
 export interface SpawnModelInput {
   /** Marker-bearing compatibility spelling understood by old peers/daemons. */
@@ -78,6 +79,17 @@ export function resolveSpawnModelInput(
   input: SpawnModelInput,
 ): ModelSelection | undefined {
   const normalizedProvider = provider.toLowerCase();
+  try {
+    validateProviderContextRequest(normalizedProvider, input.contextWindow);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'invalid-context-window';
+    throw new ModelSelectionError(
+      code === 'unsupported-context-window'
+        ? 'unsupported-context-window'
+        : 'invalid-context-window',
+      code,
+    );
+  }
   const legacy = input.model?.trim() || '';
   const identity = input.modelIdentity?.trim() || '';
   if (input.model?.trim()) assertSafeModelIdentity(input.model);
@@ -86,7 +98,7 @@ export function resolveSpawnModelInput(
 
   if (normalizedProvider !== 'claude') {
     const contextWindow = validateWindow(input.contextWindow);
-    if (hasCanonical && !identity && !legacy) {
+    if (hasCanonical && !identity && !legacy && normalizedProvider !== 'codex') {
       throw new ModelSelectionError(
         'empty-model',
         'modelIdentity or legacy model is required when contextWindow is present',

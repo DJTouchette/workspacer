@@ -915,7 +915,39 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .await
         .context("timed out listing codex models")?;
     let _ = child.start_kill();
-    result
+    let mut models = result?;
+    if let Ok(output) = Command::new(bin)
+        .args(["debug", "models", "--bundled"])
+        .current_dir(cwd)
+        .output()
+        .await
+    {
+        if output.status.success() {
+            if let Ok(raw) = serde_json::from_slice::<Value>(&output.stdout) {
+                for row in raw
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let Some(id) = row.get("slug").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(model) = models.iter_mut().find(|model| model.id == id) else {
+                        continue;
+                    };
+                    model.default_context_window =
+                        row.get("context_window").and_then(Value::as_u64);
+                    model.max_context_window =
+                        row.get("max_context_window").and_then(Value::as_u64);
+                    model.effective_context_window_percent = row
+                        .get("effective_context_window_percent")
+                        .and_then(Value::as_u64);
+                }
+            }
+        }
+    }
+    Ok(models)
 }
 
 /// Parse one Codex app-server `model/list` row. Kept separate from the process
@@ -962,6 +994,9 @@ fn model_info_from_value(model: &Value) -> Option<ModelInfo> {
         default,
         effort_levels,
         default_effort,
+        default_context_window: None,
+        max_context_window: None,
+        effective_context_window_percent: None,
     })
 }
 
@@ -977,6 +1012,7 @@ pub fn spawn_session(
     cwd: String,
     model: Option<String>,
     effort: Option<String>,
+    context_window: Option<u64>,
     bin: String,
     yolo: bool,
     headless: bool,
@@ -998,6 +1034,7 @@ pub fn spawn_session(
             &cwd,
             model,
             effort,
+            context_window,
             &bin,
             yolo,
             headless,
@@ -1089,7 +1126,7 @@ async fn start_appserver(
     // Headless only: (model, effort) config overrides. The app-server is the
     // thread's creator there, so what hybrid mode sets on the TUI process goes
     // on the server instead. `None` in hybrid mode — the TUI owns the config.
-    overrides: Option<(Option<String>, Option<String>)>,
+    overrides: Option<(Option<String>, Option<String>, Option<u64>)>,
     extras: &SpawnExtras,
 ) -> anyhow::Result<(tokio::process::Child, CodexWs, String)> {
     // Each managed session gets its own app-server, so threads/approvals are
@@ -1104,14 +1141,12 @@ async fn start_appserver(
 
     let mut cmd = Command::new(bin);
     cmd.arg("app-server").arg("--listen").arg(&ws_url);
-    if let Some((model, effort)) = overrides {
-        if let Some(m) = model {
-            cmd.arg("-c").arg(format!("model={}", Value::String(m)));
-        }
-        if let Some(e) = effort {
-            cmd.arg("-c")
-                .arg(format!("model_reasoning_effort={}", Value::String(e)));
-        }
+    if let Some((model, effort, context_window)) = overrides {
+        cmd.args(codex_override_args(
+            model.as_deref(),
+            effort.as_deref(),
+            context_window,
+        ));
     }
     // The workspacer MCP facade + the daemon's AskUserQuestion shim.
     for (key, value) in facade_mcp_overrides(session_id, facade) {
@@ -1166,6 +1201,7 @@ async fn run_rollout_fallback(
     cwd: &str,
     model: Option<String>,
     effort: Option<String>,
+    context_window: Option<u64>,
     bin: &str,
     yolo: bool,
     facade: &Facade,
@@ -1190,6 +1226,7 @@ async fn run_rollout_fallback(
         bin,
         model.as_deref(),
         effort.as_deref(),
+        context_window,
         yolo,
         session_id,
         facade,
@@ -1278,23 +1315,14 @@ fn fallback_tui_argv(
     bin: &str,
     model: Option<&str>,
     effort: Option<&str>,
+    context_window: Option<u64>,
     yolo: bool,
     session_id: &str,
     facade: &Facade,
     extra_args: &[String],
 ) -> Vec<String> {
     let mut argv = vec![bin.to_string()];
-    if let Some(m) = model {
-        argv.push("-c".to_string());
-        argv.push(format!("model={}", Value::String(m.to_string())));
-    }
-    if let Some(e) = effort {
-        argv.push("-c".to_string());
-        argv.push(format!(
-            "model_reasoning_effort={}",
-            Value::String(e.to_string())
-        ));
-    }
+    argv.extend(codex_override_args(model, effort, context_window));
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
     }
@@ -1308,6 +1336,30 @@ fn fallback_tui_argv(
     // The profile's own argv last, so `codex -p <preset>` wins over the
     // defaults above rather than being shadowed by them.
     argv.extend(extra_args.iter().cloned());
+    argv
+}
+
+fn codex_override_args(
+    model: Option<&str>,
+    effort: Option<&str>,
+    context_window: Option<u64>,
+) -> Vec<String> {
+    let mut argv = Vec::new();
+    if let Some(model) = model {
+        argv.extend([
+            "-c".to_string(),
+            format!("model={}", Value::String(model.into())),
+        ]);
+    }
+    if let Some(effort) = effort {
+        argv.extend([
+            "-c".to_string(),
+            format!("model_reasoning_effort={}", Value::String(effort.into())),
+        ]);
+    }
+    if let Some(window) = context_window {
+        argv.extend(["-c".to_string(), format!("model_context_window={window}")]);
+    }
     argv
 }
 
@@ -1341,6 +1393,7 @@ async fn run_session(
     cwd: &str,
     model: Option<String>,
     effort: Option<String>,
+    context_window: Option<u64>,
     bin: &str,
     yolo: bool,
     headless: bool,
@@ -1375,7 +1428,7 @@ async fn run_session(
     //
     // For headless the app-server is the thread's creator, so the model/effort
     // overrides that hybrid mode sets on the TUI go on the server instead.
-    let overrides = headless.then(|| (model.clone(), effort.clone()));
+    let overrides = headless.then(|| (model.clone(), effort.clone(), context_window));
     let (mut child, ws_stream, ws_url) = match start_appserver(
         session_id, cwd, bin, facade, overrides, extras,
     )
@@ -1397,6 +1450,7 @@ async fn run_session(
                 cwd,
                 model,
                 effort,
+                context_window,
                 bin,
                 yolo,
                 facade,
@@ -1480,6 +1534,7 @@ async fn run_session(
             &ws_url,
             model.as_deref(),
             effort.as_deref(),
+            context_window,
             yolo,
             extras,
         )
@@ -1692,6 +1747,7 @@ async fn run_session(
             cwd,
             model,
             effort,
+            context_window,
             bin,
             yolo,
             facade,
@@ -1724,6 +1780,7 @@ fn spawn_codex_tui(
     ws_url: &str,
     model: Option<&str>,
     effort: Option<&str>,
+    context_window: Option<u64>,
     yolo: bool,
     extras: &SpawnExtras,
 ) -> Option<Arc<pty::PtyHandle>> {
@@ -1731,17 +1788,7 @@ fn spawn_codex_tui(
     // Model / reasoning effort are config overrides on the thread's creator;
     // YOLO bypasses the approval/sandbox prompts so the shared thread doesn't
     // block on them.
-    if let Some(m) = model {
-        argv.push("-c".to_string());
-        argv.push(format!("model={}", Value::String(m.to_string())));
-    }
-    if let Some(e) = effort {
-        argv.push("-c".to_string());
-        argv.push(format!(
-            "model_reasoning_effort={}",
-            Value::String(e.to_string())
-        ));
-    }
+    argv.extend(codex_override_args(model, effort, context_window));
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
     }
@@ -2328,7 +2375,16 @@ mod tests {
             mcp_url: Some("http://127.0.0.1:9/mcp?t=tok".into()),
             instructions: None,
         };
-        let argv = fallback_tui_argv("codex", Some("gpt-5.5"), None, true, "s1", &facade, &[]);
+        let argv = fallback_tui_argv(
+            "codex",
+            Some("gpt-5.5"),
+            None,
+            Some(1_000_000),
+            true,
+            "s1",
+            &facade,
+            &[],
+        );
         assert!(
             argv.iter()
                 .any(|a| a == "mcp_servers.workspacer.url=\"http://127.0.0.1:9/mcp?t=tok\""),
@@ -2337,11 +2393,39 @@ mod tests {
         // …and the rest of what the app-server path applies.
         assert!(argv.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
         assert!(argv.iter().any(|a| a == "model=\"gpt-5.5\""));
+        assert!(argv.iter().any(|a| a == "model_context_window=1000000"));
+    }
+
+    #[test]
+    fn every_codex_process_shape_uses_the_same_context_config_override() {
+        // start_appserver, fallback_tui_argv and spawn_codex_tui all extend
+        // this exact argv builder. Mutating/removing the config key breaks this
+        // assertion and therefore guards every actual Codex consumer.
+        assert_eq!(
+            codex_override_args(Some("gpt-5.5"), Some("high"), Some(1_000_000)),
+            vec![
+                "-c",
+                "model=\"gpt-5.5\"",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "-c",
+                "model_context_window=1000000",
+            ]
+        );
     }
 
     #[test]
     fn a_facade_less_session_registers_no_workspacer_server() {
-        let argv = fallback_tui_argv("codex", None, None, false, "s1", &Facade::default(), &[]);
+        let argv = fallback_tui_argv(
+            "codex",
+            None,
+            None,
+            None,
+            false,
+            "s1",
+            &Facade::default(),
+            &[],
+        );
         assert!(!argv
             .iter()
             .any(|a| a.starts_with("mcp_servers.workspacer.url")));
@@ -2515,6 +2599,9 @@ mod tests {
                 default: true,
                 effort_levels: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
                 default_effort: Some("xhigh".into()),
+                default_context_window: None,
+                max_context_window: None,
+                effective_context_window_percent: None,
             })
         );
     }

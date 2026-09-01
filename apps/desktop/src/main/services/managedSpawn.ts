@@ -55,6 +55,7 @@ import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
 import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
 import { modelFromExtraArgs } from './claudeResolver';
 import { claudeArgvModel } from '../shared/modelContextWindows';
+import { contextRequestForSpawn } from '../shared/providerContext';
 
 /** Install hints surfaced when a provider CLI isn't on PATH. */
 const INSTALL_HINT: Record<AgentProvider, string> = {
@@ -285,11 +286,20 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     profileModel ||
     opts.model?.trim() ||
     (opts.manager ? resolveManagerModel(provider) : undefined);
+  const requestedContextWindow = contextRequestForSpawn(
+    provider,
+    opts.contextWindow,
+    opts.resumeSessionId,
+  );
   const modelSelection = resolveSpawnModelSelection(
     provider,
     requestedModel,
     profileModel ? undefined : opts.modelIdentity,
-    profileModel ? undefined : opts.contextWindow,
+    profileModel
+      ? undefined
+      : requestedModel || opts.modelIdentity
+        ? requestedContextWindow
+        : undefined,
   );
   const spawnModel = modelSelection?.model;
   const serializedModel =
@@ -452,6 +462,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(provider === 'codex' && { transport }),
     settings: {
       model: serializedModel,
+      contextWindow: modelSelection?.contextWindow ?? requestedContextWindow,
       effort: spawnEffort,
       permissionMode,
       // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
@@ -487,7 +498,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     cwd,
     model: serializedModel,
     modelIdentity: modelSelection?.model,
-    contextWindow: modelSelection?.contextWindow,
+    contextWindow: modelSelection?.contextWindow ?? requestedContextWindow,
     effort: spawnEffort,
     bin,
     yolo,
@@ -576,8 +587,13 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     'codex',
     opts.model?.trim() || (opts.manager ? resolveManagerModel('codex') : undefined),
     opts.modelIdentity,
-    opts.contextWindow,
+    opts.model?.trim() || opts.modelIdentity
+      ? contextRequestForSpawn('codex', opts.contextWindow, opts.resumeSessionId)
+      : undefined,
   );
+  const hybridContextWindow =
+    hybridSelection?.contextWindow ??
+    contextRequestForSpawn('codex', opts.contextWindow, opts.resumeSessionId);
   const spawnModel = hybridSelection?.model;
   // …and the same for effort: a manager spawn with none requested takes the
   // level configured for it on codex (agents.managerEfforts).
@@ -611,6 +627,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     transport: 'pty' as const,
     settings: {
       model: spawnModel,
+      contextWindow: hybridContextWindow,
       effort: spawnEffort,
       permissionMode: skipPermissions ? 'yolo' : 'ask',
     },
@@ -626,6 +643,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     bin,
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
     ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
     // Codex has a real hidden instruction channel even on this PTY-only
     // rollout path. Keep the task as the user turn (so transcript
     // reconstruction never displays host contract text), while the contract
@@ -642,7 +660,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     // model from this field, and a Codex resume puts nothing on the argv.
     model: spawnModel,
     modelIdentity: hybridSelection?.model,
-    contextWindow: hybridSelection?.contextWindow,
+    contextWindow: hybridContextWindow,
     cols: opts.cols ?? 120,
     rows: opts.rows ?? 32,
     sessionId,

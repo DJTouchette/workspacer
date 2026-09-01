@@ -1158,4 +1158,59 @@ describe('applyManagedMode carries the daemon selection slice', () => {
     claudeSessionStore.applyManagedMode(sid, 'input', { selection: {} });
     expect(claudeSessionStore.getSnapshot(sid)!.resolvedContextWindow).toBe(200_000);
   });
+
+  it('accepts Codex runtime correction from requested 1M to effective 258400 immediately', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', {
+      provider: 'codex',
+      selection: {
+        requestedSelection: { model: 'gpt-5.6-codex', contextWindow: 1_000_000 },
+        resolvedContextWindow: 1_000_000,
+      },
+    });
+    claudeSessionStore.applyStatusLine(sid, {
+      modelDisplay: 'gpt-5.6-codex',
+      contextWindowSize: 258_400,
+      contextUsedPct: 50,
+      receivedAt: '2026-08-31T20:00:00.000Z',
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.statusLine).toMatchObject({
+      contextWindowSize: 258_400,
+      contextUsedPct: 50,
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.requestedSelection?.contextWindow).toBe(1_000_000);
+  });
+
+  it('rejects stale/out-of-order telemetry after a newer compaction reset', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyStatusLine(sid, {
+      contextWindowSize: 258_400,
+      contextUsedPct: 10,
+      receivedAt: '2026-08-31T20:00:02.000Z',
+    });
+    claudeSessionStore.applyStatusLine(sid, {
+      contextWindowSize: 258_400,
+      contextUsedPct: 88,
+      receivedAt: '2026-08-31T20:00:01.000Z',
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.statusLine?.contextUsedPct).toBe(10);
+  });
+
+  it('clears the previous runtime occupancy across restart/provider switch', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'responding', { provider: 'claude' });
+    claudeSessionStore.applyStatusLine(sid, {
+      contextWindowSize: 200_000,
+      contextUsedPct: 80,
+    });
+    claudeSessionStore.setSpawnMeta(sid, {
+      provider: 'codex',
+      settings: { model: 'gpt-5.6-codex', contextWindow: 1_000_000 },
+    });
+    const snap = claudeSessionStore.getSnapshot(sid)!;
+    expect(snap.provider).toBe('codex');
+    expect(snap.settings?.contextWindow).toBe(1_000_000);
+    expect(snap.statusLine?.contextWindowSize).toBeUndefined();
+    expect(snap.statusLine?.contextUsedPct).toBeUndefined();
+  });
 });

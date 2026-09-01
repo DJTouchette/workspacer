@@ -173,6 +173,9 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         default: true,
         effort_levels: EFFORT_LEVELS.iter().map(|s| (*s).to_string()).collect(),
         default_effort: None,
+        default_context_window: None,
+        max_context_window: None,
+        effective_context_window_percent: None,
     }])
 }
 

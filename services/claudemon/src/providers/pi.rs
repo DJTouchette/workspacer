@@ -98,6 +98,9 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
                         effort_levels: vec![],
                         // Pi reports no reasoning-effort metadata.
                         default_effort: None,
+                        default_context_window: None,
+                        max_context_window: None,
+                        effective_context_window_percent: None,
                     })
                 })
                 .collect::<Vec<_>>();

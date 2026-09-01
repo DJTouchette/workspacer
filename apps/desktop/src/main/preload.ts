@@ -286,6 +286,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       default: boolean;
       effortLevels?: string[];
       defaultEffort?: string;
+      defaultContextWindow?: number;
+      maxContextWindow?: number;
+      effectiveContextWindowPercent?: number;
     }>
   > => ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   /** Detection status per provider. Cached for a few seconds in main; pass

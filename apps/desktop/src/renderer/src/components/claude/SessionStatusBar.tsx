@@ -309,6 +309,8 @@ export const SessionStatusBar: React.FC<Props> = ({
         <>
           <Sep />
           <span
+            data-testid="session-status-context-bar"
+            aria-label={`Active context ${Math.round(ctxPct)}% of runtime-confirmed window`}
             style={{
               display: 'inline-flex',
               alignItems: 'center',

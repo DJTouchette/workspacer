@@ -1252,6 +1252,8 @@ const SideBar: React.FC<SideBarProps> = ({
                 {/* Context-fill bar — working cards only (mock's progress line) */}
                 {cardState === 'working' && hasCtx && (
                   <span
+                    data-testid="sidebar-agent-context-bar"
+                    aria-label={`Active context ${Math.round(stats.ctxPct!)}% of runtime-confirmed window`}
                     style={{
                       display: 'block',
                       height: 3,

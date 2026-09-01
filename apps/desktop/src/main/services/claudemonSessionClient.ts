@@ -302,6 +302,9 @@ class ClaudemonSessionClient {
       default: boolean;
       effortLevels?: string[];
       defaultEffort?: string;
+      defaultContextWindow?: number;
+      maxContextWindow?: number;
+      effectiveContextWindowPercent?: number;
     }>
   > {
     const params = new URLSearchParams();
@@ -320,6 +323,9 @@ class ClaudemonSessionClient {
           default?: boolean;
           effortLevels?: unknown;
           defaultEffort?: unknown;
+          defaultContextWindow?: unknown;
+          maxContextWindow?: unknown;
+          effectiveContextWindowPercent?: unknown;
         }>;
       };
       return (body.models ?? []).map((m) => ({
@@ -334,6 +340,13 @@ class ClaudemonSessionClient {
         // The level a turn runs at with no effort override — Codex reports it
         // per model, so the composer's "Default" row can name it.
         ...(typeof m.defaultEffort === 'string' && { defaultEffort: m.defaultEffort }),
+        ...(typeof m.defaultContextWindow === 'number' && {
+          defaultContextWindow: m.defaultContextWindow,
+        }),
+        ...(typeof m.maxContextWindow === 'number' && { maxContextWindow: m.maxContextWindow }),
+        ...(typeof m.effectiveContextWindowPercent === 'number' && {
+          effectiveContextWindowPercent: m.effectiveContextWindowPercent,
+        }),
       }));
     } catch {
       return [];

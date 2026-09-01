@@ -133,6 +133,7 @@ pub enum ModelSelectionError {
     EmptyModel,
     InvalidModelIdentity,
     InvalidContextWindow,
+    UnsupportedContextWindow,
     ConflictingContextWindow,
     ConflictingModelIdentity,
 }
@@ -143,6 +144,7 @@ impl ModelSelectionError {
             Self::EmptyModel => "empty-model",
             Self::InvalidModelIdentity => "invalid-model-identity",
             Self::InvalidContextWindow => "invalid-context-window",
+            Self::UnsupportedContextWindow => "unsupported-context-window",
             Self::ConflictingContextWindow => "conflicting-context-window",
             Self::ConflictingModelIdentity => "conflicting-model-identity",
         }
@@ -229,6 +231,10 @@ pub fn normalize_model_input(
     model_identity: Option<&str>,
     context_window: Option<u64>,
 ) -> Result<Option<PersistedModelSelection>, ModelSelectionError> {
+    let normalized_provider = provider.trim().to_ascii_lowercase();
+    if context_window.is_some() && !matches!(normalized_provider.as_str(), "claude" | "codex") {
+        return Err(ModelSelectionError::UnsupportedContextWindow);
+    }
     if legacy_model
         .into_iter()
         .chain(model_identity)
@@ -245,11 +251,12 @@ pub fn normalize_model_input(
         .filter(|value| !value.is_empty());
     let has_canonical = model_identity.is_some() || context_window.is_some();
 
-    if !provider.eq_ignore_ascii_case("claude") {
+    if normalized_provider != "claude" {
         if context_window == Some(0) {
             return Err(ModelSelectionError::InvalidContextWindow);
         }
-        if has_canonical && identity.is_none() && legacy.is_none() {
+        if has_canonical && identity.is_none() && legacy.is_none() && normalized_provider != "codex"
+        {
             return Err(ModelSelectionError::EmptyModel);
         }
         if let (Some(identity), Some(legacy)) = (identity, legacy) {

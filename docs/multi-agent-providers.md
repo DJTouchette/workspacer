@@ -50,6 +50,15 @@ integration is *cleaner*, not hackier:
 - Health: `GET /global/health`.
 
 ### Codex — `codex app-server`
+
+Context is configured independently from the model. New Codex sessions request a
+1,000,000-token window through Codex's `model_context_window` setting unless the
+caller chooses another value; resumes retain their persisted request. This is a
+request, not a promise: once Codex reports the effective runtime window, all
+occupancy meters use that confirmed value. The Context popover keeps requested,
+effective, catalog default and advertised maximum values explicitly labelled.
+Copilot, OpenCode and Pi remain provider-managed because their installed harness
+interfaces do not currently expose a validated context-window request.
 - JSON-RPC 2.0 over stdio, newline-delimited; plus `--listen ws://` (the
   transport workspacer drives sessions over, since a live TUI and our RPC client
   can share it). `--listen unix://` is gated in current Codex builds.

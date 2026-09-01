@@ -66,6 +66,7 @@ import {
 } from '../../lib/modelOptions';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
+import { ModelContextPopover } from '../ModelContextPopover';
 import type { ClaudeProfile } from '../../../../main/shared/ipcTypes';
 import {
   ContextMenu,
@@ -698,6 +699,21 @@ export const ComposerControls: React.FC<{
   const remoteHub = snapshot?.hub;
   const disabled = !sessionId || !!remoteHub;
   const disabledTitle = remoteHub ? remoteDisabledTitle(remoteHub) : 'No session yet';
+  const requestedContext =
+    snapshot?.requestedSelection?.contextWindow ?? settings?.contextWindow ?? null;
+  const contextChoices =
+    caps.modelSource === 'claude' && currentModel
+      ? (models ?? [])
+          .filter((option) => option.id === currentModel.id && option.contextWindow != null)
+          .map((option) => ({
+            value: option.contextWindow!,
+            label: option.context ?? `${option.contextWindow} tokens`,
+          }))
+          .filter(
+            (choice, index, all) =>
+              all.findIndex((other) => other.value === choice.value) === index,
+          )
+      : undefined;
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
@@ -718,6 +734,35 @@ export const ComposerControls: React.FC<{
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{modelLabel}</span>
         <ChevronDown size={11} strokeWidth={2.25} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
+      <Sep />
+      <ModelContextPopover
+        provider={provider}
+        requested={requestedContext}
+        effective={stats.effectiveContextWindow}
+        providerDefault={currentModel?.defaultContextWindow}
+        advertisedMaximum={currentModel?.maxContextWindow}
+        choices={contextChoices}
+        onChange={
+          !disabled && caps.modelSource === 'claude' && contextChoices?.length
+            ? (contextWindow) => {
+                const option = (models ?? []).find(
+                  (candidate) =>
+                    candidate.id === currentModel?.id && candidate.contextWindow === contextWindow,
+                );
+                if (!option) return;
+                liveModelSwitch(
+                  modelOptionCommand(option),
+                  option.label,
+                  { x: 0, y: 0 },
+                  {
+                    model: option.id,
+                    contextWindow: option.contextWindow ?? null,
+                  },
+                );
+              }
+            : undefined
+        }
+      />
       {caps.effort && (
         <>
           <Sep />

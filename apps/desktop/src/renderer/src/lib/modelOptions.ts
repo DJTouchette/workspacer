@@ -40,6 +40,10 @@ export interface ModelOption {
   effortLevels?: string[];
   /** Level this model runs at with no effort override (Codex reports it). */
   defaultEffort?: string;
+  /** Installed harness catalog metadata; informational, not confirmation. */
+  defaultContextWindow?: number;
+  maxContextWindow?: number;
+  effectiveContextWindowPercent?: number;
 }
 
 interface ClaudeCatalogPayload {
@@ -183,6 +187,9 @@ export async function loadModelOptions(
       default: m.default,
       effortLevels: m.effortLevels,
       defaultEffort: m.defaultEffort,
+      defaultContextWindow: m.defaultContextWindow,
+      maxContextWindow: m.maxContextWindow,
+      effectiveContextWindowPercent: m.effectiveContextWindowPercent,
     }));
   } catch {
     return [];

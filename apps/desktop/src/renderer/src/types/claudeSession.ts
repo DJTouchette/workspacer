@@ -324,6 +324,8 @@ export interface ClaudeSessionSnapshot {
    *  (live statusLine/usage model wins when present). */
   settings?: {
     model?: string;
+    /** Requested window; provisional until statusLine reports effective. */
+    contextWindow?: number | null;
     effort?: string;
     permissionMode?: string;
     /** Claude only: whether the process carries `--dangerously-skip-permissions`.

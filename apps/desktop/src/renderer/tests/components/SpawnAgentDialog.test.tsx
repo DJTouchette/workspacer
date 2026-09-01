@@ -95,6 +95,8 @@ beforeEach(() => {
       label: 'GPT-5.5',
       default: true,
       effortLevels: ['low', 'medium', 'high', 'xhigh'],
+      defaultContextWindow: 272_000,
+      maxContextWindow: 872_000,
     },
     {
       id: 'legacy-codex',
@@ -196,6 +198,33 @@ describe('SpawnAgentDialog permissions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
+  });
+});
+
+describe('SpawnAgentDialog Context popover', () => {
+  it('sends the fresh Codex 1M default from the human spawn surface', async () => {
+    const { onSpawn } = renderDialog();
+    fireEvent.click(screen.getByText('Codex').closest('button')!);
+    fireEvent.click(advancedButton());
+    await screen.findByLabelText('Context settings');
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'codex', contextWindow: 1_000_000 }),
+    );
+  });
+
+  it('forwards a numeric Codex override selected in the shared popover', async () => {
+    const { onSpawn } = renderDialog();
+    fireEvent.click(screen.getByText('Codex').closest('button')!);
+    fireEvent.click(advancedButton());
+    fireEvent.click(await screen.findByLabelText('Context settings'));
+    fireEvent.change(screen.getByLabelText('Custom context tokens'), {
+      target: { value: '400000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /dispatch agent/i }));
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'codex', contextWindow: 400_000 }),
+    );
   });
 });
 

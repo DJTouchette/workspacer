@@ -16,6 +16,7 @@ import { profilesForProvider } from '../lib/profileFields';
 import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
 import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../lib/modelOptions';
 import { normalizeModelSelection } from '../../../main/shared/modelContextWindows';
+import { ModelContextPopover } from './ModelContextPopover';
 
 /**
  * What a profile chip promises, in the vocabulary of the harness it belongs to.
@@ -145,6 +146,9 @@ interface ProviderModel {
   default: boolean;
   /** Exact effort ids reported for this model by the provider catalog. */
   effortLevels?: string[];
+  defaultContextWindow?: number;
+  maxContextWindow?: number;
+  effectiveContextWindowPercent?: number;
 }
 
 /**
@@ -224,6 +228,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [seen, setSeen] = useState<ModelOption[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
+  const [codexContextWindow, setCodexContextWindow] = useState<number | null>(1_000_000);
+  const [codexContextTouched, setCodexContextTouched] = useState(false);
   // Permission mode ('' = provider default: claude 'default', managed 'ask').
   // Effort is kept per provider: Claude and Codex have different ladders and a
   // choice made for one harness must not leak into the other. An empty entry
@@ -530,6 +536,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const selectedProviderModel = providerModels.find((model) =>
     resolvedProviderModel ? model.id === resolvedProviderModel : model.default,
   );
+  const claudeSelection = resolvedModel ? normalizeModelSelection(resolvedModel) : undefined;
+  const setClaudeContext = (contextWindow: number | null) => {
+    if (!claudeSelection || contextWindow == null) return;
+    const sibling = [...aliases, ...seen].find(
+      (option) => option.id === claudeSelection.model && option.contextWindow === contextWindow,
+    );
+    if (sibling) setModelSel(modelOptionCommand(sibling));
+  };
   // Codex reports supported reasoning efforts per model. Prefer that live
   // catalog over the provider fallback so, for example, xhigh appears only
   // when the selected model accepts it. Claude currently reports one
@@ -588,7 +602,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     const resolvedMode = permissionMode || defaultModeFor(provider);
     const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
     const initialPrompt = prompt.trim() || undefined;
-    const claudeSelection = resolvedModel ? normalizeModelSelection(resolvedModel) : undefined;
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(
@@ -621,7 +634,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             name: name.trim() || undefined,
             model: resolvedProviderModel || undefined,
             modelIdentity: resolvedProviderModel || undefined,
-            contextWindow: resolvedProviderModel ? null : undefined,
+            contextWindow:
+              provider === 'codex'
+                ? resumeSessionId && !codexContextTouched
+                  ? undefined
+                  : codexContextWindow
+                : undefined,
             provider,
             // The harness's own profile — its config root (CODEX_HOME /
             // COPILOT_HOME), extra argv, `-p` preset and, for Copilot, the
@@ -838,6 +856,56 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       ),
     });
   }
+
+  const claudeContextChoices = claudeSelection
+    ? [...aliases, ...seen]
+        .filter((option) => option.id === claudeSelection.model && option.contextWindow != null)
+        .map((option) => ({ value: option.contextWindow!, label: option.context ?? option.label }))
+        .filter(
+          (choice, index, all) => all.findIndex((item) => item.value === choice.value) === index,
+        )
+    : [];
+  rows.push({
+    key: 'context',
+    label: 'context',
+    control: (
+      <ModelContextPopover
+        provider={provider}
+        requested={
+          isClaude
+            ? claudeSelection?.contextWindow
+            : provider === 'codex'
+              ? resumeSessionId && !codexContextTouched
+                ? undefined
+                : codexContextWindow
+              : null
+        }
+        providerDefault={selectedProviderModel?.defaultContextWindow}
+        advertisedMaximum={selectedProviderModel?.maxContextWindow}
+        choices={
+          isClaude
+            ? claudeContextChoices
+            : provider === 'codex'
+              ? [
+                  { value: null, label: 'Provider default' },
+                  { value: 1_000_000, label: 'Request 1M' },
+                ]
+              : undefined
+        }
+        allowNumeric={provider === 'codex'}
+        onChange={
+          isClaude
+            ? setClaudeContext
+            : provider === 'codex'
+              ? (value) => {
+                  setCodexContextTouched(true);
+                  setCodexContextWindow(value);
+                }
+              : undefined
+        }
+      />
+    ),
+  });
 
   if (capsFor(provider).effort) {
     rows.push({

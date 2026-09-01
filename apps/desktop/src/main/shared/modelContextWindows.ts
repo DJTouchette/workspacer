@@ -79,6 +79,7 @@ export type ModelSelectionErrorCode =
   | 'invalid-model-identity'
   | 'invalid-model-type'
   | 'invalid-context-window'
+  | 'unsupported-context-window'
   | 'conflicting-context-window'
   | 'conflicting-model-identity';
 

@@ -226,6 +226,9 @@ export interface ElectronAPI {
       effortLevels?: string[];
       /** Level a turn runs at with no override (Codex reports it per model). */
       defaultEffort?: string;
+      defaultContextWindow?: number;
+      maxContextWindow?: number;
+      effectiveContextWindowPercent?: number;
     }>
   >;
   providerCheckAll: (

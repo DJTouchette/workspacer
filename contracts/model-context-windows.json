@@ -752,19 +752,19 @@
       "note": "Claude compatibility syntax must not leak into another provider's namespace."
     },
     {
-      "name": "non-Claude pair preserves exact one-m id",
+      "name": "OpenCode context request is unsupported",
       "provider": "opencode",
       "model": "openrouter/custom-1m",
       "modelIdentity": "openrouter/custom-1m",
       "contextWindow": 1000000,
-      "expectedModel": "openrouter/custom-1m",
-      "expectedContextWindow": 1000000,
-      "expectedLegacyModel": "openrouter/custom-1m",
-      "error": null,
-      "note": "The numeric pair may coexist with an opaque id but never rewrites it."
+      "expectedModel": null,
+      "expectedContextWindow": null,
+      "expectedLegacyModel": null,
+      "error": "unsupported-context-window",
+      "note": "OpenCode exposes no validated context request mechanism, so the shared boundary refuses one."
     },
     {
-      "name": "non-Claude context window without model identity is invalid",
+      "name": "Codex context window without model identity remains an independent config override",
       "provider": "codex",
       "model": null,
       "modelIdentity": null,
@@ -772,8 +772,8 @@
       "expectedModel": null,
       "expectedContextWindow": null,
       "expectedLegacyModel": null,
-      "error": "empty-model",
-      "note": "A context window cannot identify what model it belongs to; every provider twin must reject this partial canonical wire."
+      "error": null,
+      "note": "Codex documents model_context_window independently of model; omitting a model preserves the provider default."
     },
     {
       "name": "conflicting non-Claude identity and companion is refused",

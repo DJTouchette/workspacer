@@ -72,6 +72,14 @@ pub struct ModelInfo {
     pub effort_levels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
+    /// Raw installed-catalog capacity metadata. These are capability facts,
+    /// never the active session denominator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_context_window_percent: Option<u64>,
 }
 
 // ── Model-list cache ─────────────────────────────────────────────────────────
@@ -1131,6 +1139,9 @@ mod tests {
             default: true,
             effort_levels: vec![],
             default_effort: None,
+            default_context_window: None,
+            max_context_window: None,
+            effective_context_window_percent: None,
         }];
 
         // Fresh entry is served both as a fresh hit and as last-known-good.

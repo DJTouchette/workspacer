@@ -43,6 +43,7 @@ import {
   readSelectionSlice,
   type CanonicalSelectionSlice,
 } from '../shared/canonicalSelection';
+import { normalizeModelSelection } from '../shared/modelContextWindows';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -85,6 +86,8 @@ export type SessionAmbientState =
  *  fallback — live statusLine/usage wins for the model when present). */
 export interface SessionSpawnSettings {
   model?: string;
+  /** Requested launch window. Provisional until runtime status confirms one. */
+  contextWindow?: number | null;
   effort?: string;
   permissionMode?: string;
   /** Claude only: whether the process was launched with
@@ -636,6 +639,16 @@ function statusConfirmsSelection(
     : modelMatch === true;
 }
 
+function statusModelCompatible(
+  status: SessionStatusLine,
+  selection: import('../shared/modelContextWindows').ModelSelection,
+): boolean {
+  if (!status.modelDisplay) return true;
+  const reported = comparableModelIdentity(status.modelDisplay);
+  const selected = comparableModelIdentity(selection.model);
+  return !!reported && !!selected && (reported.includes(selected) || selected.includes(reported));
+}
+
 // ── Store ──
 
 class ClaudeSessionStore {
@@ -729,6 +742,7 @@ class ClaudeSessionStore {
     // A restart-with-settings re-spawns onto an id that may still have a live
     // entry — refresh its settings in place so the pills track the request.
     const existing = this.sessions.get(sessionId);
+    if (existing && meta.provider) existing.provider = meta.provider;
     // Same reason, for the routing block: `createSession` is the only other
     // place meta is applied, and a re-spawn onto a LIVE id never reaches it, so
     // without this the row would keep the previous life's role/capability (or
@@ -737,6 +751,34 @@ class ClaudeSessionStore {
     if (existing && meta.routing) existing.routing = meta.routing;
     if (existing && meta.settings) {
       existing.settings = { ...existing.settings, ...meta.settings };
+      // A restarted/provider-switched process has not confirmed any effective
+      // window yet. Its request remains visible in settings as provisional;
+      // the prior process' occupancy pair must not survive the boundary.
+      existing.statusLine = existing.statusLine
+        ? {
+            ...existing.statusLine,
+            modelDisplay: undefined,
+            contextWindowSize: undefined,
+            contextUsedPct: undefined,
+            receivedAt: undefined,
+          }
+        : existing.statusLine;
+      if (existing.usage) {
+        existing.usage.contextTokens = 0;
+        existing.usage.contextLimit = null;
+      }
+      if (meta.settings.model) {
+        try {
+          this.advanceModelSelectionEpoch(
+            sessionId,
+            normalizeModelSelection(meta.settings.model, meta.settings.contextWindow),
+            true,
+          );
+        } catch {
+          // Compatibility metadata can be partial/malformed; it is still safe
+          // to clear the old runtime pair, just not to build a fence from it.
+        }
+      }
       // A restart can change the window (`opus` → `opus[1m]`), and the new
       // life's first usage turn is a while away — re-resolve now.
       SessionUsageAccumulator.refreshContextLimit(existing);
@@ -780,6 +822,18 @@ class ClaudeSessionStore {
     const provenance = this.modelTelemetryProvenance.get(sessionId);
     if (!provenance || provenance.telemetryEpoch === provenance.acceptedEpoch) return statusLine;
     if (statusConfirmsSelection(statusLine, provenance.selection)) {
+      provenance.telemetryEpoch = provenance.acceptedEpoch;
+      provenance.suppressionsRemaining = 0;
+      return statusLine;
+    }
+    // Codex's configured window is a request. Its first runtime-reported
+    // effective window is the correction we are waiting for, not a stale frame.
+    const provider = this.sessions.get(sessionId)?.provider?.toLowerCase();
+    if (
+      provider === 'codex' &&
+      statusLine.contextWindowSize !== undefined &&
+      statusModelCompatible(statusLine, provenance.selection)
+    ) {
       provenance.telemetryEpoch = provenance.acceptedEpoch;
       provenance.suppressionsRemaining = 0;
       return statusLine;
@@ -1564,6 +1618,12 @@ class ClaudeSessionStore {
     if (!sessionId) return;
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    const previousAt = session.statusLine?.receivedAt
+      ? Date.parse(session.statusLine.receivedAt)
+      : Number.NaN;
+    const incomingAt = statusLine.receivedAt ? Date.parse(statusLine.receivedAt) : Number.NaN;
+    if (Number.isFinite(previousAt) && Number.isFinite(incomingAt) && incomingAt < previousAt)
+      return;
     // Always record the latest value immediately (trailing-edge debounce).
     statusLine = this.reconcileModelTelemetry(sessionId, statusLine);
     session.statusLine = statusLine;

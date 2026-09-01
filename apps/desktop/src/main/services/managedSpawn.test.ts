@@ -163,6 +163,40 @@ describe('spawnManagedAgent — spawn cwd pre-flight', () => {
 });
 
 describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
+  it('defaults a fresh Codex request to 1M and records the provisional request', async () => {
+    await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
+    expect(lastManaged().contextWindow).toBe(1_000_000);
+    expect((lastMeta().settings as Payload).contextWindow).toBe(1_000_000);
+  });
+
+  it('preserves an explicit Codex override and does not default a resume', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      contextWindow: 400_000,
+    });
+    expect(lastManaged().contextWindow).toBe(400_000);
+
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      resumeSessionId: 'old-session',
+    });
+    expect(lastManaged().contextWindow).toBeUndefined();
+  });
+
+  it.each(['copilot', 'opencode', 'pi'] as const)(
+    'refuses an invented context request for %s at the shared spawn boundary',
+    async (provider) => {
+      await expect(
+        spawnManagedAgent({ provider, cwd: '/proj', contextWindow: 1_000_000 }),
+      ).rejects.toThrow('unsupported-context-window');
+      expect(spawnManagedMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("codex + transport 'stream' sends transport in the payload AND stamps it in spawn meta", async () => {
     await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
 
@@ -379,6 +413,8 @@ describe('spawnManagedAgent — win32 codex', () => {
       expect(spawnMock).toHaveBeenCalledTimes(1);
       const payload = spawnMock.mock.calls[0][0] as Payload;
       expect(payload.rolloutProvider).toBe('codex');
+      expect(payload.contextWindow).toBe(1_000_000);
+      expect(payload.argv).toEqual(expect.arrayContaining(['-c', 'model_context_window=1000000']));
       // It IS a PTY session, and now says so rather than leaving the field
       // absent — with codex defaulting to headless, an absent transport would
       // read as the default rather than as this.
@@ -891,7 +927,7 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
     });
     expect(lastManaged().model).toBe('gpt-5');
     expect(lastManaged().modelIdentity).toBe('gpt-5');
-    expect(lastManaged().contextWindow).toBeNull();
+    expect(lastManaged().contextWindow).toBe(1_000_000);
     // …and it is recorded, not just passed: the daemon can only report what it
     // was told, and the card/pill read it from there.
     expect((lastMeta().settings as Payload).model).toBe('gpt-5');
@@ -950,7 +986,7 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
       expect(lastManaged()).toMatchObject({
         model: 'gpt-5',
         modelIdentity: 'gpt-5',
-        contextWindow: null,
+        contextWindow: 1_000_000,
       });
     },
   );

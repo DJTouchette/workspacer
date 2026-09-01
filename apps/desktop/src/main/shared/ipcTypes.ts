@@ -305,6 +305,7 @@ export interface ClaudeSessionSnapshot {
    *  itself writes is declared here. */
   settings?: {
     model?: string;
+    contextWindow?: number | null;
     effort?: string;
     permissionMode?: string;
     /** Claude only: whether the process carries `--dangerously-skip-permissions`,

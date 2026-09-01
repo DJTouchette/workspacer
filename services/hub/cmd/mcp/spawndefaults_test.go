@@ -290,6 +290,41 @@ func TestSpawnAgentExplicitModelSurvivesForAManagedProvider(t *testing.T) {
 	}
 }
 
+func TestSpawnAgentCodexContextDefaultsAndExplicitOverrideReachTheBus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{})
+	defaulted := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "provider": "codex"})
+	if defaulted["contextWindow"] != float64(1_000_000) {
+		t.Fatalf("fresh Codex spawn must request 1M, got %v", defaulted)
+	}
+	explicit := spawnEchoParams(t, ctx, cs, map[string]any{
+		"cwd": "/tmp", "provider": "codex", "contextWindow": 400_000,
+	})
+	if explicit["contextWindow"] != float64(400_000) {
+		t.Fatalf("explicit Codex context override drifted, got %v", explicit)
+	}
+}
+
+func TestSpawnAgentRefusesUnsupportedProviderContextBeforeTheBus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cs := spawnDefaultsSession(t, ctx, false, map[string]any{})
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "spawn_agent",
+		Arguments: map[string]any{
+			"cwd": "/tmp", "provider": "opencode", "contextWindow": 1_000_000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(textOf(res), "unsupported-context-window") {
+		t.Fatalf("unsupported provider/window must be a stable tool error, got %q", textOf(res))
+	}
+}
+
 func TestSpawnAgentForwardsCanonicalPairAndLegacyCompanion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

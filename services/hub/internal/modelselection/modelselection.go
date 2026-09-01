@@ -16,6 +16,7 @@ var (
 	ErrEmptyModel               = errors.New("empty-model")
 	ErrInvalidModelIdentity     = errors.New("invalid-model-identity")
 	ErrInvalidContextWindow     = errors.New("invalid-context-window")
+	ErrUnsupportedContextWindow = errors.New("unsupported-context-window")
 	ErrConflictingContextWindow = errors.New("conflicting-context-window")
 	ErrConflictingModelIdentity = errors.New("conflicting-model-identity")
 )
@@ -45,11 +46,15 @@ func ResolveInput(provider, legacyModel, modelIdentity string, contextWindow *ui
 	identity := strings.TrimSpace(modelIdentity)
 	hasCanonical := identity != "" || contextWindow != nil
 
-	if strings.ToLower(strings.TrimSpace(provider)) != "claude" {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	if contextWindow != nil && normalizedProvider != "claude" && normalizedProvider != "codex" {
+		return nil, ErrUnsupportedContextWindow
+	}
+	if normalizedProvider != "claude" {
 		if contextWindow != nil && *contextWindow == 0 {
 			return nil, ErrInvalidContextWindow
 		}
-		if hasCanonical && identity == "" && legacy == "" {
+		if hasCanonical && identity == "" && legacy == "" && normalizedProvider != "codex" {
 			return nil, ErrEmptyModel
 		}
 		if identity != "" && legacy != "" && identity != legacy {
@@ -192,6 +197,8 @@ func ErrorCode(err error) string {
 		return ErrInvalidModelIdentity.Error()
 	case errors.Is(err, ErrInvalidContextWindow):
 		return ErrInvalidContextWindow.Error()
+	case errors.Is(err, ErrUnsupportedContextWindow):
+		return ErrUnsupportedContextWindow.Error()
 	case errors.Is(err, ErrConflictingContextWindow):
 		return ErrConflictingContextWindow.Error()
 	case errors.Is(err, ErrConflictingModelIdentity):

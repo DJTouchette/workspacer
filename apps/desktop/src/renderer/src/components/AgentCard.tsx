@@ -433,6 +433,8 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         {ctxPct !== undefined ? (
           <>
             <span
+              data-testid="agent-row-context-bar"
+              aria-label={`Active context ${Math.round(ctxPct)}% of runtime-confirmed window`}
               style={{
                 flex: 1,
                 height: 5,

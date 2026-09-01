@@ -67,7 +67,11 @@ const base = {
   lastActivity: Date.now(),
 };
 
-function harnessFor(agents: any[], snapshotOverrides: Record<string, any> = {}) {
+function harnessFor(
+  agents: any[],
+  snapshotOverrides: Record<string, any> = {},
+  statusOverrides: Record<string, any> = {},
+) {
   const snapshotBySession: Record<string, any> = Object.fromEntries(
     agents.map((a) => [
       a.sessionId,
@@ -75,7 +79,7 @@ function harnessFor(agents: any[], snapshotOverrides: Record<string, any> = {}) 
     ]),
   );
   const statusBySession: Record<string, any> = Object.fromEntries(
-    agents.map((a) => [a.sessionId, 'idle']),
+    agents.map((a) => [a.sessionId, statusOverrides[a.sessionId] ?? 'idle']),
   );
 
   const Harness: React.FC = () => {
@@ -116,6 +120,51 @@ function harnessFor(agents: any[], snapshotOverrides: Record<string, any> = {}) 
   };
   return Harness;
 }
+
+describe('SideBar agent-row context bar', () => {
+  it('uses runtime-confirmed occupancy and never the requested 1M estimate', () => {
+    const agents = [mkAgent('worker', 'worker')];
+    const RequestedOnly = harnessFor(
+      agents,
+      {
+        's-worker': {
+          provider: 'codex',
+          requestedSelection: { model: 'gpt-5.6-codex', contextWindow: 1_000_000 },
+          resolvedContextWindow: 1_000_000,
+          usage: {
+            contextTokens: 129_200,
+            contextLimit: 1_000_000,
+            totalInputTokens: 74_000_000,
+            totalOutputTokens: 1_000_000,
+          },
+        },
+      },
+      { 's-worker': 'thinking' },
+    );
+    const view = render(<RequestedOnly />);
+    expect(screen.queryByTestId('sidebar-agent-context-bar')).toBeNull();
+
+    const Confirmed = harnessFor(
+      agents,
+      {
+        's-worker': {
+          provider: 'codex',
+          requestedSelection: { model: 'gpt-5.6-codex', contextWindow: 1_000_000 },
+          usage: {
+            contextTokens: 129_200,
+            contextLimit: 1_000_000,
+            totalInputTokens: 74_000_000,
+            totalOutputTokens: 1_000_000,
+          },
+          statusLine: { contextWindowSize: 258_400 },
+        },
+      },
+      { 's-worker': 'thinking' },
+    );
+    view.rerender(<Confirmed />);
+    expect(screen.getByTestId('sidebar-agent-context-bar')).toHaveAccessibleName(/50%/);
+  });
+});
 
 describe('SideBar fleet nesting — grandchildren', () => {
   it('nests a three-level chain (manager → worker → sub-worker) under the manager', () => {

@@ -182,6 +182,35 @@ fn set_model_in_argv(argv: &mut Vec<String>, provider: &str, model: &str) {
     *argv = out;
 }
 
+/// Make Codex's documented spawn-time context override agree with the wire.
+fn set_context_window_in_argv(argv: &mut Vec<String>, provider: &str, window: Option<u64>) {
+    if !provider.eq_ignore_ascii_case("codex") {
+        return;
+    }
+    let mut out = Vec::with_capacity(argv.len() + usize::from(window.is_some()) * 2);
+    let mut index = 0;
+    while index < argv.len() {
+        if argv[index] == "-c"
+            && argv
+                .get(index + 1)
+                .is_some_and(|value| value.trim().starts_with("model_context_window="))
+        {
+            index += 2;
+            continue;
+        }
+        out.push(argv[index].clone());
+        index += 1;
+    }
+    if let Some(window) = window {
+        out.extend(["-c".to_string(), format!("model_context_window={window}")]);
+    }
+    *argv = out;
+}
+
+fn context_window_for_spawn(requested: Option<u64>, persisted: Option<u64>) -> Option<u64> {
+    requested.or(persisted)
+}
+
 /// Reject a working directory no child could actually start in — the daemon-side
 /// backstop under the desktop's own pre-flight (`main/lib/spawnCwd.ts`).
 ///
@@ -265,6 +294,12 @@ pub async fn handle(
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let prior_context_window = store
+        .requested_model_selection(&session_id)
+        .and_then(|selection| selection.selection.context_window);
+    let effective_context_window =
+        context_window_for_spawn(payload.context_window, prior_context_window);
+    set_context_window_in_argv(&mut payload.argv, input_provider, effective_context_window);
     let cwd = payload.cwd.clone();
     let cols = payload.cols.unwrap_or(80);
     let rows = payload.rows.unwrap_or(24);
@@ -690,6 +725,12 @@ pub async fn handle_managed(
                 payload.cwd.clone(),
                 payload.model.clone(),
                 payload.effort.clone(),
+                context_window_for_spawn(
+                    payload.context_window,
+                    store
+                        .requested_model_selection(&session_id)
+                        .and_then(|selection| selection.selection.context_window),
+                ),
                 bin,
                 payload.yolo,
                 headless,
@@ -861,6 +902,35 @@ pub async fn handle_provider_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_context_override_is_injected_replaced_and_provider_scoped() {
+        let mut fresh = vec!["codex".to_string()];
+        set_context_window_in_argv(&mut fresh, "codex", Some(1_000_000));
+        assert_eq!(fresh, vec!["codex", "-c", "model_context_window=1000000"]);
+
+        let mut explicit = vec![
+            "codex".to_string(),
+            "-c".to_string(),
+            "model_context_window=272000".to_string(),
+        ];
+        set_context_window_in_argv(&mut explicit, "codex", Some(500_000));
+        assert_eq!(explicit, vec!["codex", "-c", "model_context_window=500000"]);
+
+        let mut unsupported = vec!["opencode".to_string()];
+        set_context_window_in_argv(&mut unsupported, "opencode", Some(1_000_000));
+        assert_eq!(unsupported, vec!["opencode"]);
+    }
+
+    #[test]
+    fn resume_uses_persisted_context_but_an_explicit_request_wins() {
+        assert_eq!(context_window_for_spawn(None, Some(400_000)), Some(400_000));
+        assert_eq!(
+            context_window_for_spawn(Some(1_000_000), Some(400_000)),
+            Some(1_000_000)
+        );
+        assert_eq!(context_window_for_spawn(None, None), None);
+    }
 
     /// The ghost this guard exists to prevent: both spawn routes answer 200 with
     /// a session id before anyone knows the child lives, so an unusable cwd used

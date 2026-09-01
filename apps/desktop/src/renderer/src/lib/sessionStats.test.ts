@@ -91,12 +91,13 @@ describe('deriveSessionStats — the 23M worker (live specimen)', () => {
     expect(stats.contextTokens!).toBeLessThan(stats.billedTokens!);
   });
 
-  it('DISBELIEVES a statusLine percentage whose window the session has disproved', () => {
+  it('omits a percentage when runtime window telemetry is disproved', () => {
     // 356,380 tokens cannot fit a 200k window, so `contextUsedPct: 100` is a
     // reading of a window this session is not on. Before this guard the bar
-    // pegged red at 100% on a worker sitting at 36%.
+    // A requested 1M estimate cannot replace disproved runtime telemetry: it
+    // remains provisional in the Context popover, never a bar denominator.
     const stats = deriveSessionStats(WORKER_23M);
-    expect(Math.round(stats.ctxPct!)).toBe(36);
+    expect(stats.ctxPct).toBeUndefined();
   });
 
   it('still trusts the statusLine percentage when its window holds up', () => {
