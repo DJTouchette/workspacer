@@ -15,6 +15,14 @@ promoted: false
 ## Observation
 Hub threshold watches are mutable while armed because sweepThresholds binds context telemetry and changes state. notifyWhen must deep-copy every pointer-bearing field while watchMu is held, then marshal and deliver that detached copy after unlocking. Returning or marshalling the map-owned *thresholdWatch after unlock races the sweep; marshalling the detached value does not.
 
+The race scheduler cannot promise to interleave a tiny JSON marshal with every
+sweep on every machine. The Hub regression therefore combines real concurrent
+notifyWhen/sweepThresholds race stress with a Go-AST contract over notifyWhen:
+the result of `snapshotThresholdWatch` must be produced before unlock and the
+same result must reach `jsonResult` after it. This makes the exact live-pointer
+return mutation deterministically red without a production hook or mutable test
+seam.
+
 ## Impact
 A live watch pointer can be read by JSON encoding concurrently with sweep mutation, producing a Go data race and an incoherent arm response.
 

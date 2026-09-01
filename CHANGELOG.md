@@ -52,6 +52,15 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   agents it governs.
 
 ### Changed
+- **Context-window controls are now provider-scoped, and requests stay
+  provisional.** Claude and Codex context variants are selectable through the
+  shared spawn and session controls; the Fleet Manager keeps a separate saved
+  preference for each provider. A fresh Codex session with no explicit choice
+  requests a 1,000,000-token window, while a resume keeps its durable request
+  when it has one and a legacy resume without one stays on Codex's
+  provider/default behaviour. A requested window is not a promise that the
+  runtime granted it: occupancy, context bars and `contextUsedPct` watches use
+  only the provider's runtime-confirmed effective window.
 - **Context health now reports only active, runtime-confirmed occupancy.** Legacy
   Codex telemetry that has no last-request usage now shows context waiting
   instead of inventing a percentage; Copilot occupancy uses
