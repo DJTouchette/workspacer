@@ -606,7 +606,9 @@ async function awaitHealthPatiently(url: string, signal: AbortSignal): Promise<v
     return;
   } catch (err) {
     if (signal.aborted) throw err;
-    console.warn(`[hub] not healthy after ${HEALTH_TIMEOUT_MS}ms but still running — waiting on: ${err}`);
+    console.warn(
+      `[hub] not healthy after ${HEALTH_TIMEOUT_MS}ms but still running — waiting on: ${err}`,
+    );
     // Same key as the caller's failure notice, so whichever lands last (this
     // warn, the recovery info below, or the caller's give-up) replaces the rest.
     notifySystem({
