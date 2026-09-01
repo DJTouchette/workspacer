@@ -780,10 +780,11 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// agents.spawn so this path can't silently fall back to spawning Claude.
 	provider := r.roleProviderDefault(p)
 	if provider != "claude" {
-		if provider == "codex" && p.ContextWindow == nil && p.ResumeSessionID == "" {
-			window := modelselection.OneMillion
-			p.ContextWindow = &window
-		}
+		p.ContextWindow = modelselection.ContextWindowForNewSpawn(
+			provider,
+			p.ContextWindow,
+			p.ResumeSessionID != "",
+		)
 		resolved, err := modelselection.ResolveInput(provider, p.Model, p.ModelIdentity, p.ContextWindow)
 		if err != nil {
 			return nil, fmt.Errorf("invalid %s model selection: %w", provider, err)

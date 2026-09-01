@@ -22,6 +22,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Fresh-Codex spawn request from the cross-language contract fixture's
+/// `providerContextDefaults` block. It is intentionally distinct from the
+/// model lookup table: this is a requested CLI override, not a reported window.
+pub const DEFAULT_CODEX_CONTEXT_WINDOW: u64 = 1_000_000;
+
 /// How a table row matches a model id (already lowercased).
 ///
 /// Normative, not an implementation detail: the `o3` / `o4` rows are `Prefix`
@@ -587,6 +592,8 @@ mod tests {
 
     #[derive(Deserialize)]
     struct Fixture {
+        #[serde(rename = "providerContextDefaults")]
+        provider_context_defaults: Vec<ProviderContextDefault>,
         windows: Vec<WindowCase>,
         #[serde(rename = "lookupCases")]
         lookup_cases: Vec<LookupCase>,
@@ -600,6 +607,14 @@ mod tests {
         input_cases: Vec<InputCase>,
         #[serde(rename = "resolutionCases")]
         resolution_cases: Vec<ResolutionCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct ProviderContextDefault {
+        provider: String,
+        #[serde(rename = "freshContextWindow")]
+        fresh_context_window: u64,
+        note: String,
     }
 
     #[derive(Deserialize)]
@@ -686,6 +701,26 @@ mod tests {
 
     fn fixture() -> Fixture {
         serde_json::from_str(FIXTURE).expect("model-context-windows.json parses")
+    }
+
+    #[test]
+    fn provider_context_defaults_match_the_contract() {
+        let f = fixture();
+        assert_eq!(
+            f.provider_context_defaults.len(),
+            1,
+            "provider defaults were removed"
+        );
+        let codex = f
+            .provider_context_defaults
+            .iter()
+            .find(|row| row.provider == "codex")
+            .expect("the contract must name Codex");
+        assert_eq!(
+            DEFAULT_CODEX_CONTEXT_WINDOW, codex.fresh_context_window,
+            "Codex default drifted from the contract — {}",
+            codex.note
+        );
     }
 
     /// The table itself, row for row and IN ORDER. A lookup corpus alone would

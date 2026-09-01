@@ -211,6 +211,20 @@ fn context_window_for_spawn(requested: Option<u64>, persisted: Option<u64>) -> O
     requested.or(persisted)
 }
 
+/// The managed Codex ingress is a second spawn surface: direct clients can
+/// omit both model and contextWindow, and still need the contract's fresh-life
+/// request. A resume is intentionally excluded; a pre-feature session has no
+/// persisted request and must stay on the provider's own default.
+fn managed_codex_context_window_for_spawn(
+    requested: Option<u64>,
+    persisted: Option<u64>,
+    is_resume: bool,
+) -> Option<u64> {
+    requested
+        .or(persisted)
+        .or_else(|| (!is_resume).then_some(crate::session::windows::DEFAULT_CODEX_CONTEXT_WINDOW))
+}
+
 /// Reject a working directory no child could actually start in — the daemon-side
 /// backstop under the desktop's own pre-flight (`main/lib/spawnCwd.ts`).
 ///
@@ -580,6 +594,16 @@ pub async fn handle_managed(
     if let Some(problem) = cwd_problem(&payload.cwd) {
         return (StatusCode::BAD_REQUEST, problem).into_response();
     }
+    // Default before normalization/persistence so direct, model-less managed
+    // Codex callers receive the same request as desktop and hub callers.
+    // `normalize_model_input` permits this Codex-only model-less pair.
+    if payload.provider == "codex" {
+        payload.context_window = managed_codex_context_window_for_spawn(
+            payload.context_window,
+            None,
+            payload.resume.is_some(),
+        );
+    }
     let persisted_selection = match normalize_model_input(
         &payload.provider,
         payload.model.as_deref(),
@@ -725,11 +749,12 @@ pub async fn handle_managed(
                 payload.cwd.clone(),
                 payload.model.clone(),
                 payload.effort.clone(),
-                context_window_for_spawn(
+                managed_codex_context_window_for_spawn(
                     payload.context_window,
                     store
                         .requested_model_selection(&session_id)
                         .and_then(|selection| selection.selection.context_window),
+                    payload.resume.is_some(),
                 ),
                 bin,
                 payload.yolo,
@@ -930,6 +955,22 @@ mod tests {
             Some(1_000_000)
         );
         assert_eq!(context_window_for_spawn(None, None), None);
+    }
+
+    #[test]
+    fn fresh_managed_codex_defaults_but_legacy_resume_remains_provider_default() {
+        assert_eq!(
+            managed_codex_context_window_for_spawn(None, None, false),
+            Some(crate::session::windows::DEFAULT_CODEX_CONTEXT_WINDOW),
+        );
+        assert_eq!(
+            managed_codex_context_window_for_spawn(None, None, true),
+            None
+        );
+        assert_eq!(
+            managed_codex_context_window_for_spawn(Some(400_000), None, true),
+            Some(400_000),
+        );
     }
 
     /// The ghost this guard exists to prevent: both spawn routes answer 200 with

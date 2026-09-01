@@ -12,6 +12,24 @@ import (
 
 const OneMillion uint64 = 1_000_000
 
+// DefaultCodexContextWindow is the fresh-Codex spawn request from
+// contracts/model-context-windows.json's providerContextDefaults block. Its
+// contract test keeps this Go ingress aligned with the desktop and daemon.
+const DefaultCodexContextWindow uint64 = 1_000_000
+
+// ContextWindowForNewSpawn applies the provider request policy before model
+// normalization. Codex permits an explicit context request without a model, so
+// this must not be hidden behind a model-selection gate. Resumes deliberately
+// stay untouched: sessions created before this feature have no durable request
+// and must retain their provider default rather than be retroactively upgraded.
+func ContextWindowForNewSpawn(provider string, contextWindow *uint64, isResume bool) *uint64 {
+	if contextWindow != nil || isResume || !strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		return contextWindow
+	}
+	window := DefaultCodexContextWindow
+	return &window
+}
+
 var (
 	ErrEmptyModel               = errors.New("empty-model")
 	ErrInvalidModelIdentity     = errors.New("invalid-model-identity")

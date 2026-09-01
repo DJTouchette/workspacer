@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 )
 
 func TestCodexSpawnContextDefaultOverrideAndResume(t *testing.T) {
@@ -29,7 +31,7 @@ func TestCodexSpawnContextDefaultOverrideAndResume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if bodies[0].ContextWindow == nil || *bodies[0].ContextWindow != 1_000_000 {
+	if bodies[0].ContextWindow == nil || *bodies[0].ContextWindow != modelselection.DefaultCodexContextWindow {
 		t.Fatalf("fresh default = %v, want 1M", bodies[0].ContextWindow)
 	}
 	if bodies[1].ContextWindow == nil || *bodies[1].ContextWindow != 400_000 {

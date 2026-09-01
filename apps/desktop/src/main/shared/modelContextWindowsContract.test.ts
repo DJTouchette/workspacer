@@ -22,6 +22,7 @@ import {
   requestedWindowFor,
   resolveContextWindow,
 } from './modelContextWindows';
+import { DEFAULT_CODEX_CONTEXT_WINDOW, contextRequestForSpawn } from './providerContext';
 
 interface WindowRowCase {
   match: string;
@@ -66,6 +67,11 @@ interface ClaudeArgvCase {
   error: string | null;
   note: string;
 }
+interface ProviderContextDefault {
+  provider: string;
+  freshContextWindow: number;
+  note: string;
+}
 
 // This file lives at apps/desktop/src/main/shared/ — five levels below the
 // repo root, where contracts/ sits.
@@ -87,6 +93,7 @@ const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8')) as {
   selectionCases: SelectionCase[];
   claudeArgvCases: ClaudeArgvCase[];
   resolutionCases: ResolutionCase[];
+  providerContextDefaults: ProviderContextDefault[];
 };
 
 describe('model context window contract (shared with Rust windows.rs and Go windows.go)', () => {
@@ -97,6 +104,7 @@ describe('model context window contract (shared with Rust windows.rs and Go wind
     expect(fixture.selectionCases.length).toBeGreaterThanOrEqual(10);
     expect(fixture.claudeArgvCases.length).toBeGreaterThanOrEqual(4);
     expect(fixture.resolutionCases.length).toBeGreaterThanOrEqual(12);
+    expect(fixture.providerContextDefaults).toHaveLength(1);
   });
 
   // The table itself, row for row and IN ORDER. A lookup corpus alone would not
@@ -176,5 +184,15 @@ describe('model context window contract (shared with Rust windows.rs and Go wind
     expect(at(200_000)).toBe(200_000);
     expect(at(204_000)).toBe(200_000);
     expect(at(204_001)).toBeNull();
+  });
+
+  it('providerContextDefaults pins the fresh, model-less Codex spawn request', () => {
+    const codex = fixture.providerContextDefaults.find((row) => row.provider === 'codex');
+    expect(codex, 'Codex must have an explicit provider-level default').toBeDefined();
+    expect(DEFAULT_CODEX_CONTEXT_WINDOW, codex?.note).toBe(codex?.freshContextWindow);
+    expect(contextRequestForSpawn('codex', undefined)).toBe(codex?.freshContextWindow);
+    // Compatibility decision: pre-feature resumes without a durable request
+    // must keep the provider default, not be retroactively upgraded.
+    expect(contextRequestForSpawn('codex', undefined, 'legacy-session')).toBeUndefined();
   });
 });

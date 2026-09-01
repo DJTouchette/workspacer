@@ -105,9 +105,25 @@
           "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::resolutionCases",
           "services/hub/cmd/brain/windows_test.go::ResolutionCases"
         ]
+      },
+      "providerContextDefaults": {
+        "why": "Provider-level requests are separate from the model lookup table. A fresh Codex session asks its CLI for this window even when no model was selected; a resume with no persisted request deliberately remains provider-default for compatibility with sessions created before this control existed.",
+        "required": ["provider", "freshContextWindow", "note"],
+        "loaders": [
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::providerContextDefaults",
+          "services/hub/internal/modelselection/modelselection_test.go::ProviderContextDefaults",
+          "services/claudemon/src/session/windows.rs::provider_context_defaults"
+        ]
       }
     }
   },
+  "providerContextDefaults": [
+    {
+      "provider": "codex",
+      "freshContextWindow": 1000000,
+      "note": "A model-less new Codex life explicitly requests 1M. This is a spawn request, not a claim about the provider-reported effective runtime window."
+    }
+  ],
   "windows": [
     {
       "match": "[1m]",

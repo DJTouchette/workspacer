@@ -163,8 +163,10 @@ describe('spawnManagedAgent — spawn cwd pre-flight', () => {
 });
 
 describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
-  it('defaults a fresh Codex request to 1M and records the provisional request', async () => {
+  it('keeps the 1M default on the exact model-less fresh Codex path and records the provisional request', async () => {
     await spawnManagedAgent({ provider: 'codex', transport: 'stream', cwd: '/proj' });
+    expect(lastManaged().model).toBeUndefined();
+    expect(lastManaged().modelIdentity).toBeUndefined();
     expect(lastManaged().contextWindow).toBe(1_000_000);
     expect((lastMeta().settings as Payload).contextWindow).toBe(1_000_000);
   });

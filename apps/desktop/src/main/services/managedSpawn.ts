@@ -295,12 +295,16 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     provider,
     requestedModel,
     profileModel ? undefined : opts.modelIdentity,
-    profileModel
-      ? undefined
-      : requestedModel || opts.modelIdentity
-        ? requestedContextWindow
-        : undefined,
+    profileModel ? undefined : requestedContextWindow,
   );
+  // `contextRequestForSpawn` owns the fresh-Codex default even when no model
+  // is named. `resolveSpawnModelSelection` quite correctly returns no model
+  // selection in that case, so do not make this request depend on its optional
+  // result: model-less Codex is the normal provider-default path.
+  const effectiveContextWindow =
+    provider === 'codex'
+      ? requestedContextWindow
+      : (modelSelection?.contextWindow ?? requestedContextWindow);
   const spawnModel = modelSelection?.model;
   const serializedModel =
     isClaudeStream && modelSelection ? claudeArgvModel(modelSelection) : spawnModel;
@@ -462,7 +466,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(provider === 'codex' && { transport }),
     settings: {
       model: serializedModel,
-      contextWindow: modelSelection?.contextWindow ?? requestedContextWindow,
+      contextWindow: effectiveContextWindow,
       effort: spawnEffort,
       permissionMode,
       // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
@@ -498,7 +502,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     cwd,
     model: serializedModel,
     modelIdentity: modelSelection?.model,
-    contextWindow: modelSelection?.contextWindow ?? requestedContextWindow,
+    contextWindow: effectiveContextWindow,
     effort: spawnEffort,
     bin,
     yolo,

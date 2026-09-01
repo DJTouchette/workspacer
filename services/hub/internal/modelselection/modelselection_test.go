@@ -9,6 +9,11 @@ import (
 )
 
 type contract struct {
+	ProviderContextDefaults []struct {
+		Provider           string `json:"provider"`
+		FreshContextWindow uint64 `json:"freshContextWindow"`
+		Note               string `json:"note"`
+	} `json:"providerContextDefaults"`
 	InputCases []struct {
 		Name                  string  `json:"name"`
 		Provider              string  `json:"provider"`
@@ -50,10 +55,29 @@ func loadContract(t *testing.T) contract {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.InputCases) < 12 || len(c.SelectionCases) < 10 || len(c.ClaudeArgvCases) < 4 {
+	if len(c.ProviderContextDefaults) != 1 || len(c.InputCases) < 12 || len(c.SelectionCases) < 10 || len(c.ClaudeArgvCases) < 4 {
 		t.Fatal("the model-selection contract corpus was gutted")
 	}
 	return c
+}
+
+func TestProviderContextDefaultsFollowTheContract(t *testing.T) {
+	c := loadContract(t)
+	for _, tc := range c.ProviderContextDefaults {
+		if tc.Provider != "codex" {
+			t.Fatalf("unsupported provider context default %q", tc.Provider)
+		}
+		if DefaultCodexContextWindow != tc.FreshContextWindow {
+			t.Fatalf("Codex default = %d, want contract %d — %s", DefaultCodexContextWindow, tc.FreshContextWindow, tc.Note)
+		}
+		got := ContextWindowForNewSpawn(tc.Provider, nil, false)
+		if got == nil || *got != tc.FreshContextWindow {
+			t.Fatalf("model-less fresh Codex request = %v, want %d — %s", got, tc.FreshContextWindow, tc.Note)
+		}
+		if got := ContextWindowForNewSpawn(tc.Provider, nil, true); got != nil {
+			t.Fatalf("legacy Codex resume must remain provider-default, got %d", *got)
+		}
+	}
 }
 
 func TestInputCases(t *testing.T) {

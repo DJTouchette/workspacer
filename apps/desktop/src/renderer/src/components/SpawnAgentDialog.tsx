@@ -16,6 +16,7 @@ import { profilesForProvider } from '../lib/profileFields';
 import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
 import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../lib/modelOptions';
 import { normalizeModelSelection } from '../../../main/shared/modelContextWindows';
+import { DEFAULT_CODEX_CONTEXT_WINDOW } from '../../../main/shared/providerContext';
 import { ModelContextPopover } from './ModelContextPopover';
 
 /**
@@ -228,7 +229,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [seen, setSeen] = useState<ModelOption[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
-  const [codexContextWindow, setCodexContextWindow] = useState<number | null>(1_000_000);
+  const [codexContextWindow, setCodexContextWindow] = useState<number | null>(
+    DEFAULT_CODEX_CONTEXT_WINDOW,
+  );
   const [codexContextTouched, setCodexContextTouched] = useState(false);
   // Permission mode ('' = provider default: claude 'default', managed 'ask').
   // Effort is kept per provider: Claude and Codex have different ladders and a
@@ -888,7 +891,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             : provider === 'codex'
               ? [
                   { value: null, label: 'Provider default' },
-                  { value: 1_000_000, label: 'Request 1M' },
+                  { value: DEFAULT_CODEX_CONTEXT_WINDOW, label: 'Request 1M' },
                 ]
               : undefined
         }

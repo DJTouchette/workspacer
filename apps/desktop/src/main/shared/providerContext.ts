@@ -1,5 +1,11 @@
 /** Provider-level context-request policy shared by every desktop spawn door. */
 
+/**
+ * Fresh-Codex request from contracts/model-context-windows.json's
+ * providerContextDefaults block. modelContextWindowsContract.test.ts pins this
+ * consumer to that cross-language fixture; the renderer imports this exact
+ * value rather than carrying its own dialog literal.
+ */
 export const DEFAULT_CODEX_CONTEXT_WINDOW = 1_000_000;
 
 export function providerAcceptsContextRequest(provider: string): boolean {
