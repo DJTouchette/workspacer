@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/djtouchette/workspacer-hub/internal/nodes"
 )
 
 func readEntries(t *testing.T, path string) []Entry {
@@ -69,17 +71,14 @@ func TestDecisionLogJoinsADecisionToTheSpawnItProduced(t *testing.T) {
 	}
 }
 
-// Mode 0600, like routing.yaml and jobs.json beside it: the log names project
-// directories, the models spent in them, and which credential asked.
+// Owner-only, like routing.yaml and jobs.json beside it: the log names project
+// directories, the models spent in them, and which credential asked. Unix
+// proves this with mode bits; Windows proves it from the file's real DACL.
 func TestDecisionLogIsWrittenPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "routing-decisions.jsonl")
 	NewDecisionLog(path, 0).Decision(Decision{DecisionID: "rd_x"})
-	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("the log was not created (the directory should have been): %v", err)
-	}
-	if perm := st.Mode().Perm(); perm != 0o600 {
-		t.Errorf("decision log mode %v, want 0600", perm)
+	if got, why := nodes.FileExposure(path); got != nodes.ExposureOwnerOnly {
+		t.Errorf("decision log exposure = %v (%s), want owner-only", got, why)
 	}
 }
 
@@ -107,6 +106,11 @@ func TestDecisionLogRotatesRatherThanTrimming(t *testing.T) {
 	if _, err := os.Stat(path + ".1"); err != nil {
 		t.Errorf("no previous generation at %s.1 — rotation dropped the history instead of keeping one generation", path)
 	}
+	for _, generation := range []string{path, path + ".1"} {
+		if got, why := nodes.FileExposure(generation); got != nodes.ExposureOwnerOnly {
+			t.Errorf("rotated generation %s exposure = %v (%s), want owner-only", generation, got, why)
+		}
+	}
 	// Whatever is in the live file is still whole lines.
 	readEntries(t, path)
 }
@@ -127,7 +131,9 @@ func TestDecisionLogDisabledIsSilent(t *testing.T) {
 }
 
 func TestDecisionLogPathSitsBesideTheMatrix(t *testing.T) {
-	if got := DecisionLogPathFor("/home/u/.config/workspacer-hub/routing.yaml"); got != "/home/u/.config/workspacer-hub/routing-decisions.jsonl" {
+	dir := filepath.Join(t.TempDir(), "workspacer-hub")
+	matrix := filepath.Join(dir, "routing.yaml")
+	if got := DecisionLogPathFor(matrix); got != filepath.Join(dir, "routing-decisions.jsonl") {
 		t.Errorf("DecisionLogPathFor = %q", got)
 	}
 	if got := DecisionLogPathFor(""); got != "" {

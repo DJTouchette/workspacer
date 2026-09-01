@@ -3,6 +3,7 @@ package routing
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,12 +116,13 @@ func TestWhatAJudgeGetsUnderTheShippedDefaultCeiling(t *testing.T) {
 // A directory with its OWN ceiling caps harder than the default, and Select
 // honours it — the per-directory act the default is only a floor for.
 func TestSelectHonoursAPerDirectoryCeiling(t *testing.T) {
-	m, err := Load("test.yaml", []byte("ceilings:\n  /home/someone/locked: { max_capability: cheap, max_tool_scope: view }\n"))
+	locked := filepath.Join(t.TempDir(), "locked")
+	m, err := Load("test.yaml", []byte("ceilings:\n  "+strconv.Quote(locked)+": { max_capability: cheap, max_tool_scope: view }\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
-		Role: "implementer", CanonicalCwd: "/home/someone/locked/sub/dir",
+		Role: "implementer", CanonicalCwd: filepath.Join(locked, "sub", "dir"),
 	})
 	if !d.Eligible {
 		t.Fatalf("nothing spawnable under a cheap ceiling: %s", strings.Join(d.Reason, " | "))
@@ -262,24 +264,25 @@ func TestUnrankedCeilingJudgesNothing(t *testing.T) {
 }
 
 func TestCheckSpawnClampsTheToolScope(t *testing.T) {
+	client := filepath.Join(t.TempDir(), "client")
 	m, err := Load("test.yaml", []byte(
-		"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n  /home/me/client: { max_capability: balanced, max_tool_scope: triage }\n"))
+		"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n  "+strconv.Quote(client)+": { max_capability: balanced, max_tool_scope: triage }\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/home/me/client/sub", ToolScope: "operator", Capability: "frontier"})
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: filepath.Join(client, "sub"), ToolScope: "operator", Capability: "frontier"})
 	if !v.ToolScopeRefused || v.ToolScope != "triage" {
 		t.Errorf("operator was not clamped to triage inside a triage-capped tree: %+v", v)
 	}
 	if !v.CapabilityRefused || v.Capability != "balanced" {
 		t.Errorf("frontier was not clamped to balanced inside a balanced-capped tree: %+v", v)
 	}
-	if v.Key != "/home/me/client" {
+	if v.Key != client {
 		t.Errorf("matched ceiling %q, want the ancestor entry", v.Key)
 	}
 	// A sibling whose name shares the prefix is NOT inside it.
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/home/me/client-old", ToolScope: "operator"}); v.ToolScopeRefused {
-		t.Errorf("/home/me/client-old was treated as inside /home/me/client: %+v", v)
+	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: client + "-old", ToolScope: "operator"}); v.ToolScopeRefused {
+		t.Errorf("%s was treated as inside %s: %+v", client+"-old", client, v)
 	}
 }
 

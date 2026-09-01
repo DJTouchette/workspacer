@@ -205,12 +205,21 @@ func (l *DecisionLog) append(e Entry) {
 
 	// 0600 for the same reason routing.yaml and jobs.json are: this file names
 	// project directories, the models spent in them, and which credential asked.
-	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := openDecisionLogFile(l.path)
 	if err != nil {
 		l.complain("cannot open the decision log %s: %v", l.path, err)
 		return
 	}
 	defer f.Close()
+	// The Unix opener's mode only applies when it creates a new file, and on
+	// Windows a Go mode is not an ACL at all. Repair an existing loose file and
+	// install an owner-only Windows DACL before any sensitive row is written. If
+	// that cannot be established, fail closed for the audit bytes (routing itself is
+	// still deliberately non-fatal).
+	if err := secureDecisionLogFile(f); err != nil {
+		l.complain("cannot make the decision log %s private: %v", l.path, err)
+		return
+	}
 	if _, err := f.Write(line); err != nil {
 		l.complain("cannot write to the decision log %s: %v", l.path, err)
 		return
@@ -227,11 +236,28 @@ func (l *DecisionLog) rotateLocked(incoming int64) {
 		return
 	}
 	prev := l.path + ".1"
+	// A pre-existing log may have been loosened between writes. Privacy must
+	// follow the bytes into the retained generation, so repair the live file
+	// before renaming it. If that cannot be done, keep it in place and let the
+	// append path below refuse to add another sensitive row.
+	if err := secureDecisionLogPath(l.path); err != nil {
+		l.complain("cannot make the decision log private before rotation %s: %v", l.path, err)
+		return
+	}
 	if err := os.Rename(l.path, prev); err != nil {
 		l.complain("cannot rotate the decision log %s: %v", l.path, err)
 		return
 	}
 	log.Printf("[routing] decision log passed %d bytes; previous generation kept at %s", l.maxBytes, prev)
+}
+
+func secureDecisionLogPath(path string) error {
+	f, err := openDecisionLogFile(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return secureDecisionLogFile(f)
 }
 
 func (l *DecisionLog) complain(format string, args ...any) {

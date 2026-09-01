@@ -3,6 +3,7 @@ package routing
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -299,12 +300,12 @@ thresholds:
 // --- ceilings ----------------------------------------------------------------
 
 func TestCeilingForNearestAncestorThenDefault(t *testing.T) {
-	work := filepath.Join(string(filepath.Separator), "home", "u", "Work")
+	work := filepath.Join(t.TempDir(), "Work")
 	client := filepath.Join(work, "client")
 	m, err := Load("routing.yaml", []byte(`
 ceilings:
-  `+work+`: { max_capability: frontier, max_tool_scope: operator }
-  `+client+`: { max_capability: balanced, max_tool_scope: triage }
+  `+strconv.Quote(work)+`: { max_capability: frontier, max_tool_scope: operator }
+  `+strconv.Quote(client)+`: { max_capability: balanced, max_tool_scope: triage }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +324,7 @@ ceilings:
 	if _, key := m.CeilingFor(work + "-old"); key != CeilingDefaultKey {
 		t.Errorf("a directory whose NAME merely starts with a ceiling key matched %q — that is a prefix test, not containment", key)
 	}
-	if c, key := m.CeilingFor(filepath.Join(string(filepath.Separator), "tmp", "scratch")); key != CeilingDefaultKey || c.MaxCapability == "" {
+	if c, key := m.CeilingFor(filepath.Join(t.TempDir(), "scratch")); key != CeilingDefaultKey || c.MaxCapability == "" {
 		t.Errorf("an unlisted directory got %q %+v, want the default entry", key, c)
 	}
 }

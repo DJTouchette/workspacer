@@ -357,26 +357,30 @@ func (m *Matrix) ProviderPolicy(provider string) (Provider, bool) {
 // it matched.
 //
 // Matching is EXACT, then nearest ancestor directory, then CeilingDefaultKey.
-// It is deliberately LEXICAL over an already-resolved path: this function does
-// not canonicalize, does not resolve symlinks, and must never be handed a
-// caller-supplied string directly. The enforcement site canonicalizes first —
+// It is deliberately LEXICAL over an already-resolved path: filepath.Clean only
+// normalizes separators and dot components here; this function does not resolve
+// symlinks, and must never be handed a caller-supplied string directly. The
+// enforcement site canonicalizes first —
 // that is the same check-path/opened-path rule the filesystem guard is built on,
 // and a ceiling looked up on an unresolved path is a ceiling a symlink walks
 // around.
 func (m *Matrix) CeilingFor(canonicalDir string) (Ceiling, string) {
-	if c, ok := m.Ceilings[canonicalDir]; ok {
-		return c, canonicalDir
-	}
+	target := filepath.Clean(canonicalDir)
 	bestKey := ""
+	bestPath := ""
 	for key := range m.Ceilings {
 		if key == CeilingDefaultKey || !filepath.IsAbs(key) {
 			continue
 		}
-		if !isAtOrInside(key, canonicalDir) {
+		candidate := filepath.Clean(key)
+		if !isAtOrInside(candidate, target) {
 			continue
 		}
-		if len(key) > len(bestKey) {
-			bestKey = key
+		// Clean before comparing so a hand-written Windows key using forward
+		// slashes matches the canonical backslash form. Break equal-depth ties
+		// deterministically: maps deliberately do not promise iteration order.
+		if len(candidate) > len(bestPath) || (len(candidate) == len(bestPath) && key < bestKey) {
+			bestKey, bestPath = key, candidate
 		}
 	}
 	if bestKey != "" {
@@ -398,11 +402,11 @@ func (m *Matrix) CeilingFor(canonicalDir string) (Ceiling, string) {
 // answers "yes" for a sibling reached by "..", and the second makes
 // /home/u/work-old a child of /home/u/work.
 func isAtOrInside(dir, target string) bool {
-	if target == dir {
+	if routingPathsEqual(target, dir) {
 		return true
 	}
 	if !strings.HasSuffix(dir, string(filepath.Separator)) {
 		dir += string(filepath.Separator)
 	}
-	return strings.HasPrefix(target, dir)
+	return routingPathHasPrefix(target, dir)
 }
