@@ -783,7 +783,8 @@ impl UsageAcc {
         }
     }
 
-    pub fn status_line(&self) -> StatusLine {
+    #[cfg(test)]
+    fn status_line(&self) -> StatusLine {
         self.build_status_line(false)
     }
 

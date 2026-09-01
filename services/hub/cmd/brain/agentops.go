@@ -346,12 +346,16 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		}
 	}
 	r.watches[w.ID] = w
-	// Marshal the detached value while the mutex still protects the map-owned
-	// watch. sweepThresholds mutates context binding/state, so unlocking before
-	// this copy/marshal would hand json a live, concurrently mutable pointer.
-	result, err := jsonResult(snapshotThresholdWatch(w))
+	// Detach while the mutex still protects the map-owned watch. The JSON work
+	// itself can happen after release: sweepThresholds may bind context/state in
+	// the meantime, but it can no longer mutate the response being encoded.
+	response := snapshotThresholdWatch(w)
 	r.watchMu.Unlock()
-	return result, err
+	if hook := r.watchResponseSnapshotReady; hook != nil {
+		// Test seam for the exact unlock/marshal interleaving. Nil in production.
+		hook()
+	}
+	return jsonResult(response)
 }
 
 // crossedBy renders the predicate this session has crossed, or "".
@@ -810,4 +814,7 @@ type fleetState struct {
 	watchMu  sync.Mutex
 	watches  map[string]*thresholdWatch
 	watchSeq int
+	// Deterministically exercises a sweep after notifyWhen releases watchMu but
+	// before it marshals the response. Tests only; production leaves it nil.
+	watchResponseSnapshotReady func()
 }

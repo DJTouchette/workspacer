@@ -493,6 +493,35 @@ fn status_confirms_selection(
     }
 }
 
+/// Evidence-backed policies for adapters whose managed telemetry accumulator
+/// retains a displayable numerator/window pair across a live model switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostSwitchContextConfirmation {
+    /// Codex marks a new `last` + runtime-window update explicitly; that fresh
+    /// pair is successor evidence even when provider truth differs from the
+    /// requested/catalog window.
+    AnyFreshPair,
+    /// Claude stream-json can deliver a late predecessor `result`, so its fresh
+    /// pair must also match the accepted successor selection.
+    SelectionCompatiblePair,
+}
+
+/// Deliberately not provider-neutral. Codex app-server and Claude stream-json
+/// have demonstrated the cached-pair ingress; Claude PTY statusLine, OpenCode,
+/// Pi, and Copilot have not.
+fn post_switch_context_confirmation_policy(
+    provider: &str,
+    transport: Transport,
+) -> Option<PostSwitchContextConfirmation> {
+    match (provider, transport) {
+        ("codex", _) => Some(PostSwitchContextConfirmation::AnyFreshPair),
+        ("claude", Transport::Stream) => {
+            Some(PostSwitchContextConfirmation::SelectionCompatiblePair)
+        }
+        _ => None,
+    }
+}
+
 /// Keep asynchronous provider telemetry on the epoch it can prove. A frame
 /// with no command id cannot overwrite an accepted owner selection merely by
 /// arriving later; incompatible model/window fields are withheld while cost,
@@ -573,7 +602,19 @@ fn reconcile_context_health(session: &mut SessionState, status: &mut StatusLine)
     // belong to the predecessor, so keep this display fence until a successor
     // runtime pair arrives. Billing counters remain untouched.
     if session.context_display_confirmation_pending {
-        if has_fresh_runtime_pair {
+        let confirms_successor =
+            match post_switch_context_confirmation_policy(&session.provider, session.transport) {
+                Some(PostSwitchContextConfirmation::AnyFreshPair) => has_fresh_runtime_pair,
+                Some(PostSwitchContextConfirmation::SelectionCompatiblePair) => {
+                    has_fresh_runtime_pair
+                        && session
+                            .requested_selection
+                            .as_ref()
+                            .is_some_and(|selection| status_confirms_selection(status, selection))
+                }
+                None => false,
+            };
+        if confirms_successor {
             session.context_display_confirmation_pending = false;
         } else {
             status.context_window_size = None;
@@ -1544,10 +1585,11 @@ impl SessionStore {
             entry.context_telemetry_epoch = fresh_epoch;
             entry.pending_model_confirmation = Some(persisted.selection.clone());
             entry.model_confirmation_suppressions_remaining = MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
-            // Codex's app-server retains a displayable occupancy pair in its
-            // UsageAcc across model-only ticks; unlike Claude's status line,
-            // that cached pair has no successor-request provenance.
-            entry.context_display_confirmation_pending = entry.provider == "codex";
+            // Only adapters with observed cached-pair behavior get this
+            // unbounded DISPLAY fence. See the helper for the explicit policy;
+            // the bounded model-label fence above remains provider-neutral.
+            entry.context_display_confirmation_pending =
+                post_switch_context_confirmation_policy(&entry.provider, entry.transport).is_some();
             if let Some(status) = entry.status_line.as_mut() {
                 status.model_display = None;
                 status.context_window_size = None;
@@ -2832,6 +2874,29 @@ impl Default for SessionStore {
 mod tests {
     use super::*;
     use crate::session::state::{ContextHealth, PendingOwner};
+
+    #[test]
+    fn post_switch_context_confirmation_policy_is_evidence_backed() {
+        assert_eq!(
+            post_switch_context_confirmation_policy("codex", Transport::Stream),
+            Some(PostSwitchContextConfirmation::AnyFreshPair)
+        );
+        assert_eq!(
+            post_switch_context_confirmation_policy("claude", Transport::Stream),
+            Some(PostSwitchContextConfirmation::SelectionCompatiblePair)
+        );
+        assert_eq!(
+            post_switch_context_confirmation_policy("claude", Transport::Pty),
+            None,
+            "Claude PTY has no UsageAcc cached-pair ingress"
+        );
+        for provider in ["copilot", "opencode", "pi", "future-provider"] {
+            assert!(
+                post_switch_context_confirmation_policy(provider, Transport::Stream).is_none(),
+                "{provider} was blanket-fenced without a demonstrated cached-pair ingress"
+            );
+        }
+    }
 
     fn hook(event: &str, session_id: &str, cwd: &str) -> HookEvent {
         HookEvent {

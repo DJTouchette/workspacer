@@ -611,6 +611,43 @@ func TestNotifyWhenContextHealthParity(t *testing.T) {
 	}
 }
 
+func TestNotifyWhenDoesNotResurrectCompatHealthClearedByRawStatusLine(t *testing.T) {
+	now := time.Now().UTC()
+	epoch := telemetryEpoch("1788888888888888901")
+	health := fmt.Sprintf(`{"usedTokens":180000,"windowTokens":200000,"usedPct":90,"windowSource":"runtime","observedAt":%q,"epoch":%q,"provider":"codex"}`,
+		now.Format(time.RFC3339Nano), epoch)
+	worker := fmt.Sprintf(`{"session_id":"worker","cwd":"/w/p","mode":"responding","provider":"codex","statusLine":{"contextHealth":%s},"status_line":{"context_health":{"used_tokens":180000,"window_tokens":200000,"used_pct":90,"window_source":"runtime","observed_at":%q,"epoch":%q,"provider":"codex"}}}`,
+		health, now.Format(time.RFC3339Nano), epoch)
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := fleetReg(t, srv.URL,
+		map[string]string{"mgr": row("mgr", "/w", "input"), "worker": worker},
+		map[string]spawnMeta{"worker": {ParentSessionID: "mgr"}})
+
+	// The real high-frequency path replaces only status_line. A present raw
+	// object whose context_health is null authoritatively clears the sample;
+	// the untouched 90% camelCase overlay above is now stale compatibility data.
+	reg.store.updateStatusLine("worker", json.RawMessage(`{"context_health":null}`))
+	result, err := reg.handle(context.Background(), "agents.notifyWhen", json.RawMessage(
+		`{"sessionId":"worker","contextUsedPct":80}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var armed thresholdWatch
+	if err := json.Unmarshal(result, &armed); err != nil {
+		t.Fatal(err)
+	}
+	if armed.State != "waitingForTelemetry" || armed.ContextEpoch != nil {
+		t.Fatalf("cleared raw health resurrected the stale compat sample: %+v", armed)
+	}
+	reg.sweepThresholds(context.Background(), now)
+	if got := len(rec.calls("/sessions/mgr/message")); got != 0 {
+		t.Fatalf("stale 90%% compat health fired %d wake(s) after raw clear", got)
+	}
+}
+
 func TestNotifyWhenHookAdoptedProviderWaitsAndBindsNormalizedTelemetry(t *testing.T) {
 	now := time.Now().UTC()
 	rec := newRecorder()

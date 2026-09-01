@@ -81,6 +81,7 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
       }
       try {
         const sl = update.status_line ?? {};
+        const telemetryEpoch = mapTelemetryEpoch(sl.context_health?.epoch);
         // Map the wire (snake_case) shape to the renderer's camelCase type.
         claudeSessionStore.applyStatusLine(update.session_id, {
           modelDisplay: sl.model_display,
@@ -95,14 +96,14 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
               ? 'waitingForRuntimeUsage'
               : undefined,
           contextHealth:
-            sl.context_health && mapTelemetryEpoch(sl.context_health.epoch)
+            sl.context_health && telemetryEpoch
               ? {
                   usedTokens: sl.context_health.used_tokens,
                   windowTokens: sl.context_health.window_tokens,
                   usedPct: sl.context_health.used_pct,
                   windowSource: sl.context_health.window_source,
                   observedAt: sl.context_health.observed_at,
-                  epoch: mapTelemetryEpoch(sl.context_health.epoch)!,
+                  epoch: telemetryEpoch,
                   provider: sl.context_health.provider,
                 }
               : undefined,

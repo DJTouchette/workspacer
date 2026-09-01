@@ -2218,6 +2218,204 @@ mod tests {
     }
 
     #[test]
+    fn model_switch_keeps_claude_display_fenced_until_successor_result_pair() {
+        fn apply_frame(
+            store: &SessionStore,
+            conv: &ConversationStore,
+            totals: &mut StreamTotals,
+            mode: &mut SessionMode,
+            acc: &mut UsageAcc,
+            frame: Value,
+        ) {
+            apply_updates(
+                store,
+                conv,
+                "claude-switch",
+                translate(&frame, totals),
+                mode,
+                acc,
+            );
+        }
+
+        let store = SessionStore::new();
+        store.register_managed("claude-switch", "/tmp", "claude");
+        store.set_transport("claude-switch", crate::session::state::Transport::Stream);
+        let conv = ConversationStore::new();
+        let mut totals = StreamTotals::default();
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "system", "subtype": "init", "model": "claude-sonnet-4-5" }),
+        );
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "assistant", "message": {
+                "model": "claude-sonnet-4-5", "content": [],
+                "usage": { "input_tokens": 20_000, "cache_read_input_tokens": 160_000,
+                           "cache_creation_input_tokens": 0 }
+            }}),
+        );
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "result", "subtype": "success", "is_error": false,
+                "total_cost_usd": 4.25,
+                "usage": { "input_tokens": 100, "output_tokens": 20 },
+                "modelUsage": { "claude-sonnet-4-5": { "contextWindow": 200_000 } }
+            }),
+        );
+        let predecessor = store.get("claude-switch").unwrap().status_line.unwrap();
+        assert_eq!(predecessor.context_window_size, Some(200_000));
+        assert_eq!(predecessor.context_used_pct, Some(90.0));
+        assert_eq!(predecessor.cost_usd, Some(4.25));
+        assert_eq!(predecessor.context_health.unwrap().used_tokens, 180_000);
+
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("opus[1m]").unwrap();
+        store.accept_requested_model_selection("claude-switch", &selection);
+        let successor_epoch = store.get("claude-switch").unwrap().context_telemetry_epoch;
+
+        // These are real claude_stream rate-limit frames. Each makes UsageAcc
+        // publish another status tick carrying its cached predecessor display
+        // pair. Five ticks cross the old three-frame model-fence boundary.
+        for tick in 1..=5 {
+            apply_frame(
+                &store,
+                &conv,
+                &mut totals,
+                &mut mode,
+                &mut acc,
+                json!({ "type": "rate_limit_event", "rate_limit_info": {
+                    "status": "allowed", "rateLimitType": "five_hour",
+                    "utilization": 10.0 + tick as f64
+                }}),
+            );
+            let line = store.get("claude-switch").unwrap().status_line.unwrap();
+            assert!(
+                line.context_used_pct.is_none(),
+                "tick {tick} leaked predecessor numerator"
+            );
+            assert!(
+                line.context_window_size.is_none(),
+                "tick {tick} leaked predecessor window"
+            );
+            assert!(
+                line.context_health.is_none(),
+                "tick {tick} laundered predecessor health"
+            );
+            assert_eq!(
+                line.cost_usd,
+                Some(4.25),
+                "billing was suppressed at tick {tick}"
+            );
+            assert_eq!(line.five_hour_pct, Some(10.0 + tick as f64));
+        }
+
+        // Even a newly received, internally correlated predecessor result pair
+        // cannot satisfy the successor's 1M confirmation fence. Its billing is
+        // still current and must continue to land.
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "assistant", "message": {
+                "model": "claude-sonnet-4-5", "content": [],
+                "usage": { "input_tokens": 30_000, "cache_read_input_tokens": 160_000,
+                           "cache_creation_input_tokens": 0 }
+            }}),
+        );
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "result", "subtype": "success", "is_error": false,
+                "total_cost_usd": 5.0,
+                "usage": { "input_tokens": 50, "output_tokens": 10 },
+                "modelUsage": { "claude-sonnet-4-5": { "contextWindow": 200_000 } }
+            }),
+        );
+        let stale_result = store.get("claude-switch").unwrap().status_line.unwrap();
+        assert!(stale_result.context_used_pct.is_none());
+        assert!(stale_result.context_window_size.is_none());
+        assert!(stale_result.context_health.is_none());
+        assert_eq!(stale_result.cost_usd, Some(5.0));
+
+        // A successor model identity plus the result's correlated 250K/1M pair
+        // is the first evidence allowed to release the display and health.
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "stream_event", "event": {
+                "type": "message_start", "message": { "model": "claude-opus-4-6" }
+            }}),
+        );
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "assistant", "message": {
+                "model": "claude-opus-4-6", "content": [],
+                "usage": { "input_tokens": 50_000, "cache_read_input_tokens": 200_000,
+                           "cache_creation_input_tokens": 0 }
+            }}),
+        );
+        let numerator_only = store.get("claude-switch").unwrap().status_line.unwrap();
+        assert!(
+            numerator_only.context_used_pct.is_none(),
+            "fresh successor numerator was divided by the cached predecessor window"
+        );
+        assert!(numerator_only.context_window_size.is_none());
+        assert!(numerator_only.context_health.is_none());
+        assert_eq!(numerator_only.cost_usd, Some(5.0));
+        apply_frame(
+            &store,
+            &conv,
+            &mut totals,
+            &mut mode,
+            &mut acc,
+            json!({ "type": "result", "subtype": "success", "is_error": false,
+                "total_cost_usd": 6.5,
+                "usage": { "input_tokens": 60, "output_tokens": 15 },
+                "modelUsage": { "claude-opus-4-6": { "contextWindow": 1_000_000 } }
+            }),
+        );
+        let successor = store.get("claude-switch").unwrap().status_line.unwrap();
+        assert_eq!(successor.model_display.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(successor.context_window_size, Some(1_000_000));
+        assert_eq!(successor.context_used_pct, Some(25.0));
+        assert_eq!(successor.cost_usd, Some(6.5));
+        let health = successor
+            .context_health
+            .expect("successor pair publishes health");
+        assert_eq!(health.used_tokens, 250_000);
+        assert_eq!(health.window_tokens, 1_000_000);
+        assert_eq!(health.provider, "claude");
+        assert_eq!(health.epoch, successor_epoch);
+    }
+
+    #[test]
     fn error_result_surfaces_except_user_interrupts() {
         // A real failure surfaces.
         let updates = t(

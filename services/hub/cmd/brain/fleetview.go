@@ -144,7 +144,7 @@ func (s fleetSession) contextHealth(now time.Time) *contextHealthReading {
 			WindowSource: raw.WindowSource, ObservedAt: raw.ObservedAt, Epoch: raw.Epoch,
 			Provider: raw.Provider,
 		}
-	} else if s.StatusLine != nil && s.StatusLine.ContextHealth != nil {
+	} else if s.RawStatusLine == nil && s.StatusLine != nil && s.StatusLine.ContextHealth != nil {
 		copy := *s.StatusLine.ContextHealth
 		h = &copy
 	}
