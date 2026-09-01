@@ -106,7 +106,19 @@
     "pin the '/' filesystem-root branch, which has no portable spelling.",
     "`needsUnreadableDir`: SKIP when the process can read a 0o000 directory anyway",
     "(running as root, or Windows). `needsHome`: SKIP when the process has no",
-    "resolvable home directory (${HOME} has nothing to substitute). A skip must be",
+    "resolvable home directory (${HOME} has nothing to substitute).",
+    "`caseSensitiveOnly`: SKIP on Windows, where the containment comparison folds",
+    "case because the FILESYSTEM does. Such a case spells its target by changing",
+    "the case of a directory component, which on a case-sensitive volume names a",
+    "SECOND directory the roots do not contain \u2014 and on NTFS names the same",
+    "directory as the root itself, so the case's own `tree` collapses to one",
+    "directory and the deny it asks for would be a REFUSAL OF THE ROOT'S OWN FILE.",
+    "That is not a narrower answer, it is a false one, and it is the shape that",
+    "broke the Fleet Manager's brief_check/brief_append/brief_archive for every",
+    "Windows workspace spelled with a different drive-letter or directory case.",
+    "The flag is on the CASE, not on a copy: a copy that keeps byte-exact",
+    "containment on Windows is diverging (see DELIBERATELY ABSENT), and the",
+    "fixture must not bless it by asserting the false denial. A skip must be",
     "reported as a skip; silently counting a skipped case as a pass is how this",
     "fixture would rot.",
     "",
@@ -130,7 +142,16 @@
     "volume (comparison is byte-exact everywhere today, so fs.write('<cwd>/.BUS-TOKEN')",
     "clobbers the real one on APFS/NTFS); and library.save/library.remove called with",
     "no cwd at all, which Go resolves against its own process cwd and TypeScript skips",
-    "entirely.",
+    "entirely. And, as of the `caseSensitiveOnly` flag: WINDOWS CONTAINMENT CASE",
+    "FOLDING. cmd/brain compares canonical paths with the OS's own identity",
+    "primitive on Windows (kernel32 CompareStringOrdinal, bIgnoreCase) because a",
+    "workspace root and a target whose drive letter or directory case differ name",
+    "ONE directory there; internal/bus and the desktop copy are still byte-exact on",
+    "Windows and will therefore refuse a path that IS inside the root they were",
+    "given. The brain is the copy that answers brief.*/fs.* under the default",
+    "catalog delegation, so the user-visible defect is fixed; the other two are a",
+    "known false-denial divergence and the flag marks the cases rather than",
+    "asserting either side's answer as the contract.",
     "",
     "ALSO ABSENT, and this one is a DECISION rather than a gap, so that the next",
     "reader does not re-file it: HARD LINKS. All three copies allow a hard link in",
@@ -372,6 +393,7 @@
           "posixOnly",
           "needsUnreadableDir",
           "needsHome",
+          "caseSensitiveOnly",
           "deniedBy",
           "resolvesTo"
         ],
@@ -2515,6 +2537,7 @@
     {
       "name": "a case-variant spelling of a store carve-out is NOT exempted",
       "group": "secrets",
+      "caseSensitiveOnly": true,
       "tree": {
         "dirs": [
           "config/workspacer/library"
@@ -2529,11 +2552,12 @@
       "target": "${CONFIG}/LIBRARY/loot.txt",
       "expect": "deny",
       "deniedBy": "secret",
-      "why": "The asymmetry is the whole design: folding in the config-dir test DENIES more, folding in the carve-out test would EXEMPT more. <configDir>/LIBRARY is inside the config dir either way, but it is NOT the carve-out \u2014 on a case-sensitive volume it is an ordinary attacker-named directory, and on a case-insensitive one the byte-exact carve-out test simply keeps the exemption to the spelling the daemon itself composed. A copy that folded both comparisons turns any case-variant spelling of library/, layouts/ or sessions/ into a writable hole in the config dir."
+      "why": "The asymmetry is the whole design: folding in the config-dir test DENIES more, folding in the carve-out test would EXEMPT more. <configDir>/LIBRARY is inside the config dir either way, but it is NOT the carve-out \u2014 on a case-sensitive volume it is an ordinary attacker-named directory, and on a case-insensitive one the byte-exact carve-out test simply keeps the exemption to the spelling the daemon itself composed. A copy that folded both comparisons turns any case-variant spelling of library/, layouts/ or sessions/ into a writable hole in the config dir. `caseSensitiveOnly` because on NTFS <configDir>/LIBRARY IS the carve-out — the tree below creates one directory, not two — so the exemption is correct there and this deny is unspellable."
     },
     {
       "name": "a sibling differing from the root only in case is not inside it",
       "group": "containment",
+      "caseSensitiveOnly": true,
       "tree": {
         "dirs": [
           "root/proj",
@@ -2549,7 +2573,7 @@
       "target": "${ROOT}/PROJ/secret.txt",
       "expect": "deny",
       "deniedBy": "outside-roots",
-      "why": "containsPath's own header calls byte-exactness a property of the shared algorithm, and nothing enforced it: lowercasing both arguments passed all 85 cases in every copy. On a case-sensitive filesystem these are two different directories and the second is somebody else's; on a case-insensitive one they are the same directory, and the byte-exact answer is the NARROW one, which is the safe direction for an allow-list. The secret gate is the mirror image and folds on purpose \u2014 see the two case-variant secrets cases."
+      "why": "containsPath's own header calls byte-exactness a property of the shared algorithm, and nothing enforced it: lowercasing both arguments passed all 85 cases in every copy. On a case-sensitive filesystem these are two different directories and the second is somebody else's; on a case-insensitive one they are the same directory, and the byte-exact answer is the NARROW one, which is the safe direction for an allow-list. The secret gate is the mirror image and folds on purpose \u2014 see the two case-variant secrets cases. `caseSensitiveOnly` because the two dirs below are ONE directory on NTFS, where root/PROJ/secret.txt is the granted root's own file and refusing it denies the caller their own workspace."
     },
     {
       "name": "a root spelled through a symlink and '..' grants only where it resolves",

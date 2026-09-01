@@ -102,3 +102,92 @@ func windowsASCIIEqual(a, b string) bool {
 	}
 	return true
 }
+
+// windowsContainmentContract is the containment DECISION the Windows Fleet
+// Manager path depends on, spelled as Windows paths and asserted twice: by the
+// mutation proof below, which runs anywhere, and by
+// TestWindowsPathContainmentMatchesTheOrdinalContract, which runs the shipping
+// containsPath against it on the one host that can call kernel32.
+//
+// Every vector is pure ASCII on purpose. The Unicode discrimination (Kelvin
+// sign, umlauts, Cyrillic) is the COMPARATOR's job and lives in
+// windowsOrdinalContainmentContract above; this table is about what containment
+// does with the comparator's answer, which is where a widening hides.
+var windowsContainmentContract = []struct {
+	name, root, target string
+	want               bool
+}{
+	{"the manager root itself, spelled with a lower-case drive", `C:\Work\FleetManager`, `c:\work\fleetmanager`, true},
+	{"a project under the manager root, case-swapped", `C:\Work\FleetManager`, `c:\WORK\fleetMANAGER\Projects\Client`, true},
+	{"a sibling whose path is the root plus more letters", `C:\Work\FleetManager`, `C:\Work\FleetManagerOther\loot.txt`, false},
+	{"the same widening spelled in another case", `C:\Work\FleetManager`, `c:\work\fleetmanagerother\loot.txt`, false},
+	{"a directory outside the root entirely", `C:\Work\FleetManager`, `C:\Work\Outside\loot.txt`, false},
+	{"a volume-prefix root contains everything below it", `C:\`, `C:\Work\loot.txt`, true},
+	{"another drive is not inside it", `C:\Work`, `D:\Work\loot.txt`, false},
+}
+
+// windowsContainsPath is containsPath's shape with its two platform primitives
+// injected and its separator fixed to the Windows one, so a Linux runner can
+// execute the Windows containment decision and a MUTATION of it. It is a copy
+// of six lines rather than a call because the point is to run variants the
+// shipping code must not have; the shipping code is asserted against the same
+// vectors on Windows.
+func windowsContainsPath(root, target string, equal func(a, b string) bool, hasPrefix func(path, prefix string) bool, separatorRequired bool) bool {
+	if root == "" {
+		return false
+	}
+	if equal(target, root) {
+		return true
+	}
+	if strings.HasSuffix(root, `\`) {
+		return hasPrefix(target, root)
+	}
+	if !separatorRequired {
+		return hasPrefix(target, root)
+	}
+	return hasPrefix(target, root+`\`)
+}
+
+// TestWindowsContainmentContractKillsBothContainmentMutations is the mutation
+// proof for windowsContainmentContract, and it insists on the two DIRECTIONS
+// separately, because one vector set can easily catch only one of them:
+//
+//   - BYTE-EXACT containment (the pre-fix comparison, and the state anything
+//     reverting pathmatch_windows.go to pathmatch_other.go's bodies lands in)
+//     must be caught by a vector the contract expects to ALLOW. That is a false
+//     denial — the Fleet Manager refused its own workspace — and a table with
+//     only deny vectors would not notice, since byte-exactness denies more.
+//   - DROPPING THE SEPARATOR containsPath appends to a non-volume root must be
+//     caught by a vector the contract expects to DENY. That is the widening
+//     folding the comparison makes reachable without a "..", and a table with
+//     only allow vectors would not notice either.
+//
+// Naming the killing vectors rather than counting them is deliberate: a
+// mutation "killed" by a vector of the wrong polarity proves nothing.
+func TestWindowsContainmentContractKillsBothContainmentMutations(t *testing.T) {
+	var falseDenials, widenings []string
+	for _, tc := range windowsContainmentContract {
+		if got := windowsContainsPath(tc.root, tc.target, windowsASCIIEqual, windowsASCIIHasPrefix, true); got != tc.want {
+			t.Errorf("the contract disagrees with itself: containment(%q, %q) = %v, want %v — %s", tc.root, tc.target, got, tc.want, tc.name)
+		}
+		byteExact := windowsContainsPath(tc.root, tc.target, func(a, b string) bool { return a == b }, strings.HasPrefix, true)
+		if byteExact != tc.want && tc.want {
+			falseDenials = append(falseDenials, tc.name)
+		}
+		widened := windowsContainsPath(tc.root, tc.target, windowsASCIIEqual, windowsASCIIHasPrefix, false)
+		if widened != tc.want && !tc.want {
+			widenings = append(widenings, tc.name)
+		}
+	}
+	if len(falseDenials) == 0 {
+		t.Error("no vector catches byte-exact containment as a FALSE DENIAL — the contract would pass with the Windows fold reverted")
+	}
+	if len(widenings) == 0 {
+		t.Error("no vector catches a dropped root separator as a WIDENING — the contract would pass with an unsafe ordinal prefix test")
+	}
+	t.Logf("byte-exact containment killed by: %v; dropped separator killed by: %v", falseDenials, widenings)
+}
+
+func windowsASCIIHasPrefix(path, prefix string) bool {
+	return len(path) >= len(prefix) && windowsASCIIEqual(path[:len(prefix)], prefix)
+}

@@ -24,6 +24,8 @@ func containmentSkipReason(c containmentCase) string {
 	switch {
 	case c.PosixOnly && runtime.GOOS == "windows":
 		return "posixOnly"
+	case c.CaseSensitiveOnly && runtime.GOOS == "windows":
+		return "caseSensitiveOnly"
 	case c.NeedsSymlinks && runtime.GOOS == "windows":
 		return "needsSymlinks"
 	case c.NeedsUnreadableDir:
@@ -246,10 +248,16 @@ type containmentTree struct {
 }
 
 type containmentCase struct {
-	Name               string          `json:"name"`
-	Group              string          `json:"group"`
-	NeedsSymlinks      bool            `json:"needsSymlinks"`
-	PosixOnly          bool            `json:"posixOnly"`
+	Name          string `json:"name"`
+	Group         string `json:"group"`
+	NeedsSymlinks bool   `json:"needsSymlinks"`
+	PosixOnly     bool   `json:"posixOnly"`
+	// CaseSensitiveOnly marks a case whose target differs from a path inside the
+	// roots only by the case of a directory component. See the fixture's CASE
+	// FLAGS: where the filesystem folds case the two spellings are ONE directory,
+	// so the case's tree collapses and the deny it asks for would refuse the
+	// root's own file.
+	CaseSensitiveOnly  bool            `json:"caseSensitiveOnly"`
 	NeedsUnreadableDir bool            `json:"needsUnreadableDir"`
 	NeedsHome          bool            `json:"needsHome"`
 	Tree               containmentTree `json:"tree"`
@@ -908,6 +916,9 @@ func TestPathContainmentContractCases(t *testing.T) {
 			})
 			if c.PosixOnly && runtime.GOOS == "windows" {
 				t.Skip("posixOnly: the '/' filesystem-root branch has no portable spelling")
+			}
+			if c.CaseSensitiveOnly && runtime.GOOS == "windows" {
+				t.Skip("caseSensitiveOnly: Windows opens both spellings as one directory, so the deny would refuse the root's own file")
 			}
 			if c.NeedsSymlinks && runtime.GOOS == "windows" {
 				t.Skip("needsSymlinks: symlink creation needs developer mode on Windows")
