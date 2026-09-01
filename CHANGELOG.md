@@ -53,8 +53,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - **Context-window controls are now provider-scoped, and requests stay
-  provisional.** Claude and Codex context variants are selectable through the
-  shared spawn and session controls; the Fleet Manager keeps a separate saved
+  provisional.** Claude context variants may be selectable in supported live
+  session controls, but Codex context-window choice is made at spawn time;
+  existing Codex sessions show their runtime/provider-managed effective context
+  read-only. The Fleet Manager keeps a separate saved
   preference for each provider. A fresh Codex session with no explicit choice
   requests a 1,000,000-token window, while a resume keeps its durable request
   when it has one and a legacy resume without one stays on Codex's
