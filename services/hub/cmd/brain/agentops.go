@@ -41,6 +41,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -181,6 +182,9 @@ const thresholdSweepInterval = 15 * time.Second
 // MAX_WATCHES_PER_WATCHER.
 const maxWatchesPerWatcher = 20
 
+var contextHealthProviders = map[string]bool{"claude": true, "codex": true, "copilot": true}
+var noContextWindowProviders = map[string]bool{"opencode": true, "pi": true}
+
 // thresholdWatch is one armed, ONE-SHOT watch. A re-arming watch would be a
 // poll with extra steps.
 type thresholdWatch struct {
@@ -244,6 +248,17 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 	}
 	if target.ended() {
 		return nil, fmt.Errorf("agents.notifyWhen: session %s has already ended — nothing left to watch", p.SessionID)
+	}
+	if p.ContextUsedPct != nil {
+		provider := normalizedProvider(target.Provider)
+		if noContextWindowProviders[provider] {
+			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct is unavailable for provider %s: it cannot emit a runtime context window", provider)
+		}
+		if !contextHealthProviders[provider] && target.contextHealth(time.Now()) == nil {
+			// Future providers remain extensible when they prove the contract with
+			// a correlated sample. Otherwise waiting would leak a permanent slot.
+			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct cannot wait for unknown provider %s without a fresh runtime context sample", provider)
+		}
 	}
 	// Default the recipient to the target's PARENT — the manager that dispatched
 	// it is who wants to know, and it is the same routing the worker-finished
@@ -315,10 +330,7 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 // TWIN: crossedBy in thresholdWatch.ts.
 func crossedBy(w *thresholdWatch, s fleetSession, now time.Time) string {
 	if w.ContextUsedPct != nil {
-		if health := s.contextHealth(now); health != nil && health.UsedPct >= *w.ContextUsedPct {
-			return contextCrossing(*w.ContextUsedPct, health)
-		}
-		return ""
+		return contextWatchCrossing(w, s, now)
 	}
 	if w.Tokens != nil {
 		if tokens := s.tokens(); tokens >= *w.Tokens {
@@ -361,15 +373,63 @@ func crossedBy(w *thresholdWatch, s fleetSession, now time.Time) string {
 	return ""
 }
 
-func formatPct(v float64) string {
+func normalizedProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return "unknown"
+	}
+	return provider
+}
+
+// Canonical desktop/Hub wake percentage: bounded and exactly one decimal.
+func formatContextPct(v float64) string {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		v = 0
+	}
+	v = math.Max(0, math.Min(100, v))
+	return strconv.FormatFloat(v, 'f', 1, 64)
+}
+
+func formatNumber(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// contextWatchCrossing is the single authoritative context predicate used by
+// production sweeps and direct tests. Ownership invalidation is part of the
+// predicate; it cannot be bypassed by an epoch-blind numeric-only branch.
+func contextWatchCrossing(w *thresholdWatch, s fleetSession, now time.Time) string {
+	targetProvider := normalizedProvider(s.Provider)
+	if w.ContextProvider != "" && targetProvider != normalizedProvider(w.ContextProvider) {
+		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed a provider/session boundary (%s → %s); re-arm after a confirmed sample", formatContextPct(*w.ContextUsedPct), w.ContextProvider, targetProvider)
+	}
+	if noContextWindowProviders[targetProvider] {
+		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% is unavailable for provider %s; re-arm only on a provider with runtime context telemetry", formatContextPct(*w.ContextUsedPct), targetProvider)
+	}
+	health := s.contextHealth(now)
+	if health == nil {
+		return ""
+	}
+	if w.ContextEpoch != nil && *w.ContextEpoch != health.Epoch {
+		return fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed telemetry epoch %s → %s; re-arm after the confirmed %s sample", formatContextPct(*w.ContextUsedPct), formatNumber(*w.ContextEpoch), formatNumber(health.Epoch), health.Provider)
+	}
+	if w.ContextProvider == "" {
+		w.ContextProvider = health.Provider
+	}
+	if w.ContextEpoch == nil {
+		epoch := health.Epoch
+		w.ContextEpoch = &epoch
+	}
+	if health.UsedPct >= *w.ContextUsedPct {
+		return contextCrossing(*w.ContextUsedPct, health)
+	}
+	return ""
 }
 
 func contextCrossing(threshold float64, h *contextHealthReading) string {
 	return fmt.Sprintf(
 		"contextUsedPct active context %s%% ≥ %s%% (%s / %s tokens; runtime-confirmed by %s; observed %s; epoch %s)",
-		formatPct(h.UsedPct), formatPct(threshold), groupThousands(h.UsedTokens),
-		groupThousands(h.WindowTokens), h.Provider, h.ObservedAt, formatPct(h.Epoch),
+		formatContextPct(h.UsedPct), formatContextPct(threshold), groupThousands(h.UsedTokens),
+		groupThousands(h.WindowTokens), h.Provider, h.ObservedAt, formatNumber(h.Epoch),
 	)
 }
 
@@ -415,33 +475,7 @@ func (r *registry) sweepThresholds(ctx context.Context, now time.Time) {
 			delete(r.watches, id)
 			continue
 		}
-		crossed := ""
-		if w.ContextUsedPct != nil {
-			if w.ContextProvider != "" && target.Provider != "" && w.ContextProvider != target.Provider {
-				crossed = fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed a provider/session boundary (%s → %s); re-arm after a confirmed sample", formatPct(*w.ContextUsedPct), w.ContextProvider, target.Provider)
-			} else {
-				health := target.contextHealth(now)
-				if health == nil {
-					continue
-				}
-				if w.ContextEpoch != nil && *w.ContextEpoch != health.Epoch {
-					crossed = fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed telemetry epoch %s → %s; re-arm after the confirmed %s sample", formatPct(*w.ContextUsedPct), formatPct(*w.ContextEpoch), formatPct(health.Epoch), health.Provider)
-				} else {
-					if w.ContextProvider == "" {
-						w.ContextProvider = health.Provider
-					}
-					if w.ContextEpoch == nil {
-						epoch := health.Epoch
-						w.ContextEpoch = &epoch
-					}
-					if health.UsedPct >= *w.ContextUsedPct {
-						crossed = contextCrossing(*w.ContextUsedPct, health)
-					}
-				}
-			}
-		} else {
-			crossed = crossedBy(w, target, now)
-		}
+		crossed := crossedBy(w, target, now)
 		if crossed == "" {
 			continue
 		}

@@ -337,13 +337,16 @@ keep an eye on a running worker WITHOUT polling. Never loop on list_agents or
 get_conversation to "keep an eye on" something — that is a hang, and it locks
 the user out. Arm a watch and STOP.
 - Prefer contextUsedPct (finite range (0,100]) for health: it is ACTIVE context
-  occupancy divided only by a runtime-confirmed effective window. It is
-  single-purpose and cannot be combined with another threshold. Missing,
+  occupancy divided only by a runtime-confirmed effective window. OpenCode and
+  Pi cannot emit that window and are refused at arm time. It is single-purpose
+  and cannot be combined with another threshold. Missing,
   stale, provisional, reset, or inconsistent telemetry leaves the watch armed
   until trustworthy telemetry arrives; an already-high sample fires on the
   next sweep. A provider/session/model reset invalidates it and asks you to
   re-arm. The wake includes percentage, numerator, denominator, provider,
-  observation time, and telemetry epoch.
+  observation time, and telemetry epoch. Claude correlates the pair on result
+  frames; during a long turn the prior sample may age stale and the watch waits
+  rather than trusting an in-progress numerator.
 - tokens is legacy cache-inclusive CUMULATIVE throughput (input + output,
   including cache reads where reported): useful for cadence/scope checkpoints,
   not active-context health. Compaction does not reset it. usd is cumulative

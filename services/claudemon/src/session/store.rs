@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -84,6 +85,18 @@ const FLUSH_DELAY_MS: u64 = 300;
 fn now_millis() -> i64 {
     let now = OffsetDateTime::now_utc();
     now.unix_timestamp() * 1000 + i64::from(now.millisecond())
+}
+
+/// Seed process-local context epochs from wall-clock nanoseconds so a daemon
+/// restart cannot recycle the small counters a still-visible old snapshot used.
+/// The in-process atomic then makes every ownership boundary unique even when
+/// several sessions are registered in the same clock tick.
+fn context_epoch_seed() -> u64 {
+    OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .try_into()
+        .unwrap_or(1)
+        .max(1)
 }
 /// Grace period after a flushed send before verifying the submit took. A
 /// successful submit flips the session to `Responding` (UserPromptSubmit
@@ -311,6 +324,8 @@ pub struct SessionStore {
     /// therefore gated on still owning the generation it was born with; a stale
     /// caller reaps only its own child and leaves the store alone.
     generations: Arc<DashMap<String, u64>>,
+    /// Process-local, restart-distinct source for context telemetry ownership.
+    context_telemetry_epochs: Arc<AtomicU64>,
     /// Last-known PTY size (cols, rows) per session — set at spawn/register and
     /// on `/resize`. The live permission-mode switch reconstructs the screen
     /// from the output ring with `vt100`, which needs the real grid to place
@@ -518,10 +533,11 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
 /// retain a newer sample across unrelated status ticks, and drop malformed or
 /// out-of-order evidence. Display telemetry remains unaffected.
 fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
+    let explicitly_updated = status.context_health_updated;
     let previous = session
         .status_line
         .as_ref()
-        .and_then(|sl| sl.context_health.as_ref());
+        .and_then(|sl| sl.context_health.clone());
     if let Some(sample) = status.context_health.as_mut() {
         let valid = sample.window_source == "runtime"
             && sample.window_tokens > 0
@@ -536,19 +552,22 @@ fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
         } else {
             sample.provider = session.provider.clone();
             sample.epoch = session.context_telemetry_epoch;
-            if previous.is_some_and(|old| {
+            if previous.as_ref().is_some_and(|old| {
                 old.provider == sample.provider
                     && old.epoch == sample.epoch
                     && old.observed_at >= sample.observed_at
             }) {
-                status.context_health = previous.cloned();
+                status.context_health = previous;
             }
         }
-    } else if session.pending_model_confirmation.is_none() {
+    } else if !explicitly_updated && session.pending_model_confirmation.is_none() {
         // Rate-limit/cost-only ticks must not erase the latest confirmed
         // occupancy. Freshness is judged from the sample's own observed_at.
-        status.context_health = previous.cloned();
+        status.context_health = previous;
     }
+    // The marker is meaningful only while reconciling this inbound tick. It is
+    // neither durable state nor part of the public status-line contract.
+    status.context_health_updated = false;
 }
 
 impl SessionStore {
@@ -577,6 +596,7 @@ impl SessionStore {
             managed_decisions: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
             generations: Arc::new(DashMap::new()),
+            context_telemetry_epochs: Arc::new(AtomicU64::new(context_epoch_seed())),
             term_sizes: Arc::new(DashMap::new()),
             managed_yolo: Arc::new(DashMap::new()),
             managed_model: Arc::new(DashMap::new()),
@@ -629,6 +649,11 @@ impl SessionStore {
         let mut entry = self.generations.entry(session_id.to_string()).or_insert(0);
         *entry += 1;
         *entry
+    }
+
+    fn fresh_context_telemetry_epoch(&self) -> u64 {
+        self.context_telemetry_epochs
+            .fetch_add(1, Ordering::Relaxed)
     }
 
     /// Whether `generation` is still the live one for this session. False once a
@@ -952,10 +977,18 @@ impl SessionStore {
         }
 
         let (state, became_input, became_stopped) = {
+            let fresh_epoch = self.fresh_context_telemetry_epoch();
             let mut entry = self
                 .states
                 .entry(event.session_id.clone())
                 .or_insert_with(|| SessionState::new(event.session_id.clone(), event.cwd.clone()));
+            // Hook-adopted Claude sessions have no spawn registration to stamp
+            // them. Hydrated rows also deserialize this process-local field as
+            // zero. Assign exactly once for this live process before telemetry.
+            if entry.context_telemetry_epoch == 0 {
+                entry.context_telemetry_epoch = fresh_epoch;
+                entry.status_line = None;
+            }
             let prev_mode = entry.mode;
             entry.apply(&event);
             let became_input = entry.mode == SessionMode::Input && prev_mode != SessionMode::Input;
@@ -1287,6 +1320,7 @@ impl SessionStore {
         cwd: &str,
         handle: WrapperHandle,
     ) -> SessionState {
+        let fresh_epoch = self.fresh_context_telemetry_epoch();
         let state = {
             let mut entry = self
                 .states
@@ -1305,7 +1339,7 @@ impl SessionStore {
             }
             // A spawn onto an existing id is a new telemetry life (resume or
             // restart). The prior process' context evidence cannot cross it.
-            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
+            entry.context_telemetry_epoch = fresh_epoch;
             entry.status_line = None;
             entry.clone()
         };
@@ -1345,6 +1379,7 @@ impl SessionStore {
     /// (`/sessions/:id/stream`) works uniformly — it simply never receives any
     /// bytes; the conversation/state/status streams carry the real telemetry.
     pub fn register_managed(&self, session_id: &str, cwd: &str, provider: &str) -> SessionState {
+        let fresh_epoch = self.fresh_context_telemetry_epoch();
         let state = {
             let mut entry = self
                 .states
@@ -1354,7 +1389,7 @@ impl SessionStore {
                 });
             entry.mode = SessionMode::Input;
             entry.provider = provider.to_string();
-            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
+            entry.context_telemetry_epoch = fresh_epoch;
             entry.status_line = None;
             entry.clone()
         };
@@ -1484,11 +1519,12 @@ impl SessionStore {
         session_id: &str,
         persisted: &super::windows::PersistedModelSelection,
     ) {
+        let fresh_epoch = self.fresh_context_telemetry_epoch();
         let state = self.states.get_mut(session_id).map(|mut entry| {
             entry.requested_model = Some(persisted.legacy_model.clone());
             entry.requested_selection = Some(persisted.selection.clone());
             entry.model_selection_epoch = entry.model_selection_epoch.saturating_add(1);
-            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
+            entry.context_telemetry_epoch = fresh_epoch;
             entry.pending_model_confirmation = Some(persisted.selection.clone());
             entry.model_confirmation_suppressions_remaining = MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
             if let Some(status) = entry.status_line.as_mut() {
@@ -3771,7 +3807,7 @@ mod tests {
     #[test]
     fn context_health_is_stamped_ordered_and_cleared_at_a_new_life() {
         let store = SessionStore::new();
-        store.register_managed("c1", "/tmp", "codex");
+        let initial = store.register_managed("c1", "/tmp", "codex");
         let observed = OffsetDateTime::now_utc();
         let sample = |used: u64, at: OffsetDateTime| StatusLine {
             context_health: Some(ContextHealth {
@@ -3790,7 +3826,8 @@ mod tests {
             .unwrap();
         let health = first.status_line.unwrap().context_health.unwrap();
         assert_eq!(health.provider, "codex");
-        assert_eq!(health.epoch, 1);
+        assert_eq!(health.epoch, initial.context_telemetry_epoch);
+        assert!(health.epoch > 0);
 
         // An out-of-order lower sample cannot roll the accepted observation back.
         let late = store
@@ -3805,11 +3842,63 @@ mod tests {
             120_000
         );
 
-        // Resume/restart/provider registration advances ownership and clears
-        // the old process' sample before any successor telemetry arrives.
+        // A model switch advances ownership and clears the old model's sample.
+        let selection =
+            crate::session::windows::normalize_persisted_model_selection("gpt-5.5-codex").unwrap();
+        store.accept_requested_model_selection("c1", &selection);
+        let switched = store.get("c1").unwrap();
+        assert_ne!(
+            switched.context_telemetry_epoch,
+            initial.context_telemetry_epoch
+        );
+        assert!(switched
+            .status_line
+            .as_ref()
+            .and_then(|line| line.context_health.as_ref())
+            .is_none());
+
+        // Resume/restart/provider registration advances ownership again and
+        // clears the prior process' status before successor telemetry arrives.
         let restarted = store.register_managed("c1", "/tmp", "claude");
-        assert_eq!(restarted.context_telemetry_epoch, 2);
+        assert_ne!(
+            restarted.context_telemetry_epoch,
+            switched.context_telemetry_epoch
+        );
         assert!(restarted.status_line.is_none());
+    }
+
+    #[test]
+    fn hook_adopted_claude_session_gets_fresh_epoch_and_can_publish_health() {
+        let store = SessionStore::new();
+        let created = store.ingest(hook("SessionStart", "hook-only", "/tmp"));
+        assert!(created.context_telemetry_epoch > 0);
+        assert_eq!(created.provider, "claude");
+
+        let state = store
+            .ingest_status_line(&serde_json::json!({
+                "session_id": "hook-only",
+                "context_window": {
+                    "used_percentage": 80,
+                    "context_window_size": 200_000,
+                    "current_usage": {
+                        "input_tokens": 10,
+                        "cache_read_input_tokens": 159_990,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }))
+            .expect("hook-created row accepts the next status line");
+        let health = state.status_line.unwrap().context_health.unwrap();
+        assert_eq!(health.used_pct, 80.0);
+        assert_eq!(health.provider, "claude");
+        assert_eq!(health.epoch, created.context_telemetry_epoch);
+
+        // A fresh SessionStore models a daemon restart. Its epoch source is
+        // restart-distinct, and the process-local field never came from serde.
+        let next_process = SessionStore::new()
+            .ingest(hook("SessionStart", "hook-only", "/tmp"))
+            .context_telemetry_epoch;
+        assert_ne!(next_process, created.context_telemetry_epoch);
     }
 
     fn account_reading(five_pct: f64) -> AccountUsage {

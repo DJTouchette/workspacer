@@ -42,6 +42,8 @@ export const MAX_WATCHES_PER_WATCHER = 20;
  * armed and waits for a new sample; absence/staleness never becomes 0%. */
 export const CONTEXT_HEALTH_MAX_AGE_MS = 2 * 60_000;
 const CONTEXT_HEALTH_FUTURE_SKEW_MS = 5_000;
+const CONTEXT_HEALTH_PROVIDERS = new Set(['claude', 'codex', 'copilot']);
+const NO_CONTEXT_WINDOW_PROVIDERS = new Set(['opencode', 'pi']);
 
 export interface ThresholdPredicate {
   /** Cache-inclusive cumulative throughput/cadence (input + output), not
@@ -160,11 +162,7 @@ export function sessionTokens(s: WatchableSession): number {
  */
 export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: number): string | null {
   if (watch.contextUsedPct !== undefined) {
-    const health = contextHealthReading(s, now);
-    if (health && health.usedPct >= watch.contextUsedPct) {
-      return contextCrossing(watch.contextUsedPct, health);
-    }
-    return null;
+    return contextWatchCrossing(watch, s, now);
   }
   if (watch.tokens !== undefined) {
     const tokens = sessionTokens(s);
@@ -207,16 +205,69 @@ export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: numbe
   return null;
 }
 
-function formatPct(value: number): string {
-  return value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+/** Canonical desktop/Hub wake percentage: bounded and exactly one decimal. */
+export function formatContextPct(value: number): string {
+  const bounded = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+  return bounded.toLocaleString('en-US', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    useGrouping: false,
+  });
 }
 
 function contextCrossing(threshold: number, h: ContextHealthReading): string {
   return (
-    `contextUsedPct active context ${formatPct(h.usedPct)}% ≥ ${formatPct(threshold)}% ` +
+    `contextUsedPct active context ${formatContextPct(h.usedPct)}% ≥ ${formatContextPct(threshold)}% ` +
     `(${h.usedTokens.toLocaleString('en-US')} / ${h.windowTokens.toLocaleString('en-US')} tokens; ` +
     `runtime-confirmed by ${h.provider}; observed ${h.observedAt}; epoch ${h.epoch})`
   );
+}
+
+function providerName(provider?: string): string {
+  return provider?.trim().toLowerCase() || 'unknown';
+}
+
+function assertContextWatchCanArm(s: WatchableSession, now: number): void {
+  const provider = providerName(s.provider);
+  if (NO_CONTEXT_WINDOW_PROVIDERS.has(provider)) {
+    throw new Error(
+      `agents.notifyWhen: contextUsedPct is unavailable for provider ${provider}: it cannot emit a runtime context window`,
+    );
+  }
+  if (!CONTEXT_HEALTH_PROVIDERS.has(provider) && !contextHealthReading(s, now)) {
+    // Future providers remain extensible: a real correlated sample proves the
+    // capability. Without one, waiting forever would consume a permanent slot.
+    throw new Error(
+      `agents.notifyWhen: contextUsedPct cannot wait for unknown provider ${provider} without a fresh runtime context sample`,
+    );
+  }
+}
+
+/** The single authoritative context predicate used by both production sweeps
+ * and direct predicate tests. It includes ownership invalidation, not merely
+ * the numeric comparison. */
+function contextWatchCrossing(
+  watch: ThresholdWatch,
+  s: WatchableSession,
+  now: number,
+): string | null {
+  const targetProvider = providerName(s.provider);
+  if (watch.contextProvider && targetProvider !== providerName(watch.contextProvider)) {
+    return `monitoring invalidated: contextUsedPct ${formatContextPct(watch.contextUsedPct!)}% watch crossed a provider/session boundary (${watch.contextProvider} → ${targetProvider}); re-arm after a confirmed sample`;
+  }
+  if (NO_CONTEXT_WINDOW_PROVIDERS.has(targetProvider)) {
+    return `monitoring invalidated: contextUsedPct ${formatContextPct(watch.contextUsedPct!)}% is unavailable for provider ${targetProvider}; re-arm only on a provider with runtime context telemetry`;
+  }
+  const health = contextHealthReading(s, now);
+  if (!health) return null;
+  if (watch.contextEpoch !== undefined && watch.contextEpoch !== health.epoch) {
+    return `monitoring invalidated: contextUsedPct ${formatContextPct(watch.contextUsedPct!)}% watch crossed telemetry epoch ${watch.contextEpoch} → ${health.epoch}; re-arm after the confirmed ${health.provider} sample`;
+  }
+  watch.contextProvider ??= health.provider;
+  watch.contextEpoch ??= health.epoch;
+  return health.usedPct >= watch.contextUsedPct!
+    ? contextCrossing(watch.contextUsedPct!, health)
+    : null;
 }
 
 /** Validate and normalize a caller's predicate. At least one threshold is
@@ -306,6 +357,8 @@ export class ThresholdWatcher {
         `agents.notifyWhen: session ${args.sessionId} has already ended — nothing left to watch`,
       );
     }
+    const armedAt = args.now ?? Date.now();
+    if (predicate.contextUsedPct !== undefined) assertContextWatchCanArm(target, armedAt);
     const watcher = sessions.find((s) => s.sessionId === args.watcherSessionId);
     if (!watcher || watcher.status === 'ended') {
       throw new Error(
@@ -320,7 +373,6 @@ export class ThresholdWatcher {
         `agents.notifyWhen: ${args.watcherSessionId} already has ${mine.length} armed watches (max ${MAX_WATCHES_PER_WATCHER}) — let some fire, or stop arming in a loop`,
       );
     }
-    const armedAt = args.now ?? Date.now();
     const health =
       predicate.contextUsedPct !== undefined ? contextHealthReading(target, armedAt) : null;
     const watch: ThresholdWatch = {
@@ -331,7 +383,7 @@ export class ThresholdWatcher {
       ...predicate,
     };
     if (predicate.contextUsedPct !== undefined) {
-      watch.contextProvider = target.provider ?? health?.provider;
+      watch.contextProvider = target.provider?.toLowerCase() ?? health?.provider;
       watch.contextEpoch = health?.epoch;
       watch.state = health
         ? health.usedPct >= predicate.contextUsedPct
@@ -371,27 +423,7 @@ export class ThresholdWatcher {
         this.watches.delete(watch.id);
         continue;
       }
-      let crossed: string | null;
-      if (watch.contextUsedPct !== undefined) {
-        if (watch.contextProvider && target.provider && watch.contextProvider !== target.provider) {
-          crossed = `monitoring invalidated: contextUsedPct ${formatPct(watch.contextUsedPct)}% watch crossed a provider/session boundary (${watch.contextProvider} → ${target.provider}); re-arm after a confirmed sample`;
-        } else {
-          const health = contextHealthReading(target, now);
-          if (!health) continue;
-          if (watch.contextEpoch !== undefined && watch.contextEpoch !== health.epoch) {
-            crossed = `monitoring invalidated: contextUsedPct ${formatPct(watch.contextUsedPct)}% watch crossed telemetry epoch ${watch.contextEpoch} → ${health.epoch}; re-arm after the confirmed ${health.provider} sample`;
-          } else {
-            watch.contextProvider ??= health.provider;
-            watch.contextEpoch ??= health.epoch;
-            crossed =
-              health.usedPct >= watch.contextUsedPct
-                ? contextCrossing(watch.contextUsedPct, health)
-                : null;
-          }
-        }
-      } else {
-        crossed = crossedBy(watch, target, now);
-      }
+      const crossed = crossedBy(watch, target, now);
       if (!crossed) continue;
       this.watches.delete(watch.id); // one-shot: gone before delivery, never twice
       fired.push({ watch, entry: watchEntry(target, crossed) });

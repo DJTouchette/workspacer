@@ -6,14 +6,32 @@
  * fires on the right threshold, and it never fires into nothing.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import * as path from 'path';
 import {
   ThresholdWatcher,
   crossedBy,
+  formatContextPct,
   parsePredicate,
   sessionTokens,
   type WatchableSession,
 } from './thresholdWatch';
 import { parseFleetMessage } from '../shared/fleetMessages';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const contract = JSON.parse(
+  readFileSync(path.resolve(here, '../../../../../contracts/context-health-cases.json'), 'utf-8'),
+) as {
+  formatPctCases: Array<{ input: number; expected: string }>;
+  unsupportedProviders: string[];
+  cumulativeCodex: {
+    inputTokens: number;
+    outputTokens: number;
+    windowTokens: number;
+    thresholdPct: number;
+  };
+};
 
 const session = (over: Partial<WatchableSession> = {}): WatchableSession => ({
   sessionId: 'w1',
@@ -108,7 +126,7 @@ describe('contextUsedPct health semantics', () => {
     expect(armed.state).toBe('alreadySatisfied');
     watcher.sweep(now);
     const text = deliver.mock.calls[0][1] as string;
-    expect(text).toContain('contextUsedPct active context 80% ≥ 80%');
+    expect(text).toContain('contextUsedPct active context 80.0% ≥ 80.0%');
     expect(text).toContain('160,000 / 200,000 tokens');
     expect(text).toContain('runtime-confirmed by codex');
     expect(text).toContain('epoch 7');
@@ -143,6 +161,28 @@ describe('contextUsedPct health semantics', () => {
     target.statusLine!.contextHealth!.usedPct = 90;
     watcher.sweep(now);
     expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a hook-adopted Claude row wait, then fires when its first trustworthy result arrives', () => {
+    const target = session({ provider: 'claude', usage: null, statusLine: {} });
+    const { watcher, deliver } = rig([mgr(), target]);
+    expect(
+      watcher.arm({
+        sessionId: 'w1',
+        watcherSessionId: 'mgr',
+        predicate: { contextUsedPct: 80 },
+        now,
+      }).state,
+    ).toBe('waitingForTelemetry');
+
+    target.statusLine!.contextHealth = withHealth(now + 1_000, 170_000, 200_000, {
+      provider: 'claude',
+      epoch: 41,
+    }).statusLine!.contextHealth;
+    watcher.sweep(now + 1_000);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0][1]).toContain('runtime-confirmed by claude');
+    expect(watcher.list()).toHaveLength(0);
   });
 
   it('handles compaction as a newer decrease, then fires on a later genuine rise', () => {
@@ -194,6 +234,24 @@ describe('contextUsedPct health semantics', () => {
     target.provider = 'claude';
     second.watcher.sweep(now + 3_000);
     expect(second.deliver.mock.calls[0][1]).toContain('provider/session boundary');
+
+    const third = rig(sessions);
+    target.provider = 'claude';
+    target.statusLine!.contextHealth = withHealth(now + 4_000, 100_000, 200_000, {
+      provider: 'claude',
+      epoch: 9,
+    }).statusLine!.contextHealth;
+    third.watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now: now + 4_000,
+    });
+    target.provider = 'future-agent';
+    target.statusLine!.contextHealth = undefined;
+    third.watcher.sweep(now + 5_000);
+    expect(third.deliver.mock.calls[0][1]).toContain('provider/session boundary');
+    expect(third.watcher.list()).toHaveLength(0);
   });
 
   it('never substitutes cumulative token throughput for active occupancy', () => {
@@ -210,6 +268,75 @@ describe('contextUsedPct health semantics', () => {
     expect(sessionTokens(target)).toBe(9_500_000);
     expect(deliver).not.toHaveBeenCalled();
     expect(watcher.list()).toHaveLength(1);
+  });
+
+  it('mutation-proves cumulative legacy Codex input cannot fire an 80% watch', () => {
+    const c = contract.cumulativeCodex;
+    const target = session({
+      provider: 'codex',
+      usage: null,
+      statusLine: {
+        totalInputTokens: c.inputTokens,
+        totalOutputTokens: c.outputTokens,
+        // The producer deliberately has no contextHealth: the legacy flat
+        // counters are cumulative billing, despite carrying a window nearby.
+      },
+    });
+    const { watcher, deliver } = rig([mgr(), target]);
+    watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: c.thresholdPct },
+      now,
+    });
+    watcher.sweep(now);
+    expect(c.inputTokens / c.windowTokens).toBeGreaterThan(c.thresholdPct / 100);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watcher.list()).toHaveLength(1);
+  });
+
+  it('refuses structurally unsupported and unproven future providers without consuming slots', () => {
+    for (const provider of contract.unsupportedProviders) {
+      const { watcher } = rig([mgr(), session({ provider })]);
+      expect(() =>
+        watcher.arm({
+          sessionId: 'w1',
+          watcherSessionId: 'mgr',
+          predicate: { contextUsedPct: 80 },
+          now,
+        }),
+      ).toThrow(`contextUsedPct is unavailable for provider ${provider}`);
+      expect(watcher.list()).toHaveLength(0);
+    }
+
+    const future = rig([mgr(), session({ provider: 'future-agent' })]);
+    expect(() =>
+      future.watcher.arm({
+        sessionId: 'w1',
+        watcherSessionId: 'mgr',
+        predicate: { contextUsedPct: 80 },
+        now,
+      }),
+    ).toThrow(/cannot wait for unknown provider future-agent/);
+    expect(future.watcher.list()).toHaveLength(0);
+
+    const proven = withHealth(now, 100_000, 200_000, { provider: 'future-agent' });
+    proven.provider = 'future-agent';
+    const accepted = rig([mgr(), proven]);
+    expect(
+      accepted.watcher.arm({
+        sessionId: 'w1',
+        watcherSessionId: 'mgr',
+        predicate: { contextUsedPct: 80 },
+        now,
+      }).state,
+    ).toBe('armed');
+  });
+});
+
+describe('shared context formatting contract', () => {
+  it('renders the same bounded one-decimal percentages as Hub', () => {
+    for (const c of contract.formatPctCases) expect(formatContextPct(c.input)).toBe(c.expected);
   });
 });
 

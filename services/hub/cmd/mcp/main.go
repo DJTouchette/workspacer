@@ -810,7 +810,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Threshold alerts (operator only; see the capability's own note) ────
 	addTool[notifyWhenIn](b, "notify_when",
-		"Ask to be woken ONCE when a session crosses a threshold without polling. Prefer contextUsedPct for runtime-confirmed active-context health; tokens is cache-inclusive cumulative throughput/cadence, not context health. usd and idleSeconds retain their existing meanings. Watches are one-shot and in-memory.",
+		"Ask to be woken ONCE when a session crosses a threshold without polling. Prefer contextUsedPct for runtime-confirmed active-context health when the target provider supports it (currently not OpenCode or Pi); tokens is cache-inclusive cumulative throughput/cadence, not context health. Claude refreshes confirmed context at result frames, so a long turn may wait once its prior sample ages stale. usd and idleSeconds retain their existing meanings. Watches are one-shot and in-memory.",
 		"agents.notifyWhen")
 
 	// ── Project briefs (operator only — brief.* matches no scoped tier) ────

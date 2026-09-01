@@ -501,6 +501,10 @@ pub struct UsageAcc {
     /// update. Unlike the display window, this is never filled from a model
     /// table and is therefore safe to publish as health evidence.
     context_health: Option<ContextHealth>,
+    /// Whether the newest provider update addressed context health at all.
+    /// This distinguishes an unrelated cost/rate tick from an explicit newer
+    /// partial sample that must clear the previously published health pair.
+    context_health_updated: bool,
     five_hour_pct: Option<f64>,
     five_hour_resets_at: Option<i64>,
     five_hour_window_minutes: Option<u64>,
@@ -599,6 +603,7 @@ impl UsageAcc {
         // context_tokens / context_window stay latest-wins in BOTH modes — never
         // summed (see the type doc): they feed occupancy, and compaction shrinks it.
         if context_tokens.is_some() || context_window.is_some() {
+            self.context_health_updated = true;
             self.context_health = match (context_tokens, context_window) {
                 (Some(used), Some(window)) if window > 0 && used <= window => Some(ContextHealth {
                     used_tokens: used,
@@ -667,7 +672,7 @@ impl UsageAcc {
     /// The context %, previously Claude-only, is computed from the latest
     /// context occupancy over the provider-reported window (falling back to
     /// [`context_window_for`] by model id).
-    pub fn status_line(&self) -> StatusLine {
+    fn build_status_line(&self, context_health_updated: bool) -> StatusLine {
         let window = self
             .context_window
             .or_else(|| self.model.as_deref().and_then(context_window_for));
@@ -706,6 +711,7 @@ impl UsageAcc {
             context_used_pct: pct,
             context_window_size: window,
             context_health: self.context_health.clone(),
+            context_health_updated,
             total_input_tokens: self.input,
             total_output_tokens: self.output,
             cached_input_tokens: self.cached_input,
@@ -725,6 +731,18 @@ impl UsageAcc {
             effort: self.effort.clone(),
             received_at: Some(OffsetDateTime::now_utc()),
         }
+    }
+
+    pub fn status_line(&self) -> StatusLine {
+        self.build_status_line(false)
+    }
+
+    /// Build the next line for SessionStore, consuming the explicit context
+    /// update marker so later unrelated ticks retain (rather than repeatedly
+    /// clear) whichever health sample the store accepted.
+    fn take_status_line(&mut self) -> StatusLine {
+        let updated = std::mem::take(&mut self.context_health_updated);
+        self.build_status_line(updated)
     }
 }
 
@@ -994,7 +1012,7 @@ pub fn apply_updates(
         }
     }
     if usage_changed {
-        store.apply_status_line(session_id, acc.status_line());
+        store.apply_status_line(session_id, acc.take_status_line());
     }
 }
 /// The profile half of a managed spawn: the harness's config-root environment
@@ -1405,6 +1423,83 @@ mod tests {
             acc.status_line().context_health.is_none(),
             "the old denominator must not be paired with a newer numerator"
         );
+    }
+
+    #[test]
+    fn partial_successor_invalidation_survives_usage_acc_and_session_store() {
+        let store = SessionStore::new();
+        store.register_managed("c1", "/tmp", "codex");
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+
+        apply_updates(
+            &store,
+            &conv,
+            "c1",
+            vec![AgentUpdate::Usage {
+                model: None,
+                input_tokens: Some(10),
+                output_tokens: Some(2),
+                cached_input_tokens: None,
+                cost_usd: None,
+                context_tokens: Some(160_000),
+                context_window: Some(200_000),
+            }],
+            &mut mode,
+            &mut acc,
+        );
+        assert!(store
+            .get("c1")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .is_some());
+
+        apply_updates(
+            &store,
+            &conv,
+            "c1",
+            vec![AgentUpdate::Usage {
+                model: None,
+                input_tokens: Some(20),
+                output_tokens: Some(3),
+                cached_input_tokens: None,
+                cost_usd: None,
+                context_tokens: Some(40_000),
+                context_window: None,
+            }],
+            &mut mode,
+            &mut acc,
+        );
+        assert!(
+            store
+                .get("c1")
+                .unwrap()
+                .status_line
+                .unwrap()
+                .context_health
+                .is_none(),
+            "SessionStore must not resurrect the pair UsageAcc explicitly cleared"
+        );
+
+        // A later unrelated cost tick may retain current health, but there is
+        // deliberately none after invalidation, so it cannot revive the old pair.
+        store.apply_status_line(
+            "c1",
+            StatusLine {
+                cost_usd: Some(1.0),
+                ..Default::default()
+            },
+        );
+        assert!(store
+            .get("c1")
+            .unwrap()
+            .status_line
+            .unwrap()
+            .context_health
+            .is_none());
     }
 
     #[test]

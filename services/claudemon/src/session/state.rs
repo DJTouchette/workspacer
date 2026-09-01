@@ -470,6 +470,12 @@ pub struct StatusLine {
     /// session store stamps provider/epoch provenance before publishing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_health: Option<ContextHealth>,
+    /// Internal tri-state companion for `context_health`: false means this
+    /// status tick carried no context observation and should retain the last
+    /// sample; true + `None` means a newer partial/null observation explicitly
+    /// invalidated it. Consumed by SessionStore and never persisted or wired.
+    #[serde(skip)]
+    pub context_health_updated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -613,7 +619,9 @@ impl StatusLine {
                 let window = cw
                     .and_then(|c| c.get("context_window_size"))
                     .and_then(Value::as_u64);
-                let current = cw.and_then(|c| c.get("current_usage"));
+                let current = cw
+                    .and_then(|c| c.get("current_usage"))
+                    .and_then(Value::as_object);
                 let used = current.map(|u| {
                     let get = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
                     get("input_tokens")
@@ -635,6 +643,10 @@ impl StatusLine {
                     _ => None,
                 }
             },
+            // A context_window object is a complete Claude status observation.
+            // Its real pre-first-message shape has `current_usage: null`; that
+            // explicitly means "no runtime numerator yet", never confirmed 0%.
+            context_health_updated: cw.is_some(),
             total_input_tokens: cw
                 .and_then(|c| c.get("total_input_tokens"))
                 .and_then(Value::as_u64),
@@ -851,7 +863,7 @@ pub struct SessionState {
     /// Runtime-telemetry ownership epoch used by context-health watches. It is
     /// process-local by design (watches are process-local too) and advances on
     /// every spawn/resume/provider/model boundary.
-    #[serde(default)]
+    #[serde(skip)]
     pub context_telemetry_epoch: u64,
     /// The accepted selection whose provider confirmation is still pending.
     /// Ephemeral by design; hydration may recreate the fence from durable owner
@@ -1407,6 +1419,11 @@ mod tests {
         assert_eq!(health.used_pct, 60.0);
 
         for raw in [
+            // Real Claude pre-first-message shape: the field is explicit null.
+            serde_json::json!({ "context_window": {
+                "used_percentage": 0, "context_window_size": 200_000,
+                "current_usage": null
+            }}),
             serde_json::json!({ "context_window": {
                 "used_percentage": 60, "context_window_size": 200_000
             }}),
@@ -1420,6 +1437,16 @@ mod tests {
                 "a percentage-only or denominator-free display sample is not health evidence"
             );
         }
+    }
+
+    #[test]
+    fn process_local_context_epoch_is_not_serialized() {
+        let mut state = SessionState::new("s".into(), Some("/tmp".into()));
+        state.context_telemetry_epoch = 42;
+        let wire = serde_json::to_value(&state).unwrap();
+        assert!(wire.get("context_telemetry_epoch").is_none());
+        let restored: SessionState = serde_json::from_value(wire).unwrap();
+        assert_eq!(restored.context_telemetry_epoch, 0);
     }
 
     /// Claude never spells a window's length out, so the daemon stamps it from

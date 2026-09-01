@@ -599,7 +599,7 @@ func TestNotifyWhenContextHealthParity(t *testing.T) {
 		t.Fatalf("confirmed boundary produced %d wakes", len(msgs))
 	}
 	text, _ := msgs[0].body["text"].(string)
-	for _, want := range []string{"contextUsedPct active context 80% ≥ 80%", "160,000 / 200,000 tokens", "runtime-confirmed by codex", "epoch 7"} {
+	for _, want := range []string{"contextUsedPct active context 80.0% ≥ 80.0%", "160,000 / 200,000 tokens", "runtime-confirmed by codex", "epoch 7"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("context wake missing %q:\n%s", want, text)
 		}

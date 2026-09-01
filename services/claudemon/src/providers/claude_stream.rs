@@ -96,6 +96,12 @@ pub struct StreamTotals {
     /// carries the matching runtime window, so keeping this until that frame
     /// lets the health carrier publish a correlated numerator/denominator pair
     /// without reconstructing either from a percentage.
+    ///
+    /// Freshness consequence: during a long Claude turn, assistant frames may
+    /// update this numerator but cannot publish context health yet because the
+    /// matching effective window arrives only on `result`. Consumers therefore
+    /// keep the prior result sample until it ages stale, then wait; they must not
+    /// treat an in-progress numerator as correlated or as confirmed 0%.
     context_tokens: Option<u64>,
 }
 

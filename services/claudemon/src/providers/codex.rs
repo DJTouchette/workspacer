@@ -131,7 +131,8 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             // `TokenUsageBreakdown`s. `total` is CUMULATIVE across the whole
             // thread; `last` is the most recent request — i.e. what's actually
             // occupying the context window right now. Older builds sent a flat
-            // snake_case `usage` object; those spellings are kept as fallbacks.
+            // snake_case `usage` object, but that shape has no current-request
+            // numerator: its counters remain valid for billing only.
             let tu = params
                 .get("tokenUsage")
                 .or_else(|| params.get("usage"))
@@ -161,20 +162,13 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 // output AND reasoning tokens, and reasoning doesn't carry
                 // forward into the window — a high-effort turn inflated the
                 // gauge by thousands of phantom tokens. Same convention as the
-                // Claude paths (input + cache). Legacy flat shape falls back
-                // through its own fields.
-                let context_tokens = last
-                    .and_then(|l| {
-                        pick(l, ["inputTokens", "input_tokens"])
-                            .or_else(|| pick(l, ["totalTokens", "total_tokens"]))
-                    })
-                    .or_else(|| {
-                        total.is_none().then(|| {
-                            input
-                                .or_else(|| pick(tu, ["total_tokens", "totalTokens"]))
-                                .unwrap_or_else(|| output.unwrap_or(0))
-                        })
-                    });
+                // Claude paths (input + cache). Never promote the legacy flat
+                // cumulative counters into this gauge: 230k cumulative tokens
+                // against a 272k window is not an 84.6%-full current context.
+                let context_tokens = last.and_then(|l| {
+                    pick(l, ["inputTokens", "input_tokens"])
+                        .or_else(|| pick(l, ["totalTokens", "total_tokens"]))
+                });
                 let context_window = [tu, params].iter().find_map(|v| {
                     v.get("modelContextWindow")
                         .or_else(|| v.get("model_context_window"))
@@ -1311,6 +1305,7 @@ async fn run_rollout_fallback(
 /// Argv for the fallback TUI. Same config overrides the app-server path applies
 /// — model, reasoning effort, the bypass flag, and (the bit that used to go
 /// missing) the facade's MCP servers.
+#[allow(clippy::too_many_arguments)]
 fn fallback_tui_argv(
     bin: &str,
     model: Option<&str>,
@@ -2861,21 +2856,58 @@ mod tests {
     }
 
     #[test]
-    fn token_usage_maps_to_usage_legacy_flat_shape() {
-        let p = json!({ "usage": { "input_tokens": 1000, "output_tokens": 200, "cached_input_tokens": 50,
-            "total_tokens": 1250, "model_context_window": 272000 } });
+    fn legacy_flat_usage_keeps_billing_totals_but_has_no_context_numerator() {
+        let p = json!({ "usage": { "input_tokens": 230000, "output_tokens": 200, "cached_input_tokens": 50,
+            "total_tokens": 230250, "model_context_window": 272000 } });
         assert_eq!(
             translate("thread/tokenUsage/updated", &p),
             vec![AgentUpdate::Usage {
                 model: None,
-                input_tokens: Some(1000),
+                input_tokens: Some(230000),
                 output_tokens: Some(200),
                 cached_input_tokens: Some(50),
                 cost_usd: None,
-                // Input side only — output/reasoning don't occupy the window.
-                context_tokens: Some(1000),
+                // The flat counters are cumulative session billing totals.
+                context_tokens: None,
                 context_window: Some(272000),
             }]
+        );
+    }
+
+    #[test]
+    fn cumulative_codex_contract_never_publishes_context_health() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/context-health-cases.json"
+        ))
+        .unwrap();
+        let c = &fixture["cumulativeCodex"];
+        let input = c["inputTokens"].as_u64().unwrap();
+        let output = c["outputTokens"].as_u64().unwrap();
+        let window = c["windowTokens"].as_u64().unwrap();
+        let threshold = c["thresholdPct"].as_f64().unwrap();
+        assert!(input as f64 / window as f64 * 100.0 > threshold);
+
+        let updates = translate(
+            "thread/tokenUsage/updated",
+            &json!({ "usage": {
+                "input_tokens": input,
+                "output_tokens": output,
+                "model_context_window": window
+            }}),
+        );
+        let store = SessionStore::new();
+        store.register_managed("cumulative", "/tmp", "codex");
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        apply_updates(&store, &conv, "cumulative", updates, &mut mode, &mut acc);
+        let line = store.get("cumulative").unwrap().status_line.unwrap();
+        assert_eq!(line.total_input_tokens, Some(input));
+        assert_eq!(line.total_output_tokens, Some(output));
+        assert_eq!(line.context_window_size, Some(window));
+        assert!(
+            line.context_health.is_none(),
+            "restoring the legacy fallback would create an >80% false health sample"
         );
     }
 

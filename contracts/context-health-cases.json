@@ -1,0 +1,29 @@
+{
+  "vocabulary": {
+    "blocks": {
+      "formatPctCases": {
+        "why": "Desktop and Hub wake text must render the same bounded percentage.",
+        "required": ["input", "expected"],
+        "loaders": [
+          "apps/desktop/src/main/services/thresholdWatch.test.ts::formatPctCases",
+          "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases"
+        ]
+      }
+    }
+  },
+  "formatPctCases": [
+    { "input": -5, "expected": "0.0" },
+    { "input": 0, "expected": "0.0" },
+    { "input": 12.34, "expected": "12.3" },
+    { "input": 80, "expected": "80.0" },
+    { "input": 99.99, "expected": "100.0" },
+    { "input": 105, "expected": "100.0" }
+  ],
+  "unsupportedProviders": ["opencode", "pi"],
+  "cumulativeCodex": {
+    "inputTokens": 230000,
+    "outputTokens": 200,
+    "windowTokens": 272000,
+    "thresholdPct": 80
+  }
+}
