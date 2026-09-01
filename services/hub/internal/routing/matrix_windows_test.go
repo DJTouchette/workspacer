@@ -40,6 +40,63 @@ func TestWindowsCeilingUsesVolumeCaseAndSeparatorSemantics(t *testing.T) {
 	}
 }
 
+func TestWindowsCeilingUsesOrdinalUnicodeCaseSemantics(t *testing.T) {
+	root := t.TempDir()
+	defaultCeiling := Ceiling{MaxCapability: "frontier", MaxToolScope: "operator"}
+	rootCeiling := Ceiling{MaxCapability: "balanced", MaxToolScope: "triage"}
+	lockedCeiling := Ceiling{MaxCapability: "cheap", MaxToolScope: "view"}
+
+	for _, tc := range []struct {
+		name       string
+		configured string
+		canonical  string
+		wantKey    string
+		wantScope  string
+	}{
+		{name: "Cyrillic", configured: filepath.Join(root, "ПРОЕКТ"), canonical: filepath.Join(root, "проект", "Child"), wantScope: "view"},
+		{name: "umlaut", configured: filepath.Join(root, "Ärger"), canonical: filepath.Join(root, "ärGER", "Child"), wantScope: "view"},
+		{name: "Kelvin sign is a sibling", configured: filepath.Join(root, "Kelvin"), canonical: filepath.Join(root, "Kelvin", "Child"), wantKey: root, wantScope: "triage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Matrix{Ceilings: map[string]Ceiling{
+				CeilingDefaultKey: defaultCeiling,
+				root:              rootCeiling,
+				tc.configured:     lockedCeiling,
+			}}
+			wantKey := tc.wantKey
+			if wantKey == "" {
+				wantKey = tc.configured
+			}
+			if c, key := m.CeilingFor(tc.canonical); key != wantKey || c.MaxToolScope != tc.wantScope {
+				t.Fatalf("ordinal Windows lookup chose key=%q ceiling=%+v, want key=%q scope=%q", key, c, wantKey, tc.wantScope)
+			}
+		})
+	}
+}
+
+func TestWindowsRoutingComparisonFollowsOrdinalContract(t *testing.T) {
+	for _, tc := range windowsOrdinalRoutingContract {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := routingPathsEqual(tc.a, tc.b); got != tc.want {
+				t.Errorf("routingPathsEqual(%q, %q) = %t, want %t", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+
+	if !routingPathHasPrefix(`c:\РАБОТА\Проект\sub`, `C:\работа\проект\`) {
+		t.Error("a Cyrillic case variant of a Windows ancestor did not match")
+	}
+	if !routingPathHasPrefix(`\\SERVER\SHARE\Ärger\child`, `\\server\share\ärGER\`) {
+		t.Error("an umlaut case variant on the same UNC share did not match")
+	}
+	if routingPathHasPrefix(`C:\work\client-old`, `C:\work\client\`) {
+		t.Error("a prefix sibling compared as contained")
+	}
+	if routingPathHasPrefix(`\\server\share-old\work`, `\\server\share\`) {
+		t.Error("a sibling UNC share compared as contained")
+	}
+}
+
 func TestWindowsLoadAcceptsDriveAndUNCAbsoluteCeilingKeys(t *testing.T) {
 	drive := `C:\Work\Locked`
 	unc := `\\Server\Share\Locked`
