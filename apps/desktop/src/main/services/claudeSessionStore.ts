@@ -249,6 +249,18 @@ export interface SessionStatusLine {
   effort?: string;
   contextUsedPct?: number;
   contextWindowSize?: number;
+  /** Correlated active occupancy and effective window, emitted only from
+   * runtime provider evidence. Automatic health decisions must use this
+   * carrier, never the display-oriented fields above. */
+  contextHealth?: {
+    usedTokens: number;
+    windowTokens: number;
+    usedPct: number;
+    windowSource: 'runtime';
+    observedAt: string;
+    epoch: number;
+    provider: string;
+  };
   totalInputTokens?: number;
   totalOutputTokens?: number;
   /** Cache-read subset of `totalInputTokens`, when the provider reports one.
@@ -760,6 +772,7 @@ class ClaudeSessionStore {
             modelDisplay: undefined,
             contextWindowSize: undefined,
             contextUsedPct: undefined,
+            contextHealth: undefined,
             receivedAt: undefined,
           }
         : existing.statusLine;
@@ -843,6 +856,7 @@ class ClaudeSessionStore {
       modelDisplay: undefined,
       contextWindowSize: undefined,
       contextUsedPct: undefined,
+      contextHealth: undefined,
     };
     provenance.suppressionsRemaining = Math.max(0, provenance.suppressionsRemaining - 1);
     if (provenance.suppressionsRemaining === 0) {

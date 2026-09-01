@@ -38,6 +38,32 @@ function rig(sessions: WatchableSession[]) {
   return { deliver, watcher };
 }
 
+function withHealth(
+  now: number,
+  usedTokens: number,
+  windowTokens = 200_000,
+  over: Record<string, unknown> = {},
+): WatchableSession {
+  return session({
+    provider: 'codex',
+    usage: null,
+    statusLine: {
+      totalInputTokens: 9_000_000,
+      totalOutputTokens: 500_000,
+      contextHealth: {
+        usedTokens,
+        windowTokens,
+        usedPct: (usedTokens / windowTokens) * 100,
+        windowSource: 'runtime',
+        observedAt: new Date(now).toISOString(),
+        epoch: 7,
+        provider: 'codex',
+        ...over,
+      },
+    },
+  });
+}
+
 describe('parsePredicate', () => {
   it('refuses an EMPTY predicate — an armed watch that can never fire is a lie', () => {
     expect(() => parsePredicate({})).toThrow(/at least one threshold/);
@@ -55,6 +81,135 @@ describe('parsePredicate', () => {
       usd: 5,
       idleSeconds: 60,
     });
+  });
+
+  it('accepts only finite context percentages in (0, 100] and keeps health single-purpose', () => {
+    expect(parsePredicate({ contextUsedPct: 80 })).toEqual({ contextUsedPct: 80 });
+    expect(parsePredicate({ contextUsedPct: 100 })).toEqual({ contextUsedPct: 100 });
+    for (const bad of [0, -1, 100.01, Infinity, NaN]) {
+      expect(() => parsePredicate({ contextUsedPct: bad })).toThrow(/finite number in \(0, 100\]/);
+    }
+    expect(() => parsePredicate({ contextUsedPct: 80, tokens: 1 })).toThrow(/single-purpose/);
+  });
+});
+
+describe('contextUsedPct health semantics', () => {
+  const now = Date.parse('2026-08-31T20:10:00Z');
+
+  it('arms alreadySatisfied and fires at the exact boundary with explainable provenance', () => {
+    const sessions = [mgr(), withHealth(now, 160_000)];
+    const { watcher, deliver } = rig(sessions);
+    const armed = watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    expect(armed.state).toBe('alreadySatisfied');
+    watcher.sweep(now);
+    const text = deliver.mock.calls[0][1] as string;
+    expect(text).toContain('contextUsedPct active context 80% ≥ 80%');
+    expect(text).toContain('160,000 / 200,000 tokens');
+    expect(text).toContain('runtime-confirmed by codex');
+    expect(text).toContain('epoch 7');
+    expect(watcher.list()).toHaveLength(0);
+  });
+
+  it('waits through missing, provisional, stale, and internally inconsistent telemetry', () => {
+    const target = withHealth(now, 180_000);
+    const sessions = [mgr(), target];
+    const { watcher, deliver } = rig(sessions);
+    target.statusLine!.contextHealth = undefined;
+    const armed = watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    expect(armed.state).toBe('waitingForTelemetry');
+
+    target.statusLine!.contextHealth = withHealth(now, 180_000).statusLine!.contextHealth;
+    target.statusLine!.contextHealth!.windowSource = 'requested';
+    watcher.sweep(now);
+    target.statusLine!.contextHealth!.windowSource = 'runtime';
+    target.statusLine!.contextHealth!.observedAt = new Date(now - 120_001).toISOString();
+    watcher.sweep(now);
+    target.statusLine!.contextHealth!.observedAt = new Date(now).toISOString();
+    target.statusLine!.contextHealth!.usedPct = 10;
+    watcher.sweep(now);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watcher.list()).toHaveLength(1);
+
+    target.statusLine!.contextHealth!.usedPct = 90;
+    watcher.sweep(now);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles compaction as a newer decrease, then fires on a later genuine rise', () => {
+    const target = withHealth(now, 120_000);
+    const sessions = [mgr(), target];
+    const { watcher, deliver } = rig(sessions);
+    watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    target.statusLine!.contextHealth = withHealth(now + 1_000, 40_000).statusLine!.contextHealth;
+    watcher.sweep(now + 1_000);
+    expect(deliver).not.toHaveBeenCalled();
+    target.statusLine!.contextHealth = withHealth(now + 2_000, 170_000).statusLine!.contextHealth;
+    watcher.sweep(now + 2_000);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates one-shot on provider or telemetry-epoch changes and asks for re-arm', () => {
+    const target = withHealth(now, 100_000);
+    const sessions = [mgr(), target];
+    const { watcher, deliver } = rig(sessions);
+    watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    target.statusLine!.contextHealth = withHealth(now + 1_000, 170_000, 200_000, {
+      epoch: 8,
+    }).statusLine!.contextHealth;
+    watcher.sweep(now + 1_000);
+    expect(deliver.mock.calls[0][1]).toContain('telemetry epoch 7 → 8');
+    expect(deliver.mock.calls[0][1]).toContain('re-arm');
+    expect(watcher.list()).toHaveLength(0);
+
+    const second = rig(sessions);
+    target.statusLine!.contextHealth = withHealth(now + 2_000, 100_000, 200_000, {
+      epoch: 8,
+    }).statusLine!.contextHealth;
+    second.watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now: now + 2_000,
+    });
+    target.provider = 'claude';
+    second.watcher.sweep(now + 3_000);
+    expect(second.deliver.mock.calls[0][1]).toContain('provider/session boundary');
+  });
+
+  it('never substitutes cumulative token throughput for active occupancy', () => {
+    const target = withHealth(now, 20_000); // 10% active, despite 9.5M cumulative.
+    const sessions = [mgr(), target];
+    const { watcher, deliver } = rig(sessions);
+    watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now,
+    });
+    watcher.sweep(now);
+    expect(sessionTokens(target)).toBe(9_500_000);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watcher.list()).toHaveLength(1);
   });
 });
 

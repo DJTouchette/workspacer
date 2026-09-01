@@ -464,6 +464,12 @@ pub struct StatusLine {
     pub context_used_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window_size: Option<u64>,
+    /// A context-occupancy sample that is safe to use for health decisions.
+    /// Unlike the display fields above, this exists only when the provider
+    /// supplied the active numerator and effective denominator together. The
+    /// session store stamps provider/epoch provenance before publishing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_health: Option<ContextHealth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -534,6 +540,26 @@ pub struct StatusLine {
     pub received_at: Option<OffsetDateTime>,
 }
 
+/// Runtime-confirmed active-context occupancy. This is intentionally separate
+/// from the display-oriented `context_used_pct` / `context_window_size` pair:
+/// managed-provider display can fall back to a model table, while an automatic
+/// health wake must never do so.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextHealth {
+    pub used_tokens: u64,
+    pub window_tokens: u64,
+    pub used_pct: f64,
+    /// Currently always `"runtime"`; explicit so consumers fail closed if a
+    /// future producer introduces requested/catalog/provisional provenance.
+    pub window_source: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
+    /// Advances at provider/session/model ownership boundaries.
+    pub epoch: u64,
+    /// Provider that owned this sample (for example `codex` or `claude`).
+    pub provider: String,
+}
+
 /// Claude's account windows are named by their length rather than carrying it:
 /// `five_hour` is 300 minutes and `seven_day` is 10080. Nothing on Claude's
 /// wire spells the duration out, so the daemon stamps it from the window's own
@@ -583,6 +609,32 @@ impl StatusLine {
             context_window_size: cw
                 .and_then(|c| c.get("context_window_size"))
                 .and_then(Value::as_u64),
+            context_health: {
+                let window = cw
+                    .and_then(|c| c.get("context_window_size"))
+                    .and_then(Value::as_u64);
+                let current = cw.and_then(|c| c.get("current_usage"));
+                let used = current.map(|u| {
+                    let get = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
+                    get("input_tokens")
+                        + get("cache_creation_input_tokens")
+                        + get("cache_read_input_tokens")
+                });
+                match (used, window) {
+                    (Some(used), Some(window)) if window > 0 && used <= window => {
+                        Some(ContextHealth {
+                            used_tokens: used,
+                            window_tokens: window,
+                            used_pct: used as f64 / window as f64 * 100.0,
+                            window_source: "runtime".to_string(),
+                            observed_at: OffsetDateTime::now_utc(),
+                            epoch: 0,
+                            provider: String::new(),
+                        })
+                    }
+                    _ => None,
+                }
+            },
             total_input_tokens: cw
                 .and_then(|c| c.get("total_input_tokens"))
                 .and_then(Value::as_u64),
@@ -796,6 +848,11 @@ pub struct SessionState {
     /// cannot silently inherit the newly accepted selection's provenance.
     #[serde(skip)]
     pub model_telemetry_epoch: u64,
+    /// Runtime-telemetry ownership epoch used by context-health watches. It is
+    /// process-local by design (watches are process-local too) and advances on
+    /// every spawn/resume/provider/model boundary.
+    #[serde(default)]
+    pub context_telemetry_epoch: u64,
     /// The accepted selection whose provider confirmation is still pending.
     /// Ephemeral by design; hydration may recreate the fence from durable owner
     /// truth without a schema change, but only with the same finite evidence
@@ -850,6 +907,7 @@ impl SessionState {
             requested_selection: None,
             model_selection_epoch: 0,
             model_telemetry_epoch: 0,
+            context_telemetry_epoch: 0,
             pending_model_confirmation: None,
             model_confirmation_suppressions_remaining: 0,
         }
@@ -1328,6 +1386,40 @@ mod tests {
         // Non-finite is not a reading at all.
         assert_eq!(pct(serde_json::json!({ "used_percentage": "nope" })), None);
         assert_eq!(pct(serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn claude_context_health_requires_a_direct_current_usage_and_window_pair() {
+        let confirmed = StatusLine::from_claude_json(&serde_json::json!({
+            "context_window": {
+                "used_percentage": 60,
+                "context_window_size": 200_000,
+                "current_usage": {
+                    "input_tokens": 10,
+                    "cache_read_input_tokens": 119_990,
+                    "cache_creation_input_tokens": 0
+                }
+            }
+        }));
+        let health = confirmed.context_health.expect("runtime pair");
+        assert_eq!(health.used_tokens, 120_000);
+        assert_eq!(health.window_tokens, 200_000);
+        assert_eq!(health.used_pct, 60.0);
+
+        for raw in [
+            serde_json::json!({ "context_window": {
+                "used_percentage": 60, "context_window_size": 200_000
+            }}),
+            serde_json::json!({ "context_window": {
+                "used_percentage": 60,
+                "current_usage": { "input_tokens": 120_000 }
+            }}),
+        ] {
+            assert!(
+                StatusLine::from_claude_json(&raw).context_health.is_none(),
+                "a percentage-only or denominator-free display sample is not health evidence"
+            );
+        }
     }
 
     /// Claude never spells a window's length out, so the daemon stamps it from

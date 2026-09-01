@@ -504,12 +504,50 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
     status.model_display = None;
     status.context_window_size = None;
     status.context_used_pct = None;
+    status.context_health = None;
     session.model_confirmation_suppressions_remaining = session
         .model_confirmation_suppressions_remaining
         .saturating_sub(1);
     if session.model_confirmation_suppressions_remaining == 0 {
         session.model_telemetry_epoch = session.model_selection_epoch;
         session.pending_model_confirmation = None;
+    }
+}
+
+/// Bind a correlated runtime context sample to the session life that owns it,
+/// retain a newer sample across unrelated status ticks, and drop malformed or
+/// out-of-order evidence. Display telemetry remains unaffected.
+fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
+    let previous = session
+        .status_line
+        .as_ref()
+        .and_then(|sl| sl.context_health.as_ref());
+    if let Some(sample) = status.context_health.as_mut() {
+        let valid = sample.window_source == "runtime"
+            && sample.window_tokens > 0
+            && sample.used_tokens <= sample.window_tokens
+            && sample.used_pct.is_finite()
+            && (0.0..=100.0).contains(&sample.used_pct)
+            && (sample.used_pct - sample.used_tokens as f64 / sample.window_tokens as f64 * 100.0)
+                .abs()
+                <= 0.01;
+        if !valid {
+            status.context_health = None;
+        } else {
+            sample.provider = session.provider.clone();
+            sample.epoch = session.context_telemetry_epoch;
+            if previous.is_some_and(|old| {
+                old.provider == sample.provider
+                    && old.epoch == sample.epoch
+                    && old.observed_at >= sample.observed_at
+            }) {
+                status.context_health = previous.cloned();
+            }
+        }
+    } else if session.pending_model_confirmation.is_none() {
+        // Rate-limit/cost-only ticks must not erase the latest confirmed
+        // occupancy. Freshness is judged from the sample's own observed_at.
+        status.context_health = previous.cloned();
     }
 }
 
@@ -969,6 +1007,7 @@ impl SessionStore {
                 self.patch_rate_limits(&mut status, &root);
             }
             reconcile_model_telemetry(session, &mut status);
+            reconcile_context_health(session, &mut status);
             session.status_line = Some(status.clone());
             session.updated_at = OffsetDateTime::now_utc();
             session.clone()
@@ -1264,6 +1303,10 @@ impl SessionStore {
                 entry.clear_pending();
                 entry.updated_at = OffsetDateTime::now_utc();
             }
+            // A spawn onto an existing id is a new telemetry life (resume or
+            // restart). The prior process' context evidence cannot cross it.
+            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
+            entry.status_line = None;
             entry.clone()
         };
         self.wrappers.insert(session_id.to_string(), handle);
@@ -1311,6 +1354,8 @@ impl SessionStore {
                 });
             entry.mode = SessionMode::Input;
             entry.provider = provider.to_string();
+            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
+            entry.status_line = None;
             entry.clone()
         };
         self.buffers
@@ -1443,12 +1488,14 @@ impl SessionStore {
             entry.requested_model = Some(persisted.legacy_model.clone());
             entry.requested_selection = Some(persisted.selection.clone());
             entry.model_selection_epoch = entry.model_selection_epoch.saturating_add(1);
+            entry.context_telemetry_epoch = entry.context_telemetry_epoch.saturating_add(1);
             entry.pending_model_confirmation = Some(persisted.selection.clone());
             entry.model_confirmation_suppressions_remaining = MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
             if let Some(status) = entry.status_line.as_mut() {
                 status.model_display = None;
                 status.context_window_size = None;
                 status.context_used_pct = None;
+                status.context_health = None;
             }
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
@@ -1959,6 +2006,7 @@ impl SessionStore {
                 self.patch_rate_limits(&mut status, &root);
             }
             reconcile_model_telemetry(&mut entry, &mut status);
+            reconcile_context_health(&entry, &mut status);
             entry.status_line = Some(status.clone());
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
@@ -2725,7 +2773,7 @@ impl Default for SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::state::PendingOwner;
+    use crate::session::state::{ContextHealth, PendingOwner};
 
     fn hook(event: &str, session_id: &str, cwd: &str) -> HookEvent {
         HookEvent {
@@ -3718,6 +3766,50 @@ mod tests {
             store.get("nobody").is_none(),
             "must not create a phantom session"
         );
+    }
+
+    #[test]
+    fn context_health_is_stamped_ordered_and_cleared_at_a_new_life() {
+        let store = SessionStore::new();
+        store.register_managed("c1", "/tmp", "codex");
+        let observed = OffsetDateTime::now_utc();
+        let sample = |used: u64, at: OffsetDateTime| StatusLine {
+            context_health: Some(ContextHealth {
+                used_tokens: used,
+                window_tokens: 200_000,
+                used_pct: used as f64 / 2_000.0,
+                window_source: "runtime".into(),
+                observed_at: at,
+                epoch: 0,
+                provider: String::new(),
+            }),
+            ..Default::default()
+        };
+        let first = store
+            .apply_status_line("c1", sample(120_000, observed))
+            .unwrap();
+        let health = first.status_line.unwrap().context_health.unwrap();
+        assert_eq!(health.provider, "codex");
+        assert_eq!(health.epoch, 1);
+
+        // An out-of-order lower sample cannot roll the accepted observation back.
+        let late = store
+            .apply_status_line("c1", sample(20_000, observed - time::Duration::SECOND))
+            .unwrap();
+        assert_eq!(
+            late.status_line
+                .unwrap()
+                .context_health
+                .unwrap()
+                .used_tokens,
+            120_000
+        );
+
+        // Resume/restart/provider registration advances ownership and clears
+        // the old process' sample before any successor telemetry arrives.
+        let restarted = store.register_managed("c1", "/tmp", "claude");
+        assert_eq!(restarted.context_telemetry_epoch, 2);
+        assert!(restarted.status_line.is_none());
     }
 
     fn account_reading(five_pct: f64) -> AccountUsage {

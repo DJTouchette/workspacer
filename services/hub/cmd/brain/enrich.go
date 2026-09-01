@@ -342,7 +342,7 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	// stats/progressFingerprint/statusLineAlive read 0/undefined for the phone's
 	// strongest fingerprint signal — see .rivet/learnings 2026-08-23.
 	if sl, ok := m["status_line"].(map[string]any); ok {
-		m["statusLine"] = map[string]any{
+		compat := map[string]any{
 			"modelDisplay":        sl["model_display"],
 			"effort":              sl["effort"],
 			"contextUsedPct":      sl["context_used_pct"],
@@ -365,6 +365,18 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 			"capabilities":        sl["capabilities"],
 			"receivedAt":          sl["received_at"],
 		}
+		if health, ok := sl["context_health"].(map[string]any); ok {
+			compat["contextHealth"] = map[string]any{
+				"usedTokens":   health["used_tokens"],
+				"windowTokens": health["window_tokens"],
+				"usedPct":      health["used_pct"],
+				"windowSource": health["window_source"],
+				"observedAt":   health["observed_at"],
+				"epoch":        health["epoch"],
+				"provider":     health["provider"],
+			}
+		}
+		m["statusLine"] = compat
 	}
 	// pending → pendingApproval / pendingQuestions. Set both explicitly (null
 	// when absent) so a sparse merge clears a stale decision on the client.

@@ -43,8 +43,8 @@ use tokio::sync::mpsc;
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
-    Capabilities, Pending, PendingOwner, PendingWrite, Plan, PlanStatus, PlanStep, SessionMode,
-    StatusLine, SubagentUpdate,
+    Capabilities, ContextHealth, Pending, PendingOwner, PendingWrite, Plan, PlanStatus, PlanStep,
+    SessionMode, StatusLine, SubagentUpdate,
 };
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
@@ -497,6 +497,10 @@ pub struct UsageAcc {
     cost: Option<f64>,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
+    /// Latest active-occupancy/effective-window pair received in one provider
+    /// update. Unlike the display window, this is never filled from a model
+    /// table and is therefore safe to publish as health evidence.
+    context_health: Option<ContextHealth>,
     five_hour_pct: Option<f64>,
     five_hour_resets_at: Option<i64>,
     five_hour_window_minutes: Option<u64>,
@@ -594,6 +598,23 @@ impl UsageAcc {
         }
         // context_tokens / context_window stay latest-wins in BOTH modes — never
         // summed (see the type doc): they feed occupancy, and compaction shrinks it.
+        if context_tokens.is_some() || context_window.is_some() {
+            self.context_health = match (context_tokens, context_window) {
+                (Some(used), Some(window)) if window > 0 && used <= window => Some(ContextHealth {
+                    used_tokens: used,
+                    window_tokens: window,
+                    used_pct: used as f64 / window as f64 * 100.0,
+                    window_source: "runtime".to_string(),
+                    observed_at: OffsetDateTime::now_utc(),
+                    epoch: 0,
+                    provider: String::new(),
+                }),
+                // A newer partial/invalid occupancy update makes the prior
+                // correlated pair no longer current. Wait for the next full
+                // provider pair instead of retaining apparently fresh health.
+                _ => None,
+            };
+        }
         if context_tokens.is_some() {
             self.context_tokens = context_tokens; // latest, not max — compaction shrinks it
         }
@@ -684,6 +705,7 @@ impl UsageAcc {
             model_display: self.model.clone(),
             context_used_pct: pct,
             context_window_size: window,
+            context_health: self.context_health.clone(),
             total_input_tokens: self.input,
             total_output_tokens: self.output,
             cached_input_tokens: self.cached_input,
@@ -1342,6 +1364,10 @@ mod tests {
         let sl = acc.status_line();
         assert_eq!(sl.context_window_size, Some(200_000));
         assert!((sl.context_used_pct.unwrap() - 25.0).abs() < 0.001);
+        let health = sl.context_health.expect("paired runtime sample");
+        assert_eq!(health.used_tokens, 50_000);
+        assert_eq!(health.window_tokens, 200_000);
+        assert_eq!(health.window_source, "runtime");
     }
 
     #[test]
@@ -1359,9 +1385,26 @@ mod tests {
         let sl = acc.status_line();
         assert_eq!(sl.context_window_size, Some(200_000));
         assert!((sl.context_used_pct.unwrap() - 50.0).abs() < 0.001);
+        assert!(
+            sl.context_health.is_none(),
+            "a model-table display fallback must never become health evidence"
+        );
         // Context % is capped at 100 even if occupancy overshoots the window.
         acc.merge(None, None, None, None, None, Some(999_999), None);
         assert!((acc.status_line().context_used_pct.unwrap() - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn an_incomplete_successor_sample_clears_prior_context_health() {
+        let mut acc = UsageAcc::default();
+        acc.merge(None, None, None, None, None, Some(50_000), Some(200_000));
+        assert!(acc.status_line().context_health.is_some());
+
+        acc.merge(None, None, None, None, None, Some(40_000), None);
+        assert!(
+            acc.status_line().context_health.is_none(),
+            "the old denominator must not be paired with a newer numerator"
+        );
     }
 
     #[test]

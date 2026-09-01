@@ -164,6 +164,16 @@ export interface SessionStatusLine {
   effort?: string;
   contextUsedPct?: number;
   contextWindowSize?: number;
+  /** Runtime-confirmed active occupancy/effective-window pair. */
+  contextHealth?: {
+    usedTokens: number;
+    windowTokens: number;
+    usedPct: number;
+    windowSource: 'runtime';
+    observedAt: string;
+    epoch: number;
+    provider: string;
+  };
   totalInputTokens?: number;
   totalOutputTokens?: number;
   /** The cache-read subset of `totalInputTokens`, when the provider reports one.

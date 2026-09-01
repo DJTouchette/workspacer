@@ -175,7 +175,10 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // user's own document and a plugin writing into it deserves the sensitive
   // treatment write access gets.
   'agents.close': { label: 'Dismiss a finished agent session', sensitive: true },
-  'agents.notifyWhen': { label: 'Ask to be told when an agent crosses a cost or idle threshold' },
+  'agents.notifyWhen': {
+    label:
+      'Ask to be told when an agent crosses a cost, cadence, idle, or confirmed context threshold',
+  },
   // Read-only, and its subject is dead sessions: which managers ended with
   // workers still pointing at them. What it discloses about one — a label, a
   // directory, its live children — agents.list already shows while it runs.

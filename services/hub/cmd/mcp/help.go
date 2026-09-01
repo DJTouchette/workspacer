@@ -332,12 +332,23 @@ is idempotent, so closing an already-forgotten session succeeds. It stops the
 daemon side too for a session that had not already ended, so "dismissed" is not
 a lie. The user's desktop PANE is theirs to close; this is the fleet's view.`),
 	"watch": strings.TrimSpace(`
-notify_when({sessionId, tokens|usd|idleSeconds, notifySessionId?}) is how you
+notify_when({sessionId, contextUsedPct|tokens|usd|idleSeconds, notifySessionId?}) is how you
 keep an eye on a running worker WITHOUT polling. Never loop on list_agents or
 get_conversation to "keep an eye on" something — that is a hang, and it locks
 the user out. Arm a watch and STOP.
-- Give at least one threshold. tokens is CUMULATIVE (input + output), so it
-  catches scope creep a context percentage would not; usd is cumulative cost;
+- Prefer contextUsedPct (finite range (0,100]) for health: it is ACTIVE context
+  occupancy divided only by a runtime-confirmed effective window. It is
+  single-purpose and cannot be combined with another threshold. Missing,
+  stale, provisional, reset, or inconsistent telemetry leaves the watch armed
+  until trustworthy telemetry arrives; an already-high sample fires on the
+  next sweep. A provider/session/model reset invalidates it and asks you to
+  re-arm. The wake includes percentage, numerator, denominator, provider,
+  observation time, and telemetry epoch.
+- tokens is legacy cache-inclusive CUMULATIVE throughput (input + output,
+  including cache reads where reported): useful for cadence/scope checkpoints,
+  not active-context health. Compaction does not reset it. usd is cumulative
+  session cost (provider-authoritative where supplied, otherwise Workspacer's
+  estimate; absent cost telemetry cannot cross it);
   idleSeconds catches a worker that stopped without finishing — it measures
   SILENCE, not the reported state, so it also catches one that is wedged and
   still claiming to stream. The wake names which of the two it was.
@@ -346,7 +357,8 @@ the user out. Arm a watch and STOP.
   to watch — that is a decision you should make deliberately, not a loop.
 - The wake goes to the target's PARENT by default (you, for a worker you
   dispatched); notifySessionId overrides it.
-- Watches live in memory: a workspacer restart clears them.`),
+- Watches live in memory: a workspacer restart clears them; they are not
+  persisted or recovered.`),
 	"brief": strings.TrimSpace(`
 brief_append({project, section, line}) adds ONE line to a project's
 .workspacer/brief.md. Use it instead of read_file + write_file: it is

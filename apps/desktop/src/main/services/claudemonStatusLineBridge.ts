@@ -78,6 +78,17 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           effort: sl.effort,
           contextUsedPct: sl.context_used_pct,
           contextWindowSize: sl.context_window_size,
+          contextHealth: sl.context_health
+            ? {
+                usedTokens: sl.context_health.used_tokens,
+                windowTokens: sl.context_health.window_tokens,
+                usedPct: sl.context_health.used_pct,
+                windowSource: sl.context_health.window_source,
+                observedAt: sl.context_health.observed_at,
+                epoch: sl.context_health.epoch,
+                provider: sl.context_health.provider,
+              }
+            : undefined,
           totalInputTokens: sl.total_input_tokens,
           totalOutputTokens: sl.total_output_tokens,
           // Cache-read subset of the input, when the provider reports one

@@ -810,7 +810,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Threshold alerts (operator only; see the capability's own note) ────
 	addTool[notifyWhenIn](b, "notify_when",
-		"Ask to be woken ONCE when a session crosses a threshold — the way to keep an eye on a worker's cost or context WITHOUT polling (never loop on list_agents; that is a hang, not monitoring). Give at least one of tokens / usd / idleSeconds. When it crosses you get a [fleet] wake naming what was crossed, and the watch is then discarded: arm another if you still want to watch. Defaults to waking the target's parent (you, if you dispatched it).",
+		"Ask to be woken ONCE when a session crosses a threshold without polling. Prefer contextUsedPct for runtime-confirmed active-context health; tokens is cache-inclusive cumulative throughput/cadence, not context health. usd and idleSeconds retain their existing meanings. Watches are one-shot and in-memory.",
 		"agents.notifyWhen")
 
 	// ── Project briefs (operator only — brief.* matches no scoped tier) ────
@@ -1699,9 +1699,10 @@ type terminalInputIn struct {
 type notifyWhenIn struct {
 	SessionID       string  `json:"sessionId" jsonschema:"the session to watch"`
 	NotifySessionID string  `json:"notifySessionId,omitempty" jsonschema:"the session to wake when it crosses; omit to wake the watched session's parent (which is you, for a worker you dispatched)"`
-	Tokens          float64 `json:"tokens,omitempty" jsonschema:"fire when the session's CUMULATIVE tokens (input + output) reach this — e.g. 250000 to catch a worker whose scope is running away"`
-	USD             float64 `json:"usd,omitempty" jsonschema:"fire when the session's cumulative cost in USD reaches this — e.g. 10"`
+	Tokens          float64 `json:"tokens,omitempty" jsonschema:"legacy cadence alert: fire when cache-inclusive CUMULATIVE throughput (input + output, including cache reads where reported) reaches this. This is not active-context health"`
+	USD             float64 `json:"usd,omitempty" jsonschema:"fire when cumulative session cost in USD reaches this; provider-authoritative where supplied, otherwise Workspacer's estimate; absent cost telemetry cannot cross it"`
 	IdleSeconds     float64 `json:"idleSeconds,omitempty" jsonschema:"fire when NOTHING has arrived from the session for this many seconds — whether it is sitting at a prompt or still claiming to work. This is the catch-all for a worker that stopped without finishing, including a wedged one whose state still reads 'streaming'; the wake says which it is"`
+	ContextUsedPct  float64 `json:"contextUsedPct,omitempty" jsonschema:"single-purpose health watch: fire when runtime-confirmed ACTIVE context occupancy reaches this percentage of the same confirmed effective window. Finite range (0,100]; cannot be combined with tokens/usd/idleSeconds. Missing, stale or provisional telemetry waits without firing"`
 }
 
 type briefAppendIn struct {

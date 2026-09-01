@@ -2084,12 +2084,14 @@ export function registerHubCapabilities(): void {
   // already in the sessions.snapshot every VIEW token can read. What it removes
   // is the polling, not a restriction.
   registerCapability('agents.notifyWhen', (params: unknown) => {
-    const { sessionId, notifySessionId, tokens, usd, idleSeconds } = (params ?? {}) as {
+    const { sessionId, notifySessionId, tokens, usd, idleSeconds, contextUsedPct } = (params ??
+      {}) as {
       sessionId?: string;
       notifySessionId?: string;
       tokens?: number;
       usd?: number;
       idleSeconds?: number;
+      contextUsedPct?: number;
     };
     if (!sessionId) throw new Error('agents.notifyWhen requires { sessionId }');
     // Default the recipient to the target's PARENT — the manager that
@@ -2107,7 +2109,7 @@ export function registerHubCapabilities(): void {
     return thresholdWatcher.arm({
       sessionId,
       watcherSessionId: watcherId,
-      predicate: { tokens, usd, idleSeconds },
+      predicate: { tokens, usd, idleSeconds, contextUsedPct },
     });
   });
 

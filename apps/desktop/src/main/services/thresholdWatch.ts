@@ -9,7 +9,7 @@
  *
  * This closes the hole the same way the worker-finished wake closed the "how do
  * I know it's done" one: the manager ASKS to be told, once, and then stops.
- * `notify_when(session, {tokens|usd|idleSeconds})` arms a one-shot watch;
+ * `notify_when(session, {tokens|usd|idleSeconds|contextUsedPct})` arms a one-shot watch;
  * crossing it delivers a `[fleet]` wake through the same channel every other
  * wake uses, so a manager needs no new habit to receive it.
  *
@@ -38,8 +38,14 @@ export const SWEEP_MS = 15_000;
  *  arming watches would otherwise turn a wake channel into a firehose. */
 export const MAX_WATCHES_PER_WATCHER = 20;
 
+/** Runtime context evidence older than this is not actionable. The watch stays
+ * armed and waits for a new sample; absence/staleness never becomes 0%. */
+export const CONTEXT_HEALTH_MAX_AGE_MS = 2 * 60_000;
+const CONTEXT_HEALTH_FUTURE_SKEW_MS = 5_000;
+
 export interface ThresholdPredicate {
-  /** Fire when the session's cumulative tokens (input + output) reach this. */
+  /** Cache-inclusive cumulative throughput/cadence (input + output), not
+   * active-context health. Compaction does not reset it. */
   tokens?: number;
   /** Fire when the session's cumulative cost in USD reaches this. */
   usd?: number;
@@ -47,6 +53,9 @@ export interface ThresholdPredicate {
    *  whether it is sitting at a prompt or claiming to still be working (see
    *  `crossedBy`: a wedged session reports `streaming` forever). */
   idleSeconds?: number;
+  /** Fire when runtime-confirmed ACTIVE context occupancy reaches this share
+   * of the same runtime-confirmed effective window. Valid range: (0, 100]. */
+  contextUsedPct?: number;
 }
 
 export interface ThresholdWatch extends ThresholdPredicate {
@@ -56,6 +65,10 @@ export interface ThresholdWatch extends ThresholdPredicate {
   /** The session to wake when it crosses — the manager that armed the watch. */
   watcherSessionId: string;
   armedAt: number;
+  /** Health watches bind to the target's provider/telemetry life. */
+  contextProvider?: string;
+  contextEpoch?: number;
+  state?: 'armed' | 'alreadySatisfied' | 'waitingForTelemetry';
 }
 
 /** What the sweep needs of a session. A structural subset of
@@ -65,6 +78,7 @@ export interface WatchableSession {
   cwd?: string;
   label?: string;
   status?: string;
+  provider?: string;
   ambientState?: string;
   lastActivity?: number;
   usage?: {
@@ -78,7 +92,54 @@ export interface WatchableSession {
     totalInputTokens?: number;
     totalOutputTokens?: number;
     costUSD?: number;
+    contextHealth?: ContextHealthSample;
   };
+}
+
+export interface ContextHealthSample {
+  usedTokens: number;
+  windowTokens: number;
+  usedPct: number;
+  windowSource: 'runtime' | string;
+  observedAt: string;
+  epoch: number;
+  provider: string;
+}
+
+interface ContextHealthReading extends ContextHealthSample {
+  observedAtMs: number;
+}
+
+/** Return only fresh, internally-consistent runtime evidence. */
+export function contextHealthReading(
+  s: WatchableSession,
+  now: number,
+): ContextHealthReading | null {
+  const h = s.statusLine?.contextHealth;
+  if (!h || h.windowSource !== 'runtime') return null;
+  const observedAtMs = Date.parse(h.observedAt);
+  if (
+    !Number.isFinite(h.usedTokens) ||
+    !Number.isFinite(h.windowTokens) ||
+    !Number.isFinite(h.usedPct) ||
+    !Number.isFinite(h.epoch) ||
+    !Number.isFinite(observedAtMs) ||
+    h.usedTokens < 0 ||
+    h.windowTokens <= 0 ||
+    h.usedTokens > h.windowTokens ||
+    h.usedPct < 0 ||
+    h.usedPct > 100 ||
+    h.epoch <= 0 ||
+    !h.provider ||
+    (s.provider !== undefined && h.provider !== s.provider) ||
+    observedAtMs > now + CONTEXT_HEALTH_FUTURE_SKEW_MS ||
+    now - observedAtMs > CONTEXT_HEALTH_MAX_AGE_MS
+  ) {
+    return null;
+  }
+  const computed = (h.usedTokens / h.windowTokens) * 100;
+  if (Math.abs(computed - h.usedPct) > 0.01) return null;
+  return { ...h, observedAtMs };
 }
 
 /** Total tokens a session has burned — the number the manager means by "how big
@@ -98,6 +159,13 @@ export function sessionTokens(s: WatchableSession): number {
  * one line, not three: the watch is one-shot, so one crossing ends it.
  */
 export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: number): string | null {
+  if (watch.contextUsedPct !== undefined) {
+    const health = contextHealthReading(s, now);
+    if (health && health.usedPct >= watch.contextUsedPct) {
+      return contextCrossing(watch.contextUsedPct, health);
+    }
+    return null;
+  }
   if (watch.tokens !== undefined) {
     const tokens = sessionTokens(s);
     if (tokens >= watch.tokens) {
@@ -139,6 +207,18 @@ export function crossedBy(watch: ThresholdWatch, s: WatchableSession, now: numbe
   return null;
 }
 
+function formatPct(value: number): string {
+  return value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+}
+
+function contextCrossing(threshold: number, h: ContextHealthReading): string {
+  return (
+    `contextUsedPct active context ${formatPct(h.usedPct)}% ≥ ${formatPct(threshold)}% ` +
+    `(${h.usedTokens.toLocaleString('en-US')} / ${h.windowTokens.toLocaleString('en-US')} tokens; ` +
+    `runtime-confirmed by ${h.provider}; observed ${h.observedAt}; epoch ${h.epoch})`
+  );
+}
+
 /** Validate and normalize a caller's predicate. At least one threshold is
  *  required — an empty predicate is a watch that can never fire, which reads to
  *  the caller as "armed" and is worse than a refusal. */
@@ -155,9 +235,23 @@ export function parsePredicate(input: ThresholdPredicate): ThresholdPredicate {
     }
     out[key] = n;
   }
+  if (input.contextUsedPct !== undefined && input.contextUsedPct !== null) {
+    const n = Number(input.contextUsedPct);
+    if (!Number.isFinite(n) || n <= 0 || n > 100) {
+      throw new Error(
+        `agents.notifyWhen: contextUsedPct must be a finite number in (0, 100], got ${JSON.stringify(input.contextUsedPct)}`,
+      );
+    }
+    if (Object.keys(out).length > 0) {
+      throw new Error(
+        'agents.notifyWhen: contextUsedPct is a single-purpose health predicate and cannot be combined with tokens, usd, or idleSeconds',
+      );
+    }
+    out.contextUsedPct = n;
+  }
   if (Object.keys(out).length === 0) {
     throw new Error(
-      'agents.notifyWhen requires at least one threshold: tokens, usd, or idleSeconds',
+      'agents.notifyWhen requires at least one threshold: tokens, usd, idleSeconds, or contextUsedPct',
     );
   }
   return out;
@@ -226,13 +320,25 @@ export class ThresholdWatcher {
         `agents.notifyWhen: ${args.watcherSessionId} already has ${mine.length} armed watches (max ${MAX_WATCHES_PER_WATCHER}) — let some fire, or stop arming in a loop`,
       );
     }
+    const armedAt = args.now ?? Date.now();
+    const health =
+      predicate.contextUsedPct !== undefined ? contextHealthReading(target, armedAt) : null;
     const watch: ThresholdWatch = {
       id: `w${++this.seq}`,
       sessionId: args.sessionId,
       watcherSessionId: args.watcherSessionId,
-      armedAt: args.now ?? Date.now(),
+      armedAt,
       ...predicate,
     };
+    if (predicate.contextUsedPct !== undefined) {
+      watch.contextProvider = target.provider ?? health?.provider;
+      watch.contextEpoch = health?.epoch;
+      watch.state = health
+        ? health.usedPct >= predicate.contextUsedPct
+          ? 'alreadySatisfied'
+          : 'armed'
+        : 'waitingForTelemetry';
+    }
     this.watches.set(watch.id, watch);
     this.start();
     return watch;
@@ -265,7 +371,27 @@ export class ThresholdWatcher {
         this.watches.delete(watch.id);
         continue;
       }
-      const crossed = crossedBy(watch, target, now);
+      let crossed: string | null;
+      if (watch.contextUsedPct !== undefined) {
+        if (watch.contextProvider && target.provider && watch.contextProvider !== target.provider) {
+          crossed = `monitoring invalidated: contextUsedPct ${formatPct(watch.contextUsedPct)}% watch crossed a provider/session boundary (${watch.contextProvider} → ${target.provider}); re-arm after a confirmed sample`;
+        } else {
+          const health = contextHealthReading(target, now);
+          if (!health) continue;
+          if (watch.contextEpoch !== undefined && watch.contextEpoch !== health.epoch) {
+            crossed = `monitoring invalidated: contextUsedPct ${formatPct(watch.contextUsedPct)}% watch crossed telemetry epoch ${watch.contextEpoch} → ${health.epoch}; re-arm after the confirmed ${health.provider} sample`;
+          } else {
+            watch.contextProvider ??= health.provider;
+            watch.contextEpoch ??= health.epoch;
+            crossed =
+              health.usedPct >= watch.contextUsedPct
+                ? contextCrossing(watch.contextUsedPct, health)
+                : null;
+          }
+        }
+      } else {
+        crossed = crossedBy(watch, target, now);
+      }
       if (!crossed) continue;
       this.watches.delete(watch.id); // one-shot: gone before delivery, never twice
       fired.push({ watch, entry: watchEntry(target, crossed) });

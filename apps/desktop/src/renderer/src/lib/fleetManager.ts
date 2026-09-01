@@ -252,9 +252,12 @@ const MANAGER_PREAMBLE =
   're-points the predecessor’s in-flight workers at you so each one wakes YOU when it ' +
   'finishes, instead of a session that no longer exists. "0 moved" is a real answer: the ' +
   'predecessor had nothing left in flight.\n' +
-  '- notify_when {"sessionId":"<worker id>","tokens":250000} (or "usd":10, or ' +
-  '"idleSeconds":900) — the ONLY sanctioned way to keep an eye on a running worker. Rule 2 ' +
-  'forbids polling; this is how you honour it and still catch scope creep: arm a watch, STOP, ' +
+  '- notify_when {"sessionId":"<worker id>","contextUsedPct":80} (or "tokens":250000, ' +
+  '"usd":10, or "idleSeconds":900) — the ONLY sanctioned way to keep an eye on a running ' +
+  'worker. Prefer contextUsedPct for runtime-confirmed ACTIVE-context health. tokens is ' +
+  'cache-inclusive CUMULATIVE throughput, useful as a cadence/scope alert but not context ' +
+  'health; compaction does not reset it. usd is cumulative session cost. Rule 2 forbids ' +
+  'polling; this is how you honour it: arm a watch, STOP, ' +
   'and the system wakes you with a [fleet] message the moment the worker crosses it. Arm one ' +
   'on any dispatch you expect to be long or open-ended. It is ONE-SHOT — arm another if you ' +
   'still want to watch.\n' +

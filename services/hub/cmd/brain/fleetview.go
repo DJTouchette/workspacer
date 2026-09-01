@@ -13,8 +13,32 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
+	"time"
 )
+
+const contextHealthMaxAge = 2 * time.Minute
+
+type contextHealthReading struct {
+	UsedTokens   float64 `json:"usedTokens"`
+	WindowTokens float64 `json:"windowTokens"`
+	UsedPct      float64 `json:"usedPct"`
+	WindowSource string  `json:"windowSource"`
+	ObservedAt   string  `json:"observedAt"`
+	Epoch        float64 `json:"epoch"`
+	Provider     string  `json:"provider"`
+}
+
+type rawContextHealthReading struct {
+	UsedTokens   float64 `json:"used_tokens"`
+	WindowTokens float64 `json:"window_tokens"`
+	UsedPct      float64 `json:"used_pct"`
+	WindowSource string  `json:"window_source"`
+	ObservedAt   string  `json:"observed_at"`
+	Epoch        float64 `json:"epoch"`
+	Provider     string  `json:"provider"`
+}
 
 // fleetSession is one session as the fleet verbs read it.
 //
@@ -31,6 +55,7 @@ type fleetSession struct {
 	ParentSessionID string `json:"parentSessionId"`
 	IsWakeTarget    bool   `json:"isWakeTarget"`
 	LastActivity    int64  `json:"lastActivity"`
+	Provider        string `json:"provider"`
 
 	// Usage is the compat overlay's camelCase block. It carries costUSD but NOT
 	// the cumulative token counters — those live only on the status line, which
@@ -50,9 +75,10 @@ type fleetSession struct {
 	// were at the last full snapshot. That is the difference between catching a
 	// runaway spend and noticing it by chance.
 	StatusLine *struct {
-		TotalInputTokens  *float64 `json:"totalInputTokens"`
-		TotalOutputTokens *float64 `json:"totalOutputTokens"`
-		CostUSD           *float64 `json:"costUSD"`
+		TotalInputTokens  *float64              `json:"totalInputTokens"`
+		TotalOutputTokens *float64              `json:"totalOutputTokens"`
+		CostUSD           *float64              `json:"costUSD"`
+		ContextHealth     *contextHealthReading `json:"contextHealth"`
 		// OverageOutOfCredits is the daemon's structured out-of-credits bit,
 		// read by the finish wake's failure check (workerfailure.go). Standing
 		// ACCOUNT state, not a per-turn event — it only ever enriches a failure
@@ -60,11 +86,46 @@ type fleetSession struct {
 		OverageOutOfCredits *bool `json:"overageOutOfCredits"`
 	} `json:"statusLine"`
 	RawStatusLine *struct {
-		TotalInputTokens    *float64 `json:"total_input_tokens"`
-		TotalOutputTokens   *float64 `json:"total_output_tokens"`
-		CostUSD             *float64 `json:"cost_usd"`
-		OverageOutOfCredits *bool    `json:"overage_out_of_credits"`
+		TotalInputTokens    *float64                 `json:"total_input_tokens"`
+		TotalOutputTokens   *float64                 `json:"total_output_tokens"`
+		CostUSD             *float64                 `json:"cost_usd"`
+		ContextHealth       *rawContextHealthReading `json:"context_health"`
+		OverageOutOfCredits *bool                    `json:"overage_out_of_credits"`
 	} `json:"status_line"`
+}
+
+// contextHealth returns only fresh, internally consistent runtime evidence.
+// Raw wins because high-frequency updates refresh only status_line; a present
+// but malformed raw sample must fail closed rather than fall back to stale
+// camelCase compatibility data.
+func (s fleetSession) contextHealth(now time.Time) *contextHealthReading {
+	var h *contextHealthReading
+	if s.RawStatusLine != nil && s.RawStatusLine.ContextHealth != nil {
+		raw := s.RawStatusLine.ContextHealth
+		h = &contextHealthReading{
+			UsedTokens: raw.UsedTokens, WindowTokens: raw.WindowTokens, UsedPct: raw.UsedPct,
+			WindowSource: raw.WindowSource, ObservedAt: raw.ObservedAt, Epoch: raw.Epoch,
+			Provider: raw.Provider,
+		}
+	} else if s.StatusLine != nil && s.StatusLine.ContextHealth != nil {
+		copy := *s.StatusLine.ContextHealth
+		h = &copy
+	}
+	if h == nil || h.WindowSource != "runtime" || h.Provider == "" ||
+		(s.Provider != "" && h.Provider != s.Provider) || h.WindowTokens <= 0 ||
+		h.UsedTokens < 0 || h.UsedTokens > h.WindowTokens || h.Epoch <= 0 ||
+		math.IsNaN(h.UsedPct) || math.IsInf(h.UsedPct, 0) || h.UsedPct < 0 || h.UsedPct > 100 {
+		return nil
+	}
+	observed, err := time.Parse(time.RFC3339, h.ObservedAt)
+	if err != nil || observed.After(now.Add(5*time.Second)) || now.Sub(observed) > contextHealthMaxAge {
+		return nil
+	}
+	computed := h.UsedTokens / h.WindowTokens * 100
+	if math.Abs(computed-h.UsedPct) > 0.01 {
+		return nil
+	}
+	return h
 }
 
 // outOfCredits reads the daemon's out-of-credits bit, preferring the RAW block

@@ -300,14 +300,11 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                 // the last request, prefer the INPUT side: `total_tokens`
                 // also counts output + reasoning, which don't carry forward
                 // into the window (same convention as codex.rs / Claude).
-                let context_tokens = info
-                    .and_then(|i| i.get("last_token_usage"))
-                    .and_then(|l| {
-                        l.get("input_tokens")
-                            .or_else(|| l.get("total_tokens"))
-                            .and_then(Value::as_u64)
-                    })
-                    .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
+                let context_tokens = info.and_then(|i| i.get("last_token_usage")).and_then(|l| {
+                    l.get("input_tokens")
+                        .or_else(|| l.get("total_tokens"))
+                        .and_then(Value::as_u64)
+                });
                 let context_window = info
                     .and_then(|i| i.get("model_context_window"))
                     .and_then(Value::as_u64);
@@ -1064,7 +1061,7 @@ mod tests {
     }
 
     #[test]
-    fn token_count_without_last_falls_back_to_in_plus_out() {
+    fn token_count_without_last_never_uses_cumulative_totals_as_context() {
         let e = ev(json!({
             "type": "token_count",
             "info": { "total_token_usage": { "input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200 },
@@ -1078,7 +1075,7 @@ mod tests {
                 output_tokens: Some(200),
                 cached_input_tokens: None,
                 cost_usd: None,
-                context_tokens: Some(1200),
+                context_tokens: None,
                 context_window: Some(272000),
             }]
         );

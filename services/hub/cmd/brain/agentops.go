@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -189,7 +190,11 @@ type thresholdWatch struct {
 	Tokens           *float64 `json:"tokens,omitempty"`
 	USD              *float64 `json:"usd,omitempty"`
 	IdleSeconds      *float64 `json:"idleSeconds,omitempty"`
+	ContextUsedPct   *float64 `json:"contextUsedPct,omitempty"`
 	ArmedAt          int64    `json:"armedAt"`
+	ContextProvider  string   `json:"contextProvider,omitempty"`
+	ContextEpoch     *float64 `json:"contextEpoch,omitempty"`
+	State            string   `json:"state,omitempty"`
 }
 
 // notifyWhen arms a one-shot threshold watch. It STARTS NOTHING and changes no
@@ -205,6 +210,7 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		Tokens          *float64 `json:"tokens"`
 		USD             *float64 `json:"usd"`
 		IdleSeconds     *float64 `json:"idleSeconds"`
+		ContextUsedPct  *float64 `json:"contextUsedPct"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -213,14 +219,22 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		return nil, fmt.Errorf("agents.notifyWhen requires { sessionId }")
 	}
 	for name, v := range map[string]*float64{"tokens": p.Tokens, "usd": p.USD, "idleSeconds": p.IdleSeconds} {
-		if v != nil && (*v <= 0 || *v != *v) {
+		if v != nil && (*v <= 0 || math.IsNaN(*v) || math.IsInf(*v, 0)) {
 			return nil, fmt.Errorf("agents.notifyWhen: %s must be a positive number, got %v", name, *v)
 		}
 	}
-	if p.Tokens == nil && p.USD == nil && p.IdleSeconds == nil {
+	if p.ContextUsedPct != nil {
+		if math.IsNaN(*p.ContextUsedPct) || math.IsInf(*p.ContextUsedPct, 0) || *p.ContextUsedPct <= 0 || *p.ContextUsedPct > 100 {
+			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct must be a finite number in (0, 100], got %v", *p.ContextUsedPct)
+		}
+		if p.Tokens != nil || p.USD != nil || p.IdleSeconds != nil {
+			return nil, fmt.Errorf("agents.notifyWhen: contextUsedPct is a single-purpose health predicate and cannot be combined with tokens, usd, or idleSeconds")
+		}
+	}
+	if p.Tokens == nil && p.USD == nil && p.IdleSeconds == nil && p.ContextUsedPct == nil {
 		// An empty predicate is a watch that can never fire, which reads to the
 		// caller as "armed" and is worse than a refusal.
-		return nil, fmt.Errorf("agents.notifyWhen requires at least one threshold: tokens, usd, or idleSeconds")
+		return nil, fmt.Errorf("agents.notifyWhen requires at least one threshold: tokens, usd, idleSeconds, or contextUsedPct")
 	}
 
 	all := r.fleetSessions(ctx)
@@ -263,6 +277,7 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		r.watches = map[string]*thresholdWatch{}
 	}
 	r.watchSeq++
+	now := time.Now()
 	w := &thresholdWatch{
 		ID:               "w" + strconv.Itoa(r.watchSeq),
 		SessionID:        p.SessionID,
@@ -270,7 +285,22 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		Tokens:           p.Tokens,
 		USD:              p.USD,
 		IdleSeconds:      p.IdleSeconds,
-		ArmedAt:          time.Now().UnixMilli(),
+		ContextUsedPct:   p.ContextUsedPct,
+		ArmedAt:          now.UnixMilli(),
+	}
+	if p.ContextUsedPct != nil {
+		w.ContextProvider = target.Provider
+		if health := target.contextHealth(now); health != nil {
+			w.ContextProvider = health.Provider
+			w.ContextEpoch = &health.Epoch
+			if health.UsedPct >= *p.ContextUsedPct {
+				w.State = "alreadySatisfied"
+			} else {
+				w.State = "armed"
+			}
+		} else {
+			w.State = "waitingForTelemetry"
+		}
 	}
 	r.watches[w.ID] = w
 	r.watchMu.Unlock()
@@ -284,6 +314,12 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 // the watch is one-shot, so one crossing ends it.
 // TWIN: crossedBy in thresholdWatch.ts.
 func crossedBy(w *thresholdWatch, s fleetSession, now time.Time) string {
+	if w.ContextUsedPct != nil {
+		if health := s.contextHealth(now); health != nil && health.UsedPct >= *w.ContextUsedPct {
+			return contextCrossing(*w.ContextUsedPct, health)
+		}
+		return ""
+	}
 	if w.Tokens != nil {
 		if tokens := s.tokens(); tokens >= *w.Tokens {
 			return "tokens " + groupThousands(tokens) + " ≥ " + groupThousands(*w.Tokens)
@@ -323,6 +359,18 @@ func crossedBy(w *thresholdWatch, s fleetSession, now time.Time) string {
 		}
 	}
 	return ""
+}
+
+func formatPct(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func contextCrossing(threshold float64, h *contextHealthReading) string {
+	return fmt.Sprintf(
+		"contextUsedPct active context %s%% ≥ %s%% (%s / %s tokens; runtime-confirmed by %s; observed %s; epoch %s)",
+		formatPct(h.UsedPct), formatPct(threshold), groupThousands(h.UsedTokens),
+		groupThousands(h.WindowTokens), h.Provider, h.ObservedAt, formatPct(h.Epoch),
+	)
 }
 
 // groupThousands renders a token count the way toLocaleString('en-US') does —
@@ -367,7 +415,33 @@ func (r *registry) sweepThresholds(ctx context.Context, now time.Time) {
 			delete(r.watches, id)
 			continue
 		}
-		crossed := crossedBy(w, target, now)
+		crossed := ""
+		if w.ContextUsedPct != nil {
+			if w.ContextProvider != "" && target.Provider != "" && w.ContextProvider != target.Provider {
+				crossed = fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed a provider/session boundary (%s → %s); re-arm after a confirmed sample", formatPct(*w.ContextUsedPct), w.ContextProvider, target.Provider)
+			} else {
+				health := target.contextHealth(now)
+				if health == nil {
+					continue
+				}
+				if w.ContextEpoch != nil && *w.ContextEpoch != health.Epoch {
+					crossed = fmt.Sprintf("monitoring invalidated: contextUsedPct %s%% watch crossed telemetry epoch %s → %s; re-arm after the confirmed %s sample", formatPct(*w.ContextUsedPct), formatPct(*w.ContextEpoch), formatPct(health.Epoch), health.Provider)
+				} else {
+					if w.ContextProvider == "" {
+						w.ContextProvider = health.Provider
+					}
+					if w.ContextEpoch == nil {
+						epoch := health.Epoch
+						w.ContextEpoch = &epoch
+					}
+					if health.UsedPct >= *w.ContextUsedPct {
+						crossed = contextCrossing(*w.ContextUsedPct, health)
+					}
+				}
+			}
+		} else {
+			crossed = crossedBy(w, target, now)
+		}
 		if crossed == "" {
 			continue
 		}

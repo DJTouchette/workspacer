@@ -92,6 +92,11 @@ pub struct StreamTotals {
     /// that ran during the turn — the main thread's plus every sub-agent's. See
     /// the `result` arm.
     model: Option<String>,
+    /// Latest main-thread input-side occupancy in this turn. The result frame
+    /// carries the matching runtime window, so keeping this until that frame
+    /// lets the health carrier publish a correlated numerator/denominator pair
+    /// without reconstructing either from a percentage.
+    context_tokens: Option<u64>,
 }
 
 /// Translate one stdout event into typed updates. Pure and total: unknown
@@ -182,6 +187,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                 }
             }
             if let Some(context_tokens) = context_tokens_from(msg.get("usage")) {
+                totals.context_tokens = Some(context_tokens);
                 out.push(AgentUpdate::Usage {
                     model: msg.get("model").and_then(Value::as_str).map(str::to_owned),
                     input_tokens: None,
@@ -232,9 +238,10 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                 output_tokens: Some(totals.output),
                 cached_input_tokens: None,
                 cost_usd: value.get("total_cost_usd").and_then(Value::as_f64),
-                context_tokens: None,
+                context_tokens: totals.context_tokens,
                 context_window,
             });
+            totals.context_tokens = None;
             let aborted =
                 value.get("terminal_reason").and_then(Value::as_str) == Some("aborted_streaming");
             if value
@@ -2166,6 +2173,41 @@ mod tests {
                 context_tokens: None,
                 context_window: Some(200000),
             }
+        );
+    }
+
+    #[test]
+    fn result_correlates_active_occupancy_with_its_runtime_window() {
+        let mut totals = StreamTotals::default();
+        translate(
+            &json!({ "type": "system", "subtype": "init", "model": "claude-sonnet-4-5" }),
+            &mut totals,
+        );
+        translate(
+            &json!({ "type": "assistant", "message": {
+                "model": "claude-sonnet-4-5",
+                "content": [],
+                "usage": { "input_tokens": 10, "cache_read_input_tokens": 119990,
+                           "cache_creation_input_tokens": 0 }
+            }}),
+            &mut totals,
+        );
+        let updates = translate(
+            &json!({ "type": "result", "subtype": "success", "is_error": false,
+                "modelUsage": { "claude-sonnet-4-5": { "contextWindow": 200000 } } }),
+            &mut totals,
+        );
+        assert!(updates.iter().any(|u| matches!(
+            u,
+            AgentUpdate::Usage {
+                context_tokens: Some(120_000),
+                context_window: Some(200_000),
+                ..
+            }
+        )));
+        assert_eq!(
+            totals.context_tokens, None,
+            "a new turn needs a new correlated occupancy"
         );
     }
 

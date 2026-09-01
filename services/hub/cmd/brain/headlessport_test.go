@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -539,6 +540,9 @@ func TestNotifyWhenRefusesAWatchThatCouldNeverFire(t *testing.T) {
 		{"ended target", `{"sessionId":"dead","tokens":1}`, "already ended"},
 		{"no recipient", `{"sessionId":"mgr","tokens":1}`, "no notifySessionId and the target has no parent"},
 		{"dead recipient", `{"sessionId":"worker","notifySessionId":"dead","tokens":1}`, "not a live session"},
+		{"zero context", `{"sessionId":"worker","contextUsedPct":0}`, "finite number in (0, 100]"},
+		{"overfull context", `{"sessionId":"worker","contextUsedPct":101}`, "finite number in (0, 100]"},
+		{"mixed health", `{"sessionId":"worker","contextUsedPct":80,"tokens":1}`, "single-purpose"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := reg.handle(ctx, "agents.notifyWhen", json.RawMessage(c.params)); err == nil {
@@ -547,6 +551,105 @@ func TestNotifyWhenRefusesAWatchThatCouldNeverFire(t *testing.T) {
 				t.Errorf("refusal %q does not contain %q", err, c.wantIn)
 			}
 		})
+	}
+}
+
+func contextHealthStatus(t *testing.T, at time.Time, used, window float64, epoch float64, provider, source string) json.RawMessage {
+	t.Helper()
+	return json.RawMessage(fmt.Sprintf(`{"total_input_tokens":9500000,"total_output_tokens":500000,"context_health":{"used_tokens":%v,"window_tokens":%v,"used_pct":%v,"window_source":%q,"observed_at":%q,"epoch":%v,"provider":%q}}`,
+		used, window, used/window*100, source, at.Format(time.RFC3339Nano), epoch, provider))
+}
+
+func TestNotifyWhenContextHealthParity(t *testing.T) {
+	now := time.Now().UTC()
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	worker := `{"session_id":"worker","cwd":"/w/p","mode":"responding","provider":"codex"}`
+	reg := fleetReg(t, srv.URL,
+		map[string]string{"mgr": row("mgr", "/w", "input"), "worker": worker},
+		map[string]spawnMeta{"mgr": {IsWakeTarget: true}, "worker": {ParentSessionID: "mgr"}})
+	ctx := context.Background()
+
+	// Missing telemetry arms and waits rather than inventing 0% or refusing.
+	res, err := reg.handle(ctx, "agents.notifyWhen", json.RawMessage(`{"sessionId":"worker","contextUsedPct":80}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var armed thresholdWatch
+	_ = json.Unmarshal(res, &armed)
+	if armed.State != "waitingForTelemetry" {
+		t.Fatalf("missing telemetry armed as %q", armed.State)
+	}
+
+	// A provisional source and a stale sample both leave the watch armed.
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now, 180000, 200000, 7, "codex", "requested"))
+	reg.sweepThresholds(ctx, now)
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now.Add(-contextHealthMaxAge-time.Second), 180000, 200000, 7, "codex", "runtime"))
+	reg.sweepThresholds(ctx, now)
+	if got := len(rec.calls("/sessions/mgr/message")); got != 0 {
+		t.Fatalf("untrustworthy telemetry fired %d wake(s)", got)
+	}
+
+	// A confirmed exact-boundary sample fires once and explains the decision.
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now, 160000, 200000, 7, "codex", "runtime"))
+	reg.sweepThresholds(ctx, now)
+	msgs := rec.calls("/sessions/mgr/message")
+	if len(msgs) != 1 {
+		t.Fatalf("confirmed boundary produced %d wakes", len(msgs))
+	}
+	text, _ := msgs[0].body["text"].(string)
+	for _, want := range []string{"contextUsedPct active context 80% ≥ 80%", "160,000 / 200,000 tokens", "runtime-confirmed by codex", "epoch 7"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("context wake missing %q:\n%s", want, text)
+		}
+	}
+	reg.sweepThresholds(ctx, now)
+	if got := len(rec.calls("/sessions/mgr/message")); got != 1 {
+		t.Errorf("context watch was not one-shot: %d wakes", got)
+	}
+}
+
+func TestNotifyWhenContextCompactionCumulativeSeparationAndEpochInvalidation(t *testing.T) {
+	now := time.Now().UTC()
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	worker := `{"session_id":"worker","cwd":"/w/p","mode":"responding","provider":"codex"}`
+	reg := fleetReg(t, srv.URL,
+		map[string]string{"mgr": row("mgr", "/w", "input"), "worker": worker},
+		map[string]spawnMeta{"mgr": {IsWakeTarget: true}, "worker": {ParentSessionID: "mgr"}})
+	ctx := context.Background()
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now, 120000, 200000, 7, "codex", "runtime"))
+	res, err := reg.handle(ctx, "agents.notifyWhen", json.RawMessage(`{"sessionId":"worker","contextUsedPct":80}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var armed thresholdWatch
+	_ = json.Unmarshal(res, &armed)
+	if armed.State != "armed" || armed.ContextEpoch == nil || *armed.ContextEpoch != 7 {
+		t.Fatalf("healthy baseline not bound: %+v", armed)
+	}
+
+	// Compaction lowers active occupancy. The 10M cumulative counters above are
+	// deliberately enormous; neither can substitute for context health.
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now.Add(time.Second), 40000, 200000, 7, "codex", "runtime"))
+	reg.sweepThresholds(ctx, now.Add(time.Second))
+	if got := len(rec.calls("/sessions/mgr/message")); got != 0 {
+		t.Fatalf("compaction/cumulative throughput fired %d wake(s)", got)
+	}
+
+	// A resume/model/provider telemetry life cannot be compared with the old
+	// baseline. It invalidates and asks for a deliberate re-arm.
+	reg.store.updateStatusLine("worker", contextHealthStatus(t, now.Add(2*time.Second), 170000, 200000, 8, "codex", "runtime"))
+	reg.sweepThresholds(ctx, now.Add(2*time.Second))
+	msgs := rec.calls("/sessions/mgr/message")
+	if len(msgs) != 1 {
+		t.Fatalf("epoch change produced %d wakes", len(msgs))
+	}
+	text, _ := msgs[0].body["text"].(string)
+	if !strings.Contains(text, "telemetry epoch 7 → 8") || !strings.Contains(text, "re-arm") {
+		t.Errorf("epoch invalidation is not actionable:\n%s", text)
 	}
 }
 
