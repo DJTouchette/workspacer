@@ -15,4 +15,22 @@ func TestWindowsRoutingPathComparisonIsCaseInsensitiveButVolumeBounded(t *testin
 	if windowsRoutingPathHasPrefix(`D:\work\client\sub`, `C:\work\client\`) {
 		t.Error("a path on another volume compared as contained")
 	}
+	if windowsRoutingPathsEqual(`C:\Work\Kelvin`, `c:\work\kelvin`) {
+		t.Error("Windows routing path comparison used Unicode folding; only ASCII A-Z may fold")
+	}
+}
+
+func TestWindowsRoutingPathComparisonHandlesUNCBoundaries(t *testing.T) {
+	if !windowsRoutingPathsEqual(`\\Server\Share\Work`, `\\server\share\work`) {
+		t.Error("case variants of one UNC path did not compare equal")
+	}
+	if !windowsRoutingPathHasPrefix(`\\SERVER\SHARE\Work\child`, `\\server\share\work\`) {
+		t.Error("a child on the same UNC share did not compare as contained")
+	}
+	if windowsRoutingPathHasPrefix(`\\server\share-old\work`, `\\server\share\`) {
+		t.Error("a sibling UNC share compared as contained")
+	}
+	if windowsRoutingPathHasPrefix(`\\server\other\work`, `\\server\share\`) {
+		t.Error("a path on another UNC share compared as contained")
+	}
 }

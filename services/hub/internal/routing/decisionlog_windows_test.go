@@ -26,6 +26,53 @@ func TestDecisionLogPrivacyOnWindowsIsAnACLContract(t *testing.T) {
 	if got, why := nodes.FileExposure(path); got != nodes.ExposureOwnerOnly {
 		t.Fatalf("decision log exposure = %v (%s), want owner-only", got, why)
 	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatalf("GetNamedSecurityInfo: %v", err)
+	}
+	control, _, err := sd.Control()
+	if err != nil {
+		t.Fatalf("security descriptor control: %v", err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("decision log DACL still inherits from its parent")
+	}
+}
+
+func TestOpenDecisionLogFileCreatesWithProtectedDACLBeforeRepair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "loose-parent")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grantDecisionLogEveryoneReadWithInheritance(t, dir, windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT)
+	if got, why := nodes.FileExposure(dir); got != nodes.ExposureLoose {
+		t.Fatalf("parent ACL mutation did not make the atomic-creation guard red: exposure=%v (%s)", got, why)
+	}
+
+	path := filepath.Join(dir, "routing-decisions.jsonl")
+	f, err := openDecisionLogFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately do not call secureDecisionLogFile: this assertion observes
+	// the ACL installed by CreateFile itself, before the existing-file repair.
+	if got, why := nodes.FileExposure(path); got != nodes.ExposureOwnerOnly {
+		t.Fatalf("new decision log exposure before repair = %v (%s), want owner-only", got, why)
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatalf("GetNamedSecurityInfo: %v", err)
+	}
+	control, _, err := sd.Control()
+	if err != nil {
+		t.Fatalf("security descriptor control: %v", err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("CreateFile did not protect the decision-log DACL from inheritance")
+	}
 }
 
 // Reversible mutation guard: make an existing log genuinely loose at the ACL
@@ -50,7 +97,32 @@ func TestDecisionLogRepairsALooseWindowsDACLBeforeAppend(t *testing.T) {
 	}
 }
 
+func TestDecisionLogRepairsALooseWindowsDACLBeforeRotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing-decisions.jsonl")
+	if err := os.WriteFile(path, []byte("loose oversized generation\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	grantDecisionLogEveryoneRead(t, path)
+	if got, why := nodes.FileExposure(path); got != nodes.ExposureLoose {
+		t.Fatalf("ACL mutation did not make the rotation guard red: exposure=%v (%s)", got, why)
+	}
+
+	NewDecisionLog(path, 1).Decision(Decision{DecisionID: "rd_rotated_private"})
+	rotated := path + ".1"
+	if got, why := nodes.FileExposure(rotated); got != nodes.ExposureOwnerOnly {
+		t.Fatalf("rotated generation exposure = %v (%s), want owner-only", got, why)
+	}
+	if entries := readEntries(t, path); len(entries) != 1 || entries[0].DecisionID != "rd_rotated_private" {
+		t.Fatalf("new live generation entries = %+v", entries)
+	}
+}
+
 func grantDecisionLogEveryoneRead(t *testing.T, path string) {
+	t.Helper()
+	grantDecisionLogEveryoneReadWithInheritance(t, path, windows.NO_INHERITANCE)
+}
+
+func grantDecisionLogEveryoneReadWithInheritance(t *testing.T, path string, inheritance uint32) {
 	t.Helper()
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -67,7 +139,7 @@ func grantDecisionLogEveryoneRead(t *testing.T, path string) {
 	merged, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
 		AccessPermissions: windows.GENERIC_READ,
 		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       windows.NO_INHERITANCE,
+		Inheritance:       inheritance,
 		Trustee: windows.TRUSTEE{
 			TrusteeForm:  windows.TRUSTEE_IS_SID,
 			TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,

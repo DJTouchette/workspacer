@@ -329,6 +329,61 @@ ceilings:
 	}
 }
 
+func TestNonAbsoluteCeilingKeyIsReportedBeforeItFallsThrough(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+ceilings:
+  relative/project: { max_capability: cheap, max_tool_scope: view }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Issue
+	for i := range m.Issues {
+		if m.Issues[i].Where == "ceilings.relative/project" {
+			found = &m.Issues[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("non-absolute ceiling key was not reported at load: %v", m.Issues)
+	}
+	if !strings.Contains(found.Detail, "not an absolute path") || !strings.Contains(found.Detail, "default ceiling") {
+		t.Errorf("issue does not explain the silent weaker fallback: %s", found.Detail)
+	}
+	if _, key := m.CeilingFor(filepath.Join(t.TempDir(), "relative", "project")); key != CeilingDefaultKey {
+		t.Errorf("non-absolute key unexpectedly reached the consumer as %q; this test no longer proves why the load issue matters", key)
+	}
+}
+
+func TestCeilingForCleansKeysAndBreaksEquivalentTiesDeterministically(t *testing.T) {
+	root := t.TempDir()
+	direct := filepath.Join(root, "client")
+	sep := string(filepath.Separator)
+	// filepath.Join cleans as it joins, so spell this key directly: the two map
+	// keys must remain distinct while filepath.Clean maps them to one candidate.
+	dirty := root + sep + "a" + sep + ".." + sep + "client"
+	want := direct
+	if dirty < want {
+		want = dirty
+	}
+	m := &Matrix{Ceilings: map[string]Ceiling{
+		CeilingDefaultKey: {MaxCapability: "frontier", MaxToolScope: "operator"},
+		direct:            {MaxCapability: "balanced", MaxToolScope: "triage"},
+		dirty:             {MaxCapability: "cheap", MaxToolScope: "view"},
+	}}
+	dirtyTarget := root + sep + "other" + sep + ".." + sep + "client" + sep + "." + sep + "child"
+	for i := 0; i < 100; i++ {
+		_, key := m.CeilingFor(dirtyTarget)
+		if key != want {
+			t.Fatalf("equivalent cleaned keys selected %q, want lexical tie-break %q", key, want)
+		}
+	}
+	parentTraversal := direct + sep + ".." + sep + "sibling"
+	if _, key := m.CeilingFor(parentTraversal); key != CeilingDefaultKey {
+		t.Fatalf("cleaned parent traversal matched %q, want the default boundary", key)
+	}
+}
+
 // --- catalog validation ------------------------------------------------------
 
 type fakeCatalog struct {

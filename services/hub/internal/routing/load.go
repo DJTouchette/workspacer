@@ -3,6 +3,7 @@ package routing
 import (
 	_ "embed"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -424,6 +425,9 @@ func validate(m *Matrix) []Issue {
 
 	for _, key := range sortedKeys(m.Ceilings) {
 		c := m.Ceilings[key]
+		if key != CeilingDefaultKey && !filepath.IsAbs(key) {
+			add("ceilings."+key, "ceiling key %q is not an absolute path on this platform — CeilingFor ignores non-absolute keys, so this row would silently fall through to a weaker ancestor or the default ceiling", key)
+		}
 		if c.MaxCapability != "" && !declared[c.MaxCapability] {
 			add("ceilings."+key, "max_capability %q is not in the `capabilities:` list", c.MaxCapability)
 		}
