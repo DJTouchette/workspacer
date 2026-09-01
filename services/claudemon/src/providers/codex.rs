@@ -3000,7 +3000,7 @@ mod tests {
         // path. Its cached predecessor sample must not reappear even after the
         // bounded selection fence has fully expired.
         let settings = json!({ "threadSettings": { "model": "other-model" } });
-        for _ in 0..5 {
+        for _ in 0..7 {
             apply_updates(
                 &store,
                 &conv,
@@ -3009,13 +3009,14 @@ mod tests {
                 &mut mode,
                 &mut acc,
             );
-            assert!(store
-                .get("epoch")
-                .unwrap()
-                .status_line
-                .unwrap()
-                .context_health
-                .is_none());
+            let line = store.get("epoch").unwrap().status_line.unwrap();
+            assert!(line.context_health.is_none());
+            assert!(line.context_used_pct.is_none());
+            assert!(line.context_window_size.is_none());
+            assert_eq!(
+                line.context_usage_state,
+                Some(crate::session::state::ContextUsageState::WaitingForRuntimeUsage),
+            );
         }
 
         // The real legacy flat frame remains cumulative-only and explicitly
@@ -3029,13 +3030,14 @@ mod tests {
             &mut mode,
             &mut acc,
         );
-        assert!(store
-            .get("epoch")
-            .unwrap()
-            .status_line
-            .unwrap()
-            .context_health
-            .is_none());
+        let still_waiting = store.get("epoch").unwrap().status_line.unwrap();
+        assert!(still_waiting.context_health.is_none());
+        assert!(still_waiting.context_used_pct.is_none());
+        assert!(still_waiting.context_window_size.is_none());
+        assert_eq!(
+            still_waiting.context_usage_state,
+            Some(crate::session::state::ContextUsageState::WaitingForRuntimeUsage),
+        );
         apply_updates(
             &store,
             &conv,
@@ -3044,13 +3046,11 @@ mod tests {
             &mut mode,
             &mut acc,
         );
-        let fresh = store
-            .get("epoch")
-            .unwrap()
-            .status_line
-            .unwrap()
-            .context_health
-            .unwrap();
+        let fresh_line = store.get("epoch").unwrap().status_line.unwrap();
+        assert_eq!(fresh_line.context_used_pct, Some(90.0));
+        assert_eq!(fresh_line.context_window_size, Some(window));
+        assert!(fresh_line.context_usage_state.is_none());
+        let fresh = fresh_line.context_health.unwrap();
         assert_eq!(fresh.epoch, successor_epoch);
         assert_eq!(fresh.used_tokens, input);
     }

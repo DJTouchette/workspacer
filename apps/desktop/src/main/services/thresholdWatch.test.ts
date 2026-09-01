@@ -498,6 +498,24 @@ describe('codex-shaped sessions (usage: null) fall back to statusLine', () => {
 });
 
 describe('ThresholdWatcher.arm', () => {
+  it('returns a detached snapshot rather than the sweep-owned watch', () => {
+    const target = withHealth(Date.parse('2026-08-31T20:10:00Z'), 100_000);
+    const { watcher } = rig([mgr(), target]);
+    const armed = watcher.arm({
+      sessionId: 'w1',
+      watcherSessionId: 'mgr',
+      predicate: { contextUsedPct: 80 },
+      now: Date.parse('2026-08-31T20:10:00Z'),
+    });
+
+    // Mutating a returned response must never mutate the map-owned watch the
+    // next sweep will inspect.
+    armed.contextEpoch = NEXT_EPOCH;
+    armed.state = 'waitingForTelemetry';
+
+    expect(watcher.list()[0]).toMatchObject({ contextEpoch: EPOCH, state: 'armed' });
+  });
+
   it('refuses a target that does not exist or has ended', () => {
     const { watcher } = rig([mgr(), session({ status: 'ended' })]);
     expect(() =>

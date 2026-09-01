@@ -13,9 +13,9 @@ use super::account_usage::{AccountUsage, UsageError, UsageFailure};
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
-    HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState, StatusLine, SubagentInfo,
-    SubagentStatus, SubagentUpdate, Transport, CLAUDE_FIVE_HOUR_WINDOW_MINUTES,
-    CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
+    ContextUsageState, HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState,
+    StatusLine, SubagentInfo, SubagentStatus, SubagentUpdate, Transport,
+    CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::protocol::WrapperMessage;
 
@@ -536,12 +536,13 @@ fn reconcile_model_telemetry(session: &mut SessionState, status: &mut StatusLine
 /// sequence: the supported providers do not all expose such a timestamp, so it
 /// must not pretend to reject source-order inversions. Display telemetry remains
 /// unaffected.
-fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
+fn reconcile_context_health(session: &mut SessionState, status: &mut StatusLine) {
     let explicitly_updated = status.context_health_updated;
     let previous = session
         .status_line
         .as_ref()
         .and_then(|sl| sl.context_health.clone());
+    let mut has_fresh_runtime_pair = false;
     if !explicitly_updated {
         // SessionStore is the sole authority for context-less ticks. UsageAcc
         // intentionally retains its last correlated sample for display ticks,
@@ -563,6 +564,22 @@ fn reconcile_context_health(session: &SessionState, status: &mut StatusLine) {
         } else {
             sample.provider = session.provider.clone();
             sample.epoch = session.context_telemetry_epoch;
+            has_fresh_runtime_pair = true;
+        }
+    }
+    // The model confirmation fence is intentionally finite so an unmatchable
+    // model label cannot hide provider truth forever. Context occupancy has a
+    // stricter provenance rule: the accumulator's cached numerator/window may
+    // belong to the predecessor, so keep this display fence until a successor
+    // runtime pair arrives. Billing counters remain untouched.
+    if session.context_display_confirmation_pending {
+        if has_fresh_runtime_pair {
+            session.context_display_confirmation_pending = false;
+        } else {
+            status.context_window_size = None;
+            status.context_used_pct = None;
+            status.context_usage_state = Some(ContextUsageState::WaitingForRuntimeUsage);
+            status.context_health = None;
         }
     }
     // The marker is meaningful only while reconciling this inbound tick. It is
@@ -1527,11 +1544,15 @@ impl SessionStore {
             entry.context_telemetry_epoch = fresh_epoch;
             entry.pending_model_confirmation = Some(persisted.selection.clone());
             entry.model_confirmation_suppressions_remaining = MODEL_CONFIRMATION_MAX_SUPPRESSIONS;
+            // Codex's app-server retains a displayable occupancy pair in its
+            // UsageAcc across model-only ticks; unlike Claude's status line,
+            // that cached pair has no successor-request provenance.
+            entry.context_display_confirmation_pending = entry.provider == "codex";
             if let Some(status) = entry.status_line.as_mut() {
                 status.model_display = None;
                 status.context_window_size = None;
                 status.context_used_pct = None;
-                status.context_usage_state = None;
+                status.context_usage_state = Some(ContextUsageState::WaitingForRuntimeUsage);
                 status.context_health = None;
             }
             entry.updated_at = OffsetDateTime::now_utc();
@@ -2043,7 +2064,7 @@ impl SessionStore {
                 self.patch_rate_limits(&mut status, &root);
             }
             reconcile_model_telemetry(&mut entry, &mut status);
-            reconcile_context_health(&entry, &mut status);
+            reconcile_context_health(&mut entry, &mut status);
             entry.status_line = Some(status.clone());
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
@@ -3907,22 +3928,30 @@ mod tests {
         let next_epoch = switched.context_telemetry_epoch;
         assert!(switched.status_line.unwrap().context_health.is_none());
 
-        // UsageAcc status ticks include its cached health value even when no
-        // new context observation was merged. More ticks than the bounded
-        // model fence proves that expiry cannot stamp the cached sample into
-        // the successor epoch.
-        for _ in 0..5 {
+        // UsageAcc status ticks include its cached display pair even when no
+        // new context observation was merged. More than twice the bounded
+        // model fence proves expiry cannot republish that predecessor pair.
+        for _ in 0..7 {
             let state = store
                 .apply_status_line(
                     "c1",
                     StatusLine {
+                        context_used_pct: Some(90.0),
+                        context_window_size: Some(200_000),
                         context_health: Some(stale.clone()),
                         context_health_updated: false,
                         ..Default::default()
                     },
                 )
                 .unwrap();
-            assert!(state.status_line.unwrap().context_health.is_none());
+            let line = state.status_line.unwrap();
+            assert!(line.context_health.is_none());
+            assert!(line.context_used_pct.is_none());
+            assert!(line.context_window_size.is_none());
+            assert_eq!(
+                line.context_usage_state,
+                Some(ContextUsageState::WaitingForRuntimeUsage)
+            );
         }
 
         let fresh = store
@@ -3941,7 +3970,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let health = fresh.status_line.unwrap().context_health.unwrap();
+        let line = fresh.status_line.unwrap();
+        assert!(line.context_usage_state.is_none());
+        let health = line.context_health.unwrap();
         assert_eq!(health.epoch, next_epoch);
         assert_eq!(health.used_tokens, 20_000);
     }

@@ -74,6 +74,11 @@ export interface ThresholdWatch extends ThresholdPredicate {
   state?: 'armed' | 'alreadySatisfied' | 'waitingForTelemetry';
 }
 
+/** Return a detached API/test view; armed watches remain mutable during sweep. */
+function snapshotWatch(watch: ThresholdWatch): ThresholdWatch {
+  return { ...watch };
+}
+
 /** What the sweep needs of a session. A structural subset of
  *  ClaudeSessionState, so the store's rows satisfy it as-is. */
 export interface WatchableSession {
@@ -408,12 +413,14 @@ export class ThresholdWatcher {
     }
     this.watches.set(watch.id, watch);
     this.start();
-    return watch;
+    // Keep arm() semantically aligned with the Hub: this is an immutable
+    // response snapshot, never the mutable value retained in watches.
+    return snapshotWatch(watch);
   }
 
   /** Armed watches, for tests and for the arm() response's own accounting. */
   list(): ThresholdWatch[] {
-    return [...this.watches.values()];
+    return [...this.watches.values()].map(snapshotWatch);
   }
 
   /**

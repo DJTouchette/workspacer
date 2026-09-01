@@ -944,6 +944,12 @@ pub struct SessionState {
     /// next frame (and every later truthful divergence) is visible.
     #[serde(skip)]
     pub model_confirmation_suppressions_remaining: u8,
+    /// An accepted model/provider boundary invalidates cached context display
+    /// occupancy until this session receives a new runtime-correlated pair.
+    /// Kept separately from the bounded model label fence: the latter must
+    /// expire for truthful model divergence, while stale occupancy must not.
+    #[serde(skip)]
+    pub context_display_confirmation_pending: bool,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -987,6 +993,7 @@ impl SessionState {
             context_telemetry_epoch: 0,
             pending_model_confirmation: None,
             model_confirmation_suppressions_remaining: 0,
+            context_display_confirmation_pending: false,
         }
     }
 

@@ -201,6 +201,34 @@ type thresholdWatch struct {
 	State            string          `json:"state,omitempty"`
 }
 
+// snapshotThresholdWatch returns a detached value for an API response. Watches
+// remain mutable while armed (the sweep binds context telemetry and state), so
+// no caller may retain the map-owned pointer after watchMu is released.
+func snapshotThresholdWatch(w *thresholdWatch) thresholdWatch {
+	s := *w
+	if w.Tokens != nil {
+		v := *w.Tokens
+		s.Tokens = &v
+	}
+	if w.USD != nil {
+		v := *w.USD
+		s.USD = &v
+	}
+	if w.IdleSeconds != nil {
+		v := *w.IdleSeconds
+		s.IdleSeconds = &v
+	}
+	if w.ContextUsedPct != nil {
+		v := *w.ContextUsedPct
+		s.ContextUsedPct = &v
+	}
+	if w.ContextEpoch != nil {
+		v := *w.ContextEpoch
+		s.ContextEpoch = &v
+	}
+	return s
+}
+
 // notifyWhen arms a one-shot threshold watch. It STARTS NOTHING and changes no
 // session: it records an intention to send a message later, whose body is
 // composed entirely by the host from the provider's own snapshot fields.
@@ -318,8 +346,12 @@ func (r *registry) notifyWhen(ctx context.Context, raw json.RawMessage) (json.Ra
 		}
 	}
 	r.watches[w.ID] = w
+	// Marshal the detached value while the mutex still protects the map-owned
+	// watch. sweepThresholds mutates context binding/state, so unlocking before
+	// this copy/marshal would hand json a live, concurrently mutable pointer.
+	result, err := jsonResult(snapshotThresholdWatch(w))
 	r.watchMu.Unlock()
-	return jsonResult(w)
+	return result, err
 }
 
 // crossedBy renders the predicate this session has crossed, or "".
