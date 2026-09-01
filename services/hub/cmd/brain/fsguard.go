@@ -350,7 +350,10 @@ func asciiLower(s string) string {
 }
 
 // containsPath is the containment comparison itself, over two ALREADY canonical
-// paths. Byte-exact, no case folding on any platform.
+// paths. Linux keeps byte-exact comparisons; Windows uses its ordinal filesystem
+// comparison, because a root and target whose drive or directory casing differs
+// still name the same directory there. The platform helpers deliberately compare
+// only canonical paths: slash and dot normalization remains the walk's job.
 //
 // The trailing-separator arm is reached only when the root canonicalized to a
 // volume prefix ("/" on POSIX, `C:\` or `\\server\share\` on Windows). Such a
@@ -367,13 +370,13 @@ func containsPath(canonRoot, canonTarget string) bool {
 	if canonRoot == "" {
 		return false
 	}
-	if canonTarget == canonRoot {
+	if canonicalPathsEqual(canonTarget, canonRoot) {
 		return true
 	}
 	if strings.HasSuffix(canonRoot, string(filepath.Separator)) {
-		return strings.HasPrefix(canonTarget, canonRoot)
+		return canonicalPathHasPrefix(canonTarget, canonRoot)
 	}
-	return strings.HasPrefix(canonTarget, canonRoot+string(filepath.Separator))
+	return canonicalPathHasPrefix(canonTarget, canonRoot+string(filepath.Separator))
 }
 
 // containsPathFolded is containsPath with ASCII case folded away. It is used
