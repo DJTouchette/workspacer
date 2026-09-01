@@ -543,6 +543,10 @@ type spawnParams struct {
 	// that old providers/peers execute.
 	ModelIdentity string  `json:"modelIdentity"`
 	ContextWindow *uint64 `json:"contextWindow"`
+	// contextWindowSet distinguishes an omitted field from explicit JSON null.
+	// Codex null means provider-default; omission on a fresh life takes the
+	// shared 1M policy. It is never serialized.
+	contextWindowSet bool
 	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
 	Effort    string `json:"effort"`
 	ProfileID string `json:"profileId"`
@@ -715,6 +719,10 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err == nil {
+		_, p.contextWindowSet = present["contextWindow"]
+	}
 
 	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the
 	// REMOTE/web/MCP spawn path. Driving an agent is already code execution on
@@ -779,12 +787,17 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// adapter, not a Claude PTY. Same dispatch split as the desktop's
 	// agents.spawn so this path can't silently fall back to spawning Claude.
 	provider := r.roleProviderDefault(p)
+	if err := r.resolveManagerSelection(provider, &p); err != nil {
+		return nil, fmt.Errorf("invalid Fleet Manager selection: %w", err)
+	}
 	if provider != "claude" {
-		p.ContextWindow = modelselection.ContextWindowForNewSpawn(
-			provider,
-			p.ContextWindow,
-			p.ResumeSessionID != "",
-		)
+		if !p.contextWindowSet {
+			p.ContextWindow = modelselection.ContextWindowForNewSpawn(
+				provider,
+				p.ContextWindow,
+				p.ResumeSessionID != "",
+			)
+		}
 		resolved, err := modelselection.ResolveInput(provider, p.Model, p.ModelIdentity, p.ContextWindow)
 		if err != nil {
 			return nil, fmt.Errorf("invalid %s model selection: %w", provider, err)
@@ -808,7 +821,16 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		p.ModelIdentity = ""
 		p.ContextWindow = nil
 	}
-	resolvedModel, err := r.claudeSpawnModel(p.Model, p.ModelIdentity, p.ContextWindow)
+	var resolvedModel *modelselection.Resolved
+	var err error
+	if p.Manager && p.ResumeSessionID != "" && strings.TrimSpace(p.Model) == "" && strings.TrimSpace(p.ModelIdentity) == "" {
+		// An old manager resume with no recorded pair keeps the provider's
+		// durable conversation selection. Do not reinterpret omission as
+		// today's global Claude default.
+		resolvedModel, err = modelselection.ResolveInput("claude", p.Model, p.ModelIdentity, p.ContextWindow)
+	} else {
+		resolvedModel, err = r.claudeSpawnModel(p.Model, p.ModelIdentity, p.ContextWindow)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("invalid Claude model selection: %w", err)
 	}
@@ -1157,6 +1179,37 @@ func (r *registry) roleProviderDefault(p spawnParams) string {
 		return strings.TrimSpace(configured)
 	}
 	return "claude"
+}
+
+// resolveManagerSelection is the headless twin of roleModels.ts. It runs after
+// provider resolution and before generic provider defaults, so every manager
+// start door observes the same per-provider tuple. Explicit caller fields win.
+// A resume that did not carry a durable field keeps it absent rather than
+// applying whatever Settings happens to say today.
+func (r *registry) resolveManagerSelection(provider string, p *spawnParams) error {
+	if !p.Manager || p.ResumeSessionID != "" {
+		return nil
+	}
+	agents, _ := r.cfg.get()["agents"].(map[string]any)
+	prefs, err := modelselection.CanonicalManagerPreferences(agents, false)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(p.Model) == "" && strings.TrimSpace(p.ModelIdentity) == "" {
+		if model := strings.TrimSpace(prefs.Models[provider]); model != "" {
+			p.Model = model
+		}
+	}
+	if strings.TrimSpace(p.Effort) == "" {
+		p.Effort = strings.TrimSpace(prefs.Efforts[provider])
+	}
+	if !p.contextWindowSet {
+		if window, set := prefs.Context(provider); set {
+			p.ContextWindow = window
+			p.contextWindowSet = true
+		}
+	}
+	return nil
 }
 
 func (r *registry) transportDefault(provider, requested string) string {

@@ -114,6 +114,22 @@
           "services/hub/internal/modelselection/modelselection_test.go::ProviderContextDefaults",
           "services/claudemon/src/session/windows.rs::provider_context_defaults"
         ]
+      },
+      "managerPreferenceCases": {
+        "why": "The persisted Fleet Manager model/context boundary shared by desktop and Hub. It pins legacy Claude marker migration, nullable Codex provider-default, provider guards, and foreign-model rejection without making Rust own a config schema it never reads.",
+        "required": [
+          "name",
+          "agents",
+          "expectedModels",
+          "expectedEfforts",
+          "expectedContexts",
+          "error",
+          "note"
+        ],
+        "loaders": [
+          "apps/desktop/src/main/shared/managerSelection.test.ts::managerPreferenceCases",
+          "services/hub/internal/modelselection/manager_test.go::ManagerPreferenceCases"
+        ]
       }
     }
   },
@@ -122,6 +138,83 @@
       "provider": "codex",
       "freshContextWindow": 1000000,
       "note": "A model-less new Codex life explicitly requests 1M. This is a spawn request, not a claim about the provider-reported effective runtime window."
+    }
+  ],
+  "managerPreferenceCases": [
+    {
+      "name": "legacy Claude marker migrates to canonical pair",
+      "agents": {
+        "managerModels": { "claude": "opus[1m]", "codex": "gpt-5-codex" },
+        "managerEfforts": { "claude": "max", "codex": "xhigh" }
+      },
+      "expectedModels": { "claude": "opus", "codex": "gpt-5-codex" },
+      "expectedEfforts": { "claude": "max", "codex": "xhigh" },
+      "expectedContexts": { "claude": 1000000 },
+      "error": null,
+      "note": "Old managerModels values remain readable and become suffix-free without crossing provider keys."
+    },
+    {
+      "name": "Codex null is an explicit provider-default preference",
+      "agents": {
+        "managerModels": { "codex": "gpt-5-codex" },
+        "managerContextWindows": { "codex": null }
+      },
+      "expectedModels": { "codex": "gpt-5-codex" },
+      "expectedEfforts": {},
+      "expectedContexts": { "codex": null },
+      "error": null,
+      "note": "Null must survive round-trip; omission is the distinct fresh-Codex 1M policy."
+    },
+    {
+      "name": "Claude selected variant keeps its canonical context",
+      "agents": {
+        "managerModels": { "claude": "sonnet" },
+        "managerContextWindows": { "claude": 200000 }
+      },
+      "expectedModels": { "claude": "sonnet" },
+      "expectedEfforts": {},
+      "expectedContexts": { "claude": 200000 },
+      "error": null,
+      "note": "Claude context is a validated model variant, not a free provider-wide number."
+    },
+    {
+      "name": "provider-managed harness rejects a context request",
+      "agents": { "managerContextWindows": { "copilot": 1000000 } },
+      "expectedModels": {},
+      "expectedEfforts": {},
+      "expectedContexts": {},
+      "error": "unsupported-context-window",
+      "note": "Copilot/OpenCode/Pi expose read-only provider-managed context."
+    },
+    {
+      "name": "zero context is invalid",
+      "agents": { "managerContextWindows": { "codex": 0 } },
+      "expectedModels": {},
+      "expectedEfforts": {},
+      "expectedContexts": {},
+      "error": "invalid-context-window",
+      "note": "Only positive integer requests or explicit null are durable."
+    },
+    {
+      "name": "unsupported Claude numeric variant is rejected",
+      "agents": {
+        "managerModels": { "claude": "opus" },
+        "managerContextWindows": { "claude": 400000 }
+      },
+      "expectedModels": {},
+      "expectedEfforts": {},
+      "expectedContexts": {},
+      "error": "unsupported-context-window",
+      "note": "Claude context is selected through catalog model variants; an arbitrary numeric request cannot be serialized honestly to Claude argv."
+    },
+    {
+      "name": "foreign model is rejected at config ingress",
+      "agents": { "managerModels": { "codex": "sonnet" } },
+      "expectedModels": {},
+      "expectedEfforts": {},
+      "expectedContexts": {},
+      "error": "foreign-manager-model",
+      "note": "A Claude alias cannot be persisted as the Codex manager model."
     }
   ],
   "windows": [

@@ -33,6 +33,7 @@
 import { configService } from '../services/configService';
 import type { AgentProvider } from '../services/agentProviders';
 import { isForeignModel } from '../shared/modelVocabulary';
+import { managerContextPreference, type ManagerContextWindows } from '../shared/managerSelection';
 
 /**
  * The shared resolution above, as one function. Exported because it is the
@@ -114,4 +115,27 @@ export function resolveManagerEffort(provider: AgentProvider): string | undefine
   const agents = configService.getConfig().agents as
     { managerEfforts?: Record<string, string> } | undefined;
   return perHarnessEffort(provider, agents?.managerEfforts);
+}
+
+/** Requested window for a NEW Fleet Manager life on this harness. The caller
+ *  applies the generic provider policy afterwards, so an absent Codex entry
+ *  becomes the shared fresh 1M request while an explicit null stays
+ *  provider-default. Resume callers deliberately do not consult this setting. */
+export function resolveManagerContextWindow(provider: AgentProvider): number | null | undefined {
+  const agents = configService.getConfig().agents as
+    { managerContextWindows?: ManagerContextWindows } | undefined;
+  return managerContextPreference(provider, agents?.managerContextWindows);
+}
+
+/** explicit call > stored manager preference > provider policy. A resume with
+ *  no durable explicit value skips the preference so an old conversation is
+ *  never silently rewritten by a later Settings change. */
+export function resolveManagerContextForSpawn(
+  provider: AgentProvider,
+  explicit: number | null | undefined,
+  resumeSessionId?: string,
+): number | null | undefined {
+  if (explicit !== undefined) return explicit;
+  if (resumeSessionId) return undefined;
+  return resolveManagerContextWindow(provider);
 }

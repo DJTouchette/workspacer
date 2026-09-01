@@ -100,6 +100,8 @@ interface HarnessModelSelectProps {
   hint?: React.ReactNode;
   /** Sentence appended to the stale-value warning, naming the consequence. */
   warningSuffix?: string;
+  /** Compact control rendered beside the model picker (for example Context). */
+  controlAddon?: React.ReactNode;
 }
 
 const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
@@ -110,6 +112,7 @@ const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
   defaultLabel = 'Harness default',
   hint,
   warningSuffix,
+  controlAddon,
 }) => {
   const { options: catalog, loaded } = useModelOptions(provider);
   const { options, unknown, foreign } = harnessModelOptions(
@@ -123,12 +126,15 @@ const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
   return (
     <>
       <Row label={label}>
-        <SearchableSelect
-          value={value}
-          options={options}
-          onChange={onChange}
-          placeholder={defaultLabel}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <SearchableSelect
+            value={value}
+            options={options}
+            onChange={onChange}
+            placeholder={defaultLabel}
+          />
+          {controlAddon}
+        </div>
       </Row>
       {hint && <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>{hint}</div>}
       {(unknown || foreign) && (

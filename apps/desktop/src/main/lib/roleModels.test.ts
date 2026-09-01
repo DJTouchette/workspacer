@@ -15,8 +15,14 @@ vi.mock('../services/configService', () => ({
   configService: { getConfig: () => mockConfig },
 }));
 
-const { perHarnessModel, resolveManagerModel, resolveTitleModel, resolveManagerEffort } =
-  await import('./roleModels');
+const {
+  perHarnessModel,
+  resolveManagerModel,
+  resolveTitleModel,
+  resolveManagerEffort,
+  resolveManagerContextWindow,
+  resolveManagerContextForSpawn,
+} = await import('./roleModels');
 
 beforeEach(() => {
   mockConfig = {};
@@ -136,5 +142,24 @@ describe('resolveManagerEffort', () => {
     // discard a deliberate choice on a newer CLI.
     mockConfig = { agents: { managerEfforts: { codex: 'ultra' } } };
     expect(resolveManagerEffort('codex')).toBe('ultra');
+  });
+});
+
+describe('resolveManagerContextForSpawn', () => {
+  it('reads only this harness entry and preserves explicit provider-default null', () => {
+    mockConfig = {
+      agents: { managerContextWindows: { claude: 200_000, codex: null } },
+    };
+    expect(resolveManagerContextWindow('claude')).toBe(200_000);
+    expect(resolveManagerContextWindow('codex')).toBeNull();
+    expect(resolveManagerContextWindow('copilot')).toBeUndefined();
+  });
+
+  it('uses explicit call input before config and skips current config on resume', () => {
+    mockConfig = { agents: { managerContextWindows: { codex: 400_000 } } };
+    expect(resolveManagerContextForSpawn('codex', 300_000)).toBe(300_000);
+    expect(resolveManagerContextForSpawn('codex', null)).toBeNull();
+    expect(resolveManagerContextForSpawn('codex', undefined)).toBe(400_000);
+    expect(resolveManagerContextForSpawn('codex', undefined, 'old-manager')).toBeUndefined();
   });
 });

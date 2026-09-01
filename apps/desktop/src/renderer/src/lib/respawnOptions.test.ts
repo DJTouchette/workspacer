@@ -22,6 +22,10 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
         toolScope: 'operator',
         manager: true,
         fleetFullAccess: true,
+        model: 'gpt-5-codex',
+        modelIdentity: 'gpt-5-codex',
+        contextWindow: 400_000,
+        effort: 'xhigh',
         lastSessionId: 'sess-old',
       }),
       'sess-old',
@@ -33,6 +37,10 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       toolScope: 'operator',
       transport: 'stream',
       resumeSessionId: 'sess-old',
+      model: 'gpt-5-codex',
+      modelIdentity: 'gpt-5-codex',
+      contextWindow: 400_000,
+      effort: 'xhigh',
     });
   });
 

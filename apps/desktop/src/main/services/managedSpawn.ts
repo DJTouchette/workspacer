@@ -52,7 +52,11 @@ import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModelSelection } from '../lib/spawnModel';
 import { resolveTransport, type AgentTransport } from '../lib/spawnTransport';
-import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
+import {
+  resolveManagerContextForSpawn,
+  resolveManagerModel,
+  resolveManagerEffort,
+} from '../lib/roleModels';
 import { modelFromExtraArgs } from './claudeResolver';
 import { claudeArgvModel } from '../shared/modelContextWindows';
 import { contextRequestForSpawn } from '../shared/providerContext';
@@ -285,18 +289,28 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   const requestedModel =
     profileModel ||
     opts.model?.trim() ||
-    (opts.manager ? resolveManagerModel(provider) : undefined);
+    (opts.manager && !opts.resumeSessionId ? resolveManagerModel(provider) : undefined);
   const requestedContextWindow = contextRequestForSpawn(
     provider,
-    opts.contextWindow,
+    opts.manager
+      ? resolveManagerContextForSpawn(provider, opts.contextWindow, opts.resumeSessionId)
+      : opts.contextWindow,
     opts.resumeSessionId,
   );
-  const modelSelection = resolveSpawnModelSelection(
-    provider,
-    requestedModel,
-    profileModel ? undefined : opts.modelIdentity,
-    profileModel ? undefined : requestedContextWindow,
-  );
+  const preserveManagerResumeSelection =
+    provider === 'claude' &&
+    opts.manager &&
+    !!opts.resumeSessionId &&
+    !requestedModel?.trim() &&
+    !opts.modelIdentity?.trim();
+  const modelSelection = preserveManagerResumeSelection
+    ? undefined
+    : resolveSpawnModelSelection(
+        provider,
+        requestedModel,
+        profileModel ? undefined : opts.modelIdentity,
+        profileModel ? undefined : requestedContextWindow,
+      );
   // `contextRequestForSpawn` owns the fresh-Codex default even when no model
   // is named. `resolveSpawnModelSelection` quite correctly returns no model
   // selection in that case, so do not make this request depend on its optional
@@ -314,7 +328,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // ladders are not portable — codex's 'xhigh' means nothing to claude — and
   // resolved here so it reaches every entry point, not just a launcher.
   const spawnEffort =
-    opts.effort?.trim() || (opts.manager ? resolveManagerEffort(provider) : undefined);
+    opts.effort?.trim() ||
+    (opts.manager && !opts.resumeSessionId ? resolveManagerEffort(provider) : undefined);
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.mcpFacade || !!opts.toolScope;
   // A facade session takes its requested tier, defaulting to operator (the
@@ -589,20 +604,34 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   // both spawn paths at once instead of one.
   const hybridSelection = resolveSpawnModelSelection(
     'codex',
-    opts.model?.trim() || (opts.manager ? resolveManagerModel('codex') : undefined),
+    opts.model?.trim() ||
+      (opts.manager && !opts.resumeSessionId ? resolveManagerModel('codex') : undefined),
     opts.modelIdentity,
     opts.model?.trim() || opts.modelIdentity
-      ? contextRequestForSpawn('codex', opts.contextWindow, opts.resumeSessionId)
+      ? contextRequestForSpawn(
+          'codex',
+          opts.manager
+            ? resolveManagerContextForSpawn('codex', opts.contextWindow, opts.resumeSessionId)
+            : opts.contextWindow,
+          opts.resumeSessionId,
+        )
       : undefined,
   );
   const hybridContextWindow =
     hybridSelection?.contextWindow ??
-    contextRequestForSpawn('codex', opts.contextWindow, opts.resumeSessionId);
+    contextRequestForSpawn(
+      'codex',
+      opts.manager
+        ? resolveManagerContextForSpawn('codex', opts.contextWindow, opts.resumeSessionId)
+        : opts.contextWindow,
+      opts.resumeSessionId,
+    );
   const spawnModel = hybridSelection?.model;
   // …and the same for effort: a manager spawn with none requested takes the
   // level configured for it on codex (agents.managerEfforts).
   const spawnEffort =
-    opts.effort?.trim() || (opts.manager ? resolveManagerEffort('codex') : undefined);
+    opts.effort?.trim() ||
+    (opts.manager && !opts.resumeSessionId ? resolveManagerEffort('codex') : undefined);
   const skipPermissions = !!opts.skipPermissions;
   // The Windows rollout hybrid predates the facade wiring: it spawns a bare TUI
   // and tails the transcript, so a manager/facade session asked for here comes

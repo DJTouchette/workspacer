@@ -15,11 +15,12 @@ vi.mock('../../src/components/AgentCardBody', () => ({ AgentCardBody: () => <div
 afterEach(cleanup);
 
 const agent = {
-  id: 'worker',
-  name: 'worker',
+  id: 'manager',
+  name: 'Fleet Manager',
   cwd: '/repo',
   provider: 'codex',
   sessionId: 'session',
+  manager: true,
 } as unknown as AgentWorkspace;
 
 const snapshot = (confirmed: boolean) =>
@@ -55,7 +56,7 @@ const snapshot = (confirmed: boolean) =>
   }) as any;
 
 describe('both exact context-bar consumers use the shared runtime-confirmed selector', () => {
-  it('AgentCard fleet row hides a provisional requested window, then renders active occupancy', () => {
+  it('Fleet Manager row hides its provisional requested window, then renders active occupancy', () => {
     const view = render(<AgentCard agent={agent} snapshot={snapshot(false)} onOpen={() => {}} />);
     expect(screen.queryByTestId('agent-row-context-bar')).toBeNull();
     view.rerender(<AgentCard agent={agent} snapshot={snapshot(true)} onOpen={() => {}} />);

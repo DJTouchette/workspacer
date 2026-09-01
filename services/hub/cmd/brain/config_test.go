@@ -200,6 +200,54 @@ func TestConfigSaveReloadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManagerSelectionMigrationAndNullableRoundTrip(t *testing.T) {
+	dir := tempConfigHome(t)
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("customTop: keep-me\nagents:\n  managerModels:\n    claude: opus[1m]\n    codex: gpt-5-codex\n  managerContextWindows:\n    codex: 400000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newConfigService()
+	agents := c.get()["agents"].(map[string]any)
+	models := agents["managerModels"].(map[string]any)
+	contexts := agents["managerContextWindows"].(map[string]any)
+	if models["claude"] != "opus" || contexts["claude"] != uint64(1_000_000) {
+		t.Fatalf("legacy manager selection was not canonicalized: models=%#v contexts=%#v", models, contexts)
+	}
+	if c.get()["customTop"] != "keep-me" {
+		t.Fatal("migration dropped unrelated config")
+	}
+
+	merged := mustSave(t, c, map[string]any{"agents": map[string]any{
+		"managerContextWindows": map[string]any{"codex": nil},
+	}})
+	contexts = merged["agents"].(map[string]any)["managerContextWindows"].(map[string]any)
+	if value, present := contexts["codex"]; !present || value != nil {
+		t.Fatalf("explicit Codex provider-default did not survive: %#v", contexts)
+	}
+	if contexts["claude"] != uint64(1_000_000) {
+		t.Fatalf("changing Codex erased Claude: %#v", contexts)
+	}
+	fresh := newConfigService().get()["agents"].(map[string]any)["managerContextWindows"].(map[string]any)
+	if value, present := fresh["codex"]; !present || value != nil {
+		t.Fatalf("Codex null did not round-trip through YAML: %#v", fresh)
+	}
+}
+
+func TestManagerSelectionSaveRejectsProviderManagedContext(t *testing.T) {
+	tempConfigHome(t)
+	c := newConfigService()
+	_, err := c.save(map[string]any{"agents": map[string]any{
+		"managerContextWindows": map[string]any{"copilot": 1_000_000},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "unsupported-context-window") {
+		t.Fatalf("got %v, want unsupported-context-window refusal", err)
+	}
+}
+
 func TestInvalidDefaultModelTypeResetsOnlySelectionAndKeepsPersistenceLive(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

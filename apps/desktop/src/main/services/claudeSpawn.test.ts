@@ -69,6 +69,7 @@ let mockConfig: {
     fleetFullAccess?: boolean;
     managerModels?: Record<string, string>;
     managerEfforts?: Record<string, string>;
+    managerContextWindows?: Record<string, number | null>;
   };
   projects?: Record<string, { yolo?: boolean }>;
   claude?: { defaultModel: string; contextWindow: number | null };
@@ -653,6 +654,45 @@ describe('spawnClaudeAgent — role models reach the argv', () => {
     mockConfig.agents = { managerModels: { claude: 'opus[1m]' } };
     await spawnClaudeAgent({ cwd: '/proj', manager: true, model: 'sonnet' });
     expect(argvModel()).toBe('sonnet');
+  });
+
+  it('delivers the configured Claude model/context pair to argv and requested metadata', async () => {
+    mockConfig.agents = {
+      managerModels: { claude: 'opus' },
+      managerContextWindows: { claude: 1_000_000 },
+    };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
+    expect(argvModel()).toBe('opus[1m]');
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({
+      settings: { model: 'opus[1m]', contextWindow: 1_000_000 },
+    });
+  });
+
+  it('keeps an explicit context override ahead of the configured manager context', async () => {
+    mockConfig.agents = {
+      managerModels: { claude: 'opus' },
+      managerContextWindows: { claude: 1_000_000 },
+    };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true, model: 'opus', contextWindow: 200_000 });
+    expect(argvModel()).toBe('opus');
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({
+      settings: { model: 'opus', contextWindow: 200_000 },
+    });
+  });
+
+  it('does not rewrite a resumed manager from current model/context preferences', async () => {
+    mockConfig = {
+      claude: { defaultModel: 'opus', contextWindow: 1_000_000 },
+      agents: {
+        managerModels: { claude: 'sonnet' },
+        managerContextWindows: { claude: 200_000 },
+      },
+    };
+    await spawnClaudeAgent({ cwd: '/proj', manager: true, resumeSessionId: 'old-manager' });
+    expect(argvModel()).toBeUndefined();
+    expect(setSpawnMeta.mock.calls.at(-1)![1]).toMatchObject({
+      settings: { model: undefined, contextWindow: undefined },
+    });
   });
 
   it('a plain agent is untouched by the manager model', async () => {

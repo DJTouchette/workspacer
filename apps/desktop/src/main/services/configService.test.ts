@@ -250,6 +250,48 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     },
   );
 
+  it('migrates a legacy Fleet Manager Claude marker into the per-provider context map', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'customTop: keep-me\nagents:\n  managerModels:\n    claude: opus[1m]\n    codex: gpt-5-codex\n',
+    );
+    const cfg = configService.reloadConfig() as any;
+    expect(cfg.agents.managerModels).toEqual({ claude: 'opus', codex: 'gpt-5-codex' });
+    expect(cfg.agents.managerContextWindows).toEqual({ claude: 1_000_000 });
+    expect(cfg.customTop).toBe('keep-me');
+  });
+
+  it('round-trips explicit Codex provider-default null without erasing Claude', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'agents:\n  managerModels:\n    claude: opus\n    codex: gpt-5-codex\n  managerContextWindows:\n    claude: 1000000\n    codex: 400000\n',
+    );
+    configService.reloadConfig();
+    mockedFs.writeFileSync.mockClear();
+    const cfg = configService.saveConfig({
+      agents: { managerContextWindows: { codex: null } } as any,
+    }) as any;
+    expect(cfg.agents.managerContextWindows).toEqual({ claude: 1_000_000, codex: null });
+    const written = String(mockedFs.writeFileSync.mock.calls.at(-1)?.[1] ?? '');
+    expect(written).toContain('claude: 1000000');
+    expect(written).toContain('codex: null');
+  });
+
+  it('rejects a persisted context request for a provider-managed harness', () => {
+    expect(() =>
+      configService.saveConfig({
+        agents: { managerContextWindows: { copilot: 1_000_000 } } as any,
+      }),
+    ).toThrow(/provider-managed/);
+  });
+
+  it('drops only an invalid old provider-managed context entry on read', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'ui:\n  theme: light\nagents:\n  managerContextWindows:\n    codex: 400000\n    copilot: 1000000\n',
+    );
+    const cfg = configService.reloadConfig() as any;
+    expect(cfg.ui.theme).toBe('light');
+    expect(cfg.agents.managerContextWindows).toEqual({ codex: 400_000 });
+  });
+
   it('preserves unrelated top-level sections when saving a partial', () => {
     configService.saveConfig({ scripts: { '/repo': [{ name: 'x', command: 'y' }] } as any });
     const cfg = configService.getConfig();

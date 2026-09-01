@@ -167,6 +167,79 @@ func normalizeClaudeConfigSelection(config, source map[string]any) error {
 	return nil
 }
 
+// applyManagerContextPatch restores explicit null entries after deepMerge.
+// Null normally means "unset" in the config overlay contract, but
+// agents.managerContextWindows.codex=null is the durable provider-default
+// choice. The map itself is not wholesale: changing Codex must preserve Claude.
+func applyManagerContextPatch(config, source map[string]any) {
+	if source == nil {
+		return
+	}
+	sourceAgents, _ := source["agents"].(map[string]any)
+	if sourceAgents == nil {
+		return
+	}
+	raw, present := sourceAgents["managerContextWindows"]
+	if !present {
+		return
+	}
+	patch, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	agents, _ := config["agents"].(map[string]any)
+	if agents == nil {
+		return
+	}
+	current, _ := agents["managerContextWindows"].(map[string]any)
+	copyMap := map[string]any{}
+	for key, value := range current {
+		copyMap[key] = value
+	}
+	for key, value := range patch {
+		copyMap[key] = value
+	}
+	agents["managerContextWindows"] = copyMap
+}
+
+func normalizeManagerConfigPreferences(config, source map[string]any, strict bool) error {
+	applyManagerContextPatch(config, source)
+	agents, _ := config["agents"].(map[string]any)
+	if agents == nil {
+		return nil
+	}
+	prefs, err := modelselection.CanonicalManagerPreferences(agents, strict)
+	if err != nil {
+		return err
+	}
+	if prefs.ModelsSet {
+		models := map[string]any{}
+		for key, value := range prefs.Models {
+			models[key] = value
+		}
+		agents["managerModels"] = models
+	}
+	if prefs.EffortsSet {
+		efforts := map[string]any{}
+		for key, value := range prefs.Efforts {
+			efforts[key] = value
+		}
+		agents["managerEfforts"] = efforts
+	}
+	if prefs.ContextsSet || len(prefs.ContextSet) > 0 {
+		contexts := map[string]any{}
+		for key := range prefs.ContextSet {
+			if value := prefs.Contexts[key]; value != nil {
+				contexts[key] = *value
+			} else {
+				contexts[key] = nil
+			}
+		}
+		agents["managerContextWindows"] = contexts
+	}
+	return nil
+}
+
 func configWindow(value any) (*uint64, error) {
 	if value == nil {
 		return nil, nil
@@ -369,6 +442,11 @@ func (c *configService) loadFromDisk() map[string]any {
 		defaultClaude, _ := defaults["claude"].(map[string]any)
 		mergedClaude["defaultModel"] = defaultClaude["defaultModel"]
 		mergedClaude["contextWindow"] = defaultClaude["contextWindow"]
+	}
+	if err := normalizeManagerConfigPreferences(merged, parsed, false); err != nil {
+		// Compatibility mode should not fail, but keep a loud guard if a future
+		// validation arm forgets that contract.
+		log.Printf("brain: invalid Fleet Manager selection in %s: %v", configPath(), err)
 	}
 	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)))
 }
@@ -729,6 +807,10 @@ func (c *configService) saveLocked(partial map[string]any) (map[string]any, erro
 		}
 		if err := normalizeClaudeConfigSelection(merged, dropped); err != nil {
 			log.Printf("brain: config.save refused invalid Claude model selection: %v", err)
+			return c.current, err
+		}
+		if err := normalizeManagerConfigPreferences(merged, dropped, true); err != nil {
+			log.Printf("brain: config.save refused invalid Fleet Manager selection: %v", err)
 			return c.current, err
 		}
 		if c.persistBlocked {

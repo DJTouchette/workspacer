@@ -708,6 +708,8 @@ export function useAgentManager() {
       grantYolo = false,
       provider: AgentProvider = 'claude',
       model?: string,
+      contextWindow?: number | null,
+      effort?: string,
     ): Promise<string | undefined> => {
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
@@ -784,6 +786,8 @@ export function useAgentManager() {
         // never come through here: a respawn of a stopped manager card, a
         // headless bus spawn. Blank = the harness's own default.
         ...(model?.trim() && { model: model.trim() }),
+        contextWindow,
+        ...(effort?.trim() && { effort: effort.trim() }),
         // Chat-first: the manager is a bubbles experience, like the Guide.
         // Claude and Codex both have a headless stream transport; the others
         // ignore it (and spawnManagedAgent says so out loud).

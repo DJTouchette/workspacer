@@ -92,7 +92,7 @@ describe('SupervisorSection — the Fleet Manager model picker', () => {
       />,
     );
     const row = within(screen.getByText('Manager model').closest('div') as HTMLElement);
-    fireEvent.click(row.getByRole('button'));
+    fireEvent.click(row.getByRole('button', { name: /codex default/i }));
     await waitFor(() => expect(row.getByText('GPT-5 Codex')).toBeInTheDocument());
     expect(row.queryByText('Fable')).not.toBeInTheDocument();
   });
@@ -110,7 +110,7 @@ describe('SupervisorSection — the Fleet Manager model picker', () => {
       />,
     );
     const row = within(screen.getByText('Manager model').closest('div') as HTMLElement);
-    fireEvent.click(row.getByRole('button'));
+    fireEvent.click(row.getByRole('button', { name: /codex default/i }));
     await waitFor(() => expect(row.getByText('GPT-5 Codex')).toBeInTheDocument());
     fireEvent.click(row.getByText('GPT-5 Codex'));
     await waitFor(() => expect(save).toHaveBeenCalled());
@@ -136,6 +136,118 @@ describe('SupervisorSection — the Fleet Manager model picker', () => {
     );
     const row = within(screen.getByText('Manager model').closest('div') as HTMLElement);
     await waitFor(() => expect(row.getByRole('button').textContent).toMatch(/Fable|fable/));
+  });
+});
+
+describe('SupervisorSection — the Fleet Manager context preference', () => {
+  beforeEach(() => {
+    const api = window.electronAPI as unknown as Record<string, unknown>;
+    api.claudeListModels = vi.fn().mockResolvedValue({
+      aliases: [
+        { model: 'opus', label: 'Opus · 200K', contextWindow: 200_000 },
+        { model: 'opus', label: 'Opus · 1M', contextWindow: 1_000_000 },
+      ],
+      seen: [],
+      defaultModel: '',
+    });
+    api.providerListModels = vi
+      .fn()
+      .mockResolvedValue([{ id: 'gpt-5-codex', label: 'GPT-5 Codex' }]);
+  });
+
+  it('shows the shared fresh-Codex 1M request and persists provider-default null', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection
+        config={
+          {
+            agents: {
+              managerProvider: 'codex',
+              managerContextWindows: { claude: 200_000 },
+            },
+          } as Config
+        }
+        save={save}
+      />,
+    );
+    expect(screen.getByLabelText('Context settings')).toHaveTextContent('1.0M requested');
+    fireEvent.click(screen.getByRole('button', { name: 'Provider default' }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)![0]).toMatchObject({
+      agents: { managerContextWindows: { claude: 200_000, codex: null } },
+    });
+  });
+
+  it('persists a validated custom Codex token request', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection config={{ agents: { managerProvider: 'codex' } } as Config} save={save} />,
+    );
+    fireEvent.change(screen.getByLabelText('Custom context tokens'), {
+      target: { value: '400000' },
+    });
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)![0]).toMatchObject({
+      agents: { managerContextWindows: { codex: 400_000 } },
+    });
+  });
+
+  it('offers only catalog-validated Claude context siblings', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection
+        config={
+          {
+            agents: {
+              managerProvider: 'claude',
+              managerModels: { claude: 'opus' },
+              managerContextWindows: { claude: 200_000 },
+            },
+          } as Config
+        }
+        save={save}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Opus · 1M' })).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Custom context tokens')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Context settings'));
+    expect(screen.getByRole('button', { name: 'Opus · 1M' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Opus · 1M' }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)![0]).toMatchObject({
+      agents: { managerContextWindows: { claude: 1_000_000 } },
+    });
+  });
+
+  it('persists the Claude catalog model and its base context as one pair', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(
+      <SupervisorSection
+        config={{ agents: { managerProvider: 'claude' } } as Config}
+        save={save}
+      />,
+    );
+    const row = within(screen.getByText('Manager model').closest('div') as HTMLElement);
+    fireEvent.click(row.getByRole('button', { name: /claude default/i }));
+    await waitFor(() => expect(row.getByText('Opus · 200K')).toBeInTheDocument());
+    fireEvent.click(row.getByText('Opus · 200K'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)![0]).toMatchObject({
+      agents: {
+        managerModels: { claude: 'opus' },
+        managerContextWindows: { claude: 200_000 },
+      },
+    });
+  });
+
+  it('keeps Copilot context provider-managed and read-only', () => {
+    renderSection({ agents: { managerProvider: 'copilot' } } as Partial<Config>);
+    expect(screen.getByLabelText('Context settings')).toHaveTextContent('provider-managed');
+    expect(screen.getByText(/exposes no validated request control/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Custom context tokens')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request 1M' })).not.toBeInTheDocument();
   });
 });
 

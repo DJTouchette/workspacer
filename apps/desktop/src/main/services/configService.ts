@@ -9,6 +9,11 @@ import { pruneOrphanedConfigKeys } from '../lib/orphanedConfigKeys';
 import { WHOLESALE_CONFIG_PATHS } from '../shared/configWholesale';
 import type { ProjectIdentity } from '../shared/ipcTypes';
 import { ModelSelectionError, normalizeModelSelection } from '../shared/modelContextWindows';
+import {
+  canonicalManagerPreferences,
+  ManagerSelectionError,
+  type ManagerContextWindows,
+} from '../shared/managerSelection';
 
 interface ShellOption {
   name: string;
@@ -207,7 +212,7 @@ interface Config {
     fleetFullAccess: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
-     *  claude/codex/opencode — see SupervisorSection. */
+     *  claude/codex/copilot — see SupervisorSection. */
     managerProvider: string;
     /** Coordinator model for the Fleet Manager's OWN conversation, keyed by
      *  harness — `managerProvider` shipped with no model twin, so the manager
@@ -221,6 +226,10 @@ interface Config {
      *  low..max, codex minimal..xhigh, copilot its own seven); '' / absent =
      *  the harness's own default. Read through lib/roleModels. */
     managerEfforts?: Record<string, string>;
+    /** Requested context for the Fleet Manager's own conversation, keyed by
+     *  harness. Claude/Codex only. A Codex null is an explicit
+     *  provider-default choice; absence takes the shared fresh-Codex policy. */
+    managerContextWindows?: ManagerContextWindows;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries: {
       claude: string;
@@ -470,6 +479,47 @@ export function deepMerge(target: any, source: any): any {
     }
   }
   return result;
+}
+
+/**
+ * `null` normally means "unset" to deepMerge, but it is a real value at
+ * agents.managerContextWindows.codex (explicit provider-default). Restore the
+ * exact entries the caller supplied after the ordinary merge, without making
+ * the whole per-provider map wholesale: changing Codex must not erase Claude.
+ */
+function applyManagerContextPatch(config: Config, source?: unknown): void {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+  const sourceAgents = (source as Record<string, unknown>).agents;
+  if (!sourceAgents || typeof sourceAgents !== 'object' || Array.isArray(sourceAgents)) return;
+  if (!Object.prototype.hasOwnProperty.call(sourceAgents, 'managerContextWindows')) return;
+  const raw = (sourceAgents as Record<string, unknown>).managerContextWindows;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+  const agents = config.agents as Config['agents'] & Record<string, unknown>;
+  const current: Record<string, number | null | undefined> =
+    agents.managerContextWindows && typeof agents.managerContextWindows === 'object'
+      ? { ...agents.managerContextWindows }
+      : {};
+  for (const [provider, value] of Object.entries(raw)) current[provider] = value as number | null;
+  agents.managerContextWindows = current;
+}
+
+function normalizeManagerConfigPreferences(
+  config: Config,
+  source?: unknown,
+  strict = true,
+): Config {
+  applyManagerContextPatch(config, source);
+  const normalized = canonicalManagerPreferences(config.agents, strict);
+  if (normalized.managerModels !== undefined) {
+    config.agents.managerModels = normalized.managerModels as Record<string, string>;
+  }
+  if (normalized.managerEfforts !== undefined) {
+    config.agents.managerEfforts = normalized.managerEfforts as Record<string, string>;
+  }
+  if (normalized.managerContextWindows !== undefined) {
+    config.agents.managerContextWindows = normalized.managerContextWindows;
+  }
+  return config;
 }
 
 /** Normalize the Claude selection after a read and before a write. `source`
@@ -749,7 +799,11 @@ export class ConfigService {
       // re-serialized by the next save forever. Strictly one key at a time —
       // see ORPHANED_CONFIG_KEYS; this is NOT unknown-key pruning.
       this.pruneOrphanedKeys(parsed as Record<string, unknown>, data, configPath);
-      const merged = normalizeClaudeConfigSelection(deepMerge(defaults, parsed) as Config, parsed);
+      const merged = normalizeManagerConfigPreferences(
+        normalizeClaudeConfigSelection(deepMerge(defaults, parsed) as Config, parsed),
+        parsed,
+        false,
+      );
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
       // to the flat defaults, after which migrateFlatChords is a no-op. A modern
       // config passes migrateKeybindings untouched and migrateFlatChords then
@@ -758,7 +812,7 @@ export class ConfigService {
       this.lastBrokenBackup = null;
       return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
     } catch (err) {
-      if (err instanceof ModelSelectionError) {
+      if (err instanceof ModelSelectionError || err instanceof ManagerSelectionError) {
         // The YAML is valid. Preserve every unrelated setting and reset only
         // the invalid model pair; never rename/discard a valid config as if it
         // were a syntax failure.
@@ -874,7 +928,12 @@ export class ConfigService {
       // map), so the caller learning about it is the entire point — the bus
       // handler in hubCapabilities turns it into an error reply, and the IPC
       // handler rejects the renderer's promise.
-      if (err instanceof WholesaleValueError) throw err;
+      if (
+        err instanceof WholesaleValueError ||
+        err instanceof ModelSelectionError ||
+        err instanceof ManagerSelectionError
+      )
+        throw err;
       // Could not take the lock: the other writer is mid-write (or wedged).
       // Writing anyway is the bug this exists to prevent, so refuse — and say
       // so, because the setting the user just changed did not land.
@@ -929,6 +988,7 @@ export class ConfigService {
         applyWholesale(merged as unknown as Record<string, unknown>, partial, path);
       }
       normalizeClaudeConfigSelection(merged, partial);
+      normalizeManagerConfigPreferences(merged, partial);
       if (this.persistBlocked) {
         // The on-disk config failed to load (unreadable or unparseable): keep
         // the change in memory only. Writing here would replace the user's

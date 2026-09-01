@@ -310,6 +310,10 @@ export interface Config {
      *  the same reason as the model: the ladders differ per CLI. Absent = that
      *  harness's own default. Resolved in main by lib/roleModels. */
     managerEfforts?: Partial<Record<AgentProvider, string>>;
+    /** Fleet Manager requested context, per harness. Claude/Codex only. A
+     *  Codex null is explicit provider-default; an absent entry takes the
+     *  shared fresh-Codex request policy. */
+    managerContextWindows?: Partial<Record<AgentProvider, number | null>>;
     /** Pre-check "isolated worktree" in the spawn dialog. */
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */

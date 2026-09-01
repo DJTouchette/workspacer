@@ -22,12 +22,20 @@
 import React from 'react';
 import { Config } from '../../hooks/useConfig';
 import type { AgentProvider } from '../../types/pane';
-import HarnessModelSelect from './HarnessModelSelect';
+import HarnessModelSelect, { useModelOptions } from './HarnessModelSelect';
 import HarnessEffortSelect from './HarnessEffortSelect';
 import { useProviderDetection } from '../../hooks/useProviderDetection';
 import { visibleProviderOptions, NOT_INSTALLED_SUFFIX } from '../../lib/providerAvailability';
 import { MANAGER_PROVIDERS } from '../../lib/roleProviders';
 import { Section, Row, ModeButton, CheckRow, inputStyle } from './primitives';
+import { ModelContextPopover, type ContextChoice } from '../ModelContextPopover';
+import {
+  claudeAliasSelection,
+  claudeArgvModel,
+  normalizeModelSelection,
+} from '../../../../main/shared/modelContextWindows';
+import { DEFAULT_CODEX_CONTEXT_WINDOW } from '../../../../main/shared/providerContext';
+import { hasManagerContextPreference } from '../../../../main/shared/managerSelection';
 
 const hintStyle: React.CSSProperties = {
   fontSize: '0.72rem',
@@ -56,6 +64,88 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   );
   const patchAgents = (p: Partial<NonNullable<Config['agents']>>) =>
     save({ agents: { ...agents, ...p } });
+  const managerModel = agents.managerModels?.[managerProvider] ?? '';
+  const hasManagerContext = hasManagerContextPreference(
+    agents.managerContextWindows,
+    managerProvider,
+  );
+  const managerContext = hasManagerContext
+    ? agents.managerContextWindows?.[managerProvider]
+    : undefined;
+  let managerModelValue = managerModel;
+  let claudeSelection: ReturnType<typeof normalizeModelSelection> | undefined;
+  if (managerProvider === 'claude' && managerModel.trim()) {
+    try {
+      claudeSelection = normalizeModelSelection(managerModel, managerContext);
+      managerModelValue = claudeArgvModel(claudeSelection);
+    } catch {
+      // Keep the raw value visible; the main-process validator will refuse a
+      // malformed replacement rather than hiding what the config contains.
+    }
+  }
+  const { options: managerCatalog } = useModelOptions(managerProvider);
+  const claudeContextChoices: ContextChoice[] =
+    managerProvider === 'claude' && claudeSelection
+      ? managerCatalog
+          .flatMap((option) => {
+            try {
+              const selection = normalizeModelSelection(option.value);
+              return selection.model.toLowerCase() === claudeSelection!.model.toLowerCase() &&
+                selection.contextWindow !== null
+                ? [{ value: selection.contextWindow, label: option.label }]
+                : [];
+            } catch {
+              return [];
+            }
+          })
+          .filter(
+            (choice, index, all) =>
+              all.findIndex((candidate) => candidate.value === choice.value) === index,
+          )
+      : [];
+  const contextRequested =
+    managerProvider === 'claude'
+      ? claudeSelection?.contextWindow
+      : managerProvider === 'codex'
+        ? hasManagerContext
+          ? managerContext
+          : DEFAULT_CODEX_CONTEXT_WINDOW
+        : undefined;
+  const updateManagerModel = (value: string) => {
+    if (managerProvider !== 'claude') {
+      return patchAgents({
+        managerModels: { ...(agents.managerModels ?? {}), [managerProvider]: value },
+      });
+    }
+    if (!value.trim()) {
+      return patchAgents({
+        managerModels: { ...(agents.managerModels ?? {}), claude: '' },
+        managerContextWindows: {
+          ...(agents.managerContextWindows ?? {}),
+          claude: null,
+        },
+      });
+    }
+    let selection = normalizeModelSelection(value);
+    if (selection.contextWindow === null) selection = claudeAliasSelection(selection.model);
+    return patchAgents({
+      managerModels: {
+        ...(agents.managerModels ?? {}),
+        claude: selection.model,
+      },
+      managerContextWindows: {
+        ...(agents.managerContextWindows ?? {}),
+        claude: selection.contextWindow,
+      },
+    });
+  };
+  const updateManagerContext = (value: number | null) =>
+    patchAgents({
+      managerContextWindows: {
+        ...(agents.managerContextWindows ?? {}),
+        [managerProvider]: value,
+      },
+    });
 
   return (
     <Section title="Fleet Manager">
@@ -105,9 +195,33 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       <HarnessModelSelect
         provider={managerProvider}
         label="Manager model"
-        value={agents.managerModels?.[managerProvider] ?? ''}
-        onChange={(v) =>
-          patchAgents({ managerModels: { ...(agents.managerModels ?? {}), [managerProvider]: v } })
+        value={managerModelValue}
+        onChange={updateManagerModel}
+        controlAddon={
+          <ModelContextPopover
+            provider={managerProvider}
+            requested={contextRequested}
+            choices={
+              managerProvider === 'claude'
+                ? claudeContextChoices
+                : managerProvider === 'codex'
+                  ? [
+                      { value: null, label: 'Provider default' },
+                      { value: DEFAULT_CODEX_CONTEXT_WINDOW, label: 'Request 1M' },
+                    ]
+                  : undefined
+            }
+            allowNumeric={managerProvider === 'codex'}
+            onChange={
+              managerProvider === 'claude'
+                ? claudeContextChoices.length
+                  ? updateManagerContext
+                  : undefined
+                : managerProvider === 'codex'
+                  ? updateManagerContext
+                  : undefined
+            }
+          />
         }
         defaultLabel={`${managerProvider} default`}
         hint={

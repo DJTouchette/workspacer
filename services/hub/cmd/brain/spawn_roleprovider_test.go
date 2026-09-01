@@ -149,3 +149,133 @@ func TestPlainWorkerIgnoresTheRoleHarnessSettings(t *testing.T) {
 		t.Fatalf("expected one PTY spawn, got %d", n)
 	}
 }
+
+func TestHeadlessManagerResolvesTheConfiguredSelectionTuple(t *testing.T) {
+	reg, calls := roleProviderRig(t, map[string]any{
+		"agents": map[string]any{
+			"managerProvider": "codex",
+			"managerModels": map[string]any{
+				"claude": "opus",
+				"codex":  "gpt-5-codex",
+			},
+			"managerEfforts": map[string]any{
+				"claude": "high",
+				"codex":  "xhigh",
+			},
+			"managerContextWindows": map[string]any{
+				"claude": 200000,
+				"codex":  400000,
+			},
+		},
+	})
+	if _, err := reg.handle(context.Background(), "agents.spawn",
+		[]byte(`{"cwd":"/tmp","manager":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	managed := calls("/sessions/spawn-managed")
+	if len(managed) != 1 {
+		t.Fatalf("expected one managed spawn, got %d", len(managed))
+	}
+	want := map[string]any{
+		"provider":       "codex",
+		"model":          "gpt-5-codex",
+		"model_identity": "gpt-5-codex",
+		"effort":         "xhigh",
+		"context_window": float64(400000),
+	}
+	for key, expected := range want {
+		if got := managed[0].body[key]; got != expected {
+			t.Errorf("%s = %#v, want %#v", key, got, expected)
+		}
+	}
+}
+
+func TestHeadlessManagerExplicitSelectionBeatsConfig(t *testing.T) {
+	reg, calls := roleProviderRig(t, map[string]any{
+		"agents": map[string]any{
+			"managerProvider":       "codex",
+			"managerModels":         map[string]any{"codex": "gpt-5-codex"},
+			"managerEfforts":        map[string]any{"codex": "xhigh"},
+			"managerContextWindows": map[string]any{"codex": 400000},
+		},
+	})
+	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(
+		`{"cwd":"/tmp","manager":true,"model":"gpt-5.2","effort":"low","contextWindow":300000}`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	got := calls("/sessions/spawn-managed")[0].body
+	if got["model"] != "gpt-5.2" || got["effort"] != "low" || got["context_window"] != float64(300000) {
+		t.Fatalf("explicit tuple did not win: %#v", got)
+	}
+}
+
+func TestHeadlessManagerExplicitProviderDefaultSuppressesFreshCodexOneMillion(t *testing.T) {
+	reg, calls := roleProviderRig(t, map[string]any{
+		"agents": map[string]any{
+			"managerProvider":       "codex",
+			"managerContextWindows": map[string]any{"codex": nil},
+		},
+	})
+	if _, err := reg.handle(context.Background(), "agents.spawn",
+		[]byte(`{"cwd":"/tmp","manager":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := calls("/sessions/spawn-managed")[0].body["context_window"]; present {
+		t.Fatalf("explicit provider-default was overwritten by the fresh Codex default: %#v",
+			calls("/sessions/spawn-managed")[0].body)
+	}
+}
+
+func TestHeadlessManagerResumeDoesNotTakeCurrentPreferences(t *testing.T) {
+	reg, calls := roleProviderRig(t, map[string]any{
+		"agents": map[string]any{
+			"managerProvider":       "codex",
+			"managerModels":         map[string]any{"codex": "gpt-5-codex"},
+			"managerEfforts":        map[string]any{"codex": "xhigh"},
+			"managerContextWindows": map[string]any{"codex": 400000},
+		},
+	})
+	if _, err := reg.handle(context.Background(), "agents.spawn",
+		[]byte(`{"cwd":"/tmp","manager":true,"resumeSessionId":"old-manager"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := calls("/sessions/spawn-managed")[0].body
+	for _, key := range []string{"model", "model_identity", "effort", "context_window"} {
+		if value, present := got[key]; present {
+			t.Errorf("resume unexpectedly inherited current %s=%#v", key, value)
+		}
+	}
+	if got["resume"] != "old-manager" {
+		t.Errorf("resume = %#v, want old-manager", got["resume"])
+	}
+}
+
+func TestHeadlessClaudeManagerResumeDoesNotTakeCurrentOrGlobalDefaults(t *testing.T) {
+	reg, calls := roleProviderRig(t, map[string]any{
+		"claude": map[string]any{
+			"transport":     "stream",
+			"defaultModel":  "opus",
+			"contextWindow": 1_000_000,
+		},
+		"agents": map[string]any{
+			"managerProvider":       "claude",
+			"managerModels":         map[string]any{"claude": "sonnet"},
+			"managerEfforts":        map[string]any{"claude": "max"},
+			"managerContextWindows": map[string]any{"claude": 200000},
+		},
+	})
+	if _, err := reg.handle(context.Background(), "agents.spawn",
+		[]byte(`{"cwd":"/tmp","manager":true,"resumeSessionId":"old-manager"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := calls("/sessions/spawn-managed")[0].body
+	for _, key := range []string{"model", "model_identity", "effort", "context_window"} {
+		if value, present := got[key]; present {
+			t.Errorf("Claude resume unexpectedly inherited %s=%#v", key, value)
+		}
+	}
+	if got["resume"] != "old-manager" {
+		t.Errorf("resume = %#v, want old-manager", got["resume"])
+	}
+}

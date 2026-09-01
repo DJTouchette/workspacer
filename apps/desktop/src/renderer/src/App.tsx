@@ -108,6 +108,8 @@ import {
 import { projectKey as scriptKey, projectKey } from './lib/projectKey';
 import { touchProject } from './lib/projectRegistry';
 import { rememberedClaudeModelPatch } from './lib/modelOptions';
+import { managerContextPreference } from '../../main/shared/managerSelection';
+import { contextRequestForSpawn } from '../../main/shared/providerContext';
 
 /**
  * Pure helper — normalizes a raw saved-session blob into a canonical
@@ -1700,6 +1702,11 @@ function App() {
         // model id is not portable between them; blank = the harness's own
         // default, which main re-resolves anyway (lib/roleModels).
         const model = config.agents?.managerModels?.[provider];
+        const effort = config.agents?.managerEfforts?.[provider];
+        const contextWindow = contextRequestForSpawn(
+          provider,
+          managerContextPreference(provider, config.agents?.managerContextWindows),
+        );
         await spawnFleetManager(
           ask,
           root,
@@ -1707,6 +1714,8 @@ function App() {
           fullAccess || anyProjectYolo,
           provider,
           model,
+          contextWindow,
+          effort,
         );
       })();
     };
@@ -1717,6 +1726,8 @@ function App() {
     config.agents?.fleetFullAccess,
     config.agents?.managerProvider,
     config.agents?.managerModels,
+    config.agents?.managerEfforts,
+    config.agents?.managerContextWindows,
     config.projects,
     spawnFleetManager,
   ]);

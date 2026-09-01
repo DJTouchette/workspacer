@@ -645,6 +645,11 @@ export interface AppConfig {
     };
     /** Per-harness Fleet Manager coordinator models (see lib/roleModels). */
     managerModels?: Record<string, string>;
+    /** Per-harness Fleet Manager reasoning effort (see lib/roleModels). */
+    managerEfforts?: Record<string, string>;
+    /** Fleet Manager context requests. Only Claude/Codex are writable; null is
+     *  the explicit provider-default choice. */
+    managerContextWindows?: Record<string, number | null>;
   };
 }
 

@@ -974,6 +974,91 @@ describe('spawnManagedAgent — the Fleet Manager’s own model reaches the spaw
     expect(lastManaged().model).toBe('gpt-5.1-codex-max');
   });
 
+  it('delivers a configured custom Codex context and records the requested tuple', async () => {
+    mockConfig = {
+      agents: {
+        managerModels: { codex: 'gpt-5' },
+        managerContextWindows: { codex: 400_000 },
+      },
+    };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged()).toMatchObject({
+      model: 'gpt-5',
+      modelIdentity: 'gpt-5',
+      contextWindow: 400_000,
+    });
+    expect(lastMeta()).toMatchObject({
+      settings: { model: 'gpt-5', contextWindow: 400_000 },
+    });
+  });
+
+  it('preserves configured provider-default null instead of injecting fresh Codex 1M', async () => {
+    mockConfig = { agents: { managerContextWindows: { codex: null } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+    });
+    expect(lastManaged().contextWindow).toBeNull();
+  });
+
+  it('keeps an explicit context ahead of the manager preference', async () => {
+    mockConfig = { agents: { managerContextWindows: { codex: 400_000 } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      contextWindow: 300_000,
+    });
+    expect(lastManaged().contextWindow).toBe(300_000);
+  });
+
+  it('does not apply current manager model/context preferences to a resume', async () => {
+    mockConfig = {
+      agents: {
+        managerModels: { codex: 'gpt-5' },
+        managerContextWindows: { codex: 400_000 },
+      },
+    };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      resumeSessionId: 'old-manager',
+    });
+    expect(lastManaged()).toMatchObject({ resumeSessionId: 'old-manager' });
+    expect(lastManaged().model).toBeUndefined();
+    expect(lastManaged().contextWindow).toBeUndefined();
+  });
+
+  it('does not apply the global Claude default to an old manager resume with no durable pair', async () => {
+    mockConfig = {
+      claude: { defaultModel: 'opus', contextWindow: 1_000_000 },
+      agents: {
+        managerModels: { claude: 'sonnet' },
+        managerContextWindows: { claude: 200_000 },
+      },
+    };
+    await spawnManagedAgent({
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      resumeSessionId: 'old-manager',
+    });
+    expect(lastManaged().model).toBeUndefined();
+    expect(lastManaged().modelIdentity).toBeUndefined();
+    expect(lastManaged().contextWindow).toBeUndefined();
+  });
+
   it.each(['', '   '])(
     'treats a blank caller model %j as omitted and keeps the configured manager model',
     async (model) => {
@@ -1047,6 +1132,18 @@ describe('spawnManagedAgent — role effort comes from config when the caller na
       effort: 'low',
     });
     expect(lastManaged().effort).toBe('low');
+  });
+
+  it('does not apply a current manager effort preference to a resume', async () => {
+    mockConfig = { agents: { managerEfforts: { codex: 'xhigh' } } };
+    await spawnManagedAgent({
+      provider: 'codex',
+      transport: 'stream',
+      cwd: '/proj',
+      manager: true,
+      resumeSessionId: 'old-manager',
+    });
+    expect(lastManaged().effort).toBeUndefined();
   });
 
   it('leaves a plain worker on the harness default', async () => {

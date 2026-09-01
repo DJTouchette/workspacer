@@ -22,6 +22,18 @@ describe('buildManagerKickoff — full-access mode', () => {
   });
 });
 
+describe('buildManagerKickoff — requested selection readback', () => {
+  const doctrine = buildManagerKickoff('status');
+
+  it('points the manager at the canonical config tuple and distinguishes runtime truth', () => {
+    expect(doctrine).toContain('get_config');
+    expect(doctrine).toContain('agents.managerContextWindows');
+    expect(doctrine).toMatch(/requested[^]*effective/);
+    expect(doctrine).toContain('runtime truth');
+    expect(doctrine).toContain('Never use the requested value as a context-bar denominator');
+  });
+});
+
 describe('buildManagerKickoff — crash succession', () => {
   // Version rot, not logic: the doctrine taught the manager to find a dead
   // predecessor by scanning list_agents for a parentSessionId with no session
@@ -409,6 +421,38 @@ describe('spawnFleetManager', () => {
       provider: 'codex',
       model: 'gpt-5-codex',
       manager: true,
+    });
+    hook.unmount();
+  });
+
+  it('records the requested manager context on the fresh manager card/spawn', async () => {
+    const hook = renderHook(() => useAgentManager());
+    await act(async () => {
+      await hook.result.current.spawnFleetManager(
+        'status',
+        '/home/u/Work',
+        false,
+        false,
+        'codex',
+        'gpt-5-codex',
+        1_000_000,
+        'xhigh',
+      );
+    });
+    expect(spawnClaude.mock.calls[0][0]).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5-codex',
+      contextWindow: 1_000_000,
+      effort: 'xhigh',
+      manager: true,
+    });
+    expect(
+      hook.result.current.agents.find((agent) => agent.name === FLEET_MANAGER_NAME),
+    ).toMatchObject({
+      provider: 'codex',
+      model: 'gpt-5-codex',
+      contextWindow: 1_000_000,
+      effort: 'xhigh',
     });
     hook.unmount();
   });

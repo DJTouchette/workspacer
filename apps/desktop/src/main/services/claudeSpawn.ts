@@ -33,7 +33,11 @@ import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModelSelection } from '../lib/spawnModel';
-import { resolveManagerModel, resolveManagerEffort } from '../lib/roleModels';
+import {
+  resolveManagerContextForSpawn,
+  resolveManagerModel,
+  resolveManagerEffort,
+} from '../lib/roleModels';
 import { installManagerSkills } from './managerSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
@@ -202,17 +206,32 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // the manager starts, the same rule the model above follows, and so the
   // recorded spawn meta below names the level the argv actually carries.
   let effort = opts.effort;
-  if (!effort?.trim() && opts.manager) effort = resolveManagerEffort('claude');
+  if (!effort?.trim() && opts.manager && !opts.resumeSessionId)
+    effort = resolveManagerEffort('claude');
 
   const profileModel = modelFromExtraArgs(profile?.extraArgs);
   let requestedModel = profileModel ?? opts.model;
-  if (opts.manager && !requestedModel) requestedModel = resolveManagerModel('claude');
-  const modelSelection = resolveSpawnModelSelection(
-    'claude',
-    requestedModel,
-    profileModel ? undefined : opts.modelIdentity,
-    profileModel ? undefined : opts.contextWindow,
-  );
+  if (opts.manager && !opts.resumeSessionId && !requestedModel)
+    requestedModel = resolveManagerModel('claude');
+  const requestedContextWindow = opts.manager
+    ? resolveManagerContextForSpawn('claude', opts.contextWindow, opts.resumeSessionId)
+    : opts.contextWindow;
+  // A pre-feature manager card may carry no recorded selection at all. On
+  // resume, omission means "let the existing conversation keep its durable
+  // provider choice", not "apply today's global Claude default".
+  const preserveManagerResumeSelection =
+    opts.manager &&
+    !!opts.resumeSessionId &&
+    !requestedModel?.trim() &&
+    !opts.modelIdentity?.trim();
+  const modelSelection = preserveManagerResumeSelection
+    ? undefined
+    : resolveSpawnModelSelection(
+        'claude',
+        requestedModel,
+        profileModel ? undefined : opts.modelIdentity,
+        profileModel ? undefined : requestedContextWindow,
+      );
   const model = modelSelection?.model;
   const serializedModel = modelSelection ? claudeArgvModel(modelSelection) : undefined;
 
@@ -227,6 +246,9 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     ...(opts.routing && { routing: opts.routing }),
     settings: {
       model: serializedModel,
+      // Requested/provisional. Provider telemetry later owns
+      // resolvedContextWindow and may correct this without rewriting history.
+      contextWindow: modelSelection?.contextWindow,
       effort,
       permissionMode,
       bypassAvailable,

@@ -91,6 +91,12 @@ const MANAGER_PREAMBLE =
   'its blocker and required authority or decision to the user when escalation is required, then ' +
   'wait for direction before redispatching or broadening scope. Malformed escalation blocks remain ' +
   'ordinary prose and do not waive any requested wks-result.\n' +
+  'If the user asks what model, effort, or context YOU were configured to request, read ' +
+  'get_config and report agents.managerProvider plus this provider’s entries in ' +
+  'agents.managerModels, agents.managerEfforts, and agents.managerContextWindows. Say ' +
+  '"requested" rather than "effective": the live session status/provider telemetry is ' +
+  'runtime truth and may report a smaller effective window. Never use the requested value ' +
+  'as a context-bar denominator.\n' +
   '3. Every project keeps a living brief at .workspacer/brief.md inside the repo, with ' +
   'sections "## Now" (in flight — a live list, drop a line the moment its work lands), ' +
   '"## Direction" (durable goals and where it is going), and "## Recently" (a DATED log, ' +
