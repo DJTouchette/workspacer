@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,9 +21,9 @@ func loadMatrix(t *testing.T, yaml string) *Matrix {
 	return m
 }
 
-func resume(role, capability string) SpawnRequest {
+func resume(cwd, role, capability string) SpawnRequest {
 	return SpawnRequest{
-		CanonicalCwd:    "/home/someone/project",
+		CanonicalCwd:    cwd,
 		Role:            role,
 		Capability:      capability,
 		Resuming:        true,
@@ -33,10 +35,11 @@ func resume(role, capability string) SpawnRequest {
 // at an existing session, in any profile.
 func TestAFreshRoleMayNotResumeASession(t *testing.T) {
 	m := shippedMatrix(t)
+	cwd := filepath.Join(t.TempDir(), "project")
 	for _, profile := range sortedKeys(m.Profiles) {
 		m.ActiveProfile = profile
 		for _, role := range []string{"reviewer", "deep_reviewer", "judge"} {
-			v := m.CheckSpawn(resume(role, ""))
+			v := m.CheckSpawn(resume(cwd, role, ""))
 			if !v.ResumeRefused {
 				t.Errorf("profile %s: role %s was allowed to resume a session — a reviewer that inherits the implementer's conversation inherits the reasoning it is grading", profile, role)
 				continue
@@ -65,8 +68,9 @@ func TestAFreshRoleMayNotResumeASession(t *testing.T) {
 // most ordinary caller there is.
 func TestAFreshCapabilityDeclaredWithoutARoleIsAlsoRefused(t *testing.T) {
 	m := shippedMatrix(t)
+	cwd := filepath.Join(t.TempDir(), "project")
 	for _, capability := range []string{"reviewer", "deep_reviewer", "frontier_plus"} {
-		if v := m.CheckSpawn(resume("", capability)); !v.ResumeRefused {
+		if v := m.CheckSpawn(resume(cwd, "", capability)); !v.ResumeRefused {
 			t.Errorf("capability %s resumed a session with no role declared: %+v", capability, v)
 		}
 	}
@@ -76,6 +80,7 @@ func TestAFreshCapabilityDeclaredWithoutARoleIsAlsoRefused(t *testing.T) {
 // everything and the tests above would not notice.
 func TestOrdinaryWorkKeepsItsResume(t *testing.T) {
 	m := shippedMatrix(t)
+	cwd := filepath.Join(t.TempDir(), "project")
 	cases := []struct{ role, capability string }{
 		{"", ""},                    // declares nothing: no freshness claim
 		{"implementer", ""},         // frontier, not marked fresh
@@ -87,7 +92,7 @@ func TestOrdinaryWorkKeepsItsResume(t *testing.T) {
 		{"", "nobody-ranked-this"},  // ditto for a capability
 	}
 	for _, c := range cases {
-		if v := m.CheckSpawn(resume(c.role, c.capability)); v.ResumeRefused {
+		if v := m.CheckSpawn(resume(cwd, c.role, c.capability)); v.ResumeRefused {
 			t.Errorf("role %q / capability %q was refused a resume it is entitled to: %s",
 				c.role, c.capability, strings.Join(v.Because, " | "))
 		}
@@ -98,8 +103,9 @@ func TestOrdinaryWorkKeepsItsResume(t *testing.T) {
 // refusal to inherit, not a restriction on reviewers.
 func TestAFreshRoleStartingANewSessionIsFine(t *testing.T) {
 	m := shippedMatrix(t)
+	cwd := filepath.Join(t.TempDir(), "project")
 	for _, role := range []string{"reviewer", "deep_reviewer", "judge"} {
-		req := resume(role, "")
+		req := resume(cwd, role, "")
 		req.Resuming, req.ResumeSessionID = false, ""
 		if v := m.CheckSpawn(req); v.ResumeRefused {
 			t.Errorf("role %s was refused while starting a NEW session: %+v", role, v)
@@ -114,12 +120,15 @@ func TestFreshIsEnforcedWithNoCeilingsBlockAtAll(t *testing.T) {
 	m := shippedMatrix(t)
 	m.Ceilings = nil
 	m.fallback = nil // no shipped `default:` to fall back onto either
-	v := m.CheckSpawn(resume("reviewer", ""))
+	v := m.CheckSpawn(resume(filepath.Join(t.TempDir(), "project"), "reviewer", ""))
 	if v.Key != "" {
 		t.Fatalf("this matrix was supposed to have no ceiling at all: %+v", v)
 	}
 	if !v.ResumeRefused {
 		t.Error("with no ceilings block, the freshness refusal stopped firing — it was riding on the ceiling's early return")
+	}
+	if v.FreshCapability != "reviewer" || len(v.Because) == 0 {
+		t.Errorf("fresh refusal was vacuous: %+v", v)
 	}
 }
 
@@ -139,7 +148,7 @@ mode_shifts:
   spend_down:
     drifter: deep_reviewer
 `)
-	v := m.CheckSpawn(resume("drifter", ""))
+	v := m.CheckSpawn(resume(filepath.Join(t.TempDir(), "project"), "drifter", ""))
 	if !v.ResumeRefused {
 		t.Fatalf("a role a mode shift moves onto a fresh capability kept its resume: %+v", v)
 	}
@@ -163,7 +172,7 @@ mode_shifts:
   conserve:
     auditor: balanced
 `)
-	if v := m.CheckSpawn(resume("auditor", "")); !v.ResumeRefused {
+	if v := m.CheckSpawn(resume(filepath.Join(t.TempDir(), "project"), "auditor", "")); !v.ResumeRefused {
 		t.Errorf("a mode shift onto a non-fresh capability handed a fresh role its resume back: %+v", v)
 	}
 }
@@ -183,13 +192,13 @@ profiles:
 	// `mode_shifts.spend_down` moves the reviewer role onto deep_reviewer and
 	// that entry is still fresh — which is the strongest-reading rule doing its
 	// job, and a different claim from the one under test here.
-	if v := m.CheckSpawn(resume("", "reviewer")); v.ResumeRefused {
+	if v := m.CheckSpawn(resume(filepath.Join(t.TempDir(), "project"), "", "reviewer")); v.ResumeRefused {
 		t.Errorf("`fresh: false` on the active profile's reviewer was overruled: %s", strings.Join(v.Because, " | "))
 	}
 	// The same matrix under a profile that DID keep the flag still refuses, so
 	// the case above is a reading of the file rather than the arm going quiet.
 	m.ActiveProfile = "codex_only"
-	if v := m.CheckSpawn(resume("", "reviewer")); !v.ResumeRefused {
+	if v := m.CheckSpawn(resume(filepath.Join(t.TempDir(), "project"), "", "reviewer")); !v.ResumeRefused {
 		t.Errorf("switching to a profile that keeps `fresh: true` did not restore the refusal: %+v", v)
 	}
 }
@@ -198,18 +207,19 @@ profiles:
 // the ceiling AND asking to inherit a review's session, and a caller that fixed
 // only the half it was told about would come straight back.
 func TestACeilingClampAndAFreshRefusalAreBothExplained(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "project")
 	m := loadMatrix(t, `
 ceilings:
-  /home/someone/project: { max_capability: cheap, max_tool_scope: view }
+  `+strconv.Quote(cwd)+`: { max_capability: cheap, max_tool_scope: view }
 `)
-	req := resume("", "deep_reviewer")
+	req := resume(cwd, "", "deep_reviewer")
 	req.ToolScope = "operator"
 	v := m.CheckSpawn(req)
 	if !v.ResumeRefused || !v.CapabilityRefused || !v.ToolScopeRefused {
 		t.Fatalf("the three arms did not all fire: %+v", v)
 	}
 	why := strings.Join(v.Because, " | ")
-	if !strings.Contains(why, "ceilings./home/someone/project") || !strings.Contains(why, "resumeSessionId") {
+	if !strings.Contains(why, "ceilings."+cwd) || !strings.Contains(why, "resumeSessionId") {
 		t.Errorf("the explanation drops one of the two reasons: %s", why)
 	}
 }
@@ -219,8 +229,9 @@ ceilings:
 // refusing routing.select's own advice.
 func TestSelectNeverProducesAResumeRefusal(t *testing.T) {
 	m := shippedMatrix(t)
+	cwd := filepath.Join(t.TempDir(), "project")
 	for _, role := range sortedKeys(m.Roles) {
-		v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/home/someone/project", Role: role})
+		v := m.CheckSpawn(SpawnRequest{CanonicalCwd: cwd, Role: role})
 		if v.ResumeRefused {
 			t.Errorf("role %s: a non-resuming request was refused: %+v", role, v)
 		}

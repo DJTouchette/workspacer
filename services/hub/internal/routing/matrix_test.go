@@ -330,16 +330,14 @@ ceilings:
 }
 
 func TestNonAbsoluteCeilingKeyIsReportedBeforeItFallsThrough(t *testing.T) {
-	m, err := Load("routing.yaml", []byte(`
-ceilings:
-  relative/project: { max_capability: cheap, max_tool_scope: view }
-`))
+	key := filepath.Join("relative", "project")
+	m, err := Load("routing.yaml", []byte("ceilings:\n  "+strconv.Quote(key)+": { max_capability: cheap, max_tool_scope: view }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var found *Issue
 	for i := range m.Issues {
-		if m.Issues[i].Where == "ceilings.relative/project" {
+		if m.Issues[i].Where == "ceilings."+key {
 			found = &m.Issues[i]
 			break
 		}
