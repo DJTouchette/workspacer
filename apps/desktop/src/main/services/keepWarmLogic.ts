@@ -102,39 +102,19 @@ export function windowActive(usage: AccountUsageWire, nowMs: number): boolean {
 // Only the 5h window is typed here — the document is far wider (spend, tokens,
 // per-model splits) and keep-warm reads none of it.
 
-/** One scalar in the report. `ok` carries a reading; the other two carry a
- *  reason instead, and are NOT zero. */
-export interface UsageReportMeasured {
-  state: 'ok' | 'unknown' | 'unavailable';
-  value?: number | null;
-  reason?: string | null;
-}
-
-export interface UsageReportWindow {
-  used_percent?: UsageReportMeasured | null;
-  /** Epoch seconds. `null` when the source reported no reset time, which is
-   *  also why the report leaves `is_current` null there. */
-  resets_at?: number | null;
-  window_minutes?: number | null;
-  is_current?: boolean | null;
-}
-
-export interface UsageReportAccount {
-  /** `""` is the default login; `null` means the daemon cannot say which. */
-  account?: string | null;
-  label?: string | null;
-  windows?: { five_hour?: UsageReportWindow | null } | null;
-}
-
-export interface UsageReportProvider {
-  provider: string;
-  accounts?: UsageReportAccount[] | null;
-}
-
-export interface UsageReportWire {
-  generated_at?: number;
-  providers?: UsageReportProvider[] | null;
-}
+// The wire types moved to main/shared/usageReport.ts when the Overview usage
+// card became the report's second reader: the renderer cannot import from
+// main/services, and a second hand-typed copy of a wire shape is exactly how
+// the usage plane grew five mirrors of one struct. Re-exported here so this
+// module stays the one import for keep-warm's callers.
+export type {
+  UsageReportMeasured,
+  UsageReportWindow,
+  UsageReportAccount,
+  UsageReportProvider,
+  UsageReportWire,
+} from '../shared/usageReport';
+import type { UsageReportWire } from '../shared/usageReport';
 
 /**
  * A provider's 5h window as the report sees it, in the flat shape

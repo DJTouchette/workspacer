@@ -17,6 +17,7 @@ import type {
   RecentAgentSession,
 } from './shared/ipcTypes';
 import type { BoardData, BoardLane, BoardMoveRequest } from './services/briefBoardService';
+import type { UsageReportWire } from './shared/usageReport';
 
 // ── MessagePort storage (preload isolated world) ──
 // Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
@@ -312,6 +313,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       error: string | null;
     }>
   > => ipcRenderer.invoke(IPC.KEEPWARM_HEARTBEATS, limit),
+  /** claudemon's sessionless account-usage report. null = could not ask. */
+  usageReport: (): Promise<UsageReportWire | null> => ipcRenderer.invoke(IPC.USAGE_REPORT),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
   claudeSetPermissionMode: (

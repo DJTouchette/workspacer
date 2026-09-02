@@ -15,12 +15,14 @@
  * the dialog — a portal bubbles through the REACT tree, so a dialog rendered
  * inside its own click target reopens itself on the way out.
  */
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import React from 'react';
 import { SessionStatusBar } from '../../src/components/claude/SessionStatusBar';
 import { InspectorCard } from '../../src/components/claude/InspectorCard';
 import { RateLimitCard } from '../../src/panes/OverviewPane';
+import { __resetUsageReportCache } from '../../src/hooks/useUsageReport';
+import type { UsageReportWire } from '../../../main/shared/usageReport';
 import type { ClaudeSessionSnapshot, SessionStatusLine } from '../../src/types/claudeSession';
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -257,5 +259,200 @@ describe('the Overview card speaks for an account, not a session', () => {
     // into the card's own onClick and reopen what it just closed.
     fireEvent.click(dialog.parentElement as HTMLElement);
     expect(screen.queryByRole('dialog', { name: 'Usage detail' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * THE COLD START.
+ *
+ * Every window this card draws used to come from a live session's status line,
+ * so with nothing running it rendered null — no matter how good the daemon's
+ * own reading was. claudemon answers GET /usage/report from disk and its
+ * account poller with zero sessions; these pin that the card reads it, that it
+ * never lets the report speak over a live line, and that it refuses to draw a
+ * window the report says is not running.
+ */
+describe('the Overview usage card with no session at all', () => {
+  const api = window.electronAPI as unknown as Record<string, unknown>;
+
+  /** One provider/account row of claudemon's report. */
+  const doc = (
+    provider: string,
+    account: string,
+    windows: Record<string, unknown>,
+  ): UsageReportWire => ({
+    generated_at: NOW,
+    providers: [
+      {
+        provider,
+        accounts: [
+          { account, label: account.split('/').pop() || 'default', is_default: false, windows },
+        ],
+      },
+    ],
+  });
+
+  /** A window the report says is running. */
+  const running = (pct: number | null, resetsIn: number, mins?: number) => ({
+    used_percent:
+      pct === null
+        ? { state: 'unknown' as const, reason: 'no reading' }
+        : { state: 'ok' as const, value: pct },
+    resets_at: NOW + resetsIn,
+    window_minutes: mins ?? null,
+    is_current: true,
+  });
+
+  beforeEach(() => {
+    __resetUsageReportCache();
+    delete api.usageReport;
+  });
+
+  afterEach(() => {
+    __resetUsageReportCache();
+  });
+
+  it('renders the daemon’s reading with zero snapshots', async () => {
+    const acct = '/home/u/.claude/accounts/coldboot';
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', acct, {
+        five_hour: running(18, 3 * 3600, 300),
+        seven_day: running(91, 4 * 86400, 10080),
+      }),
+    );
+
+    render(<RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="coldboot" />);
+
+    // Nothing at first — this is exactly the old behaviour, and it is what the
+    // report is fetched to replace.
+    await waitFor(() => expect(screen.getByText('18%')).toBeInTheDocument());
+    expect(screen.getByText('91%')).toBeInTheDocument();
+    // …and it is a real card, not a bare readout: the detail dialog opens.
+    expect(screen.getByLabelText('Show usage detail')).toBeInTheDocument();
+  });
+
+  it('lets a live status line win, and fills only what the line never carried', async () => {
+    const account = 'livewins';
+    const path = '/home/u/.claude/accounts/livewins/projects/p/t.jsonl';
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', '/home/u/.claude/accounts/livewins', {
+        // Contradicts the live line on 5h, and speaks for a window the live
+        // line is silent about.
+        five_hour: running(77, 3 * 3600, 300),
+        seven_day: running(33, 4 * 86400, 10080),
+      }),
+    );
+
+    render(
+      <RateLimitCard
+        snaps={[
+          {
+            sessionId: 'sess-live',
+            provider: 'claude',
+            transcriptPath: path,
+            statusLine: {
+              fiveHourPct: 11,
+              fiveHourResetsAt: NOW + 3 * 3600,
+              fiveHourWindowMins: 300,
+              receivedAt: new Date().toISOString(),
+            },
+          },
+        ]}
+        provider="claude"
+        title="Claude usage"
+        account={account}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText('33%')).toBeInTheDocument());
+    expect(screen.getByText('11%')).toBeInTheDocument();
+    expect(screen.queryByText('77%')).not.toBeInTheDocument();
+  });
+
+  it('refuses a percentage from a window that is not running', async () => {
+    const acct = '/home/u/.claude/accounts/rolledover';
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', acct, {
+        // Live on 2026-08-30: 67% against a reset two days in the past. Real
+        // history, a false present.
+        five_hour: {
+          used_percent: { state: 'ok', value: 67 },
+          resets_at: NOW - 2 * 86400,
+          window_minutes: 300,
+          is_current: false,
+        },
+        // A percentage with no reset time cannot say WHICH window it describes.
+        monthly: {
+          used_percent: { state: 'ok', value: 42 },
+          resets_at: null,
+          window_minutes: null,
+          is_current: null,
+        },
+        seven_day: running(5, 4 * 86400, 10080),
+      }),
+    );
+
+    render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="rolledover" />,
+    );
+
+    await waitFor(() => expect(screen.getByText('5%')).toBeInTheDocument());
+    // Neither lapsed figure is drawn, and neither leaves an empty meter behind:
+    // the row simply is not there.
+    expect(screen.queryByText('67%')).not.toBeInTheDocument();
+    expect(screen.queryByText('42%')).not.toBeInTheDocument();
+    expect(screen.queryByText('5h')).not.toBeInTheDocument();
+    expect(screen.queryByText('Mo')).not.toBeInTheDocument();
+    expect(screen.getByText('7d')).toBeInTheDocument();
+  });
+
+  it('renders nothing when the report has no running window for the account', async () => {
+    // What `usage.pollOnBoot: false` looks like from here: the daemon never
+    // polled the idle account, so the report carries a reason instead of a
+    // reading. The card must go back to drawing nothing rather than a row of
+    // empty meters.
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', '/home/u/.claude/accounts/notpolled', {
+        five_hour: {
+          used_percent: { state: 'unknown', reason: 'no reading for this account' },
+          resets_at: null,
+          window_minutes: null,
+          is_current: null,
+        },
+        seven_day: {
+          used_percent: { state: 'unknown', reason: 'no reading for this account' },
+          resets_at: null,
+          window_minutes: null,
+          is_current: null,
+        },
+      }),
+    );
+
+    const { container } = render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="notpolled" />,
+    );
+
+    await waitFor(() => expect(api.usageReport).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByLabelText('Show usage detail')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing when the transport cannot reach the daemon at all', async () => {
+    // The web/remote backends stub usageReport to null — "we could not ask".
+    api.usageReport = vi.fn().mockResolvedValue(null);
+    const { container } = render(<RateLimitCard snaps={[]} provider="codex" title="Codex usage" />);
+    await waitFor(() => expect(api.usageReport).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('answers a provider card that does not filter by account', async () => {
+    // Codex has one account here and the card passes `account: undefined`.
+    api.usageReport = vi
+      .fn()
+      .mockResolvedValue(
+        doc('codex', '/home/u/.codex', { seven_day: running(4, 6 * 86400, 10080) }),
+      );
+    render(<RateLimitCard snaps={[]} provider="codex" title="Codex usage" />);
+    await waitFor(() => expect(screen.getByText('4%')).toBeInTheDocument());
   });
 });

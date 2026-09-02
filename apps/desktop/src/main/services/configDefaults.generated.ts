@@ -193,6 +193,9 @@ export const CONFIG_DEFAULTS = {
   codex: {
     transport: 'stream',
   },
+  usage: {
+    pollOnBoot: true,
+  },
   agents: {
     defaultProvider: 'claude',
     defaultCwd: '',

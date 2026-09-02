@@ -637,7 +637,7 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 	for _, section := range []string{
 		"ui", "terminal", "browser", "panes", "keybindings", "notifications",
 		"editor", "claude", "agents", "directories", "scripts",
-		"updates", "apps",
+		"updates", "apps", "usage",
 	} {
 		if _, ok := def[section]; !ok {
 			t.Errorf("default config missing top-level section %q", section)
@@ -649,6 +649,13 @@ func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
 	}
 	if _, ok := def["agents"].(map[string]any)["binaries"]; !ok {
 		t.Error("agents.binaries missing from defaults")
+	}
+	// usage.pollOnBoot ships ON. The default lives here rather than in either
+	// runtime because both spawn claudemon and both must agree about the
+	// environment it gets; a false here would silently blank the boot gauges
+	// on every fresh install.
+	if got := def["usage"].(map[string]any)["pollOnBoot"]; got != true {
+		t.Errorf("usage.pollOnBoot = %v, want true (account gauges are accurate at boot by default)", got)
 	}
 }
 

@@ -828,6 +828,15 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Keep-warm heartbeats live in the desktop's claudemon; not exposed over
     // the hub bus (settings-only surface), so the web client shows none.
     keepWarmHeartbeats: async () => [],
+    // HUB-TODO: claudemon's /usage/report is loopback-confined
+    // (internal/capspec/httproutes.go) and the hub exposes no bus capability
+    // for it, so a web/remote client cannot reach it. null is the honest
+    // answer — "we could not ask" — and it degrades the Overview usage card to
+    // exactly its previous behaviour there: live status lines only, and
+    // nothing at all with no session running. Wiring a `usage.report`
+    // capability is the fix; a stub that invented an empty document would make
+    // the card render every window as absent instead.
+    usageReport: async () => null,
     claudeMessage: (sessionId, text) =>
       client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,

@@ -186,6 +186,9 @@
   "codex": {
     "transport": "stream"
   },
+  "usage": {
+    "pollOnBoot": true
+  },
   "agents": {
     "defaultProvider": "claude",
     "defaultCwd": "",

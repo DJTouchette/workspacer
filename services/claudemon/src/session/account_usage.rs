@@ -623,6 +623,56 @@ pub fn configured_config_roots() -> Vec<String> {
     roots
 }
 
+/// The environment variable carrying the desktop's / launcher's
+/// `usage.pollOnBoot` setting. `0` (or `false`/`off`/`no`) turns idle-root
+/// discovery off; anything else, INCLUDING ABSENCE, leaves it on.
+pub const POLL_ON_BOOT_ENV: &str = "WORKSPACER_USAGE_POLL_ON_BOOT";
+
+/// Parse [`POLL_ON_BOOT_ENV`]. Split from the env read so the default is
+/// testable without touching process state.
+///
+/// Absence is ON, and that is the compatibility contract in both directions: an
+/// older desktop that has never heard of the key sets nothing and must keep the
+/// shipped behaviour, and a spawn site that fails to compute the value must
+/// over-poll rather than silently blank every gauge. Only an explicit falsy
+/// spelling turns it off.
+pub fn poll_on_boot_from_env(raw: Option<&str>) -> bool {
+    match raw {
+        None => true,
+        Some(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+    }
+}
+
+/// [`poll_on_boot_from_env`] against this process's environment.
+pub fn poll_on_boot_enabled() -> bool {
+    poll_on_boot_from_env(std::env::var(POLL_ON_BOOT_ENV).ok().as_deref())
+}
+
+/// The roots ONE scheduler pass should poll.
+///
+/// Live roots are always included — the toggle is about an IDLE daemon, and a
+/// running session's gauges must never regress because of it. `include_idle`
+/// (the `usage.pollOnBoot` setting) decides whether the configured accounts
+/// that have nothing running join them; with it off this is exactly the
+/// pre-46fd339f behaviour, an empty list on a cold daemon and therefore no
+/// requests at all.
+pub fn roots_to_poll(live: &[String], include_idle: bool) -> Vec<String> {
+    let mut roots = if include_idle {
+        configured_config_roots()
+    } else {
+        Vec::new()
+    };
+    for r in live {
+        if !roots.contains(r) {
+            roots.push(r.clone());
+        }
+    }
+    roots
+}
+
 /// How often a root is re-read while a Claude session is live on the account.
 const LIVE_INTERVAL_SECS: u64 = 60;
 /// …and while nothing is running. Still polled — a boot readout is exactly what
@@ -708,7 +758,10 @@ pub fn due_now(
 ///
 /// Iterates CONFIGURED roots ([`configured_config_roots`]) unioned with the
 /// roots of any live session, so a cold daemon with zero sessions still has
-/// real gauges within a tick of boot. Each root keeps its own schedule: live
+/// real gauges within a tick of boot. `include_idle_roots` is the operator's
+/// `usage.pollOnBoot` setting (see [`roots_to_poll`]): with it off, only live
+/// roots are polled and an idle daemon makes no requests. Each root keeps its
+/// own schedule: live
 /// accounts every [`LIVE_INTERVAL_SECS`], idle ones every
 /// [`IDLE_INTERVAL_SECS`], and a failing one backs off toward
 /// [`MAX_BACKOFF_SECS`] (see [`next_poll_delay`]). A root that goes idle→live
@@ -727,7 +780,7 @@ pub fn due_now(
 /// zero at the surface, which is the thing that lies to the user.
 ///
 /// [`SessionStore::set_account_usage`]: super::store::SessionStore::set_account_usage
-pub fn spawn_poller(store: super::store::SessionStore) {
+pub fn spawn_poller(store: super::store::SessionStore, include_idle_roots: bool) {
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
@@ -740,12 +793,7 @@ pub fn spawn_poller(store: super::store::SessionStore) {
             tick.tick().await;
             let now = std::time::Instant::now();
             let live = store.live_claude_config_roots();
-            let mut roots = configured_config_roots();
-            for r in &live {
-                if !roots.contains(r) {
-                    roots.push(r.clone());
-                }
-            }
+            let roots = roots_to_poll(&live, include_idle_roots);
             // Forget roots that are no longer configured or live, so a removed
             // profile stops occupying the schedule.
             schedule.retain(|k, _| roots.contains(k));
@@ -1199,5 +1247,115 @@ mod tests {
              manufacturing a failure every tick: {roots:?}",
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // ── usage.pollOnBoot ────────────────────────────────────────────────────
+    //
+    // The toggle gates ONE thing: whether an idle daemon discovers the accounts
+    // that have no session running. Everything else about the poller — the
+    // cadence, the backoff, the booking — is untouched by it, so these tests
+    // pin the union and the default and nothing else.
+
+    #[test]
+    fn the_toggle_suppresses_idle_roots_but_never_a_live_one() {
+        let live = vec!["/home/u/.claude/accounts/work".to_string()];
+
+        // Off: the pre-46fd339f behaviour. The default root is NOT added — that
+        // union is the whole of what the setting buys — and the live root is
+        // still there, so a running session's gauges cannot regress.
+        let off = roots_to_poll(&live, false);
+        assert_eq!(
+            off, live,
+            "with pollOnBoot off, only roots with a live session are polled",
+        );
+        assert!(
+            !off.iter().any(|r| r.is_empty()),
+            "the default root is an IDLE-discovery entry; off must not add it: {off:?}",
+        );
+
+        // On: the configured roots (always at least the default one, first)
+        // plus the live root.
+        let on = roots_to_poll(&live, true);
+        assert_eq!(
+            on[0], "",
+            "with pollOnBoot on, the default account leads the pass: {on:?}",
+        );
+        assert!(
+            on.contains(&live[0]),
+            "a live root is polled under either setting: {on:?}",
+        );
+        assert!(
+            on.len() > off.len(),
+            "on must poll strictly more than off, or the flag does nothing: {on:?} vs {off:?}",
+        );
+    }
+
+    #[test]
+    fn an_idle_daemon_with_the_toggle_off_polls_nothing_at_all() {
+        // The cold-boot shape: zero sessions. This is the request-count claim
+        // the setting makes — not "fewer requests", none.
+        assert!(
+            roots_to_poll(&[], false).is_empty(),
+            "an idle daemon with pollOnBoot off must make no account requests",
+        );
+        assert!(
+            !roots_to_poll(&[], true).is_empty(),
+            "an idle daemon with pollOnBoot on must still find the default account",
+        );
+    }
+
+    #[test]
+    fn a_live_root_is_not_polled_twice_when_it_is_also_configured() {
+        // The default root is in configured_config_roots() unconditionally, so
+        // a live session on the DEFAULT account is the collision case.
+        let roots = roots_to_poll(&[String::new()], true);
+        assert_eq!(
+            roots.iter().filter(|r| r.is_empty()).count(),
+            1,
+            "the default root must appear once, not once per source: {roots:?}",
+        );
+    }
+
+    #[test]
+    fn an_absent_env_var_means_on() {
+        // Compatibility in both directions: an older desktop sets nothing, and
+        // a spawn site that could not compute the value sets nothing. Neither
+        // may turn the feature off.
+        assert!(poll_on_boot_from_env(None), "absent must default to ON");
+        for on in ["1", "true", "yes", "on", "", "  ", "anything"] {
+            assert!(
+                poll_on_boot_from_env(Some(on)),
+                "{on:?} is not one of the falsy spellings and must read as ON",
+            );
+        }
+        for off in ["0", "false", "off", "no", "FALSE", " 0 "] {
+            assert!(
+                !poll_on_boot_from_env(Some(off)),
+                "{off:?} must read as OFF"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cold_boot_with_no_env_var_set_reads_as_on() {
+        // The same claim through the real environment read the daemon boot
+        // path calls, so a wrong variable NAME cannot pass the parser test.
+        let restore = std::env::var(POLL_ON_BOOT_ENV).ok();
+        std::env::remove_var(POLL_ON_BOOT_ENV);
+        let cold = poll_on_boot_enabled();
+        std::env::set_var(POLL_ON_BOOT_ENV, "0");
+        let off = poll_on_boot_enabled();
+        std::env::set_var(POLL_ON_BOOT_ENV, "1");
+        let on = poll_on_boot_enabled();
+        match restore {
+            Some(v) => std::env::set_var(POLL_ON_BOOT_ENV, v),
+            None => std::env::remove_var(POLL_ON_BOOT_ENV),
+        }
+        assert!(
+            cold,
+            "a daemon spawned with no {POLL_ON_BOOT_ENV} polls on boot"
+        );
+        assert!(!off, "{POLL_ON_BOOT_ENV}=0 turns idle-root discovery off");
+        assert!(on, "{POLL_ON_BOOT_ENV}=1 turns it back on");
     }
 }

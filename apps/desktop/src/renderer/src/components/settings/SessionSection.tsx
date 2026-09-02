@@ -216,6 +216,13 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const saveKeepWarm = (patch: Partial<typeof keepWarm>) =>
     save({ claude: { ...config.claude, defaultView, keepWarm: { ...keepWarm, ...patch } } });
 
+  // Boot-time account-usage polling. Cross-provider, so it sits under its own
+  // `usage` section rather than `claude`. Absent means ON — the same default
+  // config_defaults.json declares and claudemon assumes when the env var it
+  // travels in is missing entirely (an older desktop against a newer daemon).
+  const pollOnBoot = config.usage?.pollOnBoot ?? true;
+  const savePollOnBoot = (v: boolean) => save({ usage: { ...config.usage, pollOnBoot: v } });
+
   // The spawn-time permission default. Two config keys, one control — both are
   // written together so they can never contradict (see lib/permissionDefaults).
   const permissionMode = currentPermissionModeDefault(config.claude);
@@ -593,6 +600,18 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which view a Claude pane opens in. The rich GUI shows the conversation, work cards, and
         inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
+      </div>
+
+      <CheckRow
+        label="Poll account usage on start"
+        checked={pollOnBoot}
+        onChange={savePollOnBoot}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Reads each signed-in Claude account&apos;s 5-hour and 7-day limits when the agent daemon
+        starts, so the usage cards are right before anything is running. Off polls only accounts
+        with a live session, so an idle machine asks for nothing. Takes effect the next time the
+        daemon starts.
       </div>
 
       <CheckRow

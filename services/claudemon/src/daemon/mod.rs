@@ -101,9 +101,20 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
 
     // Account-usage poller: fills the 5h/7d/monthly gauges for stream-transport
     // Claude sessions, whose wire events carry reset times but (in practice) no
-    // utilization %. Polls the OAuth usage endpoint only while a live Claude
-    // session exists; costs zero tokens. See session::account_usage.
-    crate::session::account_usage::spawn_poller(store.clone());
+    // utilization %. Costs zero tokens. See session::account_usage.
+    //
+    // By default every CONFIGURED account is polled, so the gauges are right on
+    // a daemon with nothing running. The user can restrict that to accounts
+    // with a live session (`usage.pollOnBoot: false` in the workspacer config,
+    // which both spawn sites hand us as WORKSPACER_USAGE_POLL_ON_BOOT). Read
+    // once here rather than inside the loop: this is a boot decision, and a
+    // daemon's own environment does not change under it.
+    let poll_idle_accounts = crate::session::account_usage::poll_on_boot_enabled();
+    tracing::info!(
+        poll_on_boot = poll_idle_accounts,
+        "account usage poller starting",
+    );
+    crate::session::account_usage::spawn_poller(store.clone(), poll_idle_accounts);
 
     // Ghost sweep: a session row whose teardown escaped (superseded generation,
     // crash between spawn and register) advertises a live-looking mode forever

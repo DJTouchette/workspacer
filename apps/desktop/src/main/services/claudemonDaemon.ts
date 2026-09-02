@@ -65,6 +65,27 @@ export function providerBinaryEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/**
+ * `usage.pollOnBoot` as the daemon's environment.
+ *
+ * claudemon's account-usage poller decides at boot whether to iterate every
+ * CONFIGURED Claude root or only the roots of live sessions, and it has no
+ * config file of its own — it reads a handful of env vars at the point of use
+ * (CLAUDE_CONFIG_DIR is the precedent). So the setting travels in the spawn
+ * environment, exactly like the provider binaries above.
+ *
+ * Sent explicitly in BOTH directions rather than only when off: this process
+ * respawns the daemon after a crash, and an env var that is only ever added
+ * would leave a stale "0" behind from the previous spawn's environment. The
+ * Go launcher (services/hub/cmd/workspacer/plan.go) writes the same variable
+ * with the same 0/1 spelling. Absent means ON, which is what an older desktop
+ * that knows nothing about the key gives a newer daemon.
+ */
+export function usagePollEnv(): NodeJS.ProcessEnv {
+  const on = configService.getConfig().usage?.pollOnBoot !== false;
+  return { WORKSPACER_USAGE_POLL_ON_BOOT: on ? '1' : '0' };
+}
+
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopClaudemon() / app shutdown so an intentional kill isn't respawned. */
@@ -159,6 +180,7 @@ function launch(bin: string): Promise<void> {
     daemonSpawnOptions({
       RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info',
       ...providerBinaryEnv(),
+      ...usagePollEnv(),
     }),
   );
 

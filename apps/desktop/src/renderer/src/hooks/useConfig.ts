@@ -278,6 +278,13 @@ export interface Config {
      *  overridable in the spawn dialog. Default 'stream'. */
     transport?: 'pty' | 'stream';
   };
+  /** Account rate-limit reporting — cross-provider, so its own section rather
+   *  than a key under `claude`. */
+  usage?: {
+    /** Poll every configured Claude account on daemon boot so the 5h/7d
+     *  windows are accurate with nothing running. Default true. */
+    pollOnBoot?: boolean;
+  };
   /** Defaults applied when spawning a new agent. */
   agents?: {
     /** Coding-agent backend pre-selected in the spawn dialog. */

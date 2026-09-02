@@ -108,6 +108,10 @@ function detectDefaultShell(): string {
   return process.env.SHELL || '/bin/sh';
 }
 
+/** Bound like keep-warm's own report fetch: the daemon answers this from disk
+ *  and its own cache, so a slow answer means the daemon is unwell, not busy. */
+const USAGE_REPORT_TIMEOUT_MS = 15_000;
+
 let ipcHandlersRegistered = false;
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
@@ -968,6 +972,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return await res.json();
     } catch {
       return [];
+    }
+  });
+
+  // claudemon's sessionless usage report — every provider's account windows as
+  // their own CLIs left them on disk, plus the daemon's polled Claude reading.
+  // The Overview usage card reads this so it has something to draw on a cold
+  // start, where there is no live session and therefore no status line at all.
+  // keepWarmService.ts is the route's other client; both go through main
+  // because the daemon is loopback-confined and the renderer cannot reach it.
+  ipcMain.handle(IPC.USAGE_REPORT, async () => {
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/usage/report`, {
+        signal: AbortSignal.timeout(USAGE_REPORT_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      // Daemon still starting, or gone. null is "we could not ask", which the
+      // card renders as nothing rather than as zero.
+      return null;
     }
   });
 

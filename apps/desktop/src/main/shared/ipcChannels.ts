@@ -61,6 +61,7 @@ export const IPC = {
   PROVIDER_LIST_MODELS: 'provider:listModels',
   PROVIDER_CHECK_ALL: 'provider:checkAll',
   KEEPWARM_HEARTBEATS: 'keepwarm:heartbeats',
+  USAGE_REPORT: 'usage:report',
   CLAUDE_MESSAGE: 'claude:message',
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
   CLAUDE_SET_EFFORT: 'claude:setEffort',

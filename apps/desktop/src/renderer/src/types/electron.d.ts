@@ -2,6 +2,7 @@ import type { PluginManifest, PluginUpdateStatus } from './plugin';
 import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
+import type { UsageReportWire } from '../../../main/shared/usageReport';
 import type {
   BoardData,
   BoardLane,
@@ -248,6 +249,11 @@ export interface ElectronAPI {
       error: string | null;
     }>
   >;
+  /** claudemon's sessionless account-usage report — the Overview usage card's
+   *  cold-start source. null = the daemon could not be asked (still starting,
+   *  gone, or, on the web/remote transports, not reachable from the renderer at
+   *  all), which every consumer must render as nothing rather than as zero. */
+  usageReport: () => Promise<UsageReportWire | null>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeSetPermissionMode: (
     sessionId: string,

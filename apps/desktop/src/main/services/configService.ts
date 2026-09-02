@@ -195,6 +195,18 @@ interface Config {
      *  Per-spawn overridable in the spawn dialog. */
     transport: 'pty' | 'stream';
   };
+  /** Account rate-limit reporting. Its own section rather than a key under
+   *  `claude`, because the reading it governs is cross-provider: the Overview
+   *  usage cards, keep-warm and the hub's routing all read claudemon's one
+   *  usage report, which covers Claude and Codex alike. */
+  usage?: {
+    /** Poll every CONFIGURED Claude account on daemon boot, so the 5h/7d
+     *  windows are accurate with nothing running. Off restricts the poller to
+     *  accounts that have a live session (the pre-46fd339f behaviour), so an
+     *  idle machine makes no account-usage requests at all. On by default;
+     *  reaches claudemon as WORKSPACER_USAGE_POLL_ON_BOOT at spawn. */
+    pollOnBoot?: boolean;
+  };
   /** Defaults applied when spawning a new agent. */
   agents: {
     /** Coding-agent backend pre-selected in the spawn dialog. */

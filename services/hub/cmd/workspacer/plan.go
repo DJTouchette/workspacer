@@ -28,6 +28,14 @@ type serveOptions struct {
 	DevStreamLogs     bool   // pass --plugins-stream-logs to the hub (plugin dev only)
 	SkipClaudemonInit bool   // skip the `claudemon init` pre-flight (operator owns ~/.claude/settings.json)
 	DBPath            string // claudemon's SQLite session store; resolved by resolveDBPath, never empty by the time buildServePlan sees it
+
+	// UsagePollOnBoot is the operator's `usage.pollOnBoot` config choice, and
+	// nil when the config states none. A pointer rather than a bool because
+	// the zero value of this setting is ON: a plain bool would make every
+	// serveOptions literal that forgets the field spawn a daemon with account
+	// polling switched off. nil leaves the variable unset, which claudemon
+	// reads as on.
+	UsagePollOnBoot *bool
 }
 
 // servePlan is the fully-wired launch plan: the child specs to supervise and
@@ -133,6 +141,19 @@ func buildServePlan(opts serveOptions) servePlan {
 	// so only set ours when the user didn't).
 	if os.Getenv("RUST_LOG") == "" {
 		claudemon.Env = []string{"RUST_LOG=claudemon=info"}
+	}
+	// usage.pollOnBoot. claudemon's account-usage poller decides at boot
+	// whether to iterate every configured Claude root or only the roots of live
+	// sessions, and the daemon has no config file — the setting travels in its
+	// environment, the same variable and the same 0/1 spelling the desktop
+	// writes (apps/desktop/src/main/services/claudemonDaemon.ts usagePollEnv).
+	// Unset when the config states nothing, which the daemon reads as ON.
+	if opts.UsagePollOnBoot != nil {
+		v := "1"
+		if !*opts.UsagePollOnBoot {
+			v = "0"
+		}
+		claudemon.Env = append(claudemon.Env, "WORKSPACER_USAGE_POLL_ON_BOOT="+v)
 	}
 
 	hubArgs := []string{

@@ -8,6 +8,8 @@ import { ProjectMark } from '../components/ProjectMark';
 import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectRegistry';
 import { claudeAccountOf } from '../lib/claudeAccount';
 import { usageWindows, fmtWindowLength } from '../lib/sessionStats';
+import { useUsageReport } from '../hooks/useUsageReport';
+import { reportAccountKeys, reportWindowsFor } from '../../../main/shared/usageReport';
 import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
 import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
 import { UsageDetailDialog } from '../components/claude/UsageDetailDialog';
@@ -187,6 +189,10 @@ export const RateLimitCard: React.FC<{
 }> = ({ snaps, provider, title, account }) => {
   const [detailOpen, setDetailOpen] = useState(false);
   const cacheKey = account === undefined ? provider : `${provider}:${account}`;
+  // The session-free source. Only the windows nothing live has spoken for are
+  // taken from it (below) — a status line is first-hand and the report is the
+  // daemon's summary, so a live reading is never overwritten by it.
+  const report = useUsageReport();
   let best: NonNullable<Snap['statusLine']> | null = null;
   let bestTs = -1;
   for (const s of snaps) {
@@ -230,15 +236,29 @@ export const RateLimitCard: React.FC<{
   const fresher = best !== null && bestTs >= (cached?.ts ?? -1);
   const whole = fresher ? best : (cached?.sl ?? best);
   const wholeTs = fresher ? bestTs : (cached?.ts ?? bestTs);
-  if (!whole) return null;
-  lastRateLimit[cacheKey] = { sl: whole, ts: wholeTs, fields };
+  // Only the windows the report says are RUNNING — a percentage against a
+  // reset that has passed is real history and a false present, so
+  // reportWindowsFor drops it rather than drawing it (the same currency test
+  // the hub's limits.ReadWindow applies to this document).
+  const fromReport = reportWindowsFor(report, provider, account, Date.now());
+  const reportHasWindow = RATE_LIMIT_FIELDS.some((f) => fromReport[f] !== undefined);
+  // A cold start has no line at all, live or remembered. The card used to
+  // return null there and the daemon's perfectly good reading stayed invisible.
+  if (!whole && !reportHasWindow) return null;
+  if (whole) lastRateLimit[cacheKey] = { sl: whole, ts: wholeTs, fields };
   // Compose what the card renders: the freshest whole line for everything that
   // is not a window, each window figure from its own freshest carrier.
-  best = { ...whole };
+  best = { ...(whole ?? {}) };
   for (const f of RATE_LIMIT_FIELDS) {
     const c = fields[f];
     if (c) best[f] = c.value;
     else delete best[f];
+  }
+  // …and the report fills only what nothing live ever carried. Per field, like
+  // the cache above: a session that reported a 5h percentage and never a 7d one
+  // is silent about the 7d window, not a report that there isn't one.
+  for (const f of RATE_LIMIT_FIELDS) {
+    if (best[f] === undefined && fromReport[f] !== undefined) best[f] = fromReport[f];
   }
 
   // Render a window when Claude gives us a utilization % OR just a reset time.
@@ -557,6 +577,11 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   const { plugins } = usePlugins();
   const pluginStates = usePluginStates();
   const updateStatus = useUpdateStatus();
+  // Shared with every RateLimitCard below — one fetch, many readers. Read here
+  // so a second Claude login gets its card on a COLD start too: the account
+  // list is otherwise discovered only from live sessions and from cards drawn
+  // earlier this run, neither of which exists a second after launch.
+  const usageReport = useUsageReport();
   const [snaps, setSnaps] = useState<Snap[]>([]);
 
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -925,6 +950,11 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               }
               for (const k of Object.keys(lastRateLimit)) {
                 if (k.startsWith('claude:')) accounts.add(k.slice('claude:'.length));
+              }
+              // …and the accounts the daemon has a RUNNING window for, which is
+              // the only source that speaks before the first session starts.
+              for (const k of reportAccountKeys(usageReport, 'claude', Date.now())) {
+                accounts.add(k);
               }
               return [...accounts]
                 .sort()

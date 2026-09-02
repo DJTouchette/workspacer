@@ -138,6 +138,11 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 
 		SkipClaudemonInit: *f.noClaudemonInit,
 		DBPath:            *f.dbPath,
+
+		// The one config key this launcher forwards to claudemon. Read from the
+		// same config.yaml the desktop writes, so `workspacer serve` honours the
+		// Settings checkbox on a machine where both have run.
+		UsagePollOnBoot: usagePollOnBootSetting(configDir()),
 	}
 	if opts.ClaudemonBin == "" {
 		fmt.Fprintln(os.Stderr, "workspacer: claudemon binary not found next to this binary or on PATH (build it with `make build-claudemon`, or pass --claudemon-bin)")

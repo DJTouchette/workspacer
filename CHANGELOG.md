@@ -10,6 +10,29 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **A switch for the boot-time account-usage poll.** The agent daemon reads
+  every signed-in Claude account's 5-hour and 7-day limits when it starts, so
+  the usage cards are right before anything is running. That is still what
+  happens by default, and `usage.pollOnBoot` is now the way to say otherwise:
+  turn it off and the daemon polls only accounts that have a live session, so
+  an idle machine makes no account-usage requests at all. The setting reaches
+  the daemon in its environment at spawn from both places that start one, the
+  desktop app and `workspacer serve`, and there is a checkbox for it in
+  Settings under Session, beside keep-warm. A daemon started without the
+  setting polls on boot, so nothing changes for an install that never touches
+  it.
+- **The Overview usage cards read the daemon directly when no session is
+  running.** They drew their windows only from a live session's status line, so
+  a freshly opened app showed nothing at all until the first agent started, no
+  matter how good the daemon's own reading was. They now fall back to
+  claudemon's usage report, which answers from disk and from the account poll
+  with nothing running, refreshed every few minutes. A live status line still
+  wins wherever there is one, per window rather than per card. A window the
+  report says has already rolled over, or that carries no reset time, is shown
+  as not running rather than as an empty meter: the percentage against a
+  lapsed window is history, and drawing it would state a false present. The
+  web and remote clients keep their previous behaviour, since the daemon is
+  reachable only from the machine it runs on.
 - **Effort stepping: a routing mode can now trim thinking time instead of
   changing the model.** Until now a mode had one lever — move the role to a
   different capability — which swaps the model out entirely. Between "the

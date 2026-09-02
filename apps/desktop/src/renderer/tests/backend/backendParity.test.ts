@@ -313,6 +313,20 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     expect(notFromIpc, `still the web stub, not the preload: ${notFromIpc.join(', ')}`).toEqual([]);
   });
 
+  // A stub that answers is worse than a missing method: it does not vanish, it
+  // LIES quietly. The Overview usage card's cold-start source is a loopback
+  // read of claudemon, which only main can make, and the web backend answers
+  // `null` for it by design. If it were not overlaid here, the DEFAULT desktop
+  // launch (bus mode) would take that null and the card would go back to
+  // rendering nothing with no session running — the exact bug it was added to
+  // fix, with every test in usageSurfaces still green.
+  it('the usage report comes from the daemon on desktop, not the web null stub', () => {
+    expect(
+      HOST_ONLY as readonly string[],
+      'usageReport must be delegated to the preload: the web backend stubs it to null',
+    ).toContain('usageReport');
+  });
+
   it('bridged workflow drill-in preserves the IPC watcher path', async () => {
     const ipc = {
       platform: 'linux',

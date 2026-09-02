@@ -483,6 +483,15 @@ describe('default-config single source — generated TS matches the canonical br
     // The retired fleet-supervisor block is gone from the canonical defaults.
     expect(brainDefaults).not.toHaveProperty('supervisor');
   });
+
+  it('declares usage.pollOnBoot, on, in all three copies', () => {
+    // The key travels to claudemon as an env var computed from the merged
+    // config at spawn, so a default missing from any one copy is a daemon
+    // spawned with the wrong answer by whichever runtime read that copy.
+    expect(brainDefaults).toHaveProperty('usage.pollOnBoot', true);
+    expect(CONFIG_DEFAULTS).toHaveProperty('usage.pollOnBoot', true);
+    expect(RENDERER_CONFIG_DEFAULTS).toHaveProperty('usage.pollOnBoot', true);
+  });
 });
 
 // ─── mtime gate — two writers (desktop + brain) on one config.yaml ───────────
