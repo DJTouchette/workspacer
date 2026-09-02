@@ -157,14 +157,15 @@ the job as of `0bac5799`.
   `CheckSpawn` skip the ceiling arm entirely — that is why a run could report
   only `ResumeRefused` and never exercise the clamp and tool-scope arms it was
   written to prove (`fresh_test.go`, fixed in `75220468`).
-- **STATE, checked 2026-09-01 16:40Z: `containment-windows` is STILL RED on
-  master.** Run `33533220982` on `0bac5799` passed desktop, hub (Linux),
-  claudemon, tui and conflict-markers, and failed `containment-windows` on
-  `TestBriefToolsAcceptWindowsManagerWorkspaceSpellings` and two
-  `TestPathContainmentContractCases` arms — "a case-variant spelling of a store
-  carve-out is NOT exempted" and "a sibling differing from the root only in case
-  is not inside it". Note the direction: those are cases where case-insensitive
-  matching must NOT apply, so the ordinal fix and the containment contract now
-  disagree about where case-folding stops. Do not treat the Windows containment
-  work as finished, and do not assume a green Linux hub job says anything about
-  it.
+- **STATE, checked 2026-09-01: the repair `02e8e65c` merged to master as
+  `115b565a` on 2026-09-01.** The first `containment-windows` CI run after that
+  push is what confirms the job is green; do not assume it from the merge
+  alone, check the run.
+- The two failing corpus cases in the prior run built two spellings of ONE
+  NTFS directory, and `MkdirAll` collapses them, so the deny they asked for was
+  a false refusal of the caller's own granted root, not a real containment gap.
+  Separately, the brief-tools test had sent `brief.archive` both `count` and
+  `keep`, which `archiveOldestEntries` rejects before containment logic ever
+  runs. The ordinal guard was right all along; no production code changed. A
+  genuinely case-only sibling such as `<root>Other` is still denied, and that
+  case is now regression-tested.
