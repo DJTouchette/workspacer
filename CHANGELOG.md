@@ -92,6 +92,40 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   not rescue a red window — the tier shift is still the tool that bends the
   curve.
 
+### Fixed
+- **The Claude usage bar no longer blanks for the first few minutes after you
+  start an agent.** The card stayed, the meter emptied, and it filled itself
+  back in some minutes later. Two causes, one symptom.
+
+  In the daemon, an account rate-limit reading was treated as authoritative
+  for five minutes but refreshed at worst every fifteen. A headless Claude
+  session has no percentage of its own, because its wire event carries the
+  reset time and leaves the utilization out, so the percentage on its status
+  line comes entirely from that account reading, injected on each rebuild.
+  Every rebuild landing in the ten-minute hole between "declared stale" and
+  "refreshed" went out with no percentage, which is the empty bar. The
+  freshness ceiling is now derived from the refresh cadence rather than
+  written down beside it, so a reading is never retracted between two of its
+  own polls, and a test ties the two constants together. The ceiling is still
+  a ceiling: a reading from a poller that has died stops being asserted after
+  one refresh cycle plus a minute of grace.
+
+  The poller also booked its next attempt from whether the account was busy at
+  the moment it last ran, so an account polled while idle kept a quarter-hour
+  appointment even after you started work on it. A root that goes from idle to
+  live is now due on the next scheduler tick, which is what makes the meter
+  correct within half a minute of starting an agent rather than up to fifteen
+  minutes later. Every poll outcome is logged, success and failure alike, with
+  the account it was for and when it was observed, so a reading's age is
+  something you can now account for instead of guess at.
+
+  On the desktop, the Overview usage card remembered the last reading as one
+  whole thing, so a newer status line carrying a reset time and no percentage
+  displaced a good percentage, and a live reading older than what was
+  remembered was drawn in preference to it. The card now remembers each
+  figure separately: a line that does not mention a percentage says nothing
+  about it, and the fresher of the two readings wins per field.
+
 ## [0.161.0] - 2026-09-01
 
 ### Added

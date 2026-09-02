@@ -114,12 +114,42 @@ function fmtReset(epochSecs: number | undefined): string {
   return `resets in ${Math.round(h / 24)}d`;
 }
 
-/** Freshest rate-limit statusLine seen this app run, per provider. The
+/** The account-window figures the card draws, cached INDEPENDENTLY of one
+ *  another. A status line is not one reading: the daemon rebuilds a stream
+ *  session's line from wire data that carries a reset time but no percentage,
+ *  so a whole-line "newest wins" lets a newer, emptier line erase a good
+ *  percentage — the card stays, the bar empties. A field the newer line does
+ *  not mention says nothing about that field, so each is remembered by
+ *  whichever line last actually carried it. */
+const RATE_LIMIT_FIELDS = [
+  'fiveHourPct',
+  'fiveHourResetsAt',
+  'fiveHourWindowMins',
+  'sevenDayPct',
+  'sevenDayResetsAt',
+  'sevenDayWindowMins',
+  'monthlyPct',
+  'monthlyResetsAt',
+  'monthlyWindowMins',
+] as const;
+type RateLimitField = (typeof RATE_LIMIT_FIELDS)[number];
+
+/** Freshest rate-limit statusLine seen this app run, per provider+account. The
  *  windows are account-global but ride on per-session statusLines, and the
  *  store evicts a session ~30s after it ends — so a refetch with no live
  *  session for that provider would blank the card even though the account
- *  data is still valid. Module-level so it also survives pane remounts. */
-const lastRateLimit: Record<string, { sl: NonNullable<Snap['statusLine']>; ts: number }> = {};
+ *  data is still valid. Module-level so it also survives pane remounts.
+ *
+ *  `sl`/`ts` are the freshest whole line (everything the detail dialog reads
+ *  that is not a window); `fields` is the per-field memory described above. */
+const lastRateLimit: Record<
+  string,
+  {
+    sl: NonNullable<Snap['statusLine']>;
+    ts: number;
+    fields: Partial<Record<RateLimitField, { value: number; ts: number }>>;
+  }
+> = {};
 
 /** Providers whose sessions report account rate-limit windows, in display
  *  order. Each gets its own card — the windows are per-account, so a Claude
@@ -139,6 +169,10 @@ const RATE_LIMIT_PROVIDERS: Array<{ id: string; title: string }> = [
  * reading seen when the current snapshots carry none (the reset countdowns
  * stay honest: they render from absolute epochs). Renders nothing until the
  * provider has ever reported a window.
+ *
+ * "Freshest" is decided PER FIELD, not per line (see [`RATE_LIMIT_FIELDS`]):
+ * a newer line that omits a percentage is silent about it, not a report of
+ * nothing, and a live line older than what is remembered loses to the memory.
  */
 /** Exported for the surface test that pins which surfaces open the usage
  *  dialog — the Overview is the one a reader calls "the dashboard", and it
@@ -177,9 +211,35 @@ export const RateLimitCard: React.FC<{
     }
   }
   const cached = lastRateLimit[cacheKey];
-  if (best && bestTs >= (cached?.ts ?? -1)) lastRateLimit[cacheKey] = { sl: best, ts: bestTs };
-  else if (!best && cached) best = cached.sl;
-  if (!best) return null;
+  // Per field, the most recent line that ACTUALLY CARRIED it wins. A rebuilt
+  // status line arrives newer than the reading it replaces while carrying only
+  // a reset time, and taking it wholesale is what empties the meter.
+  const fields = { ...(cached?.fields ?? {}) };
+  if (best) {
+    for (const f of RATE_LIMIT_FIELDS) {
+      const v = best[f];
+      if (v === undefined) continue;
+      const prev = fields[f];
+      if (!prev || bestTs >= prev.ts) fields[f] = { value: v, ts: bestTs };
+    }
+  }
+  // The whole line only advances when the live one is at least as fresh as
+  // what is cached. The old code updated the cache on that condition but had
+  // no branch for "best exists and is OLDER", so an undated line (ts 0) was
+  // rendered in preference to a fresher remembered one.
+  const fresher = best !== null && bestTs >= (cached?.ts ?? -1);
+  const whole = fresher ? best : (cached?.sl ?? best);
+  const wholeTs = fresher ? bestTs : (cached?.ts ?? bestTs);
+  if (!whole) return null;
+  lastRateLimit[cacheKey] = { sl: whole, ts: wholeTs, fields };
+  // Compose what the card renders: the freshest whole line for everything that
+  // is not a window, each window figure from its own freshest carrier.
+  best = { ...whole };
+  for (const f of RATE_LIMIT_FIELDS) {
+    const c = fields[f];
+    if (c) best[f] = c.value;
+    else delete best[f];
+  }
 
   // Render a window when Claude gives us a utilization % OR just a reset time.
   // Many accounts only report the reset while comfortably within a window, so a

@@ -336,7 +336,7 @@ impl ClaudeBucket {
     }
 }
 
-fn label_for_root(root: &str) -> String {
+pub(crate) fn label_for_root(root: &str) -> String {
     if root.is_empty() {
         return "default".to_string();
     }

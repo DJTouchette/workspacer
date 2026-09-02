@@ -4138,13 +4138,15 @@ mod tests {
     }
 
     // A reading past its freshness window (poller stopped or failing) must not
-    // keep overwriting live wire data.
+    // keep overwriting live wire data. The window is the refresh cadence plus a
+    // live cadence of grace, so "past it" means past a whole idle cycle — an
+    // hour here, comfortably past any legitimate schedule.
     #[test]
     fn stale_account_usage_is_ignored() {
         let store = SessionStore::new();
         store.register_managed("s1", "/tmp", "claude");
         let mut old = account_reading(42.0);
-        old.fetched_at = OffsetDateTime::now_utc() - time::Duration::minutes(10);
+        old.fetched_at = OffsetDateTime::now_utc() - time::Duration::hours(1);
         store
             .account_usage
             .write()
@@ -4155,6 +4157,54 @@ mod tests {
             .apply_status_line("s1", StatusLine::default())
             .unwrap();
         assert_eq!(state.status_line.unwrap().five_hour_pct, None);
+    }
+
+    /// THE REPRODUCTION of the intermittent Claude usage bar.
+    ///
+    /// A stream session's `rate_limit_event` carries `resetsAt` without
+    /// `utilization`, so the percentage on its status line comes only from the
+    /// account reading, injected per-rebuild and never written back. With the
+    /// freshness ceiling shorter than the idle poll cadence, the FIRST rebuild
+    /// after a poll was patched and every rebuild after the ceiling was not —
+    /// and because `build_status_line` stamps a fresh `received_at` regardless,
+    /// that pct-less line was the newest thing the renderer had and it emptied
+    /// the meter. Both of these must carry a percentage.
+    #[test]
+    fn the_meter_survives_a_rebuild_a_whole_idle_cadence_after_the_poll() {
+        let store = SessionStore::new();
+        store.register_managed("s1", "/tmp", "claude");
+        store.set_account_usage("", account_reading(8.0));
+
+        // What the stream wire actually delivers: a reset time, no percentage.
+        let wire = || StatusLine {
+            five_hour_resets_at: Some(1_800_000_000),
+            ..StatusLine::default()
+        };
+
+        let first = store.apply_status_line("s1", wire()).unwrap();
+        assert_eq!(
+            first.status_line.unwrap().five_hour_pct,
+            Some(8.0),
+            "the rebuild right after a poll was never the broken one",
+        );
+
+        // The poller's next idle attempt has not landed yet — the reading is
+        // exactly one idle cadence old, which is the ordinary state of an idle
+        // root a moment before its refresh, not a pathological one.
+        {
+            let mut guard = store.account_usage.write().unwrap();
+            let u = guard.get_mut("").unwrap();
+            u.fetched_at = OffsetDateTime::now_utc()
+                - time::Duration::seconds(crate::session::account_usage::IDLE_INTERVAL_SECS as i64);
+        }
+
+        let second = store.apply_status_line("s1", wire()).unwrap();
+        assert_eq!(
+            second.status_line.unwrap().five_hour_pct,
+            Some(8.0),
+            "a status line rebuilt before the next poll is due must still \
+             carry the account's percentage — this is the blank meter",
+        );
     }
 
     // Two logged-in accounts = two config roots = two independent readings.

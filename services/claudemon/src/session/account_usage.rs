@@ -46,10 +46,25 @@ pub struct AccountUsage {
     pub fetched_at: OffsetDateTime,
 }
 
-/// How long a reading stays authoritative. Past this the poller has stopped
-/// (no live Claude sessions) or is failing, and per-session wire data — even
-/// stale — is better than a dead account snapshot.
-const FRESH_FOR_SECS: i64 = 5 * 60;
+/// How long a reading stays authoritative. Past this the poller has stopped or
+/// is failing, and per-session wire data — even stale — is better than a dead
+/// account snapshot.
+///
+/// DERIVED FROM THE REFRESH CADENCE ON PURPOSE, and it must never be shorter
+/// than it. This was a flat five minutes while [`IDLE_INTERVAL_SECS`] was
+/// fifteen, so an idle daemon's reading spent two thirds of every refresh cycle
+/// being declared stale — and because the stream transport's `rate_limit_event`
+/// carries `resetsAt` without `utilization`, every status line rebuilt inside
+/// that gap went out with `five_hour_pct: None` and blanked the meter for five
+/// to fifteen minutes after an agent started. The ceiling is one idle cadence
+/// plus one live cadence of grace (16 minutes), which is the OUTER BOUND the
+/// gate exists for: a reading from a poller that has died or been failing for
+/// longer than a full refresh cycle plus a minute stops being asserted, while a
+/// reading from a healthy poller is never asserted-then-retracted between two
+/// of its own polls. Raising the ceiling rather than lowering the idle interval
+/// is deliberate — five-hour utilization does not move meaningfully in a
+/// quarter hour, and the alternative quadruples the API call rate.
+const FRESH_FOR_SECS: i64 = (IDLE_INTERVAL_SECS + LIVE_INTERVAL_SECS) as i64;
 
 impl AccountUsage {
     pub fn is_fresh(&self, now: OffsetDateTime) -> bool {
@@ -613,7 +628,7 @@ const LIVE_INTERVAL_SECS: u64 = 60;
 /// …and while nothing is running. Still polled — a boot readout is exactly what
 /// an idle daemon is asked for — but 15× less often, which is what keeps the
 /// original "don't hammer the API from an idle daemon" intent intact.
-const IDLE_INTERVAL_SECS: u64 = 15 * 60;
+pub(crate) const IDLE_INTERVAL_SECS: u64 = 15 * 60;
 /// Ceiling on the failure backoff. An expired profile token (the live case on
 /// this machine since 2026-08-20) is not going to fix itself from our side, so
 /// a failing root settles at one attempt an hour rather than one a minute.
@@ -641,6 +656,54 @@ pub fn next_poll_delay(live: bool, consecutive_failures: u32) -> std::time::Dura
     std::time::Duration::from_secs(secs.min(MAX_BACKOFF_SECS))
 }
 
+/// One root's booked next attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Booking {
+    /// When the root may next be polled.
+    pub next: std::time::Instant,
+    /// Consecutive failures behind the current backoff.
+    pub failures: u32,
+    /// Whether `next` was computed on the LIVE cadence. Kept so an idle→live
+    /// transition can be recognised — see [`due_now`].
+    pub live: bool,
+}
+
+/// Whether `root` may be polled now, re-arming it when it has just gone from
+/// idle to live.
+///
+/// The booked instant is written only AFTER a poll runs, from the liveness at
+/// that instant — so a root polled while idle is booked [`IDLE_INTERVAL_SECS`]
+/// out, and a session starting a minute later used to wait out the rest of that
+/// appointment. That wait is exactly the window in which a just-started agent
+/// shows a blank usage meter, because the account reading it needs is the one
+/// the poll would refresh. So a root whose booking was made on the idle cadence
+/// and which now has a live session becomes due immediately: the first status
+/// line after the session starts is patched from a reading taken within one
+/// scheduler tick rather than up to a quarter of an hour later.
+///
+/// Only idle→live pulls an appointment forward. Live→idle leaves the booking
+/// alone (it is already sooner than an idle one would be), and a root that is
+/// already live is untouched, so this cannot turn into a poll every tick.
+pub fn due_now(
+    schedule: &mut std::collections::HashMap<String, Booking>,
+    root: &str,
+    is_live: bool,
+    now: std::time::Instant,
+) -> bool {
+    match schedule.get_mut(root) {
+        // Never attempted: due immediately, which is what makes the FIRST tick
+        // after boot do the work.
+        None => true,
+        Some(b) => {
+            if is_live && !b.live {
+                b.next = now;
+                b.live = true;
+            }
+            b.next <= now
+        }
+    }
+}
+
 /// Background poll loop.
 ///
 /// Iterates CONFIGURED roots ([`configured_config_roots`]) unioned with the
@@ -648,7 +711,14 @@ pub fn next_poll_delay(live: bool, consecutive_failures: u32) -> std::time::Dura
 /// real gauges within a tick of boot. Each root keeps its own schedule: live
 /// accounts every [`LIVE_INTERVAL_SECS`], idle ones every
 /// [`IDLE_INTERVAL_SECS`], and a failing one backs off toward
-/// [`MAX_BACKOFF_SECS`] (see [`next_poll_delay`]).
+/// [`MAX_BACKOFF_SECS`] (see [`next_poll_delay`]). A root that goes idle→live
+/// has its booking pulled forward to now ([`due_now`]).
+///
+/// Every poll outcome is logged at INFO — root label, success or failure kind,
+/// and the instant observed — so poll history is reconstructible from the
+/// daemon log. It is four requests an hour per idle root, so this is not
+/// chatty, and its absence was what made "the reading is two hours old" an
+/// unanswerable question.
 ///
 /// Every outcome is recorded, success or failure — `set_account_usage` for a
 /// reading, `set_account_usage_error` for a classified failure — so a consumer
@@ -662,14 +732,13 @@ pub fn spawn_poller(store: super::store::SessionStore) {
         let client = reqwest::Client::new();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(SCHEDULER_TICK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // root → (next attempt, consecutive failures). A root absent from the
-        // map has never been attempted and is due immediately, which is what
-        // makes the FIRST tick after boot do the work.
-        let mut schedule: std::collections::HashMap<String, (tokio::time::Instant, u32)> =
+        // root → booking. A root absent from the map has never been attempted
+        // and is due immediately (see [`due_now`]).
+        let mut schedule: std::collections::HashMap<String, Booking> =
             std::collections::HashMap::new();
         loop {
             tick.tick().await;
-            let now = tokio::time::Instant::now();
+            let now = std::time::Instant::now();
             let live = store.live_claude_config_roots();
             let mut roots = configured_config_roots();
             for r in &live {
@@ -682,16 +751,22 @@ pub fn spawn_poller(store: super::store::SessionStore) {
             schedule.retain(|k, _| roots.contains(k));
 
             for root in roots {
-                let due = schedule
-                    .get(&root)
-                    .map(|(at, _)| *at <= now)
-                    .unwrap_or(true);
-                if !due {
+                let is_live = live.contains(&root);
+                if !due_now(&mut schedule, &root, is_live, now) {
                     continue;
                 }
-                let is_live = live.contains(&root);
+                let label = super::usage_report::label_for_root(&root);
                 let failures = match fetch_account_usage(&client, &root).await {
                     Ok(usage) => {
+                        tracing::info!(
+                            root = %label,
+                            outcome = "ok",
+                            live = is_live,
+                            observed_at = usage.fetched_at.unix_timestamp(),
+                            five_hour_pct = ?usage.five_hour_pct,
+                            seven_day_pct = ?usage.seven_day_pct,
+                            "account usage poll",
+                        );
                         store.set_account_usage(&root, usage);
                         0
                     }
@@ -700,15 +775,29 @@ pub fn spawn_poller(store: super::store::SessionStore) {
                         // token, or being offline must never take the daemon
                         // down — but no longer SILENT: the classified failure
                         // is stored so callers can say which of the three it is.
-                        tracing::debug!(kind = ?err.kind, root, detail = %err.detail,
-                                        "account usage poll failed");
-                        let prev = schedule.get(&root).map(|(_, f)| *f).unwrap_or(0);
+                        tracing::info!(
+                            root = %label,
+                            outcome = "failed",
+                            live = is_live,
+                            kind = ?err.kind,
+                            detail = %err.detail,
+                            observed_at = OffsetDateTime::now_utc().unix_timestamp(),
+                            "account usage poll",
+                        );
+                        let prev = schedule.get(&root).map(|b| b.failures).unwrap_or(0);
                         store.set_account_usage_error(&root, err);
                         prev.saturating_add(1)
                     }
                 };
                 let delay = next_poll_delay(is_live, failures);
-                schedule.insert(root, (tokio::time::Instant::now() + delay, failures));
+                schedule.insert(
+                    root,
+                    Booking {
+                        next: std::time::Instant::now() + delay,
+                        failures,
+                        live: is_live,
+                    },
+                );
             }
         }
     });
@@ -980,6 +1069,89 @@ mod tests {
         assert_eq!(next_poll_delay(false, 30).as_secs(), MAX_BACKOFF_SECS);
         // …and no arithmetic overflow on the way there.
         assert!(next_poll_delay(false, u32::MAX).as_secs() <= MAX_BACKOFF_SECS);
+    }
+
+    /// THE defect, in one line: a reading may not be declared stale sooner than
+    /// the schedule can possibly refresh it. `FRESH_FOR_SECS` was 300 while
+    /// `IDLE_INTERVAL_SECS` was 900, so an idle root's reading was dead for two
+    /// thirds of every refresh cycle and every status line rebuilt in that gap
+    /// went out with no percentage. Nothing else ties the two constants
+    /// together, so this test is the tie.
+    #[test]
+    fn a_reading_never_goes_stale_before_it_can_be_refreshed() {
+        assert!(
+            FRESH_FOR_SECS >= IDLE_INTERVAL_SECS as i64,
+            "a reading is asserted for {FRESH_FOR_SECS}s but refreshed at worst \
+             every {IDLE_INTERVAL_SECS}s — the difference is a window in which \
+             every rebuilt status line blanks the meter",
+        );
+        assert!(
+            FRESH_FOR_SECS >= LIVE_INTERVAL_SECS as i64,
+            "…and the same must hold on the live cadence",
+        );
+        // But it is still a CEILING: a poller that has died must eventually
+        // stop having its last reading asserted, so freshness may not be
+        // unbounded or wider than a full refresh cycle plus a live one.
+        assert!(
+            FRESH_FOR_SECS <= (IDLE_INTERVAL_SECS + LIVE_INTERVAL_SECS) as i64,
+            "a dead poller's reading has to age out within one refresh cycle \
+             plus a live cadence of grace",
+        );
+    }
+
+    /// A root polled while idle is booked a quarter of an hour out. When a
+    /// session starts on it, the appointment must come forward to now — not be
+    /// waited out, which is what made "start an agent, wait up to 15 minutes
+    /// for your usage" the shipped behaviour.
+    #[test]
+    fn an_idle_root_that_goes_live_is_due_within_one_tick() {
+        let now = std::time::Instant::now();
+        let mut schedule = std::collections::HashMap::new();
+
+        // Never seen: due immediately, which is what makes boot work.
+        assert!(due_now(&mut schedule, "", false, now));
+
+        // Polled while idle → booked IDLE_INTERVAL_SECS out, and not due.
+        schedule.insert(
+            String::new(),
+            Booking {
+                next: now + next_poll_delay(false, 0),
+                failures: 0,
+                live: false,
+            },
+        );
+        let a_minute_later = now + std::time::Duration::from_secs(60);
+        assert!(
+            !due_now(&mut schedule, "", false, a_minute_later),
+            "an idle root keeps its idle cadence",
+        );
+
+        // A session starts. The next scheduler tick must find it due.
+        assert!(
+            due_now(&mut schedule, "", true, a_minute_later),
+            "an idle→live transition pulls the appointment forward to now",
+        );
+        assert!(schedule[""].live, "the booking is re-armed as live");
+
+        // …and only once: still live on the following tick, it waits out the
+        // live cadence like anything else rather than polling every tick.
+        schedule.insert(
+            String::new(),
+            Booking {
+                next: a_minute_later + next_poll_delay(true, 0),
+                failures: 0,
+                live: true,
+            },
+        );
+        assert!(
+            !due_now(
+                &mut schedule,
+                "",
+                true,
+                a_minute_later + std::time::Duration::from_secs(SCHEDULER_TICK_SECS),
+            ),
+            "a root that was already live must not become due every tick",
+        );
     }
 
     /// Root discovery, against a synthetic HOME laid out the way workspacer's

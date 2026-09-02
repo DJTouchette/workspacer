@@ -146,6 +146,103 @@ describe('the Overview card speaks for an account, not a session', () => {
     expect(screen.getByTitle(/7-day limit \(7 days window\)/)).toBeInTheDocument();
   });
 
+  /**
+   * THE BLANK BAR, renderer half.
+   *
+   * The daemon rebuilds a stream session's status line many times a minute
+   * from wire data that carries `fiveHourResetsAt` and no `fiveHourPct`, and
+   * stamps each rebuild with a fresh `receivedAt`. So the pct-less line is
+   * always the NEWEST thing this card sees — and a whole-line "newest wins"
+   * cache took it wholesale, leaving the card in place with an empty meter.
+   *
+   * The cache is per field: a line that does not mention a percentage says
+   * nothing about it. Each test uses its own account so the module-level cache
+   * cannot carry a reading between them.
+   */
+  it('keeps a remembered percentage when a newer line carries only a reset', () => {
+    const snap = (sl: SessionStatusLine) => [
+      {
+        sessionId: 'sess-1',
+        provider: 'claude',
+        transcriptPath: '/home/u/.claude/accounts/displace/projects/p/t.jsonl',
+        statusLine: sl,
+      },
+    ];
+    const { rerender } = render(
+      <RateLimitCard
+        snaps={snap(statusLine())}
+        provider="claude"
+        title="Claude usage"
+        account="displace"
+      />,
+    );
+    expect(screen.getByText('11%')).toBeInTheDocument();
+
+    // One second later, the rebuilt line: a reset time, no percentage.
+    rerender(
+      <RateLimitCard
+        snaps={snap({
+          fiveHourResetsAt: NOW + 3 * 3600,
+          fiveHourWindowMins: 300,
+          receivedAt: new Date(Date.now() + 1000).toISOString(),
+        })}
+        provider="claude"
+        title="Claude usage"
+        account="displace"
+      />,
+    );
+    expect(screen.getByText('11%')).toBeInTheDocument();
+    // …and the 7-day window, which the newer line does not mention at all,
+    // must not vanish either.
+    expect(screen.getByText('2%')).toBeInTheDocument();
+  });
+
+  it('prefers a fresher remembered reading over an older live one', () => {
+    const account = 'older';
+    const path = '/home/u/.claude/accounts/older/projects/p/t.jsonl';
+    const { rerender } = render(
+      <RateLimitCard
+        snaps={[
+          {
+            sessionId: 'sess-1',
+            provider: 'claude',
+            transcriptPath: path,
+            statusLine: statusLine(),
+          },
+        ]}
+        provider="claude"
+        title="Claude usage"
+        account={account}
+      />,
+    );
+    expect(screen.getByText('11%')).toBeInTheDocument();
+
+    // A session whose statusLine has NO receivedAt sorts as timestamp 0 —
+    // older than the cache. Neither branch of the old cache update fired for
+    // that case, so the stale 99% was rendered over the fresher 11%.
+    rerender(
+      <RateLimitCard
+        snaps={[
+          {
+            sessionId: 'sess-2',
+            provider: 'claude',
+            transcriptPath: path,
+            statusLine: {
+              fiveHourPct: 99,
+              fiveHourResetsAt: NOW + 3600,
+              fiveHourWindowMins: 300,
+            },
+          },
+        ]}
+        provider="claude"
+        title="Claude usage"
+        account={account}
+      />,
+    );
+    expect(screen.getByText('11%')).toBeInTheDocument();
+    expect(screen.queryByText('99%')).not.toBeInTheDocument();
+  });
+
   it('closes on a backdrop click and stays closed', () => {
     render(
       <RateLimitCard
