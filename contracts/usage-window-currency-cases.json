@@ -130,7 +130,7 @@
       "expect": "current",
       "usedPercent": 18.0,
       "secondsToReset": 5596,
-      "why": "The claude default login exactly as the live daemon served it on 2026-08-30. A future resets_at is the only thing that makes a percentage usable, and window_minutes null is normal for Anthropic - it must not be mistaken for an unreadable window."
+      "why": "The claude default login exactly as the live daemon served it on 2026-08-30 - a DATED SNAPSHOT from before Anthropic's window lengths were stamped (five_hour 300, seven_day 10080, as of the pace-aware routing change). A future resets_at is the only thing that makes a percentage usable, and a null window_minutes here is this fixture's own history, not a general rule - it must not be mistaken for an unreadable window."
     },
     {
       "name": "a genuine zero on an open window is an answer, not an absence",

@@ -334,7 +334,15 @@ reading belongs to, so it is never paced.
 Everything above is read through the same currency guard as everything else. A
 window that has rolled over has no length, no reset and no percentage available
 to it, so it cannot be paced at all — the pace ratio is one more thing a stale
-reading must not be able to reach.
+reading must not be able to reach, whether "stale" means the window itself has
+closed or the daemon's own reading of a still-open window is old. A window can
+be current — resets_at strictly in the future — while its account row carries
+`fresh: false`; a reading like that is judged exactly as a rolled-over one is,
+PaceUnknown, so an old observation cannot license a spend-down or a conserve
+either. `health:` does not consult the same flag today, so a stale reading can
+still set a provider's health while leaving its pace unknown — the two answers
+are allowed to disagree, and the pace explanation says "stale" by name so the
+disagreement is never silent.
 
 ### What pace may do
 
@@ -418,6 +426,11 @@ has no weekday shape to have an opinion about.
   under `spend_tail` is ignored, and both the load-time issue and the answer's
   own explanation say so, rather than leaving a number in the file that looks
   like it does something.
+- `weekend: reserve` is applied to the seven-day window's expected share
+  regardless of which curve produced it — `curve: calendar` included, not only
+  the `workdays` curve or its unusable-workdays fallback. A reserve tightens
+  the expected-progress line either way, so `weekend: reserve` under
+  `curve: calendar` starts saying "overspending" earlier during the week too.
 
 ### What pacing does not do yet
 

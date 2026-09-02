@@ -410,6 +410,122 @@ func TestAProviderWithNoPaceableWindowStaysConservative(t *testing.T) {
 	}
 }
 
+// TestAStaleReadingCannotBePaced is the second SHOULD-FIX: a reading whose
+// window is CURRENT (resets_at is still in the future — the currency guard
+// alone would wave it through) but whose daemon-reported freshness is false
+// must not produce a known pace. Live, a fresh:false reading with observed_at
+// 72 hours old on a still-current seven-day window paced as known/on_track at
+// 0.228x (a stale 20% used divided by a live 86% elapsed) — under-conserving
+// exactly the way a stale currency reading would, just through the other
+// input to the division.
+func TestAStaleReadingCannotBePaced(t *testing.T) {
+	now := at(1788126404)
+	acct := ""
+	fresh := false
+	observed := now.Add(-72 * time.Hour).Unix()
+	staleAccount := WireAccount{
+		Account: &acct, Label: "default", IsDefault: true, Source: "disk",
+		Fresh: &fresh, ObservedAt: &observed,
+		Windows: WireWindows{SevenDay: paceWin(20, now.Add(86*time.Hour).Unix(), 7*24*60)},
+	}
+	b := bucketFrom("claude", staleAccount, WindowSevenDay, now)
+
+	got := PaceFor(b, testPace())
+	if got.Known {
+		t.Fatalf("a stale reading produced a KNOWN pace: %+v", got)
+	}
+	if got.State != PaceUnknown {
+		t.Errorf("state = %q, want unknown", got.State)
+	}
+	if got.Conserves() || got.BlocksSpendDown() {
+		t.Errorf("a stale reading must neither add conserve nor block spend-down: %+v", got)
+	}
+	if !strings.Contains(got.Because, "stale") {
+		t.Errorf("the explanation does not name staleness: %q", got.Because)
+	}
+	if !strings.Contains(got.Because, "72h") {
+		t.Errorf("the explanation should say how old the evidence is: %q", got.Because)
+	}
+
+	// The worse-of-two fold must skip a stale account exactly as it skips a
+	// provider with no paceable window at all: both windows share the same
+	// account-level Fresh flag, so the whole account folds to unknown.
+	staleAccount.Windows.FiveHour = paceWin(90, now.Add(2*time.Hour).Unix(), 300)
+	var buckets []Bucket
+	for _, w := range WindowOrder {
+		buckets = append(buckets, bucketFrom("claude", staleAccount, w, now))
+	}
+	worst, all := PaceForAccount(buckets, "claude", "", testPace())
+	if worst.Known || worst.Conserves() || worst.BlocksSpendDown() {
+		t.Fatalf("a stale account must fold to an unknown pace that neither conserves nor blocks: %+v", worst)
+	}
+	if len(all) != 3 {
+		t.Fatalf("every window is still reported: %+v", all)
+	}
+}
+
+// TestWeightedSecondsCrossesADSTTransitionAtLocalMidnight is the SHOULD-FIX
+// case a deep review caught: America/Santiago moves its clocks at local
+// midnight (spring-forward, first Saturday of September), so the day walk's
+// `time.Date(y, m, d+1, 0,0,0,0, loc)` asks for a wall-clock instant that does
+// not exist. Live, requesting 2026-09-06 00:00 in that zone normalizes
+// BACKWARDS to 2026-09-05 23:00:00 — not a day past `cur` — which used to trip
+// `!next.After(cur)` and make the whole call return 0, silently degrading the
+// workdays curve to a phantom "no expected progress at all" for any window
+// spanning the transition. Cuba, Paraguay, Lebanon and Azerbaijan carry the
+// same shape of transition and would trip the same stall.
+//
+// The proof is a brute-force per-minute integration over the same interval:
+// if the day walk is choosing the right weight for the right seconds, the two
+// must agree to within a minute of rounding.
+func TestWeightedSecondsCrossesADSTTransitionAtLocalMidnight(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Skipf("tzdata for America/Santiago is not available in this environment: %v", err)
+	}
+	from := time.Date(2026, 9, 5, 0, 0, 0, 0, loc) // Saturday, the transition date
+	to := time.Date(2026, 9, 7, 0, 0, 0, 0, loc)   // Monday
+	if from.Weekday() != time.Saturday {
+		t.Fatalf("fixture drift: America/Santiago no longer moves its clocks on 2026-09-06 (from.Weekday = %s)", from.Weekday())
+	}
+
+	cfg := testPace()
+	cfg.Curve, cfg.Location, cfg.WeekendWeight = CurveWorkdays, loc, 0.5
+
+	got := weightedSeconds(from, to, cfg)
+	if got <= 0 {
+		t.Fatalf("weightedSeconds across the Santiago DST transition = %v, want a positive total — the stall this test exists to catch returns exactly 0", got)
+	}
+
+	want := bruteForceWeightedSeconds(from, to, loc, cfg.WeekendWeight)
+	if math.Abs(got-want) > 60 {
+		t.Errorf("weightedSeconds = %v, brute-force per-minute integration = %v — they disagree by more than 60 seconds", got, want)
+	}
+}
+
+// bruteForceWeightedSeconds is the independent check for the DST test above:
+// it walks the same interval one minute at a time, off time.Time.Weekday
+// directly, and cannot share the day-walk bug because it never computes a day
+// boundary at all.
+func bruteForceWeightedSeconds(from, to time.Time, loc *time.Location, weekendWeight float64) float64 {
+	total := 0.0
+	step := time.Minute
+	for t := from; t.Before(to); t = t.Add(step) {
+		w := 1.0
+		switch t.In(loc).Weekday() {
+		case time.Saturday, time.Sunday:
+			w = weekendWeight
+		}
+		remaining := to.Sub(t)
+		s := step
+		if remaining < s {
+			s = remaining
+		}
+		total += w * s.Seconds()
+	}
+	return total
+}
+
 // TestPaceNeverReadsTheUngatedScalar is window.go's rule, restated for the file
 // that does the dividing: a stale reading must not be able to reach the
 // numerator through a second door.

@@ -265,25 +265,32 @@ type routingDecisionEvent struct {
 	// own subscription: no path, no credential, no account key. All three are
 	// ABSENT when pacing is switched off, so an event never carries a pace the
 	// decision did not use.
-	Pace       string  `json:"pace,omitempty"`
-	PaceRatio  float64 `json:"paceRatio,omitempty"`
-	PaceWindow string  `json:"paceWindow,omitempty"`
-	DecidedAt  int64   `json:"decidedAt"`
+	Pace  string `json:"pace,omitempty"`
+	// PaceRatio is a POINTER, not a plain float64 with omitempty: a known
+	// on_track ratio can legitimately be exactly 0.0 (nothing used yet), and
+	// `omitempty` on a bare float64 drops a real zero exactly as readily as an
+	// absent one. Only `Known` decides whether this rides; nil means the same
+	// thing 0 used to mean by accident and now means on purpose.
+	PaceRatio  *float64 `json:"paceRatio,omitempty"`
+	PaceWindow string   `json:"paceWindow,omitempty"`
+	DecidedAt  int64    `json:"decidedAt"`
 }
 
 // paceOf projects a decision's pace onto the event's three fields. A decision
 // with no pace (pacing off, or nothing readable) contributes nothing, which is
 // what keeps `enabled: false` producing the pre-pacing event as well as the
-// pre-pacing answer.
-func paceOf(d routing.Decision) (state string, ratio float64, window string) {
+// pre-pacing answer. ratio is nil exactly when the pace is not Known, so a
+// genuine 0.0 ratio still rides the event rather than being read as absent.
+func paceOf(d routing.Decision) (state string, ratio *float64, window string) {
 	p := d.Capacity.Pace
 	if p == nil {
-		return "", 0, ""
+		return "", nil, ""
 	}
 	if !p.Known {
-		return string(p.State), 0, ""
+		return string(p.State), nil, ""
 	}
-	return string(p.State), p.Ratio, p.Window
+	r := p.Ratio
+	return string(p.State), &r, p.Window
 }
 
 // routingSelect is the `routing.select` handler: read the matrix in force, take

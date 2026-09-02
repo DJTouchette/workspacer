@@ -3,6 +3,7 @@ package limits
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -385,3 +386,51 @@ func TestAPositiveTimeToResetCannotBeReachedFromABackdatedClock(t *testing.T) {
 		})
 	}
 }
+
+// TestWindowLengthRejectsAnAbsurdMinutesValue is the MINOR a deep review
+// caught: time.Duration(m)*time.Minute on an unbounded int64 m overflows
+// silently (time.Duration is itself an int64 count of nanoseconds), so a
+// malformed or malicious window_minutes far above anything this package
+// models must not be handed to a caller as a usable length.
+func TestWindowLengthRejectsAnAbsurdMinutesValue(t *testing.T) {
+	now := time.Unix(1788126404, 0)
+	resetsAt := now.Add(time.Hour).Unix()
+
+	for _, tc := range []struct {
+		name    string
+		minutes int64
+		wantOK  bool
+	}{
+		{"an ordinary five-hour window", 300, true},
+		{"an ordinary seven-day window", 10080, true},
+		{"exactly the 366-day bound", maxWindowMinutes, true},
+		{"one minute past the bound", maxWindowMinutes + 1, false},
+		{"a value that would overflow int64 nanoseconds if multiplied unchecked", math.MaxInt64 / 60, false},
+		{"zero", 0, false},
+		{"negative", -300, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.minutes
+			r := ReadWindow(&WireWindow{
+				UsedPercent:   &Measured{State: MeasuredOk, Value: floatPtr(10)},
+				ResetsAt:      &resetsAt,
+				WindowMinutes: &m,
+			}, Provenance{Source: "oauth_poll"}, now)
+
+			got, ok := r.WindowLength()
+			if ok != tc.wantOK {
+				t.Fatalf("WindowLength() ok = %v, want %v (got %v)", ok, tc.wantOK, got)
+			}
+			if ok && got != time.Duration(m)*time.Minute {
+				t.Errorf("WindowLength() = %v, want %v", got, time.Duration(m)*time.Minute)
+			}
+			// Whatever the answer, it must never be negative or absurdly huge —
+			// the overflow this test exists to catch would produce exactly that.
+			if got < 0 || got > maxWindowMinutes*time.Minute {
+				t.Errorf("WindowLength() = %v is outside a sane range for minutes=%d", got, m)
+			}
+		})
+	}
+}
+
+func floatPtr(v float64) *float64 { return &v }

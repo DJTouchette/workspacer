@@ -180,7 +180,9 @@ type Reading struct {
 	// but present".
 	hasReset bool
 	// windowMinutes is the window's declared length, when the source reports
-	// one. Anthropic reports none; codex reports 300 and 10080.
+	// one. Anthropic now reports 300 (five_hour) and 10080 (seven_day) too, as
+	// of the pace-aware routing change; codex has always reported 300 and
+	// 10080. The monthly overage window still reports none, on either side.
 	windowMinutes *int64
 
 	// now is the instant the verdict was reached. Held so a decision log can
@@ -318,14 +320,29 @@ func (r Reading) TimeToReset() (time.Duration, bool) {
 	return d, true
 }
 
-// WindowLength is the window's declared duration, when the source reports one.
-// Anthropic reports none, so a caller must tolerate false here on a perfectly
-// healthy claude reading.
+// maxWindowMinutes bounds what WindowLength will trust. `int64(minutes) *
+// time.Minute` overflows silently for an absurd value — time.Duration is an
+// int64 count of nanoseconds, so anything above roughly 15250 years wraps —
+// and long before that a "window" claiming to be, say, centuries long is not
+// a length pacing was designed to divide by. 366 days is a full year with
+// room for a leap one; nothing this package models is longer than a month.
+const maxWindowMinutes = 366 * 24 * 60
+
+// WindowLength is the window's declared duration, when the source reports
+// one and that value is plausible. Anthropic reports none for the monthly
+// overage window, so a caller must tolerate false here on a perfectly
+// healthy claude reading; a windowMinutes above maxWindowMinutes is treated
+// the same way — no length — rather than handed to a caller as a number that
+// could overflow the arithmetic on the other end of it.
 func (r Reading) WindowLength() (time.Duration, bool) {
 	if r.state != WindowCurrent || r.windowMinutes == nil {
 		return 0, false
 	}
-	return time.Duration(*r.windowMinutes) * time.Minute, true
+	m := *r.windowMinutes
+	if m <= 0 || m > maxWindowMinutes {
+		return 0, false
+	}
+	return time.Duration(m) * time.Minute, true
 }
 
 // Usable reports whether anything may be read off this reading at all.

@@ -225,6 +225,22 @@ func PaceFor(b Bucket, cfg PaceConfig) PaceReport {
 		p.Because = fmt.Sprintf("%s pace unknown: %s", b.Window, b.Reading.Explain())
 		return p
 	}
+	if b.Fresh != nil && !*b.Fresh {
+		// The currency guard only refuses a window that has CLOSED. A window
+		// can still be the one running — resets_at strictly in the future —
+		// while the daemon's own reading of it is old: a 72-hour-old
+		// observation of a still-current seven-day window paces exactly as
+		// confidently as a reading taken a second ago unless something stops
+		// it here. That under-conserves in the same direction the currency
+		// guard exists to close, so a non-fresh reading gets the same
+		// answer as a rolled-over one: PaceUnknown, which conserves nothing
+		// and unlocks nothing, and WorstPace skips it exactly as it skips a
+		// window nobody could read at all.
+		p.Because = fmt.Sprintf(
+			"%s pace unknown: the daemon flagged this reading stale (fresh: false)%s — the window is still current but its evidence is too old to divide by",
+			b.Window, staleAgeClause(b))
+		return p
+	}
 	length, ok := b.Reading.WindowLength()
 	if !ok {
 		p.Because = fmt.Sprintf(
@@ -288,6 +304,20 @@ func PaceFor(b Bucket, cfg PaceConfig) PaceReport {
 		"%s is %.0f%% used at %.0f%% elapsed, against a %s curve expecting %.0f%% by now — pace %.2fx (%s)%s",
 		b.Window, used, p.ElapsedPct, curve, p.ExpectedPct, p.Ratio, p.State, note)
 	return p
+}
+
+// staleAgeClause names how old a stale reading's evidence is, when the
+// account row carries an observed_at, so the pace explanation says more than
+// just the word "stale".
+func staleAgeClause(b Bucket) string {
+	if b.ObservedAt == nil {
+		return ""
+	}
+	age := b.Reading.Now().Sub(*b.ObservedAt)
+	if age <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (observed %s ago)", age.Round(time.Minute))
 }
 
 // expectedShare is the curve: how much of the allowance SHOULD be gone by now.
@@ -372,7 +402,20 @@ func weightedSeconds(from, to time.Time, cfg PaceConfig) float64 {
 		local := cur.In(cfg.Location)
 		next := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, cfg.Location).AddDate(0, 0, 1)
 		if !next.After(cur) {
-			return 0
+			// A DST transition that lands exactly at local midnight (Chile,
+			// Cuba, Paraguay, Lebanon and Azerbaijan all have or have had
+			// one) makes the requested midnight a WALL-CLOCK TIME THAT DOES
+			// NOT EXIST, and time.Date is then free to normalize it onto or
+			// before `cur` instead of a day forward — live, requesting
+			// America/Santiago 2026-09-06 00:00 (the spring-forward date)
+			// returns 2026-09-05 23:00:00, not a day past `cur`. The day
+			// boundary cannot be trusted at this instant, so fall through to
+			// a flat 24h of REAL elapsed time instead: that is always
+			// strictly positive regardless of what the local clock does,
+			// so the walk always terminates, and the following iteration is
+			// back on ordinary midnight-snapped footing since `cur` no
+			// longer sits on the broken instant.
+			next = cur.Add(24 * time.Hour)
 		}
 		if next.After(to) {
 			next = to
