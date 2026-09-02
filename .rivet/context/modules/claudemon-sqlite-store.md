@@ -8,7 +8,7 @@ related_paths:
   - "services/claudemon/src/session/store.rs"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-01
 ---
 
 # claudemon SQLite Persistence + Boot Hydration
@@ -70,3 +70,43 @@ the `upsert_session_tx` INSERT/COALESCE in one go, and put the value on the
 persistence task's path rather than writing it at spawn. **Migrations that ADD
 COLUMN must use a catalog-checked step body** (see `add_heartbeat_provider` /
 `add_session_requested_model`), never a bare SQL const.
+
+## Hand-authored notes (2026-09-01) — the v8 rollback window, and where its tests live
+
+Promoted from the 2026-08-31 native-1M persistence learnings, re-checked
+against master at `0bac5799`.
+
+- **The canonical selection columns are ADDITIVE AND UNVERSIONED on purpose.**
+  `sessions.requested_model_identity` and `sessions.requested_context_window`
+  are added by `add_session_requested_selection`
+  (`services/claudemon/src/store/schema.rs`) with a catalog check per column,
+  and `USER_VERSION` deliberately stays at 8 — because the previous daemon's
+  downgrade guard refuses any database stamped higher, so bumping it would end
+  the rollback window as a side effect of what is really just an ALTER TABLE.
+  During that window `requested_model` is the ONLY selection value an older
+  daemon can read or write; it cannot express the identity/window pair and may
+  still carry redundant native-1M markers. The file states this as a
+  maintenance contract: any future `sessions` rebuild must copy both columns
+  explicitly, and raising `USER_VERSION` past 8 is a compatibility DECISION,
+  not cleanup.
+- **A rollback-compatible reader must compare the LEGACY PROJECTIONS, not the
+  raw normalized pairs.** That is the edge `e8349a8d` closed: for a
+  native-1M family (Fable/Mythos) the canonical bare identity and an old marked
+  input normalize to values that LOOK different, so a naive comparison made
+  restore prefer the legacy evidence and drop the canonical 1M selection.
+  Project both sides down to the legacy spelling and compare that.
+- **CORRECTION — the canonical pair is no longer serde-skipped.** The learning
+  recorded it as hidden from public snapshots, so transports could not depend
+  on it. Since `66c842df` `SessionState.requested_selection` is serialized
+  (`skip_serializing_if = "Option::is_none"`) and `daemon/api.rs` publishes
+  `requested_selection` + `resolved_context_window` on the snapshot, the
+  session-update event and the `/sessions` list alike. Additive and optional:
+  absence still means "nobody has said".
+- **Where the regression coverage lives.** These changes are covered by INLINE
+  `#[cfg(test)]` modules in the files they touch, not a separate integration
+  target: `store/mod.rs` (daemon-restart requested-model round trips),
+  `store/schema.rs` (migration replay, including the drop-a-column and
+  re-open-after-downgrade cases) and `session/usage.rs` (resolving the 1M window
+  from the requested model). Validating a persistence/schema change is therefore
+  `cargo test` with a name filter inside the claudemon crate, plus the whole
+  crate's checks for cross-module compilation.

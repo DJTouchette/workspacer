@@ -14,7 +14,7 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/settings/SupervisorSection.tsx"
   - "docs/limit-aware-routing.md"
 owner: Damien Touchette
-last_reviewed: 2026-08-30
+last_reviewed: 2026-09-01
 ---
 
 # Limit-aware routing
@@ -117,3 +117,54 @@ naming the other, is a bug this project has already had once.
   `forecastDemandBeforeResetPct` when the real share is known.
 - **`difficulty` / `risk` / `decisionDensity` are accepted and not yet acted
   on.** They are recorded on the decision, and they change no answer today.
+
+## Windows path semantics (the containment-windows CI job)
+
+Promoted from the 2026-09-01 Windows-containment learnings. The two learnings
+were incident reports on specific CI runs (33495681039 for `2d8f7fd0`,
+33503823057 for `710d8e8b`); what follows is the durable part, plus the state of
+the job as of `0bac5799`.
+
+- **Ceiling containment is a PATH COMPARISON, and on Windows a byte compare is
+  the wrong one.** Windows resolves drive letters, UNC hosts/shares and ordinary
+  NTFS components case-insensitively, so a ceiling must answer for the directory
+  the filesystem actually opens, not for `routing.yaml`'s casing of it — a
+  Cyrillic or umlaut case variant of a configured ceiling that fails to match
+  silently hands the caller the DEFAULT ceiling, which is the permissive one.
+  The comparison is `CompareStringOrdinal` (`pathmatch_windows.go`), not
+  `strings.EqualFold`: it uses the OS uppercase table for non-linguistic
+  identifiers and so does NOT apply generic Unicode equivalences — the Kelvin
+  sign stays a sibling of `K`, which is what NTFS does. The rule is
+  platform-split by build tag (`pathmatch_windows.go` / `pathmatch_unix.go`,
+  and the same shape again in
+  `services/hub/cmd/brain/pathmatch_windows.go` / `pathmatch_other.go` for the brief tools' `workspaceRoots` confinement, which
+  shares this confinement model and had the same bug). Prefix matching must
+  also keep rejecting siblings: `C:\work\client-old` is not inside
+  `C:\work\client\`, and `\\server\share-old\work` is not inside
+  `\\server\share\`.
+- **"Private file" is a mode bit on Unix and an ACL on Windows.** The routing
+  decision log asserts 0600 privacy; on Windows that assertion is meaningless
+  (`-rw-rw-rw-` is what a mode read returns), so the log is created through
+  `CreateFile` with a protected DACL and `FILE_APPEND_DATA|WRITE_DAC`
+  (`decisionlog_private_windows.go`), with the Unix mode path kept in
+  `decisionlog_private_unix.go`. Any new "this file must be private" assertion
+  needs both implementations and platform-split tests, not a `chmod` and a
+  skip.
+- **`filepath.Join` erases the fixtures a path test is trying to exercise**, so
+  a Windows-safe routing fixture must build its dirty inputs literally and give
+  each case a real absolute cwd (`filepath.Join(t.TempDir(), "project")`) rather
+  than a hardcoded `/home/...`, which is not absolute on Windows and made
+  `CheckSpawn` skip the ceiling arm entirely — that is why a run could report
+  only `ResumeRefused` and never exercise the clamp and tool-scope arms it was
+  written to prove (`fresh_test.go`, fixed in `75220468`).
+- **STATE, checked 2026-09-01 16:40Z: `containment-windows` is STILL RED on
+  master.** Run `33533220982` on `0bac5799` passed desktop, hub (Linux),
+  claudemon, tui and conflict-markers, and failed `containment-windows` on
+  `TestBriefToolsAcceptWindowsManagerWorkspaceSpellings` and two
+  `TestPathContainmentContractCases` arms — "a case-variant spelling of a store
+  carve-out is NOT exempted" and "a sibling differing from the root only in case
+  is not inside it". Note the direction: those are cases where case-insensitive
+  matching must NOT apply, so the ordinal fix and the containment contract now
+  disagree about where case-folding stops. Do not treat the Windows containment
+  work as finished, and do not assume a green Linux hub job says anything about
+  it.

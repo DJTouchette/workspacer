@@ -10,7 +10,7 @@ related_paths:
   - "services/claudemon/src/session/pricing.rs"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-01
 ---
 
 # Usage Accounting: Twin Pricing Tables, Subagent Transcripts & Rate-Limit Windows
@@ -39,7 +39,22 @@ Token/cost accounting is implemented independently in the Electron main process 
 - **Triple-mirrored pricing tables must be edited in lockstep**: `MODEL_RATES` in `modelUsage.ts`, `BUILTIN` in `pricing.rs`, and wks-tui's own copy. **KNOWN DIVERGENCE**: `pricing.rs` line 57 has `"claude-opus-4-1"` (without trailing dash) while `modelUsage.ts` line 67 correctly has `'claude-opus-4-1-'` (with trailing dash). Editing rates in one place silently diverges GUI vs daemon vs TUI cost figures with no compile-time or runtime check tying them together — this inconsistency is already present and exemplifies the danger.
 - Longest-prefix matching is intentional and order-sensitive: e.g. `claude-opus-4-1-` (with trailing dash) must not be swallowed by the shorter `claude-opus` prefix, and dated ids like `claude-opus-4-20250514` need the separate `claude-opus-4-20` key since they don't match the `claude-opus-4-0` alias — see the long comment block in `modelUsage.ts` lines 48-62, duplicated conceptually in `pricing.rs`. **The missing trailing dash in `pricing.rs` means the daemon will mismatch Opus 4.1-dated model ids against a shorter prefix than the Electron app would use.**
 - Cache pricing constants are fixed multipliers baked into code, not table-driven, in both TS and the Claude branch of Rust: cache-write = `input * 1.25`, cache-read = `input * 0.1` (default) — but `pricing.rs`'s generic (multi-provider) path instead supports a per-model `cached_input` override (used for OpenAI/Codex, whose wire reports an explicit cached rate), so Claude and Codex costing diverge in mechanism even within the single Rust codebase.
-- Context-window default is 200k tokens (`contextLimit`/`context_limit`); both implementations infer a 1M-mode promotion heuristically — once any turn's observed context exceeds 200k, the *session's high-water mark* (not the current turn) pins the limit at 1,000,000, since the transcript `model` id carries no `[1m]` suffix.
+- ~~Context-window default is 200k tokens; both implementations infer a 1M-mode
+  promotion heuristically once observed context exceeds 200k.~~ **CORRECTED
+  2026-09-01 — that heuristic is gone.** There is now one table and one
+  resolver, pinned across the three engines by
+  `contracts/model-context-windows.json`
+  (`apps/desktop/src/main/shared/modelContextWindows.ts`,
+  `services/claudemon/src/session/windows.rs`,
+  `services/hub/cmd/brain/windows.go`). `resolveContextWindow` walks an ordered
+  list of CLAIMS — provider-reported window, user override, the `[1m]`/`-1m`
+  marker on the REQUESTED model, then the model table — and observed occupancy
+  is only a DISQUALIFIER: a claim the session demonstrably exceeds (past
+  `DRIFT_TOLERANCE`, 1.02) is dropped and the next claim tried. Occupancy never
+  promotes anything, and if every claim is disproved the window is `null` —
+  UNKNOWN, which each client renders by hiding the meter. The four places that
+  spelled unknown `200_000` (including `emptyUsage()`) are gone; that literal
+  was the whole of "every session starts at 200k and upgrades later".
 - Sidechain (subagent) turns count toward cumulative cost/tokens and the per-model split at their own model's rates, but must never move the main-thread context gauge or `model` field — enforced identically by `if (!sidechain)` in `usageAccumulator.ts`/`analyticsBackfill.ts` and `if !sidechain` in `usage.rs`; subagent transcripts live at `<transcript-stem>/subagents/*.jsonl` and are walked separately (`usage_for_path`, `subagentFilesFor`).
 - `overage` rate-limit events (monthly window) previously misfiled into the 5h gauge; `claude_stream.rs`'s `rate_limit_event` handler now explicitly buckets by `rateLimitType` (`is_overage` check) with regression tests (`rate_limit_event_buckets_by_window_type`) pinning that `overage` never lands in `five_hour_*`.
 - Every provider adapter (`claude_stream.rs`, `codex.rs`, `codex_rollout.rs`, `opencode.rs`) surfaces its own cost/usage fields into this same pipeline via `state.rs`'s `StatusLine`/session usage structs — a new adapter that gets cost wiring wrong corrupts `session_history`/`session_model_usage` analytics silently, since there is no cross-check against the transcript-derived numbers.
@@ -219,3 +234,49 @@ Verified on a live machine 2026-08-28.
    attributed by any means. If per-profile history is wanted, add an account
    column going forward and leave old rows unattributed rather than backfilling a
    guess.
+
+### Hand-authored notes (2026-09-01) — the context DENOMINATOR, and who is allowed to state it
+
+Promoted from the 2026-08-30/31 context-window learnings, each re-checked
+against master at `0bac5799` before being written down.
+
+- **A status-line percentage and its denominator are ONE claim, and either the
+  pair is believed or neither half is.** The specimen is a live worker holding
+  356,380 tokens while the provider's status line still said
+  `contextWindowSize: 200000` — a 178% meter. The rule: if held tokens exceed
+  the reported window past `DRIFT_TOLERANCE` (1.02), reject the percentage AND
+  the window together and fall through to the owner's resolved window; never
+  keep the used-% and swap the denominator, and never infer 1M from
+  occupancy. **It is a FOUR-CLIENT rule, not a desktop one**, and the fourth
+  copy is the one that gets forgotten: `deriveSessionStats`/`busContextLimit`
+  (`hubCapabilities.ts`), `sessionStats.ts` in the renderer, `stats()` in
+  `services/hub/cmd/hub/mobile.html`, and `derive_stats` in
+  `apps/tui/src/types.rs`. The TUI copy needed a wire change first, because its
+  `StatusLine` carried the percentage without `context_window_size` — a client
+  that never received the denominator cannot apply a rule about it. (A reduced
+  client silently reporting 100%/200K for a session the desktop draws correctly
+  is the symptom that this list has grown a fifth member.)
+- **What is DISPLAYED never changes what is STORED.** `busContextLimit` skips a
+  disproved raw pair for display only; `statusLine.contextWindowSize` and
+  `resolvedContextWindow` both stay on the row exactly as their owners wrote
+  them, because reconciling them is the client's job and it needs both claims
+  intact.
+- **claudemon OWNS the selection; every other process is a forwarder.** The
+  daemon publishes two fields a client cannot derive — `requested_selection`
+  `{model, context_window}` (the canonical, suffix-free request) and
+  `resolved_context_window` (what its resolver settled on) — and the brain's
+  `enrichAndCompat` projects them to camelCase BESIDE the snake originals, so a
+  current peer row carries both spellings and an older peer sends only the
+  snake one. Readers accept either. There is deliberately no local
+  reconstruction from `settings.model` or `contextLimitFor`: that is the
+  second, disagreeing answer this slice exists to retire. Absent means "nobody
+  has said", which is not `200_000` and not `null`-as-a-value.
+- **A missing Codex 5h window is usually an unreadable reading, not a zero.**
+  The report path preserves that distinction explicitly: a window whose
+  `resets_at` is absent is `no-reset-time-reported`
+  (`ReasonNoResetTime`, `services/hub/internal/limits/window.go`) and
+  `fiveHourWindowFromReport` (`keepWarmLogic.ts`) SKIPS it rather than
+  rendering 0% — a percentage alone cannot say which window it describes, which
+  is why the report leaves `is_current` null. When a Codex limit window is
+  missing from the UI, read the report's currency reason FIRST; the parser and
+  the renderer are the last two places to look, not the first.
