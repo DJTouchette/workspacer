@@ -313,8 +313,21 @@ func renameAliasKeys(in map[string]any) map[string]any {
 func normalize(m *Matrix) {
 	for pname, prof := range m.Profiles {
 		for cap, a := range prof {
+			changed := false
 			if n := normalizeProvider(a.Provider); n != a.Provider {
-				a.Provider = n
+				a.Provider, changed = n, true
+			}
+			// The ALTERNATIVES too, and for the same reason the primary is
+			// folded: a list pasted out of the spec spells `anthropic`, and a
+			// candidate whose provider never normalizes is one every
+			// provider-keyed lookup below (health, `modes:`, `enabled:`) misses
+			// in silence.
+			for i, alt := range a.Alternatives {
+				if n := normalizeProvider(alt.Provider); n != alt.Provider {
+					a.Alternatives[i].Provider, changed = n, true
+				}
+			}
+			if changed {
 				prof[cap] = a
 			}
 		}
@@ -381,6 +394,27 @@ func validate(m *Matrix) []Issue {
 			}
 			if !knownProviders[a.Provider] {
 				add(where, "provider %q is not a workspacer provider id (%s)", a.Provider, providerList())
+			}
+			// EVERY ALTERNATIVE IS CHECKED THE SAME WAY THE PRIMARY IS, and the
+			// path names the index so an operator can find the row. Capability
+			// membership is NOT re-checked: an alternative inherits its parent's
+			// capability by construction and has no name of its own to be
+			// wrong. What it can be wrong about is a model, a provider id, and
+			// nesting — and an alternative nobody validated is a fallover that
+			// only fails when the primary is already unusable, which is the
+			// worst moment to discover it. The walk itself refuses to route to
+			// a candidate flagged here; see alternatives.go.
+			for i, alt := range a.Alternatives {
+				aw := alternativePath(pname, capability, i)
+				if strings.TrimSpace(alt.Model) == "" {
+					add(aw, "no model named")
+				}
+				if !knownProviders[alt.Provider] {
+					add(aw, "provider %q is not a workspacer provider id (%s)", alt.Provider, providerList())
+				}
+				if len(alt.Alternatives) > 0 {
+					add(aw, "carries `alternatives:` of its own — an alternative may not nest, because the fallover order is the flat list the file states and a tree of them is unreadable. Move them up beside %s's own alternatives, in the order they should be tried", where)
+				}
 			}
 		}
 	}
@@ -487,33 +521,52 @@ func ValidateAgainstCatalog(m *Matrix, cat Catalog) []Issue {
 		return k
 	}
 
+	check := func(a Assignment, where string) []Issue {
+		k := lookup(a.Provider)
+		if k == nil {
+			return nil
+		}
+		id := strings.ToLower(strings.TrimSpace(a.Model))
+		if !k.ids[id] {
+			return []Issue{{Where: where, Detail: fmt.Sprintf(
+				"%s does not serve model %q — it offers %s", a.Provider, a.Model, strings.Join(sortedKeys(k.ids), ", "))}}
+		}
+		levels := k.efforts[id]
+		if a.Effort == "" || len(levels) == 0 {
+			return nil
+		}
+		if !containsFold(levels, a.Effort) {
+			return []Issue{{Where: where, Detail: fmt.Sprintf(
+				"%s %s does not take effort %q — it takes %s", a.Provider, a.Model, a.Effort, strings.Join(levels, ", "))}}
+		}
+		return nil
+	}
+
 	var issues []Issue
 	for _, pname := range sortedKeys(m.Profiles) {
 		prof := m.Profiles[pname]
 		for _, capability := range sortedKeys(prof) {
 			a := prof[capability]
-			k := lookup(a.Provider)
-			if k == nil {
-				continue
-			}
-			where := "profiles." + pname + "." + capability
-			id := strings.ToLower(strings.TrimSpace(a.Model))
-			if !k.ids[id] {
-				issues = append(issues, Issue{Where: where, Detail: fmt.Sprintf(
-					"%s does not serve model %q — it offers %s", a.Provider, a.Model, strings.Join(sortedKeys(k.ids), ", "))})
-				continue
-			}
-			levels := k.efforts[id]
-			if a.Effort == "" || len(levels) == 0 {
-				continue
-			}
-			if !containsFold(levels, a.Effort) {
-				issues = append(issues, Issue{Where: where, Detail: fmt.Sprintf(
-					"%s %s does not take effort %q — it takes %s", a.Provider, a.Model, a.Effort, strings.Join(levels, ", "))})
+			issues = append(issues, check(a, "profiles."+pname+"."+capability)...)
+			// THE ALTERNATIVES ARE CHECKED AGAINST THE SAME CATALOG, and this
+			// is not tidiness: the fallover walk treats a candidate flagged
+			// here as unusable and steps over it, so an unchecked alternative
+			// is one the router would happily hand to a CLI that does not serve
+			// that model — at the exact moment the primary has already failed.
+			for i, alt := range a.Alternatives {
+				issues = append(issues, check(alt, alternativePath(pname, capability, i))...)
 			}
 		}
 	}
 	return issues
+}
+
+// alternativePath is the dotted document path of one alternative, and it is the
+// JOIN KEY between validation and routing: validate() and ValidateAgainstCatalog
+// write Issues at this path, and the fallover walk refuses to route to a
+// candidate that has one. Two spellings of it would silently disarm that.
+func alternativePath(profile, capability string, index int) string {
+	return fmt.Sprintf("profiles.%s.%s.alternatives[%d]", profile, capability, index)
 }
 
 func containsFold(hay []string, needle string) bool {

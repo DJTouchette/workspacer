@@ -58,6 +58,36 @@ type Assignment struct {
 	// merge cannot delete, so taking an entry out of service has to be something
 	// the user writes, not something they omit. nil means enabled.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+
+	// Alternatives is the ORDERED list of other pairings that serve THIS SAME
+	// capability when the primary above cannot be used — a second provider for
+	// the same tier of work, in the profile author's own order of preference.
+	//
+	// It is a list on the ASSIGNMENT rather than a change to Profile's value
+	// type because every existing reader of `prof[capability]` keeps seeing the
+	// PRIMARY and keeps working unchanged: a matrix with no `alternatives:`
+	// anywhere resolves exactly as it did before this field existed, and the
+	// walk simply has nothing to walk.
+	//
+	// WHAT MAKES A CANDIDATE UNUSABLE, and therefore advances the walk, is
+	// listed and implemented in alternatives.go. Every one of them is judged
+	// for the CANDIDATE with the candidate's OWN capacity — health does not
+	// transfer across providers, which is the same rule applyShift already
+	// follows for a mode shift's landing provider.
+	//
+	// AN ALTERNATIVE MAY NOT CARRY ALTERNATIVES OF ITS OWN. validate() reports
+	// nesting as an Issue and the walk never descends: "try this, then this,
+	// then this" is a flat ordered list, and a tree of fallbacks would make the
+	// order the file states unreadable.
+	//
+	// A YAML SEQUENCE REPLACES WHOLESALE UNDER THE DEEP MERGE. deepMerge
+	// recurses into maps only, so a user file that mentions `alternatives:` at
+	// all replaces the whole shipped list for that capability rather than
+	// merging element by element — write the complete list you want. The
+	// primary's own provider/model/effort/fresh/enabled keys stay individually
+	// editable exactly as they are today, because they are siblings of this
+	// key rather than members of it.
+	Alternatives []Assignment `yaml:"alternatives,omitempty" json:"alternatives,omitempty"`
 }
 
 // IsEnabled reports whether this entry is in service. Absent means yes.

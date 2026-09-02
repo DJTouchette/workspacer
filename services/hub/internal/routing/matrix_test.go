@@ -442,7 +442,12 @@ profiles:
 	cat := &fakeCatalog{models: map[string][]CatalogModel{
 		// codex's ladder has no "max" — that is claude's word. This is exactly
 		// the cross-provider mix-up the per-provider ladders exist to catch.
-		"codex":  {{ID: "gpt-5.6-sol", EffortLevels: []string{"low", "medium", "high", "xhigh"}}},
+		// gpt-5.6-terra is here because `mixed.reviewer` now carries a codex
+		// ALTERNATIVE, which this function checks too. Leaving it out would make
+		// the assertion below fire on "codex does not serve terra" — a true
+		// finding about a fake catalog, and nothing to do with the ladder
+		// question this test asks.
+		"codex":  {{ID: "gpt-5.6-sol", EffortLevels: []string{"low", "medium", "high", "xhigh"}}, {ID: "gpt-5.6-terra", EffortLevels: []string{"low", "medium", "high", "xhigh"}}},
 		"claude": {{ID: "sonnet"}, {ID: "opus"}, {ID: "fable"}},
 	}}
 	issues := ValidateAgainstCatalog(m, cat)
@@ -590,6 +595,195 @@ func TestVendorAliasKeysFoldBeforeTheMerge(t *testing.T) {
 		// And the load log names the key that actually applied.
 		if !contains(m.Changed, "modes.providers.codex") {
 			t.Fatalf("run %d: Changed says %v — an operator reading the log must see the key that took effect", i, m.Changed)
+		}
+	}
+}
+
+// --- alternatives ------------------------------------------------------------
+
+// TestCatalogValidationReachesTheAlternatives is the other half of the same
+// guarantee, and it is not decoration: the fallover walk REFUSES to route to a
+// candidate the loader flagged, so an alternative nobody checked against the
+// installed CLI is one the router would hand out at the exact moment the
+// primary has already failed — the worst possible time to discover the model id
+// is wrong.
+func TestCatalogValidationReachesTheAlternatives(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: high
+      alternatives:
+        - { provider: claude, model: opus-retired, effort: high }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := &fakeCatalog{models: map[string][]CatalogModel{
+		"codex":  {{ID: "gpt-5.6-sol", EffortLevels: []string{"low", "medium", "high", "xhigh"}}},
+		"claude": {{ID: "sonnet"}, {ID: "opus"}, {ID: "fable"}},
+	}}
+	issues := ValidateAgainstCatalog(m, cat)
+	if !hasIssueAt(issues, "profiles.mixed.frontier.alternatives[0]") {
+		t.Fatalf("a model no installed CLI serves went unreported because it sat in an alternatives list: %v", issues)
+	}
+	if hasIssueAt(issues, "profiles.mixed.frontier") {
+		t.Errorf("the PRIMARY was condemned for its alternative's model: %v", issues)
+	}
+}
+
+// TestAlternativesSurviveAPerFieldMergeOfThePrimary is the reason this feature
+// is a FIELD on Assignment rather than a change to Profile's value type.
+//
+// The user edits one leaf of the primary. The alternatives list is a sibling key
+// they did not mention, so the deep merge fills it in from the shipped default
+// exactly as it fills in `provider` and `model` — which is also what happens to
+// every file written before this key existed, on the first hub that ships it.
+func TestAlternativesSurviveAPerFieldMergeOfThePrimary(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      effort: xhigh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ResolveCapability("mixed", "frontier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Effort != "xhigh" || got.Provider != "codex" || got.Model != "gpt-5.6-sol" {
+		t.Fatalf("the primary itself did not merge per key: %+v", got)
+	}
+	if len(got.Alternatives) != 1 {
+		t.Fatalf("alternatives = %+v, want the shipped list — a sibling key the user never mentioned must survive, or every file written before this key existed loses its fallover on upgrade", got.Alternatives)
+	}
+	if got.Alternatives[0].Provider != "claude" || got.Alternatives[0].Model != "opus" || got.Alternatives[0].Effort != "high" {
+		t.Errorf("alternatives[0] = %+v, want the shipped claude opus high", got.Alternatives[0])
+	}
+}
+
+// TestAUserAlternativesListReplacesWholesale pins the OTHER half of the merge,
+// which is the part that can surprise: a YAML sequence is not a map, so
+// deepMerge replaces it rather than merging element by element. Mention
+// `alternatives:` for a capability and you own the whole list for it. The field
+// comment and routing.default.yaml both say so; this is what makes that true
+// rather than aspirational.
+func TestAUserAlternativesListReplacesWholesale(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      alternatives:
+        - { provider: claude, model: sonnet, effort: high }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := m.ResolveCapability("mixed", "frontier")
+	if len(got.Alternatives) != 1 || got.Alternatives[0].Model != "sonnet" {
+		t.Fatalf("alternatives = %+v, want exactly the user's one-row list", got.Alternatives)
+	}
+	if got.Provider != "codex" || got.Model != "gpt-5.6-sol" {
+		t.Errorf("replacing the LIST disturbed the primary's own keys: %+v — those are siblings of `alternatives:`, not members of it", got)
+	}
+}
+
+// TestValidateChecksEveryAlternative: an alternative nobody validated is a
+// fallover that only fails once the primary already has, which is the worst
+// moment to learn the provider id is a typo. Nesting is refused here too — the
+// fallover order is the flat list the file states.
+func TestValidateChecksEveryAlternative(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      alternatives:
+        - { provider: clod, model: opus, effort: high }
+        - { provider: claude, effort: high }
+        - provider: claude
+          model: opus
+          alternatives:
+            - { provider: codex, model: gpt-5.6-sol }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ where, want string }{
+		{"profiles.mixed.frontier.alternatives[0]", "not a workspacer provider id"},
+		{"profiles.mixed.frontier.alternatives[1]", "no model named"},
+		{"profiles.mixed.frontier.alternatives[2]", "may not nest"},
+	} {
+		found := ""
+		for _, iss := range m.Issues {
+			if iss.Where == tc.where {
+				found = iss.Detail
+			}
+		}
+		if found == "" {
+			t.Errorf("%s produced no issue at all: %v", tc.where, m.Issues)
+			continue
+		}
+		if !strings.Contains(found, tc.want) {
+			t.Errorf("%s said %q, want something containing %q", tc.where, found, tc.want)
+		}
+	}
+	// The PRIMARY is untouched by its alternatives' problems.
+	if hasIssueAt(m.Issues, "profiles.mixed.frontier") {
+		t.Errorf("a bad alternative condemned the primary: %v", m.Issues)
+	}
+}
+
+// TestTheMixedProfileNamesBothFamiliesOnEveryTier is the shipped-default rule
+// `mixed` exists for: two subscriptions means NO tier of work should become
+// unreachable because one of them is down. Every capability names a claude
+// entry and a codex entry across its primary and its alternatives — which one
+// is primary is the profile's editorial opinion about who should do that work,
+// and the other is the answer when the first cannot.
+//
+// It is a test rather than a comment because the failure mode is silent: an
+// edit that drops one side leaves a matrix that loads clean, validates clean,
+// and simply stops falling over for that one tier, on the day it is needed.
+func TestTheMixedProfileNamesBothFamiliesOnEveryTier(t *testing.T) {
+	m, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof, ok := m.Profiles["mixed"]
+	if !ok {
+		t.Fatal("the shipped matrix has no `mixed` profile at all")
+	}
+	if len(m.Capabilities) == 0 {
+		t.Fatal("no capabilities declared — this test would assert nothing")
+	}
+	for _, capability := range m.Capabilities {
+		a, ok := prof[capability]
+		if !ok {
+			t.Errorf("mixed does not resolve %q at all", capability)
+			continue
+		}
+		families := map[string]string{}
+		for _, cand := range append([]Assignment{a}, a.Alternatives...) {
+			families[cand.Provider] = cand.Model
+		}
+		for _, want := range []string{"claude", "codex"} {
+			if _, ok := families[want]; !ok {
+				t.Errorf("mixed.%s names no %s entry across its primary and alternatives (%v) — that tier cannot fall over when its one family is unusable",
+					capability, want, families)
+			}
+		}
+	}
+	// The single-family profiles carry none, deliberately: there is nowhere to
+	// fall over TO, and listing the other family would route work onto a
+	// subscription the user chose the profile to say they do not have.
+	for _, pname := range []string{"codex_only", "anthropic_only"} {
+		for capability, a := range m.Profiles[pname] {
+			if len(a.Alternatives) > 0 {
+				t.Errorf("%s.%s carries alternatives (%+v) — a single-family profile has nowhere to fall over to", pname, capability, a.Alternatives)
+			}
 		}
 	}
 }

@@ -621,6 +621,20 @@ type Decision struct {
 	// is what the shift was allowed or refused on.
 	ShiftMode Mode `json:"shiftMode,omitempty"`
 
+	// FellOverFrom is the capability's PRIMARY pairing, present only when this
+	// answer is one of that capability's `alternatives:` instead — because the
+	// primary could not be used, or because an independent family was asked for
+	// and the walk tried a different provider first. Absent on every answer
+	// that took the primary, which is every answer a matrix with no
+	// alternatives can produce.
+	//
+	// It carries no Alternatives of its own: the list is on the matrix, and
+	// echoing it back inside a decision would put a second copy of the routing
+	// table on the wire and in every log row. The prose in Reason names WHY the
+	// primary was passed over; this field is the structured half of the same
+	// sentence, for a reader that would otherwise have to parse it.
+	FellOverFrom *Assignment `json:"fellOverFrom,omitempty"`
+
 	Reason []string `json:"reason"`
 
 	// Matrix names where the answer came from, so an operator can tell a
@@ -802,6 +816,31 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	if from != profile {
 		d.Reason = append(d.Reason, fmt.Sprintf("profile %s does not put %s on %s; took the pairing from profile %s", profile, d.Capability, subject, from))
 	}
+	// 8b. THE FALLOVER WALK, for an unconstrained request only.
+	//
+	// The capability is settled by now — the mode has moved it and the ceiling
+	// has capped it — so the only remaining question is which provider serves
+	// it, which is exactly what a capability's `alternatives:` list answers. A
+	// CONSTRAINED request does not walk: the caller asked about a named
+	// provider, and §32 says an answer on a provider they did not ask for is
+	// not an answer to their question. Their alternatives are still consulted,
+	// one layer down in assignmentFor, to find that provider inside this
+	// profile before borrowing another profile's pairing.
+	//
+	// alternativesOffered is read BEFORE the walk, because the walk may return
+	// one of the alternatives and an alternative carries none of its own. It is
+	// what lets the independence sentence below tell "this matrix offers no
+	// cross-provider pairing here" apart from "it does, and none of it could be
+	// used" — two different instructions to the operator reading it.
+	alternativesOffered := len(a.Alternatives)
+	if constrained {
+		if p, err := m.ResolveCapability(from, d.Capability); err == nil {
+			alternativesOffered = len(p.Alternatives)
+		}
+	}
+	if !constrained {
+		a = d.walkAlternatives(m, snap, snapErr, now, req, from, a)
+	}
 	if !a.IsEnabled() {
 		d.Reason = append(d.Reason, fmt.Sprintf("profile %s has capability %s explicitly disabled (enabled: false)", from, d.Capability))
 		return d
@@ -824,9 +863,22 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 		// Reported, never silently ignored: §23 makes independence part of the
 		// requirement rather than a coincidence, and a reviewer that inherited
 		// the implementer's family without anyone saying so is the failure.
-		d.Reason = append(d.Reason, fmt.Sprintf(
-			"independent family was REQUIRED and could not be arranged: %s is the only provider this matrix puts %s on, and it also ran the previous agent — set `fresh: true` on that entry, or add a cross-family pairing",
-			d.Provider, d.Capability))
+		//
+		// Independence is a PREFERENCE the walk above tries to honour — it puts
+		// candidates on a different provider first — and it is not a refusal.
+		// So the sentence has to say which of the two ways it lost: the matrix
+		// offered nothing on another provider for this capability, or it did
+		// and none of it could be used. Claiming the first when the second
+		// happened would send an operator to edit a file that is already right.
+		if alternativesOffered > 0 {
+			d.Reason = append(d.Reason, fmt.Sprintf(
+				"independent family was REQUIRED and could not be arranged: %s also ran the previous agent, and every cross-provider alternative this matrix offers for %s was tried first and could not be used (the reasons above say why). `fresh: true` on that entry is what carries independence when the pairing cannot",
+				d.Provider, d.Capability))
+		} else {
+			d.Reason = append(d.Reason, fmt.Sprintf(
+				"independent family was REQUIRED and could not be arranged: %s is the only provider this matrix puts %s on, and it also ran the previous agent — set `fresh: true` on that entry, or add a cross-family pairing under `alternatives:`",
+				d.Provider, d.Capability))
+		}
 	}
 	if prev != "" {
 		d.Reason = append(d.Reason, fmt.Sprintf("previous agent ran on %s; this one runs on %s", prev, d.Provider))
@@ -953,11 +1005,22 @@ func effortSuffix(effort string) string {
 // constraint by looking beyond the active profile when it has to.
 //
 // When the caller named no provider, the active profile answers and that is the
-// end of it. When the caller DID name one, the active profile is tried first
-// and every other profile after it, in name order for determinism — a matrix
-// that puts `frontier` on codex under `mixed` and on claude under
-// `anthropic_only` can answer "frontier, on claude" without the caller having
-// to know which profile spells it that way.
+// end of it. When the caller DID name one, the search widens in three steps and
+// the ORDER of them is the whole point:
+//
+//  1. the active profile's own PRIMARY for that capability;
+//  2. the active profile's own ALTERNATIVES for that capability, in file order —
+//     the profile author's own cross-family pairing for this exact tier of work,
+//     which is a better answer to "frontier, but on claude" than anyone else's
+//     profile is;
+//  3. every OTHER profile, in name order for determinism.
+//
+// Step 3 came first for as long as it was the only step, and it is what made
+// `provider: claude` under `mixed` answer with `anthropic_only`'s whole
+// assignment — a different profile's opinion about effort and freshness, chosen
+// because it happened to spell the pairing. It stays as the LAST resort, so a
+// matrix that carries no alternatives at all resolves exactly as it always did,
+// and so a provider genuinely absent from this profile's list is still found.
 func (m *Matrix) assignmentFor(profile, capability, provider string, constrained bool) (Assignment, string, bool) {
 	if !constrained {
 		a, err := m.ResolveCapability(profile, capability)
@@ -966,8 +1029,19 @@ func (m *Matrix) assignmentFor(profile, capability, provider string, constrained
 		}
 		return a, profile, true
 	}
-	if a, err := m.ResolveCapability(profile, capability); err == nil && a.Provider == provider {
-		return a, profile, true
+	if a, err := m.ResolveCapability(profile, capability); err == nil {
+		if a.Provider == provider {
+			return a, profile, true
+		}
+		for _, alt := range a.Alternatives {
+			// A disabled alternative is not a pairing: `enabled: false` is the
+			// one spelling for taking an entry out of service, and routing onto
+			// one here would make the flag a comment on exactly the rows nobody
+			// looks at.
+			if normalizeProvider(alt.Provider) == provider && alt.IsEnabled() {
+				return alt, profile, true
+			}
+		}
 	}
 	names := make([]string, 0, len(m.Profiles))
 	for name := range m.Profiles {

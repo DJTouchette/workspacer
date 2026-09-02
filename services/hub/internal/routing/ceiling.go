@@ -379,23 +379,43 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 	best, bestName, found := 0, "", false
 	for _, pname := range sortedKeys(m.Profiles) {
 		for _, cname := range sortedKeys(m.Profiles[pname]) {
-			a := m.Profiles[pname][cname]
-			if normalizeProvider(a.Provider) != p || matchableModel(a.Model) != mo {
-				continue
-			}
-			if ef != "" && strings.ToLower(strings.TrimSpace(a.Effort)) != ef {
-				continue
-			}
-			r := m.RankOf(cname)
-			if r == UnrankedCapability {
-				r = UnrankedCapabilityStrength
-			}
-			if !found || r > best {
-				best, bestName, found = r, cname, true
+			// THE ALTERNATIVES COUNT AS READINGS OF THIS CAPABILITY. A model
+			// that appears ONLY inside an `alternatives:` list is a model this
+			// matrix genuinely resolves — the router will hand it out the
+			// moment the primary is unusable — so a gate that scanned primaries
+			// alone would find no reading for it and wave it straight past the
+			// named-model arm. That is the same hole the arm exists to close,
+			// reopened one field lower down.
+			for _, a := range withAlternatives(m.Profiles[pname][cname]) {
+				if normalizeProvider(a.Provider) != p || matchableModel(a.Model) != mo {
+					continue
+				}
+				if ef != "" && strings.ToLower(strings.TrimSpace(a.Effort)) != ef {
+					continue
+				}
+				r := m.RankOf(cname)
+				if r == UnrankedCapability {
+					r = UnrankedCapabilityStrength
+				}
+				if !found || r > best {
+					best, bestName, found = r, cname, true
+				}
 			}
 		}
 	}
 	return best, bestName, found
+}
+
+// withAlternatives is a capability entry read as the full list of pairings the
+// matrix could resolve it to: the primary first, then its alternatives in file
+// order. It is what stops "scan the profiles" from meaning "scan the primaries"
+// in the three places that have to see every pairing — the ceiling's two model
+// arms, and the fallover walk itself.
+func withAlternatives(a Assignment) []Assignment {
+	out := make([]Assignment, 0, 1+len(a.Alternatives))
+	out = append(out, a)
+	out = append(out, a.Alternatives...)
+	return out
 }
 
 // routeSafely fills in the verdict's safe routed tuple: what the PERMITTED
@@ -510,18 +530,24 @@ func (m *Matrix) providerOfModel(model string) string {
 	found := ""
 	for _, pname := range sortedKeys(m.Profiles) {
 		for _, cname := range sortedKeys(m.Profiles[pname]) {
-			a := m.Profiles[pname][cname]
-			if matchableModel(a.Model) != mo {
-				continue
+			// Alternatives included, same reason as capabilityOfModel: a model
+			// the matrix only ever names as a fallover still plainly belongs to
+			// a provider, and missing that reading here is how a clamp on a
+			// spawn that named the model without a provider silently changes
+			// which harness runs.
+			for _, a := range withAlternatives(m.Profiles[pname][cname]) {
+				if matchableModel(a.Model) != mo {
+					continue
+				}
+				p := normalizeProvider(a.Provider)
+				if p == "" {
+					continue
+				}
+				if found != "" && found != p {
+					return "" // two providers serve this id: no plain reading
+				}
+				found = p
 			}
-			p := normalizeProvider(a.Provider)
-			if p == "" {
-				continue
-			}
-			if found != "" && found != p {
-				return "" // two providers serve this id: no plain reading
-			}
-			found = p
 		}
 	}
 	return found
