@@ -447,12 +447,12 @@ func validate(m *Matrix) []Issue {
 		default:
 			add("mode_shifts."+mode, "%q is not a routing mode (conserve, spend_down)", mode)
 		}
-		for _, role := range sortedKeys(m.ModeShifts[mode]) {
+		for _, role := range sortedKeys(m.ModeShifts[mode].Roles) {
 			where := "mode_shifts." + mode + "." + role
 			if _, ok := m.Roles[role]; !ok {
 				add(where, "no role %q in the `roles:` table, so this shift can never fire", role)
 			}
-			if c := m.ModeShifts[mode][role]; !declared[c] {
+			if c := m.ModeShifts[mode].Roles[role]; !declared[c] {
 				add(where, "capability %q is not in the `capabilities:` list", c)
 			}
 		}
@@ -496,6 +496,10 @@ func validate(m *Matrix) []Issue {
 	// The pacing block, whose validation is long enough to live beside the code
 	// that reads it (pacing.go) rather than in the middle of this function.
 	issues = append(issues, validatePacing(m.Thresholds.Pacing)...)
+	// The effort-stepping knobs, beside their own reader for the same reason:
+	// `mode_shifts.<mode>.effort_step`, its capability allow-list, and every
+	// row's `min_effort` floor. See effort.go.
+	issues = append(issues, validateEffortStepping(m)...)
 	return issues
 }
 

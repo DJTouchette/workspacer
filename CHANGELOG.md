@@ -7,6 +7,66 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Effort stepping: a routing mode can now trim thinking time instead of
+  changing the model.** Until now a mode had one lever — move the role to a
+  different capability — which swaps the model out entirely. Between "the
+  same model" and "a different model" there is a gentler move, and
+  `mode_shifts.<mode>.effort_step` is it: a notch count on the provider's own
+  reasoning ladder, applied to the row the answer actually lands on. Conserve
+  ships at `-1`, spend_down at `+1`. It is a count rather than a level name
+  because the ladders are not portable — Claude runs low..max, Codex stops at
+  xhigh — so one notch down means the same thing on both.
+
+  Where it fires is the point. A provider merely running *ahead* of its
+  window curve — past `block_spend_down_at_ratio`, not yet at
+  `conserve_at_ratio` — used to block a spend-down and do nothing else. It
+  now also trims one notch and leaves the capability exactly where it is:
+  being slightly ahead of the curve is a reason to spend a little less, not a
+  reason to change which model does the work. The harsher tier shift stays
+  where it was, for the band that actually needs it.
+
+  Three rules bound it. A row that declares no `effort:` is not stepped —
+  there is no rung to count from, and the answer says so rather than
+  inventing a level nobody wrote. `effort_step_capabilities` limits the step
+  to the tiers where reasoning is the expensive part (frontier, frontier_max,
+  deep_reviewer, frontier_plus by default), because a scout at `medium` is
+  mostly a worse scout rather than a cheaper one. And a per-row `min_effort`
+  floor — set to `high` on every review capability in the shipped `mixed` and
+  `anthropic_only` profiles, primaries and alternatives alike — is what stops
+  a conserving fleet from trimming its own reviewer.
+
+  The answer carries `effortStep` (from, to, why) whenever a step was armed,
+  including when it was armed and then clamped or floored, and the field
+  rides the `routing.decision` event and the decision log. `effort_step: 0`
+  reproduces the previous answers byte for byte, reasons included.
+
+- **Live provider availability is a fallover trigger.** Every reason the
+  router could pass over a candidate was a fact about the routing file — a
+  row switched off, a load-time issue, a health reading. The one that bites
+  first on a new machine was missing: the provider's CLI is not installed, so
+  nothing can be launched there however healthy its allowance looks. The
+  hub's existing per-provider model-catalog probe now also answers that
+  question, and the map is injected into the decision rather than fetched
+  inside it, so the policy layer stays pure.
+
+  A provider that answers with no launchable model is routed around, with the
+  reason naming it. A provider nobody could **ask** about — claudemon
+  restarting, no peer to answer `claude.listModels` — is unknown, and unknown
+  routes exactly as it did before: a hub that cannot reach its daemon for
+  thirty seconds must not declare every provider dead.
+
+### Changed
+- `routing.select`'s answer, the `routing.decision` event, the decision log,
+  the MCP `routing` help topic and the `select_model` tool description all
+  describe effort stepping and availability. `docs/limit-aware-routing.md`
+  gains a section per knob, including the honest limit: an effort step trims
+  thinking tokens, not context re-reads, so it degrades gracefully and will
+  not rescue a red window — the tier shift is still the tool that bends the
+  curve.
+
 ## [0.161.0] - 2026-09-01
 
 ### Added

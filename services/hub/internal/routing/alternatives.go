@@ -22,13 +22,15 @@ package routing
 // A profile that lists none behaves exactly as it did before this file existed.
 //
 // IT IS PURE, like the rest of policy.go. Every judgement below is made from the
-// matrix and from the limits.Snapshot that was passed in. There is no live probe
-// of whether a provider's CLI is actually installed — the closest thing to that
-// is the load-time catalog validation, whose findings ride Matrix.Issues, and
-// this walk does consult those. A candidate whose provider is installed today
-// and uninstalled ten minutes from now is not visible here; making it visible is
-// a live-detection feature and belongs where the catalog is already fetched, not
-// inside a function that must not do I/O.
+// matrix, from the limits.Snapshot that was passed in, and from the
+// ProviderAvailability map that was passed in. There is still no live probe
+// INSIDE this file: the load-time catalog validation's findings ride
+// Matrix.Issues, and the LIVE half — whether a provider's CLI answers at all
+// right now — is read where the catalog is already fetched (cmd/hub's
+// routingCatalog) and injected as an argument, which is the shape this comment
+// used to say such a feature belonged in. See availability.go, and note the
+// fail-open rule: a provider nobody could ask about is UNKNOWN and routes
+// exactly as it did before.
 
 import (
 	"fmt"
@@ -67,6 +69,7 @@ type providerJudge struct {
 	m       *Matrix
 	snap    limits.Snapshot
 	snapErr error
+	avail   ProviderAvailability
 	now     time.Time
 	account string
 	demand  limits.Demand
@@ -78,8 +81,8 @@ type judged struct {
 	mode     Mode
 }
 
-func newProviderJudge(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, account string, demand limits.Demand) *providerJudge {
-	return &providerJudge{m: m, snap: snap, snapErr: snapErr, now: now, account: account, demand: demand, seen: map[string]judged{}}
+func newProviderJudge(m *Matrix, snap limits.Snapshot, snapErr error, avail ProviderAvailability, now time.Time, account string, demand limits.Demand) *providerJudge {
+	return &providerJudge{m: m, snap: snap, snapErr: snapErr, avail: avail, now: now, account: account, demand: demand, seen: map[string]judged{}}
 }
 
 // judge reads a provider's capacity and the mode its OWN capacity decides.
@@ -118,6 +121,17 @@ func (j *providerJudge) judge(provider string) judged {
 //	                          does not serve, an effort it does not take. Routing
 //	                          onto a row the loader already condemned is how a
 //	                          fallover fails at the exact moment it is needed.
+//	provider UNAVAILABLE      the LIVE reading: this provider itself answered the
+//	                          catalog probe and serves nothing, so its CLI is not
+//	                          installed or cannot launch. It is judged BEFORE
+//	                          health because a provider that cannot be started is
+//	                          not usefully described as green. A provider nobody
+//	                          could ask about is UNKNOWN and passes — see
+//	                          availability.go's fail-open rule. Note the two
+//	                          checks are different scopes and both stay: this one
+//	                          is the PROVIDER, the Issue above is the specific
+//	                          MODEL on it, so a candidate on a live provider whose
+//	                          own model is flagged is still unusable.
 //	RED or EXHAUSTED          the allowance is gone or nearly gone.
 //	CONSERVE                  the provider's own mode verdict, which also covers
 //	                          being over the window-progress curve and being
@@ -138,6 +152,9 @@ func (j *providerJudge) unusable(c candidate, path string) string {
 		if iss.Where == path {
 			return fmt.Sprintf("the matrix's load-time validation flags %s — %s", path, iss.Detail)
 		}
+	}
+	if why, off := j.avail.Unusable(provider); off {
+		return why
 	}
 	got := j.judge(provider)
 	switch got.capacity.EffectiveHealth {
@@ -220,7 +237,7 @@ func preferIndependent(cands []candidate, previous string) ([]candidate, bool) {
 // later arms of Select (`enabled: false`, the provider check) still judge what
 // comes back, so a walk that ends on a disabled primary still refuses.
 func (d *Decision) walkAlternatives(
-	m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req Request,
+	m *Matrix, snap limits.Snapshot, snapErr error, avail ProviderAvailability, now time.Time, req Request,
 	profile string, primary Assignment,
 ) Assignment {
 	if len(primary.Alternatives) == 0 {
@@ -236,7 +253,7 @@ func (d *Decision) walkAlternatives(
 		}
 	}
 
-	judge := newProviderJudge(m, snap, snapErr, now, req.wantedAccount(), d.Demand)
+	judge := newProviderJudge(m, snap, snapErr, avail, now, req.wantedAccount(), d.Demand)
 	pathOf := func(c candidate) string {
 		if c.primary() {
 			return "profiles." + profile + "." + d.Capability

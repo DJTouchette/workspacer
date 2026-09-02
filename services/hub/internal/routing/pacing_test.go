@@ -199,7 +199,7 @@ func paceWindows(fiveUsed float64, fiveResets time.Duration, sevenUsed float64, 
 
 func selectWith(t *testing.T, m *Matrix, snap limits.Snapshot, req Request) Decision {
 	t.Helper()
-	return Select(m, snap, nil, policyNow, req)
+	return Select(m, snap, nil, nil, policyNow, req)
 }
 
 func modeOf(t *testing.T, m *Matrix, snap limits.Snapshot, provider string) Decision {
@@ -513,7 +513,7 @@ func TestTheWorkdayCurveIsLoadBearingEndToEnd(t *testing.T) {
 	}(t)
 
 	utcCalendar := matrixWithPacing(t, func(p *Pacing) { p.SevenDay.Timezone = "UTC" })
-	calendar := Select(utcCalendar, snap, nil, friday, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: floatPtr(0)})
+	calendar := Select(utcCalendar, snap, nil, nil, friday, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: floatPtr(0)})
 	if calendar.Mode != ModeConserve {
 		t.Fatalf("the calendar curve must read Friday-evening 88%% as over the line: %s\n%v", calendar.Mode, calendar.Reason)
 	}
@@ -523,7 +523,7 @@ func TestTheWorkdayCurveIsLoadBearingEndToEnd(t *testing.T) {
 		p.SevenDay.WeekendWeight = 0.25
 		p.SevenDay.Timezone = "UTC"
 	})
-	d := Select(workdays, snap, nil, friday, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: floatPtr(0)})
+	d := Select(workdays, snap, nil, nil, friday, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: floatPtr(0)})
 	if d.Mode == ModeConserve {
 		t.Errorf("a week's allowance spent over the WORKING week is on plan under the workdays curve — the curve knob is not reaching the arithmetic: %v", d.Reason)
 	}

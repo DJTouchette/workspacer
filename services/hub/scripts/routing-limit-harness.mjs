@@ -253,6 +253,17 @@ const clearFakeRequests = (fakeURL) =>
 
 const fakeRequestCount = async (fakeURL) => (await fakeJSON(fakeURL, '/usage/requests')).count ?? 0;
 
+const setProviderAvailable = (fakeURL, provider, available) =>
+  fakeJSON(fakeURL, '/providers/availability', {
+    method: 'POST',
+    body: JSON.stringify({ provider, available }),
+  });
+
+const modelProbeCount = async (fakeURL, provider) =>
+  ((await fakeJSON(fakeURL, '/providers/probes')).probes ?? []).filter((p) => p.provider === provider).length;
+
+const reasonsOf = (result) => (result?.reason ?? []).join(' | ');
+
 function provider(report, name) {
   return report.providers.find((p) => p.provider === name);
 }
@@ -500,6 +511,28 @@ function seedFixtures() {
       'ceilings:',
       '  default: { max_capability: frontier_plus, max_tool_scope: operator }',
       `  ${CEILED_DIR}: { max_capability: balanced, max_tool_scope: triage }`,
+      // --- the shapes slice 2's cases need, and that the shipped file has no
+      //     reason to carry. Everything else is the shipped default, merged
+      //     underneath, so the cases above keep measuring what they measured.
+      //
+      // conserve moves the JUDGE across providers (frontier_plus is claude,
+      // cheap is codex) and cheap's own codex row is switched off — which is
+      // what makes the mode shift and the fallover walk compose on one answer.
+      'mode_shifts:',
+      '  conserve:',
+      '    judge: cheap',
+      'profiles:',
+      '  mixed:',
+      '    cheap:',
+      '      enabled: false',
+      '      alternatives:',
+      '        - { provider: copilot, model: gpt-5-mini }',
+      // A THREE-CANDIDATE capability whose MIDDLE entry is disabled, so a walk
+      // has something to step over and name on its way past.
+      '    deep_reviewer:',
+      '      alternatives:',
+      '        - { provider: codex, model: gpt-5.6-sol, effort: high, fresh: true, enabled: false }',
+      '        - { provider: copilot, model: gpt-5-mini, fresh: true }',
       '',
     ].join('\n'),
     { mode: 0o600 },
@@ -832,6 +865,160 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   operator.close();
 }
 
+
+// ---------------------------------------------------------------------------
+// SLICE 2: EFFORT STEPPING, THE COMPOSED WALK, AND LIVE AVAILABILITY
+//
+// Every case below runs against the live hub for the same reason the pacing
+// ones do: the halves that can break are the ones that only exist end to end —
+// the matrix file's new keys surviving the seed/merge/reload path, the mode's
+// step reaching the row a fallover actually chose, and the availability map
+// being built at the edge and injected into a Select that cannot probe.
+// ---------------------------------------------------------------------------
+
+async function runSlice2RoutingAssertions(caller, fakeURL) {
+  console.log('\nslice 2: fallover shapes and effort stepping:');
+
+  const ask = async (scenario, request) => {
+    await setScenario(fakeURL, scenario, true);
+    const eventStart = caller.events.length;
+    const result = await caller.call('routing.select', {
+      ...routingRequest(scenario, ''),
+      provider: '',
+      preferredProvider: '',
+      ...request,
+    });
+    const ev = await waitFor(
+      async () => caller.events.slice(eventStart).find((e) => e?.type === 'routing.decision' && e?.data?.decisionId === result?.decisionId),
+      5000,
+    );
+    return { result, event: ev?.data };
+  };
+
+  // 1. A RED PRIMARY, ACROSS PROVIDERS, ON THE EVENT PLANE. codex is out of
+  //    allowance, mixed's frontier alternative is claude, and the published
+  //    event has to describe the provider that will actually run the work.
+  const red = await ask('codex-red', { role: 'implementer' });
+  check('codex-red: the answer falls over to the claude alternative', red.result?.provider === 'claude' && red.result?.model === 'opus', JSON.stringify(red.result));
+  check('codex-red: the capability is unchanged — a fallover moves the PROVIDER', red.result?.capability === 'frontier', JSON.stringify(red.result?.capability));
+  check('codex-red: the subject capacity is still codex\'s own RED reading', red.result?.capacity?.provider === 'codex' && red.result?.capacity?.health === 'red', JSON.stringify(red.result?.capacity?.health));
+  check('codex-red: the event names the primary it passed over', red.event?.fellOverFrom?.provider === 'codex', JSON.stringify(red.event?.fellOverFrom));
+  check('codex-red: the event health describes CLAUDE, the provider about to run it', red.event?.health === 'green' && red.event?.provider === 'claude', JSON.stringify({ health: red.event?.health, provider: red.event?.provider }));
+
+  // 5a. CONSERVE TRIMS THE EFFORT of the row it landed on — the same model,
+  //     thinking one notch less, which is the move that had no spelling before.
+  check('codex-red: conserve steps the landing row down one rung', red.result?.effort === 'medium', JSON.stringify(red.result?.effort));
+  check('codex-red: the step is reported as a structured from/to', red.result?.effortStep?.from === 'high' && red.result?.effortStep?.to === 'medium', JSON.stringify(red.result?.effortStep));
+  check('codex-red: the step rides the routing.decision event', red.event?.effortStep?.to === 'medium' && red.event?.effort === 'medium', JSON.stringify(red.event?.effortStep));
+  check('codex-red: the step is explained, not merely applied', /steps down the claude ladder/.test(red.result?.effortStep?.why ?? ''), red.result?.effortStep?.why ?? '');
+
+  // 5b. AND IT LEAVES THE CHEAP TIERS ALONE. Same scenario, same conserve, a
+  //     role whose capability is not on the allow-list: a scout on Sonnet at
+  //     `medium` is a worse scout rather than a cheaper one.
+  const balanced = await ask('codex-red', { role: 'fixer' });
+  check('codex-red: a balanced tier is NOT stepped', balanced.result?.capability === 'balanced' && balanced.result?.effort === 'high', JSON.stringify({ capability: balanced.result?.capability, effort: balanced.result?.effort }));
+  check('codex-red: and it says why it was left alone', /effort_step_capabilities/.test(balanced.result?.effortStep?.why ?? ''), balanced.result?.effortStep?.why ?? '');
+
+  // 2. A SKIPPED MIDDLE CANDIDATE. The walk steps over a disabled alternative
+  //    and NAMES it — a silent skip reads as "there was no alternative".
+  const skipped = await ask('claude-overpace', { role: 'deep_reviewer' });
+  check('skipped-middle: the walk lands on the third candidate', skipped.result?.provider === 'copilot' && skipped.result?.model === 'gpt-5-mini', JSON.stringify(skipped.result));
+  check('skipped-middle: the disabled middle entry is named in the reasons', /alternative codex gpt-5\.6-sol[^|]*was skipped too: the entry is explicitly disabled/.test(reasonsOf(skipped.result)), reasonsOf(skipped.result));
+  check('skipped-middle: the primary it fell over FROM is the claude one', skipped.result?.fellOverFrom?.provider === 'claude', JSON.stringify(skipped.result?.fellOverFrom));
+
+  // 3. A PINNED PROVIDER IS SERVED FROM ITS OWN PROFILE. Asking for claude
+  //    under `mixed` must take mixed's own cross-family pairing, not borrow
+  //    another profile's whole opinion about effort and freshness.
+  const pinned = await ask('healthy-current', { role: 'implementer', provider: 'claude', preferredProvider: 'claude' });
+  check('pinned-provider: the answer is on the provider that was asked for', pinned.result?.provider === 'claude', JSON.stringify(pinned.result));
+  check('pinned-provider: it did NOT borrow another profile\'s pairing', !/took the pairing from profile/.test(reasonsOf(pinned.result)), reasonsOf(pinned.result));
+
+  // 4. INDEPENDENT FAMILY: a preference the walk honours, and an honest report
+  //    when capacity will not allow it.
+  const independent = await ask('healthy-current', {
+    role: 'reviewer', previousProvider: 'codex', requireIndependentFamily: true,
+  });
+  check('independent-family: the reviewer lands on a different family from the implementer', independent.result?.provider === 'claude' && independent.result?.independentFamily === true, JSON.stringify({ provider: independent.result?.provider, independentFamily: independent.result?.independentFamily }));
+  check('independent-family: the walk says it tried the independent candidates first', /prefers a different one first/.test(reasonsOf(independent.result)), reasonsOf(independent.result));
+
+  const sameFamily = await ask('claude-overpace', {
+    role: 'reviewer', previousProvider: 'codex', requireIndependentFamily: true,
+  });
+  check('same-family fallback: a conserving claude sends the reviewer back to codex', sameFamily.result?.provider === 'codex', JSON.stringify(sameFamily.result));
+  check('same-family fallback: independence is reported HONESTLY as lost', sameFamily.result?.independentFamily === false, JSON.stringify(sameFamily.result?.independentFamily));
+  check('same-family fallback: and the answer says it could not be arranged', /independent family was REQUIRED and could not be arranged/.test(reasonsOf(sameFamily.result)), reasonsOf(sameFamily.result));
+  check('same-family fallback: `fresh: true` is what still carries independence', sameFamily.result?.fresh === true, JSON.stringify(sameFamily.result?.fresh));
+
+  // 6. SPEND_DOWN STEPS UP, and stops at two different limits.
+  const spend = await ask('healthy-current', { role: 'supervisor', provider: 'codex', preferredProvider: 'codex' });
+  check('spend_down: the mode is actually spend_down', spend.result?.mode === 'spend_down', JSON.stringify(spend.result?.reason));
+  check('spend_down: an unpromoted role steps UP one rung', spend.result?.effort === 'xhigh' && spend.result?.effortStep?.from === 'high', JSON.stringify(spend.result?.effortStep));
+
+  const promoted = await ask('healthy-current', { role: 'implementer', provider: 'codex', preferredProvider: 'codex' });
+  check('spend_down: a role whose CAPABILITY was already promoted is not promoted twice', promoted.result?.capability === 'frontier_max' && promoted.result?.effort === 'xhigh', JSON.stringify({ capability: promoted.result?.capability, effort: promoted.result?.effort }));
+  check('spend_down: and the cap is explained', /one promotion per decision/.test(promoted.result?.effortStep?.why ?? ''), promoted.result?.effortStep?.why ?? '');
+
+  const clamped = await ask('healthy-current', { role: 'judge', provider: 'codex', preferredProvider: 'codex' });
+  check('spend_down: a step off the top of the ladder CLAMPS', clamped.result?.effort === 'xhigh', JSON.stringify(clamped.result?.effort));
+  check('spend_down: and says the ladder ran out', /clamped at codex's ceiling/.test(clamped.result?.effortStep?.why ?? ''), clamped.result?.effortStep?.why ?? '');
+
+  // 7. THE COMPOSED PATH: a cross-provider mode shift, and then a fallover walk
+  //    running on top of it. Everything describing "who runs this" must name the
+  //    FINAL landing rather than the provider the shift picked on the way.
+  const composed = await ask('claude-overpace', { role: 'judge' });
+  check('composed: the mode came from the conserving claude subject', composed.result?.mode === 'conserve' && composed.result?.capacity?.provider === 'claude', JSON.stringify({ mode: composed.result?.mode, subject: composed.result?.capacity?.provider }));
+  check('composed: the mode shift moved the capability across providers', composed.result?.baseCapability === 'frontier_plus' && composed.result?.capability === 'cheap', JSON.stringify({ base: composed.result?.baseCapability, capability: composed.result?.capability }));
+  check('composed: the walk then ran on top of the shift and landed elsewhere again', composed.result?.provider === 'copilot' && composed.result?.model === 'gpt-5-mini', JSON.stringify(composed.result));
+  check('composed: fellOverFrom names the row the WALK passed over', composed.result?.fellOverFrom?.provider === 'codex', JSON.stringify(composed.result?.fellOverFrom));
+  check('composed: shiftCapacity describes the FINAL landing, not the shift\'s', composed.result?.shiftCapacity?.provider === 'copilot', JSON.stringify(composed.result?.shiftCapacity?.provider));
+  check('composed: the event names the landing provider and its own health', composed.event?.provider === 'copilot' && composed.event?.health === composed.result?.shiftCapacity?.health, JSON.stringify({ provider: composed.event?.provider, health: composed.event?.health }));
+}
+
+// runAvailabilityAssertions is LAST on purpose: once a provider answers the
+// catalog with an empty list the hub caches that answer, so this case
+// deliberately leaves codex unavailable for the rest of the run.
+async function runAvailabilityAssertions(caller, fakeURL) {
+  console.log('\nlive provider availability:');
+  await setScenario(fakeURL, 'healthy-current', true);
+
+  // Before: codex is not flagged, the fake 404s its catalog, and "we could not
+  // ask" must route exactly as it always did.
+  const before = await caller.call('routing.select', {
+    ...routingRequest('availability-before', ''),
+    provider: '',
+    preferredProvider: '',
+    role: 'implementer',
+  });
+  check('availability: an UNKNOWN provider still gets the work (fail open)', before?.provider === 'codex', JSON.stringify({ provider: before?.provider, reason: reasonsOf(before) }));
+
+  await setProviderAvailable(fakeURL, 'codex', false);
+  const probesBefore = await modelProbeCount(fakeURL, 'codex');
+  // The refresh is kicked BY a decision and runs in the background, so the ask
+  // that flags the provider is not the ask that sees it — and the refresh is
+  // rate-limited, so this poll has to keep ASKING rather than only watching.
+  // That is the contract: no ambient probing, at most one refresh per decision.
+  const reprobed = await waitFor(async () => {
+    await caller.call('routing.select', { ...routingRequest('availability-kick', ''), provider: '', preferredProvider: '', role: 'implementer' });
+    return (await modelProbeCount(fakeURL, 'codex')) > probesBefore;
+  }, 20000);
+  check('availability: a decision kicks a background re-probe of the provider catalog', !!reprobed, `codex model probes stayed at ${probesBefore}`);
+
+  const after = await waitFor(async () => {
+    const d = await caller.call('routing.select', {
+      ...routingRequest('availability-after', ''),
+      provider: '',
+      preferredProvider: '',
+      role: 'implementer',
+    });
+    return d?.provider === 'claude' ? d : null;
+  }, 20000);
+  check('availability: a provider that reports no launchable model is routed AROUND', !!after, 'the decision stayed on codex after its catalog went empty');
+  if (after) {
+    check('availability: the reason names the live probe, not the allowance', /is not available to launch right now/.test(reasonsOf(after)), reasonsOf(after));
+    check('availability: and the allowance it skipped was healthy, so nothing else explains the move', after?.capacity?.health === 'green', JSON.stringify(after?.capacity?.health));
+  }
+}
+
 try {
   console.log('building hub...');
   execFileSync('go', ['build', '-o', hubBin, './cmd/hub'], { cwd: hubDir, stdio: 'inherit' });
@@ -894,6 +1081,8 @@ try {
 
   const decisionId = await runDecisionRecordAssertions(caller, fake.url);
   await runCeilingAwareSelectAssertions(caller);
+  await runSlice2RoutingAssertions(caller, fake.url);
+  await runAvailabilityAssertions(caller, fake.url);
   await runSpawnBindingAssertions(hubPort, decisionId);
 
   caller.close();

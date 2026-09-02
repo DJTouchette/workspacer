@@ -255,7 +255,8 @@ func TestARoutingDecisionTakesItsOwnReading(t *testing.T) {
 // that routes conservatively and says why.
 func TestRoutingSelectAnswersWithoutAUsageDocument(t *testing.T) {
 	svc := routing.New("", nil) // compiled-in defaults, no file, no catalog
-	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"), nil, nil)
+	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"), nil,
+		nil, nil)
 
 	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{}`)); err == nil {
 		t.Error("a request with no role was answered — routing answers in ROLES, and guessing one is how a decision gets attributed to work nobody described")
@@ -372,7 +373,8 @@ func TestASlowClaudemonCannotHangADecision(t *testing.T) {
 	defer func() { close(block); srv.Close() }()
 
 	svc := routing.New("", nil)
-	h := routingSelect(svc, newUsageWatcher(srv.URL), nil, nil)
+	h := routingSelect(svc, newUsageWatcher(srv.URL), nil,
+		nil, nil)
 
 	// The handler's own budget, shortened for the test by bounding the wall
 	// clock rather than the constant: what is being proven is that SOME bound
@@ -410,7 +412,7 @@ func TestRoutingSelectRecordsAndPublishesTheDecisionItAnswered(t *testing.T) {
 	logf := routing.NewDecisionLog(path, routing.DefaultDecisionLogMaxBytes)
 
 	var published []event.Envelope
-	h := routingSelect(routing.New("", nil), newUsageWatcher("http://127.0.0.1:1"),
+	h := routingSelect(routing.New("", nil), newUsageWatcher("http://127.0.0.1:1"), nil,
 		func(ev event.Envelope) { published = append(published, ev) }, logf)
 
 	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","cwd":"/tmp","provider":"codex"}`))
@@ -524,7 +526,7 @@ func TestAFalloverEventNamesTheHealthOfTheProviderItActuallyPicked(t *testing.T)
 
 	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
 	var published []event.Envelope
-	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL),
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL), nil,
 		func(ev event.Envelope) { published = append(published, ev) }, logf)
 
 	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"reviewer","cwd":"/tmp"}`))
@@ -575,7 +577,7 @@ func TestAFalloverDecisionPublishesFellOverFrom(t *testing.T) {
 
 	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
 	var published []event.Envelope
-	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL),
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL), nil,
 		func(ev event.Envelope) { published = append(published, ev) }, logf)
 
 	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"reviewer","cwd":"/tmp"}`)); err != nil {
@@ -592,5 +594,145 @@ func TestAFalloverDecisionPublishesFellOverFrom(t *testing.T) {
 	}
 	if ev.FellOverFrom == nil || ev.FellOverFrom.Provider != "claude" {
 		t.Fatalf("event fellOverFrom = %+v, want the claude primary this decision fell over from", ev.FellOverFrom)
+	}
+}
+
+// stubAvailability is a routingCatalog stand-in: it answers with a fixed map
+// and records what the handler asked it to refresh.
+type stubAvailability struct {
+	live      routing.ProviderAvailability
+	refreshed [][]string
+}
+
+func (s *stubAvailability) Availability() routing.ProviderAvailability { return s.live }
+func (s *stubAvailability) RefreshAvailability(providers []string) {
+	s.refreshed = append(s.refreshed, providers)
+}
+
+// TestTheHandlerFeedsLiveAvailabilityIntoTheDecision is the wiring proof for
+// slice 2's third part, at the boundary that owns it.
+//
+// routing.Select is pure and cannot probe anything, so the live launchability
+// reading only exists if this handler reads it off the catalog and passes it
+// in. A map that is built and never handed over would look exactly like a
+// working feature from inside internal/routing, where every test supplies its
+// own map by hand.
+func TestTheHandlerFeedsLiveAvailabilityIntoTheDecision(t *testing.T) {
+	now := time.Now()
+	// BOTH providers healthy: nothing but availability can move this answer.
+	body := altUsageDoc(t, now, map[string]float64{"claude": 12, "codex": 12})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	avail := &stubAvailability{live: routing.ProviderAvailability{
+		"codex": {Available: false, Reason: "no codex CLI is installed on this machine"},
+	}}
+	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL), avail, nil, logf)
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d, ok := raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if !d.Eligible || d.Provider != "claude" {
+		t.Fatalf("got %s %s — the answer must fall over off the unavailable codex primary: %v", d.Provider, d.Model, d.Reason)
+	}
+	if !strings.Contains(strings.Join(d.Reason, " "), "no codex CLI is installed on this machine") {
+		t.Errorf("the probe's own reason never reached the answer: %v", d.Reason)
+	}
+
+	// And the refresh is kicked for the providers this matrix can route to,
+	// which is what keeps the map current without a background poll.
+	if len(avail.refreshed) != 1 {
+		t.Fatalf("the handler refreshed %d time(s); a decision must ask for a fresh reading exactly once", len(avail.refreshed))
+	}
+	got := strings.Join(avail.refreshed[0], ",")
+	if !strings.Contains(got, "claude") || !strings.Contains(got, "codex") {
+		t.Errorf("refreshed %q, want the providers the shipped matrix actually routes to", got)
+	}
+
+	// A handler with NO availability source at all is the ordinary desktop
+	// case, and it must route exactly as it did before this existed.
+	plain := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL), nil, nil, logf)
+	raw, err = plain(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select without a catalog: %v", err)
+	}
+	if d, _ := raw.(routing.Decision); d.Provider != "codex" {
+		t.Errorf("provider = %q with no availability source — an unknown provider must fail OPEN", d.Provider)
+	}
+}
+
+// TestTheDecisionEventCarriesTheEffortStep is the wiring proof for slice 2's
+// first part on the OPEN-BY-DECISION event plane: without it a client watching
+// the plane sees `effort` change with nothing in the payload saying a routing
+// mode moved it.
+func TestTheDecisionEventCarriesTheEffortStep(t *testing.T) {
+	now := time.Now()
+	// codex nearly out, claude fine. The request PINS codex, so the answer
+	// stays there and the effort step is the only thing that can move.
+	body := altUsageDoc(t, now, map[string]float64{"claude": 12, "codex": 95})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
+	var published []event.Envelope
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL), nil,
+		func(ev event.Envelope) { published = append(published, ev) }, logf)
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","provider":"codex","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d, _ := raw.(routing.Decision)
+	if d.Mode != routing.ModeConserve || d.Effort != "medium" {
+		t.Fatalf("got mode %s effort %q — this test needs a conserving codex to mean anything: %v", d.Mode, d.Effort, d.Reason)
+	}
+	if len(published) != 1 {
+		t.Fatalf("published %d event(s)", len(published))
+	}
+	var ev struct {
+		Effort     string              `json:"effort"`
+		EffortStep *routing.EffortStep `json:"effortStep"`
+	}
+	if err := json.Unmarshal(published[0].Data, &ev); err != nil {
+		t.Fatalf("event payload: %v", err)
+	}
+	if ev.Effort != "medium" {
+		t.Errorf("event effort = %q, want the stepped `medium` the answer carries", ev.Effort)
+	}
+	if ev.EffortStep == nil || ev.EffortStep.From != "high" || ev.EffortStep.To != "medium" {
+		t.Fatalf("event effortStep = %+v, want high -> medium", ev.EffortStep)
+	}
+	if ev.EffortStep.Why == "" {
+		t.Error("the event carries a step with no explanation, so a display can say WHAT moved and never WHY")
+	}
+
+	// The other side: an ordinary answer no step was armed for must publish no
+	// such field at all.
+	quiet := altUsageDoc(t, now, map[string]float64{"claude": 12, "codex": 12})
+	calm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(quiet)
+	}))
+	defer calm.Close()
+	published = nil
+	h = routingSelect(routing.New("", nil), newUsageWatcher(calm.URL), nil,
+		func(ev event.Envelope) { published = append(published, ev) }, logf)
+	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"implementer","provider":"codex","cwd":"/tmp"}`)); err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	if len(published) != 1 {
+		t.Fatalf("published %d event(s)", len(published))
+	}
+	if strings.Contains(string(published[0].Data), "effortStep") {
+		t.Errorf("a decision no step was armed for published one anyway: %s", published[0].Data)
 	}
 }

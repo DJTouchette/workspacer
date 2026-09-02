@@ -42,16 +42,18 @@ The result is that work moves away from a provider whose allowance is tight, and
 that model selection lives in one file rather than in every dispatch site. Model
 vendors rename things; the matrix is the only place that has to know.
 
-Work moves across providers by **two different mechanisms**, and they are easy
-to conflate because both end with a dispatch on a provider nobody named:
+A routing mode has **three moves**, and they are easy to conflate because two of
+them end with a dispatch on a provider nobody named:
 
 | | What moves | Configured by |
 |---|---|---|
 | **Mode shift** | The ROLE moves to a **different capability** — a conserving scout drops from `balanced` to `cheap`. Which provider that lands on is a consequence, not the aim. | `mode_shifts:` |
+| **Effort step** | Nothing moves at all: the **same model** is asked to think one notch less (or more) along its own reasoning ladder. | `mode_shifts.<mode>.effort_step` |
 | **Fallover** | The capability stays **exactly the same** and only the **provider** serving it changes, because the primary one cannot be used. | `alternatives:` |
 
-They compose, in that order: the mode moves the capability, the ceiling caps the
-result, and the fallover then picks who runs it. A decision reports the first
+They compose, in that order: the mode arms the effort step and moves the
+capability, the ceiling caps the result, the fallover picks who runs it, and the
+step is applied last, to the row that actually won. A decision reports the first
 through `capability` versus `baseCapability`, and the second through
 `fellOverFrom` and a reason sentence naming the primary it passed over.
 
@@ -266,13 +268,16 @@ before there is a manager to ask, from Settings, Fleet Manager
 (`agents.managerProvider`, `managerModels`, `managerEfforts`). The row exists so
 the vocabulary is complete.
 
-**`profiles:`** resolves each capability to `{ provider, model, effort, fresh,
-enabled }`. `provider` is a workspacer provider id (`claude`, `codex`,
+**`profiles:`** resolves each capability to `{ provider, model, effort,
+min_effort, fresh, enabled, alternatives }`. `provider` is a workspacer provider id (`claude`, `codex`,
 `copilot`, `opencode`, `pi`); `openai` and `anthropic` are accepted as aliases
 and folded at load. Effort ladders differ per provider and are not
 interchangeable: Claude takes `low|medium|high|xhigh|max`, Codex takes
-`minimal|low|medium|high|xhigh`. Edit this when a vendor renames a model or you
-want a different model behind an existing capability.
+`minimal|low|medium|high|xhigh`. `min_effort` is the floor a mode's effort step
+may not push that row below (see *Effort stepping*), and `alternatives:` is the
+ordered list of other pairings that serve the same capability when the primary
+cannot be used. Edit this when a vendor renames a model or you want a different
+model behind an existing capability.
 
 **`providers:`** describes what is known about each provider's capacity, not what
 it can do. `metered: true` means the provider publishes an allowance worth
@@ -330,6 +335,10 @@ does, the landing provider's own capacity is read and judged before the move is
 applied, and the move is refused if that provider is itself conserving. Moving
 work onto a constrained provider because a different one was constrained is worse
 than not moving it.
+
+Each mode block also carries `effort_step` and `effort_step_capabilities`, which
+are the mode's *other* lever — the same model, thinking less. They have their own
+section below, as does the per-row `min_effort` floor that bounds them.
 
 **`ceilings:`** is the per-directory cap. It has its own section below.
 
@@ -530,6 +539,162 @@ sentence in prose, and the `routing.decision` event carries `pace`, `paceRatio`
 and `paceWindow` so a fleet display can caption a mode change without reading
 the reasons. All of those are absent when pacing is off.
 
+## Effort stepping: the same model, thinking less
+
+A capability shift is a blunt instrument. It changes which model runs the work,
+so conserving means a scout stops being a Sol scout and becomes a Luna one.
+Between "the same model" and "a different model" there is a move the matrix
+could not previously make: **the same model, at a lower reasoning effort**.
+
+```yaml
+mode_shifts:
+  conserve:
+    scout: cheap
+    effort_step: -1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
+  spend_down:
+    implementer: frontier_max
+    effort_step: 1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
+
+profiles:
+  mixed:
+    deep_reviewer:
+      provider: claude
+      model: opus
+      effort: high
+      min_effort: high      # an effort step may never trim this row below `high`
+```
+
+### `effort_step` — a notch count, not a level
+
+`effort_step` is a number of rungs on the **provider's own** ladder, applied to
+the row the answer landed on. `-1` steps down one, `+1` steps up one, and `0`
+(or the key absent) reproduces the pre-stepping answer exactly, reason list
+included.
+
+It is a count rather than a level name because **the ladders are not portable**:
+claude runs `low, medium, high, xhigh, max`, codex stops at `xhigh`, and copilot
+starts below both at `none`. One notch down means the same thing on all three;
+`medium` does not. The ladders live in `internal/routing/effort.go`, taken from
+the adapters that build each CLI's argv.
+
+Three things stop a step:
+
+- **A row with no `effort:`** is not stepped. It runs at the provider's own
+  default, which this layer does not know — `frontier_plus: {provider: claude,
+  model: fable}` has no rung to count from — so the answer says so instead of
+  inventing a level nobody wrote.
+- **A provider with no published ladder** (`opencode`, `pi` — BYO key) is not
+  stepped, for the same reason.
+- **The ends of the ladder.** A step through the floor or the ceiling clamps
+  and says which, because "we tried and could not" is a different fact from "we
+  did not try".
+
+Under `spend_down` there is one further rule: **one promotion per decision**. If
+the mode has already moved the role UP a capability tier, the effort is left at
+what that tier's own row declares rather than being raised a second time. The
+comparison is on `capability_ranks:`, not on whether a shift fired, because the
+ceiling runs between the two and routinely takes the promotion back — under the
+shipped `default: {max_capability: frontier}` a spend-down implementer is moved
+to `frontier_max` and clamped straight back, and nothing was promoted there.
+
+### `effort_step_capabilities` — where trimming is worth it
+
+Empty means every capability, which is **not** what ships. The default list is
+`frontier`, `frontier_max`, `deep_reviewer`, `frontier_plus`: the tiers where
+reasoning time is the expensive part. A scout on Sonnet at `medium` is mostly a
+worse scout rather than a cheaper one, so `cheap` and `balanced` are left alone.
+A capability outside the list is reported as untouched, with the reason, rather
+than silently skipped.
+
+### `min_effort` — the floor a row will not go below
+
+A per-row floor, validated at load against that provider's ladder. The shipped
+`mixed` and `anthropic_only` profiles set `min_effort: high` on `reviewer`,
+`deep_reviewer` and `frontier_plus`: a review that is trimmed is not a review.
+
+It is honoured on **alternatives** as well as primaries, and the shipped file
+writes it on both — a fallover takes the alternative's own row, so a floor
+written only on the primary stops binding at the exact moment the answer moves.
+
+### When a step fires
+
+Two bands, and the order inside `Select` is the feature rather than an
+implementation detail:
+
+| Evidence | What happens |
+|---|---|
+| `conserve` / `spend_down` | that mode's own `effort_step`, alongside the capability shift it already performs |
+| `normal`, pace in the **lower** overspend band (at or past `block_spend_down_at_ratio`, below `conserve_at_ratio`) | conserve's step **only** — the capability is not moved |
+
+The lower band already blocked a spend-down and did nothing else. It now also
+trims one notch: being slightly ahead of the curve is a reason to spend a little
+less, not a reason to change which model does the work. The step is armed from
+the SUBJECT provider's reading — the same one the mode came from — and applied
+last, to whichever row the shift, the ceiling and the fallover walk finally
+chose. After a fallover that is the alternative's own effort and its own
+`min_effort`.
+
+### What it does not fix
+
+**An effort step trims thinking tokens, not context re-reads.** A worker at
+`medium` still reads the same files, still re-reads them after a compaction, and
+still carries the same system prompt and tool definitions on every turn. So
+stepping degrades gracefully — it buys a real but modest saving for a modest
+loss of depth — and it **will not rescue a red window**. The tier shift is still
+the tool that bends the curve, and a provider that is actually out of allowance
+is routed away from rather than asked to think less.
+
+### Reading a stepped answer
+
+`routing.select` returns `effortStep: {from, to, why}` whenever a step was
+ARMED, including when it was armed and then clamped, floored, or refused — the
+pair being equal is the answer to "we looked and did not move". The same
+sentence is in the `reason` list, the field rides the `routing.decision` event,
+and the whole decision (this field included) is written to the decision log.
+Nothing is present when no step was armed.
+
+## Live provider availability
+
+The fallover triggers in `alternatives:` were all facts about the **document** —
+a row switched off, a load-time issue, a health reading. One was missing, and it
+is the one that bites first on a new machine: **the provider's CLI is not
+installed**, so nothing can be launched there at all, however healthy its
+allowance looks.
+
+The hub already boots each provider's CLI to fetch its model catalog, which is
+what `routing.yaml`'s model ids are validated against. That probe's answer is
+folded into a small map and **injected into `Select` as an argument**, alongside
+the usage snapshot and the clock. `Select` stays pure: it does no I/O, so a fact
+about the world outside arrives from the caller or does not arrive at all.
+
+There are **three** states, and the third one is the whole safety argument:
+
+| | Meaning | Effect on routing |
+|---|---|---|
+| available | the provider answered with models it can launch | usable |
+| unavailable | the **provider itself** answered and can launch nothing — the CLI is not installed, or cannot start | unusable; the walk moves on and the reason names it |
+| unknown | nobody could ask (claudemon down, no peer to answer `claude.listModels`, never probed) | **used as normal** — exactly as before this existed |
+
+Collapsing unknown into unavailable would mean a hub that cannot reach claudemon
+for thirty seconds declares every provider dead and routes nowhere. That is
+strictly worse than routing to a provider that turns out to be missing: the
+second failure is loud, immediate and recoverable, and the first looks like the
+router breaking for no reason.
+
+Availability is about the PROVIDER. A candidate on a provider that is up, whose
+own **model** the loader flagged (`ValidateAgainstCatalog` — "codex does not
+serve model X"), is still unusable, and the answer quotes that reason instead.
+
+The map is refreshed on the same cadence as the catalog it comes from, and the
+refresh is kicked by a decision rather than by a timer: it runs in the
+background, at most one at a time, and no more often than every few seconds, so
+nothing boots a provider CLI on a machine where nobody is routing. A decision
+acts on the last probe and the next one acts on this one; the first decision
+after a hub start therefore routes with an empty map, which is the fail-open
+state.
+
 ## Ceilings
 
 A ceiling is the most a spawn started in a given project directory may be given,
@@ -718,8 +883,19 @@ conserving, that the `routing.decision` event carries the pace, that a provider
 publishing no window stays pace-UNKNOWN, that the decision and its spawn both
 reach the log, that a capped directory caps `routing.select` and the spawn gate
 identically, and that a symlink into that directory does not walk around either.
-`ROUTING_HARNESS_REQUIRE_ROUTING=1` makes a parked assertion a failure rather
-than a note.
+
+It also runs the fallover and stepping shapes end to end: a RED primary landing
+on the other family with the event's `health` and `fellOverFrom` describing the
+provider that will actually run the work, a disabled middle alternative that the
+walk steps over and NAMES, a pinned provider served from its own profile without
+borrowing another's pairing, an independent-family preference honoured and then
+honestly reported as lost when capacity will not allow it, conserve trimming a
+frontier row's effort while leaving a balanced one alone, spend_down stepping up
+and stopping at both the ladder ceiling and the one-promotion rule, a
+cross-provider mode shift with a fallover walk running on top of it, and a
+provider whose catalog reports no launchable model being routed around while an
+unprobeable one is not. `ROUTING_HARNESS_REQUIRE_ROUTING=1` makes a parked
+assertion a failure rather than a note.
 
 The Go unit tests cover the merge, the validation, the mode rules and the ceiling
 arms:

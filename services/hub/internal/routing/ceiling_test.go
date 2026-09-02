@@ -46,7 +46,7 @@ func TestTheShippedMatrixNeverAdvisesWhatItsOwnCeilingRefuses(t *testing.T) {
 
 	check := func(what, profile, role string, mode Mode) {
 		t.Helper()
-		d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+		d := Select(m, limits.Snapshot{}, nil, nil, time.Unix(1_800_000_000, 0), Request{
 			Role: role, Profile: profile, CanonicalCwd: dir,
 		})
 		if !d.Eligible {
@@ -71,8 +71,8 @@ func TestTheShippedMatrixNeverAdvisesWhatItsOwnCeilingRefuses(t *testing.T) {
 		for role := range m.Roles {
 			check("role "+role+" under profile "+profile, profile, role, ModeNormal)
 		}
-		for mode, byRole := range m.ModeShifts {
-			for role := range byRole {
+		for mode, shift := range m.ModeShifts {
+			for role := range shift.Roles {
 				check("role "+role+" under profile "+profile+" (mode_shifts."+mode+")", profile, role, Mode(mode))
 			}
 		}
@@ -86,7 +86,7 @@ func TestTheShippedMatrixNeverAdvisesWhatItsOwnCeilingRefuses(t *testing.T) {
 // drifted.
 func TestWhatAJudgeGetsUnderTheShippedDefaultCeiling(t *testing.T) {
 	m := shippedMatrix(t)
-	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+	d := Select(m, limits.Snapshot{}, nil, nil, time.Unix(1_800_000_000, 0), Request{
 		Role: "judge", CanonicalCwd: "/home/someone/project",
 	})
 	if !d.Eligible {
@@ -121,7 +121,7 @@ func TestSelectHonoursAPerDirectoryCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+	d := Select(m, limits.Snapshot{}, nil, nil, time.Unix(1_800_000_000, 0), Request{
 		Role: "implementer", CanonicalCwd: filepath.Join(locked, "sub", "dir"),
 	})
 	if !d.Eligible {
@@ -143,7 +143,7 @@ func TestSelectRefusesUnderAnUnreadableCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := Select(m, limits.Snapshot{}, nil, time.Unix(1_800_000_000, 0), Request{
+	d := Select(m, limits.Snapshot{}, nil, nil, time.Unix(1_800_000_000, 0), Request{
 		Role: "implementer", CanonicalCwd: "/x",
 	})
 	if d.Eligible {

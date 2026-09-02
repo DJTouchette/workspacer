@@ -19,6 +19,16 @@
  *   POST /usage/advance
  *   GET  /usage/requests
  *   POST /usage/requests/clear
+ *
+ * Live-availability controls (the model catalog the hub probes per provider):
+ *   GET  /providers/:provider/models   200 {models:[]} once marked unavailable,
+ *                                      404 otherwise — which is what keeps every
+ *                                      other provider UNKNOWN and therefore
+ *                                      routable, exactly as it was before the
+ *                                      availability feature existed.
+ *   POST /providers/availability       {"provider":"codex","available":false}
+ *   GET  /providers/probes             {count, probes} — so a harness can wait
+ *                                      for the hub to actually re-probe.
  */
 import http from 'node:http';
 
@@ -52,6 +62,11 @@ const SCENARIOS = Object.freeze([
   // 'healthy-current' and the clock can.
   'claude-overpace',
   'claude-pace-blocks-spend-down',
+  // A Codex five-hour window past the shipped 90% red band. The captured
+  // stale-codex row cannot serve for this: it is deliberately NON-CURRENT, so
+  // the currency guard makes it UNKNOWN rather than red, and a fallover case
+  // needs a primary that is genuinely, currently out of allowance.
+  'codex-red',
 ]);
 
 const args = process.argv.slice(2);
@@ -74,6 +89,11 @@ const state = {
   script: [],
   index: 0,
   requests: [],
+  // Providers this fake reports as having NO launchable model — the live
+  // "the CLI is not installed" answer. Everything not named here 404s, which the
+  // hub reads as "could not ask" and routes around exactly as it always did.
+  unavailable: new Set(),
+  modelProbes: [],
 };
 
 const epoch = () => Math.floor(Date.now() / 1000);
@@ -211,6 +231,11 @@ function codexProvider(now, scenario) {
     label = CODEX_CAPTURE.planType;
   } else if (scenario === 'reset-now') {
     fiveHour = { usedPercent: 45.0, windowMinutes: 300, resetsAt: now };
+  } else if (scenario === 'codex-red') {
+    // Past the shipped red_at_used_pct (90) on a CURRENT window, and far enough
+    // from the reset that nothing spends down.
+    fiveHour = { usedPercent: 95.0, windowMinutes: 300, resetsAt: now + 4 * 60 * 60 };
+    sevenDay = { usedPercent: 11.0, windowMinutes: 10080, resetsAt: now + 4 * 24 * 60 * 60 };
   }
 
   return {
@@ -379,6 +404,40 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/usage/requests/clear') {
       state.requests = [];
       sendJSON(res, 200, { ok: true });
+      return;
+    }
+
+    // THE MODEL CATALOG, which is where live provider availability comes from.
+    const models = url.pathname.match(/^\/providers\/([^/]+)\/models$/);
+    if (req.method === 'GET' && models) {
+      const provider = decodeURIComponent(models[1]);
+      state.modelProbes.push({ at: epoch(), provider });
+      if (state.modelProbes.length > 1000) state.modelProbes.shift();
+      if (state.unavailable.has(provider)) {
+        // A 200 carrying an empty list is the PROVIDER's own answer: it booted
+        // (or failed to) and can launch nothing. That is the one shape the hub
+        // reads as unavailable.
+        sendJSON(res, 200, { models: [] });
+        return;
+      }
+      // Anything else is "this fake does not model that catalog", which must
+      // stay UNKNOWN rather than becoming a routing refusal.
+      sendJSON(res, 404, { error: `no catalog for ${provider} in this fake` });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/providers/availability') {
+      const body = await readJSON(req);
+      const provider = String(body.provider ?? '').trim();
+      if (!provider) throw new Error('body must include provider');
+      if (body.available === false) state.unavailable.add(provider);
+      else state.unavailable.delete(provider);
+      sendJSON(res, 200, { ok: true, unavailable: [...state.unavailable] });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/providers/probes') {
+      sendJSON(res, 200, { count: state.modelProbes.length, probes: state.modelProbes, unavailable: [...state.unavailable] });
       return;
     }
 

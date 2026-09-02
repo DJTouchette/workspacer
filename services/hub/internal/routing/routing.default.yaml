@@ -196,6 +196,13 @@ roles:
 #             interchangeable: claude is low|medium|high|xhigh|max, codex is
 #             minimal|low|medium|high|xhigh. The spec's "Sol Max" is codex's
 #             `xhigh` — codex has no level named `max`.
+#   min_effort
+#             the FLOOR a routing mode's `effort_step` (see mode_shifts: below)
+#             may not push this row below. A name from the same ladder as
+#             `effort`, validated at load against it. Set on every review row in
+#             `mixed` and `anthropic_only`, primaries AND alternatives: a review
+#             that is trimmed is not a review, and a floor written only on the
+#             primary stops binding the moment a fallover moves the answer.
 #   fresh     the worker must NOT inherit the previous agent's conversation: it
 #             gets the ticket, the acceptance criteria, the architecture rules,
 #             the diff, the relevant source and the test results, and not the
@@ -226,10 +233,25 @@ roles:
 #             candidate unusable is judged with that candidate's OWN capacity,
 #             never the primary's: its allowance is RED or EXHAUSTED, its
 #             provider's own routing mode is CONSERVE, the provider or the entry
-#             carries `enabled: false`, or the loader flagged that row (an
-#             unknown provider id, a model the installed CLI does not serve).
+#             carries `enabled: false`, the loader flagged that row (an unknown
+#             provider id, a model the installed CLI does not serve), or — the
+#             LIVE trigger, with no key in this file — the hub just asked that
+#             provider's CLI what it can launch and the answer was nothing.
 #             Nothing is usable? The primary stands, exactly as it did before
 #             this key existed.
+#
+#             LIVE AVAILABILITY HAS NO SETTING BECAUSE IT IS NOT A POLICY. It is
+#             the same per-provider model-catalog probe your `model:` values are
+#             validated against, read for a second question: can anything be
+#             started there at all? Three answers, and the third is the one that
+#             matters — the provider answered with models (usable), the provider
+#             itself answered with none (unusable, CLI not installed or unable
+#             to start), or NOBODY COULD ASK (claudemon down, never probed),
+#             which is UNKNOWN and routes exactly as it did before. A hub that
+#             cannot reach its daemon for thirty seconds must not conclude that
+#             every provider is dead. The probe is refreshed in the background
+#             when a decision is taken, never on a timer, so nothing boots a
+#             provider CLI on a machine where nobody is routing.
 #
 #             THIS IS NOT `mode_shifts:`. A mode shift moves a ROLE to a
 #             DIFFERENT CAPABILITY (a conserving scout drops from balanced to
@@ -297,20 +319,30 @@ profiles:
     # below make a real event rather than a hypothetical one. That is exactly
     # why they carry `fresh: true` too: a codex reviewer of codex work is a
     # reviewer only because it did not inherit the implementer's reasoning.
+    #
+    # `min_effort: high` ON EVERY REVIEW ROW, primary and alternative alike.
+    # A review is only a review if it actually thinks about the diff, so this is
+    # the floor the mode's `effort_step` may not push these rows below — a
+    # conserving fleet trims a scout's thinking time, not its reviewer's. It is
+    # written on the ALTERNATIVES too because a fallover takes the alternative's
+    # own row: a floor on the primary alone would stop binding at the exact
+    # moment the answer moved to the other family.
     reviewer:
       provider: claude
       model: sonnet
       effort: high
+      min_effort: high
       fresh: true
       alternatives:
-        - { provider: codex, model: gpt-5.6-terra, effort: high, fresh: true }
+        - { provider: codex, model: gpt-5.6-terra, effort: high, min_effort: high, fresh: true }
     deep_reviewer:
       provider: claude
       model: opus
       effort: high
+      min_effort: high
       fresh: true
       alternatives:
-        - { provider: codex, model: gpt-5.6-sol, effort: high, fresh: true }
+        - { provider: codex, model: gpt-5.6-sol, effort: high, min_effort: high, fresh: true }
     # EVERY TIER IN THIS PROFILE CARRIES BOTH FAMILIES, and the escalation tier
     # is no exception. The alternative here is the same pairing `codex_only`
     # already uses for frontier_plus, so a Fable that cannot be reached answers
@@ -322,9 +354,10 @@ profiles:
     frontier_plus:
       provider: claude
       model: fable
+      min_effort: high
       fresh: true
       alternatives:
-        - { provider: codex, model: gpt-5.6-sol, effort: xhigh, fresh: true }
+        - { provider: codex, model: gpt-5.6-sol, effort: xhigh, min_effort: high, fresh: true }
 
   # One subscription, and therefore NO `alternatives:` anywhere in this profile:
   # a single-family profile has nowhere to fall over TO, and listing the other
@@ -353,9 +386,13 @@ profiles:
     balanced: { provider: claude, model: sonnet, effort: high }
     frontier: { provider: claude, model: opus, effort: high }
     frontier_max: { provider: claude, model: opus, effort: max }
-    reviewer: { provider: claude, model: sonnet, effort: high, fresh: true }
-    deep_reviewer: { provider: claude, model: opus, effort: high, fresh: true }
-    frontier_plus: { provider: claude, model: fable, fresh: true }
+    # Same review floors as `mixed`, for the same reason: an effort step may
+    # trim a scout, never a reviewer. (`frontier_plus` declares no effort at
+    # all, so it is not steppable in the first place — the floor is there for
+    # the day somebody gives that row an `effort:`.)
+    reviewer: { provider: claude, model: sonnet, effort: high, min_effort: high, fresh: true }
+    deep_reviewer: { provider: claude, model: opus, effort: high, min_effort: high, fresh: true }
+    frontier_plus: { provider: claude, model: fable, min_effort: high, fresh: true }
 
 # ---------------------------------------------------------------------------
 # PROVIDERS — what is known about each one's capacity, not what it can do.
@@ -522,8 +559,51 @@ forecast_weights:
 # moves the scout down off `balanced` while the fixer stays on it — so a
 # capability -> capability map would move both and be wrong about one.
 #
-# Every value must be a name from `capabilities:` above; anything else is
+# Every ROLE value must be a name from `capabilities:` above; anything else is
 # reported at load and ignored.
+#
+# TWO RESERVED KEYS SIT BESIDE THE ROLES in each block, and they are the OTHER
+# thing a mode can do — leave the capability exactly where it is and change how
+# hard the model it lands on is asked to think:
+#
+#   effort_step               a NOTCH COUNT on the provider's own reasoning
+#                             ladder, applied to the row the answer actually
+#                             lands on (the primary, the alternative a fallover
+#                             chose, or whatever the capability shift landed on).
+#                             -1 steps down one rung, +1 steps up one, and 0 —
+#                             or the key absent — reproduces the pre-stepping
+#                             answer exactly, reason list included.
+#
+#                             A count rather than a level name BECAUSE THE
+#                             LADDERS ARE NOT PORTABLE: claude runs
+#                             low/medium/high/xhigh/max, codex stops at xhigh,
+#                             copilot starts below both at `none`. One notch
+#                             down means the same thing on all three; `medium`
+#                             does not. A row that declares no `effort:` at all
+#                             is NOT stepped — it runs at the provider's own
+#                             default and there is no rung to count from — and
+#                             the answer says so rather than guessing.
+#
+#                             A step clamps at the ladder's ends and at the
+#                             row's own `min_effort:` floor, and says which.
+#
+#   effort_step_capabilities  the capabilities this mode's step applies to.
+#                             EMPTY MEANS EVERY CAPABILITY, which is not what
+#                             ships: thinking time is the expensive part of a
+#                             frontier tier and a small part of a cheap one, so
+#                             `cheap` and `balanced` are left alone — a scout on
+#                             Sonnet at `medium` is mostly a worse scout rather
+#                             than a cheaper one.
+#
+# WHEN A STEP FIRES, and it is not only in the two blocks below. CONSERVE and
+# SPEND_DOWN use their own `effort_step`. A NORMAL decision uses conserve's step
+# when the provider is in the LOWER overspend band — past
+# `thresholds.pacing.block_spend_down_at_ratio` but not yet at
+# `conserve_at_ratio`. That band already blocks a spend-down and did nothing
+# else; it now also trims one notch, and it still does NOT move the capability.
+# Being slightly ahead of the curve is a reason to spend a little less, not a
+# reason to change which model does the work. See
+# docs/limit-aware-routing.md.
 mode_shifts:
   # "scouting -> cheaper tier; mechanical work -> cheap; routine fixes ->
   # balanced; browser validation -> balanced/cheap; frontier for implementation
@@ -541,6 +621,13 @@ mode_shifts:
     scout: cheap
     validator: cheap
     judge: deep_reviewer
+    # One rung down on whatever ladder the answer lands on, for the four tiers
+    # where reasoning is the expensive part. This is the move that had no
+    # spelling before: Sol at `high` becomes Sol at `medium` — the same model,
+    # thinking less — instead of the work dropping to a different model or
+    # nothing happening at all.
+    effort_step: -1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
   # "balanced scout -> frontier scout; balanced reviewer -> frontier reviewer;
   # frontier high -> frontier max on difficult work." Unused subscription
   # capacity has no value after the reset, so near one it buys assurance.
@@ -567,6 +654,14 @@ mode_shifts:
     fixer: frontier
     complex_fixer: frontier_max
     diagnostician: frontier_max
+    # The mirror of conserve's step, with ONE PROMOTION PER DECISION as the
+    # rule: a role this block has ALREADY moved up a capability tier keeps that
+    # tier's own declared effort rather than being raised a second time. The
+    # roles above are exactly the promoted ones, so in practice this step is
+    # what reaches a role the table leaves where it is — and it is capped at the
+    # landing row's declared effort whenever the capability moved.
+    effort_step: 1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
 
 # ---------------------------------------------------------------------------
 # MODES — the manual override. `auto` lets the thresholds above decide.

@@ -51,6 +51,16 @@ type Assignment struct {
 	// interchangeable (claude low..max, codex minimal..xhigh), which is why this
 	// is validated against the live catalog rather than against a list here.
 	Effort string `yaml:"effort,omitempty" json:"effort,omitempty"`
+	// MinEffort is the FLOOR the mode's effort step may not push this row
+	// below — a review capability that is only a review at `high` says so here
+	// rather than hoping nothing ever trims it.
+	//
+	// It is a name from the PROVIDER's own ladder (see effort.go), validated at
+	// load against that ladder, and it is honoured on an ALTERNATIVE as well as
+	// on a primary: a fallover takes the alternative's own effort, so a floor
+	// written only on the primary would stop binding at the exact moment the
+	// answer moved. Empty means the ladder's own floor is the only floor.
+	MinEffort string `yaml:"min_effort,omitempty" json:"minEffort,omitempty"`
 	// Fresh says the worker must not inherit the previous agent's conversation.
 	// It is what makes a same-family reviewer an actual reviewer.
 	Fresh bool `yaml:"fresh,omitempty" json:"fresh,omitempty"`
@@ -209,6 +219,63 @@ type Modes struct {
 	Providers map[string]string `yaml:"providers" json:"providers"`
 }
 
+// ModeShift is everything one routing mode does, and it is TWO knobs on one
+// axis rather than one: which capability a role gets, and how hard the model it
+// lands on is asked to think.
+//
+// The role table is INLINE — `conserve: {scout: cheap}` is still written
+// exactly that way — so every routing.yaml written before effort stepping
+// existed parses unchanged, and the two reserved keys sit beside the roles
+// rather than under a nested block nobody would find.
+//
+// WHY EFFORT IS A SEPARATE MOVE FROM CAPABILITY. A capability shift changes
+// which MODEL runs the work; an effort step changes how much THINKING that
+// model is asked to do before it answers. They cost differently and they
+// degrade differently: dropping Sol to Terra changes the answer's character,
+// while dropping Sol from `high` to `medium` trims reasoning tokens off the same
+// model. The gentler move is the right first response to a window that is merely
+// running ahead of its curve, and the harsher one is still there for a window
+// that is actually scarce. See docs/limit-aware-routing.md.
+type ModeShift struct {
+	// Roles is role -> capability: the shift table this block has always been.
+	Roles map[string]string `yaml:",inline" json:"roles,omitempty"`
+
+	// EffortStep is a NOTCH COUNT on the provider's own effort ladder, applied
+	// to the assignment the answer actually lands on. Negative steps down
+	// (conserve ships -1), positive steps up (spend_down ships +1), and 0 —
+	// the absent value — reproduces the pre-stepping answer exactly, reasons
+	// included.
+	//
+	// It is a notch count rather than a level name because THE LADDERS ARE NOT
+	// PORTABLE: claude runs low..max and codex stops at xhigh, so `medium` means
+	// a different distance from the top on each. One step down is the same
+	// instruction on both.
+	EffortStep int `yaml:"effort_step,omitempty" json:"effortStep,omitempty"`
+
+	// EffortStepCapabilities is the allow-list of capabilities this mode's step
+	// applies to. Empty means EVERY capability, which is not what ships: the
+	// default names the four tiers where thinking time is the expensive part
+	// (frontier, frontier_max, deep_reviewer, frontier_plus), because a scout on
+	// Sonnet at `medium` is a worse scout rather than a cheaper one — the
+	// saving on a cheap tier is small and the loss is not.
+	EffortStepCapabilities []string `yaml:"effort_step_capabilities,omitempty" json:"effortStepCapabilities,omitempty"`
+}
+
+// StepsCapability reports whether this mode's effort step applies to a
+// capability. An empty allow-list means every capability.
+func (s ModeShift) StepsCapability(capability string) bool {
+	capability = strings.ToLower(strings.TrimSpace(capability))
+	if len(s.EffortStepCapabilities) == 0 {
+		return true
+	}
+	for _, c := range s.EffortStepCapabilities {
+		if strings.ToLower(strings.TrimSpace(c)) == capability {
+			return true
+		}
+	}
+	return false
+}
+
 // Ceiling is the most a spawn started somewhere may be given.
 //
 // It can only LOWER what a caller asked for; it never assigns anything. Loading
@@ -291,8 +358,8 @@ type Matrix struct {
 	// about the same capability — CONSERVE moves a scout down from `balanced`
 	// while leaving the fixer on it, so a capability->capability map would move
 	// both and be wrong about one of them.
-	ModeShifts map[string]map[string]string `yaml:"mode_shifts" json:"modeShifts"`
-	Ceilings   map[string]Ceiling           `yaml:"ceilings" json:"ceilings"`
+	ModeShifts map[string]ModeShift `yaml:"mode_shifts" json:"modeShifts"`
+	Ceilings   map[string]Ceiling   `yaml:"ceilings" json:"ceilings"`
 
 	// Source is the on-disk file merged in, or "" when only the compiled-in
 	// defaults are live (no file, or a file that could not be read or parsed).
@@ -437,15 +504,39 @@ func (m *Matrix) ModeFor(provider string) string {
 // `roles:` table IS the normal answer, and restating it under a mode would be
 // two places to keep in agreement.
 func (m *Matrix) ShiftFor(mode, role string) (string, bool) {
-	byRole, ok := m.ModeShifts[strings.ToLower(strings.TrimSpace(mode))]
+	shift, ok := m.ModeShifts[strings.ToLower(strings.TrimSpace(mode))]
 	if !ok {
 		return "", false
 	}
-	c, ok := byRole[role]
+	c, ok := shift.Roles[role]
 	if !ok || strings.TrimSpace(c) == "" {
 		return "", false
 	}
 	return c, true
+}
+
+// RoutableProviders is every provider this matrix can actually send work to —
+// the primaries and the alternatives of every profile, deduplicated and sorted.
+//
+// It exists so the live availability probe asks about the providers a decision
+// could land on rather than about the whole `providers:` vocabulary: booting a
+// CLI to find out whether a provider nothing routes to is installed is a cost
+// with no reader.
+func (m *Matrix) RoutableProviders() []string {
+	if m == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, prof := range m.Profiles {
+		for _, a := range prof {
+			for _, p := range append([]Assignment{a}, a.Alternatives...) {
+				if id := normalizeProvider(p.Provider); id != "" {
+					seen[id] = true
+				}
+			}
+		}
+	}
+	return sortedKeys(seen)
 }
 
 // ProviderPolicy returns what is known about a provider's capacity.

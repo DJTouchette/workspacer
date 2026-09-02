@@ -162,6 +162,13 @@ What comes back, and what to do with it:
   reported, or nothing readable) changes nothing. Quote pace.because when you
   explain a conserve to the user — "we are 1.6x over the five-hour curve" is the
   sentence, and inventing your own number for it is not.
+- effort, and effortStep when a routing mode moved it. A mode has two levers,
+  not one: it can move the role to a different CAPABILITY (a different model),
+  and it can step the effort one notch along that provider's own reasoning
+  ladder — the SAME model, thinking less, or more. effortStep names the effort
+  the matrix declares, the effort the answer runs at, and one sentence saying
+  why. It is absent when nothing stepped. Pass effort to spawn_agent exactly as
+  given; do not re-derive it from the model.
 - eligible:false means the matrix found nothing spawnable for that role under
   that constraint: a provider held out of service, no profile pairing that
   capability with a provider you asked for, or a ceiling whose configured value
@@ -180,7 +187,11 @@ What comes back, and what to do with it:
   which PROVIDER serves it, when the primary's own allowance is red, its
   provider is conserving, or its row is switched off. capability plus
   baseCapability tell you the first happened; fellOverFrom tells you the second
-  did.
+  did. A fallover can also be triggered by LIVE AVAILABILITY: when the host has
+  just asked a provider's CLI what it can launch and the answer was nothing, the
+  work goes to the next candidate and the reason names the provider that
+  could not be started. A provider the host could not ASK about is unknown and
+  is used as normal — "we could not check" is never read as "it is down".
 ROUTING IS NOT AUTOMATIC, AND ASKING IS YOUR JOB. select_model is a read-only
 question and nothing asks it for you: the host does not consult routing when it
 spawns, so a dispatch that never asked carries no decision and appears nowhere in

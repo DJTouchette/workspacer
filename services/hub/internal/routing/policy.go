@@ -627,6 +627,19 @@ type Decision struct {
 	// the fallover was allowed or refused on.
 	ShiftMode Mode `json:"shiftMode,omitempty"`
 
+	// EffortStep is what a mode's `effort_step` did to this answer: the effort
+	// the landing row declares, the effort it actually runs at, and the one
+	// sentence explaining both. ADDITIVE and `omitempty` — present only when a
+	// step was ARMED, so a matrix with `effort_step: 0` (or one written before
+	// stepping existed) produces exactly the answer it always did, this field
+	// absent and its sentence not in the reason list.
+	//
+	// From == To is a real and useful state: the step was armed and then
+	// clamped by the ladder, held by the row's `min_effort`, or refused because
+	// the row declares no effort at all. "We looked and did not move" is a
+	// different fact from "we never looked".
+	EffortStep *EffortStep `json:"effortStep,omitempty"`
+
 	// FellOverFrom is the capability's PRIMARY pairing, present only when this
 	// answer is one of that capability's `alternatives:` instead — because the
 	// primary could not be used, or because an independent family was asked for
@@ -696,7 +709,14 @@ type MatrixInfo struct {
 // round produces a mode computed for one provider and applied to another, which
 // is the incoherence the harness's copilot case would not catch and a real
 // fleet would.
-func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req Request) Decision {
+//
+// `avail` is the LIVE launchability reading — which providers answered the model
+// catalog just now, and which said they serve nothing. It is an ARGUMENT for the
+// same reason `snap` and `now` are: this function does no I/O, so a fact about
+// the world outside arrives from the caller or does not arrive at all. A nil map,
+// or a provider missing from it, is UNKNOWN and fails open — see
+// ProviderAvailability.
+func Select(m *Matrix, snap limits.Snapshot, snapErr error, avail ProviderAvailability, now time.Time, req Request) Decision {
 	d := Decision{
 		TicketID:  strings.TrimSpace(req.TicketID),
 		Role:      strings.TrimSpace(req.Role),
@@ -792,6 +812,18 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	// move is refused if that provider is itself conserving: a shift onto a red
 	// provider because a green one was constrained is worse than not shifting,
 	// and it is worse in exactly the direction this feature exists to prevent.
+	//
+	// 6b. THE EFFORT STEP IS ARMED HERE, BEFORE THE CAPABILITY MOVES, and that
+	//     order is the feature rather than an implementation detail. The two
+	//     moves answer to different bands of the same evidence: the lower
+	//     overspend band (past block_spend_down_at_ratio, not yet at
+	//     conserve_at_ratio) trims thinking time and MUST NOT move the
+	//     capability, while the higher band conserves and moves it as it always
+	//     did. Arming after the shift would make the gentle move unreachable
+	//     without the harsh one. It is APPLIED at step 8c, to whatever
+	//     assignment the shift, the ceiling and the walk finally landed on.
+	intent := armEffortStep(m, d.Mode, d.Capacity)
+
 	if shifted, ok := m.ShiftFor(string(d.Mode), d.Role); ok && shifted != d.Capability {
 		d.applyShift(m, snap, snapErr, now, req, profile, subject, constrained, shifted)
 	}
@@ -870,7 +902,7 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 		}
 	}
 	if !constrained {
-		a = d.walkAlternatives(m, snap, snapErr, now, req, from, a)
+		a = d.walkAlternatives(m, snap, snapErr, avail, now, req, from, a)
 	}
 	if !a.IsEnabled() {
 		d.Reason = append(d.Reason, fmt.Sprintf("profile %s has capability %s explicitly disabled (enabled: false)", from, d.Capability))
@@ -887,6 +919,13 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 
 	d.Provider, d.Model, d.Effort, d.Fresh = a.Provider, a.Model, a.Effort, a.Fresh
 	d.Eligible = true
+
+	// 8c. THE EFFORT STEP, applied to the row that actually won — the primary,
+	//     the alternative a fallover chose, or whatever the mode shift landed
+	//     on. Each carries its own effort and its own `min_effort`, and a step
+	//     computed against the row the answer did NOT take would be a trim
+	//     nobody could reproduce from the file.
+	applyEffortStep(m, &d, a, intent)
 
 	prev := normalizeProvider(req.PreviousProvider)
 	d.IndependentFamily = prev == "" || prev != d.Provider

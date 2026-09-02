@@ -677,7 +677,14 @@ func main() {
 	usage := newUsageWatcher(*claudemonURL)
 	go usage.run(ctx, quiescence.DefaultSampleInterval)
 
-	routingSvc := routing.New(*routingFile, newRoutingCatalog(*claudemonURL, self))
+	// One catalog, two readers: routing.Service validates the matrix's model ids
+	// against it at load, and routing.select reads its LIVE availability
+	// projection before every decision. Held in a variable rather than
+	// constructed inline because those two readers must see the same probe
+	// answers — a second catalog would boot the same CLIs again and could
+	// disagree with the first about whether a provider is there.
+	routingCat := newRoutingCatalog(*claudemonURL, self)
+	routingSvc := routing.New(*routingFile, routingCat)
 	go routingSvc.Run(ctx, routing.DefaultTickEvery)
 
 	// The append-only audit trail, beside routing.yaml in the hub's own 0600
@@ -689,7 +696,7 @@ func main() {
 	// said it did not want.
 	routingLog := routing.NewDecisionLog(routing.DecisionLogPathFor(*routingFile), routing.DefaultDecisionLogMaxBytes)
 
-	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, b.Publish, routingLog))
+	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, routingCat, b.Publish, routingLog))
 
 	// AND THIS IS WHERE THE ANSWER STOPS BEING ADVICE. Until this line, a
 	// manager could ask routing.select, ignore the answer, and spawn whatever it

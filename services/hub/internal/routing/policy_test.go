@@ -376,14 +376,14 @@ func TestSelectResolvesRolesAndHonoursTheProviderConstraint(t *testing.T) {
 	})
 
 	t.Run("a role resolves to the active profile's model", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, healthy, nil, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible || d.Provider != "codex" || d.Model != "gpt-5.6-terra" || d.Capability != "balanced" {
 			t.Fatalf("got %+v", d)
 		}
 	})
 
 	t.Run("a provider the matrix cannot serve is REFUSED, not substituted", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{Role: "scout", Provider: "copilot", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, healthy, nil, nil, policyNow, Request{Role: "scout", Provider: "copilot", ForecastDemandBeforeResetPct: &zero})
 		if d.Eligible {
 			t.Fatalf("copilot answered with %s %s — §32 is explicit that critical work must never silently land on a provider the caller did not ask for", d.Provider, d.Model)
 		}
@@ -396,7 +396,7 @@ func TestSelectResolvesRolesAndHonoursTheProviderConstraint(t *testing.T) {
 	})
 
 	t.Run("a provider another profile serves is taken from that profile", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, healthy, nil, nil, policyNow, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible || d.Provider != "claude" {
 			t.Fatalf("got %+v", d)
 		}
@@ -406,14 +406,14 @@ func TestSelectResolvesRolesAndHonoursTheProviderConstraint(t *testing.T) {
 	})
 
 	t.Run("the spec's vendor names are accepted on the wire", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{Role: "scout", Provider: "openai", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, healthy, nil, nil, policyNow, Request{Role: "scout", Provider: "openai", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible || d.Provider != "codex" {
 			t.Fatalf("openai did not normalize to codex: %+v", d)
 		}
 	})
 
 	t.Run("a cross-family reviewer is independent, and says so", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{
+		d := Select(m, healthy, nil, nil, policyNow, Request{
 			Role: "reviewer", PreviousProvider: "codex", RequireIndependentFamily: true,
 			ForecastDemandBeforeResetPct: &zero,
 		})
@@ -426,7 +426,7 @@ func TestSelectResolvesRolesAndHonoursTheProviderConstraint(t *testing.T) {
 	})
 
 	t.Run("independence that cannot be arranged is REPORTED, never silent", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{
+		d := Select(m, healthy, nil, nil, policyNow, Request{
 			Role: "reviewer", Profile: "codex_only", Provider: "codex",
 			PreviousProvider: "codex", RequireIndependentFamily: true,
 			ForecastDemandBeforeResetPct: &zero,
@@ -447,14 +447,14 @@ func TestSelectResolvesRolesAndHonoursTheProviderConstraint(t *testing.T) {
 	})
 
 	t.Run("an unknown role is refused rather than guessed", func(t *testing.T) {
-		d := Select(m, healthy, nil, policyNow, Request{Role: "wizard", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, healthy, nil, nil, policyNow, Request{Role: "wizard", ForecastDemandBeforeResetPct: &zero})
 		if d.Eligible {
 			t.Fatalf("an unknown role produced a model: %+v", d)
 		}
 	})
 
 	t.Run("a usage report that cannot be read still answers, with UNKNOWN capacity", func(t *testing.T) {
-		d := Select(m, limits.Snapshot{}, fmt.Errorf("connection refused"), policyNow, Request{
+		d := Select(m, limits.Snapshot{}, fmt.Errorf("connection refused"), nil, policyNow, Request{
 			Role: "scout", ForecastDemandBeforeResetPct: &zero,
 		})
 		if !d.Eligible || d.Model == "" {
@@ -482,7 +482,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 		"five_hour": {used: 12, resets: 75 * time.Minute},
 		"seven_day": {used: 11, resets: 96 * time.Hour},
 	})
-	d := Select(m, spendDown, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	d := Select(m, spendDown, nil, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 	if d.Mode != ModeSpendDown {
 		t.Fatalf("mode = %q, want spend_down — the rest of this test proves nothing", d.Mode)
 	}
@@ -497,7 +497,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 		"five_hour": {used: 95, resets: 2 * time.Hour},
 		"seven_day": {used: 11, resets: 96 * time.Hour},
 	})
-	d = Select(m, conserve, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	d = Select(m, conserve, nil, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 	if d.Mode != ModeConserve {
 		t.Fatalf("mode = %q, want conserve", d.Mode)
 	}
@@ -506,7 +506,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 	}
 	// §12 is explicit that implementation STAYS frontier while scouting drops.
 	// A capability->capability map would have moved both.
-	impl := Select(m, conserve, nil, policyNow, Request{Role: "implementer", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	impl := Select(m, conserve, nil, nil, policyNow, Request{Role: "implementer", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 	if impl.Capability != "frontier" {
 		t.Errorf("the implementer moved to %q under conserve — §12 keeps frontier for implementation and hard diagnosis", impl.Capability)
 	}
@@ -518,7 +518,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 	// no `conserve.fixer` entry any more, and its absence is what keeps the
 	// role on `balanced`. Demoting the role that repairs broken work is also
 	// the demotion most likely to cost more than it saves.
-	fix := Select(m, conserve, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	fix := Select(m, conserve, nil, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 	if fix.Mode != ModeConserve {
 		t.Fatalf("the fixer case is not in conserve (%q) — it proves nothing", fix.Mode)
 	}
@@ -538,7 +538,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := Select(demoted, conserve, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero}); got.Capability != "cheap" {
+	if got := Select(demoted, conserve, nil, nil, policyNow, Request{Role: "fixer", Provider: "codex", ForecastDemandBeforeResetPct: &zero}); got.Capability != "cheap" {
 		t.Errorf("a user matrix that DOES demote the fixer was ignored (capability %q) — the default moved, not the mechanism", got.Capability)
 	}
 
@@ -547,7 +547,7 @@ func TestTheModeMovesTheCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	d = Select(tuned, conserve, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+	d = Select(tuned, conserve, nil, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 	if d.Capability != "frontier" {
 		t.Errorf("an edited mode_shifts block did not reach the selection: capability = %q", d.Capability)
 	}
@@ -569,7 +569,7 @@ func TestADecisionAlwaysExplainsItself(t *testing.T) {
 		{"an unknown profile", Request{Role: "scout", Profile: "does-not-exist"}, limits.Snapshot{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := Select(m, tc.snap, nil, policyNow, tc.req)
+			d := Select(m, tc.snap, nil, nil, policyNow, tc.req)
 			if len(d.Reason) == 0 {
 				t.Fatal("no reasons at all — a routing system nobody can explain will eventually seem haunted")
 			}
@@ -588,7 +588,7 @@ func TestADecisionAlwaysExplainsItself(t *testing.T) {
 // TestNoNilMatrixPanic — a hub whose matrix failed to load at all must answer,
 // not crash the bus connection.
 func TestNoNilMatrixPanic(t *testing.T) {
-	d := Select(nil, limits.Snapshot{}, nil, policyNow, Request{Role: "scout"})
+	d := Select(nil, limits.Snapshot{}, nil, nil, policyNow, Request{Role: "scout"})
 	if d.Eligible || len(d.Reason) == 0 {
 		t.Fatalf("got %+v", d)
 	}
@@ -658,7 +658,7 @@ func TestADisabledProviderIsNotSelected(t *testing.T) {
 	t.Run("the role's own provider is refused, not substituted", func(t *testing.T) {
 		// scout -> balanced -> codex under `mixed`, with no provider named by
 		// the caller at all.
-		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
+		d := Select(off(t, "codex"), healthy, nil, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
 		if d.Eligible {
 			t.Fatalf("a disabled codex still answered with %s %s", d.Provider, d.Model)
 		}
@@ -671,7 +671,7 @@ func TestADisabledProviderIsNotSelected(t *testing.T) {
 	})
 
 	t.Run("a provider asked about by name is refused", func(t *testing.T) {
-		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+		d := Select(off(t, "codex"), healthy, nil, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 		if d.Eligible {
 			t.Fatalf("got %+v", d)
 		}
@@ -682,7 +682,7 @@ func TestADisabledProviderIsNotSelected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		if d := Select(m, healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero}); d.Eligible {
+		if d := Select(m, healthy, nil, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero}); d.Eligible {
 			t.Errorf("providers.openai.enabled: false did not take codex out of service: %+v", d)
 		}
 	})
@@ -691,7 +691,7 @@ func TestADisabledProviderIsNotSelected(t *testing.T) {
 		// implementer -> frontier -> claude under `anthropic_only`, which
 		// assignmentFor will reach for when the caller names claude. A disabled
 		// provider must not be reachable through a cross-profile search either.
-		d := Select(off(t, "claude"), healthy, nil, policyNow, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero})
+		d := Select(off(t, "claude"), healthy, nil, nil, policyNow, Request{Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero})
 		if d.Eligible {
 			t.Fatalf("a disabled claude was still reachable through another profile: %s %s", d.Provider, d.Model)
 		}
@@ -700,14 +700,14 @@ func TestADisabledProviderIsNotSelected(t *testing.T) {
 	t.Run("disabling one provider does not disable the others", func(t *testing.T) {
 		// The control. A refusal that refused everything would pass every
 		// assertion above and be a far worse bug than the one being fixed.
-		d := Select(off(t, "codex"), healthy, nil, policyNow, Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero})
+		d := Select(off(t, "codex"), healthy, nil, nil, policyNow, Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible || d.Provider != "claude" || d.Model != "sonnet" {
 			t.Fatalf("disabling codex took claude down with it: %+v", d)
 		}
 	})
 
 	t.Run("the shipped matrix disables nothing", func(t *testing.T) {
-		d := Select(shipped(t), healthy, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
+		d := Select(shipped(t), healthy, nil, nil, policyNow, Request{Role: "scout", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible {
 			t.Fatalf("the shipped defaults refuse an ordinary scout: %+v", d)
 		}
@@ -745,7 +745,7 @@ func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
 
 	t.Run("it applies when the landing provider can take the work, and says whose capacity said so", func(t *testing.T) {
 		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeHealthy})
-		d := Select(crossing, snap, nil, policyNow, scout)
+		d := Select(crossing, snap, nil, nil, policyNow, scout)
 		if d.Mode != ModeSpendDown {
 			t.Fatalf("mode = %q, want spend_down — the rest proves nothing", d.Mode)
 		}
@@ -768,7 +768,7 @@ func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
 
 	t.Run("it is REFUSED when the landing provider is itself conserving", func(t *testing.T) {
 		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeRed})
-		d := Select(crossing, snap, nil, policyNow, scout)
+		d := Select(crossing, snap, nil, nil, policyNow, scout)
 		if d.Mode != ModeSpendDown || d.ModeProvider != "codex" {
 			t.Fatalf("mode %q from %q, want spend_down from codex", d.Mode, d.ModeProvider)
 		}
@@ -790,7 +790,7 @@ func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
 			t.Fatalf("load: %v", err)
 		}
 		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown, "claude": claudeHealthy})
-		d := Select(m, snap, nil, policyNow, scout)
+		d := Select(m, snap, nil, nil, policyNow, scout)
 		if !d.Eligible || d.Provider != "codex" || d.Capability != "balanced" {
 			t.Fatalf("a disabled claude should cost the scout its promotion, not its assignment: %+v", d)
 		}
@@ -804,7 +804,7 @@ func TestACrossProviderShiftIsCheckedAgainstTheProviderItLandsOn(t *testing.T) {
 		// codex under `mixed`. Nothing crosses, so nothing is re-read — and
 		// ShiftCapacity staying nil is what says so.
 		snap := snapshotOfProviders(t, "", map[string]map[string]winSpec{"codex": codexSpendsDown})
-		d := Select(shipped(t), snap, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
+		d := Select(shipped(t), snap, nil, nil, policyNow, Request{Role: "scout", Provider: "codex", ForecastDemandBeforeResetPct: &zero})
 		if d.Capability != "frontier" || d.Provider != "codex" {
 			t.Fatalf("got %q on %s", d.Capability, d.Provider)
 		}
@@ -848,7 +848,7 @@ func TestManualModesFromTheFileReachTheDecision(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		return Select(m, healthy, nil, policyNow, Request{Role: "scout", Provider: "codex"})
+		return Select(m, healthy, nil, nil, policyNow, Request{Role: "scout", Provider: "codex"})
 	}
 
 	control := sel(t, "")
@@ -940,7 +940,7 @@ func TestAnUnusablePrimaryFallsOverToItsAlternative(t *testing.T) {
 	reviewer := Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero}
 
 	t.Run("a RED primary falls over to the first usable alternative", func(t *testing.T) {
-		d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
 		if !d.Eligible {
 			t.Fatalf("a red claude cost the reviewer its assignment entirely: %+v", d)
 		}
@@ -976,7 +976,7 @@ func TestAnUnusablePrimaryFallsOverToItsAlternative(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, reviewer)
 		if d.Provider != "codex" {
 			t.Fatalf("a conserving claude kept the reviewer: %+v", d)
 		}
@@ -998,7 +998,7 @@ func TestAnUnusablePrimaryFallsOverToItsAlternative(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, Request{
 			Role: "deep_reviewer", ForecastDemandBeforeResetPct: &zero,
 		})
 		if d.Eligible {
@@ -1028,7 +1028,7 @@ profiles:
 		if !hasIssueAt(m.Issues, "profiles.mixed.reviewer.alternatives[0]") {
 			t.Fatalf("the bad row was not flagged at load, so this case proves nothing: %v", m.Issues)
 		}
-		d := Select(m, altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		d := Select(m, altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
 		if d.Provider != "copilot" {
 			t.Fatalf("got %s %s, want the SECOND alternative — the first is a row the loader condemned", d.Provider, d.Model)
 		}
@@ -1039,7 +1039,7 @@ profiles:
 	})
 
 	t.Run("when NOTHING is usable the primary stands, and says so", func(t *testing.T) {
-		d := Select(shipped(t), altSnapshot(t, altRed, altRed), nil, policyNow, reviewer)
+		d := Select(shipped(t), altSnapshot(t, altRed, altRed), nil, nil, policyNow, reviewer)
 		if !d.Eligible || d.Provider != "claude" || d.Model != "sonnet" {
 			t.Fatalf("got %+v, want the primary — every candidate being unusable is exactly the state routing was in before this feature, and it must answer identically", d)
 		}
@@ -1056,7 +1056,7 @@ profiles:
 	})
 
 	t.Run("a healthy primary answers exactly as it did before this feature", func(t *testing.T) {
-		d := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		d := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, reviewer)
 		if d.Provider != "claude" || d.Model != "sonnet" || d.FellOverFrom != nil {
 			t.Fatalf("got %+v, want the primary untouched", d)
 		}
@@ -1091,7 +1091,7 @@ profiles:
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, reviewer)
 		if !d.Eligible || d.Provider != "codex" || d.Model != "gpt-5.6-terra" {
 			t.Fatalf("got %+v, want the codex alternative — a disabled ENTRY on a healthy provider must fall over, not refuse", d)
 		}
@@ -1123,7 +1123,7 @@ profiles:
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		d := Select(m, altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		d := Select(m, altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
 		if !d.Eligible || d.Provider != "codex" || d.Model != "gpt-5.6-luna" {
 			t.Fatalf("got %+v, want the SECOND alternative — the first is disabled and must be skipped, not selected and then refused", d)
 		}
@@ -1172,7 +1172,7 @@ providers:
 		snap := snapshotOfProviders(t, "acct", map[string]map[string]winSpec{
 			"codex": altRed, "copilot": altGreen,
 		})
-		d := Select(m, snap, nil, policyNow, Request{Role: "fixer", ForecastDemandBeforeResetPct: &zero})
+		d := Select(m, snap, nil, nil, policyNow, Request{Role: "fixer", ForecastDemandBeforeResetPct: &zero})
 		if !d.Eligible {
 			t.Fatalf("a disabled-provider alternative was selected and then refused instead of skipped: %+v", d)
 		}
@@ -1206,7 +1206,7 @@ func TestAFalloverReportsTheCandidatesOwnCapacityNotThePrimarys(t *testing.T) {
 	zero := 0.0
 	reviewer := Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero}
 
-	d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+	d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
 	if !d.Eligible || d.Provider != "codex" {
 		t.Fatalf("got %+v, want the codex alternative — the rest of this test proves nothing otherwise", d)
 	}
@@ -1238,7 +1238,7 @@ func TestAFalloverReportsTheCandidatesOwnCapacityNotThePrimarys(t *testing.T) {
 	// Capacity, so nothing downstream of this fix changes for the ordinary
 	// case — see TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore for
 	// the same guarantee over the whole Decision.
-	healthy := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+	healthy := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, reviewer)
 	if healthy.ShiftCapacity != nil {
 		t.Errorf("ShiftCapacity is set on a decision that never shifted or fell over: %+v", healthy.ShiftCapacity)
 	}
@@ -1258,7 +1258,7 @@ func TestAPinnedProviderIsServedFromItsOwnProfileFirst(t *testing.T) {
 	zero := 0.0
 	snap := altSnapshot(t, altGreen, altGreen)
 
-	d := Select(shipped(t), snap, nil, policyNow, Request{
+	d := Select(shipped(t), snap, nil, nil, policyNow, Request{
 		Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero,
 	})
 	if !d.Eligible || d.Provider != "claude" || d.Model != "opus" || d.Effort != "high" {
@@ -1281,7 +1281,7 @@ profiles:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	d = Select(elsewhere, snap, nil, policyNow, Request{
+	d = Select(elsewhere, snap, nil, nil, policyNow, Request{
 		Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero,
 	})
 	if !d.Eligible || d.Provider != "claude" {
@@ -1302,7 +1302,7 @@ func TestIndependentFamilyReordersTheWalkRatherThanRefusing(t *testing.T) {
 
 	// The control: the same request WITHOUT the preference takes the primary,
 	// which happens to be the previous agent's own family.
-	control := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+	control := Select(m, altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, Request{
 		Role: "reviewer", PreviousProvider: "claude", ForecastDemandBeforeResetPct: &zero,
 	})
 	if control.Provider != "claude" {
@@ -1313,7 +1313,7 @@ func TestIndependentFamilyReordersTheWalkRatherThanRefusing(t *testing.T) {
 	}
 
 	t.Run("the preference reorders the candidates and is satisfied", func(t *testing.T) {
-		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, nil, policyNow, Request{
 			Role: "reviewer", PreviousProvider: "claude", RequireIndependentFamily: true,
 			ForecastDemandBeforeResetPct: &zero,
 		})
@@ -1335,7 +1335,7 @@ func TestIndependentFamilyReordersTheWalkRatherThanRefusing(t *testing.T) {
 		// The independent candidate is tried FIRST and is red, so the
 		// same-family primary is taken. That ordering is the whole design: the
 		// preference is real, and it is not absolute.
-		d := Select(m, altSnapshot(t, altGreen, altRed), nil, policyNow, Request{
+		d := Select(m, altSnapshot(t, altGreen, altRed), nil, nil, policyNow, Request{
 			Role: "reviewer", PreviousProvider: "claude", RequireIndependentFamily: true,
 			ForecastDemandBeforeResetPct: &zero,
 		})
@@ -1401,11 +1401,11 @@ func TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore(t *testing.T) {
 		// outcome.
 		{Role: "reviewer", Profile: "anthropic_only", PreviousProvider: "claude", RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero},
 	} {
-		a, err := json.Marshal(Select(withAlts, snap, nil, policyNow, req))
+		a, err := json.Marshal(Select(withAlts, snap, nil, nil, policyNow, req))
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := json.Marshal(Select(stripped, snap, nil, policyNow, req))
+		b, err := json.Marshal(Select(stripped, snap, nil, nil, policyNow, req))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1423,7 +1423,7 @@ func TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore(t *testing.T) {
 	// comparison above cannot catch (both sides hit the identical,
 	// unconditional suffix, so they still agree with EACH OTHER even though
 	// neither matches the OLD wording) — this checks the wording directly.
-	d := Select(withAlts, snap, nil, policyNow, Request{
+	d := Select(withAlts, snap, nil, nil, policyNow, Request{
 		Role: "reviewer", Profile: "anthropic_only", PreviousProvider: "claude",
 		RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero,
 	})
@@ -1467,10 +1467,80 @@ profiles:
 	if hasIssueAt(m.Issues, "profiles.mixed.frontier.alternatives[0]") {
 		t.Fatalf("the folded row was still flagged as an unknown provider — the walk would then refuse to route to it: %v", m.Issues)
 	}
-	d := Select(m, altSnapshot(t, altGreen, altRed), nil, policyNow, Request{
+	d := Select(m, altSnapshot(t, altGreen, altRed), nil, nil, policyNow, Request{
 		Role: "implementer", ForecastDemandBeforeResetPct: &zero,
 	})
 	if !d.Eligible || d.Provider != "claude" || d.Model != "opus" {
 		t.Fatalf("got %+v — a spec-spelled alternative was parsed and never reached a decision", d)
+	}
+}
+
+// TestAModeShiftAndAFalloverComposeOnOneDecision is the path a review of the
+// alternatives slice flagged as untested: the two cross-provider mechanisms
+// running one on top of the other, in one answer.
+//
+// They are easy to confuse and they compose in a fixed order — the mode moves
+// the CAPABILITY (step 7), and the walk then chooses which PROVIDER serves the
+// capability it landed on (step 8b) — so the failure mode is a decision whose
+// fields describe two different providers: the one the shift picked and the one
+// the walk actually chose. Everything a caller reads to learn "who is running
+// this" must describe the FINAL landing.
+//
+// The fixture: a conserving claude subject, a shift that crosses onto codex,
+// and codex's own entry for the landed capability switched off, so the walk has
+// to run on top of the shift and end somewhere neither of the first two chose.
+func TestAModeShiftAndAFalloverComposeOnOneDecision(t *testing.T) {
+	zero := 0.0
+	m, err := Load("test.yaml", []byte(`
+mode_shifts:
+  conserve:
+    judge: cheap
+profiles:
+  mixed:
+    cheap:
+      enabled: false
+      alternatives:
+        - { provider: copilot, model: copilot-frontier }
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	d := Select(m, altSnapshot(t, altRed, altGreen), nil, nil, policyNow, Request{
+		Role: "judge", ForecastDemandBeforeResetPct: &zero,
+	})
+	if !d.Eligible {
+		t.Fatalf("the composed path lost the assignment entirely: %v", d.Reason)
+	}
+	// 1. The mode came from the SUBJECT — claude, whose allowance is red.
+	if d.ModeProvider != "claude" || d.Mode != ModeConserve || d.Capacity.Provider != "claude" || d.Capacity.Health != limits.HealthRed {
+		t.Fatalf("mode %s from %s, capacity %+v — this case needs a conserving claude subject to mean anything", d.Mode, d.ModeProvider, d.Capacity)
+	}
+	// 2. The SHIFT moved the capability, and it crossed onto codex.
+	if d.BaseCapability != "frontier_plus" || d.Capability != "cheap" {
+		t.Fatalf("capability %q (base %q) — the mode shift did not apply, so the walk below is not running on top of anything", d.Capability, d.BaseCapability)
+	}
+	// 3. The WALK then ran on the capability the shift landed on, whose codex
+	//    entry is switched off, and took the alternative.
+	if d.Provider != "copilot" || d.Model != "copilot-frontier" {
+		t.Fatalf("got %s %s, want the copilot alternative the walk chose on top of the shift", d.Provider, d.Model)
+	}
+	if d.FellOverFrom == nil || d.FellOverFrom.Provider != "codex" {
+		t.Fatalf("FellOverFrom = %+v, want the codex primary the walk passed over — NOT the claude assignment the shift moved off", d.FellOverFrom)
+	}
+	// 4. And every field describing "the provider about to run this" agrees
+	//    with the LANDING, not with the provider the shift picked on the way.
+	if d.ShiftCapacity == nil || d.ShiftCapacity.Provider != "copilot" {
+		t.Fatalf("ShiftCapacity = %+v, want copilot's own reading — the walk must OVERWRITE the codex reading the shift took", d.ShiftCapacity)
+	}
+	if eff := d.EffectiveCapacity(); eff.Provider != d.Provider {
+		t.Errorf("EffectiveCapacity() describes %s while the answer names %s — this is exactly the misattribution the field exists to prevent", eff.Provider, d.Provider)
+	}
+	joined := strings.Join(d.Reason, " ")
+	if !strings.Contains(joined, "mode_shifts moves role judge from frontier_plus to cheap") {
+		t.Errorf("the shift is not explained: %v", d.Reason)
+	}
+	if !strings.Contains(joined, "explicitly disabled (enabled: false)") {
+		t.Errorf("the fallover's reason is not in the answer: %v", d.Reason)
 	}
 }
