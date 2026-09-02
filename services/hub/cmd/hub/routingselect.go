@@ -268,7 +268,16 @@ type routingDecisionEvent struct {
 	Pace       string  `json:"pace,omitempty"`
 	PaceRatio  float64 `json:"paceRatio,omitempty"`
 	PaceWindow string  `json:"paceWindow,omitempty"`
-	DecidedAt  int64   `json:"decidedAt"`
+	// FellOverFrom is the capability's PRIMARY pairing, present only when this
+	// answer took one of that capability's `alternatives:` instead. It rides for
+	// the same reason `health` and the ceiling fields do: without it a client
+	// watching the event plane sees a reviewer come up on the implementer's own
+	// family with the explanation present only as prose. It is a provider and a
+	// model out of the operator's own routing.yaml — the same class of fact as
+	// `provider` and `model`, which already ride — and it names no path, no
+	// account and no credential.
+	FellOverFrom *routing.Assignment `json:"fellOverFrom,omitempty"`
+	DecidedAt    int64               `json:"decidedAt"`
 }
 
 // paceOf projects a decision's pace onto the event's three fields. A decision
@@ -368,6 +377,7 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 				Pace:                 paceState,
 				PaceRatio:            paceRatio,
 				PaceWindow:           paceWindow,
+				FellOverFrom:         d.FellOverFrom,
 				DecidedAt:            d.DecidedAt,
 			}))
 		}

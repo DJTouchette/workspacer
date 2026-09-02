@@ -905,3 +905,365 @@ func TestManualModesFromTheFileReachTheDecision(t *testing.T) {
 		t.Errorf("a misspelled mode was honoured as %q (manual=%v) — an unparseable override must fall through to the thresholds, not pin a mode nobody asked for", d.Mode, d.ModeManual)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// PER-CAPABILITY ALTERNATIVES
+// ---------------------------------------------------------------------------
+
+// altWindows are the two capacity pictures every case below is built from. RED
+// is the shipped `health.red_at_used_pct` crossed on the five-hour window;
+// GREEN is quiet, current, and far enough from a reset that nothing spends down
+// — so a mode that is not NORMAL in these cases came from the file and from
+// nothing else.
+var (
+	altGreen = map[string]winSpec{
+		"five_hour": {used: 12, resets: 4 * time.Hour},
+		"seven_day": {used: 11, resets: 96 * time.Hour},
+	}
+	altRed = map[string]winSpec{
+		"five_hour": {used: 95, resets: 2 * time.Hour},
+		"seven_day": {used: 11, resets: 96 * time.Hour},
+	}
+)
+
+func altSnapshot(t *testing.T, claude, codex map[string]winSpec) limits.Snapshot {
+	t.Helper()
+	return snapshotOfProviders(t, "acct", map[string]map[string]winSpec{"claude": claude, "codex": codex})
+}
+
+// TestAnUnusablePrimaryFallsOverToItsAlternative is the feature, one case per
+// trigger. Every one of them uses the shipped `mixed` reviewer, whose primary is
+// claude and whose alternative is codex, so the capability is held constant and
+// only the reason for the fallover changes.
+func TestAnUnusablePrimaryFallsOverToItsAlternative(t *testing.T) {
+	zero := 0.0
+	reviewer := Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero}
+
+	t.Run("a RED primary falls over to the first usable alternative", func(t *testing.T) {
+		d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		if !d.Eligible {
+			t.Fatalf("a red claude cost the reviewer its assignment entirely: %+v", d)
+		}
+		if d.Provider != "codex" || d.Model != "gpt-5.6-terra" || d.Effort != "high" {
+			t.Fatalf("got %s %s (effort %q), want the codex alternative — a reviewer on an exhausted allowance is a reviewer that will not run", d.Provider, d.Model, d.Effort)
+		}
+		if d.Capability != "reviewer" {
+			t.Errorf("capability = %q — a fallover changes the PROVIDER, never the tier of work", d.Capability)
+		}
+		if !d.Fresh {
+			t.Error("the codex alternative lost `fresh: true` — after a fallover freshness is the only thing left carrying independence")
+		}
+		if d.FellOverFrom == nil || d.FellOverFrom.Provider != "claude" || d.FellOverFrom.Model != "sonnet" {
+			t.Fatalf("FellOverFrom = %+v, want the claude primary this answer is not", d.FellOverFrom)
+		}
+		if len(d.FellOverFrom.Alternatives) != 0 {
+			t.Error("FellOverFrom echoed the whole alternatives list back — the routing table belongs in the matrix, not in every decision and log row")
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "primary claude sonnet unusable") || !strings.Contains(joined, "took alternative codex gpt-5.6-terra") {
+			t.Errorf("the fallover is not explained in prose: %v", d.Reason)
+		}
+		if !strings.Contains(joined, "red") {
+			t.Errorf("the reason does not say WHY the primary was unusable: %v", d.Reason)
+		}
+	})
+
+	t.Run("a CONSERVING primary falls over, on the CANDIDATE's own capacity", func(t *testing.T) {
+		// Nothing is red here. claude is pinned to conserve by the file, and
+		// codex — which is judged in its own right rather than inheriting
+		// claude's verdict — is not.
+		m, err := Load("test.yaml", []byte("modes:\n  providers:\n    claude: conserve\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		if d.Provider != "codex" {
+			t.Fatalf("a conserving claude kept the reviewer: %+v", d)
+		}
+		if d.Capacity.Health != limits.HealthGreen {
+			t.Errorf("claude reads %q — this case is meant to prove CONSERVE moves work with no red anywhere", d.Capacity.Health)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "CONSERVE on its own capacity") {
+			t.Errorf("the reason does not name conserve as the trigger: %v", d.Reason)
+		}
+	})
+
+	t.Run("a DISABLED provider under the primary is refused, never substituted", func(t *testing.T) {
+		// The SUBJECT of an unconstrained request is the primary's own
+		// provider, so step 3b refuses before any walk happens. A fallover must
+		// not become a way around `enabled: false` — that flag is the one
+		// spelling for taking a provider out of service, and routing anywhere
+		// after reading it would make it a comment.
+		m, err := Load("test.yaml", []byte("providers:\n  claude:\n    enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+			Role: "deep_reviewer", ForecastDemandBeforeResetPct: &zero,
+		})
+		if d.Eligible {
+			t.Fatalf("a disabled claude was routed around rather than refused: %+v", d)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "enabled: false") {
+			t.Errorf("the refusal does not name the flag: %v", d.Reason)
+		}
+	})
+
+	t.Run("an alternative the LOADER flagged is not routed to", func(t *testing.T) {
+		// `clod` is not a workspacer provider id, so validate() writes an Issue
+		// at that alternative's own path. The walk refuses to route to a row the
+		// loader already condemned — otherwise a fallover fails at the exact
+		// moment the primary already has.
+		m, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    reviewer:
+      alternatives:
+        - { provider: clod, model: gpt-5.6-terra, effort: high, fresh: true }
+        - { provider: copilot, model: copilot-review, fresh: true }
+`))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if !hasIssueAt(m.Issues, "profiles.mixed.reviewer.alternatives[0]") {
+			t.Fatalf("the bad row was not flagged at load, so this case proves nothing: %v", m.Issues)
+		}
+		d := Select(m, altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		if d.Provider != "copilot" {
+			t.Fatalf("got %s %s, want the SECOND alternative — the first is a row the loader condemned", d.Provider, d.Model)
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "alternatives[0]") || !strings.Contains(joined, "was skipped too") {
+			t.Errorf("the skipped alternative is not named in the answer: %v", d.Reason)
+		}
+	})
+
+	t.Run("when NOTHING is usable the primary stands, and says so", func(t *testing.T) {
+		d := Select(shipped(t), altSnapshot(t, altRed, altRed), nil, policyNow, reviewer)
+		if !d.Eligible || d.Provider != "claude" || d.Model != "sonnet" {
+			t.Fatalf("got %+v, want the primary — every candidate being unusable is exactly the state routing was in before this feature, and it must answer identically", d)
+		}
+		if d.FellOverFrom != nil {
+			t.Errorf("FellOverFrom is set on an answer that did not fall over: %+v", d.FellOverFrom)
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "so is every alternative") {
+			t.Errorf("the walk happened and found nothing, and said nothing — silence reads as 'there was no alternative': %v", d.Reason)
+		}
+		if !strings.Contains(joined, "was skipped too") {
+			t.Errorf("the alternative that was tried is not named: %v", d.Reason)
+		}
+	})
+
+	t.Run("a healthy primary answers exactly as it did before this feature", func(t *testing.T) {
+		d := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		if d.Provider != "claude" || d.Model != "sonnet" || d.FellOverFrom != nil {
+			t.Fatalf("got %+v, want the primary untouched", d)
+		}
+		for _, r := range d.Reason {
+			if strings.Contains(r, "alternative") {
+				t.Errorf("an answer that never left the primary talks about alternatives: %q", r)
+			}
+		}
+	})
+}
+
+// TestAPinnedProviderIsServedFromItsOwnProfileFirst is the borrowing change.
+//
+// Asking for `frontier` on claude under `mixed` used to answer with
+// `anthropic_only`'s whole assignment — a different profile's opinion about
+// effort and freshness, chosen because it happened to spell the pairing. Now
+// `mixed`'s own alternative answers, which is the profile author's own intended
+// cross-family pairing. The cross-profile search stays as the LAST resort.
+func TestAPinnedProviderIsServedFromItsOwnProfileFirst(t *testing.T) {
+	zero := 0.0
+	snap := altSnapshot(t, altGreen, altGreen)
+
+	d := Select(shipped(t), snap, nil, policyNow, Request{
+		Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero,
+	})
+	if !d.Eligible || d.Provider != "claude" || d.Model != "opus" || d.Effort != "high" {
+		t.Fatalf("got %+v, want mixed's own claude alternative for frontier", d)
+	}
+	if strings.Contains(strings.Join(d.Reason, " "), "took the pairing from profile") {
+		t.Errorf("the answer was borrowed from another profile even though `mixed` names the pairing itself: %v", d.Reason)
+	}
+
+	// THE LAST RESORT IS STILL THERE. A provider that genuinely is not in this
+	// capability's own list is still found in another profile, which is what
+	// keeps a matrix written before `alternatives:` existed working.
+	elsewhere, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      alternatives:
+        - { provider: copilot, model: copilot-frontier }
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	d = Select(elsewhere, snap, nil, policyNow, Request{
+		Role: "implementer", Provider: "claude", ForecastDemandBeforeResetPct: &zero,
+	})
+	if !d.Eligible || d.Provider != "claude" {
+		t.Fatalf("got %+v, want the cross-profile borrow", d)
+	}
+	if !strings.Contains(strings.Join(d.Reason, " "), "took the pairing from profile anthropic_only") {
+		t.Errorf("the last-resort borrow stopped working or stopped saying so: %v", d.Reason)
+	}
+}
+
+// TestIndependentFamilyReordersTheWalkRatherThanRefusing is decision 2: a
+// reviewer on a different family from the implementer is a PREFERENCE the
+// router tries to honour, expressed as an ORDER over the same candidate list,
+// and `IndependentFamily` keeps reporting the truth either way.
+func TestIndependentFamilyReordersTheWalkRatherThanRefusing(t *testing.T) {
+	zero := 0.0
+	m := shipped(t)
+
+	// The control: the same request WITHOUT the preference takes the primary,
+	// which happens to be the previous agent's own family.
+	control := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+		Role: "reviewer", PreviousProvider: "claude", ForecastDemandBeforeResetPct: &zero,
+	})
+	if control.Provider != "claude" {
+		t.Fatalf("the control took %s, not the primary — every case below would prove nothing", control.Provider)
+	}
+	if control.IndependentFamily {
+		t.Error("a claude reviewer after a claude implementer is not an independent family")
+	}
+
+	t.Run("the preference reorders the candidates and is satisfied", func(t *testing.T) {
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, Request{
+			Role: "reviewer", PreviousProvider: "claude", RequireIndependentFamily: true,
+			ForecastDemandBeforeResetPct: &zero,
+		})
+		if d.Provider != "codex" {
+			t.Fatalf("got %s %s, want the codex alternative moved ahead of the same-family primary", d.Provider, d.Model)
+		}
+		if !d.IndependentFamily {
+			t.Error("IndependentFamily = false on an answer that IS a different family")
+		}
+		if d.FellOverFrom == nil || d.FellOverFrom.Provider != "claude" {
+			t.Errorf("FellOverFrom = %+v, want the primary this walk moved past", d.FellOverFrom)
+		}
+		if !strings.Contains(strings.Join(d.Reason, " "), "prefers a different one first") {
+			t.Errorf("the reorder is not explained: %v", d.Reason)
+		}
+	})
+
+	t.Run("the preference LOSES to capacity, and the answer says so", func(t *testing.T) {
+		// The independent candidate is tried FIRST and is red, so the
+		// same-family primary is taken. That ordering is the whole design: the
+		// preference is real, and it is not absolute.
+		d := Select(m, altSnapshot(t, altGreen, altRed), nil, policyNow, Request{
+			Role: "reviewer", PreviousProvider: "claude", RequireIndependentFamily: true,
+			ForecastDemandBeforeResetPct: &zero,
+		})
+		if !d.Eligible || d.Provider != "claude" {
+			t.Fatalf("got %+v — a preference that cannot be met must not cost the decision", d)
+		}
+		if d.IndependentFamily {
+			t.Error("IndependentFamily = true on a claude reviewer after a claude implementer — the report must stay honest after the walk")
+		}
+		if !d.Fresh {
+			t.Error("the answer lost `fresh: true`, which is the ONLY hard rule left when independence cannot be arranged")
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "independent family was REQUIRED and could not be arranged") {
+			t.Errorf("the requirement was dropped in silence: %v", d.Reason)
+		}
+		if !strings.Contains(joined, "could not be used") {
+			t.Errorf("the reason claims the matrix offers no cross-provider pairing, when it offers one that was tried and was red: %v", d.Reason)
+		}
+		if !strings.Contains(joined, "was skipped too") {
+			t.Errorf("the candidate that WAS tried is not named: %v", d.Reason)
+		}
+	})
+}
+
+// TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore is the compatibility
+// guard, and it is deliberately the strongest available form of it: the same
+// request, against the same matrix with every `alternatives:` list removed,
+// must produce a byte-identical decision.
+//
+// Anything the walk adds to an answer it did not change — a reason sentence, a
+// field, a reordering — shows up here as a diff. That is what makes this feature
+// a strict addition for every routing.yaml written before it existed.
+func TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore(t *testing.T) {
+	zero := 0.0
+	withAlts := shipped(t)
+	stripped := shipped(t)
+	found := 0
+	for pname, prof := range stripped.Profiles {
+		for capability, a := range prof {
+			found += len(a.Alternatives)
+			a.Alternatives = nil
+			prof[capability] = a
+		}
+		stripped.Profiles[pname] = prof
+	}
+	if found == 0 {
+		t.Fatal("the shipped matrix carries no alternatives at all, so this test compares a thing with itself")
+	}
+
+	snap := altSnapshot(t, altGreen, altGreen)
+	for _, req := range []Request{
+		{Role: "scout", ForecastDemandBeforeResetPct: &zero},
+		{Role: "reviewer", ForecastDemandBeforeResetPct: &zero},
+		{Role: "implementer", ForecastDemandBeforeResetPct: &zero},
+		{Role: "judge", ForecastDemandBeforeResetPct: &zero},
+		{Role: "reviewer", PreviousProvider: "codex", RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero},
+	} {
+		a, err := json.Marshal(Select(withAlts, snap, nil, policyNow, req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(Select(stripped, snap, nil, policyNow, req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(a) != string(b) {
+			t.Errorf("role %s: an alternatives list changed an answer that never needed one\n with: %s\n  w/o: %s", req.Role, a, b)
+		}
+	}
+}
+
+// TestAnAliasSpelledAlternativeIsNormalizedAndActuallyRoutedTo traces the value
+// all the way from the file to the spawn tuple.
+//
+// The design spec writes vendor names; the spawn wire takes workspacer provider
+// ids. An alternative whose `provider:` never gets folded is worse than a
+// primary's, because nothing looks at it until the primary has already failed:
+// the loader flags it as an unknown id, the walk then refuses to route to a
+// flagged row, and the fallover silently stops existing. So this asserts the
+// fold AND that a real decision lands on it.
+func TestAnAliasSpelledAlternativeIsNormalizedAndActuallyRoutedTo(t *testing.T) {
+	zero := 0.0
+	m, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      alternatives:
+        - { provider: anthropic, model: opus, effort: high }
+`))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	a, err := m.ResolveCapability("mixed", "frontier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Alternatives) != 1 || a.Alternatives[0].Provider != "claude" {
+		t.Fatalf("alternatives = %+v, want the vendor name folded onto the workspacer id", a.Alternatives)
+	}
+	if hasIssueAt(m.Issues, "profiles.mixed.frontier.alternatives[0]") {
+		t.Fatalf("the folded row was still flagged as an unknown provider — the walk would then refuse to route to it: %v", m.Issues)
+	}
+	d := Select(m, altSnapshot(t, altGreen, altRed), nil, policyNow, Request{
+		Role: "implementer", ForecastDemandBeforeResetPct: &zero,
+	})
+	if !d.Eligible || d.Provider != "claude" || d.Model != "opus" {
+		t.Fatalf("got %+v — a spec-spelled alternative was parsed and never reached a decision", d)
+	}
+}

@@ -651,3 +651,68 @@ func TestAnOmittedModelIsStillNotJudgedByTheNamedModelArm(t *testing.T) {
 		t.Errorf("a spawn naming no model at all was refused by the named-model arm — there is no model to read, and the matrix makes no claim about one: %+v", v)
 	}
 }
+
+// TestTheNamedModelArmSeesAModelThatOnlyEverAppearsAsAnAlternative is a
+// correctness hole, not a nicety.
+//
+// The named-model arm exists because a caller that declares a modest capability
+// while NAMING a strong model would otherwise walk around the ceiling entirely —
+// the ceiling would govern a label. A model that appears only inside an
+// `alternatives:` list is a model this matrix genuinely resolves: the router
+// hands it out the moment the primary is unusable. So a scan that read primaries
+// alone would find no reading for it, report `ok == false`, and admit it — the
+// same hole, reopened one field lower down.
+//
+// MUTATION GUARD: delete the alternatives loop in capabilityOfModel and the
+// first half of this test fails; delete it in providerOfModel and the second
+// half does.
+func TestTheNamedModelArmSeesAModelThatOnlyEverAppearsAsAnAlternative(t *testing.T) {
+	m, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    frontier_max:
+      alternatives:
+        - { provider: claude, model: opus-secret, effort: max }
+ceilings:
+  default: { max_capability: frontier, max_tool_scope: operator }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The precondition: the model exists ONLY as an alternative. If some other
+	// entry ever names it, this test is measuring that entry instead.
+	for pname, prof := range m.Profiles {
+		for cname, a := range prof {
+			if matchableModel(a.Model) == "opus-secret" {
+				t.Fatalf("%s.%s names opus-secret as a PRIMARY — the precondition is gone", pname, cname)
+			}
+		}
+	}
+
+	rank, capName, ok := m.capabilityOfModel("claude", "opus-secret", "max")
+	if !ok {
+		t.Fatalf("the matrix has no reading at all for a model it will happily spawn — the named-model arm is blind to every alternative")
+	}
+	if capName != "frontier_max" || rank != m.RankOf("frontier_max") {
+		t.Errorf("read as %q (rank %d), want frontier_max", capName, rank)
+	}
+
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Provider: "claude", Model: "opus-secret", Effort: "max"})
+	if !v.CapabilityRefused {
+		t.Fatalf("a frontier_max model was admitted under a frontier ceiling because it only appears in an alternatives list: %+v", v)
+	}
+
+	// providerOfModel, the second scan: a spawn that names the model and NO
+	// provider must still be clamped onto claude's own ladder rather than onto
+	// whatever the active profile happens to prefer.
+	if got := m.providerOfModel("opus-secret"); got != "claude" {
+		t.Errorf("providerOfModel(opus-secret) = %q, want claude — a model the matrix names only as a fallover still plainly belongs to a provider", got)
+	}
+	v = m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "frontier_max", Model: "opus-secret"})
+	if !v.CapabilityRefused {
+		t.Fatalf("the declared arm did not clamp: %+v", v)
+	}
+	if v.Provider != "claude" {
+		t.Errorf("the clamp moved the spawn to %q — a model with one plain provider must not change harness on the way down: %+v", v.Provider, v)
+	}
+}

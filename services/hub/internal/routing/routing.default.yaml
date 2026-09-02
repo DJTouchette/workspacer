@@ -80,15 +80,25 @@ version: 1
 #
 # `mixed` is the recommended default when both subscriptions are available, and
 # it earns that for two separate reasons. It draws TWO ALLOWANCES DOWN IN
-# PARALLEL rather than exhausting one. And it buys MODEL-FAMILY DIVERSITY ON
-# REVIEW: a reviewer from a different family does not carry the implementer's
-# blind spots. The second reason holds even when nothing is scarce, which is why
-# the recommendation is not only about capacity.
+# PARALLEL rather than exhausting one. And it PREFERS A DIFFERENT MODEL FAMILY
+# FOR REVIEW: a reviewer from a different family does not carry the
+# implementer's blind spots. The second reason holds even when nothing is
+# scarce, which is why the recommendation is not only about capacity.
 #
-# A single-family profile cannot buy that diversity, so it compensates with
-# `fresh: true` on its review capabilities. See the `profiles:` block for what
-# fresh means, why every profile here sets it, and how the spawn gate enforces
-# it against a spawn that asks to resume an existing session.
+# THAT SECOND REASON IS A PREFERENCE, NOT A GUARANTEE, and the file says so
+# rather than letting you find out. Each capability below may carry
+# `alternatives:` — other providers that serve the same tier of work — and when
+# the primary cannot be used (its allowance is red, its provider is conserving,
+# it is switched off, or the loader flagged the row) the router takes the first
+# alternative that can be, and NAMES the fallover in the decision's reasons. A
+# codex outage can therefore land a `mixed` reviewer back on codex. The matrix
+# prefers a different family for review and says so when it could not.
+#
+# WHAT IS GUARANTEED, in every profile, always, is `fresh: true` on the review
+# capabilities: the reviewer does not inherit the implementer's conversation. A
+# single-family profile has never had anything else, and after a fallover
+# neither has `mixed`. See the `profiles:` block for what fresh means and how
+# the spawn gate enforces it against a spawn that asks to resume a session.
 active_profile: mixed
 
 # ---------------------------------------------------------------------------
@@ -206,26 +216,122 @@ roles:
 #             honoured.
 #   enabled   set to false to take an entry out of service. Omitting it is not
 #             the same thing — a deep merge cannot delete, by design.
+#
+#   alternatives
+#             an ORDERED list of other pairings that serve THIS SAME capability
+#             when the primary cannot be used. The router walks it in the order
+#             written and takes the first candidate that can be used, and the
+#             decision's reasons name the fallover: "primary codex gpt-5.6-sol
+#             unusable (...); took alternative claude opus". What makes a
+#             candidate unusable is judged with that candidate's OWN capacity,
+#             never the primary's: its allowance is RED or EXHAUSTED, its
+#             provider's own routing mode is CONSERVE, the provider or the entry
+#             carries `enabled: false`, or the loader flagged that row (an
+#             unknown provider id, a model the installed CLI does not serve).
+#             Nothing is usable? The primary stands, exactly as it did before
+#             this key existed.
+#
+#             THIS IS NOT `mode_shifts:`. A mode shift moves a ROLE to a
+#             DIFFERENT CAPABILITY (a conserving scout drops from balanced to
+#             cheap) and may land anywhere. A fallover keeps the capability
+#             identical and changes only which PROVIDER serves it. They compose:
+#             the mode moves the capability, the ceiling caps it, and the
+#             fallover then picks who runs it.
+#
+#             A CALLER THAT PINS `provider:` DOES NOT GET A FALLOVER. It asked
+#             about that provider, and a model on one it did not ask for is not
+#             an answer. Its alternatives are still read, to find that provider
+#             inside this profile before borrowing another profile's pairing.
+#
+#             An alternative may NOT carry `alternatives:` of its own; the
+#             loader reports nesting. And this key is a LIST, so the deep merge
+#             replaces it WHOLESALE: mention `alternatives:` for a capability
+#             and you replace the whole shipped list for it. The primary's own
+#             provider/model/effort/fresh/enabled keys are siblings of this one
+#             and stay individually editable, exactly as they are today.
 profiles:
   # Codex builds and diagnoses; Anthropic reviews and adjudicates. Two
-  # subscriptions drawn down in parallel, and an implementer never reviewed by
-  # its own model family.
+  # subscriptions drawn down in parallel, and an implementer whose reviewer is
+  # PREFERABLY not its own model family — the alternatives below are what the
+  # router falls over to when the preferred provider cannot be used, so a codex
+  # outage can legitimately land a reviewer back on codex. The answer says so
+  # when it happens; `fresh: true` is what still holds either way.
+  #
+  # EVERY CAPABILITY HERE NAMES BOTH FAMILIES, one as the primary and the other
+  # as its alternative. That is the rule this profile is FOR: two subscriptions
+  # means no tier of work should be unreachable because one of them is down.
+  # TestTheMixedProfileNamesBothFamiliesOnEveryTier holds the line, so an edit
+  # that drops one side is a failing test rather than a tier that quietly stops
+  # falling over.
   mixed:
-    cheap: { provider: codex, model: gpt-5.6-luna }
-    balanced: { provider: codex, model: gpt-5.6-terra, effort: high }
-    frontier: { provider: codex, model: gpt-5.6-sol, effort: high }
-    frontier_max: { provider: codex, model: gpt-5.6-sol, effort: xhigh }
-    # These are cross-family here, so they are already independent of a codex
-    # implementer by construction. `fresh` is set anyway: it is a property of
-    # the ROLE, not of whether a profile happens to pair two families. Leave it
-    # unset and freshness holds only by accident of the model pairing, and it
-    # stops holding the moment someone edits this profile so implementer and
-    # reviewer land on the same family.
-    reviewer: { provider: claude, model: sonnet, effort: high, fresh: true }
-    deep_reviewer: { provider: claude, model: opus, effort: high, fresh: true }
-    frontier_plus: { provider: claude, model: fable, fresh: true }
+    cheap:
+      provider: codex
+      model: gpt-5.6-luna
+      alternatives:
+        - { provider: claude, model: sonnet }
+    balanced:
+      provider: codex
+      model: gpt-5.6-terra
+      effort: high
+      alternatives:
+        - { provider: claude, model: sonnet, effort: high }
+    frontier:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: high
+      alternatives:
+        - { provider: claude, model: opus, effort: high }
+    frontier_max:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: xhigh
+      alternatives:
+        - { provider: claude, model: opus, effort: max }
+    # These are cross-family here, so they are independent of a codex
+    # implementer whenever the primary holds. `fresh` is set anyway: it is a
+    # property of the ROLE, not of whether a profile happens to pair two
+    # families. Leave it unset and freshness holds only by accident of the model
+    # pairing, and it stops holding the moment someone edits this profile so
+    # implementer and reviewer land on the same family — OR the moment a
+    # fallover does the same thing at runtime, which the codex alternatives
+    # below make a real event rather than a hypothetical one. That is exactly
+    # why they carry `fresh: true` too: a codex reviewer of codex work is a
+    # reviewer only because it did not inherit the implementer's reasoning.
+    reviewer:
+      provider: claude
+      model: sonnet
+      effort: high
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-terra, effort: high, fresh: true }
+    deep_reviewer:
+      provider: claude
+      model: opus
+      effort: high
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-sol, effort: high, fresh: true }
+    # EVERY TIER IN THIS PROFILE CARRIES BOTH FAMILIES, and the escalation tier
+    # is no exception. The alternative here is the same pairing `codex_only`
+    # already uses for frontier_plus, so a Fable that cannot be reached answers
+    # with codex's own top of ladder rather than with nothing — an escalation
+    # that cannot be spawned at all is the worst of the available outcomes. It
+    # is `fresh: true` for the same reason every review capability is: after a
+    # fallover the escalation may be the implementer's own family, and freshness
+    # is then the only thing left carrying independence.
+    frontier_plus:
+      provider: claude
+      model: fable
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-sol, effort: xhigh, fresh: true }
 
-  # One subscription. The critical detail is FRESH REVIEW CONTEXT: the reviewer
+  # One subscription, and therefore NO `alternatives:` anywhere in this profile:
+  # a single-family profile has nowhere to fall over TO, and listing the other
+  # family here would route work onto a subscription the user chose this profile
+  # to say they do not have.
+  #
+  # The critical detail is FRESH REVIEW CONTEXT: the reviewer
   # gets the ticket, the acceptance criteria, the architecture rules, the diff,
   # the relevant source and the test results — and not the implementer's
   # reasoning history.
@@ -240,7 +346,8 @@ profiles:
 
   # Sonnet is used considerably more aggressively than the traditional Claude
   # hierarchy would imply — that is deliberate, and it is the user's call from
-  # what they have been seeing.
+  # what they have been seeing. No `alternatives:` here either, and for the same
+  # reason codex_only has none.
   anthropic_only:
     cheap: { provider: claude, model: sonnet }
     balanced: { provider: claude, model: sonnet, effort: high }

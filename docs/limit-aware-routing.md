@@ -42,6 +42,19 @@ The result is that work moves away from a provider whose allowance is tight, and
 that model selection lives in one file rather than in every dispatch site. Model
 vendors rename things; the matrix is the only place that has to know.
 
+Work moves across providers by **two different mechanisms**, and they are easy
+to conflate because both end with a dispatch on a provider nobody named:
+
+| | What moves | Configured by |
+|---|---|---|
+| **Mode shift** | The ROLE moves to a **different capability** — a conserving scout drops from `balanced` to `cheap`. Which provider that lands on is a consequence, not the aim. | `mode_shifts:` |
+| **Fallover** | The capability stays **exactly the same** and only the **provider** serving it changes, because the primary one cannot be used. | `alternatives:` |
+
+They compose, in that order: the mode moves the capability, the ceiling caps the
+result, and the fallover then picks who runs it. A decision reports the first
+through `capability` versus `baseCapability`, and the second through
+`fellOverFrom` and a reason sentence naming the primary it passed over.
+
 One bus method exposes it, `routing.select`, and it is read-only. Agents holding
 the workspacer tools at the operator tier see it as `select_model`. It decides
 nothing on its own: a caller passes the answer's provider, model and effort to
@@ -107,14 +120,53 @@ condemned.
 
 `mixed` is the recommended default when both subscriptions exist, for two
 reasons. It draws two allowances down in parallel instead of exhausting one, and
-it buys model-family diversity on review: a reviewer from a different family
-does not carry the implementer's blind spots. That second reason is the one that
-survives even when capacity is not scarce.
+it **prefers a different model family for review**: a reviewer from a different
+family does not carry the implementer's blind spots. That second reason is the
+one that survives even when capacity is not scarce.
 
-A single-family profile cannot buy that diversity, so it compensates with
-freshness. Every profile sets `fresh: true` on its review capabilities
-(`reviewer`, `deep_reviewer`, `frontier_plus`), and in a single-family profile it
-is the only thing making the reviewer independent at all. `fresh` means the
+That preference is not a guarantee, and the matrix says so rather than letting
+you find out. Every capability under `mixed` names **both families** — one as
+the primary pairing and the other in an ordered `alternatives:` list — and when
+the primary cannot be used the router takes the first alternative that can be,
+and names the fallover in the decision's reasons:
+
+```yaml
+frontier:
+  provider: codex
+  model: gpt-5.6-sol
+  effort: high
+  alternatives:
+    - { provider: claude, model: opus, effort: high }
+```
+
+A candidate is unusable when its provider's allowance is **RED or EXHAUSTED**,
+when that provider's own routing mode is **CONSERVE**, when the provider or the
+entry carries **`enabled: false`**, or when the loader **flagged that row** (an
+unknown provider id, a model the installed CLI does not serve, an effort it does
+not take). Every one of those is judged against the **candidate's own** capacity,
+never the primary's: "codex is red, so use claude" is only an argument if
+somebody read claude. If nothing in the list is usable, the primary stands and
+the answer says the walk was tried and found nothing.
+
+Two consequences worth being explicit about. A codex outage can legitimately
+land a `mixed` reviewer back on codex, so `mixed` no longer buys family
+diversity by construction — the matrix prefers a different family for review and
+says so when it could not. And a caller that pins `provider:` gets **no**
+fallover: it asked about that provider, and a model on one it did not ask for is
+not an answer to that question. Its alternatives are still read, to find that
+provider inside the active profile before borrowing another profile's pairing.
+
+`alternatives:` is a YAML **list**, so the deep merge replaces it wholesale:
+mention it for a capability and you own the whole list for that capability. The
+primary's own `provider`/`model`/`effort`/`fresh`/`enabled` keys are siblings of
+it and stay individually editable. An alternative may not carry alternatives of
+its own; the loader reports nesting as an issue.
+
+What IS guaranteed, in every profile, always, is freshness. Every profile sets
+`fresh: true` on its review capabilities
+(`reviewer`, `deep_reviewer`, `frontier_plus`), and in a single-family profile —
+or in `mixed` after a fallover — it is the only thing making the reviewer
+independent at all. `fresh` means the
 worker must **not** inherit the previous agent's conversation: the reviewer gets
 the ticket, the acceptance criteria, the diff, the relevant source and the test
 results, and does not get the implementer's reasoning history. A reviewer that

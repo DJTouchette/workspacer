@@ -168,8 +168,19 @@ What comes back, and what to do with it:
   cannot be read. model is empty and the reason list says which. Do not
   substitute a model of your own; report the reason it gave.
 - previousProvider (the harness the previous worker ran on) is worth passing when
-  you route a review, so the answer can land on a different model family; the
-  answer reports independentFamily honestly when it could not.
+  you route a review, so the answer can land on a different model family. It is a
+  PREFERENCE: the router tries the capability's other-provider candidates first
+  and takes the best one it can actually use, then reports independentFamily
+  honestly when none of them could be. fresh is the rule with teeth.
+- fellOverFrom, when present, names the pairing the answer did NOT take. Two
+  different mechanisms can move work across providers and they are easy to
+  confuse: mode_shifts moves a ROLE to a DIFFERENT CAPABILITY (a conserving
+  scout drops from balanced to cheap, and whichever provider that lands on is a
+  consequence), while alternatives keep the SAME capability and change only
+  which PROVIDER serves it, when the primary's own allowance is red, its
+  provider is conserving, or its row is switched off. capability plus
+  baseCapability tell you the first happened; fellOverFrom tells you the second
+  did.
 ROUTING IS NOT AUTOMATIC, AND ASKING IS YOUR JOB. select_model is a read-only
 question and nothing asks it for you: the host does not consult routing when it
 spawns, so a dispatch that never asked carries no decision and appears nowhere in
