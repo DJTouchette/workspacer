@@ -19,7 +19,7 @@ related_paths:
   - "services/hub/cmd/brain/handlers.go"
   - "services/hub/cmd/hub/mobile.html"
 owner: Damien Touchette
-last_reviewed: 2026-08-28
+last_reviewed: 2026-09-01
 ---
 
 # Fleet Manager: the delegating manager agent, its wake loop, succession and briefs
@@ -328,3 +328,45 @@ The correct flatten is `normalizeBriefLine`'s two replaces — newline runs and
 tab/FF/VT runs become one space, **interior SPACES are left alone** — and the Go
 twin `flattenBriefLine` (`services/hub/cmd/brain/brief.go`) is the same function,
 so both providers must use it rather than `strings.Fields` or a `\s+` regexp.
+
+## Hand-authored notes (2026-09-01) — notify_when is a TWIN, and its inputs must be read RAW
+
+Promoted from the 2026-08-31 fleet-manager learnings, re-checked against master
+at `0bac5799`.
+
+- **`notify_when` has two full implementations and they must stay behaviorally
+  identical.** TypeScript: `main/services/thresholdWatch.ts` (desktop
+  `agents.notifyWhen`). Go: `services/hub/cmd/brain/agentops.go` (headless), with
+  the facade tool declared in `services/hub/cmd/mcp/main.go`. Both deliberately
+  hold the same policy — a 15s sweep (`SWEEP_MS` / `thresholdSweepInterval`),
+  one-shot in-memory watches, a 20-watch cap per watcher
+  (`MAX_WATCHES_PER_WATCHER` / `maxWatchesPerWatcher`), and host-rendered
+  `[fleet]` threshold wakes. **Adding a predicate is a five-part change on BOTH
+  sides**: schema, evaluator, tests, the facade tool docs, and the wake
+  composer. A one-sided extension works for either the desktop or the headless
+  Fleet Manager and silently drifts policy for the other; treat it as a
+  dual-provider contract and test both over the same fixtures. (`contextUsedPct`
+  is the worked example — note how much validation rode along with it: provider
+  eligibility, staleness, and the refusal to combine it with the cumulative
+  predicates.)
+- **Every status-line-derived predicate must read the RAW snake_case block
+  first.** `sessionStore.updateStatusLine` merges a high-frequency tick into
+  `status_line` ONLY — it does not re-run the camelCase compatibility overlay,
+  so `statusLine` stays as it was at the last FULL snapshot. `fleetSession`
+  (`services/hub/cmd/brain/fleetview.go`) therefore prefers raw in `pick`
+  (tokens/cost), `contextHealth` and `outOfCredits`. A new health predicate
+  reading only the camel projection fires late or misses its threshold entirely
+  against perfectly fresh telemetry — the difference between catching a runaway
+  spend and noticing it by chance. Extend the raw and compat structs together,
+  go through one raw-first accessor, and include a raw-only update in the tests.
+  (The desktop has no such split: it reads its own live store's `statusLine`.)
+- **CORRECTION — the Fleet Manager DOES have a manager-scoped context setting
+  now.** A 2026-08-31 note recorded `agents.managerModels`/`managerEfforts` as
+  per-provider with no context equivalent, so a fresh Codex manager got 1M only
+  through provider-level new-spawn defaulting. `agents.managerContextWindows`
+  shipped in `1eebab86`: it is resolved beside the other two in
+  `main/lib/roleModels.ts`, preserved through `configService.ts`'s
+  presence-aware merge (a `null` leaf is a real value, not an omission), and
+  pinned with its Hub twin by `managerPreferenceCases` in
+  `contracts/model-context-windows.json` — including the migration of a legacy
+  `managerModels: {claude: "opus[1m]"}` into the canonical suffix-free pair.

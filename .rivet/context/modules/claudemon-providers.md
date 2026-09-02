@@ -8,7 +8,7 @@ related_paths:
   - "services/claudemon/src/session/pricing.rs"
   - "services/claudemon/src/daemon/spawn.rs"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-01
 ---
 
 # Claudemon Multi-Provider Adapters & PTY/Stream Transports
@@ -200,3 +200,45 @@ Fixed 2026-08-28: `providers/mod.rs` now emits `format!("⚠️ Error: {msg}\n")
 `errorMarkerReason` already takes only the first line, so both readers agree, and
 `contracts/agent-error-marker-cases.json` gained a case pinning the coalesced
 shape. **Don't drop the newline.**
+
+### Hand-authored notes (2026-09-01) — Codex context windows: five numbers that are not the same number
+
+Promoted from the 2026-08-31 Codex context learnings, re-checked against master
+at `0bac5799`. Measured on a real rollout (Workspacer session `d9723c3c` →
+`01a055de` via the `~/.workspacer/codex-threads` sidecar), 539
+`token_count` events.
+
+- **Keep these five apart. Conflating any two produces a confident wrong
+  answer:**
+  1. the **requested** window (`requestedSelection.contextWindow` — user
+     intent, may never be honored),
+  2. the **canonical/catalog** window (the shared model→window table and
+     `codex debug models`' `context_window`/`max_context_window`),
+  3. the **runtime** window the harness reports
+     (`statusLine.contextWindowSize`, from `token_count`'s
+     `model_context_window`),
+  4. **cumulative** tokens billed for that rollout, and
+  5. the **compaction threshold**.
+  On that specimen `model_context_window` was 258,400 on every one of the 539
+  events, the largest single input was 227,231, and five compactions happened
+  around 217K–227K — while cumulative usage reached 75,586,943 and matched
+  `~/.codex/state_5.sqlite`'s `threads.tokens_used`. So a >250K session token
+  count is NOT evidence that the live context exceeded 258.4K. Keep the active
+  context bar on the latest input against the provider-reported runtime window,
+  and label cumulative totals as billed.
+- **Never turn a catalog capacity into a picker option on its own.** A model's
+  nominal 1.05M capacity displayed as an honored allocation, while the harness
+  reports a much smaller active window, is the failure this rule prevents.
+  Display the live reported operational window separately from official
+  capacity.
+- **CORRECTED 2026-09-01 — Codex DOES have a spawn-time context control, and it
+  is now wired.** The earlier note that Workspacer "persists a generic
+  contextWindow but does not pass it into `codex::spawn_session`" is stale:
+  `set_context_window_in_argv` (`services/claudemon/src/daemon/spawn.rs`) and
+  `codex.rs` now emit `-c model_context_window=<n>` (de-duplicating any existing
+  `-c model_context_window=` first), a fresh model-less Codex life requests 1M
+  by contract (`providerContextDefaults`), and `SpawnAgentDialog` offers
+  "Request 1M". It remains a SPAWN-TIME request only: there is still no live
+  Codex context switch, the request is provisional until a runtime frame
+  confirms it, and a validated value should be checked against the selected
+  CLI's catalog rather than assumed.

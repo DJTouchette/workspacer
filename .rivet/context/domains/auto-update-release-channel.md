@@ -13,7 +13,7 @@ related_paths:
   - "apps/desktop/electron-builder.yml"
   - ".github/workflows/release.yml"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-01
 ---
 
 # In-app auto-update (electron-updater, stable vs nightly channels)
@@ -72,3 +72,29 @@ testers that never mixes with the stable release feed.
 - **`autoInstallOnAppQuit` is deliberately `false`; `autoDownload` is `true`.** The product choice is: download silently in the background as soon as an update is found, but only ever prompt the user at the install/restart step (`onDownloaded()`'s `dialog.showMessageBox`) — never auto-install without asking, and never ask twice for the same download (see `promptOpen` guard).
 - **`updates.channel` has no renderer UI today.** `UpdatesSection.tsx` only exposes the `enabled` toggle; `channel` can only be set by hand-editing `config.yaml`'s `updates.channel` key (defaults to `'latest'` if the block or key is absent — see `readUpdatesConfig()`).
 - **The web-mirror / bridge builds never see real update state.** `webBackend.ts` and `bridgedBackend.ts` stub all three update IPC calls to resolve `{ state: 'unsupported' }` — in-app updates are declared a desktop-shell-only concern; there is no equivalent update mechanism for the hub/brain/claudemon daemons or the `workspacer serve` CLI bundle.
+
+## Hand-authored notes (2026-09-01) — what actually gates a nightly
+
+Promoted from the 2026-09-01 Prettier-drift learning, re-checked against master
+at `0bac5799`.
+
+- **CORRECTION, and it is the important one: the nightly is NOT gated on CI.**
+  The learning recorded the rule as "the CI workflow is required for master
+  pushes, and the nightly workflow must not be dispatched until that CI is
+  green". That is a HUMAN release policy, not a mechanism. `release.yml`'s
+  `gate` job decides only two things — is this a nightly (schedule, or a
+  dispatch with the input), and has the sha changed since the last nightly —
+  and it never reads the `ci` workflow's conclusion. Verified: the 08:00 UTC
+  scheduled run on 2026-09-01 (`33510502279`) built and published successfully
+  while master's own CI was failing on `containment-windows`. **A red master
+  still ships a nightly to every early tester on the rolling feed.** If the
+  policy is meant to bind, it has to become a step in `gate`; until then,
+  "don't dispatch" is a rule for the person, and the cron does not follow it.
+- **The desktop `Format` check can fail on a file your branch never touched.**
+  For release candidate `a22bc61b` the CI Format step failed solely on
+  `apps/desktop/src/main/services/hubDaemon.ts`, which was byte-for-byte
+  identical to `origin/master` — pre-existing Prettier drift, not the branch's
+  doing (fixed separately in `2d8f7fd0`). Before assuming a formatting failure
+  belongs to your change, diff the named file against master; if it is
+  unchanged, the drift predates you and fixing it is an unrelated commit that
+  needs its own approval, not a quiet amend to the release candidate.

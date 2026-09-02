@@ -8,7 +8,7 @@ related_paths:
   - "services/claudemon/src/session/state.rs"
   - "services/claudemon/src/session/store.rs"
 owner: Damien Touchette
-last_reviewed: 2026-08-16
+last_reviewed: 2026-09-01
 ---
 
 # Session Lifecycle
@@ -274,3 +274,44 @@ mobile.html, round-trip tested), `app.supervisorHome`/`ensureSupervisorHome` (a
 persisted IPC channel), and `services/hub/internal/supervisor` +
 `services/hub/internal/nodes/supervisor.go` (OS process supervision). See
 `modules/fleet-manager.md`.
+
+## Hand-authored notes (2026-09-01) — the model string is a context-window carrier, and that is now bounded
+
+Promoted from the 2026-08-30/31 model-window learnings, re-checked against
+master at `0bac5799`. The learnings were written as a MIGRATION PROPOSAL; the
+migration has since landed, so what follows is the shipped shape, not a plan.
+
+- **`[1m]`/`-1m` is argv SYNTAX, not identity, and Claude Code strips it from
+  the model id it writes into the transcript.** That is why the requested model
+  was for a long time the only thing that knew a session was 1M, and why a
+  session could publish a 200K denominator while genuinely holding a 1M window.
+  A model string is therefore semantically load-bearing across spawn, restore
+  and federation — not a display alias.
+- **The canonical boundary now exists in one place per language and the marker
+  is bounded ingress compatibility.** `contracts/model-context-windows.json`'s
+  `selectionCases` block pins it: normalization always returns a base identity
+  plus a numeric-or-null window, conflicts and empty identities are rejected,
+  unknown identities survive, and feeding canonical output back through the
+  normalizer is a no-op. `claudeArgvCases` pins the one place a marker is still
+  EMITTED — external `--model` argv for the selectable Opus/Sonnet 1M variants;
+  1M-native families (Fable/Mythos) and every unspecified selection stay
+  undecorated. Implementations: `main/shared/modelContextWindows.ts` (+
+  `canonicalSelection.ts` for the wire mapping),
+  `services/claudemon/src/session/windows.rs`,
+  `services/hub/internal/modelselection/modelselection.go`,
+  `services/hub/cmd/brain/windows.go`.
+- **The selection rides its own optional wire field now, additively.**
+  claudemon publishes `requested_selection {model, context_window}` and
+  `resolved_context_window`; the brain projects the camelCase pair beside the
+  snake originals; the desktop, `/app`, `/m` and wks-tui all forward them
+  without editing. Both spellings must be accepted on read — version skew
+  across a federation link is normal, and an older brain sends only the snake
+  form (the same way `status_line` and `tool_calls` still ride along unrenamed).
+  Absence means "nobody has said" and must not be completed from a neighbouring
+  field.
+- **CORRECTION to the 2026-08-30 note "the requested Claude model is the only
+  1M carrier":** it no longer is. Since `66c842df`/`73af1d02`/`4d4b8e9b` the
+  canonical pair is published end to end, so a consumer that still re-derives a
+  window from `settings.model` is manufacturing the second, disagreeing answer
+  the slice exists to retire. `requested_model` survives as the compatibility
+  projection only.

@@ -8,7 +8,7 @@ related_paths:
   - "apps/desktop/src/main/services/hubCapabilities.ts"
   - "services/hub/cmd/brain/handlers.go"
 owner: Damien Touchette
-last_reviewed: 2026-08-16
+last_reviewed: 2026-09-01
 ---
 
 # Agent Spawn (two transports)
@@ -199,3 +199,36 @@ Agents spawn via two independent transports: Electron IPC (`claude:spawn`) and h
   `mock.calls[0].at(-1)`, which silently stopped meaning "the guard" the moment
   `library.list` grew a trailing filter argument — it now finds the single
   function-typed argument (`guardArgOf`) and asserts there is exactly one.
+
+### Context-window requests have their own funnels — and Codex has a SECOND ingress
+
+Promoted from the 2026-08-30/31 spawn learnings, re-checked against master at
+`0bac5799`.
+
+- **A requested context window rides the same high-risk chain as the model, and
+  every link has to keep it.** Desktop spawn (`main/lib/spawnModel.ts`,
+  `managedSpawn.ts`) → claudemon persistence and spawn
+  (`daemon/spawn.rs`, `store/mod.rs`) → session usage → hub capabilities and
+  federation → the routing ceiling comparison
+  (`services/hub/internal/routing/modelid.go`, which keeps legacy suffixes for
+  COMPARISON only). A UI/config-only implementation leaves the selection
+  unobservable in the headless and federated paths, or loses it before usage
+  derives a limit; that is why the value is a persisted, wire-carried field
+  rather than an argv detail. See `domains/session-lifecycle.md` for the
+  canonical `{model, contextWindow}` slice itself.
+- **Fresh model-less Codex defaulting happens at TWO layers, and the order
+  matters at both.** `contracts/model-context-windows.json`'s
+  `providerContextDefaults` block is the single source
+  (`codex: freshContextWindow 1000000`), consumed by
+  `main/shared/providerContext.ts` (`DEFAULT_CODEX_CONTEXT_WINDOW`,
+  `contextRequestForSpawn`) on the desktop and independently at claudemon's
+  `POST /sessions/spawn-managed`, which is a second spawn surface direct
+  clients reach without passing through the host. Two rules, both testable:
+  apply the fresh-life default BEFORE managed model normalization — a Codex
+  request legitimately carries a `contextWindow` with NO model
+  (`modelselection.ResolveInput` permits exactly that for `codex` and rejects
+  it for everyone else), so defaulting after model selection drops the normal
+  model-less request; and never default a RESUME — a resume with no persisted
+  request must stay nil, or every pre-feature session is silently upgraded on
+  restart. Keep the provider-level fresh-spawn policy separate from the
+  model→window table lookup, and test both cases.
