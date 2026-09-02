@@ -611,14 +611,20 @@ type Decision struct {
 	// feature). An explanation that named only one of them could claim a
 	// capacity reason it never used.
 	ModeProvider string `json:"modeProvider,omitempty"`
-	// ShiftCapacity is the LANDING provider's own capacity, read when a mode
-	// shift would have moved this role onto a provider other than ModeProvider.
-	// It is present whether the shift was applied or refused: "we looked at
-	// claude before sending claude the work" is the claim, and a field that
-	// appeared only on success would not support it.
+	// ShiftCapacity is the LANDING provider's own capacity — read when a mode
+	// shift (step 7) would have moved this role onto a provider other than
+	// ModeProvider, OR when the fallover walk (step 8b, alternatives.go) landed
+	// the answer on something other than the primary. Both cases are the same
+	// claim: "we looked at PROVIDER's own capacity before sending it the work",
+	// and applyShift's cross-provider check and the walk's providerJudge are the
+	// two places that reading is taken. It is present whether a mode shift was
+	// applied, refused, or never attempted; a fallover OVERWRITES it with the
+	// candidate it actually chose, because this field always describes the
+	// non-subject provider the CURRENT answer is prepared to defend, not a
+	// history of every provider read along the way. See EffectiveCapacity.
 	ShiftCapacity *Capacity `json:"shiftCapacity,omitempty"`
-	// ShiftMode is the mode that landing provider's OWN capacity decides, which
-	// is what the shift was allowed or refused on.
+	// ShiftMode is that landing provider's OWN mode verdict — what the shift or
+	// the fallover was allowed or refused on.
 	ShiftMode Mode `json:"shiftMode,omitempty"`
 
 	// FellOverFrom is the capability's PRIMARY pairing, present only when this
@@ -645,6 +651,31 @@ type Decision struct {
 	FellBack bool `json:"fellBack,omitempty"`
 	// DecidedAt is the instant the currency verdicts were reached.
 	DecidedAt int64 `json:"decidedAt"`
+}
+
+// EffectiveCapacity is the Capacity that actually describes d.Provider — the
+// one a caller publishing "this decision's own health" should quote, rather
+// than reaching for Capacity (which is always the SUBJECT's, step 4's own
+// reading, and stays exactly that on a decision that never shifted or fell
+// over).
+//
+// A mode shift or a fallover is free to land the answer on a provider other
+// than the subject, and when either does, ShiftCapacity is that landing
+// provider's own reading (see its doc). This is used ONLY when its Provider
+// actually matches d.Provider — both are normalized at load, so a direct
+// string comparison is exact — which is what keeps a decision that never
+// shifted or fell over answering with precisely d.Capacity, byte for byte.
+//
+// This is the fix for the bug the routing.decision event used to carry: it
+// published Capacity.Health unconditionally, so a reviewer that fell over from
+// a red claude to a green codex shipped the event as `provider: codex, health:
+// red` — the primary's health, misattributed to the provider that is actually
+// about to run the work.
+func (d Decision) EffectiveCapacity() Capacity {
+	if d.ShiftCapacity != nil && d.ShiftCapacity.Provider == d.Provider {
+		return *d.ShiftCapacity
+	}
+	return d.Capacity
 }
 
 // MatrixInfo is the provenance of the matrix behind a decision.
@@ -875,9 +906,25 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 				"independent family was REQUIRED and could not be arranged: %s also ran the previous agent, and every cross-provider alternative this matrix offers for %s was tried first and could not be used (the reasons above say why). `fresh: true` on that entry is what carries independence when the pairing cannot",
 				d.Provider, d.Capability))
 		} else {
+			hint := "set `fresh: true` on that entry, or add a cross-family pairing"
+			if profileHasAnyAlternatives(m, from) {
+				// The active profile already uses `alternatives:` for some
+				// other tier, so naming the key is a real, actionable
+				// suggestion here too.
+				hint += " under `alternatives:`"
+			}
+			// A single-family profile (anthropic_only, codex_only) never uses
+			// `alternatives:` anywhere — it has nowhere to fall over to, by
+			// design (TestTheMixedProfileNamesBothFamiliesOnEveryTier holds
+			// that line) — so mentioning the key there would suggest undoing
+			// the profile's whole point. Gating on the PROFILE rather than on
+			// this capability's own (zero, by construction of this branch)
+			// alternatives is also what keeps this hint byte-identical to its
+			// pre-alternatives-feature wording for every matrix that never
+			// uses the key at all.
 			d.Reason = append(d.Reason, fmt.Sprintf(
-				"independent family was REQUIRED and could not be arranged: %s is the only provider this matrix puts %s on, and it also ran the previous agent — set `fresh: true` on that entry, or add a cross-family pairing under `alternatives:`",
-				d.Provider, d.Capability))
+				"independent family was REQUIRED and could not be arranged: %s is the only provider this matrix puts %s on, and it also ran the previous agent — %s",
+				d.Provider, d.Capability, hint))
 		}
 	}
 	if prev != "" {
@@ -887,6 +934,20 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, now time.Time, req R
 	d.Reason = append(d.Reason, fmt.Sprintf("selected %s %s%s for capability %s under profile %s",
 		d.Provider, d.Model, effortSuffix(d.Effort), d.Capability, from))
 	return d
+}
+
+// profileHasAnyAlternatives reports whether ANY capability in this profile
+// carries an `alternatives:` list — used to decide whether telling an operator
+// to "add a cross-family pairing under `alternatives:`" is actionable advice
+// for the profile they are actually running, or a suggestion to undo a
+// single-family profile's whole point.
+func profileHasAnyAlternatives(m *Matrix, profile string) bool {
+	for _, a := range m.Profiles[profile] {
+		if len(a.Alternatives) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // providerDisabled reports whether routing.yaml takes this provider out of

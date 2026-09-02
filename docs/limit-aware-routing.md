@@ -55,6 +55,18 @@ result, and the fallover then picks who runs it. A decision reports the first
 through `capability` versus `baseCapability`, and the second through
 `fellOverFrom` and a reason sentence naming the primary it passed over.
 
+`capacity` (and the `routing.decision` event's `health`, `pace`, `paceRatio` and
+`paceWindow`) is always read for the SUBJECT — the provider step 4 judged the
+mode against — because that reading has to exist before either mechanism can
+decide whether to move anything. When a mode shift or a fallover lands the
+answer on a different provider, `shiftCapacity`/`shiftMode` carry that landing
+provider's own reading, and the published `health`/`pace` fields are drawn from
+whichever of the two actually describes `provider` (`Decision.EffectiveCapacity`
+in `internal/routing/policy.go`). Both readings are kept on the wire rather than
+only the second, because "we looked at claude before sending claude the work"
+is the claim a decision that never moved is making, and a field that appeared
+only after a shift would not support it.
+
 One bus method exposes it, `routing.select`, and it is read-only. Agents holding
 the workspacer tools at the operator tier see it as `select_model`. It decides
 nothing on its own: a caller passes the answer's provider, model and effort to
@@ -161,6 +173,16 @@ mention it for a capability and you own the whole list for that capability. The
 primary's own `provider`/`model`/`effort`/`fresh`/`enabled` keys are siblings of
 it and stay individually editable. An alternative may not carry alternatives of
 its own; the loader reports nesting as an issue.
+
+An alternative's own `fresh:` is **advisory only**. The spawn gate's freshness
+check resolves `fresh` through the active profile's **primary** entry for a
+capability — it never reads an alternative's row — so what actually governs a
+resume refusal after a fallover is the primary's flag, whichever candidate the
+walk landed on. The loader flags a mismatch (an alternative whose `fresh:`
+disagrees with its primary's) as an issue at load time, because reaching that
+asymmetry silently is how a same-family reviewer stops being independent on
+the one day the primary is down. The shipped default always agrees on both
+sides.
 
 What IS guaranteed, in every profile, always, is freshness. Every profile sets
 `fresh: true` on its review capabilities

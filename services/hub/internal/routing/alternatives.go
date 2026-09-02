@@ -262,6 +262,19 @@ func (d *Decision) walkAlternatives(
 			from := primary
 			from.Alternatives = nil
 			d.FellOverFrom = &from
+			// THE CANDIDATE'S OWN CAPACITY, KEPT RATHER THAN RE-READ. judge
+			// already read it above (that is the whole discipline this walk
+			// borrows from applyShift), so this is that same reading, quoted
+			// into the fields a caller reads to learn what actually describes
+			// the provider this answer is about to name — see
+			// Decision.EffectiveCapacity. It OVERWRITES anything a mode shift
+			// (step 7) left here: those fields always describe the provider
+			// the CURRENT answer is prepared to defend, and after a fallover
+			// that is this candidate, not wherever a mode shift landed before
+			// the ceiling and this walk ran.
+			landed := judge.judge(normalizeProvider(c.a.Provider))
+			landedCapacity := landed.capacity
+			d.ShiftCapacity, d.ShiftMode = &landedCapacity, landed.mode
 			if primaryWhy != "" {
 				d.Reason = append(d.Reason, fmt.Sprintf(
 					"primary %s %s unusable (%s); took alternative %s %s",

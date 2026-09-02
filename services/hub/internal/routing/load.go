@@ -415,6 +415,22 @@ func validate(m *Matrix) []Issue {
 				if len(alt.Alternatives) > 0 {
 					add(aw, "carries `alternatives:` of its own — an alternative may not nest, because the fallover order is the flat list the file states and a tree of them is unreadable. Move them up beside %s's own alternatives, in the order they should be tried", where)
 				}
+				// `fresh` ON AN ALTERNATIVE IS ADVISORY ONLY, and that is a
+				// real asymmetry worth flagging rather than a detail: the spawn
+				// gate's checkFresh resolves `fresh` through freshAssignment,
+				// which reads only the ACTIVE profile's PRIMARY for a
+				// capability (see fresh.go) — it never looks at an
+				// alternative's own row. So a fallover to an alternative whose
+				// `fresh:` disagrees with its primary's silently carries the
+				// PRIMARY's answer, not the row that actually ran. The shipped
+				// default always agrees on both sides; a hand-edited file that
+				// does not is the asymmetry this Issue exists to surface,
+				// because reaching it silently is exactly how a same-family
+				// reviewer stops being independent on the one day the primary
+				// is down.
+				if alt.Fresh != a.Fresh {
+					add(aw, "fresh: %v disagrees with the primary's fresh: %v — a spawn gate resolves `fresh` from the PRIMARY only (freshAssignment in fresh.go never reads an alternative's own row), so this alternative's `fresh:` is advisory and the primary's flag is what actually governs a fallover onto it", alt.Fresh, a.Fresh)
+				}
 			}
 		}
 	}

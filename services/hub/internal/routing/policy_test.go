@@ -1066,6 +1066,185 @@ profiles:
 			}
 		}
 	})
+
+	// The three cases below each kill ONE of unusable's five triggers on its
+	// own, without leaning on the others. "a RED primary falls over" above
+	// proves the health arm; "a DISABLED provider under the primary is
+	// refused" proves step 3b, which runs BEFORE the walk and so never
+	// exercises the walk's OWN provider-disabled arm at all. Neither of them
+	// touches the entry-level `enabled: false` arm or the walk's own
+	// provider-disabled arm — mutation testing showed both survive with the
+	// rest of this suite green.
+
+	t.Run("an entry-level `enabled: false` on the PRIMARY falls over, not just a provider-level one", func(t *testing.T) {
+		// claude ITSELF is healthy here — nothing about its provider or its
+		// capacity is touched. Only the capability's own entry is disabled
+		// (profiles.mixed.reviewer.enabled: false), which step 3b's
+		// provider-level check cannot see at all, so nothing refuses this
+		// decision before the walk runs. If the walk's entry-level `enabled:
+		// false` arm were neutered, the walk would treat the primary as
+		// usable and return it unchanged; Select's OWN final `!a.IsEnabled()`
+		// guard (step 8, after the walk) would then catch it and REFUSE the
+		// whole decision — which is a different, worse answer than falling
+		// over, and is what distinguishes the two.
+		m, err := Load("test.yaml", []byte("profiles:\n  mixed:\n    reviewer:\n      enabled: false\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		d := Select(m, altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+		if !d.Eligible || d.Provider != "codex" || d.Model != "gpt-5.6-terra" {
+			t.Fatalf("got %+v, want the codex alternative — a disabled ENTRY on a healthy provider must fall over, not refuse", d)
+		}
+		if d.FellOverFrom == nil || d.FellOverFrom.Provider != "claude" {
+			t.Fatalf("FellOverFrom = %+v, want the disabled claude primary", d.FellOverFrom)
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "the entry is explicitly disabled (enabled: false)") {
+			t.Errorf("the reason does not name the entry-level flag as the trigger: %v", d.Reason)
+		}
+	})
+
+	t.Run("a DISABLED alternative is SKIPPED, not selected", func(t *testing.T) {
+		// The primary is red, so the walk must reach the alternatives. The
+		// first is disabled at the entry level; the second is healthy. If the
+		// walk's entry-level arm were neutered, the first alternative would
+		// look usable and the walk would stop there, handing back a disabled
+		// row — which Select's final `!a.IsEnabled()` guard would then
+		// refuse outright, never reaching the second, perfectly good
+		// candidate.
+		m, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    reviewer:
+      alternatives:
+        - { provider: codex, model: gpt-5.6-terra, effort: high, fresh: true, enabled: false }
+        - { provider: codex, model: gpt-5.6-luna, fresh: true }
+`))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		d := Select(m, altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+		if !d.Eligible || d.Provider != "codex" || d.Model != "gpt-5.6-luna" {
+			t.Fatalf("got %+v, want the SECOND alternative — the first is disabled and must be skipped, not selected and then refused", d)
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "alternative codex gpt-5.6-terra") || !strings.Contains(joined, "was skipped too") {
+			t.Errorf("the skipped alternative is not named: %v", d.Reason)
+		}
+		if !strings.Contains(joined, "the entry is explicitly disabled (enabled: false)") {
+			t.Errorf("the reason does not say the skipped alternative was disabled: %v", d.Reason)
+		}
+	})
+
+	t.Run("an alternative on a DISABLED PROVIDER is SKIPPED, not selected-then-refused", func(t *testing.T) {
+		// balanced's SUBJECT is codex, so step 3b's provider-level check never
+		// even looks at claude — the alternative's own provider is disabled
+		// while the subject provider is something else entirely, which is
+		// exactly the shape step 3b cannot catch. If the walk's own
+		// provider-disabled arm were neutered, the walk would treat the
+		// claude alternative as usable and hand it back; Select's final
+		// providerDisabled check (after the walk, guarding the LANDED
+		// provider) would then refuse the whole decision — Eligible false —
+		// instead of moving on to the copilot candidate that is actually
+		// usable. Eligible staying true on the correct candidate is the
+		// assertion that tells the two apart.
+		//
+		// The role is `fixer`, not `scout`: codex reads RED here, and
+		// `mode_shifts.conserve` moves a conserving SCOUT off `balanced`
+		// entirely (to `cheap`) before this capability's own alternatives are
+		// ever consulted — `fixer` is deliberately absent from that table (a
+		// conserving fixer stays on `balanced`, per the shipped file's own
+		// comment), so it is the role that actually exercises this walk.
+		m, err := Load("test.yaml", []byte(`
+profiles:
+  mixed:
+    balanced:
+      alternatives:
+        - { provider: claude, model: sonnet, effort: high }
+        - { provider: copilot, model: copilot-review }
+providers:
+  claude:
+    enabled: false
+`))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		snap := snapshotOfProviders(t, "acct", map[string]map[string]winSpec{
+			"codex": altRed, "copilot": altGreen,
+		})
+		d := Select(m, snap, nil, policyNow, Request{Role: "fixer", ForecastDemandBeforeResetPct: &zero})
+		if !d.Eligible {
+			t.Fatalf("a disabled-provider alternative was selected and then refused instead of skipped: %+v", d)
+		}
+		if d.Provider != "copilot" || d.Model != "copilot-review" {
+			t.Fatalf("got %s %s, want the copilot alternative — claude's PROVIDER is disabled and must be skipped, not taken", d.Provider, d.Model)
+		}
+		joined := strings.Join(d.Reason, " ")
+		if !strings.Contains(joined, "routing.yaml's providers.claude is explicitly disabled") {
+			t.Errorf("the reason does not say claude's provider was disabled: %v", d.Reason)
+		}
+	})
+}
+
+// TestAFalloverReportsTheCandidatesOwnCapacityNotThePrimarys is SHOULD-FIX 2.
+//
+// Before this, d.Capacity (and d.Mode/d.ModeProvider, which are read from it)
+// kept describing the PRIMARY after a fallover, because step 4 reads it for
+// the SUBJECT and nothing after the walk ever revisited it. A caller reading
+// "this decision's own capacity" off the obvious field — Capacity — got
+// claude's RED reading back for a decision that runs on codex.
+//
+// The fix follows applyShift's own precedent rather than inventing a new
+// shape: ShiftCapacity/ShiftMode are the same fields a cross-provider mode
+// shift already populates with the LANDING provider's own reading, and the
+// walk now does the same for the candidate it actually chose — reusing the
+// exact reading providerJudge already took rather than a second one.
+// EffectiveCapacity() is the one door a reader should use to get "whichever
+// capacity actually describes d.Provider", so it does not have to know which
+// of the two mechanisms moved the answer, or whether either did.
+func TestAFalloverReportsTheCandidatesOwnCapacityNotThePrimarys(t *testing.T) {
+	zero := 0.0
+	reviewer := Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero}
+
+	d := Select(shipped(t), altSnapshot(t, altRed, altGreen), nil, policyNow, reviewer)
+	if !d.Eligible || d.Provider != "codex" {
+		t.Fatalf("got %+v, want the codex alternative — the rest of this test proves nothing otherwise", d)
+	}
+
+	// Capacity stays exactly what it always was: the SUBJECT's (claude's) own
+	// reading, untouched by the walk. That is not a bug to fix — see its doc
+	// comment — but a caller that reads IT as "the decision's health" is
+	// exactly the mistake the routing.decision event used to make.
+	if d.Capacity.Provider != "claude" || d.Capacity.Health != limits.HealthRed {
+		t.Fatalf("Capacity = %+v, want claude's own RED reading, untouched by the fallover", d.Capacity)
+	}
+
+	if d.ShiftCapacity == nil {
+		t.Fatal("ShiftCapacity is nil after a fallover — nothing on the Decision describes the provider it actually names")
+	}
+	if d.ShiftCapacity.Provider != "codex" || d.ShiftCapacity.Health != limits.HealthGreen {
+		t.Errorf("ShiftCapacity = %+v, want codex's own GREEN reading", d.ShiftCapacity)
+	}
+	if d.ShiftMode != ModeNormal {
+		t.Errorf("ShiftMode = %q, want codex's own mode — nothing about codex is red, conserving or spending down here", d.ShiftMode)
+	}
+
+	if eff := d.EffectiveCapacity(); eff.Provider != "codex" || eff.Health != limits.HealthGreen {
+		t.Errorf("EffectiveCapacity() = %+v, want codex's own reading — this is what a caller publishing this decision's health should read", eff)
+	}
+
+	// THE COMPATIBILITY GUARD, for this field specifically: a decision that
+	// never shifted or fell over must answer with EffectiveCapacity() ==
+	// Capacity, so nothing downstream of this fix changes for the ordinary
+	// case — see TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore for
+	// the same guarantee over the whole Decision.
+	healthy := Select(shipped(t), altSnapshot(t, altGreen, altGreen), nil, policyNow, reviewer)
+	if healthy.ShiftCapacity != nil {
+		t.Errorf("ShiftCapacity is set on a decision that never shifted or fell over: %+v", healthy.ShiftCapacity)
+	}
+	if got, want := healthy.EffectiveCapacity(), healthy.Capacity; got.Health != want.Health || got.Provider != want.Provider {
+		t.Errorf("EffectiveCapacity() = %+v, want exactly Capacity (%+v) on an answer that never moved", got, want)
+	}
 }
 
 // TestAPinnedProviderIsServedFromItsOwnProfileFirst is the borrowing change.
@@ -1214,6 +1393,13 @@ func TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore(t *testing.T) {
 		{Role: "implementer", ForecastDemandBeforeResetPct: &zero},
 		{Role: "judge", ForecastDemandBeforeResetPct: &zero},
 		{Role: "reviewer", PreviousProvider: "codex", RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero},
+		// A single-family profile's OWN independent-family failure: it never
+		// carried alternatives in either matrix (stripping mixed's changes
+		// nothing here), so this is the branch minor fix (e) below is about —
+		// marshalling the whole Decision, Reason included, is what makes this
+		// entry a real check on that sentence rather than just on the routing
+		// outcome.
+		{Role: "reviewer", Profile: "anthropic_only", PreviousProvider: "claude", RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero},
 	} {
 		a, err := json.Marshal(Select(withAlts, snap, nil, policyNow, req))
 		if err != nil {
@@ -1226,6 +1412,27 @@ func TestAMatrixWithNoAlternativesDecidesByteForByteAsBefore(t *testing.T) {
 		if string(a) != string(b) {
 			t.Errorf("role %s: an alternatives list changed an answer that never needed one\n with: %s\n  w/o: %s", req.Role, a, b)
 		}
+	}
+
+	// THE PROSE ITSELF, not just with-vs-without agreement: anthropic_only
+	// never uses `alternatives:` at all (by design — a single-family profile
+	// has nowhere to fall over to), so its independent-family-failed hint
+	// must read exactly as it did before this feature existed: "...or add a
+	// cross-family pairing", full stop. The alternatives PR appended " under
+	// `alternatives:`" to that hint UNCONDITIONALLY, which the with-vs-without
+	// comparison above cannot catch (both sides hit the identical,
+	// unconditional suffix, so they still agree with EACH OTHER even though
+	// neither matches the OLD wording) — this checks the wording directly.
+	d := Select(withAlts, snap, nil, policyNow, Request{
+		Role: "reviewer", Profile: "anthropic_only", PreviousProvider: "claude",
+		RequireIndependentFamily: true, ForecastDemandBeforeResetPct: &zero,
+	})
+	joined := strings.Join(d.Reason, " ")
+	if !strings.Contains(joined, "or add a cross-family pairing") {
+		t.Fatalf("the hint text changed; this assertion needs updating: %v", d.Reason)
+	}
+	if strings.Contains(joined, "under `alternatives:`") {
+		t.Errorf("anthropic_only has nowhere to add an alternative TO — it is single-family by design — so the hint should read exactly as it did before per-capability alternatives existed: %v", d.Reason)
 	}
 }
 

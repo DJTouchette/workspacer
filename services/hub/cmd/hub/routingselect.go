@@ -290,8 +290,14 @@ type routingDecisionEvent struct {
 // what keeps `enabled: false` producing the pre-pacing event as well as the
 // pre-pacing answer. ratio is nil exactly when the pace is not Known, so a
 // genuine 0.0 ratio still rides the event rather than being read as absent.
+//
+// It reads d.EffectiveCapacity() rather than d.Capacity for the same reason
+// the event's Health field below does: a fallover or a cross-provider mode
+// shift can land the answer on a provider other than the one Capacity was
+// read for, and a pace caption is exactly as misattributed as a health one
+// would be if it kept quoting the subject's own window-progress reading.
 func paceOf(d routing.Decision) (state string, ratio *float64, window string) {
-	p := d.Capacity.Pace
+	p := d.EffectiveCapacity().Pace
 	if p == nil {
 		return "", nil, ""
 	}
@@ -376,8 +382,16 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, pub func(event.Env
 				Eligible:   d.Eligible,
 				Mode:       string(d.Mode),
 				ModeManual: d.ModeManual,
-				Health:     string(d.Capacity.Health),
-				Reason:     d.Reason,
+				// EffectiveCapacity, NOT Capacity: Capacity is always the
+				// SUBJECT's reading (step 4), and a fallover or a
+				// cross-provider mode shift is free to land the answer on a
+				// different provider. Publishing Capacity.Health unconditionally
+				// used to ship `provider: codex, health: red` on a decision that
+				// fell over FROM a red claude TO a green codex — the primary's
+				// health, misattributed to the provider actually running the
+				// work.
+				Health: string(d.EffectiveCapacity().Health),
+				Reason: d.Reason,
 				CeilingCapped: d.Ceiling != nil &&
 					(d.Ceiling.CapabilityRefused || d.Ceiling.ToolScopeRefused || d.Ceiling.Denied),
 				CeilingMaxCapability: ceilingMax(d.Ceiling),
