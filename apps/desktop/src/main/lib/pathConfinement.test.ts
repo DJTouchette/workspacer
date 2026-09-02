@@ -93,6 +93,11 @@ interface Case {
   posixOnly?: boolean;
   needsUnreadableDir?: boolean;
   needsHome?: boolean;
+  /** The case's target differs from a path inside the roots only by the case of a
+   *  directory component. See the fixture's CASE FLAGS: on Windows the two
+   *  spellings name ONE directory, the case's `tree` collapses to it, and the
+   *  deny it asks for would be a refusal of the root's own file. */
+  caseSensitiveOnly?: boolean;
 }
 
 /** The fixture's declared vocabulary: the token names a loader may substitute,
@@ -162,6 +167,7 @@ const PROCESS_CWD = realpathOf(process.cwd());
 
 function skipReason(c: Case): string | null {
   if (c.posixOnly && WIN32) return 'posixOnly';
+  if (c.caseSensitiveOnly && WIN32) return 'caseSensitiveOnly';
   if (c.needsSymlinks && !CAN_SYMLINK) return 'needsSymlinks';
   if (c.needsUnreadableDir && !CAN_HAVE_UNREADABLE_DIR) return 'needsUnreadableDir';
   if (c.needsHome && !c.homeVia && !REAL_HOME) return 'needsHome';
