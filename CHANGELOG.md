@@ -58,9 +58,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   dry six hours into one. Claudemon now stamps the length of each Anthropic
   window onto its usage report: five hours and seven days, the two lengths
   the window names already assert and the endpoint never stated. The monthly
-  overage window deliberately carries no length, because a calendar month is
-  not a fixed number of minutes. The hub divides the share used by the share
-  the window's curve expects by now, and the result is a ratio where 1.0 is
+  overage window carries no length, because a calendar month is not a fixed
+  number of minutes. The hub divides the share used by the share the
+  window's curve expects by now, and the result is a ratio where 1.0 is
   exactly on the curve.
 
   `thresholds.pacing` in `routing.yaml` holds the two bands, the ratio at
@@ -112,8 +112,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   conversation, before or after a fallover.
 
   Health and pace on the `routing.decision` event now describe the provider
-  that was actually chosen, so a reviewer that fell over from a red claude
-  to a green codex is no longer published as `provider: codex, health: red`.
+  that was chosen, so a reviewer that fell over from a red claude to a green
+  codex is no longer published as `provider: codex, health: red`.
   Only the primary's `fresh:` is read, which makes an alternative's own
   setting advisory, so the loader raises an issue at load time when the two
   disagree rather than letting a fallover quietly carry the primary's flag.
@@ -125,6 +125,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   construction*, which is now stale prose beside correct behaviour. The
   shipped defaults, `docs/limit-aware-routing.md`, the `routing` help topic
   and the docs site all say the accurate thing.
+
 ### Changed
 - **Context-window controls are now provider-scoped, and requests stay
   provisional.** Claude context variants may be selectable in supported live
