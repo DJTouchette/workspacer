@@ -737,6 +737,47 @@ profiles:
 	}
 }
 
+// TestValidateFlagsAFreshMismatchBetweenAnAlternativeAndItsPrimary is minor
+// fix (d): `fresh` is enforced by the spawn gate's freshAssignment, which
+// resolves only the ACTIVE PROFILE'S PRIMARY for a capability (see fresh.go)
+// — it never reads an alternative's own row. So a fallover onto an
+// alternative whose `fresh:` disagrees with its primary's silently keeps the
+// PRIMARY's answer, and the alternative's own flag is dead weight that looks
+// load-bearing. The shipped default always agrees on both sides, which is
+// exactly why this asymmetry could ship silently; this Issue is what stops a
+// hand-edited file from reaching it without a warning.
+func TestValidateFlagsAFreshMismatchBetweenAnAlternativeAndItsPrimary(t *testing.T) {
+	m, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      fresh: true
+      alternatives:
+        - { provider: claude, model: opus, effort: high, fresh: false }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasIssueAt(m.Issues, "profiles.mixed.frontier.alternatives[0]") {
+		t.Fatalf("a fresh mismatch between an alternative and its primary was not flagged at load: %v", m.Issues)
+	}
+
+	agree, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    frontier:
+      fresh: true
+      alternatives:
+        - { provider: claude, model: opus, effort: high, fresh: true }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasIssueAt(agree.Issues, "profiles.mixed.frontier.alternatives[0]") {
+		t.Errorf("an alternative that AGREES with its primary's fresh was flagged anyway: %v", agree.Issues)
+	}
+}
+
 // TestTheMixedProfileNamesBothFamiliesOnEveryTier is the shipped-default rule
 // `mixed` exists for: two subscriptions means NO tier of work should become
 // unreachable because one of them is down. Every capability names a claude
@@ -765,10 +806,7 @@ func TestTheMixedProfileNamesBothFamiliesOnEveryTier(t *testing.T) {
 			t.Errorf("mixed does not resolve %q at all", capability)
 			continue
 		}
-		families := map[string]string{}
-		for _, cand := range append([]Assignment{a}, a.Alternatives...) {
-			families[cand.Provider] = cand.Model
-		}
+		families := familiesFor(a)
 		for _, want := range []string{"claude", "codex"} {
 			if _, ok := families[want]; !ok {
 				t.Errorf("mixed.%s names no %s entry across its primary and alternatives (%v) — that tier cannot fall over when its one family is unusable",
@@ -785,5 +823,71 @@ func TestTheMixedProfileNamesBothFamiliesOnEveryTier(t *testing.T) {
 				t.Errorf("%s.%s carries alternatives (%+v) — a single-family profile has nowhere to fall over to", pname, capability, a.Alternatives)
 			}
 		}
+	}
+}
+
+// familiesFor is which provider/model pairs a capability entry actually
+// OFFERS, across its primary and its alternatives — "offers" meaning a
+// candidate the walk could ever route to: enabled, and naming a model. A
+// disabled row or one with no model named is not a family this capability can
+// fall over to, whatever provider it happens to spell; counting it anyway is
+// exactly how TestTheMixedProfileNamesBothFamiliesOnEveryTier could pass for a
+// capability that only NAMES codex through a row nothing would ever route to.
+func familiesFor(a Assignment) map[string]string {
+	families := map[string]string{}
+	for _, cand := range append([]Assignment{a}, a.Alternatives...) {
+		if !cand.IsEnabled() || strings.TrimSpace(cand.Model) == "" {
+			continue
+		}
+		families[cand.Provider] = cand.Model
+	}
+	return families
+}
+
+// TestFamilyCompletenessIgnoresADisabledOrModellessCandidate proves the
+// tightening familiesFor makes over the old inline loop: before it, a
+// capability that named a family only through a disabled entry, or through an
+// entry with no model, still counted as offering that family, and
+// TestTheMixedProfileNamesBothFamiliesOnEveryTier would have passed for a
+// `mixed.cheap` whose only claude row was `enabled: false` — a capability that
+// is, in the only sense that matters to the fallover walk, codex-only. This
+// mutates the shipped `mixed.cheap` alternative (claude, the only thing
+// standing between that capability and being codex-only) two ways and shows
+// familiesFor no longer counts it either way.
+func TestFamilyCompletenessIgnoresADisabledOrModellessCandidate(t *testing.T) {
+	disabled, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    cheap:
+      alternatives:
+        - { provider: claude, model: sonnet, enabled: false }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := disabled.ResolveCapability("mixed", "cheap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if families := familiesFor(a); families["claude"] != "" {
+		t.Fatalf("a disabled alternative still counted as naming claude: %v — the completeness check would have missed a codex-only capability", families)
+	}
+
+	modelless, err := Load("routing.yaml", []byte(`
+profiles:
+  mixed:
+    cheap:
+      alternatives:
+        - { provider: claude }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := modelless.ResolveCapability("mixed", "cheap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if families := familiesFor(a2); families["claude"] != "" {
+		t.Fatalf("an alternative naming no model still counted as naming claude: %v — nothing could ever be spawned from that row", families)
 	}
 }

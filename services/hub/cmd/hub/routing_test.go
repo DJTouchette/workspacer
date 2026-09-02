@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -448,5 +449,148 @@ func TestRoutingSelectRecordsAndPublishesTheDecisionItAnswered(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"kind":"decision"`) {
 		t.Errorf("the log row is not a decision row:\n%s", body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PER-CAPABILITY ALTERNATIVES, AT THE EVENT BOUNDARY
+// ---------------------------------------------------------------------------
+
+// altUsageDoc builds a minimal /usage/report body naming exactly the
+// providers given, each a single default account with a five_hour + seven_day
+// reading — the same two-window shape internal/routing's own policy_test.go
+// altGreen/altRed use, chosen so RED/GREEN fold the same way here. `used` is
+// the five_hour window's used_percent; seven_day is fixed comfortably healthy
+// so it never becomes the binding window.
+func altUsageDoc(t *testing.T, now time.Time, byProvider map[string]float64) []byte {
+	t.Helper()
+	window := func(used float64, resets time.Duration) map[string]any {
+		return map[string]any{
+			"window_minutes": nil,
+			"is_current":     nil,
+			"used_percent":   map[string]any{"state": "ok", "value": used},
+			"resets_at":      now.Add(resets).Unix(),
+		}
+	}
+	names := make([]string, 0, len(byProvider))
+	for name := range byProvider {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	providers := make([]any, 0, len(names))
+	for _, name := range names {
+		providers = append(providers, map[string]any{
+			"provider": name,
+			"accounts": []any{map[string]any{
+				"account": "", "label": "test", "is_default": true,
+				"source": "oauth_poll",
+				"windows": map[string]any{
+					"five_hour": window(byProvider[name], 4*time.Hour),
+					"seven_day": window(11, 96*time.Hour),
+					"monthly": map[string]any{
+						"window_minutes": nil, "is_current": nil,
+						"used_percent": map[string]any{"state": "unavailable", "reason": "test fixture carries no monthly window"},
+						"resets_at":    nil,
+					},
+				},
+			}},
+		})
+	}
+	raw, err := json.Marshal(map[string]any{"generated_at": now.Unix(), "providers": providers})
+	if err != nil {
+		t.Fatalf("marshal usage doc: %v", err)
+	}
+	return raw
+}
+
+// TestAFalloverEventNamesTheHealthOfTheProviderItActuallyPicked is SHOULD-FIX
+// 2, proved at the RUNTIME boundary this handler owns.
+//
+// Before the fix, the published routing.decision event's `health` field
+// always quoted d.Capacity.Health — the SUBJECT's reading (step 4), never
+// revisited after a fallover — so a reviewer that fell over from a red claude
+// to a green codex shipped `provider: codex, health: red` onto the
+// open-by-decision event plane: the primary's health, misattributed to the
+// provider actually running the work. Decision.EffectiveCapacity is the fix;
+// this proves it through routingSelect, the handler that actually builds the
+// event, rather than only inside the pure policy layer.
+func TestAFalloverEventNamesTheHealthOfTheProviderItActuallyPicked(t *testing.T) {
+	now := time.Now()
+	body := altUsageDoc(t, now, map[string]float64{"claude": 95, "codex": 12})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
+	var published []event.Envelope
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL),
+		func(ev event.Envelope) { published = append(published, ev) }, logf)
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"reviewer","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d, ok := raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if !d.Eligible || d.Provider != "codex" {
+		t.Fatalf("got %+v, want a fallover onto codex — the rest of this test proves nothing otherwise", d)
+	}
+	if d.Capacity.Health != limits.HealthRed {
+		t.Fatalf("d.Capacity.Health = %q, want claude's RED reading — this test needs the primary to actually be unusable to mean anything", d.Capacity.Health)
+	}
+
+	if len(published) != 1 {
+		t.Fatalf("published %d event(s): %+v", len(published), published)
+	}
+	var ev map[string]any
+	if err := json.Unmarshal(published[0].Data, &ev); err != nil {
+		t.Fatalf("event payload: %v", err)
+	}
+	if ev["provider"] != "codex" {
+		t.Fatalf("event provider = %v, want codex", ev["provider"])
+	}
+	if ev["health"] != string(limits.HealthGreen) {
+		t.Errorf("event health = %v, want green — codex's OWN reading, agreeing with the provider the event names, not claude's red", ev["health"])
+	}
+}
+
+// TestAFalloverDecisionPublishesFellOverFrom is minor fix (b): the event's
+// FellOverFrom wiring in routingSelect is one unguarded field assignment with
+// no test that would notice its removal — deleting it leaves cmd/hub green.
+// Without it, a client watching the open-by-decision event plane sees a
+// reviewer land on the implementer's own family with no explanation in the
+// payload at all; the reason sentence explaining why exists only in the
+// answer the caller of routing.select gets directly, not on the wire every
+// tier receives.
+func TestAFalloverDecisionPublishesFellOverFrom(t *testing.T) {
+	now := time.Now()
+	body := altUsageDoc(t, now, map[string]float64{"claude": 95, "codex": 12})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	logf := routing.NewDecisionLog(filepath.Join(t.TempDir(), "routing-decisions.jsonl"), routing.DefaultDecisionLogMaxBytes)
+	var published []event.Envelope
+	h := routingSelect(routing.New("", nil), newUsageWatcher(srv.URL),
+		func(ev event.Envelope) { published = append(published, ev) }, logf)
+
+	if _, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"reviewer","cwd":"/tmp"}`)); err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	if len(published) != 1 {
+		t.Fatalf("published %d event(s): %+v", len(published), published)
+	}
+	var ev struct {
+		FellOverFrom *routing.Assignment `json:"fellOverFrom"`
+	}
+	if err := json.Unmarshal(published[0].Data, &ev); err != nil {
+		t.Fatalf("event payload: %v", err)
+	}
+	if ev.FellOverFrom == nil || ev.FellOverFrom.Provider != "claude" {
+		t.Fatalf("event fellOverFrom = %+v, want the claude primary this decision fell over from", ev.FellOverFrom)
 	}
 }
