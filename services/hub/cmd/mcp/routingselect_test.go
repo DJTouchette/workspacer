@@ -163,10 +163,11 @@ func TestHelpRoutingTopic(t *testing.T) {
 		"select_model",
 		"decisionId",
 		"eligible:false",
-		"escalationScrubbed",   // clamps are reported on the spawn result
-		"resumeSessionId",      // the freshness refusal
-		"effortStep",           // a mode may trim thinking time without changing the model
-		"could not be started", // live provider availability as a fallover trigger
+		"escalationScrubbed",              // clamps are reported on the spawn result
+		"resumeSessionId",                 // the freshness refusal
+		"effortStep",                      // a mode may trim thinking time without changing the model
+		"no launchable model",             // live provider availability as a fallover trigger
+		"unknown rather than unavailable", // and the limit of what that check can see
 		"docs/limit-aware-routing.md",
 	} {
 		if !strings.Contains(routing, want) {

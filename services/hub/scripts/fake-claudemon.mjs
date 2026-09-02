@@ -89,9 +89,11 @@ const state = {
   script: [],
   index: 0,
   requests: [],
-  // Providers this fake reports as having NO launchable model — the live
-  // "the CLI is not installed" answer. Everything not named here 404s, which the
-  // hub reads as "could not ask" and routes around exactly as it always did.
+  // Providers this fake answers with an EMPTY model list: the live "the CLI ran
+  // and can launch nothing" answer, which is the only shape availability reads
+  // as unavailable. Everything not named here 404s, which the hub reads as "the
+  // probe failed, so we could not ask" and routes exactly as it always did — a
+  // CLI that is genuinely absent produces that second shape, not this one.
   unavailable: new Set(),
   modelProbes: [],
 };

@@ -974,9 +974,15 @@ async function runSlice2RoutingAssertions(caller, fakeURL) {
   check('composed: the event names the landing provider and its own health', composed.event?.provider === 'copilot' && composed.event?.health === composed.result?.shiftCapacity?.health, JSON.stringify({ provider: composed.event?.provider, health: composed.event?.health }));
 }
 
-// runAvailabilityAssertions is LAST on purpose: once a provider answers the
-// catalog with an empty list the hub caches that answer, so this case
-// deliberately leaves codex unavailable for the rest of the run.
+// runAvailabilityAssertions RESTORES WHAT IT BREAKS, so it no longer has to run
+// last. It used to: an `unavailable` verdict was held for the full ten-minute
+// catalogTTL, so once codex answered the catalog with an empty list nothing in
+// the rest of the run could route to it again. That staleness was the bug (a
+// provider somebody has just installed is exactly the one whose verdict changed),
+// and now that a forced refresh re-probes an unavailable entry the scenario can
+// flip the knob back and prove codex is routable again before it returns. The
+// slice 2 cases that run after it are the second, independent proof: their
+// fallovers land on codex.
 async function runAvailabilityAssertions(caller, fakeURL) {
   console.log('\nlive provider availability:');
   await setScenario(fakeURL, 'healthy-current', true);
@@ -1015,7 +1021,28 @@ async function runAvailabilityAssertions(caller, fakeURL) {
   check('availability: a provider that reports no launchable model is routed AROUND', !!after, 'the decision stayed on codex after its catalog went empty');
   if (after) {
     check('availability: the reason names the live probe, not the allowance', /is not available to launch right now/.test(reasonsOf(after)), reasonsOf(after));
+    check('availability: the reason says what the probe SAW and does not claim a missing CLI', /ran and reported no launchable model/.test(reasonsOf(after)) && !/not installed/.test(reasonsOf(after)), reasonsOf(after));
     check('availability: and the allowance it skipped was healthy, so nothing else explains the move', after?.capacity?.health === 'green', JSON.stringify(after?.capacity?.health));
+  }
+
+  // AND IT COMES BACK. The verdict above is cached, and until the forced
+  // refresh started re-probing unavailable entries it was cached for ten
+  // minutes — so a provider that had just been installed stayed unroutable for
+  // ten minutes after it started working. Flipping the knob back and asking
+  // again is the whole assertion.
+  await setProviderAvailable(fakeURL, 'codex', true);
+  const restored = await waitFor(async () => {
+    const d = await caller.call('routing.select', {
+      ...routingRequest('availability-restored', ''),
+      provider: '',
+      preferredProvider: '',
+      role: 'implementer',
+    });
+    return d?.provider === 'codex' ? d : null;
+  }, 30000);
+  check('availability: a provider that starts answering again is routable again inside the catalog TTL', !!restored, 'codex stayed unavailable after its catalog was restored — the forced refresh is not re-probing unavailable entries');
+  if (restored) {
+    check('availability: and the restored answer carries no fallover at all', !restored?.fellOverFrom, JSON.stringify(restored?.fellOverFrom));
   }
 }
 
@@ -1081,8 +1108,12 @@ try {
 
   const decisionId = await runDecisionRecordAssertions(caller, fake.url);
   await runCeilingAwareSelectAssertions(caller);
-  await runSlice2RoutingAssertions(caller, fake.url);
+  // AVAILABILITY RUNS BEFORE SLICE 2, not after. It used to have to go last
+  // because the unavailable verdict it creates was sticky for catalogTTL; it now
+  // restores codex before it returns, and the slice 2 fallovers that follow are
+  // an independent proof that the restore took.
   await runAvailabilityAssertions(caller, fake.url);
+  await runSlice2RoutingAssertions(caller, fake.url);
   await runSpawnBindingAssertions(hubPort, decisionId);
 
   caller.close();

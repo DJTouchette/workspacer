@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -734,5 +735,117 @@ func TestTheDecisionEventCarriesTheEffortStep(t *testing.T) {
 	}
 	if strings.Contains(string(published[0].Data), "effortStep") {
 		t.Errorf("a decision no step was armed for published one anyway: %s", published[0].Data)
+	}
+}
+
+// TestAForcedRefreshReProbesAnUnavailableProvider is SHOULD-FIX 5.
+//
+// The three cached states are not equally worth holding. An answer with models
+// in it describes a working install and is reused for catalogTTL. The other two
+// are states somebody is expected to fix while the hub is running: a daemon that
+// was down comes back, and a CLI that launched nothing gets installed or logged
+// into. Holding "unavailable" for the full ten minutes made an installed
+// provider unroutable for ten minutes after it started working, which is the one
+// window in which a stale verdict costs the most.
+func TestAForcedRefreshReProbesAnUnavailableProvider(t *testing.T) {
+	var mu sync.Mutex
+	var probes int
+	serve := []string{} // what the fake claudemon says codex can launch
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		probes++
+		models := make([]map[string]any, 0, len(serve))
+		for _, id := range serve {
+			models = append(models, map[string]any{"id": id})
+		}
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"models": models})
+	}))
+	defer srv.Close()
+
+	c := newRoutingCatalog(srv.URL, nil)
+
+	// 1. The CLI runs and reports nothing: unavailable, with the reason.
+	c.entry("codex", true)
+	live := c.Availability()["codex"]
+	if live.Available {
+		t.Fatalf("codex = %+v, want the unavailable verdict a zero-model answer earns", live)
+	}
+	if !strings.Contains(live.Reason, "reported no launchable model") {
+		t.Errorf("reason = %q, want the sentence naming what the probe actually saw", live.Reason)
+	}
+	if strings.Contains(live.Reason, "not installed") {
+		t.Errorf("reason = %q claims a missing CLI, which this probe cannot detect: a missing binary makes the spawn fail, which is a non-2xx, which is UNKNOWN", live.Reason)
+	}
+
+	// 2. Somebody installs it. A FORCED refresh, well inside catalogTTL, has to
+	//    ask again — that is the whole fix.
+	mu.Lock()
+	serve = []string{"gpt-5.6-sol"}
+	before := probes
+	mu.Unlock()
+
+	c.entry("codex", true)
+	mu.Lock()
+	after := probes
+	mu.Unlock()
+	if after == before {
+		t.Fatal("a forced refresh reused the cached `unavailable` verdict: a provider somebody just installed is exactly the one whose state changed")
+	}
+	if live := c.Availability()["codex"]; !live.Available {
+		t.Fatalf("codex = %+v, want it routable again once its CLI answers with a model", live)
+	}
+
+	// 3. And a settled answer is still cached for the TTL, so the fix does not
+	//    turn every decision back into a CLI boot.
+	mu.Lock()
+	before = probes
+	mu.Unlock()
+	c.entry("codex", true)
+	c.entry("codex", true)
+	mu.Lock()
+	after = probes
+	mu.Unlock()
+	if after != before {
+		t.Errorf("a provider answering WITH models was re-probed %d extra time(s) inside catalogTTL", after-before)
+	}
+}
+
+// TestAnUnreachableDaemonAndAFailedProbeAreDifferentSentences keeps the two
+// UNKNOWN shapes apart in the words while keeping them identical in the
+// behaviour: both fail open, and neither ever reaches the availability map.
+func TestAnUnreachableDaemonAndAFailedProbeAreDifferentSentences(t *testing.T) {
+	// The daemon is up and answers 502 for this provider, which is the shape a
+	// missing CLI makes: claudemon tries to spawn the binary and the spawn fails.
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer up.Close()
+
+	c := newRoutingCatalog(up.URL, nil)
+	if _, err := c.Models("codex"); err == nil || !strings.Contains(err.Error(), "502") {
+		t.Errorf("error = %v, want the daemon's own status quoted so an operator can tell this from an unreachable daemon", err)
+	}
+	if live, ok := c.Availability()["codex"]; ok {
+		t.Errorf("a failed probe produced an availability entry (%+v); it is UNKNOWN and must fail open", live)
+	}
+
+	// And a daemon that is not there at all.
+	down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := down.URL
+	down.Close()
+
+	c = newRoutingCatalog(url, nil)
+	_, err := c.Models("codex")
+	if err == nil || !strings.Contains(err.Error(), "could not be reached") {
+		t.Errorf("error = %v, want the unreachable daemon said out loud", err)
+	}
+	if live, ok := c.Availability()["codex"]; ok {
+		t.Errorf("an unreachable daemon produced an availability entry (%+v)", live)
 	}
 }

@@ -165,10 +165,13 @@ What comes back, and what to do with it:
 - effort, and effortStep when a routing mode moved it. A mode has two levers,
   not one: it can move the role to a different CAPABILITY (a different model),
   and it can step the effort one notch along that provider's own reasoning
-  ladder — the SAME model, thinking less, or more. effortStep names the effort
-  the matrix declares, the effort the answer runs at, and one sentence saying
-  why. It is absent when nothing stepped. Pass effort to spawn_agent exactly as
-  given; do not re-derive it from the model.
+  ladder — the SAME model, thinking less, or more. Under conserve BOTH can fire
+  on one decision, so an answer may come back on a cheaper tier AND at a lower
+  effort. effortStep names the effort the matrix declares, the effort the answer
+  runs at, and one sentence saying why. It is present even when the step was
+  armed and then refused, which is how you learn a trim did not happen and why.
+  It is absent when nothing stepped at all. Pass effort to spawn_agent exactly
+  as given; do not re-derive it from the model.
 - eligible:false means the matrix found nothing spawnable for that role under
   that constraint: a provider held out of service, no profile pairing that
   capability with a provider you asked for, or a ceiling whose configured value
@@ -187,11 +190,19 @@ What comes back, and what to do with it:
   which PROVIDER serves it, when the primary's own allowance is red, its
   provider is conserving, or its row is switched off. capability plus
   baseCapability tell you the first happened; fellOverFrom tells you the second
-  did. A fallover can also be triggered by LIVE AVAILABILITY: when the host has
-  just asked a provider's CLI what it can launch and the answer was nothing, the
-  work goes to the next candidate and the reason names the provider that
-  could not be started. A provider the host could not ASK about is unknown and
-  is used as normal — "we could not check" is never read as "it is down".
+  did. A fallover can also be triggered by LIVE AVAILABILITY, and it is worth
+  knowing exactly what that does and does not see. It detects ONE thing: the
+  host asked a provider's CLI what it can launch, the CLI ran, and it reported
+  no launchable model. That candidate is passed over and the reason says so.
+  Everything else is unknown and is used as normal, including a probe that
+  FAILED: a CLI that is not installed makes the host's spawn fail, the daemon
+  answers 502, and that is unknown rather than unavailable, so a missing CLI is
+  NOT what this catches. claude can never be reported unavailable at all,
+  because its model list is assembled from alias names and past transcripts
+  rather than reported by a running CLI, so an empty answer there means "I do
+  not know". And the check runs only inside the fallover walk, so it is not
+  applied when you PIN a provider, when the capability has no alternatives, or
+  to the provider a mode shift lands on.
 ROUTING IS NOT AUTOMATIC, AND ASKING IS YOUR JOB. select_model is a read-only
 question and nothing asks it for you: the host does not consult routing when it
 spawns, so a dispatch that never asked carries no decision and appears nowhere in

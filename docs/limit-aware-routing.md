@@ -618,6 +618,17 @@ It is honoured on **alternatives** as well as primaries, and the shipped file
 writes it on both — a fallover takes the alternative's own row, so a floor
 written only on the primary stops binding at the exact moment the answer moves.
 
+**A floor ABOVE the row's own `effort:` disables stepping for that row.**
+`{effort: low, min_effort: high}` is a contradiction, and the loader reports it
+as an issue against that row. At decision time the router does not resolve it in
+the floor's favour: a floor holds an effort down and never raises one, so the row
+keeps the effort it declares and the answer says the step was skipped and why.
+The alternative would be a conserve step that spends more instead of less, with a
+reason sentence contradicting itself. The rule is enforced in `applyEffortStep`
+rather than in the fallover walk, because the walk's issue filter does not shield
+every route to that row: a pinned request never walks, and a capability with no
+`alternatives:` returns before the filter runs.
+
 ### When a step fires
 
 Two bands, and the order inside `Select` is the feature rather than an
@@ -635,6 +646,25 @@ the SUBJECT provider's reading — the same one the mode came from — and appli
 last, to whichever row the shift, the ceiling and the fallover walk finally
 chose. After a fallover that is the alternative's own effort and its own
 `min_effort`.
+
+**A pace-armed step is per-provider by its own rationale, and a mode-armed step
+is not.** The lower band's claim is "THIS provider is spending a little fast",
+which is an argument about the provider it was read from and about no other. So
+when the answer lands somewhere else, the band is re-derived for the LANDING
+provider (the walk has already read that candidate's capacity) and the step
+applies only if that provider is itself in the lower band. The reason names the
+provider whose pace justified it, and a step that does not carry says so rather
+than trimming quietly. Without this, an ahead-of-curve provider that is also
+unavailable would trim the healthy provider it fell over to, quoting the first
+one's ratio at the second. A CONSERVE or SPEND_DOWN step is left exactly as it
+is: the mode owns the whole decision, it is what moved the capability, and it
+applies to the answer that decision produced wherever that answer lands.
+
+**Under `conserve` both levers can fire on one decision, and that is the
+compound effect to keep in mind when tuning.** A `judge` on `codex_only` is moved
+from `frontier_plus` down to `deep_reviewer` by the capability shift AND stepped
+from `high` to `medium` by the effort step, in the same answer. The capability
+shift is the big move and the step rides on top of the row it landed on.
 
 ### What it does not fix
 
@@ -657,11 +687,11 @@ Nothing is present when no step was armed.
 
 ## Live provider availability
 
-The fallover triggers in `alternatives:` were all facts about the **document** —
-a row switched off, a load-time issue, a health reading. One was missing, and it
-is the one that bites first on a new machine: **the provider's CLI is not
-installed**, so nothing can be launched there at all, however healthy its
-allowance looks.
+The fallover triggers in `alternatives:` were all facts about the **document**:
+a row switched off, a load-time issue, a health reading. One live fact was
+missing, and this is it: **a provider whose CLI runs and reports that it can
+launch no model at all**. Its allowance can look perfectly healthy and there is
+still nothing to start there.
 
 The hub already boots each provider's CLI to fetch its model catalog, which is
 what `routing.yaml`'s model ids are validated against. That probe's answer is
@@ -673,9 +703,9 @@ There are **three** states, and the third one is the whole safety argument:
 
 | | Meaning | Effect on routing |
 |---|---|---|
-| available | the provider answered with models it can launch | usable |
-| unavailable | the **provider itself** answered and can launch nothing — the CLI is not installed, or cannot start | unusable; the walk moves on and the reason names it |
-| unknown | nobody could ask (claudemon down, no peer to answer `claude.listModels`, never probed) | **used as normal** — exactly as before this existed |
+| available | the provider answered the catalog probe with at least one launchable model | usable |
+| unavailable | the provider's CLI ran and reported **zero** launchable models | unusable; the walk moves on and the reason names it |
+| unknown | the probe could not be made or did not succeed: claudemon unreachable, claudemon reachable and answering non-2xx for that provider, no peer to answer `claude.listModels`, or the provider was never probed | **used as normal**, exactly as before this existed |
 
 Collapsing unknown into unavailable would mean a hub that cannot reach claudemon
 for thirty seconds declares every provider dead and routes nowhere. That is
@@ -683,9 +713,32 @@ strictly worse than routing to a provider that turns out to be missing: the
 second failure is loud, immediate and recoverable, and the first looks like the
 router breaking for no reason.
 
-Availability is about the PROVIDER. A candidate on a provider that is up, whose
-own **model** the loader flagged (`ValidateAgainstCatalog` — "codex does not
-serve model X"), is still unusable, and the answer quotes that reason instead.
+### What it does not detect
+
+The list is short and worth reading before you rely on this.
+
+- **It cannot tell you a CLI is not installed.** A missing binary makes
+  claudemon's `list_models` spawn fail, claudemon answers 502, and the hub
+  records the probe as unanswered. That is the UNKNOWN row above, and it fails
+  open: the provider is routed to exactly as it was before this feature existed.
+  The reason text keeps the two apart in words ("claudemon could not be reached"
+  against "claudemon answered 502 Bad Gateway for codex's model catalog") so the
+  validation issues an operator reads are actionable, and both still fail open.
+- **`claude` can never be marked unavailable.** Its catalog comes from
+  `claude.listModels`, which is assembled from alias names and ids seen in
+  transcripts rather than reported by a running CLI, so an empty answer there
+  means "I do not know" rather than "nothing can be launched". The hub never
+  marks that answer as answered, so claude is UNKNOWN or available and never the
+  third thing.
+- **It is consulted only inside the fallover walk.** A **pinned** provider (the
+  request named one), a capability that declares no `alternatives:`, and the
+  provider a mode shift lands on are none of them checked against this map. The
+  check lives in the walk, so it covers what the walk covers and nothing else.
+
+Availability is also about the PROVIDER rather than a row. A candidate on a
+provider that is up, whose own **model** the loader flagged
+(`ValidateAgainstCatalog`, "codex does not serve model X"), is still unusable,
+and the answer quotes that reason instead.
 
 The map is refreshed on the same cadence as the catalog it comes from, and the
 refresh is kicked by a decision rather than by a timer: it runs in the
@@ -694,6 +747,12 @@ nothing boots a provider CLI on a machine where nobody is routing. A decision
 acts on the last probe and the next one acts on this one; the first decision
 after a hub start therefore routes with an empty map, which is the fail-open
 state.
+
+An answer that found models is reused for the catalog TTL. The other two states
+are re-probed on the next forced refresh: a daemon that was down comes back, and
+a provider somebody has just installed or logged into is precisely the one whose
+verdict has changed. Holding an `unavailable` verdict for the full TTL would
+leave a working install unroutable for ten minutes after it started working.
 
 ## Ceilings
 

@@ -121,17 +121,19 @@ func (j *providerJudge) judge(provider string) judged {
 //	                          does not serve, an effort it does not take. Routing
 //	                          onto a row the loader already condemned is how a
 //	                          fallover fails at the exact moment it is needed.
-//	provider UNAVAILABLE      the LIVE reading: this provider itself answered the
-//	                          catalog probe and serves nothing, so its CLI is not
-//	                          installed or cannot launch. It is judged BEFORE
-//	                          health because a provider that cannot be started is
-//	                          not usefully described as green. A provider nobody
-//	                          could ask about is UNKNOWN and passes — see
-//	                          availability.go's fail-open rule. Note the two
-//	                          checks are different scopes and both stay: this one
-//	                          is the PROVIDER, the Issue above is the specific
-//	                          MODEL on it, so a candidate on a live provider whose
-//	                          own model is flagged is still unusable.
+//	provider UNAVAILABLE      the LIVE reading: this provider's CLI RAN and
+//	                          reported no launchable model. It is judged BEFORE
+//	                          health because a provider that cannot start
+//	                          anything is not usefully described as green. A
+//	                          provider nobody could ask about, and one whose
+//	                          probe failed, are both UNKNOWN and both pass — see
+//	                          availability.go's fail-open rule, which is also
+//	                          where the limits of this check are written down.
+//	                          Note the two checks are different scopes and both
+//	                          stay: this one is the PROVIDER, the Issue above is
+//	                          the specific MODEL on it, so a candidate on a live
+//	                          provider whose own model is flagged is still
+//	                          unusable.
 //	RED or EXHAUSTED          the allowance is gone or nearly gone.
 //	CONSERVE                  the provider's own mode verdict, which also covers
 //	                          being over the window-progress curve and being

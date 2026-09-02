@@ -30,7 +30,7 @@ func TestAnUnavailableProviderFallsOverWithTheReasonNamed(t *testing.T) {
 		"codex": {Available: false, Reason: "codex answered the model catalog with no launchable model"},
 	})
 	if !d.Eligible || d.Provider != "claude" || d.Model != "opus" {
-		t.Fatalf("got %+v, want the claude alternative — a green allowance on a CLI that is not installed is not a place to send work", d)
+		t.Fatalf("got %+v, want the claude alternative — a green allowance on a CLI that can launch nothing is not a place to send work", d)
 	}
 	if d.FellOverFrom == nil || d.FellOverFrom.Provider != "codex" {
 		t.Fatalf("FellOverFrom = %+v, want the codex primary this answer passed over", d.FellOverFrom)
@@ -40,7 +40,7 @@ func TestAnUnavailableProviderFallsOverWithTheReasonNamed(t *testing.T) {
 		t.Errorf("the walk does not say WHY it moved: %v", d.Reason)
 	}
 	if !strings.Contains(joined, "no launchable model") {
-		t.Errorf("the probe's own reason is not quoted, so an operator cannot tell a missing CLI from a dead daemon: %v", d.Reason)
+		t.Errorf("the probe's own reason is not quoted, so an operator cannot tell a CLI that launches nothing from a dead daemon: %v", d.Reason)
 	}
 	if d.Capability != "frontier" {
 		t.Errorf("capability = %q — availability changes the PROVIDER, never the tier of work", d.Capability)

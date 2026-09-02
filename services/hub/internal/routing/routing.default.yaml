@@ -203,6 +203,14 @@ roles:
 #             `mixed` and `anthropic_only`, primaries AND alternatives: a review
 #             that is trimmed is not a review, and a floor written only on the
 #             primary stops binding the moment a fallover moves the answer.
+#
+#             A FLOOR ABOVE THE ROW'S OWN `effort:` DISABLES STEPPING FOR THAT
+#             ROW. `{effort: low, min_effort: high}` is a contradiction, the
+#             loader reports it as an issue against the row, and the router
+#             leaves the row alone rather than resolving it in the floor's
+#             favour: a floor holds an effort DOWN and never raises one, so the
+#             row keeps its declared effort and the answer says the step was
+#             skipped. Write the floor at or below the effort.
 #   fresh     the worker must NOT inherit the previous agent's conversation: it
 #             gets the ticket, the acceptance criteria, the architecture rules,
 #             the diff, the relevant source and the test results, and not the
@@ -236,22 +244,45 @@ roles:
 #             carries `enabled: false`, the loader flagged that row (an unknown
 #             provider id, a model the installed CLI does not serve), or — the
 #             LIVE trigger, with no key in this file — the hub just asked that
-#             provider's CLI what it can launch and the answer was nothing.
-#             Nothing is usable? The primary stands, exactly as it did before
-#             this key existed.
+#             provider's CLI what it can launch and the CLI answered with
+#             nothing. Nothing is usable? The primary stands, exactly as it did
+#             before this key existed.
 #
 #             LIVE AVAILABILITY HAS NO SETTING BECAUSE IT IS NOT A POLICY. It is
 #             the same per-provider model-catalog probe your `model:` values are
 #             validated against, read for a second question: can anything be
 #             started there at all? Three answers, and the third is the one that
-#             matters — the provider answered with models (usable), the provider
-#             itself answered with none (unusable, CLI not installed or unable
-#             to start), or NOBODY COULD ASK (claudemon down, never probed),
-#             which is UNKNOWN and routes exactly as it did before. A hub that
-#             cannot reach its daemon for thirty seconds must not conclude that
-#             every provider is dead. The probe is refreshed in the background
-#             when a decision is taken, never on a timer, so nothing boots a
-#             provider CLI on a machine where nobody is routing.
+#             matters:
+#
+#               available    the probe answered with at least one launchable
+#                            model.
+#               unavailable  the CLI RAN and reported zero launchable models.
+#                            This is the only shape that is routed around.
+#               unknown      the probe could not be made or did not succeed:
+#                            claudemon unreachable, claudemon reachable and
+#                            answering non-2xx for that provider, no peer to
+#                            answer claude.listModels, or never probed. Routes
+#                            exactly as it did before. A hub that cannot reach
+#                            its daemon for thirty seconds must not conclude
+#                            that every provider is dead.
+#
+#             WHAT THIS DOES NOT DETECT, and it is worth knowing before you rely
+#             on it. It cannot tell you a CLI is NOT INSTALLED: a missing binary
+#             makes claudemon's list_models spawn fail, claudemon answers 502,
+#             and that is the unknown row, which fails open. `claude` can never
+#             be marked unavailable at all, because its catalog is assembled
+#             from alias names and ids seen in transcripts rather than reported
+#             by a running CLI, so an empty answer there means "I do not know".
+#             And the check is consulted ONLY inside this fallover walk: a
+#             pinned provider, a capability with no `alternatives:`, and the
+#             provider a mode shift lands on are none of them checked against it.
+#
+#             The probe is refreshed in the background when a decision is taken,
+#             never on a timer, so nothing boots a provider CLI on a machine
+#             where nobody is routing. An answer that found models is reused for
+#             the catalog TTL; the other two states are re-probed on the next
+#             refresh, because a daemon coming back and a CLI somebody has just
+#             installed are exactly the verdicts that go stale.
 #
 #             THIS IS NOT `mode_shifts:`. A mode shift moves a ROLE to a
 #             DIFFERENT CAPABILITY (a conserving scout drops from balanced to
@@ -602,8 +633,19 @@ forecast_weights:
 # `conserve_at_ratio`. That band already blocks a spend-down and did nothing
 # else; it now also trims one notch, and it still does NOT move the capability.
 # Being slightly ahead of the curve is a reason to spend a little less, not a
-# reason to change which model does the work. See
-# docs/limit-aware-routing.md.
+# reason to change which model does the work.
+#
+# A PACE-ARMED STEP IS PER-PROVIDER BY ITS OWN RATIONALE. The band's claim is
+# "THIS provider is spending a little fast", so when a fallover or a shift lands
+# the answer on somebody else the band is re-read for the LANDING provider and
+# the step applies only if that provider is itself in the lower band. The reason
+# names the provider whose pace justified it. A CONSERVE or SPEND_DOWN step is
+# NOT re-derived: the mode owns the whole decision and applies to the answer it
+# produced, wherever that answer lands.
+#
+# BOTH LEVERS CAN FIRE ON ONE DECISION under conserve. A `judge` on `codex_only`
+# is moved from `frontier_plus` down to `deep_reviewer` AND stepped from `high`
+# to `medium`, in the same answer. See docs/limit-aware-routing.md.
 mode_shifts:
   # "scouting -> cheaper tier; mechanical work -> cheap; routine fixes ->
   # balanced; browser validation -> balanced/cheap; frontier for implementation

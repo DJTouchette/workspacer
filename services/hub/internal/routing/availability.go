@@ -21,13 +21,22 @@ package routing
 // the unknown-bucket rule in policy.go. There are three states, not two:
 //
 //	entry, Available true    the provider answered with models. Usable.
-//	entry, Available false   the provider ITSELF answered and serves nothing —
-//	                         the CLI is not installed, or is installed and can
-//	                         launch no model. Unusable, with the reason quoted.
-//	NO ENTRY                 nobody could ask (claudemon down, no bus peer to
-//	                         answer claude.listModels, the provider was never
-//	                         probed). UNKNOWN, and unknown routes exactly as it
-//	                         did before this file existed.
+//	entry, Available false   the CLI RAN and reported zero launchable models.
+//	                         Unusable, with the reason quoted.
+//	NO ENTRY                 nobody could ask, or the ask failed (claudemon
+//	                         down, claudemon up and answering non-2xx for this
+//	                         provider, no bus peer to answer claude.listModels,
+//	                         the provider was never probed). UNKNOWN, and
+//	                         unknown routes exactly as it did before this file
+//	                         existed.
+//
+// WHAT THE SECOND STATE DOES NOT CATCH IS A MISSING CLI, and saying otherwise
+// has been the standing error in this feature's prose. A binary that is not on
+// the machine makes claudemon's list_models spawn fail; claudemon answers 502;
+// cmd/hub records answered=false; that is the THIRD state and it fails open.
+// The same is true of `claude`, which never sets answered at all (an empty
+// alias-and-transcript list is ignorance, not a report), so claude can never
+// appear here as unavailable.
 //
 // Collapsing the third into the second is the failure this rule exists to
 // prevent: a hub that cannot reach claudemon for thirty seconds would otherwise
@@ -35,6 +44,13 @@ package routing
 // worse than routing to a provider that turns out to be missing — that failure
 // is loud, immediate and recoverable, and this one looks like the router
 // breaking for no reason.
+//
+// AND IT IS ONLY EVER CONSULTED INSIDE THE FALLOVER WALK (alternatives.go). A
+// pinned provider, a capability with no `alternatives:`, and the provider a
+// mode shift lands on are none of them checked against this map. That is a
+// consequence of where the check lives rather than a rule anybody wrote, and it
+// is documented here so nobody reads "unavailable providers are routed around"
+// as a property of every answer.
 
 import (
 	"fmt"
@@ -46,10 +62,11 @@ import (
 type ProviderLiveness struct {
 	// Available is whether work can actually be started on this provider.
 	Available bool `json:"available"`
-	// Reason is the sentence a refusal quotes — "codex's CLI reports no
-	// launchable models", "claudemon could not be reached". Always present on
-	// an unavailable entry: a refusal with no reason is one an operator cannot
-	// act on.
+	// Reason is the sentence a refusal quotes, and the only thing it may claim
+	// is what the probe saw: "codex's CLI ran and reported no launchable
+	// model". Always present on an unavailable entry, because a refusal with no
+	// reason is one an operator cannot act on. It never says a CLI is missing:
+	// a missing CLI does not produce an entry here at all.
 	Reason string `json:"reason,omitempty"`
 	// ObservedAt is when the probe behind this entry answered, in Unix seconds,
 	// so a reader can tell a fresh verdict from an old one.

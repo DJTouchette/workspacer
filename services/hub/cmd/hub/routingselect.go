@@ -137,16 +137,28 @@ func (c *routingCatalog) Models(provider string) ([]routing.CatalogModel, error)
 	return e.models, nil
 }
 
-// entry is the cached probe, with two TTLs by way of one rule: an answer is
-// reused for catalogTTL, and an entry that never produced an availability
-// answer at all is re-probed whenever `force` asks for it (which is what the
-// background availability refresh does, at most every availabilityMinInterval).
+// entry is the cached probe, with two TTLs by way of one rule: an answer with
+// MODELS IN IT is reused for catalogTTL, and every other cached state is
+// re-probed whenever `force` asks for it (which is what the background
+// availability refresh does, at most every availabilityMinInterval).
 //
-// The asymmetry is the honest one. A provider that answered is unlikely to
-// change what it serves within ten minutes; a provider nobody could reach is
-// precisely the one whose state is expected to change — a daemon coming back, a
-// CLI being installed — and holding "unknown" for ten minutes would make the
-// availability map a record of what was true at boot.
+// The asymmetry is the honest one, and the line it is drawn on is "did this
+// probe find something launchable", not "did somebody answer". A provider
+// serving models is unlikely to change what it serves within ten minutes. The
+// other two states are both states somebody is expected to FIX while the hub
+// runs:
+//
+//	never answered      the daemon was down, or there was no peer to ask. A
+//	                    daemon coming back is the ordinary case.
+//	answered, no models the CLI is there and can launch nothing, or is not there
+//	                    at all. A provider somebody has just installed or logged
+//	                    into is exactly the one whose state changes next, and
+//	                    holding the old verdict for ten minutes would make an
+//	                    installed CLI unroutable for ten minutes after it works.
+//
+// Both are cheap to be wrong about in the direction of asking again: a forced
+// refresh runs in the background, one at a time, on the cadence of somebody
+// routing.
 func (c *routingCatalog) entry(provider string, force bool) catalogEntry {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
@@ -156,7 +168,10 @@ func (c *routingCatalog) entry(provider string, force bool) catalogEntry {
 	c.mu.Lock()
 	e, ok := c.cached[provider]
 	c.mu.Unlock()
-	if ok && time.Since(e.at) < catalogTTL && !(force && !e.answered) {
+	// settled is the one state a forced refresh leaves alone: this provider
+	// answered, and it named at least one launchable model.
+	settled := e.answered && len(e.models) > 0
+	if ok && time.Since(e.at) < catalogTTL && !(force && !settled) {
 		return e
 	}
 
@@ -195,8 +210,13 @@ func (c *routingCatalog) Availability() routing.ProviderAvailability {
 		}
 		live := routing.ProviderLiveness{Available: len(e.models) > 0, ObservedAt: e.at.Unix()}
 		if !live.Available {
+			// WHAT THIS SENTENCE MAY CLAIM is exactly what the probe saw: the
+			// CLI ran and listed no launchable model. It may NOT claim the CLI
+			// is missing. A missing binary makes claudemon's spawn fail, which
+			// is a non-2xx, which is `answered: false`, which never reaches
+			// this map at all.
 			live.Reason = fmt.Sprintf(
-				"%s answered the model catalog with no launchable model, so its CLI is not installed or cannot launch anything on this machine", provider)
+				"%s's CLI ran and reported no launchable model, so there is nothing to start on it right now", provider)
 		}
 		out[provider] = live
 	}
@@ -210,9 +230,10 @@ func (c *routingCatalog) Availability() routing.ProviderAvailability {
 // in the BACKGROUND, at most one refresh at a time and no more often than
 // availabilityMinInterval.
 //
-// A provider that answered stays cached for catalogTTL like any other catalog
-// answer; one that could not be reached is asked again, because that is the
-// entry whose staleness costs something.
+// A provider that answered WITH MODELS stays cached for catalogTTL like any
+// other catalog answer. A provider that could not be reached, and a provider
+// that answered with nothing, are both asked again: those are the entries whose
+// staleness costs something. See entry.
 func (c *routingCatalog) RefreshAvailability(providers []string) {
 	if len(providers) == 0 {
 		return
@@ -301,11 +322,19 @@ func (c *routingCatalog) providerModels(ctx context.Context, provider string) ([
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("claudemon GET /providers/%s/models: %w", provider, err)
+		return nil, false, fmt.Errorf("claudemon could not be reached for %s models (GET /providers/%s/models: %v), so nothing is known about this provider", provider, provider, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, false, fmt.Errorf("claudemon GET /providers/%s/models: %s", provider, resp.Status)
+		// THE DAEMON IS UP AND THIS PROBE FAILED, which is the shape a missing
+		// CLI produces: claudemon tries to spawn the binary, the spawn fails,
+		// and the endpoint answers 502. It is still UNKNOWN rather than
+		// unavailable, because the same status covers a daemon that is starting
+		// up, a provider it does not implement, and a spawn that timed out. The
+		// two are separated in the WORDS so an operator reading a validation
+		// issue can tell them apart, and joined in the BEHAVIOUR because both
+		// fail open.
+		return nil, false, fmt.Errorf("claudemon answered %s for %s's model catalog (GET /providers/%s/models), so this provider's models could not be listed", resp.Status, provider, provider)
 	}
 	var body struct {
 		Models []struct {

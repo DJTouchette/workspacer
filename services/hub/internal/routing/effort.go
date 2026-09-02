@@ -142,6 +142,16 @@ type effortIntent struct {
 	// allow-list is read from the same block as the count rather than looked up
 	// again later against a matrix the application site would have to be handed.
 	shift ModeShift
+	// pace marks a step the LOWER PACE BAND armed rather than a mode. The two
+	// kinds are applied differently and the difference is the whole of
+	// SHOULD-FIX 1, so it is a field rather than something inferred from mode:
+	// a pace-armed step carries mode == ModeConserve on a decision whose own
+	// mode is NORMAL, which is exactly the pair that cannot tell them apart.
+	pace bool
+	// armedBy is the provider whose own pace armed a pace step. It is the
+	// SUBJECT, and after a fallover it is not the provider the answer runs on —
+	// which is why the refusal sentence has to name both.
+	armedBy string
 }
 
 // EffortStepFor is the mode's effort block: the notch count and the
@@ -197,7 +207,7 @@ func armEffortStep(m *Matrix, mode Mode, cap Capacity) effortIntent {
 
 	// NORMAL. The only thing that arms a step here is the lower overspend band,
 	// read from the SAME pace verdict the mode was decided against.
-	if cap.Pace == nil || !cap.Pace.BlocksSpendDown() || cap.Pace.Conserves() {
+	if !inLowerPaceBand(cap) {
 		return effortIntent{}
 	}
 	s, ok := m.EffortStepFor(ModeConserve)
@@ -209,9 +219,50 @@ func armEffortStep(m *Matrix, mode Mode, cap Capacity) effortIntent {
 		notches: s.EffortStep,
 		mode:    ModeConserve,
 		shift:   s,
-		band: fmt.Sprintf(
-			"%s is running at %.2fx the expected share of the %s window — past the lower band (block_spend_down_at_ratio) and not yet at conserve_at_ratio, so the capability is left exactly where it was and only the thinking time is trimmed",
-			cap.Provider, cap.Pace.Ratio, cap.Pace.Window),
+		pace:    true,
+		armedBy: normalizeProvider(cap.Provider),
+		band:    lowerPaceBandSentence(cap),
+	}
+}
+
+// inLowerPaceBand is the LOWER overspend band, in one place because it is asked
+// twice about two different providers: once of the SUBJECT when the step is
+// armed (step 6b) and once of the LANDING provider when it is applied (step 8c).
+// Two spellings of the same band is how the two questions would drift apart.
+func inLowerPaceBand(cap Capacity) bool {
+	return cap.Pace != nil && cap.Pace.BlocksSpendDown() && !cap.Pace.Conserves()
+}
+
+// lowerPaceBandSentence names the provider whose window progress justifies a
+// pace-armed step, and it is built from whichever capacity is being spoken
+// about — so the sentence on an applied step names the provider that will run
+// the work rather than the one the question started on.
+func lowerPaceBandSentence(cap Capacity) string {
+	return fmt.Sprintf(
+		"%s is running at %.2fx the expected share of the %s window — past the lower band (block_spend_down_at_ratio) and not yet at conserve_at_ratio, so the capability is left exactly where it was and only the thinking time is trimmed",
+		normalizeProvider(cap.Provider), cap.Pace.Ratio, cap.Pace.Window)
+}
+
+// landingPaceClause says why the LANDING provider's own pace does not arm a
+// step, in the words a refusal quotes. Every branch is a different instruction
+// to the operator reading it, so they are not collapsed into one.
+func landingPaceClause(land Capacity, provider string) string {
+	provider = normalizeProvider(provider)
+	if normalizeProvider(land.Provider) != provider {
+		return fmt.Sprintf("this decision holds no capacity reading for %s at all", provider)
+	}
+	switch {
+	case land.Pace == nil:
+		return fmt.Sprintf("%s has no pace verdict of its own (pacing is off, or nothing on it was readable)", provider)
+	case !land.Pace.Known:
+		return fmt.Sprintf("%s's own pace is unknown, and unknown paces nothing", provider)
+	case land.Pace.Conserves():
+		return fmt.Sprintf(
+			"%s's own pace is at or past conserve_at_ratio (%.2fx of the %s window), which is the HIGHER band and a mode question rather than this one",
+			provider, land.Pace.Ratio, land.Pace.Window)
+	default:
+		return fmt.Sprintf("%s's own pace is %s at %.2fx of the %s window, inside the lower band",
+			provider, land.Pace.State, land.Pace.Ratio, land.Pace.Window)
 	}
 }
 
@@ -227,6 +278,23 @@ func armEffortStep(m *Matrix, mode Mode, cap Capacity) effortIntent {
 // It reads the assignment rather than d.Effort so the floor and the ladder come
 // from the row that actually won: after a fallover that is the ALTERNATIVE's
 // own row, which carries its own effort and its own `min_effort`.
+//
+// A PACE-ARMED STEP IS PER-PROVIDER BY ITS OWN RATIONALE, and that is the one
+// thing this function re-derives rather than inherits. The lower pace band says
+// "THIS provider is spending a little fast", so it is an argument about the
+// provider it was read from and about no other. When the walk or a shift lands
+// the answer somewhere else, the band has to be asked again of the provider
+// that will actually run the work — the walk already read that candidate's
+// capacity, and d.EffectiveCapacity() is that same reading — and the step is
+// refused when the landing provider is not itself in the band. Without this, an
+// ahead-of-curve codex that is ALSO unavailable would trim a healthy on-track
+// claude, quoting codex's ratio at it.
+//
+// A MODE-ARMED STEP (conserve or spend_down, decided for the subject) is NOT
+// re-derived and stays exactly as it was. The mode owns the whole decision: it
+// is what moved the capability, and it applies to the answer that decision
+// produced wherever that answer lands. Only the pace band is a per-provider
+// claim, because only the pace band leaves the mode where it found it.
 func applyEffortStep(m *Matrix, d *Decision, a Assignment, intent effortIntent) {
 	if !intent.armed {
 		return
@@ -239,6 +307,24 @@ func applyEffortStep(m *Matrix, d *Decision, a Assignment, intent effortIntent) 
 	direction := "down"
 	if intent.notches > 0 {
 		direction = "up"
+	}
+	if intent.pace {
+		// EffectiveCapacity is the landing provider's own reading when a shift
+		// or a fallover moved the answer, and the subject's own when neither
+		// did — so a decision that never moved re-derives the same band it
+		// armed on and produces the identical sentence.
+		land := d.EffectiveCapacity()
+		if normalizeProvider(land.Provider) != normalizeProvider(a.Provider) || !inLowerPaceBand(land) {
+			step(a.Effort, fmt.Sprintf(
+				"mode_shifts.%s.effort_step is %+d and the lower pace band armed it on %s, but the answer landed on %s and %s — so the pace step did not carry across: a pace-armed step is per-provider by the rationale that armed it, and %s %s keeps the %s its own row declares",
+				intent.mode, intent.notches, intent.armedBy, normalizeProvider(a.Provider),
+				landingPaceClause(land, a.Provider), a.Provider, a.Model, describeEffort(a.Effort)))
+			return
+		}
+		// The band is re-read from the LANDING provider, so the ratio and the
+		// window in the reason belong to the provider whose pace justified the
+		// trim rather than to whichever one the question started on.
+		intent.band = lowerPaceBandSentence(land)
 	}
 	head := fmt.Sprintf("mode_shifts.%s.effort_step is %+d, and %s", intent.mode, intent.notches, intent.band)
 
@@ -270,6 +356,27 @@ func applyEffortStep(m *Matrix, d *Decision, a Assignment, intent effortIntent) 
 		step(a.Effort, fmt.Sprintf(
 			"%s — but effort %q is not on %s's ladder (%s), so there is no rung to step from. ValidateAgainstCatalog reports the same row against the installed CLI",
 			head, a.Effort, a.Provider, strings.Join(ladder, ", ")))
+		return
+	}
+	// A FLOOR ABOVE THE ROW'S OWN EFFORT DISABLES STEPPING FOR THAT ROW, and
+	// this is the enforcement half of the load-time Issue validateEffortStepping
+	// already reports for it. `{effort: low, min_effort: high}` is a
+	// contradiction, and the only two ways to resolve it are to let the floor
+	// RAISE the effort or to leave the row alone. Raising is wrong in both
+	// directions at once: under conserve a step written to spend less would
+	// spend more, and the sentence explaining it would contradict itself. So
+	// the row keeps what it declares, the answer says stepping was skipped, and
+	// the operator fixes the file.
+	//
+	// It is checked HERE rather than in the walk because the walk's Issue
+	// filter does not shield every path to this row: a pinned request never
+	// walks at all, and a capability with no `alternatives:` returns before the
+	// filter runs. A rule that only held for the walk would hold for the answer
+	// it was written for and for no other.
+	if floor, hasFloor := effortRung(a.Provider, a.MinEffort); hasFloor && floor > rung {
+		step(a.Effort, fmt.Sprintf(
+			"%s — but that row's own min_effort `%s` is ABOVE the `%s` it declares as its effort, which the loader reports as a validation issue on that row: stepping is SKIPPED here and the row keeps its declared `%s`. A floor holds an effort DOWN and never raises one, so the contradiction is left for the file to fix",
+			head, a.MinEffort, a.Effort, a.Effort))
 		return
 	}
 	if promotedAlready(m, d, intent) {
@@ -354,8 +461,11 @@ func describeEffort(effort string) string {
 //	                          silently means "step nothing".
 //	min_effort                a floor that is not on the provider's own ladder
 //	                          can never be compared, and a floor ABOVE the
-//	                          effort the row declares is a contradiction the
-//	                          router resolves in the floor's favour.
+//	                          effort the row declares is a contradiction that
+//	                          DISABLES stepping for that row (applyEffortStep
+//	                          skips it and says so), because the only other
+//	                          resolution would be letting a floor raise an
+//	                          effort.
 func validateEffortStepping(m *Matrix) []Issue {
 	var issues []Issue
 	add := func(where, format string, args ...any) {
@@ -404,7 +514,7 @@ func validateEffortStepping(m *Matrix) []Issue {
 			return // the effort itself is wrong; ValidateAgainstCatalog says so
 		}
 		if rung < floor {
-			add(where, "min_effort %q is ABOVE the effort %q this row declares, so an effort step could only ever raise this row — write the floor at or below the declared effort", a.MinEffort, a.Effort)
+			add(where, "min_effort %q is ABOVE the effort %q this row declares. A floor never raises an effort, so this contradiction DISABLES stepping for this row: it keeps its declared effort and the answer says the step was skipped. Write the floor at or below the declared effort", a.MinEffort, a.Effort)
 		}
 	}
 	for _, pname := range sortedKeys(m.Profiles) {
