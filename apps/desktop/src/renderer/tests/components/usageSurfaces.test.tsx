@@ -21,7 +21,7 @@ import React from 'react';
 import { SessionStatusBar } from '../../src/components/claude/SessionStatusBar';
 import { InspectorCard } from '../../src/components/claude/InspectorCard';
 import { RateLimitCard } from '../../src/panes/OverviewPane';
-import { __resetUsageReportCache } from '../../src/hooks/useUsageReport';
+import { __resetUsageReportCache, USAGE_REPORT_REFRESH_MS } from '../../src/hooks/useUsageReport';
 import type { UsageReportWire } from '../../../main/shared/usageReport';
 import type { ClaudeSessionSnapshot, SessionStatusLine } from '../../src/types/claudeSession';
 
@@ -312,6 +312,13 @@ describe('the Overview usage card with no session at all', () => {
     __resetUsageReportCache();
   });
 
+  it('polls on a cadence the daemon can actually move under', () => {
+    // The daemon re-polls an idle account every 15 minutes, so a faster clock
+    // here asks a question whose answer cannot have changed — and this is a
+    // loopback round trip per tick per open window. One minute is the floor.
+    expect(USAGE_REPORT_REFRESH_MS).toBeGreaterThanOrEqual(60_000);
+  });
+
   it('renders the daemon’s reading with zero snapshots', async () => {
     const acct = '/home/u/.claude/accounts/coldboot';
     api.usageReport = vi.fn().mockResolvedValue(
@@ -406,6 +413,101 @@ describe('the Overview usage card with no session at all', () => {
     expect(screen.getByText('7d')).toBeInTheDocument();
   });
 
+  /**
+   * The currency rule has three independent clauses, and the obvious fixture
+   * — a lapsed window that ALSO says is_current:false — satisfies all of them
+   * at once, so any one of the three can be deleted with every test still
+   * green. These separate them.
+   */
+  it('drops a window whose reset has passed even when the report calls it current', async () => {
+    // is_current was computed at generated_at; this clock is the later one.
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', '/home/u/.claude/accounts/staleflag', {
+        five_hour: {
+          used_percent: { state: 'ok', value: 67 },
+          resets_at: NOW - 60,
+          window_minutes: 300,
+          is_current: true,
+        },
+        seven_day: running(5, 4 * 86400, 10080),
+      }),
+    );
+    render(<RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="staleflag" />);
+    await waitFor(() => expect(screen.getByText('7d')).toBeInTheDocument());
+    expect(screen.queryByText('67%')).not.toBeInTheDocument();
+    expect(screen.queryByText('5h')).not.toBeInTheDocument();
+  });
+
+  it('drops a window the report calls not current even when its reset is ahead', async () => {
+    // The daemon knows something the timestamp does not say on its own.
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', '/home/u/.claude/accounts/notcurrent', {
+        five_hour: {
+          used_percent: { state: 'ok', value: 67 },
+          resets_at: NOW + 3600,
+          window_minutes: 300,
+          is_current: false,
+        },
+        seven_day: running(5, 4 * 86400, 10080),
+      }),
+    );
+    render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="notcurrent" />,
+    );
+    await waitFor(() => expect(screen.getByText('7d')).toBeInTheDocument());
+    expect(screen.queryByText('67%')).not.toBeInTheDocument();
+    expect(screen.queryByText('5h')).not.toBeInTheDocument();
+  });
+
+  it('never reads the number off a measurement that is not `ok`', async () => {
+    // `unknown`/`unavailable` carry a REASON, not a reading — but the field is
+    // one struct and a stale value can ride along in it. The window is still
+    // running, so the row appears; the percentage must not.
+    api.usageReport = vi.fn().mockResolvedValue(
+      doc('claude', '/home/u/.claude/accounts/notok', {
+        five_hour: {
+          used_percent: { state: 'unknown', value: 99, reason: 'the poll failed' },
+          resets_at: NOW + 3600,
+          window_minutes: 300,
+          is_current: true,
+        },
+      }),
+    );
+    render(<RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="notok" />);
+    await waitFor(() => expect(screen.getByText('5h')).toBeInTheDocument());
+    expect(screen.queryByText('99%')).not.toBeInTheDocument();
+  });
+
+  it('never lets the report’s unattributed bucket speak for the default login', async () => {
+    // `account: null` is the daemon saying it could not attribute those
+    // sessions to any login. Folding it into the default account's card would
+    // present somebody else's windows — or nobody's — as yours.
+    api.usageReport = vi.fn().mockResolvedValue({
+      generated_at: NOW,
+      providers: [
+        {
+          provider: 'claude',
+          accounts: [
+            {
+              account: null,
+              label: 'unattributed',
+              is_default: false,
+              windows: { five_hour: running(88, 3 * 3600, 300) },
+            },
+            { account: '', label: 'default', is_default: true, windows: {} },
+          ],
+        },
+      ],
+    } as UsageReportWire);
+
+    const { container } = render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="" />,
+    );
+    await waitFor(() => expect(api.usageReport).toHaveBeenCalled());
+    expect(screen.queryByText('88%')).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('renders nothing when the report has no running window for the account', async () => {
     // What `usage.pollOnBoot: false` looks like from here: the daemon never
     // polled the idle account, so the report carries a reason instead of a
@@ -435,6 +537,33 @@ describe('the Overview usage card with no session at all', () => {
     await waitFor(() => expect(api.usageReport).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByLabelText('Show usage detail')).not.toBeInTheDocument();
+  });
+
+  it('keeps the last good reading when a later read cannot answer', async () => {
+    // null is "we could not ask" — the daemon restarting, a timeout — not "no
+    // windows". Letting it clear the cache would blank every card on the
+    // desktop for a transient failure, which is the same lie as rendering 0%.
+    api.usageReport = vi
+      .fn()
+      .mockResolvedValueOnce(
+        doc('claude', '/home/u/.claude/accounts/keeplast', {
+          five_hour: running(18, 3 * 3600, 300),
+        }),
+      )
+      .mockResolvedValue(null);
+
+    const first = render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="keeplast" />,
+    );
+    await waitFor(() => expect(within(first.container).getByText('18%')).toBeInTheDocument());
+
+    // A second card mounting re-reads, and this time the daemon cannot answer.
+    const second = render(
+      <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="keeplast" />,
+    );
+    await waitFor(() => expect(api.usageReport).toHaveBeenCalledTimes(2));
+    expect(within(first.container).getByText('18%')).toBeInTheDocument();
+    expect(within(second.container).getByText('18%')).toBeInTheDocument();
   });
 
   it('renders nothing when the transport cannot reach the daemon at all', async () => {
