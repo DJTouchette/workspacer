@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -87,7 +88,13 @@ func TestServePlanCarriesUsagePollOnBoot(t *testing.T) {
 // only that buildServePlan would honour a value nobody supplied.
 func TestResolveOptionsReadsUsagePollOnBoot(t *testing.T) {
 	dir := t.TempDir()
+	// configDir() is %APPDATA%\workspacer on Windows and ignores XDG_CONFIG_HOME,
+	// so sandboxing only the unix variable left this reading the real config dir
+	// there and resolving the setting to unstated. Both, same directory.
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("APPDATA", dir)
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "workspacer"), 0o700); err != nil {
 		t.Fatal(err)
 	}
