@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.161.0] - 2026-09-01
 
 ### Added
 - **Limit-aware agent routing.** The hub now reads how much of each
@@ -51,6 +51,80 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   no UI for the matrix, which is what keeps a ceiling out of reach of the
   agents it governs.
 
+- **Routing reads how fast an allowance is being spent, not only how much of
+  it is left.** Health answers what share of a window is gone. It cannot
+  answer whether that share is a lot for the hour it is: the same 40% is
+  comfortable six days into a seven-day window, and is a fleet about to run
+  dry six hours into one. Claudemon now stamps the length of each Anthropic
+  window onto its usage report: five hours and seven days, the two lengths
+  the window names already assert and the endpoint never stated. The monthly
+  overage window deliberately carries no length, because a calendar month is
+  not a fixed number of minutes. The hub divides the share used by the share
+  the window's curve expects by now, and the result is a ratio where 1.0 is
+  exactly on the curve.
+
+  `thresholds.pacing` in `routing.yaml` holds the two bands, the ratio at
+  which the mode becomes conserve and the ratio at which being near a reset
+  with capacity left stops licensing a spend-down, plus the bootstrap floor
+  underneath them, since a window's first minutes divide by nearly nothing
+  and every reading taken there would read as overspend. The seven-day
+  window can be paced on a `calendar` curve, which ships and is linear in
+  wall-clock time, or on a `workdays` curve that budgets a weekend hour at a
+  fraction of a weekday hour in the host's own timezone, so a week's
+  allowance spent across five working days is on plan rather than 40% over
+  it. Every knob is validated at load.
+
+  Pace can only tighten. It is read after the health verdict and before the
+  spend-down, so it can add conserve and it can block a spend-down, and it
+  can never talk a red or exhausted allowance back down or promote anything.
+  A window nobody measured, and a reading the daemon flagged stale, both
+  pace as *unknown* rather than confidently against data that was never
+  taken. Where a provider has two readable windows, the worse ratio binds.
+  `thresholds.pacing.enabled: false` reproduces the pre-pacing answers
+  exactly, down to the absent fields on the decision and on the
+  `routing.decision` event. Three smaller corrections ride with it: the
+  workday curve walks local midnights and used to stall in a timezone whose
+  DST transition lands at midnight, silently degrading to the calendar curve
+  for any window spanning it; a stamped window length outside a sane range
+  is refused rather than overflowed; and a legitimate on-curve ratio of
+  exactly `0` now survives onto the wire instead of being dropped as an
+  empty field.
+- **A capability can name a second provider, and the router falls over to
+  it.** Each capability in a routing profile may now carry an ordered
+  `alternatives:` list, other providers that serve the same tier of work.
+  When the primary pairing cannot be used, the router walks that list, takes
+  the first candidate that can be, and names what it moved off in the
+  decision's reasons and in a new `fellOverFrom` field. What makes a
+  candidate unusable is judged with that candidate's own capacity, never the
+  primary's: its allowance is red or exhausted, its own provider's mode
+  verdict is conserve, the provider or the entry carries `enabled: false`,
+  or the loader flagged that row. If nothing in the list can be used, the
+  primary stands, exactly as it did before the key existed.
+
+  The shipped `mixed` profile now names both a `claude` and a `codex` entry
+  on every tier, held by a test, so no tier of work becomes unreachable
+  because one subscription is down. Family independence for review changes
+  shape with it. It is a preference the router honours by trying a different
+  family first and then reports on, not a rule it enforces by refusing. A
+  codex outage can therefore land a `mixed` reviewer back on codex, and the
+  answer says so. `fresh: true` on the review capabilities is untouched and
+  is still the only hard rule: a reviewer does not inherit the implementer's
+  conversation, before or after a fallover.
+
+  Health and pace on the `routing.decision` event now describe the provider
+  that was actually chosen, so a reviewer that fell over from a red claude
+  to a green codex is no longer published as `provider: codex, health: red`.
+  Only the primary's `fresh:` is read, which makes an alternative's own
+  setting advisory, so the loader raises an issue at load time when the two
+  disagree rather than letting a fallover quietly carry the primary's flag.
+
+  An existing `routing.yaml` keeps working unchanged, and gains the shipped
+  alternatives through the same deep merge as any other key it omits. Its
+  comments are the part that does not update: a file written before this
+  release still says the `mixed` profile buys family diversity *by
+  construction*, which is now stale prose beside correct behaviour. The
+  shipped defaults, `docs/limit-aware-routing.md`, the `routing` help topic
+  and the docs site all say the accurate thing.
 ### Changed
 - **Context-window controls are now provider-scoped, and requests stay
   provisional.** Claude context variants may be selectable in supported live
@@ -85,6 +159,15 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   session, for the one login that is warmed, and refetches on demand. This
   also gives `/usage/report` its first client: the endpoint shipped in
   0.160.0 with nothing in the app reading it.
+- The Windows containment corpus no longer asks NTFS to keep two spellings
+  of one directory apart. Two cases built their fixture tree from two
+  casings of a single name, which is one directory on a case-insensitive
+  filesystem, so the denial they asserted was a false refusal, and the
+  Windows CI leg failed around thirty subtests. Those cases now carry a
+  `caseSensitiveOnly` flag and are skipped there, and the regression gains
+  the Windows-native vector it was missing: a sibling whose path is the
+  granted root plus more letters. No production code changed. The
+  containment guard was right.
 
 ## [0.160.0] - 2026-08-29
 
