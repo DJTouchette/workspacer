@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.162.0] - 2026-09-02
 
 ### Added
 - **A switch for the boot-time account-usage poll.** The agent daemon reads
@@ -26,7 +26,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   a freshly opened app showed nothing at all until the first agent started, no
   matter how good the daemon's own reading was. They now fall back to
   claudemon's usage report, which answers from disk and from the account poll
-  with nothing running, refreshed every few minutes. A live status line still
+  with nothing running, refreshed every five minutes. A live status line still
   wins wherever there is one, per window rather than per card. A window the
   report says has already rolled over, or that carries no reset time, is shown
   as not running rather than as an empty meter: the percentage against a
@@ -71,6 +71,25 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   disables stepping for that row rather than raising the effort: a floor
   holds an effort down and never lifts one.
 
+  Under spend_down there is one promotion per decision, and the shipped
+  reading of that rule is worth stating plainly. The router judges it on
+  capability ranks rather than on whether a shift fired, because the ceiling
+  runs between the two and routinely takes the promotion straight back: a
+  spend_down implementer is moved from `frontier` to `frontier_max` and the
+  shipped `default` ceiling clamps it back to `frontier` in the same decision.
+  Nothing was promoted there, so nothing is held back, and the effort steps one
+  rung ABOVE what the landing row declares. On the shipped `mixed` profile that
+  is codex `gpt-5.6-sol` at `xhigh` where the `frontier` row says `high`: the
+  same model, thinking longer, which is the gentler half of the promotion the
+  ceiling refused. When the tier promotion does survive, the effort is left at
+  the tier's own declared value instead. The bounds above are what keep that
+  interpretation contained: `effort_step_capabilities` decides which tiers may
+  step at all, so nothing outside the four frontier and review tiers is raised
+  this way; a `min_effort` floor holds a downward step up; a `min_effort`
+  written above the row's own `effort:` disables stepping for that row in
+  either direction; and the provider's ladder is a hard stop, so a codex row
+  already at `xhigh` stays there.
+
   The answer carries `effortStep` (from, to, why) whenever a step was armed,
   including when it was armed and then clamped or floored, and the field
   rides the `routing.decision` event and the decision log. `effort_step: 0`
@@ -93,8 +112,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Three limits are worth stating plainly, because the obvious reading of the
   paragraph above is wider than the feature. It **cannot** tell you a CLI is
   not installed: a missing binary makes claudemon's `list_models` spawn fail,
-  claudemon answers 502, and a failed probe is unknown, not unavailable. It
-  can never mark `claude` unavailable, because that catalog is assembled from
+  claudemon answers 502, and a failed probe reads as unknown rather than as
+  unavailable. Unknown fails open, so an uninstalled provider is still offered
+  work, and the spawn that fails there is the loud and immediate answer. It can
+  never mark `claude` unavailable, because that catalog is assembled from
   alias names and ids seen in transcripts rather than reported by a running
   CLI, so an empty answer there means "I do not know". And it is consulted
   only inside the fallover walk, so a pinned provider, a capability with no
