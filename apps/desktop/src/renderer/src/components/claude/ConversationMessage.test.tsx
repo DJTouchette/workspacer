@@ -18,9 +18,7 @@ describe('ConversationMessage — credit-balance remedy', () => {
 
   it('matches the doubled/concatenated render observed live', () => {
     render(
-      <ConversationMessage
-        turn={turn('Credit balance is too lowCredit balance is too low')}
-      />,
+      <ConversationMessage turn={turn('Credit balance is too lowCredit balance is too low')} />,
     );
     expect(screen.getByText(/stale or wrong credentials/)).toBeInTheDocument();
   });
@@ -28,7 +26,9 @@ describe('ConversationMessage — credit-balance remedy', () => {
   it('does not attach the remedy to an unrelated 529 overload', () => {
     render(
       <ConversationMessage
-        turn={turn('⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary')}
+        turn={turn(
+          '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
+        )}
       />,
     );
     expect(screen.queryByText(/stale or wrong credentials/)).not.toBeInTheDocument();

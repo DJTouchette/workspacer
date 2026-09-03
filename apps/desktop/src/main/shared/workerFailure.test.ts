@@ -108,7 +108,9 @@ describe('workerFailureReason', () => {
       '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
     );
     expect(reason).not.toContain('out of credits');
-    expect(reason).toBe('API Error: 529 Overloaded. This is a server-side issue, usually temporary');
+    expect(reason).toBe(
+      'API Error: 529 Overloaded. This is a server-side issue, usually temporary',
+    );
   });
 });
 
@@ -118,9 +120,9 @@ describe('isCreditBalanceTooLowError', () => {
   });
 
   it('matches the doubled/concatenated render observed live', () => {
-    expect(
-      isCreditBalanceTooLowError('Credit balance is too lowCredit balance is too low'),
-    ).toBe(true);
+    expect(isCreditBalanceTooLowError('Credit balance is too lowCredit balance is too low')).toBe(
+      true,
+    );
   });
 
   it('matches case-insensitively and through the agent-error marker', () => {
@@ -128,9 +130,7 @@ describe('isCreditBalanceTooLowError', () => {
   });
 
   it('matches on a structured error code first, when one is present', () => {
-    expect(isCreditBalanceTooLowError('some unrelated text', 'credit_balance_too_low')).toBe(
-      true,
-    );
+    expect(isCreditBalanceTooLowError('some unrelated text', 'credit_balance_too_low')).toBe(true);
   });
 
   it('does not match an unrelated error (529 overload)', () => {

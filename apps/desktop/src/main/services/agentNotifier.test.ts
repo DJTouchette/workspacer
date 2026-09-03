@@ -190,7 +190,8 @@ describe('notifyOnTransition', () => {
         conversation: [
           {
             role: 'assistant',
-            content: '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
+            content:
+              '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
             timestamp: 1,
           },
         ] as never,

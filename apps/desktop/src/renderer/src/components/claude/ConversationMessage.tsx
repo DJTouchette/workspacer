@@ -119,7 +119,10 @@ const ConversationMessageInner: React.FC<{
   // an ATTACHED remedy, not a replacement, so a user who already knows what
   // it means isn't second-guessed.
   const creditBalanceRemedy = useMemo(
-    () => (!isUser && turn.content && isCreditBalanceTooLowError(turn.content) ? CREDIT_BALANCE_REMEDY : null),
+    () =>
+      !isUser && turn.content && isCreditBalanceTooLowError(turn.content)
+        ? CREDIT_BALANCE_REMEDY
+        : null,
     [isUser, turn.content],
   );
 
@@ -266,10 +269,22 @@ const ConversationMessageInner: React.FC<{
                   color: colors.text,
                 }}
               >
-                <AlertTriangle size={14} color={colors.warning} style={{ flexShrink: 0, marginTop: 2 }} />
+                <AlertTriangle
+                  size={14}
+                  color={colors.warning}
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
                 <span>{creditBalanceRemedy}</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 20 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: 6,
+                  marginLeft: 20,
+                }}
+              >
                 <code
                   style={{
                     fontSize: '0.72rem',

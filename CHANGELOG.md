@@ -7,6 +7,25 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **A "Credit balance is too low" error from Claude Code now comes with the
+  actual fix, not just the raw API text.** On a subscription account this
+  message almost always means the Claude Code CLI is signed in with stale or
+  wrong credentials, not an empty balance, and the fix is to run `claude` in a
+  terminal and re-authenticate with `/logout` then `/login`. That guidance
+  now shows up everywhere the raw error used to: attached under the chat
+  bubble in the session pane with a copyable `claude` command, in a sidebar
+  card's tooltip and activity line, in the toast a died worker used to raise
+  as a plain "finished" notification, and in the wake a Fleet Manager reads
+  when a dispatched worker hits it. Matching is exact and case insensitive,
+  including the doubled text a rendering bug produced, and never fires on an
+  unrelated error. Also fixed: a transient server overload (a 529) no longer
+  gets mislabeled "out of credits" in a Fleet Manager's wake just because the
+  account separately has no overage headroom; that combination had been
+  sending a retryable hiccup down the account billing troubleshooting path.
+
 ## [0.163.0] - 2026-09-02
 
 ### Fixed

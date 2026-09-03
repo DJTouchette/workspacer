@@ -944,7 +944,9 @@ const SideBar: React.FC<SideBarProps> = ({
             // "Credit balance is too low" mystery in the card/tooltip.
             const lastLine = activity.length ? activity[activity.length - 1] : undefined;
             const creditBalanceFailed =
-              !!lastLine && lastLine.kind === 'message' && isCreditBalanceTooLowError(lastLine.text);
+              !!lastLine &&
+              lastLine.kind === 'message' &&
+              isCreditBalanceTooLowError(lastLine.text);
             const log: LogLine[] = [];
             if (hubOffline) {
               log.push({
@@ -981,7 +983,10 @@ const SideBar: React.FC<SideBarProps> = ({
               // Resting card — the last two things it did, muted; the
               // credit-balance refusal is the one exception worth a color.
               pushActivity(activity.slice(-2, -1));
-              pushActivity(activity.slice(-1), creditBalanceFailed ? 'var(--wks-error)' : undefined);
+              pushActivity(
+                activity.slice(-1),
+                creditBalanceFailed ? 'var(--wks-error)' : undefined,
+              );
             } else {
               log.push({ text: 'Standing by', color: 'var(--wks-text-faint)' });
             }
