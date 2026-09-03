@@ -642,7 +642,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    *  `.md` detour asks BEFORE it opens anything: only main knows the allowed
    *  roots, and the read behind the preview pane applies none of its own.
    *  `canonicalPath`, present only when allowed, is what the caller must open
-   *  (and hand back to `readFile`'s second argument) — pathConfinement's
+   *  (and hand back to `readFile`'s second argument): pathConfinement's
    *  caller contract. */
   checkPreviewFile: (
     url: string,
@@ -795,7 +795,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Files (editor pane). `expectedCanonicalPath`, when given, must match what a
   // FRESH canonicalization of `filePath` resolves to at read time, or the read
-  // is refused — the TOCTOU re-check for a caller that verified `filePath`
+  // is refused: the TOCTOU re-check for a caller that verified `filePath`
   // earlier (see webview:check-preview) and wants the file it checked, not
   // whatever now sits at that name.
   readFile: (

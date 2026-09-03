@@ -1005,7 +1005,7 @@ function App() {
         // pane, whose guard refuses it again and turns it into the Blocked
         // banner, so the user is told rather than shown nothing. The pane opens
         // the CANONICAL path main checked, not this renderer's own parse of the
-        // URL — see previewFileAllowed's doc for why re-deriving one here would
+        // URL: see previewFileAllowed's doc for why re-deriving one here would
         // reopen the TOCTOU the check exists to close.
         void previewFileAllowed(t.url).then((verdict) => {
           if (!verdict.allowed || !verdict.canonicalPath) return openBrowserTab();

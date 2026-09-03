@@ -287,7 +287,7 @@ describe('App.tsx routes a .md file: target to the preview pane', () => {
 
   /**
    * The TOCTOU close: the pane must open the CANONICAL path main resolved and
-   * checked, not this renderer's own (unresolved) parse of the URL — a `mdPath`
+   * checked, not this renderer's own (unresolved) parse of the URL: a `mdPath`
    * that was never re-verified is exactly the gap a symlink swapped in between
    * the check and the open walks through. Both call sites hand
    * `openMarkdownPreview` the verdict's `canonicalPath`, not `mdPath`.
@@ -331,7 +331,7 @@ describe('previewFileAllowed', () => {
 
   /** main's canonical rewrite always sets one when it allows a file:, but a
    *  caller that somehow got `allowed: true` with none must not be handed a
-   *  path to open — that would be the check-path/opened-path split again. */
+   *  path to open: that would be the check-path/opened-path split again. */
   it('refuses when main allows but names no canonical path', async () => {
     api().checkPreviewFile = () => Promise.resolve({ allowed: true });
     await expect(previewFileAllowed(PAGE_URL)).resolves.toEqual({ allowed: false });

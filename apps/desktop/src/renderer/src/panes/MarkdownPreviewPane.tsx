@@ -41,7 +41,7 @@ const MarkdownPreviewPane: React.FC<{
   previewCwd?: string;
   /** The CANONICAL path main verified this file against at check time (see
    *  browserBus.previewFileAllowed). Re-sent with the read so main can refuse
-   *  if the file changed underneath between the check and this read — a
+   *  if the file changed underneath between the check and this read: a
    *  symlink swapped in for `previewPath` between the two would otherwise
    *  render whatever it now points at. Absent for FileLink's own preview
    *  path, which carries no check to re-verify. */

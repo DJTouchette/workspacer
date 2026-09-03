@@ -905,7 +905,7 @@ describe('installWebviewGuards', () => {
 
     expect(attach(host, allowedSrc).blocked).toBe(false); // guest 1: approved
     // A refused attach is prevented before Chromium ever creates a guest for
-    // it, so it never gets a did-attach-webview of its own — this only proves
+    // it, so it never gets a did-attach-webview of its own. This only proves
     // it cannot leave a stale exemption behind for whichever guest attaches
     // next either.
     expect(attach(host, fileUrl(path.join(outside, 'evil.html'))).blocked).toBe(true);
@@ -930,7 +930,7 @@ describe('installWebviewGuards', () => {
    * The bug the re-review flagged: the exemption lived in ONE mutable variable
    * shared by every attach on this host. Electron fires will/did-attach-webview
    * as a pair per guest, but two guests' pairs can INTERLEAVE (will A, will B,
-   * did A, did B) when two <webview>s attach around the same time — the second
+   * did A, did B) when two <webview>s attach around the same time: the second
    * will-attach reset the shared variable before the first guest ever consumed
    * it, so guest A got guest B's exemption (and vice-versa) and BOTH bounced to
    * about:blank. Each attach's exemption now travels in its own queue slot,

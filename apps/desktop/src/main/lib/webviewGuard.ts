@@ -37,7 +37,7 @@
  * What this does NOT do, deliberately: it does not touch `sandbox`. A file:
  * page still gets Chromium's default opaque file origin, so it cannot fetch/XHR
  * its neighbours; it can only pull the subresources (css/js/img) a local page
- * normally can — and `webSecurity` / `allowFileAccessFromFileUrls` are pinned
+ * normally can, and `webSecurity` / `allowFileAccessFromFileUrls` are pinned
  * to that default on every attach (applySafeWebviewPreferences), so a guest
  * cannot request its way out of that origin via its own `webpreferences`
  * attribute.
@@ -89,7 +89,7 @@ export interface MutableWebPreferences {
  * `<webview webpreferences="...">` attribute onto this object AFTER its own
  * inheritance clamp, and that clamp covers contextIsolation, sandbox,
  * nodeIntegration (top and sub-frame), javascript and enableWebSQL but not
- * these two — so a guest page that can set its OWN
+ * these two, so a guest page that can set its OWN
  * `<webview webpreferences="allowFileAccessFromFileUrls">` on a file: page
  * gets whole-filesystem XHR read, the thing the file: allowance's entire
  * design (see the module header) assumes stays off.
@@ -611,7 +611,7 @@ export interface GuardHostContents {
 /**
  * The canonical `file:` src to hand Chromium, keeping the ORIGINAL request's
  * query and fragment. `pathConfinement.canonicalizePath` resolves a filesystem
- * path, not a URL, so `verdict.canonicalPath` carries neither — and rewriting
+ * path, not a URL, so `verdict.canonicalPath` carries neither, and rewriting
  * straight from it dropped both: `open_browser` on `report.html#findings` lost
  * the anchor the moment the rewrite replaced the whole URL with the bare path.
  * `originalSrc` was already parsed once by `checkWebviewSrc` to reach here, so
@@ -645,7 +645,7 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
    * but not yet paired with its guest. Electron fires will-/did-attach-webview
    * as a pair for one guest, but the PAIRS across different guests can
    * interleave (will A, will B, did A, did B) when two `<webview>`s attach
-   * around the same time — a single mutable "most recently approved" value
+   * around the same time: a single mutable "most recently approved" value
    * handed pane 2's exemption to pane 1's guest (and left pane 2 with none),
    * bouncing BOTH to about:blank. did-attach-webview never fires for a
    * REFUSED attach (Chromium never creates that guest), so only an approved

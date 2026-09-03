@@ -104,7 +104,7 @@ export interface PreviewFileVerdict {
  * resolved every symlink and every `..` to decide the file was allowed, and
  * re-deriving a path from the renderer's own (unresolved) parse of `url` is the
  * check-path/opened-path split pathConfinement's caller contract exists to
- * close — a component that was an ordinary file at check time and a symlink out
+ * close: a component that was an ordinary file at check time and a symlink out
  * of the roots by the time the pane reads it would otherwise render anyway.
  *
  * Fails CLOSED when the backend does not answer: a check we could not run is not

@@ -373,7 +373,7 @@ describe('webview:check-preview / file:read confinement', () => {
    * refuseSecretRead used to hand the RAW string back instead, on the theory
    * that readTextFile would fail on it the same way. It does not: canonicalize
    * requires an ABSOLUTE path and throws on a relative one, but fs.statSync /
-   * fs.readFileSync resolve a relative path against process.cwd() just fine —
+   * fs.readFileSync resolve a relative path against process.cwd() just fine,
    * so a relative path skipped the secret gate entirely rather than merely
    * failing to canonicalize. A relative '.git/config' from a cwd that IS a
    * live project root is exactly the credential-adjacent file the gate exists
@@ -395,7 +395,7 @@ describe('webview:check-preview / file:read confinement', () => {
    * value gets a fresh canonicalization compared against it. Without this,
    * `checkPreview` approves `<root>/doc.md`, the file is swapped for a symlink
    * to somewhere outside every root, and `file:read` opens whatever the swap
-   * now points at — the check and the open were never the same guarantee.
+   * now points at. The check and the open were never the same guarantee.
    */
   it('refuses a read when the checked file was swapped for a symlink afterward', async () => {
     const target = path.join(projectRoot, 'swap.md');
