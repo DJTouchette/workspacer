@@ -50,6 +50,25 @@ describe('applySafeWebviewPreferences', () => {
     expect(prefs.nodeIntegration).toBe(false);
     expect(prefs.contextIsolation).toBe(true);
   });
+
+  /**
+   * Electron 43.4.1 spreads a `<webview webpreferences="...">` attribute onto
+   * this object AFTER the built-in inheritance clamp, and that clamp covers
+   * contextIsolation/sandbox/nodeIntegration(*)/javascript/enableWebSQL but not
+   * webSecurity or allowFileAccessFromFileUrls. A guest page that can set its
+   * OWN `<webview webpreferences="allowFileAccessFromFileUrls">` therefore gets
+   * whole-filesystem XHR read from a file: origin. Pinned here so this function
+   * closes it regardless of what the tag or the clamp left in `prefs`.
+   */
+  it('pins webSecurity and allowFileAccessFromFileUrls, which the inheritance clamp does not cover', () => {
+    const prefs: MutableWebPreferences = {
+      webSecurity: false,
+      allowFileAccessFromFileUrls: true,
+    };
+    applySafeWebviewPreferences(prefs);
+    expect(prefs.webSecurity).toBe(true);
+    expect(prefs.allowFileAccessFromFileUrls).toBe(false);
+  });
 });
 
 describe('isWebviewSrcAllowed', () => {
@@ -810,6 +829,19 @@ describe('installWebviewGuards', () => {
     expect(prefs.preload).toBeUndefined();
     expect(prefs.nodeIntegration).toBe(false);
     expect(prefs.contextIsolation).toBe(true);
+  });
+
+  it('overrides a webpreferences attribute that asks for webSecurity off and file XHR on', () => {
+    const host = fakeHost();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const event = { preventDefault: vi.fn() };
+    const prefs: MutableWebPreferences = {
+      webSecurity: false,
+      allowFileAccessFromFileUrls: true,
+    };
+    host.emit('will-attach-webview', event, prefs, { src: 'https://example.com' });
+    expect(prefs.webSecurity).toBe(true);
+    expect(prefs.allowFileAccessFromFileUrls).toBe(false);
   });
 
   it('reports a refused attach with a reason and the phase', () => {

@@ -34,11 +34,13 @@
  *   - the target must EXIST and be a regular file, not a directory;
  *   - and its extension must be one a browser pane can actually render.
  *
- * What this does NOT do, deliberately: it does not touch `webSecurity`,
- * `sandbox`, `contextIsolation` or `allowFileAccessFromFileUrls`. A file: page
- * still gets Chromium's default opaque file origin, so it cannot fetch/XHR its
- * neighbours; it can only pull the subresources (css/js/img) a local page
- * normally can.
+ * What this does NOT do, deliberately: it does not touch `sandbox`. A file:
+ * page still gets Chromium's default opaque file origin, so it cannot fetch/XHR
+ * its neighbours; it can only pull the subresources (css/js/img) a local page
+ * normally can — and `webSecurity` / `allowFileAccessFromFileUrls` are pinned
+ * to that default on every attach (applySafeWebviewPreferences), so a guest
+ * cannot request its way out of that origin via its own `webpreferences`
+ * attribute.
  *
  * And what it does not claim: SUB-FRAME loads inside an allowed local page are
  * NOT guarded. `did-start-navigation` is filtered to the main frame, so an
@@ -69,14 +71,28 @@ export interface MutableWebPreferences {
   nodeIntegration?: boolean;
   nodeIntegrationInSubFrames?: boolean;
   contextIsolation?: boolean;
+  webSecurity?: boolean;
+  allowFileAccessFromFileUrls?: boolean;
   [k: string]: unknown;
 }
 
 /**
  * Force the non-negotiable safe prefs regardless of what the <webview> tag asked
  * for: strip any preload, disable node integration (top frame and sub-frames),
- * and require context isolation. A malicious `<webview nodeintegration preload=…>`
- * is thereby neutered even if it reaches attach.
+ * require context isolation, and pin webSecurity on / allowFileAccessFromFileUrls
+ * off. A malicious `<webview nodeintegration preload=…>` is thereby neutered
+ * even if it reaches attach.
+ *
+ * The last two are DEFAULTS, not a behaviour change: Electron already ships
+ * `webSecurity: true` and `allowFileAccessFromFileUrls: false` for a fresh
+ * `<webview>`. They earn a line here because Electron 43.4.1 spreads a
+ * `<webview webpreferences="...">` attribute onto this object AFTER its own
+ * inheritance clamp, and that clamp covers contextIsolation, sandbox,
+ * nodeIntegration (top and sub-frame), javascript and enableWebSQL but not
+ * these two — so a guest page that can set its OWN
+ * `<webview webpreferences="allowFileAccessFromFileUrls">` on a file: page
+ * gets whole-filesystem XHR read, the thing the file: allowance's entire
+ * design (see the module header) assumes stays off.
  */
 export function applySafeWebviewPreferences(prefs: MutableWebPreferences): void {
   delete prefs.preload;
@@ -84,6 +100,8 @@ export function applySafeWebviewPreferences(prefs: MutableWebPreferences): void 
   prefs.nodeIntegration = false;
   prefs.nodeIntegrationInSubFrames = false;
   prefs.contextIsolation = true;
+  prefs.webSecurity = true;
+  prefs.allowFileAccessFromFileUrls = false;
 }
 
 /**
