@@ -27,6 +27,7 @@ import { IPC } from '../shared/ipcChannels';
 import type { InAppNotification } from '../shared/ipcTypes';
 import type { SessionAmbientState } from './claudeSessionStore';
 import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
+import { isCreditBalanceTooLowError, CREDIT_BALANCE_REMEDY } from '../shared/workerFailure';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
 // 'background' counts as working so "finished" fires when the spawned work
@@ -76,6 +77,18 @@ function summarizeToolInput(input: unknown): string | null {
 /** Best-known cumulative session cost (statusLine is authoritative when live). */
 function sessionCost(session: PendingReadOnlySession): number {
   return session.statusLine?.costUSD ?? session.usage?.costUSD ?? 0;
+}
+
+/** The session's last assistant turn, if any — same "what did it just say"
+ *  read the wake path uses (see shared/workerFailure), scoped to this file so
+ *  a died-worker toast doesn't have to introduce a general failure axis just
+ *  to catch the one case that has an actionable remedy. */
+function lastAssistantText(session: PendingReadOnlySession): string {
+  const conv = session.conversation ?? [];
+  for (let i = conv.length - 1; i >= 0; i--) {
+    if (conv[i].role === 'assistant' && conv[i].content) return conv[i].content;
+  }
+  return '';
 }
 
 class AgentNotifier {
@@ -159,6 +172,10 @@ class AgentNotifier {
     if (!needsYou && !done) return;
 
     const label = agentLabel(session);
+    // A died worker goes idle exactly like a finished one (see
+    // shared/workerFailure's header) — this is the one death with an
+    // actionable fix, so it earns an honest title instead of "finished".
+    const creditBalanceFailed = done && isCreditBalanceTooLowError(lastAssistantText(session));
     let title: string;
     let body: string;
     if (needsYou && next === 'waiting_approval') {
@@ -174,6 +191,9 @@ class AgentNotifier {
       const first = questions[0]?.question;
       const more = questions.length > 1 ? ` (+${questions.length - 1} more)` : '';
       body = first ? truncate(first, 180) + more : 'The agent asked you a question.';
+    } else if (creditBalanceFailed) {
+      title = `${label} needs your attention`;
+      body = truncate(CREDIT_BALANCE_REMEDY, 180);
     } else {
       title = `${label} finished`;
       const cost = sessionCost(session);
@@ -186,7 +206,7 @@ class AgentNotifier {
     // In-app mirror: always recorded so the center is a complete history, but
     // toast-silent when the event is already on screen in front of the user.
     this.postInApp({
-      level: needsYou ? 'warn' : 'success',
+      level: needsYou || creditBalanceFailed ? 'warn' : 'success',
       title,
       body,
       source: 'agent',

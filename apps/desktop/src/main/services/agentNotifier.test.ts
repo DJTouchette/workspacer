@@ -155,6 +155,52 @@ describe('notifyOnTransition', () => {
     expect(h.created[0].body).toBe('Ready for your next step. Spent $1.50 this session.');
   });
 
+  it('a died worker on the credit-balance refusal gets an honest title and the remedy, not "finished"', () => {
+    const { win, sent, finishLoad } = makeWindow(false);
+    agentNotifier.setMainWindow(win as never);
+    finishLoad();
+
+    agentNotifier.notifyOnTransition(
+      session({
+        ambientState: 'idle',
+        label: 'Refactor',
+        conversation: [
+          { role: 'user', content: 'go', timestamp: 1 },
+          { role: 'assistant', content: '⚠️ Error: Credit balance is too low.', timestamp: 2 },
+        ] as never,
+      }),
+      'streaming',
+    );
+
+    expect(h.created[0].title).toBe('Refactor needs your attention');
+    expect(h.created[0].body).toContain('stale or wrong credentials');
+    const inApp = inAppPayloads(sent);
+    expect(inApp[0]).toMatchObject({ level: 'warn', key: 'agent:s1:done' });
+  });
+
+  it('an unrelated died worker (529) still reads as a plain finish — no false remedy', () => {
+    const { win, finishLoad } = makeWindow(false);
+    agentNotifier.setMainWindow(win as never);
+    finishLoad();
+
+    agentNotifier.notifyOnTransition(
+      session({
+        ambientState: 'idle',
+        label: 'Refactor',
+        conversation: [
+          {
+            role: 'assistant',
+            content: '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
+            timestamp: 1,
+          },
+        ] as never,
+      }),
+      'streaming',
+    );
+
+    expect(h.created[0].title).toBe('Refactor finished');
+  });
+
   it('mirrors to the in-app center even when OS notifications are disabled', () => {
     const { win, sent, finishLoad } = makeWindow(false);
     agentNotifier.setMainWindow(win as never);
