@@ -13,6 +13,8 @@ import {
   isCreditBalanceTooLowError,
   isCreditBalanceFailureText,
   CREDIT_BALANCE_REMEDY,
+  CREDIT_BALANCE_REMEDY_TOAST,
+  NOTIFICATION_BODY_MAX,
 } from './workerFailure';
 
 interface Fixture {
@@ -261,5 +263,21 @@ describe('CREDIT_BALANCE_REMEDY', () => {
     expect(CREDIT_BALANCE_REMEDY.indexOf('subscription')).toBeLessThan(
       CREDIT_BALANCE_REMEDY.indexOf('API key'),
     );
+  });
+});
+
+describe('CREDIT_BALANCE_REMEDY_TOAST', () => {
+  it('fits a notification body, which the full remedy does not', () => {
+    expect(CREDIT_BALANCE_REMEDY_TOAST.length).toBeLessThanOrEqual(NOTIFICATION_BODY_MAX);
+    expect(CREDIT_BALANCE_REMEDY.length).toBeGreaterThan(NOTIFICATION_BODY_MAX);
+  });
+
+  it('keeps the whole instruction: both slash commands and the retry', () => {
+    // The full remedy truncated at 180 stopped at "Open a terminal, run claude"
+    // — before the two commands that ARE the fix. Whatever else this string
+    // loses, it may not lose these.
+    expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('/logout');
+    expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('/login');
+    expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('retry');
   });
 });

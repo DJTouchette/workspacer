@@ -173,9 +173,17 @@ describe('notifyOnTransition', () => {
     );
 
     expect(h.created[0].title).toBe('Refactor needs your attention');
-    expect(h.created[0].body).toContain('stale or wrong credentials');
+    // The toast body is cut at 180 chars, and the full remedy's fix (the two
+    // slash commands) sits past that cut — the short variant has to be the one
+    // that lands here, on the OS toast AND on the center entry.
+    expect(h.created[0].body).toContain('/logout');
+    expect(h.created[0].body).toContain('/login');
+    expect(h.created[0].body).toContain('retry');
+    expect(h.created[0].body.length).toBeLessThanOrEqual(180);
     const inApp = inAppPayloads(sent);
     expect(inApp[0]).toMatchObject({ level: 'warn', key: 'agent:s1:done' });
+    expect((inApp[0] as { body: string }).body).toContain('/logout');
+    expect((inApp[0] as { body: string }).body).toContain('/login');
   });
 
   it('an unrelated died worker (529) still reads as a plain finish — no false remedy', () => {

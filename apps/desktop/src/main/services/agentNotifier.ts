@@ -27,7 +27,11 @@ import { IPC } from '../shared/ipcChannels';
 import type { InAppNotification } from '../shared/ipcTypes';
 import type { SessionAmbientState } from './claudeSessionStore';
 import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
-import { isCreditBalanceFailureText, CREDIT_BALANCE_REMEDY } from '../shared/workerFailure';
+import {
+  isCreditBalanceFailureText,
+  CREDIT_BALANCE_REMEDY_TOAST,
+  NOTIFICATION_BODY_MAX,
+} from '../shared/workerFailure';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
 // 'background' counts as working so "finished" fires when the spawned work
@@ -193,7 +197,11 @@ class AgentNotifier {
       body = first ? truncate(first, 180) + more : 'The agent asked you a question.';
     } else if (creditBalanceFailed) {
       title = `${label} needs your attention`;
-      body = truncate(CREDIT_BALANCE_REMEDY, 180);
+      // The SHORT remedy: this body is cut at NOTIFICATION_BODY_MAX on both
+      // the OS toast and the center entry, and the full remedy's two slash
+      // commands sit past that cut. The pane and the fleet wake carry the full
+      // text; here the fix has to fit.
+      body = truncate(CREDIT_BALANCE_REMEDY_TOAST, NOTIFICATION_BODY_MAX);
     } else {
       title = `${label} finished`;
       const cost = sessionCost(session);

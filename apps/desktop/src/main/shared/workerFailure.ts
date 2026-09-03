@@ -223,6 +223,31 @@ export const CREDIT_BALANCE_REMEDY =
   'this agent. If Claude Code is signed in with an API key or console billing rather than a ' +
   'subscription, this is a real empty balance instead: add credits in the Anthropic Console.';
 
+/**
+ * The remedy for a surface with a HARD LENGTH BUDGET — the OS toast and the
+ * in-app notification-center entry, both of which cut their body at 180
+ * characters. The full remedy is 373 and was being truncated at "Open a
+ * terminal, run claude", i.e. exactly before the two commands that are the
+ * whole instruction, so the toast said nothing actionable at all.
+ *
+ * It is a separate constant rather than a smarter truncation because what has
+ * to survive is not a prefix: it is `/logout`, `/login` and "retry", which sit
+ * in the middle. Subscription-first, and it deliberately drops the API-key
+ * caveat — the pane and the fleet wake carry the full text, and a toast that
+ * spends its budget on the rarer case loses the common one's fix.
+ *
+ * PINNED under 180 by workerFailure.test.ts, which also holds the two slash
+ * commands and the retry.
+ */
+export const CREDIT_BALANCE_REMEDY_TOAST =
+  'Claude Code reported "Credit balance is too low". Run claude in a terminal, type /logout then ' +
+  '/login with your subscription account, then retry this agent.';
+
+/** The longest body an OS toast / notification-center entry keeps (see
+ *  agentNotifier's `truncate`). Exported so the toast remedy above can be
+ *  pinned to the same number the caller actually cuts at. */
+export const NOTIFICATION_BODY_MAX = 180;
+
 /** The remedy's own command line, offered as a copyable fallback anywhere a
  *  one-click "open a terminal running claude" affordance isn't wired up. */
 export const CREDIT_BALANCE_REMEDY_COMMAND = 'claude';
