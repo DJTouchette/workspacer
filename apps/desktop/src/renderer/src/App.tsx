@@ -43,6 +43,7 @@ import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previe
 import {
   BROWSER_OPEN_EVENT,
   markdownPathFromFileUrl,
+  previewFileAllowed,
   type BrowserOpenTarget,
 } from './lib/browserBus';
 import { useUiCommands } from './hooks/useUiCommands';
@@ -987,20 +988,30 @@ function App() {
       // Chromium downloads markdown over file: rather than rendering it, so a
       // .md target goes to the preview pane, the surface that CAN show it.
       const mdPath = markdownPathFromFileUrl(t.url);
+      const openBrowserTab = () => {
+        const newId = addTab(
+          'browser',
+          t.title || 'Browser',
+          insertPosition,
+          undefined,
+          t.url,
+          false,
+        );
+        requestAnimationFrame(() => scrollToTab(newId));
+      };
       if (mdPath) {
-        const tabId = openMarkdownPreview({ path: mdPath });
-        if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+        // The detour is confined by the SAME roots as the pane it detours
+        // around; main owns that answer. A refusal falls through to the browser
+        // pane, whose guard refuses it again and turns it into the Blocked
+        // banner, so the user is told rather than shown nothing.
+        void previewFileAllowed(t.url).then((allowed) => {
+          if (!allowed) return openBrowserTab();
+          const tabId = openMarkdownPreview({ path: mdPath });
+          if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+        });
         return;
       }
-      const newId = addTab(
-        'browser',
-        t.title || 'Browser',
-        insertPosition,
-        undefined,
-        t.url,
-        false,
-      );
-      requestAnimationFrame(() => scrollToTab(newId));
+      openBrowserTab();
     };
     window.addEventListener(BROWSER_OPEN_EVENT, handler);
     return () => window.removeEventListener(BROWSER_OPEN_EVENT, handler);
@@ -2447,14 +2458,23 @@ function App() {
       if (paneType === 'browser' && opts?.url) {
         // Same markdown detour as the FileLink path above: an agent's
         // open_browser on a .md file lands in the preview pane, not a webview
-        // that would only offer to download it.
+        // that would only offer to download it. And the same roots check before
+        // it opens: this is the path an AGENT drives, so it is the one that most
+        // needs the detour not to be a way around the browser arm.
         const mdPath = markdownPathFromFileUrl(opts.url);
+        const url = opts.url;
         if (mdPath) {
-          const tabId = openMarkdownPreview({ path: mdPath, cwd: opts?.cwd });
-          if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+          void previewFileAllowed(url).then((allowed) => {
+            if (!allowed) {
+              addTabWithConfig('browser', undefined, undefined, url, false, opts?.cwd);
+              return;
+            }
+            const tabId = openMarkdownPreview({ path: mdPath, cwd: opts?.cwd });
+            if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+          });
           return;
         }
-        addTabWithConfig('browser', undefined, undefined, opts.url, false, opts?.cwd);
+        addTabWithConfig('browser', undefined, undefined, url, false, opts?.cwd);
         return;
       }
       // The guide is a singleton in the global workspace — same routing as

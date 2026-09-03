@@ -8,7 +8,6 @@ import { resolveLeader, resolveMod } from '../lib/shortcuts';
 import { isLayerArmed } from '../lib/layerArmed';
 import { guestHost, guestFramePolicy } from '../lib/guestFrame';
 import GuestFrame from '../components/GuestFrame';
-import { markdownPathFromFileUrl } from '../lib/browserBus';
 import { requestMarkdownPreview } from '../lib/previewBus';
 
 interface BrowserPaneProps {
@@ -500,7 +499,11 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       setGuestError({
         kind: 'blocked',
         detail: `Blocked: ${info.reason}`,
-        previewPath: markdownPathFromFileUrl(info.url) ?? undefined,
+        // MAIN decides whether a refused target may open in the preview pane:
+        // it is the only side that knows the roots. Deriving it here from the
+        // URL's extension offered an out-of-root .md a button that walked
+        // straight around the guard that had just refused it.
+        previewPath: info.previewPath,
       });
     });
     return () => off?.();

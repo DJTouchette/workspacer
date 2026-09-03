@@ -98,11 +98,38 @@ export const BROWSER_FILE_EXTENSIONS = new Set([
  *  would trade a blank pane for a surprise download. See browserBus.ts. */
 export const PREVIEW_FILE_EXTENSIONS = new Set(['md', 'markdown']);
 
+/**
+ * Which pane is asking.
+ *
+ * The two doors render DISJOINT extension sets: the browser refuses markdown
+ * (Chromium downloads `text/markdown` over file:) and the preview renders
+ * nothing else. Everything else about the check is the same rule on the same
+ * roots: the host test, the per-component canonicalization, containment, the
+ * credential gate, and existence. Passing a door rather than a bare extension
+ * set is what keeps the markdown detour from being a SECOND, unconfined policy
+ * written somewhere in the renderer.
+ */
+export type PaneDoor = 'browser' | 'preview';
+
+/** What the renderer is told about a refusal, so a pane that is blank ON PURPOSE
+ *  can say why. `previewPath` is present only for the markdown detour. */
+export interface WebviewBlockedInfo {
+  url: string;
+  reason: string;
+  phase: 'attach' | 'navigate';
+  previewPath?: string;
+}
+
 /** Why a src was refused. Carried to the renderer so the pane can say it. */
 export interface SrcVerdict {
   allowed: boolean;
   /** Short, user-facing. Only set when `allowed` is false. */
   reason?: string;
+  /** Set ONLY when the browser door refused an in-root markdown file: the
+   *  CANONICAL path the preview pane should open instead. Absent on every other
+   *  refusal, so a pane can offer "open the preview" without deciding for itself
+   *  whether the target was inside a root. */
+  previewPath?: string;
 }
 
 const ALLOWED: SrcVerdict = { allowed: true };
@@ -169,7 +196,7 @@ function filePathOf(u: URL): string | null {
  * not when it may not. Split out of `checkWebviewSrc` only for readability; it is
  * never reached with a non-file URL.
  */
-function checkFileSrc(u: URL, allowedRoots: string[]): SrcVerdict {
+function checkFileSrc(u: URL, allowedRoots: string[], door: PaneDoor): SrcVerdict {
   // `file://localhost/x` is the same document as `file:///x` and WHATWG already
   // normalizes the host away; any OTHER authority means a remote fetch (SMB/UNC),
   // which is not a local file no matter what the path says.
@@ -193,11 +220,23 @@ function checkFileSrc(u: URL, allowedRoots: string[]): SrcVerdict {
   }
 
   const ext = extensionOf(canonical);
-  if (PREVIEW_FILE_EXTENSIONS.has(ext)) {
-    return deny('markdown files open in the preview pane, not the browser');
-  }
-  if (!BROWSER_FILE_EXTENSIONS.has(ext)) {
-    return deny(`the browser pane does not render ${ext ? '.' + ext : 'extensionless'} files`);
+  if (door === 'preview') {
+    if (!PREVIEW_FILE_EXTENSIONS.has(ext)) {
+      return deny('the preview pane only opens markdown files');
+    }
+  } else {
+    if (PREVIEW_FILE_EXTENSIONS.has(ext)) {
+      return {
+        allowed: false,
+        reason: 'markdown files open in the preview pane, not the browser',
+        // Reached only AFTER containment passed, so this path is inside a root
+        // by construction and offering it is not a second, wider door.
+        previewPath: canonical,
+      };
+    }
+    if (!BROWSER_FILE_EXTENSIONS.has(ext)) {
+      return deny(`the browser pane does not render ${ext ? '.' + ext : 'extensionless'} files`);
+    }
   }
 
   let st: fs.Stats;
@@ -224,7 +263,11 @@ function checkFileSrc(u: URL, allowedRoots: string[]): SrcVerdict {
  * `allowedRoots` defaults to EMPTY, which allows no file at all: a caller that
  * forgets to supply roots gets the old, closed policy rather than a wildcard.
  */
-export function checkWebviewSrc(src: string | undefined, allowedRoots: string[] = []): SrcVerdict {
+export function checkWebviewSrc(
+  src: string | undefined,
+  allowedRoots: string[] = [],
+  door: PaneDoor = 'browser',
+): SrcVerdict {
   // An empty src attaches an about:blank shell that the pane drives via loadURL();
   // that later navigation is itself checked, so allow the empty attach.
   if (!src || src === 'about:blank') return ALLOWED;
@@ -239,12 +282,34 @@ export function checkWebviewSrc(src: string | undefined, allowedRoots: string[] 
   if (url.protocol === 'http:' || url.protocol === 'https:') return ALLOWED;
   if (url.protocol === 'file:') {
     try {
-      return checkFileSrc(url, allowedRoots);
+      return checkFileSrc(url, allowedRoots, door);
     } catch {
       return deny('this path could not be checked'); // fail closed on anything unexpected
     }
   }
   return deny(`the ${url.protocol.replace(/:$/, '')} scheme cannot open in a pane`);
+}
+
+/**
+ * Whether a `file:` URL may be opened in the MARKDOWN PREVIEW pane.
+ *
+ * The preview pane is the other half of the same allowance: the browser door
+ * refuses markdown and names the preview as where it does open, so without this
+ * the detour was the widest door in the feature. `markdownPathFromFileUrl` in
+ * the renderer only asks whether a URL ENDS IN `.md`; it has never seen the
+ * roots, and `IPC.FILE_READ` behind it applies no confinement of its own. So
+ * `open_browser` on `file:///etc/ssl/README.md` rendered an out-of-root file,
+ * and renaming any unreadable file to `.md` sidestepped the browser arm
+ * entirely.
+ *
+ * This is the SAME predicate on the SAME roots, with only the renderable
+ * extension set swapped, so the two doors cannot drift into different opinions
+ * about where a file may live. Non-file URLs are refused outright: an http(s)
+ * page is not a thing the preview pane opens.
+ */
+export function checkPreviewFileUrl(url: string, allowedRoots: string[] = []): SrcVerdict {
+  if (!isFileUrl(url)) return deny('the preview pane only opens local files');
+  return checkWebviewSrc(url, allowedRoots, 'preview');
 }
 
 /**
@@ -275,7 +340,7 @@ export interface WebviewGuardOptions {
    *  project added after boot is honoured without a restart. */
   allowedRoots: () => string[];
   /** Told about every refusal, so the UI can show it instead of a blank pane. */
-  onBlocked?: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void;
+  onBlocked?: (info: WebviewBlockedInfo) => void;
   /**
    * Every spelling of the src the ATTACH door already approved for this guest.
    *
@@ -363,15 +428,20 @@ export function installWebviewNavigationGuard(
     return v;
   };
 
-  const report = (url: string, reason: string) => {
-    opts.onBlocked?.({ url, reason, phase: 'navigate' });
+  const report = (url: string, v: SrcVerdict) => {
+    opts.onBlocked?.({
+      url,
+      reason: v.reason as string,
+      phase: 'navigate',
+      previewPath: v.previewPath,
+    });
   };
 
   const cancel = (e: { preventDefault(): void }, url: string) => {
     const v = verdictFor(url);
     if (v.allowed) return;
     console.warn(`[main] blocking <webview> navigation to disallowed url: ${url}`);
-    report(url, v.reason as string);
+    report(url, v);
     e.preventDefault();
   };
   guest.on('will-navigate', cancel);
@@ -387,7 +457,7 @@ export function installWebviewNavigationGuard(
       return;
     }
     console.warn(`[main] stopping <webview> navigation to disallowed url: ${details.url}`);
-    report(details.url, v.reason as string);
+    report(details.url, v);
     guest.stop();
     // Leave the guest on a blank page rather than whatever it was showing —
     // about:blank is allowed, so this doesn't re-enter the guard.
@@ -400,7 +470,7 @@ export function installWebviewNavigationGuard(
     const v = verdictFor(url);
     if (v.allowed) return { action: 'allow' };
     console.warn(`[main] blocking <webview> window.open of disallowed url: ${url}`);
-    report(url, v.reason as string);
+    report(url, v);
     return { action: 'deny' };
   });
 }
@@ -445,6 +515,7 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
         url: params.src ?? '',
         reason: verdict.reason as string,
         phase: 'attach',
+        previewPath: verdict.previewPath,
       });
       event.preventDefault();
     },

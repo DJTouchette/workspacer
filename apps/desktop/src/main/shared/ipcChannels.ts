@@ -56,6 +56,10 @@ export const IPC = {
   // fires no did-fail-load in the guest (there is no guest), so this push is the
   // only way BrowserPane learns the pane is blank on purpose.
   WEBVIEW_BLOCKED: 'webview:blocked', // push (main → renderer)
+  // May this file: URL open in the MARKDOWN PREVIEW pane? The renderer detours
+  // a .md target away from the browser pane, and only main knows the roots, so
+  // the detour has to ask before it opens anything.
+  WEBVIEW_CHECK_PREVIEW: 'webview:check-preview', // invoke
 
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',

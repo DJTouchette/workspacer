@@ -17,6 +17,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   applySafeWebviewPreferences,
+  checkPreviewFileUrl,
   checkWebviewSrc,
   installWebviewGuards,
   installWebviewNavigationGuard,
@@ -269,6 +270,64 @@ describe('checkWebviewSrc: the file: allowance', () => {
     const p = path.join(outside, 'evil.html');
     expect(isWebviewSrcAllowed(fileUrl(p), roots)).toBe(false);
     expect(isWebviewSrcAllowed(fileUrl(p), [root, outside])).toBe(true);
+  });
+});
+
+/**
+ * The markdown detour is the OTHER half of the same allowance, and it used to be
+ * unconfined end to end: the renderer only asked whether the URL ended in `.md`,
+ * and the read behind the preview pane applies no confinement of its own. So
+ * `open_browser` on `file:///etc/ssl/README.md` rendered an out-of-root file,
+ * and renaming anything to `.md` sidestepped the browser arm entirely.
+ */
+describe('checkPreviewFileUrl: the markdown detour is confined too', () => {
+  it('allows an in-root markdown file', () => {
+    const v = checkPreviewFileUrl(fileUrl(path.join(root, 'design', 'DESIGN.md')), roots);
+    expect(v.allowed).toBe(true);
+  });
+
+  it('refuses an out-of-root markdown file, before any read', () => {
+    fs.writeFileSync(path.join(outside, 'README.md'), '# escaped');
+    const v = checkPreviewFileUrl(fileUrl(path.join(outside, 'README.md')), roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/outside/);
+  });
+
+  it('refuses a %2e%2e traversal out of the root', () => {
+    const v = checkPreviewFileUrl(fileUrl(root) + '/%2e%2e/outside/README.md', roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/outside/);
+  });
+
+  it('refuses a NON-markdown file, so it cannot become a second browser door', () => {
+    const v = checkPreviewFileUrl(fileUrl(path.join(root, 'design', 'index.html')), roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/only opens markdown/);
+  });
+
+  it('refuses anything that is not a local file URL', () => {
+    for (const u of ['https://example.com/README.md', 'about:blank', 'not a url']) {
+      expect(checkPreviewFileUrl(u, roots).allowed, u).toBe(false);
+    }
+  });
+
+  it('refuses a file URL with a remote host, and an empty root list', () => {
+    expect(checkPreviewFileUrl('file://evil/share/README.md', roots).allowed).toBe(false);
+    expect(checkPreviewFileUrl(fileUrl(path.join(root, 'design', 'DESIGN.md')), []).allowed).toBe(
+      false,
+    );
+  });
+
+  it('names the preview target on the browser door ONLY when it is in a root', () => {
+    const inRoot = checkWebviewSrc(fileUrl(path.join(root, 'design', 'DESIGN.md')), roots);
+    expect(inRoot.allowed).toBe(false);
+    expect(inRoot.previewPath).toBe(path.join(root, 'design', 'DESIGN.md'));
+
+    // Out of root: refused for WHERE it is, so there is nothing to offer. A
+    // previewPath here would be a button that walks around the refusal.
+    const outOfRoot = checkWebviewSrc(fileUrl(path.join(outside, 'README.md')), roots);
+    expect(outOfRoot.allowed).toBe(false);
+    expect(outOfRoot.previewPath).toBeUndefined();
   });
 });
 

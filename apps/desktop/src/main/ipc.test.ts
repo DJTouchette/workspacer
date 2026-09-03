@@ -21,19 +21,28 @@
  * spawnManagedAgent / spawnClaudeAgent mocked.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
-const { handlers, spawnManagedAgent, spawnClaudeAgent, installWorkspacerCli, cfg } = vi.hoisted(
-  () => ({
-    handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
-    spawnManagedAgent: vi.fn(async () => 'managed-1'),
-    spawnClaudeAgent: vi.fn(async () => 'claude-1'),
-    installWorkspacerCli: vi.fn(async () => ({ ok: true, message: 'installed' })),
-    /** Mutable config the mocked configService serves — the role-harness
-     *  settings this handler now resolves live here. */
-    cfg: { value: {} as Record<string, unknown> },
-  }),
-);
+const {
+  handlers,
+  spawnManagedAgent,
+  spawnClaudeAgent,
+  installWorkspacerCli,
+  cfg,
+  readTextFileMock,
+} = vi.hoisted(() => ({
+  handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
+  readTextFileMock: vi.fn(() => ({ path: '', contents: '', size: 0 })),
+  spawnManagedAgent: vi.fn(async () => 'managed-1'),
+  spawnClaudeAgent: vi.fn(async () => 'claude-1'),
+  installWorkspacerCli: vi.fn(async () => ({ ok: true, message: 'installed' })),
+  /** Mutable config the mocked configService serves. The role-harness
+   *  settings this handler now resolves live here. */
+  cfg: { value: {} as Record<string, unknown> },
+}));
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -66,6 +75,10 @@ vi.mock('./services/configService', () => ({
   // onChange is subscribed at registration time (the config-changed push), so
   // the stub has to hand back an unsubscribe like the real one.
   configService: { getConfig: vi.fn(() => cfg.value), onChange: vi.fn(() => () => {}) },
+  // pathConfinement reads this (the config dir is refused wholesale outside its
+  // library/layouts/sessions carve-outs), and the file-read gate below goes
+  // through it. A directory nobody in this suite writes to.
+  getConfigDir: () => '/tmp/wks-ipc-test-cfg',
 }));
 vi.mock('./services/libraryService', () => ({
   libraryService: { setMainWindow: vi.fn() },
@@ -104,7 +117,7 @@ vi.mock('./services/chromeCookieImport', () => ({
 vi.mock('./services/claudeProfiles', () => ({ claudeProfiles: {} }));
 vi.mock('./services/claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
 vi.mock('./services/fileService', () => ({
-  readTextFile: vi.fn(),
+  readTextFile: (...a: unknown[]) => readTextFileMock(...(a as [])),
   writeTextFile: vi.fn(),
   listDir: vi.fn(),
 }));
@@ -272,5 +285,85 @@ describe('claude:spawn — a role spawn with no provider resolves the configured
     await spawn({ cwd: '/proj', transport: 'pty' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The markdown detour's door, and the read behind it.
+ *
+ * `open_browser` on a `.md` file is routed away from the browser pane and into
+ * the preview pane, and that detour used to be unconfined end to end: the
+ * renderer only asked whether the URL ended in `.md`, and `file:read` applied no
+ * confinement at all. So `file:///etc/ssl/README.md` rendered an out-of-root
+ * file, and renaming any unreadable file to `.md` walked around the browser arm.
+ */
+describe('webview:check-preview / file:read confinement', () => {
+  let tmp: string;
+  let projectRoot: string;
+  let outside: string;
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-ipc-preview-'));
+    projectRoot = path.join(tmp, 'project');
+    outside = path.join(tmp, 'outside');
+    fs.mkdirSync(path.join(projectRoot, '.git'), { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'NOTES.md'), '# notes');
+    fs.writeFileSync(path.join(projectRoot, '.git', 'config'), '[core]\n');
+    fs.writeFileSync(path.join(outside, 'README.md'), '# escaped');
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const fileUrl = (p: string) => 'file://' + p.split('/').map(encodeURIComponent).join('/');
+  const checkPreview = (url: string) =>
+    handlers.get('webview:check-preview')!(null, url) as Promise<{
+      allowed: boolean;
+      reason?: string;
+    }>;
+  const readFile = (p: string) =>
+    handlers.get('file:read')!(null, p) as Promise<{ contents: string }>;
+
+  beforeEach(() => {
+    // The project directory is what makes tmp a root at all; home is the other.
+    cfg.value = { projects: { [projectRoot]: { name: 'project' } } };
+  });
+
+  it('allows an in-root markdown file', async () => {
+    expect((await checkPreview(fileUrl(path.join(projectRoot, 'NOTES.md')))).allowed).toBe(true);
+  });
+
+  it('refuses an out-of-root markdown file, before any read', async () => {
+    const v = await checkPreview(fileUrl(path.join(outside, 'README.md')));
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/outside/);
+  });
+
+  it('refuses a %2e%2e traversal out of the root', async () => {
+    const v = await checkPreview(fileUrl(projectRoot) + '/%2e%2e/outside/README.md');
+    expect(v.allowed).toBe(false);
+  });
+
+  it('refuses a non-markdown file, so the detour is not a second browser door', async () => {
+    fs.writeFileSync(path.join(projectRoot, 'index.html'), '<h1>x</h1>');
+    const v = await checkPreview(fileUrl(path.join(projectRoot, 'index.html')));
+    expect(v.allowed).toBe(false);
+  });
+
+  it('reads an ordinary file, and hands the reader the CANONICAL path', async () => {
+    // check-path and opened-path may not differ: the gate resolves the string
+    // and the reader must be given what the gate resolved, not what the caller
+    // typed. `sub/..` here is the cheapest proof the two are the same value.
+    readTextFileMock.mockClear();
+    await readFile(path.join(projectRoot, 'sub', '..', 'NOTES.md'));
+    expect(readTextFileMock).toHaveBeenCalledWith(path.join(projectRoot, 'NOTES.md'));
+  });
+
+  it('refuses to read a file the fs.* denial list refuses', async () => {
+    await expect(readFile(path.join(projectRoot, '.git', 'config'))).rejects.toThrow(
+      /credentials or agent configuration/,
+    );
   });
 });

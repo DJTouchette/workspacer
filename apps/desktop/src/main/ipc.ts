@@ -54,6 +54,9 @@ import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { instrumentIpcHandlers, startEventLoopLagMonitor } from './lib/stallDiagnostics';
 import { listRecentSessions, listLiveSessionIds } from './services/recentSessions';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
+import { checkPreviewFileUrl } from './lib/webviewGuard';
+import { webviewFileRoots } from './lib/webviewRoots';
+import { canonicalizePath, isSecretPath } from './lib/pathConfinement';
 import { loadBoard, applyBoardMove, type BoardMoveRequest } from './services/briefBoardService';
 import { readImagePreview } from './services/imagePreview';
 import { savePastedImage } from './services/clipboardImage';
@@ -111,6 +114,40 @@ function detectDefaultShell(): string {
 /** Bound like keep-warm's own report fetch: the daemon answers this from disk
  *  and its own cache, so a slow answer means the daemon is unwell, not busy. */
 const USAGE_REPORT_TIMEOUT_MS = 15_000;
+
+/**
+ * The DENIAL half of pathConfinement, applied to the desktop's own file reader.
+ *
+ * Not the roots half: this is the local user's reader, and the pane behind it
+ * (the markdown preview) legitimately opens a file wherever the user points it.
+ * What it refuses is the part that was never about location: a credential
+ * basename, a `.git` subtree, git's per-user config, a provider CLI's
+ * hooks/permissions/MCP files, and the workspacer/hub state directories. That is
+ * the same second gate `assertPathAllowed` applies to every fs.* caller.
+ *
+ * It matters here because this is the read the markdown detour lands on. The
+ * browser pane refuses a file by extension and by root; without this gate,
+ * renaming one of those files to `.md` reached it through the preview pane
+ * instead, and IPC.FILE_READ checked nothing at all.
+ *
+ * Returns the CANONICAL path, which is what the caller must open: re-passing the
+ * raw string is the check-path/opened-path split pathConfinement exists to
+ * close. A path that does not canonicalize is handed back unchanged, so
+ * readTextFile still fails on it exactly as it always has; this gate narrows,
+ * it does not invent a new refusal for a path it cannot even parse.
+ */
+function refuseSecretRead(filePath: string): string {
+  let canonical: string;
+  try {
+    canonical = canonicalizePath(filePath);
+  } catch {
+    return filePath;
+  }
+  if (isSecretPath(canonical)) {
+    throw new Error('this file holds credentials or agent configuration');
+  }
+  return canonical;
+}
 
 let ipcHandlersRegistered = false;
 
@@ -1260,9 +1297,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return ensureSupervisorHome();
   });
 
+  // The markdown detour's door. App.tsx routes a `.md` file: target away from
+  // the browser pane and into the preview pane, and that detour used to be
+  // unconfined end to end: `markdownPathFromFileUrl` only asks whether the URL
+  // ends in `.md`, and IPC.FILE_READ behind it applies no confinement, so
+  // `open_browser` on `file:///etc/ssl/README.md` rendered an out-of-root file
+  // and renaming anything to `.md` sidestepped the browser arm. Same predicate,
+  // same roots, only the renderable extension set differs.
+  ipcMain.handle(IPC.WEBVIEW_CHECK_PREVIEW, (_event, url: string) =>
+    checkPreviewFileUrl(String(url ?? ''), webviewFileRoots()),
+  );
+
   // Files (editor pane). Errors (missing / too big / binary) reject the invoke,
   // which the EditorPane surfaces to the user.
-  ipcMain.handle(IPC.FILE_READ, (_event, filePath: string) => readTextFile(filePath));
+  ipcMain.handle(IPC.FILE_READ, (_event, filePath: string) =>
+    readTextFile(refuseSecretRead(filePath)),
+  );
   // Composer attachment thumbnails. Rejects for anything unreadable or not an
   // image; the chip falls back to its icon.
   ipcMain.handle(IPC.FILE_READ_IMAGE, (_event, filePath: string) => readImagePreview(filePath));

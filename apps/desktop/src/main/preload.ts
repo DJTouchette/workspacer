@@ -614,17 +614,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(IPC.FACADE_OPEN_TERMINAL, handler);
   },
   /** The webview guard refused a src or a navigation. Pushed so a pane that is
-   *  blank ON PURPOSE can say so: a prevented attach fires no did-fail-load. */
+   *  blank ON PURPOSE can say so: a prevented attach fires no did-fail-load.
+   *  `previewPath` is set only when the refusal was an in-root markdown file. */
   onWebviewBlocked: (
-    callback: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void,
+    callback: (info: {
+      url: string;
+      reason: string;
+      phase: 'attach' | 'navigate';
+      previewPath?: string;
+      webContentsId?: number;
+    }) => void,
   ): (() => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      info: { url: string; reason: string; phase: 'attach' | 'navigate' },
+      info: {
+        url: string;
+        reason: string;
+        phase: 'attach' | 'navigate';
+        previewPath?: string;
+        webContentsId?: number;
+      },
     ) => callback(info);
     ipcRenderer.on(IPC.WEBVIEW_BLOCKED, handler);
     return () => ipcRenderer.removeListener(IPC.WEBVIEW_BLOCKED, handler);
   },
+  /** May this `file:` URL open in the markdown preview pane? The renderer's
+   *  `.md` detour asks BEFORE it opens anything: only main knows the allowed
+   *  roots, and the read behind the preview pane applies none of its own. */
+  checkPreviewFile: (url: string): Promise<{ allowed: boolean; reason?: string }> =>
+    ipcRenderer.invoke(IPC.WEBVIEW_CHECK_PREVIEW, url),
   getRemoteInfo: (): Promise<{
     enabled: boolean;
     token: string;

@@ -1501,6 +1501,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // The webview guard is a main-process rule about <webview>; the web build
     // frames its guests with <iframe> and never hears from it.
     onWebviewBlocked: () => () => {},
+    // The markdown detour's door. There is no main process here to hold the
+    // roots, and no file: surface either: the preview pane on the web reads
+    // through `fs.read`, which the hub confines with the same rule server-side.
+    // Answering "allowed" defers to that guard rather than adding a second,
+    // client-side one that a browser client could simply not run.
+    checkPreviewFile: async () => ({ allowed: true }),
     // Escalation parity via the browser Notification API: a hidden tab still
     // taps the user on the shoulder. Permission is requested lazily on the
     // first escalation attempt; clicks focus the tab and re-enter the

@@ -13,13 +13,23 @@ import React from 'react';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import { ConfigProvider } from '../src/contexts/ConfigContext';
 import BrowserPane from '../src/panes/BrowserPane';
-import { pathFromFileUrl, markdownPathFromFileUrl, fileUrlFromPath } from '../src/lib/browserBus';
+import {
+  pathFromFileUrl,
+  markdownPathFromFileUrl,
+  fileUrlFromPath,
+  previewFileAllowed,
+} from '../src/lib/browserBus';
 import { MARKDOWN_PREVIEW_EVENT } from '../src/lib/previewBus';
 import { readFileSync } from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
-type Blocked = { url: string; reason: string; phase: 'attach' | 'navigate' };
+type Blocked = {
+  url: string;
+  reason: string;
+  phase: 'attach' | 'navigate';
+  previewPath?: string;
+};
 
 /** The main → renderer push, captured so a test can fire it. */
 let emitBlocked: ((info: Blocked) => void) | null = null;
@@ -95,6 +105,9 @@ describe('BrowserPane — blocked banner', () => {
       url: mdUrl,
       reason: 'markdown files open in the preview pane, not the browser',
       phase: 'navigate',
+      // MAIN names the target, and only for a file it has already placed inside
+      // a root. The pane no longer decides that from the URL's extension.
+      previewPath: '/home/dev/proj/DESIGN.md',
     });
 
     const button = await screen.findByText('Open markdown preview');
@@ -105,6 +118,27 @@ describe('BrowserPane — blocked banner', () => {
     window.removeEventListener(MARKDOWN_PREVIEW_EVENT, handler);
 
     expect(seen).toEqual(['/home/dev/proj/DESIGN.md']);
+  });
+
+  /**
+   * The banner used to derive the preview target from the refused URL's
+   * extension, so an OUT-OF-ROOT `.md` was refused by the guard and then handed
+   * the user a button that opened it anyway, through a read that applies no
+   * confinement. Main names the target or nobody does.
+   */
+  it('offers no preview button when main named no preview target', async () => {
+    const mdUrl = fileUrlFromPath('/etc/ssl/README.md');
+    mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl={mdUrl} />);
+    await waitFor(() => expect(emitBlocked).toBeTruthy());
+
+    emitBlocked!({
+      url: mdUrl,
+      reason: 'this file is outside your home and project directories',
+      phase: 'attach',
+    });
+
+    await screen.findByText('Workspacer blocked this URL.');
+    expect(screen.queryByText('Open markdown preview')).toBeNull();
   });
 
   it('offers no preview button for a non-markdown refusal', async () => {
@@ -152,6 +186,63 @@ describe('App.tsx routes a .md file: target to the preview pane', () => {
 
   it('has no third, undetoured file: dispatch point', () => {
     expect(src.match(/markdownPathFromFileUrl\(/g)).toHaveLength(2);
+  });
+
+  /**
+   * The detour itself has to be CONFINED, or it is a wider door than the pane it
+   * detours around: `markdownPathFromFileUrl` only asks whether the URL ends in
+   * `.md`, and the read behind the preview pane checks nothing. Both dispatch
+   * points ask main first, and neither opens the preview before the answer.
+   */
+  it('asks main whether the file may be previewed, at BOTH dispatch points', () => {
+    expect(src.match(/previewFileAllowed\(/g)).toHaveLength(2);
+  });
+
+  it('opens no preview until the check has answered', () => {
+    for (const anchor of [
+      'const t = (e as CustomEvent).detail as BrowserOpenTarget',
+      "if (paneType === 'browser' && opts?.url)",
+    ]) {
+      const start = src.indexOf(anchor);
+      expect(start, anchor).toBeGreaterThan(-1);
+      const body = src.slice(start, start + 1600);
+      expect(body.indexOf('previewFileAllowed('), anchor).toBeGreaterThan(-1);
+      expect(body.indexOf('previewFileAllowed('), anchor).toBeLessThan(
+        body.indexOf('openMarkdownPreview('),
+      );
+    }
+  });
+});
+
+/**
+ * The renderer half of the detour's door. Fails CLOSED: a check we could not run
+ * is not a check that passed.
+ */
+describe('previewFileAllowed', () => {
+  const api = () => window.electronAPI as unknown as Record<string, unknown>;
+
+  it('passes the URL to main and returns its verdict', async () => {
+    const seen: string[] = [];
+    api().checkPreviewFile = (url: string) => {
+      seen.push(url);
+      return Promise.resolve({ allowed: true });
+    };
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(true);
+    expect(seen).toEqual([PAGE_URL]);
+  });
+
+  it('refuses when main refuses', async () => {
+    api().checkPreviewFile = () =>
+      Promise.resolve({ allowed: false, reason: 'this file is outside your home' });
+    await expect(previewFileAllowed('file:///etc/ssl/README.md')).resolves.toBe(false);
+  });
+
+  it('refuses when the backend cannot answer at all', async () => {
+    delete api().checkPreviewFile;
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(false);
+
+    api().checkPreviewFile = () => Promise.reject(new Error('main is gone'));
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(false);
   });
 });
 

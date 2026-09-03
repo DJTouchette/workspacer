@@ -449,10 +449,26 @@ export interface ElectronAPI {
   ) => () => void;
   /** The main-process webview guard refused a src or a navigation, so the pane
    *  is blank on purpose. Desktop only: the web build frames with <iframe> and
-   *  has no such guard. */
+   *  has no such guard.
+   *
+   *  `webContentsId` names the guest the refusal is ABOUT, so a pane can claim
+   *  it by identity instead of by string-matching a URL Chromium has already
+   *  normalised. Absent for a refused ATTACH: there is no guest yet.
+   *  `previewPath` is set only when an in-root markdown file was refused. */
   onWebviewBlocked: (
-    callback: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void,
+    callback: (info: {
+      url: string;
+      reason: string;
+      phase: 'attach' | 'navigate';
+      previewPath?: string;
+      webContentsId?: number;
+    }) => void,
   ) => () => void;
+  /** May this `file:` URL open in the markdown preview pane? Asked by the `.md`
+   *  detour before it opens anything, because only main knows the allowed roots.
+   *  On the web build the preview's read goes through the hub's own fs guard,
+   *  so the backend there answers allowed and the confinement stays server-side. */
+  checkPreviewFile: (url: string) => Promise<{ allowed: boolean; reason?: string }>;
   getRemoteInfo: () => Promise<{
     enabled: boolean;
     token: string;
