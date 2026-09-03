@@ -8,7 +8,7 @@ import { FleetMessageCard } from './FleetMessageCard';
 import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
 import { parseFleetMessage, type FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import {
-  isCreditBalanceTooLowError,
+  isCreditBalanceFailureText,
   CREDIT_BALANCE_REMEDY,
   CREDIT_BALANCE_REMEDY_COMMAND,
 } from '../../../../main/shared/workerFailure';
@@ -120,7 +120,7 @@ const ConversationMessageInner: React.FC<{
   // it means isn't second-guessed.
   const creditBalanceRemedy = useMemo(
     () =>
-      !isUser && turn.content && isCreditBalanceTooLowError(turn.content)
+      !isUser && turn.content && isCreditBalanceFailureText(turn.content)
         ? CREDIT_BALANCE_REMEDY
         : null,
     [isUser, turn.content],

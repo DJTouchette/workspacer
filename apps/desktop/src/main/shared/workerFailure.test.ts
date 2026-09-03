@@ -11,6 +11,7 @@ import {
   errorMarkerReason,
   workerFailureReason,
   isCreditBalanceTooLowError,
+  isCreditBalanceFailureText,
 } from './workerFailure';
 
 interface Fixture {
@@ -111,6 +112,52 @@ describe('workerFailureReason', () => {
     expect(reason).toBe(
       'API Error: 529 Overloaded. This is a server-side issue, usually temporary',
     );
+  });
+
+  it('does NOT enrich a 429 rate limit with "out of credits", even on an out-of-credits account', () => {
+    const reason = workerFailureReason(
+      { statusLine: { overageOutOfCredits: true } },
+      '⚠️ Error: API Error: 429 Too Many Requests, please retry',
+    );
+    expect(reason).not.toContain('out of credits');
+    expect(reason).toBe('API Error: 429 Too Many Requests, please retry');
+  });
+
+  it('still enriches a genuine out-of-credits message that names none of the transient phrasings', () => {
+    const reason = workerFailureReason(
+      { statusLine: { overageOutOfCredits: true } },
+      '⚠️ Error: Your account has insufficient balance to complete this request.',
+    );
+    expect(reason).toContain('out of credits');
+    expect(reason).toContain('insufficient balance');
+  });
+});
+
+describe('isCreditBalanceFailureText', () => {
+  it('attaches for a genuine marker-established credit-balance failure', () => {
+    expect(isCreditBalanceFailureText('⚠️ Error: Credit balance is too low')).toBe(true);
+  });
+
+  it('does NOT attach for an ordinary reply that merely quotes the phrase', () => {
+    // The adversarial case: a successful turn that talks ABOUT the error
+    // (e.g. summarizing this very feature) must not be mistaken for a death.
+    expect(
+      isCreditBalanceFailureText(
+        'Done. When Claude Code reports "Credit balance is too low" the fix is to re-login. I added handling for that.',
+      ),
+    ).toBe(false);
+  });
+
+  it('does NOT attach for a marker-established failure that is a different error', () => {
+    expect(
+      isCreditBalanceFailureText(
+        '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
+      ),
+    ).toBe(false);
+  });
+
+  it('does NOT attach for plain unmarked text, even if it contains the phrase mid-message', () => {
+    expect(isCreditBalanceFailureText('Credit balance is too low, apparently.')).toBe(false);
   });
 });
 

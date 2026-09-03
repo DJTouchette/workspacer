@@ -18,9 +18,25 @@ describe('ConversationMessage — credit-balance remedy', () => {
 
   it('matches the doubled/concatenated render observed live', () => {
     render(
-      <ConversationMessage turn={turn('Credit balance is too lowCredit balance is too low')} />,
+      <ConversationMessage
+        turn={turn('⚠️ Error: Credit balance is too lowCredit balance is too low')}
+      />,
     );
     expect(screen.getByText(/stale or wrong credentials/)).toBeInTheDocument();
+  });
+
+  it('does not attach the remedy to an ordinary reply that merely quotes the phrase', () => {
+    // Adversarial case: a successful turn that talks ABOUT the error (e.g.
+    // summarizing this very feature) is not a marker-established failure and
+    // must not be mistaken for one.
+    render(
+      <ConversationMessage
+        turn={turn(
+          'Done. When Claude Code reports "Credit balance is too low" the fix is to re-login. I added handling for that.',
+        )}
+      />,
+    );
+    expect(screen.queryByText(/stale or wrong credentials/)).not.toBeInTheDocument();
   });
 
   it('does not attach the remedy to an unrelated 529 overload', () => {

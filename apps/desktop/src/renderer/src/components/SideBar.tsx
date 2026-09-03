@@ -40,7 +40,7 @@ import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
 import {
-  isCreditBalanceTooLowError,
+  isCreditBalanceFailureText,
   CREDIT_BALANCE_REMEDY,
 } from '../../../main/shared/workerFailure';
 
@@ -946,7 +946,7 @@ const SideBar: React.FC<SideBarProps> = ({
             const creditBalanceFailed =
               !!lastLine &&
               lastLine.kind === 'message' &&
-              isCreditBalanceTooLowError(lastLine.text);
+              isCreditBalanceFailureText(lastLine.text);
             const log: LogLine[] = [];
             if (hubOffline) {
               log.push({

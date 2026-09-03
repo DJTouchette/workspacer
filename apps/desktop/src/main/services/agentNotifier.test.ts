@@ -202,6 +202,33 @@ describe('notifyOnTransition', () => {
     expect(h.created[0].title).toBe('Refactor finished');
   });
 
+  it('a successful finish whose last assistant text merely quotes the phrase still reads as a plain finish', () => {
+    // Adversarial case: an ordinary reply that talks ABOUT the error (e.g.
+    // summarizing this very feature) is not a marker-established failure and
+    // must not fire the warn-level "needs your attention" toast.
+    const { win, finishLoad } = makeWindow(false);
+    agentNotifier.setMainWindow(win as never);
+    finishLoad();
+
+    agentNotifier.notifyOnTransition(
+      session({
+        ambientState: 'idle',
+        label: 'Refactor',
+        conversation: [
+          {
+            role: 'assistant',
+            content:
+              'Done. When Claude Code reports "Credit balance is too low" the fix is to re-login. I added handling for that.',
+            timestamp: 1,
+          },
+        ] as never,
+      }),
+      'streaming',
+    );
+
+    expect(h.created[0].title).toBe('Refactor finished');
+  });
+
   it('mirrors to the in-app center even when OS notifications are disabled', () => {
     const { win, sent, finishLoad } = makeWindow(false);
     agentNotifier.setMainWindow(win as never);

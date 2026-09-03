@@ -27,7 +27,7 @@ import { IPC } from '../shared/ipcChannels';
 import type { InAppNotification } from '../shared/ipcTypes';
 import type { SessionAmbientState } from './claudeSessionStore';
 import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
-import { isCreditBalanceTooLowError, CREDIT_BALANCE_REMEDY } from '../shared/workerFailure';
+import { isCreditBalanceFailureText, CREDIT_BALANCE_REMEDY } from '../shared/workerFailure';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
 // 'background' counts as working so "finished" fires when the spawned work
@@ -175,7 +175,7 @@ class AgentNotifier {
     // A died worker goes idle exactly like a finished one (see
     // shared/workerFailure's header) — this is the one death with an
     // actionable fix, so it earns an honest title instead of "finished".
-    const creditBalanceFailed = done && isCreditBalanceTooLowError(lastAssistantText(session));
+    const creditBalanceFailed = done && isCreditBalanceFailureText(lastAssistantText(session));
     let title: string;
     let body: string;
     if (needsYou && next === 'waiting_approval') {

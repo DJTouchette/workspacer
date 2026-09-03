@@ -104,7 +104,9 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  * retryable hiccup down the account-billing troubleshooting path instead.
  */
 function isTransientProviderError(marker: string): boolean {
-  return /\b5\d\d\b|overloaded|server-side issue|temporarily unavailable/i.test(marker);
+  return /\b5\d\d\b|\b429\b|overloaded|server-side issue|temporarily unavailable|rate limit|too many requests/i.test(
+    marker,
+  );
 }
 
 export function workerFailureReason(
@@ -150,6 +152,22 @@ const CREDIT_BALANCE_TEXT_RE = /credit balance is too low/i;
 export function isCreditBalanceTooLowError(text: string, errorCode?: string | null): boolean {
   if (errorCode && CREDIT_BALANCE_ERROR_CODE.test(errorCode)) return true;
   return CREDIT_BALANCE_TEXT_RE.test(text ?? '');
+}
+
+/**
+ * True only when `text` is BOTH a genuine agent-error marker turn (see
+ * `errorMarkerReason`) AND that marker's message is the credit-balance
+ * refusal. This is the gate `workerFailureReason` already gives the fleet
+ * path via `errorMarkerReason`: an ordinary reply that merely quotes the
+ * phrase (e.g. summarizing this very feature) must never match, only a turn
+ * the fold itself stamped as an error. Any surface that reads raw
+ * conversation/activity text (not already marker-established) must call this
+ * instead of `isCreditBalanceTooLowError` directly, or the gate drifts.
+ */
+export function isCreditBalanceFailureText(text: string, errorCode?: string | null): boolean {
+  const marker = errorMarkerReason(text);
+  if (marker === null) return false;
+  return isCreditBalanceTooLowError(marker, errorCode);
 }
 
 /**
