@@ -835,11 +835,30 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
         }
         "assistant" => {
             out.extend(usage_item_from_assistant_row(value, false));
+            // Claude Code CLI marks a turn it never actually got a model
+            // response for — an API refusal (credit balance, rate limit, a
+            // 5xx) — with a row-level `isApiErrorMessage: true` (confirmed
+            // against the installed CLI/SDK bundle; not documented on the
+            // JSONL format). This is the PTY transport's only such signal: a
+            // real terminal session has no AgentUpdate::Error to carry the
+            // shared marker, so without this the transcript tailer surfaced
+            // the exact same text as an ordinary reply and workerFailure.ts's
+            // marker check (which the stream/managed-provider path already
+            // satisfies via providers/mod.rs) never fired for it.
+            let is_api_error = value
+                .get("isApiErrorMessage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
                 match b {
                     Block::Text { text } if !text.trim().is_empty() => {
+                        let text = if is_api_error {
+                            format!("⚠️ Error: {}\n", text.trim())
+                        } else {
+                            text.trim().to_string()
+                        };
                         out.push(ConversationItem::AssistantText {
-                            text: text.trim().to_string(),
+                            text,
                             timestamp: ts.clone(),
                         });
                     }
@@ -1469,6 +1488,46 @@ mod tests {
         assert!(
             matches!(&items[2], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read")
         );
+    }
+
+    #[test]
+    fn api_error_row_gets_the_shared_agent_error_marker() {
+        // PTY transport: no AgentUpdate::Error exists (that's the stream/
+        // managed-provider path in providers/mod.rs), so the transcript row's
+        // own `isApiErrorMessage` is the only signal. Without marking it, this
+        // is indistinguishable from an ordinary reply to workerFailure.ts.
+        let row = json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "message": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "Credit balance is too low." }]
+            }
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(text, "⚠️ Error: Credit balance is too low.\n");
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ordinary_assistant_text_is_unmarked() {
+        let row = json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "All done." }]
+            }
+        });
+        let items = items_from_row(&row);
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => assert_eq!(text, "All done."),
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
     }
 
     #[test]
