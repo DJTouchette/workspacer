@@ -98,7 +98,7 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  *
  * That enrichment is OPT-IN, on the marker's own wording. `overageOutOfCredits`
  * says nothing about why THIS turn failed, so gluing "out of credits" onto an
- * unrelated failure is its own mislabel — observed live 2026-09-03, a 529 woke
+ * unrelated failure is its own mislabel. Observed live 2026-09-03: a 529 woke
  * its manager as "FAILED: out of credits (overage disabled) - API Error: 529
  * Overloaded", which sent a retryable hiccup down the account-billing
  * troubleshooting path instead. An opt-OUT list of transient spellings could
@@ -109,7 +109,7 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
 
 /**
  * True when the marker's own text says this turn failed on a USAGE or CREDITS
- * limit — the only family for which the standing overage bit is talking about
+ * limit, the only family for which the standing overage bit is talking about
  * the same thing the turn just hit.
  *
  * Every alternative is a wording Claude Code actually emits, read off the
@@ -130,7 +130,7 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  * the most to chase.
  *
  * There is no numeric branch. The old one matched `\b5\d\d\b`, which a reason
- * reading "failed at src/app.ts:512" or "Retry after 500 ms" satisfies — and
+ * reading "failed at src/app.ts:512" or "Retry after 500 ms" satisfies, and
  * with the enrichment now opt-in, a status code proves nothing either way.
  */
 function isUsageLimitFailure(marker: string): boolean {
@@ -224,7 +224,7 @@ export const CREDIT_BALANCE_REMEDY =
   'subscription, this is a real empty balance instead: add credits in the Anthropic Console.';
 
 /**
- * The remedy for a surface with a HARD LENGTH BUDGET — the OS toast and the
+ * The remedy for a surface with a HARD LENGTH BUDGET: the OS toast and the
  * in-app notification-center entry, both of which cut their body at 180
  * characters. The full remedy is 373 and was being truncated at "Open a
  * terminal, run claude", i.e. exactly before the two commands that are the
@@ -233,7 +233,7 @@ export const CREDIT_BALANCE_REMEDY =
  * It is a separate constant rather than a smarter truncation because what has
  * to survive is not a prefix: it is `/logout`, `/login` and "retry", which sit
  * in the middle. Subscription-first, and it deliberately drops the API-key
- * caveat — the pane and the fleet wake carry the full text, and a toast that
+ * caveat, because the pane and the fleet wake carry the full text and a toast that
  * spends its budget on the rarer case loses the common one's fix.
  *
  * PINNED under 180 by workerFailure.test.ts, which also holds the two slash

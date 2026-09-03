@@ -174,7 +174,7 @@ describe('notifyOnTransition', () => {
 
     expect(h.created[0].title).toBe('Refactor needs your attention');
     // The toast body is cut at 180 chars, and the full remedy's fix (the two
-    // slash commands) sits past that cut — the short variant has to be the one
+    // slash commands) sits past that cut, so the short variant has to be the one
     // that lands here, on the OS toast AND on the center entry.
     expect(h.created[0].body).toContain('/logout');
     expect(h.created[0].body).toContain('/login');

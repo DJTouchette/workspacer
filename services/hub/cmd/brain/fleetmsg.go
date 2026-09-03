@@ -148,7 +148,7 @@ const (
 // Go constants against the TypeScript SOURCE TEXT, and cannot see through an
 // interpolation.
 //
-// Appended when a FAILED entry's reason names the credit-balance refusal — the
+// Appended when a FAILED entry's reason names the credit-balance refusal, the
 // one case where the actionable fix (re-authenticate the CLI) differs from
 // fleetFailedNote's generic "retry or escalate an account/quota problem", and
 // worth spelling out so the manager can pass it straight to the user instead of
@@ -354,8 +354,8 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 	}
 	for _, e := range entries {
 		// The reason, not the whole final message: it has already been through
-		// errorMarkerReason, so this is marker-established by construction —
-		// the same read the desktop's buildFleetMessage does.
+		// errorMarkerReason, so this is marker-established by construction: the
+		// same read the desktop's buildFleetMessage does.
 		if e.Failed != "" && creditBalanceTooLow(e.Failed) {
 			extras = append(extras, fleetCreditBalanceNote)
 			break

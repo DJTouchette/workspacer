@@ -51,7 +51,7 @@ func TestWorkerFailureMatchesTheAgentErrorMarkerContract(t *testing.T) {
 		anyCredit = anyCredit || c.CreditBalance
 	}
 	if !anyOverage || !anyCredit {
-		t.Fatalf("the fixture sets no reasonWithOverage (%v) or no creditBalance (%v) — both readers below would be vacuous", anyOverage, anyCredit)
+		t.Fatalf("the fixture sets no reasonWithOverage (%v) or no creditBalance (%v), so both readers below would be vacuous", anyOverage, anyCredit)
 	}
 	for _, c := range doc.Cases {
 		reason, failed := workerFailureReason(false, c.FinalMessage)
@@ -159,7 +159,7 @@ func TestFleetWakeCarriesTheCreditBalanceRemedy(t *testing.T) {
 	})
 	for _, want := range []string{fleetCreditBalanceNotePrefix, "/logout", "/login", "Anthropic Console"} {
 		if !strings.Contains(wake, want) {
-			t.Errorf("the wake does not carry %q — the manager gets the raw API refusal and no fix:\n%s", want, wake)
+			t.Errorf("the wake does not carry %q, so the manager gets the raw API refusal and no fix:\n%s", want, wake)
 		}
 	}
 

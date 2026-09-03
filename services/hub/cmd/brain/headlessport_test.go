@@ -232,7 +232,7 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 		t.Errorf("the credit-balance remedy has drifted from workerFailure.ts.\n  go: %q", creditBalanceRemedy)
 	}
 	if !strings.Contains(failure, "/logout") {
-		t.Fatal("joinTSStringLiterals no longer recovers workerFailure.ts's literals — the remedy check above is comparing against mush")
+		t.Fatal("joinTSStringLiterals no longer recovers workerFailure.ts's literals, so the remedy check above is comparing against mush")
 	}
 }
 

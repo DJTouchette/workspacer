@@ -135,7 +135,7 @@ describe('workerFailureReason', () => {
 //
 // Each `message` below is lifted from an `isApiErrorMessage: true` row in this
 // machine's ~/.claude/projects transcripts (90 rows, read 2026-09-03), not
-// invented — which is the whole point: the first version of this gate was an
+// invented, which is the whole point: the first version of this gate was an
 // opt-OUT list of transient spellings, and it had to guess wordings the CLI
 // does not use. It excluded "429" (no real 429 row spells the number in its
 // prose) and let every authentication failure through, so with the overage bit
@@ -278,7 +278,7 @@ describe('isCreditBalanceTooLowError', () => {
 describe('CREDIT_BALANCE_REMEDY', () => {
   it('covers the API-key / console-billing user, for whom re-login cannot help', () => {
     // The CLI writes the IDENTICAL row whatever the auth source is, and nothing
-    // on the wire names the credential type — so a console-billed user with a
+    // on the wire names the credential type, so a console-billed user with a
     // genuinely empty balance reads this same text, and must not be sent round
     // a /logout, /login loop that cannot fix anything.
     expect(CREDIT_BALANCE_REMEDY).toContain('API key');
@@ -299,9 +299,9 @@ describe('CREDIT_BALANCE_REMEDY_TOAST', () => {
   });
 
   it('keeps the whole instruction: both slash commands and the retry', () => {
-    // The full remedy truncated at 180 stopped at "Open a terminal, run claude"
-    // — before the two commands that ARE the fix. Whatever else this string
-    // loses, it may not lose these.
+    // The full remedy truncated at 180 stopped at "Open a terminal, run
+    // claude", before the two commands that ARE the fix. Whatever else this
+    // string loses, it may not lose these.
     expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('/logout');
     expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('/login');
     expect(CREDIT_BALANCE_REMEDY_TOAST).toContain('retry');

@@ -753,8 +753,8 @@ pub fn sidechain_usage_from_row(value: &Value) -> Option<ConversationItem> {
 /// the two land as `⚠️ Error: <driver text>⚠️ Error: <row text>` whenever the
 /// two sources word the failure differently.
 ///
-/// A PTY session has no driver — a real terminal produces no AgentUpdate at all
-/// — so there the transcript row is the ONLY signal and the tailer must mark it.
+/// A PTY session has no driver: a real terminal produces no AgentUpdate at all,
+/// so there the transcript row is the ONLY signal and the tailer must mark it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ApiErrorMarking {
     /// Stamp the marker on `isApiErrorMessage` rows (PTY: nobody else will).
@@ -875,7 +875,7 @@ pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<Conversati
             // marker check (which the stream/managed-provider path already
             // satisfies via providers/mod.rs) never fired for it.
             //
-            // Only when this tailer OWNS the marker for the session — see
+            // Only when this tailer OWNS the marker for the session. See
             // [`ApiErrorMarking`]. 87 of the 90 api-error rows in a real
             // ~/.claude/projects corpus (2026-09-03) carry `entrypoint:
             // "sdk-cli"`, i.e. they were written by stream-transport sessions
@@ -1560,8 +1560,8 @@ mod tests {
         // coalesces a stream session's assistant text into one bubble, so the
         // two land concatenated whenever the driver's wording and the row's
         // differ. 87 of the 90 api-error rows in a real ~/.claude/projects
-        // corpus (2026-09-03) carry `entrypoint: "sdk-cli"` — the stream
-        // transport — so that was the common case, not the rare one.
+        // corpus (2026-09-03) carry `entrypoint: "sdk-cli"`, i.e. the stream
+        // transport, so that was the common case, not the rare one.
         use std::io::Write;
         let dir = std::env::temp_dir().join(format!(
             "claudemon-apierror-test-{}-{:?}",

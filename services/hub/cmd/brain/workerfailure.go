@@ -92,7 +92,7 @@ func errorMarkerReason(text string) (string, bool) {
 }
 
 // usageLimitFailureRe matches a marker whose OWN text says the turn failed on a
-// usage or credits limit — the only family for which the standing overage bit
+// usage or credits limit, the only family for which the standing overage bit
 // is talking about the same thing the turn just hit. TWIN: isUsageLimitFailure
 // in workerFailure.ts, and pinned to the same fixture cases.
 //
@@ -102,8 +102,8 @@ func errorMarkerReason(text string) (string, bool) {
 // resets 6:30pm", "You've hit your weekly limit · resets Aug 10, 4am", and the
 // CLI's "Credit balance is too low…" refusal.
 //
-// The enrichment is OPT-IN for that reason. Opt-OUT — a list of transient
-// spellings to skip — has to guess every wording the CLI does NOT use, and the
+// The enrichment is OPT-IN for that reason. Opt-OUT, a list of transient
+// spellings to skip, has to guess every wording the CLI does NOT use, and the
 // first version guessed wrong in both directions: it excluded "429", which no
 // real 429 row spells in its prose, and let every authentication failure
 // through, so with the bit set "Not logged in · Please run /login" woke a
@@ -135,11 +135,11 @@ func workerFailureReason(outOfCredits bool, finalMessage string) (string, bool) 
 }
 
 // ---------------------------------------------------------------------------
-// "Credit balance is too low" — a subscription-account red herring
+// "Credit balance is too low": a subscription-account red herring
 // ---------------------------------------------------------------------------
 
 // creditBalanceTextRe is the literal string Claude Code's CLI uses for this
-// refusal — never "balance" or "credit" alone, which would also catch unrelated
+// refusal, never "balance" or "credit" alone, which would also catch unrelated
 // prose. Substring, not anchored, so a doubled/concatenated render still
 // matches. TWIN: CREDIT_BALANCE_TEXT_RE in workerFailure.ts.
 var creditBalanceTextRe = regexp.MustCompile(`(?i)credit balance is too low`)
@@ -155,8 +155,8 @@ func creditBalanceTooLow(text string) bool {
 
 // There is deliberately no Go twin of isCreditBalanceFailureText (the
 // marker-gated form). That gate exists for the desktop's surfaces that read RAW
-// conversation text — the chat bubble, the sidebar card, the died-worker toast —
-// and the brain has none: its only surface is the fleet wake, whose entries
+// conversation text (the chat bubble, the sidebar card, the died-worker
+// toast) and the brain has none: its only surface is the fleet wake, whose entries
 // already carry a reason that errorMarkerReason produced. Adding an unused twin
 // would be a second definition nothing holds to the first.
 

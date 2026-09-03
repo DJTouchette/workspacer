@@ -25,7 +25,7 @@
     "established, and only when the marker's own wording is about usage or",
     "credits: `reasonWithOverage` is what a reader must produce with the bit set,",
     "and a failed case that omits it must come back UNCHANGED. That is not",
-    "hypothetical tidiness \u2014 the first version of the gate was an opt-OUT list of",
+    "hypothetical tidiness. The first version of the gate was an opt-OUT list of",
     "transient spellings and had to guess wordings the CLI does not use, so an",
     "authentication failure on a no-headroom account woke its manager as 'FAILED:",
     "out of credits (overage disabled) - Not logged in'. Every wording below is",
@@ -33,7 +33,7 @@
     "",
     "`creditBalance` is the third reader: whether the credit-balance REMEDY (a",
     "re-login instruction) may attach. It is marker-gated for the same reason the",
-    "failure is \u2014 a worker's report quoting the phrase is not a refusal."
+    "failure is: a worker's report quoting the phrase is not a refusal."
   ],
   "vocabulary": {
     "_comment": [
@@ -148,7 +148,7 @@
       "failed": true,
       "reason": "You've hit your session limit \u00b7 resets 6:30pm (America/Edmonton)",
       "reasonWithOverage": "out of credits (overage disabled) - You've hit your session limit \u00b7 resets 6:30pm (America/Edmonton)",
-      "why": "Also a 429/rate_limit row, and also a usage limit \u2014 with overage disabled, 'out of credits' is the accurate framing of why the window has no headroom."
+      "why": "Also a 429/rate_limit row, and also a usage limit: with overage disabled, 'out of credits' is the accurate framing of why the window has no headroom."
     },
     {
       "name": "a 529 overload is NOT relabelled as out of credits",
