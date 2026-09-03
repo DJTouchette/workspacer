@@ -39,6 +39,10 @@ import { useUiMode } from '../hooks/useUiMode';
 import NotificationCenter from './notifications/NotificationCenter';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH } from '../lib/sidebarWidth';
+import {
+  isCreditBalanceTooLowError,
+  CREDIT_BALANCE_REMEDY,
+} from '../../../main/shared/workerFailure';
 
 // The expanded width is user-resizable and persisted, so it is NOT a constant
 // here — it arrives as the `width` prop (see lib/sidebarWidth.ts for the
@@ -934,6 +938,13 @@ const SideBar: React.FC<SideBarProps> = ({
               }
             };
             const activity = collectRecentActivity(snap, 5);
+            // A died worker's last line IS its raw API error text (no
+            // distinct 'failed' CardState exists — see cardStateOf above) —
+            // flag the one case with an actionable fix rather than a raw
+            // "Credit balance is too low" mystery in the card/tooltip.
+            const lastLine = activity.length ? activity[activity.length - 1] : undefined;
+            const creditBalanceFailed =
+              !!lastLine && lastLine.kind === 'message' && isCreditBalanceTooLowError(lastLine.text);
             const log: LogLine[] = [];
             if (hubOffline) {
               log.push({
@@ -967,8 +978,10 @@ const SideBar: React.FC<SideBarProps> = ({
               pushActivity(lines.slice(0, -1));
               pushActivity(lines.slice(-1), 'var(--wks-success)');
             } else if (activity.length) {
-              // Resting card — the last two things it did, muted.
-              pushActivity(activity.slice(-2));
+              // Resting card — the last two things it did, muted; the
+              // credit-balance refusal is the one exception worth a color.
+              pushActivity(activity.slice(-2, -1));
+              pushActivity(activity.slice(-1), creditBalanceFailed ? 'var(--wks-error)' : undefined);
             } else {
               log.push({ text: 'Standing by', color: 'var(--wks-text-faint)' });
             }
@@ -1035,7 +1048,7 @@ const SideBar: React.FC<SideBarProps> = ({
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLElement).style.opacity = dimmed ? '0.55' : '1';
                 }}
-                title={`${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
+                title={`${agent.name} — ${label}\n${agent.cwd}${usageTip}${creditBalanceFailed ? `\n\n${CREDIT_BALANCE_REMEDY}` : ''}`}
                 style={{
                   position: 'relative',
                   width: indent ? 'calc(100% - 36px)' : 'calc(100% - 24px)',
