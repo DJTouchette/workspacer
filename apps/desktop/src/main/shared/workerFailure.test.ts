@@ -19,7 +19,18 @@ import {
 
 interface Fixture {
   marker: string;
-  cases: Array<{ name: string; finalMessage: string; failed: boolean; reason?: string }>;
+  cases: Array<{
+    name: string;
+    finalMessage: string;
+    failed: boolean;
+    reason?: string;
+    /** What the reason must become with the standing overage bit set. Absent
+     *  means the bit changes nothing, which is the answer for every wording
+     *  that is not about usage or credits. */
+    reasonWithOverage?: string;
+    /** Whether the credit-balance remedy may attach to this turn. */
+    creditBalance?: boolean;
+  }>;
 }
 
 const fixture: Fixture = JSON.parse(
@@ -47,6 +58,13 @@ describe('agent-error marker (cross-language contract)', () => {
     expect(fixture.cases.length).toBeGreaterThan(5);
   });
 
+  it('pins both extra readers non-vacuously', () => {
+    // A fixture whose new fields nobody set would leave the enrichment and the
+    // remedy tested by nothing while every case still passed.
+    expect(fixture.cases.some((c) => c.reasonWithOverage)).toBe(true);
+    expect(fixture.cases.some((c) => c.creditBalance)).toBe(true);
+  });
+
   for (const c of fixture.cases) {
     it(`${c.name}`, () => {
       const reason = errorMarkerReason(c.finalMessage);
@@ -55,6 +73,14 @@ describe('agent-error marker (cross-language contract)', () => {
       } else {
         expect(reason).toBeNull();
       }
+      // The same case, through the two readers layered on the marker: the
+      // overage enrichment (which may only ever ADD to a marker-established
+      // failure, and only for a usage/credits wording) and the remedy gate.
+      expect(workerFailureReason({}, c.finalMessage)).toBe(c.failed ? c.reason : null);
+      expect(
+        workerFailureReason({ statusLine: { overageOutOfCredits: true } }, c.finalMessage),
+      ).toBe(c.failed ? (c.reasonWithOverage ?? c.reason) : null);
+      expect(isCreditBalanceFailureText(c.finalMessage)).toBe(c.creditBalance === true);
     });
   }
 });

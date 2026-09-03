@@ -192,12 +192,17 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 		// `[supervisor]` rather than `[fleet]`, which is exactly the kind of
 		// detail a re-spelling would "tidy" — and every client's card parser
 		// keys off the literal.
-		"blocked header":          fleetBlockedHeader,
-		"blocked tail":            fleetBlockedTail,
-		"failed note":             fleetFailedNote,
-		"stopped note":            fleetStoppedNote,
-		"full-reply block prefix": "Full final message — ",
-		"escalation block prefix": "Worker escalation — ",
+		"blocked header": fleetBlockedHeader,
+		"blocked tail":   fleetBlockedTail,
+		"failed note":    fleetFailedNote,
+		"stopped note":   fleetStoppedNote,
+		// The credit-balance note's two halves. fleetMessages.ts composes it
+		// with a template literal (`…refusal: ${CREDIT_BALANCE_REMEDY}`), which
+		// this source-text comparison cannot see through, so the prefix is
+		// pinned here and the remedy itself against workerFailure.ts below.
+		"credit-balance note prefix": fleetCreditBalanceNotePrefix,
+		"full-reply block prefix":    "Full final message — ",
+		"escalation block prefix":    "Worker escalation — ",
 		// agents.sendMessage's attribution header. Split into its two fixed
 		// halves on both sides precisely so it can be pinned here: the
 		// TypeScript composes it with a template literal, which this
@@ -216,6 +221,18 @@ func TestFleetMessageTwinMatchesTheDesktop(t *testing.T) {
 	// only because it never ran against real text.
 	if !strings.Contains(ts, "[fleet] Worker finished:") {
 		t.Fatal("joinTSStringLiterals no longer recovers fleetMessages.ts's literals — this twin check is comparing against mush")
+	}
+
+	// The remedy lives in workerFailure.ts, not fleetMessages.ts, and is the
+	// half of the credit-balance note that actually tells the user what to do.
+	// A brain wake spelling it differently sends a manager (and through it, the
+	// user) a different fix than the desktop-hosted wake for the same failure.
+	failure := joinTSStringLiterals(string(mustReadRepoFile(t, "apps", "desktop", "src", "main", "shared", "workerFailure.ts")))
+	if !strings.Contains(failure, creditBalanceRemedy) {
+		t.Errorf("the credit-balance remedy has drifted from workerFailure.ts.\n  go: %q", creditBalanceRemedy)
+	}
+	if !strings.Contains(failure, "/logout") {
+		t.Fatal("joinTSStringLiterals no longer recovers workerFailure.ts's literals — the remedy check above is comparing against mush")
 	}
 }
 

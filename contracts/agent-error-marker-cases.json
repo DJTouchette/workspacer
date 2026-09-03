@@ -18,7 +18,22 @@
     "The NON-failure cases are the load-bearing half. A reader that fired on",
     "prose merely mentioning an error, or on a marker that trails rather than",
     "leads, would relabel successful work as a crash \u2014 a new bug worse than the",
-    "one this closes, so the shapes we must NOT match are pinned too."
+    "one this closes, so the shapes we must NOT match are pinned too.",
+    "",
+    "The fixture also pins the OVERAGE ENRICHMENT. `overage_out_of_credits` is",
+    "standing ACCOUNT state, so it may only enrich a failure the marker already",
+    "established, and only when the marker's own wording is about usage or",
+    "credits: `reasonWithOverage` is what a reader must produce with the bit set,",
+    "and a failed case that omits it must come back UNCHANGED. That is not",
+    "hypothetical tidiness \u2014 the first version of the gate was an opt-OUT list of",
+    "transient spellings and had to guess wordings the CLI does not use, so an",
+    "authentication failure on a no-headroom account woke its manager as 'FAILED:",
+    "out of credits (overage disabled) - Not logged in'. Every wording below is",
+    "lifted from real `isApiErrorMessage` transcript rows.",
+    "",
+    "`creditBalance` is the third reader: whether the credit-balance REMEDY (a",
+    "re-login instruction) may attach. It is marker-gated for the same reason the",
+    "failure is \u2014 a worker's report quoting the phrase is not a refusal."
   ],
   "vocabulary": {
     "_comment": [
@@ -37,7 +52,9 @@
           "why"
         ],
         "optional": [
-          "reason"
+          "reason",
+          "reasonWithOverage",
+          "creditBalance"
         ],
         "loaders": [
           "services/claudemon/src/providers/mod.rs::error_marker_matches_the_cross_language_contract",
@@ -54,6 +71,8 @@
       "finalMessage": "\u26a0\ufe0f Error: Credit balance is too low to access the Anthropic API.",
       "failed": true,
       "reason": "Credit balance is too low to access the Anthropic API.",
+      "reasonWithOverage": "out of credits (overage disabled) - Credit balance is too low to access the Anthropic API.",
+      "creditBalance": true,
       "why": "The exact shape that woke a Fleet Manager as 'Worker finished' with an API refusal as the worker's summary."
     },
     {
@@ -114,6 +133,49 @@
       "failed": true,
       "reason": "workspacer MCP server(s) did not attach to this Copilot session: workspacer.",
       "why": "claudemon's conversation store merges consecutive assistant_text items, so a mid-turn error and the turn's real reply arrive as ONE message. Observed live on a copilot session whose facade could not attach. The writer now ends the error with a newline (providers/mod.rs) and the reader must take only the first line \u2014 without both halves the reason read '...attach: workspacer.OK, I created the file.'"
+    },
+    {
+      "name": "the usage-credits refusal IS enriched by the overage bit",
+      "finalMessage": "\u26a0\ufe0f Error: You're out of usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage, to continue.",
+      "failed": true,
+      "reason": "You're out of usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage, to continue.",
+      "reasonWithOverage": "out of credits (overage disabled) - You're out of usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage, to continue.",
+      "why": "The wording Claude Code actually emits for an exhausted balance (429, error class rate_limit). Here the account bit and the turn's own failure are the same fact, which is the only time naming it helps."
+    },
+    {
+      "name": "a session limit IS enriched by the overage bit",
+      "finalMessage": "\u26a0\ufe0f Error: You've hit your session limit \u00b7 resets 6:30pm (America/Edmonton)",
+      "failed": true,
+      "reason": "You've hit your session limit \u00b7 resets 6:30pm (America/Edmonton)",
+      "reasonWithOverage": "out of credits (overage disabled) - You've hit your session limit \u00b7 resets 6:30pm (America/Edmonton)",
+      "why": "Also a 429/rate_limit row, and also a usage limit \u2014 with overage disabled, 'out of credits' is the accurate framing of why the window has no headroom."
+    },
+    {
+      "name": "a 529 overload is NOT relabelled as out of credits",
+      "finalMessage": "\u26a0\ufe0f Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary.",
+      "failed": true,
+      "reason": "API Error: 529 Overloaded. This is a server-side issue, usually temporary.",
+      "why": "Observed live 2026-09-03: the wake read 'FAILED: out of credits (overage disabled) - API Error: 529 Overloaded', which sent a retryable hiccup down the account-billing troubleshooting path. No reasonWithOverage means the reason must come back untouched."
+    },
+    {
+      "name": "an authentication failure is NOT relabelled as out of credits",
+      "finalMessage": "\u26a0\ufe0f Error: Not logged in \u00b7 Please run /login",
+      "failed": true,
+      "reason": "Not logged in \u00b7 Please run /login",
+      "why": "A stale login (error class authentication_failed) on a no-headroom account. Telling the operator their expired credentials are a billing problem is the mislabel that costs the most to chase."
+    },
+    {
+      "name": "a source line number is not an HTTP status",
+      "finalMessage": "\u26a0\ufe0f Error: build failed at src/app.ts:512",
+      "failed": true,
+      "reason": "build failed at src/app.ts:512",
+      "why": "The dropped numeric branch matched \\b5\\d\\d\\b, which 'src/app.ts:512' and 'Retry after 500 ms' both satisfy. A line number may not decide how a failure is labelled."
+    },
+    {
+      "name": "prose quoting the credit-balance phrase is not a failure and gets no remedy",
+      "finalMessage": "Done. When Claude Code reports \"Credit balance is too low\" the fix is to re-login. I added handling for that.",
+      "failed": false,
+      "why": "The adversarial case for the remedy: a worker summarizing this very feature must not be read as having died on it, or a landed dispatch arrives with a re-login instruction attached."
     }
   ]
 }

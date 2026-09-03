@@ -142,6 +142,23 @@ const (
 		"treat its last reply as possibly incomplete, not as a clean finish."
 )
 
+// fleetCreditBalanceNotePrefix + creditBalanceRemedy is CREDIT_BALANCE_NOTE in
+// fleetMessages.ts, which composes the same two halves with a template literal.
+// Split here for the same reason the sender header is: the twin check compares
+// Go constants against the TypeScript SOURCE TEXT, and cannot see through an
+// interpolation.
+//
+// Appended when a FAILED entry's reason names the credit-balance refusal — the
+// one case where the actionable fix (re-authenticate the CLI) differs from
+// fleetFailedNote's generic "retry or escalate an account/quota problem", and
+// worth spelling out so the manager can pass it straight to the user instead of
+// guessing. Without it a headless `workspacer serve` fleet wake carried the raw
+// API text and none of the remedy the desktop-hosted wake carries.
+const fleetCreditBalanceNotePrefix = "A FAILED entry's reason names the credit-balance refusal: "
+
+// fleetCreditBalanceNote is the composed block.
+const fleetCreditBalanceNote = fleetCreditBalanceNotePrefix + creditBalanceRemedy
+
 // fleetReplyExcerptMax is REPLY_EXCERPT_MAX: how much of a worker's last reply
 // rides the BULLET. fleetFullReplyMax is FULL_REPLY_MAX, the cap on the
 // complete-final-message block — deliberately generous, because the point of
@@ -332,6 +349,15 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 	for _, e := range entries {
 		if e.Failed != "" {
 			extras = append(extras, fleetFailedNote)
+			break
+		}
+	}
+	for _, e := range entries {
+		// The reason, not the whole final message: it has already been through
+		// errorMarkerReason, so this is marker-established by construction —
+		// the same read the desktop's buildFleetMessage does.
+		if e.Failed != "" && creditBalanceTooLow(e.Failed) {
+			extras = append(extras, fleetCreditBalanceNote)
 			break
 		}
 	}

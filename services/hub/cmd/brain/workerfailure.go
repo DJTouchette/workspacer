@@ -91,22 +91,86 @@ func errorMarkerReason(text string) (string, bool) {
 	return reason, true
 }
 
+// usageLimitFailureRe matches a marker whose OWN text says the turn failed on a
+// usage or credits limit — the only family for which the standing overage bit
+// is talking about the same thing the turn just hit. TWIN: isUsageLimitFailure
+// in workerFailure.ts, and pinned to the same fixture cases.
+//
+// Every alternative is a wording Claude Code actually emits, read off the
+// `isApiErrorMessage` rows in a real ~/.claude/projects corpus (90 rows,
+// 2026-09-03): "You're out of usage credits…", "You've hit your session limit ·
+// resets 6:30pm", "You've hit your weekly limit · resets Aug 10, 4am", and the
+// CLI's "Credit balance is too low…" refusal.
+//
+// The enrichment is OPT-IN for that reason. Opt-OUT — a list of transient
+// spellings to skip — has to guess every wording the CLI does NOT use, and the
+// first version guessed wrong in both directions: it excluded "429", which no
+// real 429 row spells in its prose, and let every authentication failure
+// through, so with the bit set "Not logged in · Please run /login" woke a
+// manager as "FAILED: out of credits (overage disabled) - Not logged in".
+//
+// There is deliberately no numeric branch: `\b5\d\d\b` is satisfied by a
+// reason reading "failed at src/app.ts:512" or "Retry after 500 ms".
+var usageLimitFailureRe = regexp.MustCompile(
+	`(?i)out of (usage )?credits|credit balance|insufficient credits?|\b(session|usage|weekly|monthly|daily) limit\b`)
+
 // workerFailureReason says why this worker's turn ended in FAILURE, or reports
 // an ordinary finish. `finalMessage` is the worker's last assistant turn — the
 // same text the wake already carries as its report.
 //
 // Only the MARKER can create a failure, because only it is a per-turn event.
 // `outOfCredits` is standing account state and says nothing about how THIS turn
-// ended; once the marker has established a failure it is worth folding in,
-// because it names the operator's actual problem rather than leaving it to the
-// API's wording. TWIN: workerFailureReason in workerFailure.ts.
+// ended; it enriches a failure the marker already established, and only when
+// the marker's own wording is about usage or credits. TWIN:
+// workerFailureReason in workerFailure.ts.
 func workerFailureReason(outOfCredits bool, finalMessage string) (string, bool) {
 	marker, ok := errorMarkerReason(finalMessage)
 	if !ok {
 		return "", false
 	}
-	if outOfCredits {
+	if outOfCredits && usageLimitFailureRe.MatchString(marker) {
 		return "out of credits (overage disabled) - " + marker, true
 	}
 	return marker, true
 }
+
+// ---------------------------------------------------------------------------
+// "Credit balance is too low" — a subscription-account red herring
+// ---------------------------------------------------------------------------
+
+// creditBalanceTextRe is the literal string Claude Code's CLI uses for this
+// refusal — never "balance" or "credit" alone, which would also catch unrelated
+// prose. Substring, not anchored, so a doubled/concatenated render still
+// matches. TWIN: CREDIT_BALANCE_TEXT_RE in workerFailure.ts.
+var creditBalanceTextRe = regexp.MustCompile(`(?i)credit balance is too low`)
+
+// creditBalanceTooLow is true for Claude Code's "Credit balance is too low"
+// refusal and ONLY that: a 529, a rate limit or any other provider error must
+// be false, or the remedy below (which is about stale CLI credentials) would
+// misdirect someone hitting an unrelated, often transient, failure.
+// TWIN: isCreditBalanceTooLowError in workerFailure.ts.
+func creditBalanceTooLow(text string) bool {
+	return creditBalanceTextRe.MatchString(text)
+}
+
+// There is deliberately no Go twin of isCreditBalanceFailureText (the
+// marker-gated form). That gate exists for the desktop's surfaces that read RAW
+// conversation text — the chat bubble, the sidebar card, the died-worker toast —
+// and the brain has none: its only surface is the fleet wake, whose entries
+// already carry a reason that errorMarkerReason produced. Adding an unused twin
+// would be a second definition nothing holds to the first.
+
+// creditBalanceRemedy is the one remedy sentence set, byte-identical to the
+// desktop's so a manager reads the same instruction whichever host composed the
+// wake. TWIN: CREDIT_BALANCE_REMEDY in workerFailure.ts, pinned by
+// TestFleetMessageTwinMatchesTheDesktop.
+//
+// The last sentence is not a hedge: the CLI writes the IDENTICAL row whatever
+// the auth source is, and nothing on the wire names the credential type, so for
+// an API-key or console-billed user the balance really is empty and re-login
+// cannot help.
+const creditBalanceRemedy = "Claude Code reported \"Credit balance is too low\". On a subscription this usually means the " +
+	"Claude Code CLI is signed in with stale or wrong credentials. Open a terminal, run claude, " +
+	"then type /logout and then /login, and sign in with your subscription account. Then retry " +
+	"this agent. If Claude Code is signed in with an API key or console billing rather than a " +
+	"subscription, this is a real empty balance instead: add credits in the Anthropic Console."
