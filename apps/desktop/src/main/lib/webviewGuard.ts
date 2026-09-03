@@ -4,8 +4,8 @@
  * The main window enables `webviewTag` so two things can embed pages: BrowserPane
  * (arbitrary http(s) browsing) and plugin panes (loaded from the hub UI origin or
  * a 127.0.0.1 sidecar server). Left unguarded, renderer content could inject a
- * <webview> that turns on `nodeIntegration` or a `preload` script — gaining
- * main-process/native reach — or points `src` at `file://` to read the host
+ * <webview> that turns on `nodeIntegration` or a `preload` script, gaining
+ * main-process/native reach, or points `src` at `file://` to read the host
  * filesystem. The main process force-applies safe web preferences on every attach
  * and restricts the src (and later navigations) to remote-browsing schemes plus a
  * BOUNDED set of local files.
@@ -26,6 +26,11 @@
  *   - the canonical result must sit inside one of `allowedRoots` by the same
  *     containment rule the fs.* capabilities use, so `/home/user2` is not
  *     admitted by the root `/home/user`;
+ *   - it must survive `pathConfinement.isSecretPath`, the same credential gate
+ *     `assertPathAllowed` applies to every fs.* caller, so a credential or an
+ *     agent-configuration file is refused whatever it is named. One of the
+ *     roots is the whole home directory, so being inside a root was never the
+ *     same question as being safe to render;
  *   - the target must EXIST and be a regular file, not a directory;
  *   - and its extension must be one a browser pane can actually render.
  *
@@ -34,6 +39,15 @@
  * still gets Chromium's default opaque file origin, so it cannot fetch/XHR its
  * neighbours; it can only pull the subresources (css/js/img) a local page
  * normally can.
+ *
+ * And what it does not claim: SUB-FRAME loads inside an allowed local page are
+ * NOT guarded. `did-start-navigation` is filtered to the main frame, so an
+ * allowed local page may iframe another local file, including one outside the
+ * roots. That is DISPLAY-ONLY: the page cannot read the frame back, because the
+ * two get distinct opaque file origins under Chromium's default
+ * `allowFileAccessFromFileUrls: false`, and nothing here changes that. Confining
+ * sub-frames would mean judging every image, stylesheet and script a local page
+ * pulls in, which is the thing the file allowance exists to permit.
  *
  * The roots themselves are supplied by the caller (index.ts) as one expression
  * feeding BOTH doors, so the attach check and the navigation check cannot drift
@@ -45,7 +59,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { canonicalizePath, pathWithinRoots } from './pathConfinement';
+import { canonicalizePath, isSecretPath, pathWithinRoots } from './pathConfinement';
 
 /** The mutable subset of Electron's webPreferences we override at attach time. */
 export interface MutableWebPreferences {
@@ -74,8 +88,22 @@ export function applySafeWebviewPreferences(prefs: MutableWebPreferences): void 
 /**
  * Extensions a browser pane can render from disk. Kept small on purpose: this is
  * the set a page a person wants to LOOK at is written in, not "every file type".
- * Everything else (.sh, .env, .pem, .key, an extensionless file) is refused,
- * so a mis-aimed open_browser cannot become a credential viewer.
+ * Everything else (.sh, .env, .pem, .key, an extensionless file) is refused.
+ *
+ * `json` is NOT on this list, and its absence is load-bearing rather than an
+ * oversight. The feature is "an agent wrote HTML and asked you to look at it";
+ * no mockup is a .json. What a .json IS, under a root as wide as the home
+ * directory, is `~/.claude/.credentials.json`, `~/.claude.json`,
+ * `~/.claude/settings.json` and `~/.docker/config.json`. The extension gate is
+ * not the only thing standing between the pane and those (see the credential
+ * gate in checkFileSrc), but an allowance nothing needs is not worth defending
+ * twice.
+ *
+ * `pdf` is off the list for a different reason: Chromium's internal PDF viewer
+ * is a plugin, and `plugins` is FALSE by default on a `<webview>`'s
+ * webPreferences and is not turned on anywhere in this app. With it off, a
+ * `file:` PDF does not render, it DOWNLOADS, which is the same surprise the
+ * markdown detour exists to avoid.
  */
 export const BROWSER_FILE_EXTENSIONS = new Set([
   'html',
@@ -87,10 +115,8 @@ export const BROWSER_FILE_EXTENSIONS = new Set([
   'gif',
   'webp',
   'txt',
-  'json',
   'css',
   'js',
-  'pdf',
 ]);
 
 /** Markdown is refused here and routed to the mdpreview pane instead, because
@@ -217,6 +243,26 @@ function checkFileSrc(u: URL, allowedRoots: string[], door: PaneDoor): SrcVerdic
   // an existence oracle for paths the user was never allowed to ask about.
   if (!pathWithinRoots(allowedRoots, canonical)) {
     return deny('this file is outside your home and project directories');
+  }
+
+  // The credential gate, BEFORE the extension gate, so it holds regardless of
+  // what the file is called. This is the same second predicate assertPathAllowed
+  // applies to every fs.* caller: a credential basename, a `.git` subtree
+  // (`.git/config` is a place to define a program git then runs), git's per-user
+  // config, a provider CLI's hooks/permissions/MCP files, the workspacer config
+  // dir outside its library/layouts/sessions carve-outs, and the hub's own state
+  // dir. A root is only as narrow as the directories the user works in, and the
+  // home directory is one of the roots, so "inside a root" was never the same
+  // question as "safe to render".
+  //
+  // Not all four of the .json files above are on that list: it is a shared
+  // TWIN of two Go copies pinned by contracts/path-containment-cases.json, so
+  // it is not the place to add names. `~/.claude.json` and
+  // `~/.claude/settings.json` are refused here; `~/.claude/.credentials.json`
+  // and `~/.docker/config.json` are refused by the extension gate below now
+  // that json is off the allowlist. Both halves are needed.
+  if (isSecretPath(canonical)) {
+    return deny('this file holds credentials or agent configuration');
   }
 
   const ext = extensionOf(canonical);

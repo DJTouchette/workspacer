@@ -274,6 +274,86 @@ describe('checkWebviewSrc: the file: allowance', () => {
 });
 
 /**
+ * "Inside a root" was never the same question as "safe to render". One of the
+ * roots is the whole home directory, so the module header's claim that the pane
+ * "cannot become a credential viewer" rested entirely on the extension list, and
+ * json was on it. These pin BOTH halves of the repair: the credential gate that
+ * runs before the extension gate, and an allowlist that no longer admits json.
+ */
+describe('checkWebviewSrc: credentials and agent configuration', () => {
+  /** Files that live under a root and are exactly what the roots do not vet. */
+  const SECRET_UNDER_ROOT = [
+    // Denied by pathConfinement's shared list, regardless of extension.
+    ['.claude/settings.json', /credentials or agent configuration/],
+    ['.claude.json', /credentials or agent configuration/],
+    // Denied by the extension gate now that json is off the allowlist. They are
+    // NOT on the shared denial list, which is a TWIN of two Go copies pinned by
+    // contracts/path-containment-cases.json, so this file is not the place to
+    // add names to it. Both halves are needed; neither covers all four.
+    ['.claude/.credentials.json', /does not render/],
+    ['.docker/config.json', /does not render/],
+  ] as const;
+
+  beforeAll(() => {
+    for (const [rel] of SECRET_UNDER_ROOT) {
+      const p = path.join(root, rel);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, '{"token":"hunter2"}');
+    }
+    // Extension-allowed files that the DENIAL list must refuse anyway. Each is a
+    // place a program's behaviour is defined, not project data.
+    for (const rel of ['.git/hooks/pre-commit.html', '.codex/x.html', '.claude/hooks/x.html']) {
+      const p = path.join(root, rel);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, '<h1>x</h1>');
+    }
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    fs.writeFileSync(path.join(root, 'report.pdf'), '%PDF-1.4');
+    fs.writeFileSync(path.join(root, 'README.md'), '# x');
+  });
+
+  it('refuses every one of the four json files an over-wide root exposes', () => {
+    for (const [rel, reason] of SECRET_UNDER_ROOT) {
+      const v = checkWebviewSrc(fileUrl(path.join(root, rel)), roots);
+      expect(v.allowed, rel).toBe(false);
+      expect(v.reason, rel).toMatch(reason);
+    }
+  });
+
+  it('refuses a plain .json under a root, because json renders nothing anyone asked for', () => {
+    const v = checkWebviewSrc(fileUrl(path.join(root, 'package.json')), roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/does not render/);
+  });
+
+  it('refuses a .pdf: the internal viewer is a plugin, and plugins are off', () => {
+    const v = checkWebviewSrc(fileUrl(path.join(root, 'report.pdf')), roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/does not render/);
+  });
+
+  it('refuses the denial list REGARDLESS of extension, .html included', () => {
+    for (const rel of ['.git/hooks/pre-commit.html', '.codex/x.html', '.claude/hooks/x.html']) {
+      const v = checkWebviewSrc(fileUrl(path.join(root, rel)), roots);
+      expect(v.allowed, rel).toBe(false);
+      expect(v.reason, rel).toMatch(/credentials or agent configuration/);
+    }
+  });
+
+  it('applies the same gate to the PREVIEW door, so .md is no way around it', () => {
+    const p = path.join(root, '.codex', 'notes.md');
+    fs.writeFileSync(p, '# secrets');
+    const v = checkPreviewFileUrl(fileUrl(p), roots);
+    expect(v.allowed).toBe(false);
+    expect(v.reason).toMatch(/credentials or agent configuration/);
+  });
+
+  it('still allows an ordinary page beside all of that', () => {
+    expect(isWebviewSrcAllowed(fileUrl(path.join(root, 'design', 'index.html')), roots)).toBe(true);
+  });
+});
+
+/**
  * The markdown detour is the OTHER half of the same allowance, and it used to be
  * unconfined end to end: the renderer only asked whether the URL ended in `.md`,
  * and the read behind the preview pane applies no confinement of its own. So
