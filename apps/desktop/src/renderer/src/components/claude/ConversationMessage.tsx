@@ -7,7 +7,12 @@ import { MessageImages } from './MessageImages';
 import { FleetMessageCard } from './FleetMessageCard';
 import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
 import { parseFleetMessage, type FleetMessageEntry } from '../../../../main/shared/fleetMessages';
-import { Clock } from 'lucide-react';
+import {
+  isCreditBalanceTooLowError,
+  CREDIT_BALANCE_REMEDY,
+  CREDIT_BALANCE_REMEDY_COMMAND,
+} from '../../../../main/shared/workerFailure';
+import { Clock, AlertTriangle } from 'lucide-react';
 
 /** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
 export function turnTime(ms: number | undefined): string {
@@ -109,6 +114,13 @@ const ConversationMessageInner: React.FC<{
   const parsedContent = useMemo(
     () => (turn.content ? parseMarkdownBlocks(turn.content) : null),
     [turn.content],
+  );
+  // The raw bubble below still shows Claude's own wording verbatim — this is
+  // an ATTACHED remedy, not a replacement, so a user who already knows what
+  // it means isn't second-guessed.
+  const creditBalanceRemedy = useMemo(
+    () => (!isUser && turn.content && isCreditBalanceTooLowError(turn.content) ? CREDIT_BALANCE_REMEDY : null),
+    [isUser, turn.content],
   );
 
   if (fleetMessage) {
@@ -232,6 +244,46 @@ const ConversationMessageInner: React.FC<{
           </div>
           {mentioned.length > 0 && (
             <MessageImages paths={mentioned} cwd={cwd} style={{ marginTop: 6, marginLeft: 4 }} />
+          )}
+          {creditBalanceRemedy && (
+            <div
+              style={{
+                marginTop: 8,
+                marginLeft: 4,
+                padding: '8px 10px',
+                borderRadius: 'var(--wks-radius-md)',
+                border: `1px solid ${colors.warning}`,
+                background: `color-mix(in srgb, ${colors.warning} 10%, transparent)`,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  alignItems: 'flex-start',
+                  fontSize: 'calc(0.76rem * var(--claude-gui-font-scale, 1))',
+                  lineHeight: 1.5,
+                  color: colors.text,
+                }}
+              >
+                <AlertTriangle size={14} color={colors.warning} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{creditBalanceRemedy}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 20 }}>
+                <code
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    background: 'rgba(0,0,0,0.25)',
+                    color: colors.textBright,
+                  }}
+                >
+                  {CREDIT_BALANCE_REMEDY_COMMAND}
+                </code>
+                <CopyTextButton text={CREDIT_BALANCE_REMEDY_COMMAND} label="Copy command" />
+              </div>
+            </div>
           )}
           {/* Reserved (invisible until hover) so it can't reflow a streaming
               transcript — see .wks-hover-actions. */}
