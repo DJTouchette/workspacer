@@ -1186,6 +1186,43 @@ providers:
 	})
 }
 
+// TestAFalloverTakenBeforeTheCatalogHasBeenCheckedSaysSo is SHOULD-FIX 1b.
+//
+// A fallover is allowed to take a candidate that has no Issue at its own path,
+// but "no Issue" only means "the catalog looked and found none" once
+// Matrix.CatalogChecked is true. Before the routing service's deferred check
+// has run — see DefaultFirstCatalogCheckDelay — an absent Issue means "nobody
+// has asked yet", and a decision that fell over in that window must say so
+// rather than reading a genuinely unchecked matrix as a cleanly checked one.
+func TestAFalloverTakenBeforeTheCatalogHasBeenCheckedSaysSo(t *testing.T) {
+	zero := 0.0
+	reviewer := Request{Role: "reviewer", ForecastDemandBeforeResetPct: &zero}
+
+	m := shipped(t)
+	if m.CatalogChecked {
+		t.Fatal("fixture drift: shipped() must start unchecked, or this case proves nothing")
+	}
+	d := Select(m, altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
+	if d.FellOverFrom == nil {
+		t.Fatalf("fixture drift: this case must fall over to trigger the caveat, or it proves nothing: %+v", d)
+	}
+	joined := strings.Join(d.Reason, " ")
+	if !strings.Contains(joined, catalogNotYetCheckedNote) {
+		t.Errorf("a fallover taken before the catalog has been checked does not say so: %v", d.Reason)
+	}
+
+	checked := shipped(t)
+	checked.CatalogChecked = true
+	d2 := Select(checked, altSnapshot(t, altRed, altGreen), nil, nil, policyNow, reviewer)
+	if d2.FellOverFrom == nil {
+		t.Fatalf("fixture drift: this case must also fall over: %+v", d2)
+	}
+	joined2 := strings.Join(d2.Reason, " ")
+	if strings.Contains(joined2, catalogNotYetCheckedNote) {
+		t.Errorf("a fallover taken AFTER the catalog has been checked still carries the not-yet-checked caveat: %v", d2.Reason)
+	}
+}
+
 // TestAFalloverReportsTheCandidatesOwnCapacityNotThePrimarys is SHOULD-FIX 2.
 //
 // Before this, d.Capacity (and d.Mode/d.ModeProvider, which are read from it)

@@ -79,6 +79,11 @@ type Service struct {
 	// retryEvery bounds how often a pending check is retried. A field rather
 	// than a constant so a test can drive the retry without waiting on it.
 	retryEvery time.Duration
+	// firstCheckDelay is how long after Run starts the FIRST catalog check
+	// fires, ahead of the ordinary tick. A field, for the same reason
+	// retryEvery is: a test drives it directly rather than waiting out
+	// DefaultFirstCatalogCheckDelay for real.
+	firstCheckDelay time.Duration
 }
 
 // New builds the service: seed the shipped default if this machine has never
@@ -97,7 +102,7 @@ type Service struct {
 // slow to start" banner the desktop showed. The check runs on the tick instead
 // (see ValidateCatalog and Run), which is the first moment it can succeed.
 func New(path string, cat Catalog) *Service {
-	s := &Service{path: path, cat: cat, retryEvery: DefaultCatalogRetryEvery}
+	s := &Service{path: path, cat: cat, retryEvery: DefaultCatalogRetryEvery, firstCheckDelay: DefaultFirstCatalogCheckDelay}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seedLocked()
@@ -240,7 +245,7 @@ func (s *Service) report(m *Matrix) {
 	if s.cat == nil {
 		log.Printf("[routing] no model catalog available — model ids in %s were NOT checked against the installed CLIs", where)
 	} else {
-		log.Printf("[routing] model ids in %s are checked against the installed CLIs on the next tick, not now: the catalog is asked over the bus, and at boot the bus is not listening yet", where)
+		log.Printf("[routing] model ids in %s are checked against the installed CLIs by the routing service's own deferred catalog check, never as part of this load itself: the catalog is asked over the bus, and at boot the bus is not listening yet", where)
 	}
 }
 
@@ -305,6 +310,18 @@ func (s *Service) writeMarker(marker string) {
 // retry would mostly re-read a cache, and this keeps even the miss cheap.
 const DefaultCatalogRetryEvery = 5 * time.Minute
 
+// DefaultFirstCatalogCheckDelay is how long after Run starts the FIRST catalog
+// check fires, ahead of DefaultTickEvery.
+//
+// Without this, the fallover walk (alternatives.go) is blind between boot and
+// the first ordinary tick: it reads Matrix.Issues to decide whether a candidate
+// is usable, and for up to DefaultTickEvery nothing has populated the catalog's
+// half of Issues yet, so a catalog-invalid alternative reads as clean. A few
+// seconds is enough for the desktop — which is what answers claude.listModels,
+// and which only connects once /health answers — to have made that connection,
+// without paying a full DefaultTickEvery of blindness on every boot.
+const DefaultFirstCatalogCheckDelay = 5 * time.Second
+
 // CatalogPending reports whether the live matrix still owes the catalog a check
 // (either it has had none, or the last one ran while a provider it names could
 // not answer).
@@ -339,11 +356,20 @@ func (s *Service) ValidateCatalog() bool {
 		s.mu.Unlock()
 		return false
 	}
+	// isRetry is true exactly when a check has already run against THIS
+	// document and is being tried again — never on the first look at a
+	// freshly installed or reloaded matrix (installLocked resets
+	// haveCatalogTry). It is what forces a fresh probe rather than one: the
+	// injected Catalog (cmd/hub's routingCatalog) caches a provider's answer
+	// for catalogTTL (10m), longer than DefaultCatalogRetryEvery (5m), so a
+	// retry that read the plain cache would reliably replay the same stale
+	// miss it is retrying.
+	isRetry := s.haveCatalogTry
 	s.catalogChecking = true
 	s.catalogTriedAt, s.haveCatalogTry = time.Now(), true
 	s.mu.Unlock()
 
-	probe := &answerCounting{cat: cat}
+	probe := &answerCounting{cat: cat, force: isRetry}
 	found := ValidateAgainstCatalog(m, probe)
 
 	s.mu.Lock()
@@ -377,17 +403,35 @@ func (s *Service) ValidateCatalog() bool {
 // usable answer. It is the only way to tell "checked" from "checked what it
 // could": ValidateAgainstCatalog skips a provider it cannot get an answer for,
 // by design, and skipping silently is what would make a pending check look done.
+//
+// It is also where a RETRY is told apart from a first look (see force):
+// ValidateCatalog sets force on every call after the first for a given
+// document, and this is the one seam ValidateAgainstCatalog calls through, so
+// it is the one place that distinction can be turned into a forced probe.
 type answerCounting struct {
-	cat        Catalog
+	cat Catalog
+	// force asks a RefreshingCatalog to re-probe rather than answer from its
+	// own cache. Plain Catalog implementations (tests, mainly) have no cache
+	// to force past, so this is a no-op for them.
+	force      bool
 	unanswered bool
 }
 
 func (a *answerCounting) Models(provider string) ([]CatalogModel, error) {
-	models, err := a.cat.Models(provider)
+	models, err := a.probe(provider)
 	if err != nil || len(models) == 0 {
 		a.unanswered = true
 	}
 	return models, err
+}
+
+func (a *answerCounting) probe(provider string) ([]CatalogModel, error) {
+	if a.force {
+		if rc, ok := a.cat.(RefreshingCatalog); ok {
+			return rc.Refresh(provider)
+		}
+	}
+	return a.cat.Models(provider)
 }
 
 func sameIssues(a, b []Issue) bool {
@@ -405,23 +449,41 @@ func sameIssues(a, b []Issue) bool {
 // Run polls the file until ctx ends, and runs the catalog check the boot path
 // hands it. The hub's wiring owns the goroutine; this is here so the wiring is
 // one line and the tick has one implementation.
+//
+// THE FIRST CATALOG CHECK FIRES ON ITS OWN SHORT TIMER, ahead of the ordinary
+// DefaultTickEvery tick — see DefaultFirstCatalogCheckDelay. Waiting for the
+// first 30-second tick left the fallover walk (alternatives.go's unusable)
+// reading an unchecked Matrix.Issues for that whole window: a catalog-invalid
+// alternative looked clean simply because nothing had asked the catalog about
+// it yet. s.firstCheckDelay is a field, not a literal here, so a test can drive
+// it without a real sleep.
 func (s *Service) Run(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		every = DefaultTickEvery
 	}
+	firstDelay := s.firstCheckDelay
+	if firstDelay <= 0 {
+		firstDelay = DefaultFirstCatalogCheckDelay
+	}
+	first := time.NewTimer(firstDelay)
+	defer first.Stop()
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-first.C:
+			// The first moment the catalog check can succeed: the listener is
+			// up and the desktop, which answers claude.listModels, has had its
+			// chance to connect — sooner than the ordinary tick, and still
+			// nothing New itself waits on.
+			s.ValidateCatalog()
 		case <-t.C:
 			s.ReloadIfChanged()
-			// On the FIRST tick this is the boot-time catalog validation,
-			// arriving at the first moment it can be answered: the listener is
-			// up and the desktop, which is what answers claude.listModels, has
-			// had its chance to connect. Afterwards it is a no-op unless a hand
-			// edit re-armed it or a provider could not be reached.
+			// A no-op unless a hand edit re-armed the check (ReloadIfChanged
+			// just installed a fresh document) or a provider could not be
+			// reached and the check is still owed.
 			s.ValidateCatalog()
 		}
 	}

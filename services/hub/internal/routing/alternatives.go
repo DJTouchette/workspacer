@@ -40,6 +40,28 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/limits"
 )
 
+// catalogNotYetCheckedNote is appended to a decision's Reason whenever the walk
+// takes a NON-PRIMARY candidate — an actual fallover — while
+// Matrix.CatalogChecked is still false.
+//
+// unusable's "a load-time Issue" trigger reads m.Issues for the candidate's own
+// path, and an absent Issue is read as "clean". That is only a safe reading once
+// the catalog has actually had a look: between boot and the routing service's
+// first deferred check (see Service.ValidateCatalog and
+// DefaultFirstCatalogCheckDelay), or between a hand edit landing and its own
+// first check, Issues carries only the pure load-time findings — a model a
+// provider genuinely does not serve has not been flagged yet, and an
+// alternative naming one would silently read as usable. This note is how a
+// fallover taken in that window says so, rather than looking identical to one
+// the catalog actually vetted.
+//
+// Scoped to the fallover branch only, not to an ordinary primary accepted on
+// the first look: a plain decision that never left the primary already carries
+// this same fact on Decision.Matrix.CatalogChecked (see
+// TestTheCatalogVerdictReachesTheDecision), and restating it in prose on every
+// such decision would be noise on the overwhelmingly common case.
+const catalogNotYetCheckedNote = "catalog not yet checked; alternatives accepted without catalog validation"
+
 // candidate is one pairing in a capability's own list, with the position that
 // names it in the document.
 type candidate struct {
@@ -152,7 +174,7 @@ func (j *providerJudge) unusable(c candidate, path string) string {
 	}
 	for _, iss := range j.m.Issues {
 		if iss.Where == path {
-			return fmt.Sprintf("the matrix's load-time validation flags %s — %s", path, iss.Detail)
+			return fmt.Sprintf("the matrix's validation flags %s — %s", path, iss.Detail)
 		}
 	}
 	if why, off := j.avail.Unusable(provider); off {
@@ -277,6 +299,15 @@ func (d *Decision) walkAlternatives(
 				// could not be used. Either way this is not a fallover.
 				d.Reason = append(d.Reason, skipped...)
 				return primary
+			}
+			// A CANDIDATE OTHER THAN THE PRIMARY IS ABOUT TO BE TAKEN. It has no
+			// Issue at its own path, but "no Issue" and "the catalog looked and
+			// found none" are only the same claim once CatalogChecked is true —
+			// see catalogNotYetCheckedNote. This is the one place that gap can
+			// actually change the answer: a candidate the catalog would have
+			// condemned is about to be routed to in its place.
+			if !m.CatalogChecked {
+				d.Reason = append(d.Reason, catalogNotYetCheckedNote)
 			}
 			from := primary
 			from.Alternatives = nil

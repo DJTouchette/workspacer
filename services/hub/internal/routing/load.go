@@ -76,6 +76,18 @@ type Catalog interface {
 	Models(provider string) ([]CatalogModel, error)
 }
 
+// RefreshingCatalog is a Catalog that can force a fresh probe rather than
+// answer from its own cache. It is optional — a plain Catalog with no cache
+// (every test fake, mainly) still satisfies Catalog on its own — but cmd/hub's
+// routingCatalog implements it, and Service.ValidateCatalog calls Refresh
+// instead of Models on a RETRY, because a retry that read the same cached
+// answer it is retrying would be a guaranteed no-op. See RefreshAvailability
+// for the same force-a-fresh-probe shape used on the availability side.
+type RefreshingCatalog interface {
+	Catalog
+	Refresh(provider string) ([]CatalogModel, error)
+}
+
 // Defaults is the compiled-in matrix on its own, with no user file merged in.
 // It is what every fallback in matrix.go resolves against.
 func Defaults() (*Matrix, error) {

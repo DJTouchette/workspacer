@@ -113,6 +113,10 @@ func TestAModelFlaggedAtLoadIsStillUnusableOnAnAvailableProvider(t *testing.T) {
 		"claude": {{ID: "opus"}, {ID: "sonnet"}, {ID: "fable"}},
 	}}
 	m.Issues = append(m.Issues, ValidateAgainstCatalog(m, cat)...)
+	// The fixture just did what Service.ValidateCatalog does on a real check —
+	// say so, or the walk reads this matrix as still awaiting one and adds a
+	// caveat this test does not expect.
+	m.CatalogChecked = true
 	if !hasIssueAt(m.Issues, "profiles.mixed.frontier") {
 		t.Fatalf("fixture drift: the catalog check did not flag the frontier primary: %v", m.Issues)
 	}
@@ -124,7 +128,7 @@ func TestAModelFlaggedAtLoadIsStillUnusableOnAnAvailableProvider(t *testing.T) {
 	if d.Provider != "claude" {
 		t.Fatalf("got %s — a live provider whose specific MODEL the loader flagged is still not routable", d.Provider)
 	}
-	if !strings.Contains(strings.Join(d.Reason, " "), "load-time validation flags profiles.mixed.frontier") {
+	if !strings.Contains(strings.Join(d.Reason, " "), "matrix's validation flags profiles.mixed.frontier") {
 		t.Errorf("the answer quotes the wrong reason for passing the primary over: %v", d.Reason)
 	}
 }

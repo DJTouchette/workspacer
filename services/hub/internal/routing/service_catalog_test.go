@@ -57,11 +57,11 @@ func (c *slowCatalog) Models(provider string) ([]CatalogModel, error) {
 	if c.release != nil {
 		<-c.release
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err, ok := c.errs[provider]; ok {
 		return nil, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return c.models[provider], nil
 }
 
@@ -277,5 +277,109 @@ profiles:
 	}
 	if s.ValidateCatalog() {
 		t.Error("a settled check kept probing the catalog on every tick")
+	}
+}
+
+// TestTheFirstCatalogCheckDoesNotWaitForTheOrdinaryTick is SHOULD-FIX 1a: the
+// fallover walk (alternatives.go's unusable) reads Matrix.Issues to judge a
+// candidate, and between boot and the first DefaultTickEvery tick (30s) those
+// catalog findings do not exist yet, so a catalog-invalid alternative reads as
+// clean for that whole window. Run must fire its own short first check well
+// ahead of the ordinary tick rather than waiting on it.
+func TestTheFirstCatalogCheckDoesNotWaitForTheOrdinaryTick(t *testing.T) {
+	path := matrixPath(t)
+	cat := &slowCatalog{models: map[string][]CatalogModel{
+		"codex":  {{ID: "gpt-5.6-sol"}},
+		"claude": {{ID: "opus"}, {ID: "sonnet"}, {ID: "fable"}},
+	}}
+	s := New(path, cat)
+	s.firstCheckDelay = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// An hour-long ordinary tick: if the check ran on THAT rather than on
+	// firstCheckDelay, this test would time out inside waitFor rather than
+	// pass, which is the point — it proves the two are on separate timers.
+	go s.Run(ctx, time.Hour)
+
+	waitFor(t, "the short first check", func() bool { return s.Matrix().CatalogChecked })
+}
+
+// refreshTrackingCatalog is a Catalog that also implements RefreshingCatalog,
+// counting each provider it is asked about on the two different doors
+// separately — the only way to prove SHOULD-FIX 2: that a RETRY goes through
+// Refresh rather than replaying whatever Models would have answered from its
+// own cache.
+type refreshTrackingCatalog struct {
+	mu           sync.Mutex
+	modelsAsked  []string
+	refreshAsked []string
+	errs         map[string]error
+	models       map[string][]CatalogModel
+}
+
+func (c *refreshTrackingCatalog) Models(provider string) ([]CatalogModel, error) {
+	c.mu.Lock()
+	c.modelsAsked = append(c.modelsAsked, provider)
+	err, hasErr := c.errs[provider]
+	models := c.models[provider]
+	c.mu.Unlock()
+	if hasErr {
+		return nil, err
+	}
+	return models, nil
+}
+
+func (c *refreshTrackingCatalog) Refresh(provider string) ([]CatalogModel, error) {
+	c.mu.Lock()
+	c.refreshAsked = append(c.refreshAsked, provider)
+	err, hasErr := c.errs[provider]
+	models := c.models[provider]
+	c.mu.Unlock()
+	if hasErr {
+		return nil, err
+	}
+	return models, nil
+}
+
+// TestARetryForcesAFreshProbeRatherThanReadingTheCache is SHOULD-FIX 2.
+//
+// cmd/hub's routingCatalog caches a provider's answer for catalogTTL (10m),
+// longer than DefaultCatalogRetryEvery (5m). A retry that went through Models
+// — the same door an ordinary check uses — would keep reading the very cached
+// miss it exists to get past, so the first REAL re-probe would land at
+// catalogTTL rather than at the retry cadence the service asked for. The fix
+// is Service.ValidateCatalog calling RefreshingCatalog.Refresh on a retry
+// instead, and this is what proves it actually happens rather than merely
+// compiling.
+func TestARetryForcesAFreshProbeRatherThanReadingTheCache(t *testing.T) {
+	path := matrixPath(t)
+	write(t, path, `active_profile: codex_only
+profiles:
+  codex_only:
+    frontier: { provider: codex, model: gpt-5.6-retired, effort: high }
+`)
+	cat := &refreshTrackingCatalog{
+		errs:   map[string]error{"claude": errNoAnswer}, // unanswered -> the check stays pending
+		models: map[string][]CatalogModel{"codex": {{ID: "gpt-5.6-sol"}}},
+	}
+	s := New(path, cat)
+	s.retryEvery = 0 // the cadence is Run's business; this test is about the retry itself
+
+	if !s.ValidateCatalog() {
+		t.Fatal("the first check did not run")
+	}
+	if len(cat.refreshAsked) != 0 {
+		t.Errorf("the FIRST check forced a refresh rather than an ordinary probe: %v", cat.refreshAsked)
+	}
+	if !s.CatalogPending() {
+		t.Fatal("fixture drift: the unanswered provider must leave the check pending, or this test proves nothing")
+	}
+
+	if !s.ValidateCatalog() {
+		t.Fatal("the retry did not run")
+	}
+	if len(cat.refreshAsked) == 0 {
+		t.Fatal("the retry read the cache instead of forcing a fresh probe — the exact no-op SHOULD-FIX 2 closes")
 	}
 }

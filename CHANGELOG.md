@@ -19,9 +19,19 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   answered, and it spent the bus client's full five-second readiness window
   failing on every start. It now runs on the routing service's first tick, at
   the first moment it can succeed, and a decision now records whether the
-  check had run yet, so a matrix nobody has checked is not read as a clean one. Measured on a scratch port
-  with the shipped matrix in place, the hub answers `/health` in 0.015s instead
-  of 5.04s.
+  check had run yet, so a matrix nobody has checked is not read as a clean
+  one. Measured on a scratch port with the shipped matrix in place, the hub
+  answers `/health` in 0.015s instead of 5.04s.
+
+  Two follow-ups closed the gap that deferring the check opened up. The first
+  catalog check now fires a few seconds after the routing service starts,
+  rather than waiting for the ordinary 30-second matrix-reload tick, so a
+  capability's fallover list is not walked against zero catalog findings for
+  most of a minute after every boot — and a fallover taken in the short window
+  before that first check runs now says so in its own reasoning. And a
+  catalog retry now forces a fresh probe instead of reading the provider
+  catalog's own ten-minute cache, which had made every retry before the cache
+  expired a guaranteed no-op.
 
 ## [0.162.0] - 2026-09-02
 

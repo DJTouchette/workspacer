@@ -116,11 +116,20 @@ Every key your file carries that differs from a shipped default is named in the
 load log, and so is every key that matches nothing in the defaults, which is
 usually a typo.
 
-Model ids are checked at load against the live provider catalogs
-(claudemon's `GET /providers/:provider/models` and `claude.listModels`), so an
-id your installed CLI no longer serves is reported at load rather than
-discovered at spawn time. A provider that cannot be reached is skipped, not
-condemned.
+Model ids are checked against the live provider catalogs (claudemon's
+`GET /providers/:provider/models` and `claude.listModels`), so an id your
+installed CLI no longer serves is reported rather than discovered at spawn
+time. That check runs DEFERRED from the load itself, on the routing service's
+own tick, rather than inside the load: the hub does not bind its HTTP listener
+until the matrix has loaded, and the catalog's Claude half is answered over the
+bus that listener serves — a check made part of the load could never be
+answered, and used to cost every boot the bus client's full readiness window.
+The first check now fires a few seconds after the service starts (short enough
+that a fallover is not judging candidates on no catalog information at all for
+a whole tick), and `Matrix.CatalogChecked` says whether it has run yet, so "no
+findings" and "not asked yet" are never confused with each other. A provider
+that cannot be reached is skipped, not condemned, and is retried on its own
+cadence until it answers.
 
 ## active_profile and the three profiles
 

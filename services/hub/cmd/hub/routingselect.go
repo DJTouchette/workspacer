@@ -137,6 +137,27 @@ func (c *routingCatalog) Models(provider string) ([]routing.CatalogModel, error)
 	return e.models, nil
 }
 
+// Refresh implements routing.RefreshingCatalog: force a fresh probe rather
+// than an answer served from the catalogTTL cache.
+//
+// It exists because the routing service's catalog retry (DefaultCatalogRetryEvery,
+// 5m) is shorter than catalogTTL (10m): a retry that went through Models, and
+// therefore through entry(provider, false), would keep reading the very cached
+// miss it exists to get past, and the first real re-probe would land at
+// catalogTTL rather than at the retry cadence the service asked for. This
+// reuses entry(provider, true) — the exact force shape RefreshAvailability
+// already uses for the same reason on the availability side.
+func (c *routingCatalog) Refresh(provider string) ([]routing.CatalogModel, error) {
+	e := c.entry(provider, true)
+	if e.err != nil {
+		return nil, e.err
+	}
+	if len(e.models) == 0 {
+		return nil, fmt.Errorf("%s answered no models", provider)
+	}
+	return e.models, nil
+}
+
 // entry is the cached probe, with two TTLs by way of one rule: an answer with
 // MODELS IN IT is reused for catalogTTL, and every other cached state is
 // re-probed whenever `force` asks for it (which is what the background
@@ -555,6 +576,16 @@ func routingSelect(svc *routing.Service, usage *usageWatcher, avail availability
 		// spawn quotes back as `decisionId` and what joins the two rows of the
 		// log, so it is minted exactly where a decision becomes a fact.
 		d.DecisionID = routing.NewDecisionID()
+		// svc.CatalogPending() is the SERVICE's own owed-a-check state, wider
+		// than d.Matrix.CatalogChecked: it stays true across a check that DID
+		// run but that a provider could not answer (see Service.ValidateCatalog),
+		// which is a state d.Matrix.CatalogChecked alone cannot distinguish from
+		// "fully checked and clean". routing.Select stays pure and never reads
+		// the service, so this is appended here rather than inside the walk.
+		if svc.CatalogPending() {
+			d.Reason = append(d.Reason,
+				"the routing service still owes routing.yaml a catalog check (either none has run yet, or a provider named in it could not answer the last one)")
+		}
 
 		logf.Decision(d)
 		if pub != nil {
