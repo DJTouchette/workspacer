@@ -1040,6 +1040,13 @@ describe('the attach door hands Chromium the CANONICAL path', () => {
     expect(params.src).toBe(canonicalSrc);
   });
 
+  it('preserves the fragment and query on the rewritten src', () => {
+    const src = fileUrl(path.join(root, 'design', 'index.html')) + '?tab=1#findings';
+    const { params, blocked } = attachWithParams(src);
+    expect(blocked).toBe(false);
+    expect(params.src).toBe(canonicalSrc + '?tab=1#findings');
+  });
+
   it('leaves an http(s) src exactly as it was', () => {
     const { params } = attachWithParams('https://example.com/a?b=1#c');
     expect(params.src).toBe('https://example.com/a?b=1#c');

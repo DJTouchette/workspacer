@@ -609,6 +609,28 @@ export interface GuardHostContents {
 }
 
 /**
+ * The canonical `file:` src to hand Chromium, keeping the ORIGINAL request's
+ * query and fragment. `pathConfinement.canonicalizePath` resolves a filesystem
+ * path, not a URL, so `verdict.canonicalPath` carries neither — and rewriting
+ * straight from it dropped both: `open_browser` on `report.html#findings` lost
+ * the anchor the moment the rewrite replaced the whole URL with the bare path.
+ * `originalSrc` was already parsed once by `checkWebviewSrc` to reach here, so
+ * the reparse below cannot fail in practice; it falls back to the bare
+ * canonical URL rather than throw if it somehow does.
+ */
+function rewriteFileSrc(canonicalPath: string, originalSrc: string): string {
+  const rewritten = pathToFileURL(canonicalPath);
+  try {
+    const original = new URL(originalSrc);
+    rewritten.search = original.search;
+    rewritten.hash = original.hash;
+  } catch {
+    // Unreached in practice; see doc comment above.
+  }
+  return rewritten.href;
+}
+
+/**
  * Wire BOTH doors, the attach check and the per-guest navigation guard, from
  * one call, against ONE `allowedRoots` supplier.
  *
@@ -654,7 +676,7 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
         // honouring a mutation of `params`, the guest reports the original href
         // and the navigation door must still recognise its own attach load.
         if (verdict.canonicalPath) {
-          const canonicalSrc = pathToFileURL(verdict.canonicalPath).href;
+          const canonicalSrc = rewriteFileSrc(verdict.canonicalPath, params.src as string);
           params.src = canonicalSrc;
           approvedSrcs.push(canonicalSrc);
         }
