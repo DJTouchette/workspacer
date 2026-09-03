@@ -59,6 +59,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { canonicalizePath, isSecretPath, pathWithinRoots } from './pathConfinement';
 
 /** The mutable subset of Electron's webPreferences we override at attach time. */
@@ -170,6 +171,11 @@ export interface SrcVerdict {
    *  refusal, so a pane can offer "open the preview" without deciding for itself
    *  whether the target was inside a root. */
   previewPath?: string;
+  /** The path this verdict was ABOUT, per component resolved. Set only when a
+   *  `file:` URL was ALLOWED. pathConfinement's caller contract: every caller
+   *  must hand the RETURNED canonical path to the operation, because the check
+   *  and the open are otherwise two different paths. */
+  canonicalPath?: string;
 }
 
 const ALLOWED: SrcVerdict = { allowed: true };
@@ -308,7 +314,7 @@ function checkFileSrc(u: URL, allowedRoots: string[], door: PaneDoor): SrcVerdic
   if (st.isDirectory()) return deny('this path is a directory, not a file');
   if (!st.isFile()) return deny('this path is not a regular file');
 
-  return ALLOWED;
+  return { allowed: true, canonicalPath: canonical };
 }
 
 /**
@@ -510,6 +516,14 @@ export function installWebviewNavigationGuard(
   };
   guest.on('will-navigate', cancel);
   guest.on('will-redirect', cancel);
+  // Deliberately NOT rewritten to the canonical path here, unlike the attach
+  // door. did-start-navigation fires for a navigation Chromium has ALREADY
+  // begun: there is nothing left to hand it. Substituting a URL at this point
+  // would mean cancelling a load and starting a different one, which is a
+  // navigation the pane never asked for and a history entry the user did not
+  // make. The residual gap is a TOCTOU one (a component swapped between the
+  // check and the open), the same one every path guard in this codebase carries,
+  // and it is not widened by leaving the spelling alone.
   guest.on('did-start-navigation', (details: { url: string; isMainFrame: boolean }) => {
     if (!details.isMainFrame) return;
     const v = verdictFor(details.url);
@@ -540,6 +554,12 @@ export function installWebviewNavigationGuard(
   // is installed on the window this handler admits, and its
   // `did-start-navigation` applies the FULL src policy to the popup's first
   // load. A `window.open('chrome://…')` is admitted here and stopped there.
+  //
+  // Electron's window-open handler has no URL slot: it answers allow or deny,
+  // and `overrideBrowserWindowOptions` overrides window options, not the target.
+  // So the canonical rewrite the attach door performs cannot be repeated here.
+  // The popup guard installed below re-derives its own verdict from whatever
+  // Chromium actually navigates to, which is the closest equivalent available.
   guest.setWindowOpenHandler?.(({ url }) => {
     if (!isFileUrl(url)) return { action: 'allow' };
     const v = verdictFor(url);
@@ -596,7 +616,22 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
       approvedAttachSrcs = [];
       const verdict = checkWebviewSrc(params.src, opts.allowedRoots());
       if (verdict.allowed) {
-        if (params.src) approvedAttachSrcs = [params.src];
+        if (params.src) approvedAttachSrcs.push(params.src);
+        // Hand Chromium the CANONICAL path, not the spelling the tag asked
+        // with. pathConfinement's caller contract: the walk resolved every
+        // symlink and every `..` to decide this was allowed, and re-passing the
+        // raw string is the check-path/opened-path split that whole module
+        // exists to close. This is one of the two places the URL can still be
+        // rewritten before the load starts.
+        //
+        // Both spellings stay in approvedAttachSrcs. If a future Electron stops
+        // honouring a mutation of `params`, the guest reports the original href
+        // and the navigation door must still recognise its own attach load.
+        if (verdict.canonicalPath) {
+          const canonicalSrc = pathToFileURL(verdict.canonicalPath).href;
+          params.src = canonicalSrc;
+          approvedAttachSrcs.push(canonicalSrc);
+        }
         return;
       }
       console.warn(`[main] blocking <webview> attach with disallowed src: ${params.src}`);

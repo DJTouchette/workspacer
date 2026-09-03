@@ -15,6 +15,7 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import {
   applySafeWebviewPreferences,
   checkPreviewFileUrl,
@@ -920,6 +921,72 @@ describe('installWebviewGuards', () => {
       const navBlocked = guest.stop.mock.calls.length > 0;
 
       expect(navBlocked, `${url}: attach=${attachBlocked} nav=${navBlocked}`).toBe(attachBlocked);
+    }
+  });
+});
+
+/**
+ * pathConfinement's caller contract: the walk resolves every symlink and every
+ * `..` to decide a path is allowed, and the caller must hand the RESOLVED path
+ * to the operation. Otherwise the guard checked `<root>/link/x.html` and
+ * Chromium opened wherever `link` really points, which is a different file by
+ * the time the check is over.
+ */
+describe('the attach door hands Chromium the CANONICAL path', () => {
+  let linkedSrc: string;
+  let canonicalSrc: string;
+
+  beforeAll(() => {
+    // A symlinked directory INSIDE the root, pointing at another directory
+    // inside the same root: allowed either way, so the only thing under test is
+    // which spelling is loaded.
+    const link = path.join(root, 'shortcut');
+    if (!fs.existsSync(link)) fs.symlinkSync(path.join(root, 'design'), link);
+    linkedSrc = fileUrl(path.join(root, 'shortcut', 'index.html'));
+    canonicalSrc = pathToFileURL(path.join(root, 'design', 'index.html')).href;
+  });
+
+  function attachWithParams(src: string) {
+    const host = new EventEmitter();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const event = { preventDefault: vi.fn() };
+    const params: { src?: string } = { src };
+    host.emit('will-attach-webview', event, {} as MutableWebPreferences, params);
+    return { host, params, blocked: event.preventDefault.mock.calls.length > 0 };
+  }
+
+  it('rewrites an allowed file: src to its canonical spelling', () => {
+    const { params, blocked } = attachWithParams(linkedSrc);
+    expect(blocked).toBe(false);
+    expect(params.src).toBe(canonicalSrc);
+  });
+
+  it('leaves an http(s) src exactly as it was', () => {
+    const { params } = attachWithParams('https://example.com/a?b=1#c');
+    expect(params.src).toBe('https://example.com/a?b=1#c');
+  });
+
+  it('leaves a REFUSED src alone rather than rewriting it', () => {
+    const denied = fileUrl(path.join(outside, 'evil.html'));
+    const { params, blocked } = attachWithParams(denied);
+    expect(blocked).toBe(true);
+    expect(params.src).toBe(denied);
+  });
+
+  it('recognises its own attach load under EITHER spelling', () => {
+    for (const reported of [linkedSrc, canonicalSrc]) {
+      const { host } = attachWithParams(linkedSrc);
+      const guest = new EventEmitter() as EventEmitter & {
+        stop: ReturnType<typeof vi.fn>;
+        loadURL: ReturnType<typeof vi.fn>;
+        getURL: () => string;
+      };
+      guest.stop = vi.fn();
+      guest.loadURL = vi.fn();
+      guest.getURL = () => '';
+      host.emit('did-attach-webview', {}, guest);
+      guest.emit('did-start-navigation', { url: reported, isMainFrame: true });
+      expect(guest.stop, reported).not.toHaveBeenCalled();
     }
   });
 });

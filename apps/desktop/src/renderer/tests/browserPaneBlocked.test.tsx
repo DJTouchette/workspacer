@@ -2,8 +2,8 @@
  * A refusal from the main-process webview guard has to be VISIBLE.
  *
  * A prevented `will-attach-webview` destroys the guest before it exists, so the
- * pane never fires `did-fail-load` and BrowserPane's error banner — which is
- * driven entirely by guest events — was unreachable. Every `open_browser` on a
+ * pane never fires `did-fail-load` and BrowserPane's error banner, which is
+ * driven entirely by guest events, was unreachable. Every `open_browser` on a
  * `file://` URL was therefore a silent empty rectangle. These cases pin the push
  * channel that replaces the blankness with a reason, and the markdown detour
  * that keeps a `.md` target out of the pane in the first place.
@@ -62,7 +62,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('BrowserPane — blocked banner', () => {
+describe('BrowserPane: the blocked banner', () => {
   it('renders nothing about a block until one arrives', async () => {
     mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl={PAGE_URL} />);
     await waitFor(() => expect(emitBlocked).toBeTruthy());
@@ -228,7 +228,7 @@ describe('BrowserPane claims a refusal Chromium respelled', () => {
  * The markdown detour has to sit at the DISPATCH points, not inside the pane:
  * Chromium downloads `text/markdown` over file:, so a .md target must never
  * become a browser tab in the first place. App.tsx has exactly two places a
- * file: open is dispatched, and both have to take it — a source check, because
+ * file: open is dispatched, and both have to take it. A source check, because
  * rendering App in jsdom is not a thing this suite can afford.
  */
 describe('App.tsx routes a .md file: target to the preview pane', () => {

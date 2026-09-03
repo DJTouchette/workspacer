@@ -18,10 +18,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   local file is now allowed when it sits under the user's home directory or a
   configured project directory, resolves to a real file rather than a directory
   or a symlink pointing out of those roots, and carries an extension a browser
-  can render (html, htm, svg, png, jpg, jpeg, gif, webp, txt, json, css, js,
-  pdf). Everything else is still refused, including a `file://` URL with a
-  remote host, a path outside those roots, and any attempt by a web page to
-  navigate the pane onto a local file. A refusal now reaches the pane as a
+  can render (html, htm, svg, png, jpg, jpeg, gif, webp, txt, css, js);
+  credential and agent-configuration files are refused whatever they are named,
+  and json and pdf are not on that list at all, because no mockup is a json and
+  a pdf downloads rather than renders. Everything else is still refused,
+  including a `file://` URL with a remote host, a path outside those roots, and
+  any attempt by a web page to navigate the pane onto a local file. A refusal now reaches the pane as a
   banner reading "Blocked:" and the reason, so a blank pane is never the answer
   again. Markdown is routed to the markdown preview pane, which can actually
   render it, rather than to a browser that would only offer to download it.

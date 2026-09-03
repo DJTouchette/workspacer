@@ -59,7 +59,7 @@ describe('webviewFileRoots', () => {
     expect(webviewFileRoots()).toEqual([os.homedir()]);
   });
 
-  it('narrows to home — never widens, never throws — when the config cannot be read', () => {
+  it('narrows to home, never widens and never throws, when the config cannot be read', () => {
     getConfig.mockImplementation(() => {
       throw new Error('config.yaml is a directory');
     });
