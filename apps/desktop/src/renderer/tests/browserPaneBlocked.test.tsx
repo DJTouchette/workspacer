@@ -29,6 +29,7 @@ type Blocked = {
   reason: string;
   phase: 'attach' | 'navigate';
   previewPath?: string;
+  webContentsId?: number;
 };
 
 /** The main → renderer push, captured so a test can fire it. */
@@ -149,6 +150,77 @@ describe('BrowserPane — blocked banner', () => {
 
     await screen.findByText('Workspacer blocked this URL.');
     expect(screen.queryByText('Open markdown preview')).toBeNull();
+  });
+});
+
+/**
+ * Chromium reports the WHATWG-NORMALISED href, and the pane holds the spelling
+ * it was handed. Matching those two by byte equality dropped the refusal for
+ * every URL the two spell differently, which includes the case the banner most
+ * needs to explain: a `..` typed into the address bar. Every pane hears every
+ * refusal, so a dropped one is a silent blank rectangle, not a fallback.
+ */
+describe('BrowserPane claims a refusal Chromium respelled', () => {
+  const RESPELLINGS: Array<[string, string]> = [
+    ['a .. segment', 'file:///home/dev/proj/design/../design/index.html'],
+    ['a %2e%2e segment', 'file:///home/dev/proj/design/%2e%2e/design/index.html'],
+    ['an uppercase scheme', 'FILE:///home/dev/proj/design/index.html'],
+    ['an unencoded space', 'file:///home/dev/proj/design/a report.html'],
+  ];
+
+  it.each(RESPELLINGS)('claims the refusal when the pane asked with %s', async (_label, typed) => {
+    // The pane was opened with the spelling on the left; the guard reports the
+    // href Chromium normalised it to.
+    const normalised = new URL(typed).href;
+    mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl={typed} />);
+    await waitFor(() => expect(emitBlocked).toBeTruthy());
+
+    emitBlocked!({
+      url: normalised,
+      reason: 'this file is outside your home and project directories',
+      phase: 'navigate',
+    });
+
+    await screen.findByText('Workspacer blocked this URL.');
+  });
+
+  it('claims a refusal of http://EXAMPLE.com, which normalises to a lowercase host', async () => {
+    mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl="http://EXAMPLE.com" />);
+    await waitFor(() => expect(emitBlocked).toBeTruthy());
+
+    emitBlocked!({ url: 'http://example.com/', reason: 'nope', phase: 'navigate' });
+
+    await screen.findByText('Workspacer blocked this URL.');
+  });
+
+  /** Identity beats spelling: the guest the refusal is about is named outright. */
+  it('claims a refusal aimed at ITS guest even when the URL matches nothing', async () => {
+    mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl={PAGE_URL} />);
+    await waitFor(() => expect(emitBlocked).toBeTruthy());
+    const guest = document.querySelector('webview') as unknown as Record<string, unknown>;
+    expect(guest).toBeTruthy();
+    guest.getWebContentsId = () => 42;
+
+    emitBlocked!({
+      url: 'file:///somewhere/else/entirely.html',
+      reason: 'no such file',
+      phase: 'navigate',
+      webContentsId: 42,
+    });
+
+    await screen.findByText('Workspacer blocked this URL.');
+  });
+
+  it('ignores a refusal aimed at ANOTHER guest even when the URL matches', async () => {
+    mount(<BrowserPane paneId="p1" title="Browser" isActive initialUrl={PAGE_URL} />);
+    await waitFor(() => expect(emitBlocked).toBeTruthy());
+    const guest = document.querySelector('webview') as unknown as Record<string, unknown>;
+    guest.getWebContentsId = () => 42;
+
+    emitBlocked!({ url: PAGE_URL, reason: 'no such file', phase: 'navigate', webContentsId: 99 });
+
+    await Promise.resolve();
+    expect(screen.queryByText(/Workspacer blocked this URL/)).toBeNull();
   });
 });
 

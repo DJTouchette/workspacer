@@ -8,6 +8,7 @@ import { resolveLeader, resolveMod } from '../lib/shortcuts';
 import { isLayerArmed } from '../lib/layerArmed';
 import { guestHost, guestFramePolicy } from '../lib/guestFrame';
 import GuestFrame from '../components/GuestFrame';
+import { sameUrl } from '../lib/browserBus';
 import { requestMarkdownPreview } from '../lib/previewBus';
 
 interface BrowserPaneProps {
@@ -489,12 +490,39 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   // turns it into the banner below.
   const ownUrlsRef = useRef<{ start: string; current: string }>({ start: '', current: '' });
   ownUrlsRef.current = { start: startUrl, current: normalizeUrl(url) };
+  /** This pane's guest, when it has one. `getWebContentsId` throws until the
+   *  <webview> has attached, and an <iframe> has none at all. */
+  const guestWebContentsId = useCallback((): number | null => {
+    const wv = webviewRef.current as any;
+    try {
+      return typeof wv?.getWebContentsId === 'function' ? wv.getWebContentsId() : null;
+    } catch {
+      return null;
+    }
+  }, []);
   useEffect(() => {
     const off = window.electronAPI.onWebviewBlocked?.((info) => {
       const mine = ownUrlsRef.current;
-      // Every pane hears every refusal; only the one that asked for that URL
-      // should claim it.
-      if (info.url !== mine.start && info.url !== mine.current) return;
+      // Every pane hears every refusal; only the one it is ABOUT should claim it.
+      //
+      // Identity first. Matching on the URL alone silently failed for the case
+      // the banner most needs to explain: Chromium reports the WHATWG-normalised
+      // href, so a typed `file:///home/x/../y.html`, a `%2e%2e` segment, an
+      // uppercase `FILE:///`, `http://EXAMPLE.com` and an unencoded space all
+      // came back different from the string the pane was holding, the refusal
+      // was claimed by nobody, and the address-bar traversal stayed a silent
+      // blank.
+      //
+      // The URL comparison is the fallback, not the rule: a refused ATTACH
+      // carries no guest id (there is no guest yet), and a guest that has not
+      // attached cannot report its own. It compares normalised hrefs on both
+      // sides, so those five spellings match there too.
+      const myId = guestWebContentsId();
+      if (info.webContentsId != null && myId != null) {
+        if (info.webContentsId !== myId) return;
+      } else if (!sameUrl(info.url, mine.start) && !sameUrl(info.url, mine.current)) {
+        return;
+      }
       setLoading(false);
       setGuestError({
         kind: 'blocked',
@@ -507,7 +535,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
       });
     });
     return () => off?.();
-  }, []);
+  }, [guestWebContentsId]);
 
   const handleGo = useCallback(() => {
     navigate(url);

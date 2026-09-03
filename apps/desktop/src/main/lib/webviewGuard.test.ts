@@ -675,6 +675,34 @@ describe('installWebviewNavigationGuard', () => {
     }
   });
 
+  it('names the guest a navigation refusal is about, so a pane can claim it', () => {
+    const guest = fakeGuest('https://evil.example.com/');
+    (guest as unknown as { id: number }).id = 77;
+    const seen: Array<{ webContentsId?: number }> = [];
+    installWebviewNavigationGuard(guest, {
+      allowedRoots: () => roots,
+      onBlocked: (i) => seen.push(i),
+    });
+
+    loadUrl(guest, inside());
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].webContentsId).toBe(77);
+  });
+
+  it('omits the id when the guest has none rather than sending a fake one', () => {
+    const guest = fakeGuest('https://evil.example.com/');
+    const seen: Array<{ webContentsId?: number }> = [];
+    installWebviewNavigationGuard(guest, {
+      allowedRoots: () => roots,
+      onBlocked: (i) => seen.push(i),
+    });
+
+    loadUrl(guest, inside());
+
+    expect(seen[0].webContentsId).toBeUndefined();
+  });
+
   it('survives a guest with no setWindowOpenHandler / getURL', () => {
     const bare = new EventEmitter() as EventEmitter & { stop: () => void; loadURL: () => void };
     bare.stop = vi.fn();

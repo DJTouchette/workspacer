@@ -144,6 +144,20 @@ export interface WebviewBlockedInfo {
   reason: string;
   phase: 'attach' | 'navigate';
   previewPath?: string;
+  /**
+   * The guest the refusal is ABOUT, so the pane that owns it can claim it by
+   * identity instead of by matching a string.
+   *
+   * Every pane hears every refusal, and matching on the URL alone does not
+   * work: Chromium reports the WHATWG-normalised href, while the pane holds the
+   * spelling it was handed. `file:///home/x/../y.html`, a `%2e%2e` segment, an
+   * uppercase `FILE:///`, `http://EXAMPLE.com` and an unencoded space all come
+   * back different from what was sent, and the address-bar traversal (the case
+   * the banner most needs to explain) is exactly a `..` URL. Absent on a
+   * refused ATTACH: the guest does not exist yet, and there the URL is the only
+   * identity anything has.
+   */
+  webContentsId?: number;
 }
 
 /** Why a src was refused. Carried to the renderer so the pane can say it. */
@@ -376,6 +390,9 @@ export interface GuardableContents {
   loadURL(url: string): unknown;
   /** Present on a real WebContents; used to learn what page is navigating. */
   getURL?(): string;
+  /** Present on a real WebContents. Carried into a refusal so the pane that owns
+   *  this guest can claim it without string-matching a URL. */
+  id?: number;
   /** Present on a real WebContents; guards `allowpopups` window opens. */
   setWindowOpenHandler?(handler: (details: { url: string }) => { action: 'allow' | 'deny' }): void;
 }
@@ -480,6 +497,7 @@ export function installWebviewNavigationGuard(
       reason: v.reason as string,
       phase: 'navigate',
       previewPath: v.previewPath,
+      webContentsId: typeof guest.id === 'number' ? guest.id : undefined,
     });
   };
 

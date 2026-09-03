@@ -22,6 +22,24 @@ export function requestOpenInBrowser(target: BrowserOpenTarget): void {
   window.dispatchEvent(new CustomEvent(BROWSER_OPEN_EVENT, { detail: target }));
 }
 
+/**
+ * True when two URL strings name the same resource once WHATWG-normalised.
+ *
+ * Chromium reports the normalised href, so a byte comparison against the
+ * spelling a pane was handed misses `file:///home/x/../y.html`, a `%2e%2e`
+ * segment, an uppercase `FILE:///`, `http://EXAMPLE.com` and an unencoded space.
+ * The twin of `sameUrl` in main/lib/webviewGuard.ts; both sides of the refusal
+ * push have to agree about what "the same URL" means.
+ */
+export function sameUrl(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return false;
+  }
+}
+
 /** The filesystem path a `file://` URL names, or null when `url` is not a local
  *  file URL. The inverse of `fileUrlFromPath`, and the reason a caller can tell
  *  a `.md` target apart before handing it to a pane that cannot render one.
