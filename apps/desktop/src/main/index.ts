@@ -631,10 +631,18 @@ app.whenReady().then(() => {
     });
   };
 
-  // Apply the Chrome UA to every webview/window as it's created. Don't install
-  // a window-open handler — `allowpopups="true"` on the <webview> tag already
-  // handles popups natively with the same partition, and intercepting via
-  // setWindowOpenHandler was aborting unrelated navigations.
+  // Apply the Chrome UA to every webview/window as it's created.
+  //
+  // Historical note, kept because it is a live constraint: this used to say
+  // "don't install a window-open handler", because `allowpopups="true"` on the
+  // <webview> tag already handles popups natively with the same partition and an
+  // earlier interception via setWindowOpenHandler was aborting unrelated
+  // navigations (d2537bcc, the same commit as the SSO user-agent spoofing above).
+  // There IS one now, installed per guest by the webview guard, and it is shaped
+  // around that: it judges `file:` URLs and returns Electron's native default for
+  // every other scheme, so the Google/Microsoft sign-in popups this pane exists
+  // to carry are not intercepted at all. A popup it admits then gets the same
+  // navigation guard, which is where a non-file scheme is refused.
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() === 'webview') {
       contents.setUserAgent(chromeUA);

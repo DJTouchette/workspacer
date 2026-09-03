@@ -703,6 +703,78 @@ describe('installWebviewNavigationGuard', () => {
     expect(seen[0].webContentsId).toBeUndefined();
   });
 
+  // ── The popups this pane exists to carry ──
+  //
+  // index.ts records that intercepting window.open via setWindowOpenHandler was
+  // once reverted for "aborting unrelated navigations", in the same commit as
+  // the Google/Microsoft sign-in user-agent spoofing. So this door judges file:
+  // and nothing else, and the popup it admits is guarded instead.
+
+  it('does not judge a non-file window.open at all, whatever the page is', () => {
+    for (const from of ['https://accounts.google.com/', 'about:blank', '']) {
+      const guest = fakeGuest(from);
+      const blocked: string[] = [];
+      installWebviewNavigationGuard(guest, {
+        allowedRoots: () => roots,
+        onBlocked: (i) => blocked.push(i.url),
+      });
+      for (const url of [
+        'https://accounts.google.com/o/oauth2/auth?x=1',
+        'https://login.microsoftonline.com/common/oauth2/authorize',
+        'chrome://settings',
+      ]) {
+        expect(guest.openHandler!({ url }), `${from} -> ${url}`).toEqual({ action: 'allow' });
+      }
+      expect(blocked, from).toEqual([]);
+    }
+  });
+
+  it('guards the popup it admits, so a non-file scheme is refused on its FIRST load', () => {
+    const guest = fakeGuest('https://accounts.google.com/');
+    installWebviewNavigationGuard(guest, { allowedRoots: () => roots });
+
+    expect(guest.openHandler!({ url: 'chrome://settings' })).toEqual({ action: 'allow' });
+
+    const popup = fakeGuest('');
+    guest.emit('did-create-window', { webContents: popup });
+    loadUrl(popup, 'chrome://settings');
+
+    expect(popup.stop).toHaveBeenCalledTimes(1);
+    expect(popup.loadURL).toHaveBeenCalledWith('about:blank');
+  });
+
+  it('guards the popup against reaching a local file, with no attach exemption', () => {
+    const guest = fakeGuest(inside()); // an ALLOWED local page opens the popup
+    installWebviewNavigationGuard(guest, { allowedRoots: () => roots });
+
+    const popup = fakeGuest('');
+    guest.emit('did-create-window', { webContents: popup });
+
+    // The popup has committed nothing and nothing approved a src for it, so the
+    // file: source rule refuses it even though the target is inside a root.
+    loadUrl(popup, inside());
+    expect(popup.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an SSO popup browse, which is the whole point of admitting it', () => {
+    const guest = fakeGuest('https://mail.google.com/');
+    installWebviewNavigationGuard(guest, { allowedRoots: () => roots });
+
+    const popup = fakeGuest('');
+    guest.emit('did-create-window', { webContents: popup });
+    loadUrl(popup, 'https://accounts.google.com/o/oauth2/auth');
+    loadUrl(popup, 'https://accounts.google.com/signin/oauth/consent');
+
+    expect(popup.stop).not.toHaveBeenCalled();
+  });
+
+  it('survives a did-create-window with no webContents', () => {
+    const guest = fakeGuest('https://example.com/');
+    installWebviewNavigationGuard(guest, { allowedRoots: () => roots });
+    expect(() => guest.emit('did-create-window', undefined)).not.toThrow();
+    expect(() => guest.emit('did-create-window', {})).not.toThrow();
+  });
+
   it('survives a guest with no setWindowOpenHandler / getURL', () => {
     const bare = new EventEmitter() as EventEmitter & { stop: () => void; loadURL: () => void };
     bare.stop = vi.fn();

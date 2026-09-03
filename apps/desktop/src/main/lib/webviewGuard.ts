@@ -529,13 +529,38 @@ export function installWebviewNavigationGuard(
   });
   // `allowpopups` is on, so a page can ask for a NEW window; without this a
   // `window.open('file:///…')` opened outside the pane, past both other doors.
-  // Allowed URLs keep Electron's default behaviour.
+  //
+  // This door judges `file:` URLS AND NOTHING ELSE. Every other scheme gets
+  // Electron's native default, which is what an absent handler would do, and
+  // that is deliberate: the pane exists in large part to carry "Sign in with
+  // Google/Microsoft", those popups are ordinary https windows, and a handler
+  // that judged them is exactly what was reverted in d2537bcc for "aborting
+  // unrelated navigations" (see the note in index.ts). Nothing is lost by
+  // narrowing it, because a popup is not unguarded afterwards: the guard below
+  // is installed on the window this handler admits, and its
+  // `did-start-navigation` applies the FULL src policy to the popup's first
+  // load. A `window.open('chrome://…')` is admitted here and stopped there.
   guest.setWindowOpenHandler?.(({ url }) => {
+    if (!isFileUrl(url)) return { action: 'allow' };
     const v = verdictFor(url);
     if (v.allowed) return { action: 'allow' };
     console.warn(`[main] blocking <webview> window.open of disallowed url: ${url}`);
     report(url, v);
     return { action: 'deny' };
+  });
+  // A popup the pane opens becomes a plain BrowserWindow. `installWebviewGuards`
+  // is wired to the MAIN window's webContents and its `did-attach-webview` never
+  // fires for one, so an admitted popup was the one surface in this feature with
+  // no navigation guard on it at all: a page could open a window and navigate
+  // THAT to a local file. It gets the same guard and no attach exemption,
+  // because nothing has approved a src for it.
+  guest.on('did-create-window', (win: { webContents?: GuardableContents } | undefined) => {
+    const popup = win?.webContents;
+    if (!popup) return;
+    installWebviewNavigationGuard(popup, {
+      allowedRoots: opts.allowedRoots,
+      onBlocked: opts.onBlocked,
+    });
   });
 }
 
