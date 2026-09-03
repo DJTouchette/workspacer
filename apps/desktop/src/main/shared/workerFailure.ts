@@ -207,12 +207,21 @@ export function isCreditBalanceFailureText(text: string, errorCode?: string | nu
  * On a Claude subscription this message almost never means an empty balance —
  * it means the CLI's cached credentials are stale or point at an API-key/
  * console-credits identity instead of the subscription.
+ *
+ * The last sentence is not a hedge. The CLI writes the IDENTICAL row whatever
+ * the auth source is, and nothing on the wire says which one is in play (the
+ * transcript row carries `isApiErrorMessage`, an `error` class and an
+ * `apiErrorStatus`, and none of them names the credential type). So for a user
+ * signed in with an API key or console billing the balance really is empty,
+ * /logout and /login cannot help, and the remedy has to say so itself rather
+ * than send them round a login loop.
  */
 export const CREDIT_BALANCE_REMEDY =
   'Claude Code reported "Credit balance is too low". On a subscription this usually means the ' +
   'Claude Code CLI is signed in with stale or wrong credentials. Open a terminal, run claude, ' +
   'then type /logout and then /login, and sign in with your subscription account. Then retry ' +
-  'this agent.';
+  'this agent. If Claude Code is signed in with an API key or console billing rather than a ' +
+  'subscription, this is a real empty balance instead: add credits in the Anthropic Console.';
 
 /** The remedy's own command line, offered as a copyable fallback anywhere a
  *  one-click "open a terminal running claude" affordance isn't wired up. */

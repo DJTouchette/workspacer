@@ -12,6 +12,7 @@ import {
   workerFailureReason,
   isCreditBalanceTooLowError,
   isCreditBalanceFailureText,
+  CREDIT_BALANCE_REMEDY,
 } from './workerFailure';
 
 interface Fixture {
@@ -243,5 +244,22 @@ describe('isCreditBalanceTooLowError', () => {
   it('does not match generic mentions of "balance" or "credit" alone', () => {
     expect(isCreditBalanceTooLowError('please balance the tool calls with results')).toBe(false);
     expect(isCreditBalanceTooLowError('give the user credit for finding this')).toBe(false);
+  });
+});
+
+describe('CREDIT_BALANCE_REMEDY', () => {
+  it('covers the API-key / console-billing user, for whom re-login cannot help', () => {
+    // The CLI writes the IDENTICAL row whatever the auth source is, and nothing
+    // on the wire names the credential type — so a console-billed user with a
+    // genuinely empty balance reads this same text, and must not be sent round
+    // a /logout, /login loop that cannot fix anything.
+    expect(CREDIT_BALANCE_REMEDY).toContain('API key');
+    expect(CREDIT_BALANCE_REMEDY).toContain('Anthropic Console');
+  });
+
+  it('leads with the subscription case, which is the common one', () => {
+    expect(CREDIT_BALANCE_REMEDY.indexOf('subscription')).toBeLessThan(
+      CREDIT_BALANCE_REMEDY.indexOf('API key'),
+    );
   });
 });
