@@ -108,11 +108,18 @@ export interface SrcVerdict {
 const ALLOWED: SrcVerdict = { allowed: true };
 const deny = (reason: string): SrcVerdict => ({ allowed: false, reason });
 
-/** True for the two schemes that browse the network. */
-function isRemoteScheme(url: string): boolean {
+/**
+ * True when two URL strings name the same resource once WHATWG-normalised.
+ *
+ * Chromium reports the NORMALISED href, so a byte comparison against the
+ * spelling a `<webview>` tag asked for misses `file:///a/../b.html`, a `%2e%2e`
+ * segment, an uppercase `FILE:///` scheme and an unencoded space. Fails closed
+ * on anything unparseable: two URLs we cannot compare are not the same URL.
+ */
+export function sameUrl(a: string, b: string): boolean {
+  if (a === b) return true;
   try {
-    const p = new URL(url).protocol;
-    return p === 'http:' || p === 'https:';
+    return new URL(a).href === new URL(b).href;
   } catch {
     return false;
   }
@@ -269,20 +276,40 @@ export interface WebviewGuardOptions {
   allowedRoots: () => string[];
   /** Told about every refusal, so the UI can show it instead of a blank pane. */
   onBlocked?: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void;
-  /** The src the guest attached with: the page a first navigation comes FROM. */
-  initialUrl?: string;
+  /**
+   * Every spelling of the src the ATTACH door already approved for this guest.
+   *
+   * The first load a guest performs has NO committed page to judge it by, and
+   * the rule below refuses a file: navigation from anything that is not itself
+   * an allowed file: page. Without this, the pane's whole reason for existing
+   * (`<webview src="file:///.../mockup.html">`) would be refused by its own
+   * second door. It is a one-shot: consumed by the first navigation the guest
+   * reports, so a page cannot replay it afterwards.
+   */
+  approvedAttachSrcs?: string[];
 }
 
 /**
  * Confine a guest <webview> to what `checkWebviewSrc` permits, for the lifetime of
  * the webview, plus one rule that only makes sense once file: is allowed at all:
  *
- *   **a remote page may never navigate the pane to a local file.** An allowed
- *   file: target is still refused when the page doing the navigating is on http(s).
- *   Otherwise any web page the user visits could redirect the pane onto a file it
- *   guessed the path of and read it back through the same document.
- *   file: → file: is allowed when the TARGET also passes; file: → http(s) is
- *   allowed as before.
+ *   **only a local page may navigate the pane to a local file.** An allowed
+ *   file: target is refused unless the page doing the navigating is ITSELF an
+ *   allowed file: page. Otherwise any web page the user visits could redirect
+ *   the pane onto a file it guessed the path of and read it back through the
+ *   same document. file: to file: is allowed when the TARGET also passes;
+ *   file: to http(s) is allowed as before.
+ *
+ *   The rule is stated as an allow-list on the SOURCE, not a deny-list of
+ *   remote schemes, because the deny-list shape leaked twice. `about:blank` is
+ *   not http(s) but INHERITS its initiator's origin, so an https page could
+ *   route through `window.open('about:blank')` and navigate the result to
+ *   `file:`; and a guest whose `getURL()` is still `''` (no committed document)
+ *   is not remote either, so an empty-string source was a standing bypass on
+ *   both the navigation door and the window-open door. Neither is an allowed
+ *   file: URL, so both are refused now. The one source that legitimately has no
+ *   committed page is the attach load itself, and that is what
+ *   `approvedAttachSrcs` is for: the attach door has already checked it.
  *
  * The subtlety is which event to hang this on. `will-navigate` is cancelable
  * but only fires for navigations the GUEST PAGE starts (a link click,
@@ -301,7 +328,7 @@ export function installWebviewNavigationGuard(
   opts: WebviewGuardOptions = { allowedRoots: () => [] },
 ): void {
   /** Last URL we saw the guest settle on, when it cannot tell us itself. */
-  let lastKnownUrl = opts.initialUrl ?? '';
+  let lastKnownUrl = '';
   const currentUrl = (): string => {
     try {
       return guest.getURL?.() || lastKnownUrl;
@@ -310,11 +337,27 @@ export function installWebviewNavigationGuard(
     }
   };
 
+  /** The attach src(es) this guest's FIRST load may be, still unconsumed. Only
+   *  file: spellings are kept: every other scheme is judged by the src policy
+   *  alone and needs no exemption. */
+  let pendingAttachSrcs = (opts.approvedAttachSrcs ?? []).filter((s) => isFileUrl(s));
+
+  /** Whether the page currently committed in the guest may open a local file.
+   *  ONLY an allowed file: page may. A guest with no committed document
+   *  (`getURL()` is `''`) and an `about:blank` shell both answer false. */
+  const sourceMayOpenALocalFile = (): boolean => {
+    const from = currentUrl();
+    if (!isFileUrl(from)) return false;
+    return checkWebviewSrc(from, opts.allowedRoots()).allowed;
+  };
+
   /** The full decision for one navigation: the src policy, then the origin rule. */
   const verdictFor = (url: string): SrcVerdict => {
     const v = checkWebviewSrc(url, opts.allowedRoots());
     if (!v.allowed) return v;
-    if (isFileUrl(url) && isRemoteScheme(currentUrl())) {
+    if (!isFileUrl(url)) return v;
+    if (pendingAttachSrcs.some((s) => sameUrl(url, s))) return v;
+    if (!sourceMayOpenALocalFile()) {
       return deny('a web page may not open a local file in this pane');
     }
     return v;
@@ -336,6 +379,9 @@ export function installWebviewNavigationGuard(
   guest.on('did-start-navigation', (details: { url: string; isMainFrame: boolean }) => {
     if (!details.isMainFrame) return;
     const v = verdictFor(details.url);
+    // The attach load has started, so the exemption has done its one job. Every
+    // later navigation is judged by the committed page alone.
+    pendingAttachSrcs = [];
     if (v.allowed) {
       lastKnownUrl = details.url;
       return;
@@ -375,6 +421,11 @@ export interface GuardHostContents {
  * hand at two call sites would have reopened exactly that.
  */
 export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuardOptions): void {
+  /** The src the attach door most recently APPROVED, handed to the navigation
+   *  guard the matching `did-attach-webview` installs. Electron fires the two
+   *  events as a pair, in that order, for one guest. Cleared on every attach so
+   *  a REFUSED one can never leave a stale exemption behind for the next guest. */
+  let approvedAttachSrcs: string[] = [];
   host.on(
     'will-attach-webview',
     (
@@ -383,8 +434,12 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
       params: { src?: string },
     ) => {
       applySafeWebviewPreferences(webPreferences);
+      approvedAttachSrcs = [];
       const verdict = checkWebviewSrc(params.src, opts.allowedRoots());
-      if (verdict.allowed) return;
+      if (verdict.allowed) {
+        if (params.src) approvedAttachSrcs = [params.src];
+        return;
+      }
       console.warn(`[main] blocking <webview> attach with disallowed src: ${params.src}`);
       opts.onBlocked?.({
         url: params.src ?? '',
@@ -395,6 +450,7 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
     },
   );
   host.on('did-attach-webview', (_event: unknown, guest: GuardableContents) => {
-    installWebviewNavigationGuard(guest, opts);
+    installWebviewNavigationGuard(guest, { ...opts, approvedAttachSrcs });
+    approvedAttachSrcs = [];
   });
 }

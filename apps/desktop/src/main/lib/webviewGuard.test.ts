@@ -460,6 +460,82 @@ describe('installWebviewNavigationGuard', () => {
     expect(guest.openHandler!({ url: inside() })).toEqual({ action: 'deny' });
   });
 
+  // ── The source of a file: navigation is an ALLOW-list, not a deny-list ──
+  //
+  // Keying the rule on "is the current page http(s)" left two sources that are
+  // not remote and are not allowed local pages either: `about:blank`, which
+  // inherits its initiator's origin, and a guest with no committed document at
+  // all. Both were proven ALLOW against the compiled guard before this.
+
+  it('blocks about:blank from navigating to a local file, on both doors', () => {
+    const guest = fakeGuest('about:blank');
+    const blocked: string[] = [];
+    installWebviewNavigationGuard(guest, {
+      allowedRoots: () => roots,
+      onBlocked: (i) => blocked.push(i.reason),
+    });
+
+    loadUrl(guest, inside());
+    expect(guest.stop).toHaveBeenCalledTimes(1);
+    expect(blocked[0]).toMatch(/may not open a local file/);
+
+    expect(guest.openHandler!({ url: inside() })).toEqual({ action: 'deny' });
+  });
+
+  it('blocks a guest whose getURL() is empty from reaching a local file', () => {
+    const guest = fakeGuest(''); // attached with no src, nothing committed yet
+    installWebviewNavigationGuard(guest, { allowedRoots: () => roots });
+
+    loadUrl(guest, inside());
+    expect(guest.stop).toHaveBeenCalledTimes(1);
+    expect(guest.openHandler!({ url: inside() })).toEqual({ action: 'deny' });
+  });
+
+  it('lets the attach load itself through, once, and only for that src', () => {
+    const guest = fakeGuest(''); // the initial load has no committed page
+    installWebviewNavigationGuard(guest, {
+      allowedRoots: () => roots,
+      approvedAttachSrcs: [inside()],
+    });
+
+    loadUrl(guest, inside());
+    expect(guest.stop).not.toHaveBeenCalled();
+
+    // Consumed. The guest is now ON that local page, so a second load of it is
+    // allowed by the SOURCE rule rather than by the exemption; browsing away to
+    // the web is what shows the exemption did not survive.
+    loadUrl(guest, 'https://example.com/');
+    loadUrl(guest, inside());
+    expect(guest.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not extend the attach exemption to a DIFFERENT local file', () => {
+    const guest = fakeGuest('');
+    installWebviewNavigationGuard(guest, {
+      allowedRoots: () => roots,
+      approvedAttachSrcs: [inside()],
+    });
+
+    loadUrl(guest, alsoInside());
+    expect(guest.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('matches the attach src through the spellings Chromium normalises away', () => {
+    for (const spelling of [
+      fileUrl(path.join(root, 'design')) + '/../design/index.html',
+      fileUrl(path.join(root, 'design')) + '/%2e%2e/design/index.html',
+      inside().replace(/^file:/, 'FILE:'),
+    ]) {
+      const guest = fakeGuest('');
+      installWebviewNavigationGuard(guest, {
+        allowedRoots: () => roots,
+        approvedAttachSrcs: [spelling],
+      });
+      loadUrl(guest, inside()); // what Chromium actually reports
+      expect(guest.stop, spelling).not.toHaveBeenCalled();
+    }
+  });
+
   it('survives a guest with no setWindowOpenHandler / getURL', () => {
     const bare = new EventEmitter() as EventEmitter & { stop: () => void; loadURL: () => void };
     bare.stop = vi.fn();
@@ -508,6 +584,58 @@ describe('installWebviewGuards', () => {
     expect(seen[0].url).toBe('file:///etc/passwd');
     expect(seen[0].phase).toBe('attach');
     expect(seen[0].reason).toBeTruthy();
+  });
+
+  /**
+   * The pane's whole reason for existing: `<webview src="file:///.../x.html">`.
+   * The attach door approves it, and the navigation door has to let the load
+   * that attach started through even though nothing is committed yet. Wiring the
+   * two through one call is what makes that possible without an exemption a page
+   * could ask for itself.
+   */
+  it('lets an APPROVED file: attach load through the navigation door too', () => {
+    const host = fakeHost();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const url = fileUrl(path.join(root, 'design', 'index.html'));
+
+    expect(attach(host, url).blocked).toBe(false);
+
+    const guest = new EventEmitter() as EventEmitter & {
+      stop: ReturnType<typeof vi.fn>;
+      loadURL: ReturnType<typeof vi.fn>;
+      getURL: () => string;
+    };
+    guest.stop = vi.fn();
+    guest.loadURL = vi.fn();
+    guest.getURL = () => ''; // nothing committed: this IS the attach load
+    host.emit('did-attach-webview', {}, guest);
+    guest.emit('did-start-navigation', { url, isMainFrame: true });
+
+    expect(guest.stop).not.toHaveBeenCalled();
+  });
+
+  it('leaves no attach exemption behind when the attach was REFUSED', () => {
+    const host = fakeHost();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const allowed = fileUrl(path.join(root, 'design', 'index.html'));
+
+    // A refused attach must not let the NEXT guest replay the previously
+    // approved src as its own initial load.
+    expect(attach(host, allowed).blocked).toBe(false);
+    expect(attach(host, fileUrl(path.join(outside, 'evil.html'))).blocked).toBe(true);
+
+    const guest = new EventEmitter() as EventEmitter & {
+      stop: ReturnType<typeof vi.fn>;
+      loadURL: ReturnType<typeof vi.fn>;
+      getURL: () => string;
+    };
+    guest.stop = vi.fn();
+    guest.loadURL = vi.fn();
+    guest.getURL = () => '';
+    host.emit('did-attach-webview', {}, guest);
+    guest.emit('did-start-navigation', { url: allowed, isMainFrame: true });
+
+    expect(guest.stop).toHaveBeenCalledTimes(1);
   });
 
   /**
