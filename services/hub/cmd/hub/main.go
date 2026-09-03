@@ -678,11 +678,20 @@ func main() {
 	go usage.run(ctx, quiescence.DefaultSampleInterval)
 
 	// One catalog, two readers: routing.Service validates the matrix's model ids
-	// against it at load, and routing.select reads its LIVE availability
+	// against it ON ITS TICK, and routing.select reads its LIVE availability
 	// projection before every decision. Held in a variable rather than
 	// constructed inline because those two readers must see the same probe
 	// answers — a second catalog would boot the same CLIs again and could
 	// disagree with the first about whether a provider is there.
+	//
+	// ON THE TICK, NOT HERE, AND THIS LINE IS WHY. This is ~500 lines above
+	// ListenAndServe, and the catalog's claude half is `claude.listModels` asked
+	// over the bus THAT LISTENER SERVES, answered by a desktop that only
+	// connects once /health returns. A synchronous check here therefore always
+	// spent the bus client's full readiness window and failed: 5s added to
+	// every boot, which is exactly what put "the control plane is slow to start"
+	// on screen. routing.New now installs the matrix and asks nothing; the first
+	// tick of Run does the check, at the first moment it can be answered.
 	routingCat := newRoutingCatalog(*claudemonURL, self)
 	routingSvc := routing.New(*routingFile, routingCat)
 	go routingSvc.Run(ctx, routing.DefaultTickEvery)

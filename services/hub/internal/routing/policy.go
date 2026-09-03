@@ -699,6 +699,12 @@ type MatrixInfo struct {
 	// decision made against a matrix with unresolved issues is still a
 	// decision, and the count is how a reader learns to go and look.
 	Issues int `json:"issues"`
+	// CatalogChecked is whether the model ids in that matrix had been checked
+	// against the installed CLIs when this decision was taken. It rides along
+	// because `issues: 0` means two different things without it: a matrix that
+	// was checked and is clean, and one whose check has not run yet, which is
+	// the state every decision in the first tick after a boot is taken in.
+	CatalogChecked bool `json:"catalogChecked"`
 }
 
 // Select is the whole of the spec's §30, in the order §30 gives.
@@ -727,7 +733,7 @@ func Select(m *Matrix, snap limits.Snapshot, snapErr error, avail ProviderAvaila
 		d.Reason = []string{"no routing matrix is loaded at all — this hub cannot answer a routing question"}
 		return d
 	}
-	d.Matrix = MatrixInfo{Source: m.Source, Version: m.Version, Issues: len(m.Issues)}
+	d.Matrix = MatrixInfo{Source: m.Source, Version: m.Version, Issues: len(m.Issues), CatalogChecked: m.CatalogChecked}
 
 	// 1. Profile.
 	profile, fellBack := m.ActiveProfileName()

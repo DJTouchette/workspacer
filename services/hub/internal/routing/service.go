@@ -59,6 +59,26 @@ type Service struct {
 	// readErrLogged keeps an unreadable file from logging on every tick; it
 	// resets as soon as a read succeeds.
 	readErrLogged bool
+
+	// baseIssues are the PURE load-time findings for the live matrix, kept apart
+	// from the catalog's so a repeated catalog check rebuilds Matrix.Issues
+	// rather than piling a second copy of the same finding onto it.
+	baseIssues []Issue
+	// catalogIssues is the last catalog check's verdict, kept so a retry that
+	// says the same thing does not say it again on every tick.
+	catalogIssues []Issue
+	// catalogPending is "the live matrix still owes the catalog a check": true
+	// from the moment a matrix is installed until a check runs in which every
+	// provider it names actually answered.
+	catalogPending bool
+	// catalogChecking is the in-flight guard, because the check itself runs with
+	// the lock RELEASED (see ValidateCatalog).
+	catalogChecking bool
+	catalogTriedAt  time.Time
+	haveCatalogTry  bool
+	// retryEvery bounds how often a pending check is retried. A field rather
+	// than a constant so a test can drive the retry without waiting on it.
+	retryEvery time.Duration
 }
 
 // New builds the service: seed the shipped default if this machine has never
@@ -67,24 +87,44 @@ type Service struct {
 // path "" disables the file entirely and runs on the compiled-in defaults, which
 // is what tests and a read-only deployment want. cat may be nil, in which case
 // model ids go unvalidated and that is said out loud once.
+//
+// NEW ASKS THE CATALOG NOTHING, AND THAT IS THE POINT. The hub does not bind its
+// HTTP listener until this returns, and the catalog's claude half is answered
+// over that listener's own bus by a desktop that only connects once /health
+// answers, so a probe here is a question that cannot be answered until the
+// question has been given up on. It was not merely useless: it cost the whole
+// bus-client readiness window (5s) on EVERY boot, which is the "control plane is
+// slow to start" banner the desktop showed. The check runs on the tick instead
+// (see ValidateCatalog and Run), which is the first moment it can succeed.
 func New(path string, cat Catalog) *Service {
-	s := &Service{path: path, cat: cat}
+	s := &Service{path: path, cat: cat, retryEvery: DefaultCatalogRetryEvery}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seedLocked()
-	// Boot is just the first reload: same read, same parse, same merge, same
-	// validation, one code path.
+	// Boot is just the first reload: same read, same parse, same merge, one code
+	// path.
 	if !s.reloadIfChangedLocked() && s.matrix == nil {
 		// No file, or a file that could not be read: run on the defaults.
 		if m, err := Defaults(); err == nil {
 			m.fallback, _ = Defaults()
-			s.matrix = m
+			s.installLocked(m)
 			log.Printf("[routing] running on the compiled-in default matrix (no usable %s)", s.describePath())
 		} else {
 			log.Printf("[routing] the compiled-in default matrix does not load: %v", err)
 		}
 	}
 	return s
+}
+
+// installLocked makes m the live matrix and re-arms the catalog check: a
+// document nobody has checked yet is exactly what a freshly installed one is,
+// whether it arrived at boot or from a hand edit ten minutes in.
+func (s *Service) installLocked(m *Matrix) {
+	s.matrix = m
+	s.baseIssues = append([]Issue(nil), m.Issues...)
+	s.catalogIssues = nil
+	s.catalogPending = true
+	s.haveCatalogTry = false
 }
 
 func (s *Service) describePath() string {
@@ -160,8 +200,7 @@ func (s *Service) reloadIfChangedLocked() bool {
 		}
 		return false
 	}
-	m.Issues = append(m.Issues, ValidateAgainstCatalog(m, s.cat)...)
-	s.matrix = m
+	s.installLocked(m)
 	s.report(m)
 	return true
 }
@@ -200,6 +239,8 @@ func (s *Service) report(m *Matrix) {
 	}
 	if s.cat == nil {
 		log.Printf("[routing] no model catalog available — model ids in %s were NOT checked against the installed CLIs", where)
+	} else {
+		log.Printf("[routing] model ids in %s are checked against the installed CLIs on the next tick, not now: the catalog is asked over the bus, and at boot the bus is not listening yet", where)
 	}
 }
 
@@ -254,8 +295,116 @@ func (s *Service) writeMarker(marker string) {
 	}
 }
 
-// Run polls the file until ctx ends. The hub's wiring owns the goroutine; this
-// is here so the wiring is one line and the tick has one implementation.
+// DefaultCatalogRetryEvery bounds how often a catalog check that could NOT get
+// every provider's answer is tried again.
+//
+// The retry exists because "the daemon was down" and "there was no peer to ask"
+// are both states somebody is expected to fix while the hub runs, exactly as
+// cmd/hub's catalog cache says. The bound exists because asking costs a provider
+// CLI boot: the catalog caches an unanswered provider for minutes, so a per-tick
+// retry would mostly re-read a cache, and this keeps even the miss cheap.
+const DefaultCatalogRetryEvery = 5 * time.Minute
+
+// CatalogPending reports whether the live matrix still owes the catalog a check
+// (either it has had none, or the last one ran while a provider it names could
+// not answer).
+func (s *Service) CatalogPending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.catalogPending
+}
+
+// ValidateCatalog checks the live matrix's model ids against the injected
+// catalog and folds the findings into Matrix.Issues, and reports whether a check
+// actually ran.
+//
+// This is the half of the load that New deliberately does not do. It is separate
+// because it does I/O and the boot path cannot afford it (see New), and it is
+// idempotent because it may run more than once against the same document: the
+// findings are rebuilt from the load-time ones every time rather than appended
+// to what is already there.
+//
+// TWO THINGS ARE DELIBERATE ABOUT THE LOCKING. The probe runs with the mutex
+// RELEASED, because a provider CLI can take twenty seconds to answer and
+// routing.select reads Matrix() on the decision path: a check must never hold a
+// decision open. And the result is published as a REPLACEMENT matrix rather than
+// by appending to the live one, because a decision in flight is reading the
+// Issues slice of the matrix it was handed.
+func (s *Service) ValidateCatalog() bool {
+	s.mu.Lock()
+	m, cat, base := s.matrix, s.cat, s.baseIssues
+	skip := !s.catalogPending || m == nil || cat == nil || s.catalogChecking ||
+		(s.haveCatalogTry && s.retryEvery > 0 && time.Since(s.catalogTriedAt) < s.retryEvery)
+	if skip {
+		s.mu.Unlock()
+		return false
+	}
+	s.catalogChecking = true
+	s.catalogTriedAt, s.haveCatalogTry = time.Now(), true
+	s.mu.Unlock()
+
+	probe := &answerCounting{cat: cat}
+	found := ValidateAgainstCatalog(m, probe)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.catalogChecking = false
+	if s.matrix != m {
+		// The file was reloaded while we were asking. This verdict is about a
+		// document that is no longer live, and the one that replaced it has its
+		// own pending check.
+		return false
+	}
+	next := *m
+	next.Issues = make([]Issue, 0, len(base)+len(found))
+	next.Issues = append(next.Issues, base...)
+	next.Issues = append(next.Issues, found...)
+	next.CatalogChecked = true
+	s.matrix = &next
+	// A provider that could not answer says nothing about whether the matrix is
+	// right, so it leaves the check owed rather than settled.
+	s.catalogPending = probe.unanswered
+	if !sameIssues(s.catalogIssues, found) {
+		for _, iss := range found {
+			log.Printf("[routing] %s", iss)
+		}
+	}
+	s.catalogIssues = found
+	return true
+}
+
+// answerCounting wraps a Catalog to record whether any provider failed to give a
+// usable answer. It is the only way to tell "checked" from "checked what it
+// could": ValidateAgainstCatalog skips a provider it cannot get an answer for,
+// by design, and skipping silently is what would make a pending check look done.
+type answerCounting struct {
+	cat        Catalog
+	unanswered bool
+}
+
+func (a *answerCounting) Models(provider string) ([]CatalogModel, error) {
+	models, err := a.cat.Models(provider)
+	if err != nil || len(models) == 0 {
+		a.unanswered = true
+	}
+	return models, err
+}
+
+func sameIssues(a, b []Issue) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Run polls the file until ctx ends, and runs the catalog check the boot path
+// hands it. The hub's wiring owns the goroutine; this is here so the wiring is
+// one line and the tick has one implementation.
 func (s *Service) Run(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		every = DefaultTickEvery
@@ -268,6 +417,12 @@ func (s *Service) Run(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			s.ReloadIfChanged()
+			// On the FIRST tick this is the boot-time catalog validation,
+			// arriving at the first moment it can be answered: the listener is
+			// up and the desktop, which is what answers claude.listModels, has
+			// had its chance to connect. Afterwards it is a no-op unless a hand
+			// edit re-armed it or a provider could not be reached.
+			s.ValidateCatalog()
 		}
 	}
 }

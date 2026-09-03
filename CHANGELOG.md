@@ -7,6 +7,22 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **The hub no longer takes five seconds to start, so "the control plane is
+  slow to start" stops appearing on every boot.** The routing layer validated
+  the matrix's model ids against the live model catalog inside `routing.New`,
+  which runs before the hub binds its HTTP listener, and the catalog's Claude
+  half is asked over the bus that listener serves and answered by a desktop
+  that only connects once `/health` returns. The check could therefore never be
+  answered, and it spent the bus client's full five-second readiness window
+  failing on every start. It now runs on the routing service's first tick, at
+  the first moment it can succeed, and a decision now records whether the
+  check had run yet, so a matrix nobody has checked is not read as a clean one. Measured on a scratch port
+  with the shipped matrix in place, the hub answers `/health` in 0.015s instead
+  of 5.04s.
+
 ## [0.162.0] - 2026-09-02
 
 ### Added

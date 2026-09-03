@@ -377,6 +377,13 @@ type Matrix struct {
 	Unrecognized []string `yaml:"-" json:"unrecognized"`
 	// Issues are the validation findings. See Issue.
 	Issues []Issue `yaml:"-" json:"issues"`
+	// CatalogChecked reports whether ValidateAgainstCatalog has run against THIS
+	// matrix yet, and it is here so that "no issues" can be told apart from "not
+	// asked yet". The catalog half of validation is deferred off the boot path
+	// (see Service.ValidateCatalog: at boot the bus that answers it is not
+	// listening), so between a load and the next tick the model ids in Issues
+	// are the pure ones only.
+	CatalogChecked bool `yaml:"-" json:"catalogChecked"`
 
 	// fallback is the pure compiled-in matrix, used when the user's document
 	// points a role or the active profile at something that does not resolve.
