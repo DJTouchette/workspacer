@@ -40,7 +40,11 @@ import { requestSettingsSection } from './lib/settingsBus';
 import type { UpdateStatus } from './types/electron';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
-import { BROWSER_OPEN_EVENT, type BrowserOpenTarget } from './lib/browserBus';
+import {
+  BROWSER_OPEN_EVENT,
+  markdownPathFromFileUrl,
+  type BrowserOpenTarget,
+} from './lib/browserBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
@@ -980,6 +984,14 @@ function App() {
     const handler = (e: Event) => {
       const t = (e as CustomEvent).detail as BrowserOpenTarget | undefined;
       if (!t?.url) return;
+      // Chromium downloads markdown over file: rather than rendering it, so a
+      // .md target goes to the preview pane, the surface that CAN show it.
+      const mdPath = markdownPathFromFileUrl(t.url);
+      if (mdPath) {
+        const tabId = openMarkdownPreview({ path: mdPath });
+        if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+        return;
+      }
       const newId = addTab(
         'browser',
         t.title || 'Browser',
@@ -992,7 +1004,7 @@ function App() {
     };
     window.addEventListener(BROWSER_OPEN_EVENT, handler);
     return () => window.removeEventListener(BROWSER_OPEN_EVENT, handler);
-  }, [addTab, insertPosition, scrollToTab]);
+  }, [addTab, insertPosition, scrollToTab, openMarkdownPreview]);
 
   const openSettings = useCallback(() => {
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
@@ -2433,6 +2445,15 @@ function App() {
       // no url slot) — go straight to the config-level opener, which is what
       // the pane menu's own browser entries use.
       if (paneType === 'browser' && opts?.url) {
+        // Same markdown detour as the FileLink path above: an agent's
+        // open_browser on a .md file lands in the preview pane, not a webview
+        // that would only offer to download it.
+        const mdPath = markdownPathFromFileUrl(opts.url);
+        if (mdPath) {
+          const tabId = openMarkdownPreview({ path: mdPath, cwd: opts?.cwd });
+          if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+          return;
+        }
         addTabWithConfig('browser', undefined, undefined, opts.url, false, opts?.cwd);
         return;
       }

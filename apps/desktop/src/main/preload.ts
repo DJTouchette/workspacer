@@ -613,6 +613,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.FACADE_OPEN_TERMINAL, handler);
     return () => ipcRenderer.removeListener(IPC.FACADE_OPEN_TERMINAL, handler);
   },
+  /** The webview guard refused a src or a navigation. Pushed so a pane that is
+   *  blank ON PURPOSE can say so: a prevented attach fires no did-fail-load. */
+  onWebviewBlocked: (
+    callback: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void,
+  ): (() => void) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      info: { url: string; reason: string; phase: 'attach' | 'navigate' },
+    ) => callback(info);
+    ipcRenderer.on(IPC.WEBVIEW_BLOCKED, handler);
+    return () => ipcRenderer.removeListener(IPC.WEBVIEW_BLOCKED, handler);
+  },
   getRemoteInfo: (): Promise<{
     enabled: boolean;
     token: string;

@@ -170,6 +170,7 @@ const KNOWN_STUBS = [
   'listLiveClaudeSessionIds', // boot reconcile/auto-respawn is desktop-owned; null on web
   'keepWarmHeartbeats', // keep-warm log lives in the desktop's claudemon; [] on web
   'onInAppNotification', // main-process notification mirror; web ingests notify.post bus events instead
+  'onWebviewBlocked', // <webview> attach guard is desktop-only; the web build frames with <iframe>
   'notifyEscalate', // browser Notification API on web (no Electron main to escalate to)
   'onNotificationActivate', // click-through for browser-API escalations (web-local, no bus RPC)
   'getPathForFile', // Electron webUtils; a browser file has no host path → ''

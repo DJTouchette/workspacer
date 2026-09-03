@@ -1498,6 +1498,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Main-process notification mirror; web builds still get plugin/bus
     // notifications via onHubEvent's `notify.post` path.
     onInAppNotification: () => () => {},
+    // The webview guard is a main-process rule about <webview>; the web build
+    // frames its guests with <iframe> and never hears from it.
+    onWebviewBlocked: () => () => {},
     // Escalation parity via the browser Notification API: a hidden tab still
     // taps the user on the shoulder. Permission is requested lazily on the
     // first escalation attempt; clicks focus the tab and re-enter the

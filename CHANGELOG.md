@@ -10,6 +10,22 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- **The built-in browser pane can now open a local file, and a refused URL says
+  so instead of showing an empty rectangle.** Every `open_browser` call on a
+  `file://` URL, and every "Open in browser" on a local HTML file, used to
+  produce a blank pane with no message at all: the main process refused the
+  webview before a page existed, so nothing was left to report a failure. A
+  local file is now allowed when it sits under the user's home directory or a
+  configured project directory, resolves to a real file rather than a directory
+  or a symlink pointing out of those roots, and carries an extension a browser
+  can render (html, htm, svg, png, jpg, jpeg, gif, webp, txt, json, css, js,
+  pdf). Everything else is still refused, including a `file://` URL with a
+  remote host, a path outside those roots, and any attempt by a web page to
+  navigate the pane onto a local file. A refusal now reaches the pane as a
+  banner reading "Blocked:" and the reason, so a blank pane is never the answer
+  again. Markdown is routed to the markdown preview pane, which can actually
+  render it, rather than to a browser that would only offer to download it.
+
 - **A "Credit balance is too low" error from Claude Code now comes with the
   actual fix, not just the raw API text.** On a subscription account this
   message almost always means the Claude Code CLI is signed in with stale or

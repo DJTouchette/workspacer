@@ -447,6 +447,12 @@ export interface ElectronAPI {
       parentSessionId?: string;
     }) => void,
   ) => () => void;
+  /** The main-process webview guard refused a src or a navigation, so the pane
+   *  is blank on purpose. Desktop only: the web build frames with <iframe> and
+   *  has no such guard. */
+  onWebviewBlocked: (
+    callback: (info: { url: string; reason: string; phase: 'attach' | 'navigate' }) => void,
+  ) => () => void;
   getRemoteInfo: () => Promise<{
     enabled: boolean;
     token: string;

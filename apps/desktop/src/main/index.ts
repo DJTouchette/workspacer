@@ -41,12 +41,8 @@ import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
 import { backfillAnalyticsFromTranscripts } from './services/analyticsBackfill';
 import { appIcon } from './lib/appIcon';
-import {
-  applySafeWebviewPreferences,
-  installWebviewNavigationGuard,
-  isWebviewSrcAllowed,
-  type MutableWebPreferences,
-} from './lib/webviewGuard';
+import { installWebviewGuards } from './lib/webviewGuard';
+import { webviewFileRoots } from './lib/webviewRoots';
 import { IPC } from './shared/ipcChannels';
 import { initCustomFonts, customFontsCss } from './lib/customFonts';
 
@@ -328,17 +324,20 @@ function createWindow(): void {
   // web preferences (no preload / nodeIntegration; contextIsolation on) so an
   // injected privileged webview can't reach the main process, and confine its
   // src — and every later navigation, BrowserPane's loadURL() included — to
-  // http(s)/about so it can't load file:// or other local-resource schemes off
-  // the host.
-  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    applySafeWebviewPreferences(webPreferences as unknown as MutableWebPreferences);
-    if (!isWebviewSrcAllowed(params.src)) {
-      console.warn(`[main] blocking <webview> attach with disallowed src: ${params.src}`);
-      event.preventDefault();
-    }
-  });
-  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
-    installWebviewNavigationGuard(guest);
+  // http(s)/about plus local files under webviewFileRoots(). Both doors are
+  // wired by ONE call against ONE roots supplier: giving them separate
+  // allow-lists is how the guard drifted the first time (a72c0787 → 86912a14).
+  //
+  // A refusal is pushed to the renderer as well as logged. A prevented attach
+  // fires no did-fail-load, so without this the pane is simply blank and the
+  // user is told nothing; BrowserPane turns the message into its error banner.
+  const guardedWindow = mainWindow;
+  installWebviewGuards(guardedWindow.webContents, {
+    allowedRoots: webviewFileRoots,
+    onBlocked: (info) => {
+      if (guardedWindow.isDestroyed()) return;
+      guardedWindow.webContents.send(IPC.WEBVIEW_BLOCKED, info);
+    },
   });
 
   registerIpcHandlers(mainWindow);

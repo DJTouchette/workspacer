@@ -8,6 +8,8 @@ import { resolveLeader, resolveMod } from '../lib/shortcuts';
 import { isLayerArmed } from '../lib/layerArmed';
 import { guestHost, guestFramePolicy } from '../lib/guestFrame';
 import GuestFrame from '../components/GuestFrame';
+import { markdownPathFromFileUrl } from '../lib/browserBus';
+import { requestMarkdownPreview } from '../lib/previewBus';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -60,8 +62,10 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
   // stopped/updating). Rendered as an overlay with a retry, cleared on any
   // successful load. See the render-process-gone/did-fail-load handlers.
   const [guestError, setGuestError] = useState<null | {
-    kind: 'crashed' | 'unreachable';
+    kind: 'crashed' | 'unreachable' | 'blocked';
     detail: string;
+    /** Set when the refused target was markdown: the path the preview pane wants. */
+    previewPath?: string;
   }>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
@@ -478,6 +482,30 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
     [isIframe],
   );
 
+  // ── Refusals from the main-process webview guard ──
+  //
+  // A prevented ATTACH destroys the guest before it exists, so no did-fail-load
+  // ever fires and the pane is simply an empty rectangle. This push is the only
+  // signal that the blankness is a decision rather than a bug, and it is what
+  // turns it into the banner below.
+  const ownUrlsRef = useRef<{ start: string; current: string }>({ start: '', current: '' });
+  ownUrlsRef.current = { start: startUrl, current: normalizeUrl(url) };
+  useEffect(() => {
+    const off = window.electronAPI.onWebviewBlocked?.((info) => {
+      const mine = ownUrlsRef.current;
+      // Every pane hears every refusal; only the one that asked for that URL
+      // should claim it.
+      if (info.url !== mine.start && info.url !== mine.current) return;
+      setLoading(false);
+      setGuestError({
+        kind: 'blocked',
+        detail: `Blocked: ${info.reason}`,
+        previewPath: markdownPathFromFileUrl(info.url) ?? undefined,
+      });
+    });
+    return () => off?.();
+  }, []);
+
   const handleGo = useCallback(() => {
     navigate(url);
   }, [url, navigate]);
@@ -863,16 +891,22 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
               }}
             >
               <span style={{ fontSize: '1.6rem', opacity: 0.6 }}>
-                {guestError.kind === 'crashed' ? '\u{1F4A5}' : '\u{1F50C}'}
+                {guestError.kind === 'crashed'
+                  ? '\u{1F4A5}'
+                  : guestError.kind === 'blocked'
+                    ? '\u{1F6AB}'
+                    : '\u{1F50C}'}
               </span>
               <span style={{ fontSize: '0.78rem', color: 'var(--wks-text-secondary)' }}>
-                {appMode
-                  ? guestError.kind === 'crashed'
-                    ? 'This plugin’s UI crashed.'
-                    : 'This plugin’s UI can’t be reached — its sidecar may be stopped or restarting.'
-                  : guestError.kind === 'crashed'
-                    ? 'This page crashed.'
-                    : 'This page can’t be reached.'}
+                {guestError.kind === 'blocked'
+                  ? 'Workspacer blocked this URL.'
+                  : appMode
+                    ? guestError.kind === 'crashed'
+                      ? 'This plugin’s UI crashed.'
+                      : 'This plugin’s UI can’t be reached — its sidecar may be stopped or restarting.'
+                    : guestError.kind === 'crashed'
+                      ? 'This page crashed.'
+                      : 'This page can’t be reached.'}
               </span>
               <span
                 style={{
@@ -883,36 +917,53 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
               >
                 {guestError.detail}
               </span>
-              <button
-                onClick={() => {
-                  setGuestError(null);
-                  const wv = webviewRef.current as any;
-                  try {
-                    if (wv?.loadURL) wv.loadURL(normalizeUrl(url) || startUrl);
-                    else wv?.reload?.();
-                  } catch {
-                    /* webview mid-teardown — the overlay returns on next failure */
-                  }
-                }}
-                style={{
-                  marginTop: 4,
-                  padding: '5px 14px',
-                  fontSize: '0.7rem',
-                  border: '1px solid var(--wks-border-subtle)',
-                  borderRadius: 'var(--wks-radius-md)',
-                  background: 'var(--wks-bg-raised)',
-                  color: 'var(--wks-text-primary)',
-                  cursor: 'pointer',
-                }}
-              >
-                Retry
-              </button>
+              {/* A refusal is a decision, not a transient failure: retrying loads
+                  the same URL into the same guard. The only useful button is the
+                  one that opens the surface which CAN show the target, offered
+                  when the refusal was a markdown file. */}
+              {guestError.kind !== 'blocked' && (
+                <button
+                  onClick={() => {
+                    setGuestError(null);
+                    const wv = webviewRef.current as any;
+                    try {
+                      if (wv?.loadURL) wv.loadURL(normalizeUrl(url) || startUrl);
+                      else wv?.reload?.();
+                    } catch {
+                      /* webview mid-teardown — the overlay returns on next failure */
+                    }
+                  }}
+                  style={GUEST_ERROR_BUTTON}
+                >
+                  Retry
+                </button>
+              )}
+              {guestError.kind === 'blocked' && guestError.previewPath && (
+                <button
+                  onClick={() => requestMarkdownPreview({ path: guestError.previewPath as string })}
+                  style={GUEST_ERROR_BUTTON}
+                >
+                  Open markdown preview
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
     </div>
   );
+};
+
+/** Shared look for the dead-guest overlay's single action button. */
+const GUEST_ERROR_BUTTON: React.CSSProperties = {
+  marginTop: 4,
+  padding: '5px 14px',
+  fontSize: '0.7rem',
+  border: '1px solid var(--wks-border-subtle)',
+  borderRadius: 'var(--wks-radius-md)',
+  background: 'var(--wks-bg-raised)',
+  color: 'var(--wks-text-primary)',
+  cursor: 'pointer',
 };
 
 /** A slim strip above the guest stating what this host cannot do for it. */

@@ -22,6 +22,46 @@ export function requestOpenInBrowser(target: BrowserOpenTarget): void {
   window.dispatchEvent(new CustomEvent(BROWSER_OPEN_EVENT, { detail: target }));
 }
 
+/** The filesystem path a `file://` URL names, or null when `url` is not a local
+ *  file URL. The inverse of `fileUrlFromPath`, and the reason a caller can tell
+ *  a `.md` target apart before handing it to a pane that cannot render one.
+ *
+ *  The Windows arm strips the leading slash from `/C:/x`. A POSIX path may
+ *  legally look like that too; treating it as a drive letter is the lesser
+ *  wrong, since the alternative mangles every real Windows path. */
+export function pathFromFileUrl(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'file:') return null;
+  // Any authority beyond the (already-normalized) localhost is a remote fetch,
+  // not a path on this machine.
+  if (u.host !== '' && u.host !== 'localhost') return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(u.pathname);
+  } catch {
+    return null; // malformed percent-escape
+  }
+  if (!decoded) return null;
+  return /^\/[a-zA-Z]:[\\/]/.test(decoded) ? decoded.slice(1) : decoded;
+}
+
+/**
+ * The path behind a `file://` URL that points at markdown, or null.
+ *
+ * Chromium DOWNLOADS `text/markdown` over `file:` instead of rendering it, so a
+ * markdown target must never reach the browser pane: every place that dispatches
+ * a file: open routes it to the mdpreview pane through this.
+ */
+export function markdownPathFromFileUrl(url: string): string | null {
+  const p = pathFromFileUrl(url);
+  return p && /\.(md|markdown)$/i.test(p) ? p : null;
+}
+
 /** Build a `file://` URL from an absolute filesystem path (Windows or POSIX). */
 export function fileUrlFromPath(absPath: string): string {
   // Normalize Windows backslashes, ensure a leading slash, and encode spaces

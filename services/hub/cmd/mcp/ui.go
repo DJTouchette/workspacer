@@ -84,7 +84,9 @@ func addUiTools(b *build) {
 			return event.New("command.open_pane", uiEventSource, in)
 		})
 	addUiTool(b, authtoken.ScopeTriage, "open_browser",
-		"Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI.",
+		"Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI. "+
+			"A file:// URL works too when it points at a file under the user's home or a configured "+
+			"project directory; a markdown file opens in the preview pane instead.",
 		"command.open_pane",
 		func(in openBrowserIn) event.Envelope {
 			return event.New("command.open_pane", uiEventSource, openPaneIn{PaneType: "browser", URL: in.URL})

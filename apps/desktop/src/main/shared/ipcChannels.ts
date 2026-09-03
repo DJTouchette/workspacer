@@ -51,6 +51,12 @@ export const IPC = {
   // a VISIBLE terminal pane running a command — push it to the renderer to open.
   FACADE_OPEN_TERMINAL: 'terminal:facade-open', // push (main → renderer)
 
+  // ── Browser pane ──
+  // The webview guard refused an attach or a navigation. A prevented ATTACH
+  // fires no did-fail-load in the guest (there is no guest), so this push is the
+  // only way BrowserPane learns the pane is blank on purpose.
+  WEBVIEW_BLOCKED: 'webview:blocked', // push (main → renderer)
+
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',
   CONFIG_CHANGED: 'config:changed', // push (main → renderer)
