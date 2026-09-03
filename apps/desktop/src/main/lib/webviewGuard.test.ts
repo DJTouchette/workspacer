@@ -886,16 +886,7 @@ describe('installWebviewGuards', () => {
     expect(guest.stop).not.toHaveBeenCalled();
   });
 
-  it('leaves no attach exemption behind when the attach was REFUSED', () => {
-    const host = fakeHost();
-    installWebviewGuards(host, { allowedRoots: () => roots });
-    const allowed = fileUrl(path.join(root, 'design', 'index.html'));
-
-    // A refused attach must not let the NEXT guest replay the previously
-    // approved src as its own initial load.
-    expect(attach(host, allowed).blocked).toBe(false);
-    expect(attach(host, fileUrl(path.join(outside, 'evil.html'))).blocked).toBe(true);
-
+  function makeGuest() {
     const guest = new EventEmitter() as EventEmitter & {
       stop: ReturnType<typeof vi.fn>;
       loadURL: ReturnType<typeof vi.fn>;
@@ -904,10 +895,66 @@ describe('installWebviewGuards', () => {
     guest.stop = vi.fn();
     guest.loadURL = vi.fn();
     guest.getURL = () => '';
-    host.emit('did-attach-webview', {}, guest);
-    guest.emit('did-start-navigation', { url: allowed, isMainFrame: true });
+    return guest;
+  }
 
-    expect(guest.stop).toHaveBeenCalledTimes(1);
+  it('does not leak an earlier guest exemption to a guest that never asked for one', () => {
+    const host = fakeHost();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const allowedSrc = fileUrl(path.join(root, 'design', 'index.html'));
+
+    expect(attach(host, allowedSrc).blocked).toBe(false); // guest 1: approved
+    // A refused attach is prevented before Chromium ever creates a guest for
+    // it, so it never gets a did-attach-webview of its own — this only proves
+    // it cannot leave a stale exemption behind for whichever guest attaches
+    // next either.
+    expect(attach(host, fileUrl(path.join(outside, 'evil.html'))).blocked).toBe(true);
+    expect(attach(host, 'about:blank').blocked).toBe(false); // guest 2: approved, no file: src to exempt
+
+    // did-attach-webview fires only for the two APPROVED attaches, in order.
+    const guest1 = makeGuest();
+    host.emit('did-attach-webview', {}, guest1);
+    const guest2 = makeGuest();
+    host.emit('did-attach-webview', {}, guest2);
+
+    // guest2 never asked to load a local file, so it may not ride guest1's.
+    guest2.emit('did-start-navigation', { url: allowedSrc, isMainFrame: true });
+    expect(guest2.stop).toHaveBeenCalledTimes(1);
+
+    // guest1 keeps its own.
+    guest1.emit('did-start-navigation', { url: allowedSrc, isMainFrame: true });
+    expect(guest1.stop).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The bug the re-review flagged: the exemption lived in ONE mutable variable
+   * shared by every attach on this host. Electron fires will/did-attach-webview
+   * as a pair per guest, but two guests' pairs can INTERLEAVE (will A, will B,
+   * did A, did B) when two <webview>s attach around the same time — the second
+   * will-attach reset the shared variable before the first guest ever consumed
+   * it, so guest A got guest B's exemption (and vice-versa) and BOTH bounced to
+   * about:blank. Each attach's exemption now travels in its own queue slot,
+   * consumed in the order the guests attach.
+   */
+  it('keys the exemption to the guest, so interleaved attaches do not cross-contaminate', () => {
+    const host = fakeHost();
+    installWebviewGuards(host, { allowedRoots: () => roots });
+    const srcA = fileUrl(path.join(root, 'design', 'index.html'));
+    const srcB = fileUrl(path.join(root, 'design', 'style.css'));
+
+    expect(attach(host, srcA).blocked).toBe(false); // will A
+    expect(attach(host, srcB).blocked).toBe(false); // will B
+
+    const guestA = makeGuest();
+    host.emit('did-attach-webview', {}, guestA); // did A
+    const guestB = makeGuest();
+    host.emit('did-attach-webview', {}, guestB); // did B
+
+    guestA.emit('did-start-navigation', { url: srcA, isMainFrame: true });
+    guestB.emit('did-start-navigation', { url: srcB, isMainFrame: true });
+
+    expect(guestA.stop, 'pane A should load its own attach src').not.toHaveBeenCalled();
+    expect(guestB.stop, 'pane B should load its own attach src').not.toHaveBeenCalled();
   });
 
   /**

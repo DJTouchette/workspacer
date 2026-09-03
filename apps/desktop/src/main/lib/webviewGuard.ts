@@ -618,11 +618,19 @@ export interface GuardHostContents {
  * hand at two call sites would have reopened exactly that.
  */
 export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuardOptions): void {
-  /** The src the attach door most recently APPROVED, handed to the navigation
-   *  guard the matching `did-attach-webview` installs. Electron fires the two
-   *  events as a pair, in that order, for one guest. Cleared on every attach so
-   *  a REFUSED one can never leave a stale exemption behind for the next guest. */
-  let approvedAttachSrcs: string[] = [];
+  /**
+   * FIFO queue of the exemption for each attach the attach door has APPROVED
+   * but not yet paired with its guest. Electron fires will-/did-attach-webview
+   * as a pair for one guest, but the PAIRS across different guests can
+   * interleave (will A, will B, did A, did B) when two `<webview>`s attach
+   * around the same time — a single mutable "most recently approved" value
+   * handed pane 2's exemption to pane 1's guest (and left pane 2 with none),
+   * bouncing BOTH to about:blank. did-attach-webview never fires for a
+   * REFUSED attach (Chromium never creates that guest), so only an approved
+   * attach enqueues here, and each did-attach-webview consumes exactly the
+   * entry its own will-attach-webview pushed.
+   */
+  const pendingApprovals: string[][] = [];
   host.on(
     'will-attach-webview',
     (
@@ -631,10 +639,10 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
       params: { src?: string },
     ) => {
       applySafeWebviewPreferences(webPreferences);
-      approvedAttachSrcs = [];
       const verdict = checkWebviewSrc(params.src, opts.allowedRoots());
       if (verdict.allowed) {
-        if (params.src) approvedAttachSrcs.push(params.src);
+        const approvedSrcs: string[] = [];
+        if (params.src) approvedSrcs.push(params.src);
         // Hand Chromium the CANONICAL path, not the spelling the tag asked
         // with. pathConfinement's caller contract: the walk resolved every
         // symlink and every `..` to decide this was allowed, and re-passing the
@@ -642,14 +650,15 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
         // exists to close. This is one of the two places the URL can still be
         // rewritten before the load starts.
         //
-        // Both spellings stay in approvedAttachSrcs. If a future Electron stops
+        // Both spellings stay in approvedSrcs. If a future Electron stops
         // honouring a mutation of `params`, the guest reports the original href
         // and the navigation door must still recognise its own attach load.
         if (verdict.canonicalPath) {
           const canonicalSrc = pathToFileURL(verdict.canonicalPath).href;
           params.src = canonicalSrc;
-          approvedAttachSrcs.push(canonicalSrc);
+          approvedSrcs.push(canonicalSrc);
         }
+        pendingApprovals.push(approvedSrcs);
         return;
       }
       console.warn(`[main] blocking <webview> attach with disallowed src: ${params.src}`);
@@ -663,7 +672,7 @@ export function installWebviewGuards(host: GuardHostContents, opts: WebviewGuard
     },
   );
   host.on('did-attach-webview', (_event: unknown, guest: GuardableContents) => {
+    const approvedAttachSrcs = pendingApprovals.shift() ?? [];
     installWebviewNavigationGuard(guest, { ...opts, approvedAttachSrcs });
-    approvedAttachSrcs = [];
   });
 }
