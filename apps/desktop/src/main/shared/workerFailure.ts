@@ -95,15 +95,77 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  * the marker has already established a failure, the bit is worth folding in —
  * it names the operator's actual problem precisely rather than leaving it to
  * the API's wording.
+ *
+ * That enrichment is skipped for a TRANSIENT_PROVIDER_ERROR: `overageOutOfCredits`
+ * is standing account state and says nothing about why THIS turn failed, so
+ * gluing "out of credits" onto an unrelated server-side overload is its own
+ * mislabel — observed live 2026-09-03, a 529 woke its manager as "FAILED: out
+ * of credits (overage disabled) - API Error: 529 Overloaded", which sent a
+ * retryable hiccup down the account-billing troubleshooting path instead.
  */
+function isTransientProviderError(marker: string): boolean {
+  return /\b5\d\d\b|overloaded|server-side issue|temporarily unavailable/i.test(marker);
+}
+
 export function workerFailureReason(
   session: MaybeFailedWorker,
   finalMessage: string,
 ): string | null {
   const marker = errorMarkerReason(finalMessage);
   if (!marker) return null;
-  if (session.statusLine?.overageOutOfCredits === true) {
+  if (session.statusLine?.overageOutOfCredits === true && !isTransientProviderError(marker)) {
     return `out of credits (overage disabled) - ${marker}`;
   }
   return marker;
 }
+
+// ---------------------------------------------------------------------------
+// "Credit balance is too low" — a subscription-account red herring
+// ---------------------------------------------------------------------------
+
+/**
+ * Anthropic's own error id for this refusal, when the wire carries one
+ * alongside the message — checked first because it can't false-positive on
+ * prose that happens to repeat the words. Nothing in the traced parse paths
+ * (claude_stream.rs's `errors[0]`/`result`/`subtype`, the transcript tailer's
+ * `isApiErrorMessage` text) currently plumbs a separate id through; this
+ * constant is here so a future wire change that does add one is matched
+ * without touching call sites.
+ */
+const CREDIT_BALANCE_ERROR_CODE = /credit_balance_too_low/i;
+
+/** The literal string Claude Code's CLI/SDK uses for this refusal (verified
+ *  against the installed bundle) — never "balance" or "credit" alone, which
+ *  would also catch unrelated prose. Matches inside a doubled/concatenated
+ *  render (`…lowCredit balance…`) because it's a substring test, not anchored. */
+const CREDIT_BALANCE_TEXT_RE = /credit balance is too low/i;
+
+/**
+ * True for Claude Code's "Credit balance is too low" refusal — and ONLY that:
+ * a 529, a generic rate limit, or any other provider error must return false,
+ * or the remedy below (which is specifically about stale/wrong CLI
+ * credentials) would misdirect someone hitting an unrelated, often transient,
+ * failure.
+ */
+export function isCreditBalanceTooLowError(text: string, errorCode?: string | null): boolean {
+  if (errorCode && CREDIT_BALANCE_ERROR_CODE.test(errorCode)) return true;
+  return CREDIT_BALANCE_TEXT_RE.test(text ?? '');
+}
+
+/**
+ * The one remedy sentence set, reused verbatim everywhere this error would
+ * otherwise have reached the user as raw API text: the session pane, the
+ * sidebar, a died-worker notification, and the fleet wake a manager reads.
+ * On a Claude subscription this message almost never means an empty balance —
+ * it means the CLI's cached credentials are stale or point at an API-key/
+ * console-credits identity instead of the subscription.
+ */
+export const CREDIT_BALANCE_REMEDY =
+  'Claude Code reported "Credit balance is too low". On a subscription this usually means the ' +
+  'Claude Code CLI is signed in with stale or wrong credentials. Open a terminal, run claude, ' +
+  'then type /logout and then /login, and sign in with your subscription account. Then retry ' +
+  'this agent.';
+
+/** The remedy's own command line, offered as a copyable fallback anywhere a
+ *  one-click "open a terminal running claude" affordance isn't wired up. */
+export const CREDIT_BALANCE_REMEDY_COMMAND = 'claude';
