@@ -96,15 +96,45 @@ type MaybeFailedWorker = Partial<Pick<ClaudeSessionState, 'statusLine'>>;
  * it names the operator's actual problem precisely rather than leaving it to
  * the API's wording.
  *
- * That enrichment is skipped for a TRANSIENT_PROVIDER_ERROR: `overageOutOfCredits`
- * is standing account state and says nothing about why THIS turn failed, so
- * gluing "out of credits" onto an unrelated server-side overload is its own
- * mislabel — observed live 2026-09-03, a 529 woke its manager as "FAILED: out
- * of credits (overage disabled) - API Error: 529 Overloaded", which sent a
- * retryable hiccup down the account-billing troubleshooting path instead.
+ * That enrichment is OPT-IN, on the marker's own wording. `overageOutOfCredits`
+ * says nothing about why THIS turn failed, so gluing "out of credits" onto an
+ * unrelated failure is its own mislabel — observed live 2026-09-03, a 529 woke
+ * its manager as "FAILED: out of credits (overage disabled) - API Error: 529
+ * Overloaded", which sent a retryable hiccup down the account-billing
+ * troubleshooting path instead. An opt-OUT list of transient spellings could
+ * not close that: it has to guess every wording the CLI does not use, and the
+ * first version guessed wrong in both directions (it excluded "429", which no
+ * real 429 row spells in its prose, and let every auth failure through).
  */
-function isTransientProviderError(marker: string): boolean {
-  return /\b5\d\d\b|\b429\b|overloaded|server-side issue|temporarily unavailable|rate limit|too many requests/i.test(
+
+/**
+ * True when the marker's own text says this turn failed on a USAGE or CREDITS
+ * limit — the only family for which the standing overage bit is talking about
+ * the same thing the turn just hit.
+ *
+ * Every alternative is a wording Claude Code actually emits, read off the
+ * `isApiErrorMessage` rows in this machine's ~/.claude/projects transcripts
+ * (90 rows, 2026-09-03) rather than imagined:
+ *
+ *   - "You're out of usage credits. Switch to another model, …"  (429)
+ *   - "You've hit your session limit · resets 6:30pm (America/Edmonton)"  (429)
+ *   - "You've hit your weekly limit · resets Aug 10, 4am (…)"  (429)
+ *   - "Credit balance is too low to access the Anthropic API."
+ *
+ * The wordings deliberately NOT here are the rest of that same corpus, each of
+ * which used to collect the prefix: "API Error: 529 Overloaded", "Not logged
+ * in · Please run /login", "Login expired", "401 OAuth access token has been
+ * revoked", "Connection closed mid-response", "Server error mid-response",
+ * "<model>'s safeguards flagged this message". Telling an operator their auth
+ * failure is a billing problem is the mislabel, in the direction that costs
+ * the most to chase.
+ *
+ * There is no numeric branch. The old one matched `\b5\d\d\b`, which a reason
+ * reading "failed at src/app.ts:512" or "Retry after 500 ms" satisfies — and
+ * with the enrichment now opt-in, a status code proves nothing either way.
+ */
+function isUsageLimitFailure(marker: string): boolean {
+  return /out of (?:usage )?credits|credit balance|insufficient credits?|\b(?:session|usage|weekly|monthly|daily) limit\b/i.test(
     marker,
   );
 }
@@ -115,7 +145,7 @@ export function workerFailureReason(
 ): string | null {
   const marker = errorMarkerReason(finalMessage);
   if (!marker) return null;
-  if (session.statusLine?.overageOutOfCredits === true && !isTransientProviderError(marker)) {
+  if (session.statusLine?.overageOutOfCredits === true && isUsageLimitFailure(marker)) {
     return `out of credits (overage disabled) - ${marker}`;
   }
   return marker;

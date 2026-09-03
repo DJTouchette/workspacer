@@ -99,37 +99,89 @@ describe('workerFailureReason', () => {
     expect(reason.length).toBeLessThan(220);
     expect(reason.endsWith('…')).toBe(true);
   });
+});
 
-  it('does NOT enrich a transient 529 with "out of credits", even on an out-of-credits account', () => {
-    // Live 2026-09-03 case: the fleet wake read "FAILED: out of credits
-    // (overage disabled) - API Error: 529 Overloaded..." for a plain server
-    // overload, sending the manager down the wrong troubleshooting path.
-    const reason = workerFailureReason(
-      { statusLine: { overageOutOfCredits: true } },
-      '⚠️ Error: API Error: 529 Overloaded. This is a server-side issue, usually temporary',
-    );
-    expect(reason).not.toContain('out of credits');
-    expect(reason).toBe(
-      'API Error: 529 Overloaded. This is a server-side issue, usually temporary',
-    );
-  });
+// ---------------------------------------------------------------------------
+// The overage enrichment, against the wordings Claude Code ACTUALLY emits.
+//
+// Each `message` below is lifted from an `isApiErrorMessage: true` row in this
+// machine's ~/.claude/projects transcripts (90 rows, read 2026-09-03), not
+// invented — which is the whole point: the first version of this gate was an
+// opt-OUT list of transient spellings, and it had to guess wordings the CLI
+// does not use. It excluded "429" (no real 429 row spells the number in its
+// prose) and let every authentication failure through, so with the overage bit
+// set a stale login woke its manager as "FAILED: out of credits (overage
+// disabled) - Not logged in".
+// ---------------------------------------------------------------------------
+describe('workerFailureReason enrichment is opt-in on the marker wording', () => {
+  const OVERAGE = { statusLine: { overageOutOfCredits: true } };
+  const PREFIX = 'out of credits (overage disabled) - ';
 
-  it('does NOT enrich a 429 rate limit with "out of credits", even on an out-of-credits account', () => {
-    const reason = workerFailureReason(
-      { statusLine: { overageOutOfCredits: true } },
-      '⚠️ Error: API Error: 429 Too Many Requests, please retry',
-    );
-    expect(reason).not.toContain('out of credits');
-    expect(reason).toBe('API Error: 429 Too Many Requests, please retry');
-  });
+  const enriched: Array<[string, string]> = [
+    [
+      'out of usage credits (429, rate_limit)',
+      "You're out of usage credits. Switch to another model, or manage usage credits at claude.ai/settings/usage, to continue.",
+    ],
+    [
+      'session limit (429, rate_limit)',
+      "You've hit your session limit · resets 6:30pm (America/Edmonton)",
+    ],
+    [
+      'weekly limit (429, rate_limit)',
+      "You've hit your weekly limit · resets Aug 10, 4am (America/Edmonton)",
+    ],
+    ['the credit-balance refusal', 'Credit balance is too low to access the Anthropic API.'],
+  ];
 
-  it('still enriches a genuine out-of-credits message that names none of the transient phrasings', () => {
-    const reason = workerFailureReason(
-      { statusLine: { overageOutOfCredits: true } },
-      '⚠️ Error: Your account has insufficient balance to complete this request.',
-    );
-    expect(reason).toContain('out of credits');
-    expect(reason).toContain('insufficient balance');
+  const untouched: Array<[string, string]> = [
+    [
+      '529 overload (server_error)',
+      'API Error: 529 Overloaded. This is a server-side issue, usually temporary.',
+    ],
+    ['not logged in (authentication_failed)', 'Not logged in · Please run /login'],
+    ['login expired (authentication_failed)', 'Login expired · Please run /login'],
+    [
+      'revoked token (401, authentication_failed)',
+      'Failed to authenticate. API Error: 401 OAuth access token has been revoked.',
+    ],
+    [
+      'connection closed mid-response (server_error)',
+      'API Error: Connection closed mid-response. The response above may be incomplete.',
+    ],
+    [
+      'server error mid-response (server_error)',
+      'API Error: Server error mid-response. The response above may be incomplete.',
+    ],
+    [
+      'safeguards refusal (invalid_request)',
+      "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+    ],
+    // Not wordings the CLI emits, but the shapes the dropped `\b5\d\d\b` branch
+    // used to read as an HTTP status: a source line number and a millisecond
+    // delay. Neither may move the classification now.
+    ['a source line number is not a status code', 'build failed at src/app.ts:512'],
+    ['a millisecond delay is not a status code', 'Retry after 500 ms'],
+    ['a port number is not a status code', 'connect ECONNREFUSED 127.0.0.1:500'],
+  ];
+
+  for (const [name, message] of enriched) {
+    it(`enriches ${name}`, () => {
+      expect(workerFailureReason(OVERAGE, `⚠️ Error: ${message}`)).toBe(`${PREFIX}${message}`);
+    });
+  }
+
+  for (const [name, message] of untouched) {
+    it(`leaves ${name} unenriched`, () => {
+      const reason = workerFailureReason(OVERAGE, `⚠️ Error: ${message}`);
+      expect(reason).not.toContain('out of credits');
+      expect(reason).toBe(message);
+    });
+  }
+
+  it('never enriches when the overage bit is not set', () => {
+    for (const [, message] of enriched) {
+      expect(workerFailureReason({}, `⚠️ Error: ${message}`)).toBe(message);
+    }
   });
 });
 
