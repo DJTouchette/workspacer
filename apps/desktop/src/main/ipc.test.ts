@@ -369,6 +369,27 @@ describe('webview:check-preview / file:read confinement', () => {
   });
 
   /**
+   * assertPathAllowed (every fs.* caller) denies when canonicalizePath throws;
+   * refuseSecretRead used to hand the RAW string back instead, on the theory
+   * that readTextFile would fail on it the same way. It does not: canonicalize
+   * requires an ABSOLUTE path and throws on a relative one, but fs.statSync /
+   * fs.readFileSync resolve a relative path against process.cwd() just fine —
+   * so a relative path skipped the secret gate entirely rather than merely
+   * failing to canonicalize. A relative '.git/config' from a cwd that IS a
+   * live project root is exactly the credential-adjacent file the gate exists
+   * to catch.
+   */
+  it('refuses a relative path rather than skipping the secret gate entirely', async () => {
+    const cwdBefore = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      await expect(readFile('.git/config')).rejects.toThrow(/could not be resolved/);
+    } finally {
+      process.chdir(cwdBefore);
+    }
+  });
+
+  /**
    * The TOCTOU the re-review flagged: checkPreviewFile returns `canonicalPath`
    * over IPC, and a caller that hands it BACK to `file:read` as the expected
    * value gets a fresh canonicalization compared against it. Without this,

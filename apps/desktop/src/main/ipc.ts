@@ -132,16 +132,18 @@ const USAGE_REPORT_TIMEOUT_MS = 15_000;
  *
  * Returns the CANONICAL path, which is what the caller must open: re-passing the
  * raw string is the check-path/opened-path split pathConfinement exists to
- * close. A path that does not canonicalize is handed back unchanged, so
- * readTextFile still fails on it exactly as it always has; this gate narrows,
- * it does not invent a new refusal for a path it cannot even parse.
+ * close. A path that does not canonicalize is DENIED, matching
+ * `assertPathAllowed`: a relative path throws here (canonicalizePath requires
+ * absolute) but resolves just fine against `process.cwd()` in `fs.statSync` /
+ * `fs.readFileSync`, so handing the raw string back on that catch skipped the
+ * secret gate entirely rather than merely failing to canonicalize it.
  */
 function refuseSecretRead(filePath: string): string {
   let canonical: string;
   try {
     canonical = canonicalizePath(filePath);
   } catch {
-    return filePath;
+    throw new Error('this path could not be resolved');
   }
   if (isSecretPath(canonical)) {
     throw new Error('this file holds credentials or agent configuration');
