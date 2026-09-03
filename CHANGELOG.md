@@ -19,12 +19,24 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   bubble in the session pane with a copyable `claude` command, in a sidebar
   card's tooltip and activity line, in the toast a died worker used to raise
   as a plain "finished" notification, and in the wake a Fleet Manager reads
-  when a dispatched worker hits it. Matching is exact and case insensitive,
-  including the doubled text a rendering bug produced, and never fires on an
-  unrelated error. Also fixed: a transient server overload (a 529) no longer
-  gets mislabeled "out of credits" in a Fleet Manager's wake just because the
-  account separately has no overage headroom; that combination had been
-  sending a retryable hiccup down the account billing troubleshooting path.
+  when a dispatched worker hits it. The match is a case-insensitive search for
+  Claude Code's own wording anywhere in the error text, and it only fires on a
+  turn the agent daemon marked as a failure, so an ordinary reply that merely
+  mentions the phrase never picks up the advice. The advice now also names the
+  other possibility: if Claude Code is signed in with an API key or console
+  billing rather than a subscription, the balance really is empty and the fix
+  is to add credits in the Anthropic Console. The notification version is
+  shorter than the rest so that the two slash commands, which the old one cut
+  off, fit inside a toast.
+- **A failure is now only reported as "out of credits" when the error is
+  actually about credits.** With overage disabled on an account, any worker
+  that died was labeled out of credits in a Fleet Manager's wake, whatever
+  killed it: an expired login, a server overload, a blocked message. That sent
+  a manager, and through it the user, down the account billing path for
+  problems billing had nothing to do with. The label now needs the error's own
+  wording to be about a usage or credit limit, and headless
+  `workspacer serve` gets the same treatment and the same re-login advice as
+  the desktop app.
 
 ## [0.163.0] - 2026-09-02
 
