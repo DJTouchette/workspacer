@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.163.0] - 2026-09-02
 
 ### Fixed
 - **The hub no longer takes five seconds to start, so "the control plane is
@@ -24,7 +24,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   answers `/health` in 0.015s instead of 5.04s.
 
   Two follow-ups closed the gap that deferring the check opened up. The first
-  catalog check now fires a few seconds after the routing service starts,
+  catalog check now fires five seconds after the routing service starts,
   rather than waiting for the ordinary 30-second matrix-reload tick, so a
   capability's fallover list is not walked against zero catalog findings for
   most of a minute after every boot. A fallover taken in the short window
