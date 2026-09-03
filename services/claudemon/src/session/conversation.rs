@@ -18,7 +18,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::broadcast;
 
-use super::state::{Plan, PlanStatus, PlanStep};
+use super::state::{Plan, PlanStatus, PlanStep, Transport};
 use super::transcript::{blocks, flatten_tool_result, path_is_allowed, Block};
 use super::{SessionMode, SessionStore};
 
@@ -389,6 +389,15 @@ async fn tail_one(
         ));
     }
 
+    // Who owns the agent-error marker for this session (see [`ApiErrorMarking`]).
+    // A session the store has never heard of defaults to marking: the row's own
+    // `isApiErrorMessage` says the turn genuinely failed, so a marker we did not
+    // strictly need is far cheaper than a failure nobody reports.
+    let marking = match store.get(session_id) {
+        Some(state) if state.transport == Transport::Stream => ApiErrorMarking::Driver,
+        _ => ApiErrorMarking::Tailer,
+    };
+
     let (mut offset, mut partial, mut reset, mut task_fold) = match conv.logs.get(session_id) {
         Some(l) if l.path == path => (l.offset, l.partial.clone(), false, l.tasks.clone()),
         // New session, or claude switched transcript files (e.g. resume).
@@ -439,7 +448,7 @@ async fn tail_one(
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(line) {
-            items.extend(items_from_row(&value));
+            items.extend(items_from_row(&value, marking));
             // Task tools and TodoWrite feed the same last-write-wins plan, in
             // row order — whichever the agent used most recently wins.
             if task_fold.fold_row(&value) {
@@ -734,7 +743,27 @@ pub fn sidechain_usage_from_row(value: &Value) -> Option<ConversationItem> {
     usage_item_from_assistant_row(value, true)
 }
 
-pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
+/// Who owns the agent-error marker for a session's api-error turns.
+///
+/// The marker is a per-turn failure signal and must have exactly ONE producer.
+/// A managed/stream session's driver already emits one (providers/mod.rs folds
+/// `AgentUpdate::Error` into a marked assistant turn from the CLI's `result`
+/// frame), so a second one from the transcript row is not extra safety: the
+/// desktop coalesces a stream session's assistant text into a single bubble, so
+/// the two land as `⚠️ Error: <driver text>⚠️ Error: <row text>` whenever the
+/// two sources word the failure differently.
+///
+/// A PTY session has no driver — a real terminal produces no AgentUpdate at all
+/// — so there the transcript row is the ONLY signal and the tailer must mark it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ApiErrorMarking {
+    /// Stamp the marker on `isApiErrorMessage` rows (PTY: nobody else will).
+    Tailer,
+    /// Leave them unmarked; this session's managed driver already emits one.
+    Driver,
+}
+
+pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<ConversationItem> {
     let mut out = Vec::new();
     if value
         .get("isMeta")
@@ -845,10 +874,17 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
             // the exact same text as an ordinary reply and workerFailure.ts's
             // marker check (which the stream/managed-provider path already
             // satisfies via providers/mod.rs) never fired for it.
-            let is_api_error = value
-                .get("isApiErrorMessage")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            //
+            // Only when this tailer OWNS the marker for the session — see
+            // [`ApiErrorMarking`]. 87 of the 90 api-error rows in a real
+            // ~/.claude/projects corpus (2026-09-03) carry `entrypoint:
+            // "sdk-cli"`, i.e. they were written by stream-transport sessions
+            // whose driver marks the same failure itself.
+            let is_api_error = marking == ApiErrorMarking::Tailer
+                && value
+                    .get("isApiErrorMessage")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
                 match b {
                     Block::Text { text } if !text.trim().is_empty() => {
@@ -1284,7 +1320,7 @@ mod tests {
             "timestamp": "2026-06-12T10:00:00Z",
             "message": { "role": "user", "content": "hello there" }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::UserMessage { text, timestamp } => {
@@ -1309,7 +1345,7 @@ mod tests {
                 "message": { "role": "user", "content": content }
             });
             assert!(
-                items_from_row(&row).is_empty(),
+                items_from_row(&row, ApiErrorMarking::Tailer).is_empty(),
                 "expected {content:?} to be filtered out"
             );
         }
@@ -1324,7 +1360,7 @@ mod tests {
             "message": { "role": "user", "content":
                 "<command-name>/btw</command-name>\n            <command-message>btw</command-message>\n            <command-args>is this ready?</command-args>" }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::SlashCommand {
@@ -1349,7 +1385,7 @@ mod tests {
             "message": { "role": "user", "content":
                 "<command-message>pingtest</command-message>\n<command-name>/pingtest</command-name>" }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::SlashCommand { name, args, .. } => {
@@ -1367,7 +1403,7 @@ mod tests {
             "message": { "role": "user", "content":
                 "<local-command-stdout>Set model to \u{1b}[1mOpus 4.8\u{1b}[22m and saved</local-command-stdout>" }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::CommandOutput {
@@ -1390,7 +1426,7 @@ mod tests {
             "content": "<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>",
             "timestamp": "2026-07-14T10:00:01Z"
         });
-        let items = items_from_row(&echo);
+        let items = items_from_row(&echo, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         assert!(matches!(
             &items[0],
@@ -1403,7 +1439,7 @@ mod tests {
             "subtype": "local_command",
             "content": "<local-command-stdout>## Context Usage\n\n**Tokens:** 24.5k</local-command-stdout>"
         });
-        let items = items_from_row(&stdout);
+        let items = items_from_row(&stdout, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         assert!(matches!(
             &items[0],
@@ -1413,7 +1449,7 @@ mod tests {
 
         // Other system subtypes stay ignored.
         let other = json!({ "type": "system", "subtype": "stop_hook_summary" });
-        assert!(items_from_row(&other).is_empty());
+        assert!(items_from_row(&other, ApiErrorMarking::Tailer).is_empty());
     }
 
     #[test]
@@ -1427,7 +1463,7 @@ mod tests {
                 { "type": "text", "text": "actually do this" }
             ]}
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::UserMessage { text, .. } => assert_eq!(text, "actually do this"),
@@ -1443,7 +1479,7 @@ mod tests {
                 { "type": "tool_result", "tool_use_id": "tu_1", "content": "42 lines", "is_error": false }
             ]}
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::ToolResult {
@@ -1477,7 +1513,7 @@ mod tests {
                 ]
             }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 3, "usage + text + tool_use (thinking skipped)");
         assert!(
             matches!(&items[0], ConversationItem::Usage { model: Some(m), message_id: Some(id), .. } if m == "claude-fable-5" && id == "msg_1")
@@ -1504,7 +1540,7 @@ mod tests {
                 "content": [{ "type": "text", "text": "Credit balance is too low." }]
             }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
             ConversationItem::AssistantText { text, .. } => {
@@ -1512,6 +1548,81 @@ mod tests {
             }
             other => panic!("expected AssistantText, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn the_tailer_marks_api_errors_only_where_no_driver_does() {
+        // ITEM 5 of the credit-balance review: `spawn_tailer` tails ANY session
+        // with a transcript path, so marking api-error rows unconditionally made
+        // the tailer a SECOND producer of the agent-error marker on managed
+        // sessions, whose driver already emits one (providers/mod.rs folds
+        // `AgentUpdate::Error` into a marked assistant turn). The desktop
+        // coalesces a stream session's assistant text into one bubble, so the
+        // two land concatenated whenever the driver's wording and the row's
+        // differ. 87 of the 90 api-error rows in a real ~/.claude/projects
+        // corpus (2026-09-03) carry `entrypoint: "sdk-cli"` — the stream
+        // transport — so that was the common case, not the rare one.
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!(
+            "claudemon-apierror-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::session::transcript::allow_root(&dir);
+        let row = r#"{"type":"assistant","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"You're out of usage credits."}]}}"#;
+
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+
+        // PTY: a real terminal produces no AgentUpdate at all, so the row is
+        // the only failure signal that exists and the tailer must mark it.
+        let pty = dir.join("pty.jsonl");
+        {
+            let mut f = std::fs::File::create(&pty).unwrap();
+            writeln!(f, "{row}").unwrap();
+        }
+        store.register_managed("s-pty", &dir.to_string_lossy(), "claude");
+        store.set_transport("s-pty", Transport::Pty);
+        tail_one(&store, &conv, "s-pty", &pty.to_string_lossy())
+            .await
+            .unwrap();
+        let (_seq, items) = conv.snapshot("s-pty").unwrap();
+        assert_eq!(items.len(), 1, "one assistant turn, marked: {items:?}");
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(text, "⚠️ Error: You're out of usage credits.\n");
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+
+        // STREAM: the driver already emitted its own marked turn for this same
+        // failure (pinned by providers/mod.rs's
+        // error_marker_matches_the_cross_language_contract). The tailer emits
+        // the row's text plainly, exactly as it did before the marking landed.
+        let stream = dir.join("stream.jsonl");
+        {
+            let mut f = std::fs::File::create(&stream).unwrap();
+            writeln!(f, "{row}").unwrap();
+        }
+        store.register_managed("s-stream", &dir.to_string_lossy(), "claude");
+        store.set_transport("s-stream", Transport::Stream);
+        tail_one(&store, &conv, "s-stream", &stream.to_string_lossy())
+            .await
+            .unwrap();
+        let (_seq, items) = conv.snapshot("s-stream").unwrap();
+        assert_eq!(items.len(), 1, "one assistant turn, unmarked: {items:?}");
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(
+                    text, "You're out of usage credits.",
+                    "the tailer must not stamp a marker the driver already stamped"
+                );
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -1523,7 +1634,7 @@ mod tests {
                 "content": [{ "type": "text", "text": "All done." }]
             }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         match &items[0] {
             ConversationItem::AssistantText { text, .. } => assert_eq!(text, "All done."),
             other => panic!("expected AssistantText, got {other:?}"),
@@ -1546,7 +1657,7 @@ mod tests {
             }
         });
         assert!(
-            items_from_row(&tool_use).is_empty(),
+            items_from_row(&tool_use, ApiErrorMarking::Tailer).is_empty(),
             "sidechain tool_use must be dropped"
         );
 
@@ -1556,7 +1667,7 @@ mod tests {
             "message": { "role": "assistant", "content": [{ "type": "text", "text": "subagent thinking" }] }
         });
         assert!(
-            items_from_row(&text).is_empty(),
+            items_from_row(&text, ApiErrorMarking::Tailer).is_empty(),
             "sidechain text must be dropped"
         );
 
@@ -1571,7 +1682,7 @@ mod tests {
                 ]
             }
         });
-        let items = items_from_row(&main_agent);
+        let items = items_from_row(&main_agent, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         assert!(matches!(&items[0], ConversationItem::ToolUse { name, .. } if name == "Agent"));
     }
@@ -1595,7 +1706,7 @@ mod tests {
                 ]
             }
         });
-        let items = items_from_row(&row);
+        let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1, "only the usage item, no timeline items");
         assert!(matches!(
             &items[0],
@@ -1615,7 +1726,7 @@ mod tests {
                 "content": []
             }
         });
-        let items = items_from_row(&main);
+        let items = items_from_row(&main, ApiErrorMarking::Tailer);
         assert!(matches!(
             &items[0],
             ConversationItem::Usage {
@@ -1633,10 +1744,15 @@ mod tests {
     #[test]
     fn meta_and_summary_rows_are_skipped() {
         assert!(items_from_row(
-            &json!({ "type": "user", "isMeta": true, "message": { "content": "x" } })
+            &json!({ "type": "user", "isMeta": true, "message": { "content": "x" } }),
+            ApiErrorMarking::Tailer
         )
         .is_empty());
-        assert!(items_from_row(&json!({ "type": "summary", "summary": "..." })).is_empty());
+        assert!(items_from_row(
+            &json!({ "type": "summary", "summary": "..." }),
+            ApiErrorMarking::Tailer
+        )
+        .is_empty());
     }
 
     #[test]
