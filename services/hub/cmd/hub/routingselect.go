@@ -94,6 +94,11 @@ type routingCatalog struct {
 	lastRefresh time.Time
 }
 
+// var _ routing.RefreshingCatalog: if this ever stops compiling, the force-refresh
+// path in Service.ValidateCatalog silently degrades to a cached read instead of
+// a fresh probe, and nothing else would tell you.
+var _ routing.RefreshingCatalog = (*routingCatalog)(nil)
+
 type catalogEntry struct {
 	models []routing.CatalogModel
 	// answered is whether THIS PROVIDER gave us its own answer, even if that

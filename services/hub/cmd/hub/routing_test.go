@@ -849,3 +849,66 @@ func TestAnUnreachableDaemonAndAFailedProbeAreDifferentSentences(t *testing.T) {
 		t.Errorf("an unreachable daemon produced an availability entry (%+v)", live)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// THE PENDING-CATALOG REASON
+// ---------------------------------------------------------------------------
+
+// stubOwnCatalog answers every provider with one model at once, so a test can
+// walk a Service from "nobody has checked" to "checked and settled" without
+// depending on cmd/hub's own routingCatalog or a real claudemon.
+type stubOwnCatalog struct{}
+
+func (stubOwnCatalog) Models(string) ([]routing.CatalogModel, error) {
+	return []routing.CatalogModel{{ID: "stub-model"}}, nil
+}
+
+// TestThePendingCatalogReasonRidesTheDecisionUntilTheCheckSettles proves the
+// one-line addition to routingSelect: svc.CatalogPending() appends "the
+// routing service still owes routing.yaml a catalog check" to a decision's
+// Reason, and only while the check is actually owed.
+//
+// Without this the fallover walk's own blind window (the few seconds between
+// Run starting and its first tick, see DefaultFirstCatalogCheckDelay) would
+// ship a decision with no reason naming it, and a matrix nobody has checked
+// would read exactly like one that came back clean.
+func TestThePendingCatalogReasonRidesTheDecisionUntilTheCheckSettles(t *testing.T) {
+	const pendingReason = "the routing service still owes routing.yaml a catalog check"
+
+	svc := routing.New("", stubOwnCatalog{})
+	if !svc.CatalogPending() {
+		t.Fatal("a freshly installed matrix must start pending, so this test needs that to mean anything")
+	}
+	h := routingSelect(svc, newUsageWatcher("http://127.0.0.1:1"), nil, nil, nil)
+
+	raw, err := h(bus.CallerIdentity{}, json.RawMessage(`{"role":"scout","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select: %v", err)
+	}
+	d, ok := raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if !strings.Contains(strings.Join(d.Reason, " "), pendingReason) {
+		t.Errorf("no pending-catalog reason before the check has run: %v", d.Reason)
+	}
+
+	if !svc.ValidateCatalog() {
+		t.Fatal("the catalog check did not run")
+	}
+	if svc.CatalogPending() {
+		t.Fatal("every provider answered, so the check must be settled now")
+	}
+
+	raw, err = h(bus.CallerIdentity{}, json.RawMessage(`{"role":"scout","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatalf("routing.select after the check: %v", err)
+	}
+	d, ok = raw.(routing.Decision)
+	if !ok {
+		t.Fatalf("handler returned %T", raw)
+	}
+	if strings.Contains(strings.Join(d.Reason, " "), pendingReason) {
+		t.Errorf("the pending-catalog reason survived a completed check: %v", d.Reason)
+	}
+}
