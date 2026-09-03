@@ -14,6 +14,10 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Check, ChevronRight, History, Megaphone, Reply } from 'lucide-react';
 import type { FleetMessage, FleetMessageEntry } from '../../../../main/shared/fleetMessages';
+import {
+  isCreditBalanceTooLowError,
+  CREDIT_BALANCE_REMEDY,
+} from '../../../../main/shared/workerFailure';
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
 import { StructuredResultCard } from './StructuredResultCard';
@@ -203,7 +207,11 @@ const EntryRow: React.FC<{
         )}
         {entry.failed && (
           <span
-            title={entry.failed}
+            title={
+              isCreditBalanceTooLowError(entry.failed)
+                ? `${entry.failed}\n\n${CREDIT_BALANCE_REMEDY}`
+                : entry.failed
+            }
             style={{
               padding: '1px 6px',
               borderRadius: 'var(--wks-radius-pill)',
