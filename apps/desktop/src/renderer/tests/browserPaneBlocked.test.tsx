@@ -284,6 +284,29 @@ describe('App.tsx routes a .md file: target to the preview pane', () => {
       );
     }
   });
+
+  /**
+   * The TOCTOU close: the pane must open the CANONICAL path main resolved and
+   * checked, not this renderer's own (unresolved) parse of the URL — a `mdPath`
+   * that was never re-verified is exactly the gap a symlink swapped in between
+   * the check and the open walks through. Both call sites hand
+   * `openMarkdownPreview` the verdict's `canonicalPath`, not `mdPath`.
+   */
+  it('opens the preview at the CHECKED canonical path, not the renderer-parsed one', () => {
+    for (const anchor of [
+      'const t = (e as CustomEvent).detail as BrowserOpenTarget',
+      "if (paneType === 'browser' && opts?.url)",
+    ]) {
+      const start = src.indexOf(anchor);
+      const openIdx = src.indexOf('openMarkdownPreview(', start);
+      expect(openIdx, anchor).toBeGreaterThan(-1);
+      const closeIdx = src.indexOf('});', openIdx);
+      const openCall = src.slice(openIdx, closeIdx);
+      expect(openCall, anchor).toMatch(/path:\s*verdict\.canonicalPath/);
+      expect(openCall, anchor).toMatch(/canonicalPath:\s*verdict\.canonicalPath/);
+      expect(openCall, anchor).not.toMatch(/path:\s*mdPath/);
+    }
+  });
 });
 
 /**
@@ -293,28 +316,41 @@ describe('App.tsx routes a .md file: target to the preview pane', () => {
 describe('previewFileAllowed', () => {
   const api = () => window.electronAPI as unknown as Record<string, unknown>;
 
-  it('passes the URL to main and returns its verdict', async () => {
+  it('passes the URL to main and returns its verdict, including the canonical path', async () => {
     const seen: string[] = [];
     api().checkPreviewFile = (url: string) => {
       seen.push(url);
-      return Promise.resolve({ allowed: true });
+      return Promise.resolve({ allowed: true, canonicalPath: PAGE });
     };
-    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(true);
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toEqual({
+      allowed: true,
+      canonicalPath: PAGE,
+    });
     expect(seen).toEqual([PAGE_URL]);
+  });
+
+  /** main's canonical rewrite always sets one when it allows a file:, but a
+   *  caller that somehow got `allowed: true` with none must not be handed a
+   *  path to open — that would be the check-path/opened-path split again. */
+  it('refuses when main allows but names no canonical path', async () => {
+    api().checkPreviewFile = () => Promise.resolve({ allowed: true });
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toEqual({ allowed: false });
   });
 
   it('refuses when main refuses', async () => {
     api().checkPreviewFile = () =>
       Promise.resolve({ allowed: false, reason: 'this file is outside your home' });
-    await expect(previewFileAllowed('file:///etc/ssl/README.md')).resolves.toBe(false);
+    await expect(previewFileAllowed('file:///etc/ssl/README.md')).resolves.toEqual({
+      allowed: false,
+    });
   });
 
   it('refuses when the backend cannot answer at all', async () => {
     delete api().checkPreviewFile;
-    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(false);
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toEqual({ allowed: false });
 
     api().checkPreviewFile = () => Promise.reject(new Error('main is gone'));
-    await expect(previewFileAllowed(PAGE_URL)).resolves.toBe(false);
+    await expect(previewFileAllowed(PAGE_URL)).resolves.toEqual({ allowed: false });
   });
 });
 

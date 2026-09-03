@@ -1003,10 +1003,16 @@ function App() {
         // The detour is confined by the SAME roots as the pane it detours
         // around; main owns that answer. A refusal falls through to the browser
         // pane, whose guard refuses it again and turns it into the Blocked
-        // banner, so the user is told rather than shown nothing.
-        void previewFileAllowed(t.url).then((allowed) => {
-          if (!allowed) return openBrowserTab();
-          const tabId = openMarkdownPreview({ path: mdPath });
+        // banner, so the user is told rather than shown nothing. The pane opens
+        // the CANONICAL path main checked, not this renderer's own parse of the
+        // URL — see previewFileAllowed's doc for why re-deriving one here would
+        // reopen the TOCTOU the check exists to close.
+        void previewFileAllowed(t.url).then((verdict) => {
+          if (!verdict.allowed || !verdict.canonicalPath) return openBrowserTab();
+          const tabId = openMarkdownPreview({
+            path: verdict.canonicalPath,
+            canonicalPath: verdict.canonicalPath,
+          });
           if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
         });
         return;
@@ -2464,12 +2470,16 @@ function App() {
         const mdPath = markdownPathFromFileUrl(opts.url);
         const url = opts.url;
         if (mdPath) {
-          void previewFileAllowed(url).then((allowed) => {
-            if (!allowed) {
+          void previewFileAllowed(url).then((verdict) => {
+            if (!verdict.allowed || !verdict.canonicalPath) {
               addTabWithConfig('browser', undefined, undefined, url, false, opts?.cwd);
               return;
             }
-            const tabId = openMarkdownPreview({ path: mdPath, cwd: opts?.cwd });
+            const tabId = openMarkdownPreview({
+              path: verdict.canonicalPath,
+              canonicalPath: verdict.canonicalPath,
+              cwd: opts?.cwd,
+            });
             if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
           });
           return;

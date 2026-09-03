@@ -1310,9 +1310,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // Files (editor pane). Errors (missing / too big / binary) reject the invoke,
   // which the EditorPane surfaces to the user.
-  ipcMain.handle(IPC.FILE_READ, (_event, filePath: string) =>
-    readTextFile(refuseSecretRead(filePath)),
-  );
+  //
+  // `expectedCanonicalPath`, when given, is the TOCTOU re-check: a caller that
+  // already resolved and verified this path (webview:check-preview) hands back
+  // what it resolved, and a FRESH canonicalization here must still agree. A
+  // component swapped for a symlink between the check and this read resolves
+  // to somewhere else now, and the mismatch refuses the read instead of quietly
+  // opening whatever the swap points at. Absent for every other caller (the
+  // editor pane), which never had a prior check to re-verify.
+  ipcMain.handle(IPC.FILE_READ, (_event, filePath: string, expectedCanonicalPath?: string) => {
+    const canonical = refuseSecretRead(filePath);
+    if (expectedCanonicalPath !== undefined && canonical !== expectedCanonicalPath) {
+      throw new Error('this file changed since it was last checked');
+    }
+    return readTextFile(canonical);
+  });
   // Composer attachment thumbnails. Rejects for anything unreadable or not an
   // image; the chip falls back to its icon.
   ipcMain.handle(IPC.FILE_READ_IMAGE, (_event, filePath: string) => readImagePreview(filePath));

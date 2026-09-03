@@ -80,8 +80,17 @@ export function markdownPathFromFileUrl(url: string): string | null {
   return p && /\.(md|markdown)$/i.test(p) ? p : null;
 }
 
+/** The verdict `previewFileAllowed` resolves. `canonicalPath` is present only
+ *  when `allowed` is true: the CANONICAL path main resolved the URL to, which
+ *  the caller must open verbatim (see previewFileAllowed's own doc). */
+export interface PreviewFileVerdict {
+  allowed: boolean;
+  canonicalPath?: string;
+}
+
 /**
- * Whether main will allow a `file:` URL to open in the MARKDOWN PREVIEW pane.
+ * Whether main will allow a `file:` URL to open in the MARKDOWN PREVIEW pane,
+ * and if so, the CANONICAL path it checked.
  *
  * `markdownPathFromFileUrl` above only asks whether a URL ends in `.md`; it has
  * never seen the allowed roots, and the `file:read` behind the preview pane
@@ -90,20 +99,27 @@ export function markdownPathFromFileUrl(url: string): string | null {
  * `open_browser` on `file:///etc/ssl/README.md` rendered an out-of-root file,
  * and renaming anything to `.md` sidestepped the browser arm entirely.
  *
- * Every dispatch point asks this BEFORE it opens the preview. The answer comes
- * from the same predicate and the same roots the webview guard uses, in main,
- * because that is the only side that can see them.
+ * Every dispatch point asks this BEFORE it opens the preview, and opens the
+ * `canonicalPath` this returns rather than its own parse of the URL: main
+ * resolved every symlink and every `..` to decide the file was allowed, and
+ * re-deriving a path from the renderer's own (unresolved) parse of `url` is the
+ * check-path/opened-path split pathConfinement's caller contract exists to
+ * close — a component that was an ordinary file at check time and a symlink out
+ * of the roots by the time the pane reads it would otherwise render anyway.
  *
  * Fails CLOSED when the backend does not answer: a check we could not run is not
  * a check that passed.
  */
-export async function previewFileAllowed(url: string): Promise<boolean> {
+export async function previewFileAllowed(url: string): Promise<PreviewFileVerdict> {
   const check = window.electronAPI?.checkPreviewFile;
-  if (!check) return false;
+  if (!check) return { allowed: false };
   try {
-    return (await check(url))?.allowed === true;
+    const v = await check(url);
+    return v?.allowed === true && v.canonicalPath
+      ? { allowed: true, canonicalPath: v.canonicalPath }
+      : { allowed: false };
   } catch {
-    return false;
+    return { allowed: false };
   }
 }
 

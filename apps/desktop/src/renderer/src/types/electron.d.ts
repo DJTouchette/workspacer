@@ -468,7 +468,9 @@ export interface ElectronAPI {
    *  detour before it opens anything, because only main knows the allowed roots.
    *  On the web build the preview's read goes through the hub's own fs guard,
    *  so the backend there answers allowed and the confinement stays server-side. */
-  checkPreviewFile: (url: string) => Promise<{ allowed: boolean; reason?: string }>;
+  checkPreviewFile: (
+    url: string,
+  ) => Promise<{ allowed: boolean; reason?: string; canonicalPath?: string }>;
   getRemoteInfo: () => Promise<{
     enabled: boolean;
     token: string;
@@ -617,7 +619,10 @@ export interface ElectronAPI {
    *  File isn't backed by a file on disk — and always on web, where the file
    *  lives on the client, not the host. */
   getPathForFile: (file: File) => string;
-  readFile: (filePath: string) => Promise<{ path: string; contents: string; size: number }>;
+  readFile: (
+    filePath: string,
+    expectedCanonicalPath?: string,
+  ) => Promise<{ path: string; contents: string; size: number }>;
   /** Write a pasted screenshot to a temp PNG so it can be attached by path.
    *  Resolves null when the clipboard holds no image (and always on web, where
    *  the host clipboard isn't the one the user pasted from). */

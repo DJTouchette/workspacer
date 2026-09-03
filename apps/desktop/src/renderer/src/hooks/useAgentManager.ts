@@ -1350,7 +1350,7 @@ export function useAgentManager() {
   // workspace — mirrors openInspector, deduping by the previewed path so a
   // repeat click on the same file focuses the existing pane.
   const openMarkdownPreview = useCallback(
-    (opts: { path: string; cwd?: string }): string => {
+    (opts: { path: string; cwd?: string; canonicalPath?: string }): string => {
       const aid = activeAgentIdRef.current;
       if (!aid) return '';
       const agent = agentsRef.current.find((a) => a.id === aid);
@@ -1371,6 +1371,7 @@ export function useAgentManager() {
         title,
         previewPath: opts.path,
         previewCwd: opts.cwd,
+        previewCanonicalPath: opts.canonicalPath,
         cwd: opts.cwd,
       };
       mutateAgent(aid, (a) => ({

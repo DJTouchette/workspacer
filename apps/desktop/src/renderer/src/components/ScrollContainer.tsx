@@ -419,6 +419,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             title={pane.title}
             previewPath={pane.previewPath}
             previewCwd={pane.previewCwd}
+            previewCanonicalPath={pane.previewCanonicalPath}
           />
         </Suspense>
       );

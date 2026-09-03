@@ -92,6 +92,13 @@ export interface PaneConfig {
   /** Markdown-preview panes only: the repo/working dir the file belongs to
    *  (threaded to "Open in editor" so the editor roots at the project). */
   previewCwd?: string;
+  /** Markdown-preview panes only: the CANONICAL path main verified at check
+   *  time, when the pane was opened through a checked `file:` URL (the
+   *  browser-detour dispatch points in App.tsx). Re-sent with every read so
+   *  the reader can refuse if the file changed underneath between the check
+   *  and the read (a symlink swap). Absent for FileLink's own preview path,
+   *  which was never root-confined to begin with. */
+  previewCanonicalPath?: string;
   /** Context panes only: the claudemon session whose context inventory the
    *  pane itemizes. One pane per session. */
   contextSessionId?: string;

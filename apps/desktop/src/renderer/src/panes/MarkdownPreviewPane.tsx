@@ -39,7 +39,14 @@ const MarkdownPreviewPane: React.FC<{
   title?: string;
   previewPath?: string;
   previewCwd?: string;
-}> = ({ previewPath, previewCwd }) => {
+  /** The CANONICAL path main verified this file against at check time (see
+   *  browserBus.previewFileAllowed). Re-sent with the read so main can refuse
+   *  if the file changed underneath between the check and this read — a
+   *  symlink swapped in for `previewPath` between the two would otherwise
+   *  render whatever it now points at. Absent for FileLink's own preview
+   *  path, which carries no check to re-verify. */
+  previewCanonicalPath?: string;
+}> = ({ previewPath, previewCwd, previewCanonicalPath }) => {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,7 +55,7 @@ const MarkdownPreviewPane: React.FC<{
     if (!previewPath) return;
     setLoading(true);
     try {
-      const res = await window.electronAPI.readFile(previewPath);
+      const res = await window.electronAPI.readFile(previewPath, previewCanonicalPath);
       setContent(res.contents);
       setError(null);
     } catch (err) {
@@ -56,7 +63,7 @@ const MarkdownPreviewPane: React.FC<{
     } finally {
       setLoading(false);
     }
-  }, [previewPath]);
+  }, [previewPath, previewCanonicalPath]);
 
   useEffect(() => {
     void load();

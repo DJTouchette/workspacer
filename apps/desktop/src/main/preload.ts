@@ -640,8 +640,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   /** May this `file:` URL open in the markdown preview pane? The renderer's
    *  `.md` detour asks BEFORE it opens anything: only main knows the allowed
-   *  roots, and the read behind the preview pane applies none of its own. */
-  checkPreviewFile: (url: string): Promise<{ allowed: boolean; reason?: string }> =>
+   *  roots, and the read behind the preview pane applies none of its own.
+   *  `canonicalPath`, present only when allowed, is what the caller must open
+   *  (and hand back to `readFile`'s second argument) — pathConfinement's
+   *  caller contract. */
+  checkPreviewFile: (
+    url: string,
+  ): Promise<{ allowed: boolean; reason?: string; canonicalPath?: string }> =>
     ipcRenderer.invoke(IPC.WEBVIEW_CHECK_PREVIEW, url),
   getRemoteInfo: (): Promise<{
     enabled: boolean;
@@ -788,9 +793,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
-  // Files (editor pane)
-  readFile: (filePath: string): Promise<{ path: string; contents: string; size: number }> =>
-    ipcRenderer.invoke(IPC.FILE_READ, filePath),
+  // Files (editor pane). `expectedCanonicalPath`, when given, must match what a
+  // FRESH canonicalization of `filePath` resolves to at read time, or the read
+  // is refused — the TOCTOU re-check for a caller that verified `filePath`
+  // earlier (see webview:check-preview) and wants the file it checked, not
+  // whatever now sits at that name.
+  readFile: (
+    filePath: string,
+    expectedCanonicalPath?: string,
+  ): Promise<{ path: string; contents: string; size: number }> =>
+    ipcRenderer.invoke(IPC.FILE_READ, filePath, expectedCanonicalPath),
   // Write a pasted screenshot to a temp PNG so it can be attached by path.
   // Resolves null when the clipboard holds no image.
   saveClipboardImage: (): Promise<{ path: string; width: number; height: number } | null> =>

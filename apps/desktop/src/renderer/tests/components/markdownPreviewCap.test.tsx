@@ -34,3 +34,26 @@ describe('MarkdownPreviewPane size cap', () => {
     expect(screen.queryByText(/Preview truncated/)).toBeNull();
   });
 });
+
+/**
+ * The TOCTOU re-check: a pane opened from a checked `file:` URL carries the
+ * canonical path main verified, and must hand it to `readFile` so a fresh
+ * canonicalization at read time can be compared against it (see ipc.ts's
+ * `file:read` handler). FileLink's own preview path carries no such check, so
+ * it must NOT get one manufactured for it here.
+ */
+describe('MarkdownPreviewPane: TOCTOU re-check plumbing', () => {
+  it('passes previewCanonicalPath through to the reader unchanged', async () => {
+    readFile.mockResolvedValue({ contents: '# Title' });
+    render(
+      <MarkdownPreviewPane previewPath="/repo/NOTES.md" previewCanonicalPath="/repo/NOTES.md" />,
+    );
+    await waitFor(() => expect(readFile).toHaveBeenCalledWith('/repo/NOTES.md', '/repo/NOTES.md'));
+  });
+
+  it('reads with no expected path when the pane carries none (FileLink)', async () => {
+    readFile.mockResolvedValue({ contents: '# Title' });
+    render(<MarkdownPreviewPane previewPath="/repo/NOTES.md" />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledWith('/repo/NOTES.md', undefined));
+  });
+});

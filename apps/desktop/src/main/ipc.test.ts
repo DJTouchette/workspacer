@@ -322,9 +322,10 @@ describe('webview:check-preview / file:read confinement', () => {
     handlers.get('webview:check-preview')!(null, url) as Promise<{
       allowed: boolean;
       reason?: string;
+      canonicalPath?: string;
     }>;
-  const readFile = (p: string) =>
-    handlers.get('file:read')!(null, p) as Promise<{ contents: string }>;
+  const readFile = (p: string, expectedCanonicalPath?: string) =>
+    handlers.get('file:read')!(null, p, expectedCanonicalPath) as Promise<{ contents: string }>;
 
   beforeEach(() => {
     // The project directory is what makes tmp a root at all; home is the other.
@@ -365,5 +366,35 @@ describe('webview:check-preview / file:read confinement', () => {
     await expect(readFile(path.join(projectRoot, '.git', 'config'))).rejects.toThrow(
       /credentials or agent configuration/,
     );
+  });
+
+  /**
+   * The TOCTOU the re-review flagged: checkPreviewFile returns `canonicalPath`
+   * over IPC, and a caller that hands it BACK to `file:read` as the expected
+   * value gets a fresh canonicalization compared against it. Without this,
+   * `checkPreview` approves `<root>/doc.md`, the file is swapped for a symlink
+   * to somewhere outside every root, and `file:read` opens whatever the swap
+   * now points at — the check and the open were never the same guarantee.
+   */
+  it('refuses a read when the checked file was swapped for a symlink afterward', async () => {
+    const target = path.join(projectRoot, 'swap.md');
+    fs.writeFileSync(target, '# before the swap');
+
+    const v = await checkPreview(fileUrl(target));
+    expect(v.allowed).toBe(true);
+    expect(v.canonicalPath).toBe(target);
+
+    fs.unlinkSync(target);
+    fs.symlinkSync(path.join(outside, 'README.md'), target);
+
+    await expect(readFile(target, v.canonicalPath)).rejects.toThrow(/changed since/);
+  });
+
+  it('reads an honest in-root markdown file at the canonical path checkPreview returned', async () => {
+    const v = await checkPreview(fileUrl(path.join(projectRoot, 'NOTES.md')));
+    expect(v.allowed).toBe(true);
+    readTextFileMock.mockClear();
+    await readFile(v.canonicalPath as string, v.canonicalPath);
+    expect(readTextFileMock).toHaveBeenCalledWith(v.canonicalPath);
   });
 });
