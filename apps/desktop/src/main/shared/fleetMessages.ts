@@ -15,6 +15,8 @@
  * so a bullet can never span lines.
  */
 
+import { isCreditBalanceTooLowError, CREDIT_BALANCE_REMEDY } from './workerFailure';
+
 export type FleetMessageKind =
   'worker-finished' | 'worker-escalated' | 'catch-up' | 'blocked' | 'threshold' | 'progress';
 
@@ -218,6 +220,13 @@ const FAILED_NOTE =
   `Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause ` +
   `to the user if it is an account/quota problem no retry will fix.`;
 
+/** Plain (non-bullet) note appended when a FAILED entry's reason is Claude's
+ *  "Credit balance is too low" refusal — the one case where the actionable
+ *  fix (re-authenticate the CLI) differs from FAILED_NOTE's generic "retry or
+ *  escalate an account/quota problem" advice, and is worth spelling out so
+ *  the manager can pass it straight to the user instead of guessing. */
+const CREDIT_BALANCE_NOTE = `A FAILED entry's reason names the credit-balance refusal: ${CREDIT_BALANCE_REMEDY}`;
+
 /** Plain (non-bullet) note appended when any entry is stopped/killed. */
 const STOPPED_NOTE =
   `A "stopped/killed" entry's session ENDED (killed or exited) rather than going idle — ` +
@@ -287,6 +296,9 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
   const extras: string[] = [];
   if (entries.some((e) => e.failed)) extras.push(FAILED_NOTE);
+  if (entries.some((e) => e.failed && isCreditBalanceTooLowError(e.failed))) {
+    extras.push(CREDIT_BALANCE_NOTE);
+  }
   if (entries.some((e) => e.stopped)) extras.push(STOPPED_NOTE);
   for (const e of entries) {
     if (e.result) {

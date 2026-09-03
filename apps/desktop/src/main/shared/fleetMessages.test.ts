@@ -195,6 +195,17 @@ describe('FAILED workers (error vs completion)', () => {
     ]);
     expect(text).not.toContain('FAILED');
   });
+
+  it('a credit-balance failure gets the re-authenticate remedy, an unrelated one does not', () => {
+    const creditBalance = buildFleetMessage('worker-finished', [
+      { label: 'alpha', sessionId: 'w1', cwd: '/w/a', failed: 'Credit balance is too low.' },
+    ]);
+    expect(creditBalance).toContain('/logout');
+    expect(creditBalance).toContain('/login');
+
+    const unrelated = buildFleetMessage('worker-finished', [failed]); // 'out of credits'
+    expect(unrelated).not.toContain('/logout');
+  });
 });
 
 describe('parseFleetMessage on non-wake text', () => {
