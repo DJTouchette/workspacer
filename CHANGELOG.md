@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.164.0] - 2026-09-03
 
 ### Fixed
 - **The built-in browser pane can now open a local file, and a refused URL says
@@ -18,34 +18,33 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   local file is now allowed when it sits under the user's home directory or a
   configured project directory, resolves to a real file rather than a directory
   or a symlink pointing out of those roots, and carries an extension a browser
-  can render (html, htm, svg, png, jpg, jpeg, gif, webp, txt, css, js);
-  credential and agent-configuration files are refused whatever they are named,
-  and json and pdf are not on that list at all, because no mockup is a json and
-  a pdf downloads rather than renders. Everything else is still refused,
-  including a `file://` URL with a remote host, a path outside those roots, and
-  any attempt by a web page to navigate the pane onto a local file. A refusal now reaches the pane as a
-  banner reading "Blocked:" and the reason, so a blank pane is never the answer
-  again. Markdown is routed to the markdown preview pane, which can actually
-  render it, rather than to a browser that would only offer to download it.
+  can render (html, htm, svg, png, jpg, jpeg, gif, webp, txt, css, js).
+  Credential and agent-configuration files are refused whatever they are named.
+  Everything else is still refused, including a `file://` URL with a remote
+  host, a path outside those roots, and any attempt by a web page to navigate
+  the pane onto a local file. A refusal now reaches the pane as a banner
+  reading "Blocked:" and the reason. Markdown is routed to the markdown preview
+  pane, which can actually render it, rather than to a browser that would only
+  offer to download it.
 
 - **A "Credit balance is too low" error from Claude Code now comes with the
   actual fix, not just the raw API text.** On a subscription account this
-  message almost always means the Claude Code CLI is signed in with stale or
-  wrong credentials, not an empty balance, and the fix is to run `claude` in a
+  message usually means the Claude Code CLI is signed in with stale or wrong
+  credentials, not an empty balance, and the fix is to run `claude` in a
   terminal and re-authenticate with `/logout` then `/login`. That guidance
   now shows up everywhere the raw error used to: attached under the chat
   bubble in the session pane with a copyable `claude` command, in a sidebar
-  card's tooltip and activity line, in the toast a died worker used to raise
-  as a plain "finished" notification, and in the wake a Fleet Manager reads
-  when a dispatched worker hits it. The match is a case-insensitive search for
-  Claude Code's own wording anywhere in the error text, and it only fires on a
-  turn the agent daemon marked as a failure, so an ordinary reply that merely
-  mentions the phrase never picks up the advice. The advice now also names the
-  other possibility: if Claude Code is signed in with an API key or console
-  billing rather than a subscription, the balance really is empty and the fix
-  is to add credits in the Anthropic Console. The notification version is
-  shorter than the rest so that the two slash commands, which the old one cut
-  off, fit inside a toast.
+  card's tooltip with that card's last line flagged in the error color, in the
+  toast a died worker used to raise as a plain "finished" notification, and in
+  the wake a Fleet Manager reads when a dispatched worker hits it. The match is
+  a case-insensitive search for Claude Code's own wording anywhere in the error
+  text, and it only fires on a turn the agent daemon marked as a failure, so an
+  ordinary reply that merely mentions the phrase never picks up the advice. The
+  advice also names the other possibility: if Claude Code is signed in with an
+  API key or console billing rather than a subscription, the balance really is
+  empty and the fix is to add credits in the Anthropic Console. The
+  notification version is shorter than the rest so that the two slash commands
+  fit inside a toast's 180-character body instead of being cut off before them.
 - **A failure is now only reported as "out of credits" when the error is
   actually about credits.** With overage disabled on an account, any worker
   that died was labeled out of credits in a Fleet Manager's wake, whatever
