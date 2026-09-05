@@ -98,7 +98,14 @@ func ParseScope(s string) (Scope, error) {
 // `agents.*` would silently grant agents.spawn, and any method added later
 // must be admitted here deliberately (fail closed for scoped tokens).
 var viewMethods = []string{
-	"usage.report",                  // Overview account quota and sampled pace
+	"usage.report",         // Overview account quota and sampled pace
+	"usage.pacingSchedule", // WHICH week that pace was computed against
+	//                          (five weekdays or seven calendar days). Read-only
+	//                          and on this tier for the same reason usage.report
+	//                          is: a client that may see the expected-percentage
+	//                          tick cannot explain it without knowing the shape
+	//                          it came from. The SETTER is not here — it is
+	//                          trusted-only at the handler, like jobs.upsert.
 	"agents.list",                   // fleet list (/remote, MCP list_agents)
 	"sessions.snapshots",            // full fleet snapshot seed (/m, webBackend)
 	"sessions.snapshot",             // one session's snapshot (webBackend, MCP)

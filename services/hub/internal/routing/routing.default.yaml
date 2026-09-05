@@ -525,6 +525,16 @@ thresholds:
     #   curve: workdays   weekend hours are budgeted at `weekend_weight` of a
     #                     weekday hour, so a week's allowance spent across five
     #                     working days is ON PLAN rather than 40% over it.
+    #   curve: five_day   the working week taken literally: the weekend is
+    #                     weighted at EXACTLY ZERO, so expected progress climbs
+    #                     Monday to Friday and is flat across Saturday and
+    #                     Sunday. `weekend_weight` and `weekend:` are not read
+    #                     under it. This is also the curve the desktop's
+    #                     Settings -> "Usage schedule" control selects, through
+    #                     the hub's own usage-pacing.json rather than by editing
+    #                     this file; a preference set there OVERRIDES the curve
+    #                     named here for Overview's usage.report reads, and is
+    #                     never consulted by routing.select.
     #
     # `weekend_weight` MUST BE POSITIVE and is validated. At zero, a window that
     # ends over a weekend has no expected progress at all and every weekend hour

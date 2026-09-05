@@ -134,6 +134,7 @@ var (
 	hubLayoutFile     = []string{"services", "hub", "internal", "layout", "layout.go"}
 	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
 	hubNodesFile      = []string{"services", "hub", "cmd", "hub", "nodes.go"}
+	hubUsagePrefsFile = []string{"services", "hub", "cmd", "hub", "usageprefs.go"}
 	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
 	hubPushFile       = []string{"services", "hub", "internal", "push", "push.go"}
 	hubPushEndptFile  = []string{"services", "hub", "internal", "push", "endpoint.go"}
@@ -698,6 +699,12 @@ var compositionInert = map[string]InertClaim{
 	"nodes.sleep": {
 		Reason:    "the inverse of nodes.wake and the half that closes its bill: the only caller value is an `id` SELECTING a row the hub already holds in nodes.json, and everything the call acts on — the cloud app, the machine id, the API endpoint, the credential — comes from that file. It writes nothing, and the state it changes (a node's state field, in memory only, never persisted) is CONSULTED by exactly one thing, nodes.list, which reports it to a human. What it has that its twin does not is two values with real authority in them, the stop SIGNAL and the drain window, and neither is on the wire: both are the supervisor's own tunables, so a caller cannot name SIGKILL and thereby destroy the exit record that distinguishes this deliberate stop from a crash on the next wake. The composition worth naming is with nodes.wake itself and it is bounded rather than open: sleep can only stop a machine wake could start, both are refused to the same callers by the same gate, and neither reads anything the other wrote — the state field is not config, code or policy to anything. The act with consequences here is not a widening at all, it is a DESTRUCTION: it ends work in flight on a machine somebody may be using. The answer to that is identity, and nodesTrusted is it",
 		Witnesses: []Witness{guarded(argBearing("nodesTrusted", "nodes.sleep", hubNodesFile))},
+	},
+
+	// ── usage.setPacingSchedule — the Overview pacing-schedule preference ──
+	"usage.setPacingSchedule": {
+		Reason:    "the only caller value is `schedule`, a closed two-word enum validated before anything is written, and what it SELECTS is which of two curve words internal/limits already implements. WRITE-THEN-INTERPRET: the one thing it writes is the hub's own usage-pacing.json, and the only reader of that file is usageprefs.Open at boot plus usage.report's projection — no interpreter reads it as config, code, argv or policy, and it can hold nothing but one of two words this build compiled in. WIDEN-THEN-USE: it changes no grant, no root set, no permission mode, no approval gate and no session, and the one guard that might have consulted it does not — routing.select reads Matrix.PaceConfig() straight off routing.yaml, which this method cannot write, so the ceilings that govern spawns are untouched by it. Its gate is identity rather than confinement, because there is no path here to confine: usagePrefsTrusted refuses plugin tokens and the view/triage tiers, and the method is admitted to no scoped tier",
+		Witnesses: []Witness{guarded(argBearing("usagePrefsTrusted", "usage.setPacingSchedule", hubUsagePrefsFile))},
 	},
 
 	"claude.profiles.add": {

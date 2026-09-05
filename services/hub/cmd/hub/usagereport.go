@@ -8,14 +8,21 @@ import (
 
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/routing"
+	"github.com/djtouchette/workspacer-hub/internal/usageprefs"
 )
 
 const usageReportMaxAge = time.Minute
 const usageReportValidity = time.Minute
 
-// usageReport only reads the existing usage sampler and installed matrix.
-// It cannot select routing, refresh availability, publish, log, or spawn.
-func usageReport(svc *routing.Service, usage *usageWatcher) bus.LocalIdentHandler {
+// usageReport only reads the existing usage sampler, the installed matrix and
+// the hub's own pacing-schedule preference. It cannot select routing, refresh
+// availability, publish, log, or spawn.
+//
+// The prefs store is a THIRD piece of hub-side state, on the same footing as
+// the matrix: the caller supplies nothing, and the no-parameter contract below
+// is unchanged. A nil store is "no preference", which reproduces the matrix's
+// own answer exactly.
+func usageReport(svc *routing.Service, usage *usageWatcher, prefs *usageprefs.Store) bus.LocalIdentHandler {
 	return func(_ bus.CallerIdentity, params json.RawMessage) (any, error) {
 		var args map[string]json.RawMessage
 		if len(params) > 0 {
@@ -32,6 +39,6 @@ func usageReport(svc *routing.Service, usage *usageWatcher) bus.LocalIdentHandle
 		if err != nil {
 			return nil, fmt.Errorf("usage.report unavailable: %w", err)
 		}
-		return snap.UsageReport(time.Now(), svc.Matrix().PaceConfig(), usageReportValidity), nil
+		return snap.UsageReport(time.Now(), prefs.Apply(svc.Matrix().PaceConfig()), usageReportValidity), nil
 	}
 }

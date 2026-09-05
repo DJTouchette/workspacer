@@ -127,11 +127,14 @@ func validatePacing(p Pacing) []Issue {
 	sd := p.SevenDay
 	curve := normalizePacingWord(sd.Curve)
 	switch curve {
-	case limits.CurveCalendar, limits.CurveWorkdays:
+	case limits.CurveCalendar, limits.CurveWorkdays, limits.CurveFiveDay:
 	case "":
-		add(at+".seven_day", "no curve named — write `curve: calendar` or `curve: workdays`")
+		add(at+".seven_day", "no curve named — write `curve: calendar`, `curve: workdays` or `curve: five_day`")
 	default:
-		add(at+".seven_day", "curve %q is not a seven-day curve (%s, %s), so the calendar curve answers", sd.Curve, limits.CurveCalendar, limits.CurveWorkdays)
+		// five_day is named here as well as accepted above, because the
+		// arithmetic evaluates it: a word this validator called invalid while
+		// UsableCurve honoured it would be a report that lies about the file.
+		add(at+".seven_day", "curve %q is not a seven-day curve (%s, %s, %s), so the calendar curve answers", sd.Curve, limits.CurveCalendar, limits.CurveWorkdays, limits.CurveFiveDay)
 	}
 	if _, err := resolveTimezone(sd.Timezone); err != nil {
 		add(at+".seven_day", "timezone %q cannot be resolved on this host (%v), so the workdays curve has no day boundaries and the calendar curve answers instead", sd.Timezone, err)

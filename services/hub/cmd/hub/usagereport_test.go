@@ -27,7 +27,7 @@ func TestUsageReportReadAndConcurrentCache(t *testing.T) {
 		w.Write(body)
 	}))
 	defer server.Close()
-	handler := usageReport(routing.New("", nil), newUsageWatcher(server.URL))
+	handler := usageReport(routing.New("", nil), newUsageWatcher(server.URL), nil)
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Add(1)
@@ -63,7 +63,7 @@ func TestUsageReportReadAndConcurrentCache(t *testing.T) {
 func TestUsageReportTransportFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 	defer server.Close()
-	out, err := usageReport(routing.New("", nil), newUsageWatcher(server.URL))(bus.CallerIdentity{}, nil)
+	out, err := usageReport(routing.New("", nil), newUsageWatcher(server.URL), nil)(bus.CallerIdentity{}, nil)
 	if err == nil || out != nil {
 		t.Fatal("failed transport became a successful observation")
 	}

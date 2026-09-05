@@ -37,7 +37,11 @@ package limits
 //     a weekend has a zero denominator and every weekend hour reads as infinite
 //     overspend. The curve is OPT-IN (`curve: calendar` ships) because a fleet
 //     that runs at the weekend would be told to conserve on Saturday for no
-//     reason.
+//     reason. The `five_day` curve is the other reading of the same week: the
+//     weekend is weighted at exactly zero, so expected progress climbs Monday
+//     to Friday and is FLAT across Saturday and Sunday. It is safe where
+//     `workdays` at weight zero is not, because it is a word an operator has to
+//     choose rather than a number they can leave out — see CurveFiveDay.
 //
 //  3. A WINDOW NOBODY MEASURED. Copilot publishes nothing, an Anthropic monthly
 //     overage window has no fixed length, and a provider absent from the report
@@ -57,10 +61,31 @@ import (
 )
 
 // The seven-day curves. `calendar` is linear in wall-clock time; `workdays`
-// weights weekend hours by PaceConfig.WeekendWeight.
+// weights weekend hours by PaceConfig.WeekendWeight; `five_day` is the same
+// integral with the weekend weighted at EXACTLY ZERO.
 const (
 	CurveCalendar = "calendar"
 	CurveWorkdays = "workdays"
+	// CurveFiveDay is the working week taken literally: expected consumption
+	// advances Monday to Friday and is FLAT across Saturday and Sunday, in the
+	// configured timezone. It is a separate word from `workdays` rather than
+	// `workdays` with WeekendWeight 0, because those are different claims and
+	// only one of them is safe to make by accident:
+	//
+	//   workdays + weekend_weight 0   an operator typo (or a default that never
+	//                                 got a number) in routing.yaml, which
+	//                                 UsableCurve refuses and answers with the
+	//                                 calendar curve, saying so.
+	//   five_day                      a deliberate five-weekday schedule, which
+	//                                 says the zero is the point.
+	//
+	// A zero weekend is only evaluable because the DENOMINATOR is the whole
+	// window's weekday seconds, not the elapsed ones: any 7*24h window contains
+	// exactly 120 weekday hours wherever it starts, so `total` is positive even
+	// when `done` is not. The one place `done` can be zero is a window whose
+	// elapsed part is entirely weekend, and that is answered PaceUnknown by
+	// PaceFor's `expected <= 0` guard rather than by an infinite ratio.
+	CurveFiveDay = "five_day"
 )
 
 // What the weekend is FOR, under the workdays curve.
@@ -103,13 +128,15 @@ type PaceConfig struct {
 	// Curve is which seven-day curve to use; it applies to the seven_day window
 	// only, because a five-hour window has no weekday shape.
 	Curve string
-	// Location is the timezone whose day boundaries the workdays curve uses.
-	// nil means the workdays curve cannot be evaluated and the calendar curve
+	// Location is the timezone whose day boundaries the weekday curves use.
+	// nil means neither weekday curve can be evaluated and the calendar curve
 	// answers instead — a weekend is a local fact, and a curve computed in UTC
 	// for a fleet in UTC+13 is wrong by most of a day.
 	Location *time.Location
-	// WeekendWeight is one weekend hour's share of one weekday hour's budget.
-	// MUST be strictly positive; see the file header.
+	// WeekendWeight is one weekend hour's share of one weekday hour's budget
+	// under CurveWorkdays. MUST be strictly positive there; see the file
+	// header. It is NOT read under CurveFiveDay, whose weekend weight is zero
+	// by definition — see weekendWeight below, which is the only reader.
 	WeekendWeight float64
 	// WeekendPolicy is spend_tail or reserve.
 	WeekendPolicy string
@@ -118,27 +145,39 @@ type PaceConfig struct {
 	WeekendReservePct float64
 }
 
-// UsableCurve reports whether the workdays curve can actually be evaluated, and
-// why not when it cannot.
+// UsableCurve reports whether the configured WEEKDAY curve (workdays or
+// five_day) can actually be evaluated, and why not when it cannot.
 //
 // It is separate from the load-time validation on purpose: a matrix issue is
 // reported once when the file is read, and this is what stops a decision made
 // against a bad value from dividing by zero an hour later. A refused curve falls
 // back to the calendar one, which is always evaluable, and the fallback is
 // stated in the explanation rather than being silent.
-func (c PaceConfig) UsableCurve() (workdays bool, why string) {
-	if c.Curve != CurveWorkdays {
+func (c PaceConfig) UsableCurve() (weighted bool, why string) {
+	if c.Curve != CurveWorkdays && c.Curve != CurveFiveDay {
 		return false, ""
 	}
 	if c.Location == nil {
 		return false, "no timezone could be resolved, and a weekend is a local fact — using the calendar curve"
 	}
-	if !(c.WeekendWeight > 0) {
+	// The weight guard is CurveWorkdays' alone. CurveFiveDay's weekend weight
+	// is zero on purpose and is not read off the matrix at all, so refusing it
+	// here would refuse the schedule the operator explicitly chose.
+	if c.Curve == CurveWorkdays && !(c.WeekendWeight > 0) {
 		return false, fmt.Sprintf(
 			"weekend_weight is %g, which is not a usable weight (a zero-weight weekend makes a window that ends over one have no expected progress at all, so every weekend hour would read as infinite overspend) — using the calendar curve",
 			c.WeekendWeight)
 	}
 	return true, ""
+}
+
+// weekendWeight is the ONE reader of the weekend's share, so the five-day
+// curve's zero cannot disagree with the matrix's number anywhere else.
+func (c PaceConfig) weekendWeight() float64 {
+	if c.Curve == CurveFiveDay {
+		return 0
+	}
+	return c.WeekendWeight
 }
 
 // Bands reports whether the ratio bands can order anything. Like Bands.Valid in
@@ -330,13 +369,13 @@ func expectedShare(window string, start, now, end time.Time, elapsed float64, cf
 	curve, share = CurveCalendar, elapsed
 
 	if window == WindowSevenDay {
-		if workdays, why := cfg.UsableCurve(); workdays {
+		if weighted, why := cfg.UsableCurve(); weighted {
 			total := weightedSeconds(start, end, cfg)
 			done := weightedSeconds(start, now, cfg)
 			if total > 0 && done >= 0 {
-				curve, share = CurveWorkdays, done/total
+				curve, share = cfg.Curve, done/total
 			} else {
-				note = "; the workdays curve produced no usable total, so the calendar curve answered"
+				note = fmt.Sprintf("; the %s curve produced no usable total, so the calendar curve answered", cfg.Curve)
 			}
 		} else if why != "" {
 			note = "; " + why
@@ -365,6 +404,17 @@ func expectedShare(window string, start, now, end time.Time, elapsed float64, cf
 // nonzero reserve under `spend_tail` is IGNORED, and says so here rather than
 // being a number in a file that changes nothing.
 func applyWeekendReserve(share float64, note string, cfg PaceConfig) (float64, string) {
+	// Under the five-day curve the weekend already carries no expected
+	// progress, so there is nothing left for a reserve to hold back: scaling
+	// the curve down here would move the SCHEDULE the operator asked for by a
+	// number they set for a different curve. Refused, and said so, rather than
+	// applied quietly.
+	if cfg.Curve == CurveFiveDay {
+		if cfg.WeekendPolicy == WeekendReserve && cfg.WeekendReservePct > 0 {
+			return share, note + fmt.Sprintf("; weekend: reserve is IGNORED under the %s curve, whose weekend already carries no expected progress at all", CurveFiveDay)
+		}
+		return share, note
+	}
 	switch cfg.WeekendPolicy {
 	case WeekendReserve:
 		if cfg.WeekendReservePct <= 0 || cfg.WeekendReservePct >= 100 {
@@ -423,7 +473,7 @@ func weightedSeconds(from, to time.Time, cfg PaceConfig) float64 {
 		w := 1.0
 		switch local.Weekday() {
 		case time.Saturday, time.Sunday:
-			w = cfg.WeekendWeight
+			w = cfg.weekendWeight()
 		}
 		total += w * next.Sub(cur).Seconds()
 		cur = next

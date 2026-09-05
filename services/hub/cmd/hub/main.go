@@ -38,6 +38,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/routing"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
+	"github.com/djtouchette/workspacer-hub/internal/usageprefs"
 )
 
 // uiDirResolver maps a plugin id to its hub-served static-UI directory.
@@ -321,6 +322,19 @@ func defaultJobsFile() string {
 	return filepath.Join(dir, "workspacer-hub", "jobs.json")
 }
 
+// defaultUsagePrefsFile returns where the Overview pacing-schedule preference
+// persists: <user-config-dir>/workspacer-hub/usage-pacing.json, a 0600 sibling
+// of jobs.json. It holds one enum and no argv, but it lives with the hub's
+// other host-trusted state because it is hub-owned state a bus caller may
+// change, and that is the directory fs.write refuses.
+func defaultUsagePrefsFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		return "usage-pacing.json"
+	}
+	return filepath.Join(dir, "workspacer-hub", "usage-pacing.json")
+}
+
 // jobsTrusted is the jobs.* identity gate: a job is PERSISTED ARGV (a shell
 // command, a spawn cwd+prompt, a capability call), so only host authority —
 // the host token or an operator-tier pairing — may touch the surface; plugin
@@ -382,6 +396,7 @@ func main() {
 	// this hub powers a working machine down on a clock.
 	nodesKeepFailedWakesRunning := flag.Bool("nodes-keep-failed-wakes-running", false, "do NOT stop a machine whose wake never produced a provider (default: the hub stops it again so it does not keep billing). For debugging a node that dies on boot")
 	routingFile := flag.String("routing-file", routing.DefaultPath(), "limit-aware routing matrix (routing.yaml: role -> capability -> provider/model/effort, health thresholds, mode overrides, per-directory ceilings; seeded once on first run, 0600, hand-editable and re-read on the tick). Empty = run on the compiled-in defaults and write nothing")
+	usagePrefsFile := flag.String("usage-prefs-file", defaultUsagePrefsFile(), "hub Overview pacing preference file (one enum: five_day | seven_day; persisted 0600 beside jobs.json). Empty = the preference cannot be set and routing.yaml answers")
 	jobsFile := flag.String("jobs-file", defaultJobsFile(), "hub job specs file (recurring/one-off jobs: spawn an agent, call a capability, run a shell command; persisted 0600 — a job is persisted argv). Empty = jobs disabled")
 	flag.Parse()
 
@@ -697,7 +712,23 @@ func main() {
 	// said it did not want.
 	routingLog := routing.NewDecisionLog(routing.DecisionLogPathFor(*routingFile), routing.DefaultDecisionLogMaxBytes)
 
-	srv.RegisterLocalIdent("usage.report", usageReport(routingSvc, usage))
+	// The one Overview pacing preference a CLIENT may set: five weekdays or
+	// seven calendar days. It is a hub-owned 0600 file beside jobs.json rather
+	// than a routing.yaml edit, precisely because of the paragraph above — the
+	// absence of a routing write RPC is what makes routing.yaml's ceilings a
+	// ceiling, so the toggle gets its own narrow file and its own methods.
+	// internal/usageprefs holds the precedence table; routing.select never
+	// reads it, so a Settings choice cannot move a routing decision.
+	usagePrefs, err := usageprefs.Open(*usagePrefsFile)
+	if err != nil {
+		// Never fatal: every failure answers "no preference", which is the
+		// pre-existing behaviour. Logged so a file that does nothing is not
+		// silently indistinguishable from one that works.
+		log.Printf("usage pacing schedule: %v", err)
+	}
+	srv.RegisterLocalIdent("usage.report", usageReport(routingSvc, usage, usagePrefs))
+	srv.RegisterLocalIdent("usage.pacingSchedule", usagePacingSchedule(usagePrefs))
+	srv.RegisterLocalIdent("usage.setPacingSchedule", usageSetPacingSchedule(usagePrefs))
 
 	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, routingCat, b.Publish, routingLog))
 
