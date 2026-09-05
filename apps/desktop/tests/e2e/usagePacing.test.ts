@@ -128,3 +128,75 @@ test('usage schedule control: live switch and the unavailable state', async ({ p
       });
     }
 });
+
+/**
+ * The same pacing on the SESSION surface, at rail width. jsdom can prove the
+ * right row was chosen; only a browser can show that the account block reads as
+ * account-wide rather than as this session's spend, that the above-pace red is
+ * the error token a reader sees, and that nothing clips in a 320px column.
+ */
+test('inspector usage tab: account allowance at rail width', async ({ page }, info) => {
+  for (const theme of ['light', 'dark'])
+    for (const width of [360, 1200]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto(`${url}?theme=${theme}&surface=inspector`);
+
+      // The allowance is labelled as the ACCOUNT's, not the session's. This is
+      // the whole reason the block has a heading at all.
+      await expect(page.getByText('Account allowance').first()).toBeVisible();
+      await expect(
+        page.getByText(/shared with its other sessions, not this session/).first(),
+      ).toBeVisible();
+      // …directly beside this session's own figures, which are untouched.
+      await expect(page.getByText('Context window').first()).toBeVisible();
+      await expect(page.getByText('Input tokens').first()).toBeVisible();
+
+      // Identified login: the 7-day window at 89% against 57% expected is the
+      // reading that used to read as praise.
+      // `exact` matters: a substring match also selects every ANCESTOR whose
+      // text contains the word, and the first of those in document order is a
+      // plain-coloured row wrapper.
+      const above = page.getByText('above pace', { exact: true }).first();
+      await expect(above).toBeVisible();
+      const errorColor = await page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--wks-error').trim(),
+      );
+      const asRgb = (v: string) =>
+        page.evaluate((c) => {
+          const el = document.createElement('span');
+          el.style.color = c;
+          document.body.append(el);
+          const out = getComputedStyle(el).color;
+          el.remove();
+          return out;
+        }, v);
+      expect(await above.evaluate((el) => getComputedStyle(el).color)).toBe(
+        await asRgb(errorColor),
+      );
+
+      // The two refusals, in the same column, in words rather than a blank.
+      await expect(page.getByText(/2 claude accounts are reported here/)).toBeVisible();
+      await expect(page.getByText(/runs on hub/)).toBeVisible();
+
+      // Nothing overflows the rail-width column, and the page does not scroll
+      // sideways at phone width.
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      const clipped = await page.evaluate(() => {
+        const bad: string[] = [];
+        for (const el of document.querySelectorAll('section *')) {
+          const e = el as HTMLElement;
+          if (e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== 'auto')
+            bad.push(`${e.tagName}: ${e.textContent?.slice(0, 40)}`);
+        }
+        return bad;
+      });
+      expect(clipped).toEqual([]);
+
+      await page.screenshot({
+        path: info.outputPath(`inspector-usage-${theme}-${width}.png`),
+        fullPage: true,
+      });
+    }
+});

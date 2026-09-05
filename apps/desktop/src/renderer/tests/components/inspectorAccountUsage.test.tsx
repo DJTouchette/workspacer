@@ -147,7 +147,7 @@ describe('the Inspector’s account allowance', () => {
     await flush();
     expect(screen.getByText('Account allowance')).toBeInTheDocument();
     expect(
-      screen.getByText(/shared with every other session on the same account/i),
+      screen.getByText(/shared with its other sessions, not this session/i),
     ).toBeInTheDocument();
     // The session's own metrics are untouched — this is an addition, not a
     // replacement, and the two must stay legible as different things.

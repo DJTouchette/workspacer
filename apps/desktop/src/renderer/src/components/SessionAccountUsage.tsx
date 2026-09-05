@@ -73,8 +73,8 @@ export const SessionAccountUsage: React.FC<{ session: SessionAccountIdentity | n
         Account allowance
       </div>
       <div style={{ fontSize: '0.66rem', color: colors.muted, marginBottom: 8, lineHeight: 1.45 }}>
-        The {provider} plan limits this session spends from — shared with every other session on the
-        same account, not this session&rsquo;s own tokens.
+        The {provider} account this session spends from — shared with its other sessions, not this
+        session&rsquo;s own tokens.
       </div>
       {attribution.state === 'match' ? (
         usagePacingRows(report, attribution.account, nowMs).rows.length ? (

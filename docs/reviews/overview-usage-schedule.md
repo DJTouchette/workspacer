@@ -232,8 +232,9 @@ asserts the highlight moves.
 ## Follow-ups (not in this slice)
 
 - **Authorized next feature, deliberately NOT in this branch:** the same
-  provider-window pacing in the Inspector's Usage tab. To be dispatched
-  separately once this change is reviewed and landed.
+  provider-window pacing in the Inspector's Usage tab. DONE — dispatched
+  separately on `wks/workspacer-inspector-usage-pacing`; see
+  `docs/reviews/inspector-usage-pacing.md`.
 
 - No client other than the desktop can CHANGE the schedule yet. The web `/app`
   and `/m` read `usage.report` and would show the new curve, but neither has a

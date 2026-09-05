@@ -117,10 +117,7 @@ describe('attributing a report row to one session', () => {
     label,
     windows: { five_hour: { used_percent: { state: 'ok', value: 1 }, resets_at: now + 900 } },
   });
-  const withAccounts = (
-    accounts: UsageReportAccount[],
-    provider = 'claude',
-  ): UsageReportWire => ({
+  const withAccounts = (accounts: UsageReportAccount[], provider = 'claude'): UsageReportWire => ({
     ...report,
     providers: [{ provider, accounts }],
   });

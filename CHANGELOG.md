@@ -23,6 +23,23 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   threshold moved.
 
 ### Added
+- **The Inspector's Usage tab now shows the account allowance a session spends
+  from.** The paced provider windows that Overview draws per account are now on
+  the session surface too — the same 5-hour, 7-day and monthly readings, the
+  same expected-usage tick, the same *above pace* wording and colour, following
+  the same Usage schedule. They sit under their own **Account allowance**
+  heading, apart from this session's context window, tokens and cost, because
+  they are not this session's spending: they are the plan limit every session on
+  that login shares. Which login is decided by the session's own identity, and
+  when that is not decidable the tab says so rather than showing a plausible
+  stranger's numbers: a machine with two Claude logins and a session that names
+  neither reads "2 claude accounts are reported here", a session running on a
+  peer hub says the reading covers this machine only, and a window whose reset
+  has already passed is dropped instead of drawn. No extra polling — the block
+  reads the report Overview already fetches once a minute, only while the Usage
+  tab is open. Against a server too old to report usage, the tab is exactly what
+  it was.
+
 - **Overview's weekly usage pacing can follow a five-day working week.**
   Settings → Session now has a **Usage schedule** with two answers: *Work week
   (Mon–Fri)* and *Every day (7 days)*. On the work week, the expected-usage tick
