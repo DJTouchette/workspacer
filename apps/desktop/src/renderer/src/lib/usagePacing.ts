@@ -5,6 +5,7 @@ import {
   type ReportWindowFields,
 } from '../../../main/shared/usageReport';
 import { claudeAccountOf } from './claudeAccount';
+import { fmtResetAt, fmtResetIn } from './sessionStats';
 
 const windows = [
   ['five_hour', '5h', 'fiveHour'],
@@ -23,10 +24,74 @@ export interface UsagePacingRow {
   key: string;
   label: string;
   pct?: number;
+  /** Used percentage as it is SHOWN, rounded once here so the word and the
+   *  derived remainder below can never round to a pair summing to 101. */
+  usedPct?: number;
+  /** Allowance left, `100 - usedPct`. Derived ONLY from a measurement the
+   *  report calls valid: an absent percentage leaves this absent too, because
+   *  "no reading" rendered as "100% left" is the one failure a reader cannot
+   *  detect. */
+  left?: number;
   reset?: number;
+  /** The reset, already spoken: `resets in 2h`, or a local wall clock when the
+   *  window is more than a day out. */
+  resetPhrase?: string;
   expected?: number;
   verdict?: UsagePaceVerdict;
+  /** The reading is real history rather than a current observation, either
+   *  because the provider aged it or because the report refresh failed. */
+  stale: boolean;
   description: string;
+}
+
+/** How long a reset can be away and still read as a countdown. Past a day,
+ *  `fmtResetIn`'s single coarsest unit ("3d") is too blunt to plan a weekly
+ *  allowance around, so the row switches to a local wall clock. */
+export const USAGE_RESET_ABSOLUTE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A window's reset, in words, in ONE place. The Overview card and the
+ * Inspector's account block phrase it identically or they are two surfaces
+ * describing one fact differently.
+ *
+ * A reset already in the past returns undefined rather than a phrase: the
+ * caller has separately dropped that window as rolled over, and a leftover
+ * "resets in 0m" would contradict it.
+ */
+export function usageResetPhrase(reset?: number, nowMs = Date.now()): string | undefined {
+  if (!reset || reset * 1000 <= nowMs) return undefined;
+  if (reset * 1000 - nowMs <= USAGE_RESET_ABSOLUTE_AFTER_MS) {
+    // The SAME instant the window's currency was judged against, or the row
+    // could survive the check and then count down from a different moment.
+    const inWord = fmtResetIn(reset, nowMs);
+    return inWord ? `resets in ${inWord}` : undefined;
+  }
+  const at = fmtResetAt(reset);
+  return at ? `resets ${at}` : undefined;
+}
+
+/** The one-line explanation of the expected-pace tick. Colour and position
+ *  alone do not say what the marker means, so every surface that draws a tick
+ *  prints this beside it. */
+export const USAGE_EXPECTED_LEGEND = 'Tick marks the share expected by now.';
+
+/**
+ * Why a reading is not current, when it is not.
+ *
+ * `usagePaceFallbackLabel` says the pace is unavailable; this says the
+ * PERCENTAGE beside it is history. The two causes stay distinct because they
+ * are different problems: the provider has not re-observed the account, or this
+ * app could not re-read the report at all.
+ */
+export function usageStaleNote(
+  report: UsageReportWire,
+  account: UsageReportAccount,
+): string | undefined {
+  if (report.transport_stale)
+    return 'Historical reading: the report refresh failed, so this is the last figure received.';
+  if (account.fresh === false)
+    return 'Historical reading: the provider last observed this account earlier.';
+  return undefined;
 }
 
 /**
@@ -113,8 +178,16 @@ export function usagePacingRows(
     const delta = expected !== undefined && pct !== undefined ? pct - expected : undefined;
     const verdict =
       delta === undefined ? undefined : delta > 2 ? 'ahead' : delta < -2 ? 'under' : 'on pace';
+    // Rounded ONCE. The remainder is derived from the rounded figure rather
+    // than rounded separately, so "72% used" is always paired with "28% left".
+    const usedPct = pct === undefined ? undefined : Math.round(pct);
+    const left = usedPct === undefined ? undefined : 100 - usedPct;
+    const resetPhrase = usageResetPhrase(reset, nowMs);
+    const stale = account.fresh === false || report.transport_stale === true;
     const description = [
-      pct === undefined ? 'Usage unknown' : `${Math.round(pct)}% used`,
+      usedPct === undefined ? 'Usage unknown' : `${usedPct}% used`,
+      left === undefined ? undefined : `${left}% of the allowance left`,
+      resetPhrase,
       expected === undefined
         ? p?.state === 'disabled'
           ? 'Pacing disabled'
@@ -130,7 +203,19 @@ export function usagePacingRows(
     ]
       .filter(Boolean)
       .join(' · ');
-    rows.push({ key, label, pct, reset, expected, verdict, description });
+    rows.push({
+      key,
+      label,
+      pct,
+      usedPct,
+      left,
+      reset,
+      resetPhrase,
+      expected,
+      verdict,
+      stale,
+      description,
+    });
     if (pct !== undefined) fields[`${prefix}Pct`] = pct;
     if (reset !== undefined) fields[`${prefix}ResetsAt`] = reset;
     if (length !== undefined && current) fields[`${prefix}WindowMins`] = length;

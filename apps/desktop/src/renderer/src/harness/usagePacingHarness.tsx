@@ -56,6 +56,8 @@ const accounts = [
  * Rendered at rail width, which is where clipping shows up: this column is
  * ~320px on a 1200px window and full width on a phone-sized one.
  */
+const AGED_ROOT = '/home/user/.claude/accounts/aged';
+const BLIND_ROOT = '/home/user/.claude/accounts/blind';
 const inspectorReport: UsageReportWire = {
   evaluated_at: now,
   valid_until: now + 60,
@@ -65,11 +67,18 @@ const inspectorReport: UsageReportWire = {
       accounts: [
         { account: '', label: 'Default', pct: 12, expected: 52 },
         { account: '/home/user/.claude/accounts/work', label: 'work', pct: 70, expected: 52 },
+        // An observation the provider has not refreshed: the percentage stays,
+        // the tick goes, and the card has to say it is history.
+        { account: AGED_ROOT, label: 'aged', pct: 64, expected: 52, fresh: false },
+        // A window that is running but whose measurement did not arrive. The
+        // row that must never read "0% used" or its mirror "100% left".
+        { account: BLIND_ROOT, label: 'blind', pct: null, expected: 52 },
       ].map((a) => ({
         account: a.account,
         label: a.label,
         source: 'disk',
         observed_at: now - 300,
+        fresh: a.fresh ?? null,
         windows: {
           five_hour: {
             used_percent: { state: 'ok' as const, value: a.pct },
@@ -79,20 +88,22 @@ const inspectorReport: UsageReportWire = {
             pace: {
               known: true,
               state: 'ahead',
-              usedPct: a.pct,
+              usedPct: a.pct ?? undefined,
               expectedPct: a.expected,
               curve: 'calendar',
             },
           },
           seven_day: {
-            used_percent: { state: 'ok' as const, value: a.pct + 19 },
+            used_percent: { state: 'ok' as const, value: a.pct === null ? null : a.pct + 19 },
+            // More than a day out, so this row reads as a local wall clock
+            // rather than as a countdown.
             resets_at: now + 3 * 86400,
             window_minutes: 10080,
             is_current: true,
             pace: {
               known: true,
               state: 'ahead',
-              usedPct: a.pct + 19,
+              usedPct: a.pct === null ? undefined : a.pct + 19,
               expectedPct: 57,
               curve: 'five_day',
             },
@@ -138,8 +149,12 @@ const inspectorSnapshot = (overrides: Partial<ClaudeSessionSnapshot>): ClaudeSes
     ...overrides,
   }) as unknown as ClaudeSessionSnapshot;
 
-/** One column per attribution the block can reach: the identified account, the
- *  two-login case it refuses to guess at, and a session on a peer hub. */
+/** One column per state the block can reach: the identified account, the
+ *  two-login case it refuses to guess at, a session on a peer hub, an
+ *  observation the provider has aged, and a running window whose measurement
+ *  never arrived. The last two are the ones worth looking at with your own
+ *  eyes: neither may read as a fresh figure, and neither may imply a full
+ *  allowance. */
 const inspectors: Array<{ title: string; snapshot: ClaudeSessionSnapshot }> = [
   {
     title: 'Identified account · above pace',
@@ -154,6 +169,20 @@ const inspectors: Array<{ title: string; snapshot: ClaudeSessionSnapshot }> = [
   {
     title: 'Session on a peer hub',
     snapshot: inspectorSnapshot({ sessionId: 'sess-3', transcriptPath: '', hub: 'studio' }),
+  },
+  {
+    title: 'Stale provider observation',
+    snapshot: inspectorSnapshot({
+      sessionId: 'sess-4',
+      transcriptPath: `${AGED_ROOT}/projects/p/t.jsonl`,
+    }),
+  },
+  {
+    title: 'Window running, measurement missing',
+    snapshot: inspectorSnapshot({
+      sessionId: 'sess-5',
+      transcriptPath: `${BLIND_ROOT}/projects/p/t.jsonl`,
+    }),
   },
 ];
 
@@ -222,7 +251,7 @@ const overviewSurface = (
                 pace: {
                   known: a.expected !== undefined,
                   state: 'ahead',
-                  usedPct: a.pct,
+                  usedPct: a.pct ?? undefined,
                   expectedPct: a.expected,
                   curve: 'calendar',
                 },

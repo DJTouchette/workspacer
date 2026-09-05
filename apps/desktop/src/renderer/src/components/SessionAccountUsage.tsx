@@ -1,12 +1,19 @@
 /**
  * The ACCOUNT allowance behind one session, on a session surface.
  *
- * Everything else in the Inspector's Usage tab is this session's own spending —
- * its context window, its billed tokens, its cost. This block is the opposite
- * kind of number: the provider allowance the session draws from, which every
- * other session on the same login is spending at the same time. The heading and
- * the subline say so, because a 91% weekly figure sitting under "Usage" with no
- * label reads as "this session burned 91%", which is almost never true.
+ * This is the FIRST block in the Inspector's Usage tab. Everything after it is
+ * this session's own spending: its context window, its billed tokens, its cost.
+ * This block is the opposite kind of number, the provider allowance the session
+ * draws from, which every other session on the same login is spending at the
+ * same time. The heading and the subline say so, because a 91% weekly figure
+ * sitting under "Usage" with no label reads as "this session burned 91%", which
+ * is almost never true.
+ *
+ * It is also the ONLY place in the tab that draws account quota bars. The tab
+ * used to draw them twice, once from this report and once from the opening
+ * session's live status line, with pace colours on one and raw severity colours
+ * on the other; two 5-hour percentages an arm's length apart, coloured by
+ * different rules, is a readout that cannot be trusted at a glance.
  *
  * It is a thin wrapper on purpose. The report, its once-a-minute shared fetch,
  * the pace arithmetic and the card are all the Overview's, unchanged:
@@ -31,6 +38,7 @@ import { claudeColors as colors } from './claude-shared';
 import { useUsageReport } from '../hooks/useUsageReport';
 import { usagePacingRows, usageReportAttribution } from '../lib/usagePacing';
 import { UsageReportCard } from './UsageReportCard';
+import { UsageSectionHeading } from './UsageSectionHeading';
 
 /** Just the identity fields — so the block can be reasoned about (and tested)
  *  without a whole session snapshot. */
@@ -61,21 +69,14 @@ export const SessionAccountUsage: React.FC<{ session: SessionAccountIdentity | n
   if (attribution.state === 'unavailable' || !report) return null;
   const { provider } = attribution;
   return (
-    <div style={{ marginTop: 14 }} data-testid="session-account-usage">
-      <div
-        style={{
-          fontSize: '0.72rem',
-          fontWeight: 650,
-          color: colors.textBright,
-          marginBottom: 2,
-        }}
-      >
-        Account allowance
-      </div>
-      <div style={{ fontSize: '0.66rem', color: colors.muted, marginBottom: 8, lineHeight: 1.45 }}>
-        The {provider} account this session spends from — shared with its other sessions, not this
+    // First block in the Usage tab, so the spacing is BELOW it: the account
+    // allowance is the question a reader arrives with, and this session's own
+    // spending is read against it.
+    <div style={{ marginBottom: 16 }} data-testid="session-account-usage">
+      <UsageSectionHeading title="Account allowance">
+        The {provider} account this session spends from, shared with its other sessions, not this
         session&rsquo;s own tokens.
-      </div>
+      </UsageSectionHeading>
       {attribution.state === 'match' ? (
         usagePacingRows(report, attribution.account, nowMs).rows.length ? (
           <UsageReportCard

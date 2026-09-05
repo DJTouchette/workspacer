@@ -22,7 +22,7 @@ import {
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 import { fmtTokens } from './agentUtils';
-import { planProgress, usageWindows, fmtWindowLength } from '../../lib/sessionStats';
+import { planProgress } from '../../lib/sessionStats';
 import { UsageDetailDialog } from './UsageDetailDialog';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch, requestContextPane } from '../../lib/watchBus';
@@ -34,6 +34,7 @@ import {
 } from '../../contexts/RecordedUsageContext';
 import { capsFor } from '../../lib/providerCaps';
 import { SessionAccountUsage } from '../SessionAccountUsage';
+import { UsageSectionHeading } from '../UsageSectionHeading';
 import type { AgentProvider } from '../../types/pane';
 
 export type RailTab = 'files' | 'plan' | 'workflows' | 'agents' | 'usage';
@@ -71,12 +72,6 @@ function aggregateFiles(changes: FileChange[]): FileAgg[] {
   }
   return Array.from(byPath.values()).reverse(); // most recent first
 }
-
-const fmtReset = (epochSec?: number): string => {
-  if (!epochSec) return '';
-  const d = new Date(epochSec * 1000);
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-};
 
 /** Per-session cost budget: a tiny inline dollar input tucked into the usage
  *  stats. Empty/0 disables it. When set, an OS notification fires (from the main
@@ -1020,6 +1015,42 @@ export const InspectorCard: React.FC<{
 
         {activeTab === 'usage' && (
           <>
+            {/* 1. THE ACCOUNT ALLOWANCE — the shared provider quota this session
+                draws from, and the only place in this tab that draws account
+                windows. It comes first because it is the question a reader
+                arrives with, and because the session figures below are read
+                against it. Own component, mounted only while this tab is
+                showing, so an Inspector parked on Files subscribes to no report
+                poll at all. */}
+            <SessionAccountUsage session={session} />
+            {/* 2. THIS SESSION — its own context, tokens, cost and budget. */}
+            <UsageSectionHeading
+              title="This session"
+              action={
+                (sl || usage) && (
+                  <button
+                    aria-label="Show usage detail"
+                    title="Model, prompt cache, session totals, and the account limits this session's provider reported."
+                    onClick={() => setUsageOpen(true)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                      color: colors.muted,
+                      font: 'inherit',
+                      fontSize: '0.66rem',
+                      textDecoration: 'underline',
+                      textUnderlineOffset: 2,
+                    }}
+                  >
+                    Detail
+                  </button>
+                )
+              }
+            >
+              What this session spent. Not a share of the allowance above.
+            </UsageSectionHeading>
             {
               // A LIVE source is not the only thing this tab can render. Gating on
               // `!sl && !usage` alone meant the recorded cost/token tiles below
@@ -1148,44 +1179,14 @@ export const InspectorCard: React.FC<{
                       Cumulative billed tokens are not the active context window.
                     </div>
                   )}
-                  {/* One bar per window the provider actually reported. See
-                  `usageWindows`. Codex has no monthly window and Claude has one
-                  only while extra usage is enabled, so the list is built from
-                  the data rather than fixed at three.
-
-                  The group is a click target for the same dialog the status bar
-                  opens: the rule is that usage is clickable wherever it is drawn,
-                  and this card is where a reader looks for it. */}
-                  {usageWindows(sl ?? {}).length > 0 && (
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      aria-label="Show usage detail"
-                      title="Account limits. Click for detail."
-                      onClick={() => setUsageOpen(true)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setUsageOpen(true);
-                        }
-                      }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {usageWindows(sl ?? {}).map((w) => (
-                        <UsageBar
-                          key={w.key}
-                          label={w.label}
-                          pct={w.pct}
-                          sub={[
-                            fmtWindowLength(w.windowMins),
-                            w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  {/* The account's 5-hour/7-day/monthly bars used to be drawn
+                  here too, from this session's live status line. They are gone
+                  from the body: the block above already answers the same
+                  question from the account report, and two 5-hour percentages
+                  in one column, one coloured by pace and one by raw severity,
+                  is a readout a reader has to reconcile rather than read. The
+                  live fields still reach the detail dialog, where they are
+                  labelled as this session's own provider telemetry. */}
                   {/* Sibling, not child: a portal bubbles through the REACT tree, so
                   a dialog inside the target above would reopen on its own
                   backdrop click. */}
@@ -1279,11 +1280,6 @@ export const InspectorCard: React.FC<{
                 </div>
               )
             }
-            {/* The other half of "usage": not what THIS session spent, but the
-                account allowance it spends from. Own component, mounted only
-                while this tab is showing, so an Inspector parked on Files
-                subscribes to no report poll at all. */}
-            <SessionAccountUsage session={session} />
           </>
         )}
       </div>

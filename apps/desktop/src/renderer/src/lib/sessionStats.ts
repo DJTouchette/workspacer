@@ -47,10 +47,15 @@ export function fmtUSD(n: number): string {
  * Compact time-until-reset for a unix-seconds timestamp: "38m", "5h", "3d"
  * (single coarsest unit — this rides in tight status readouts). Undefined when
  * absent or already past, so callers can just skip rendering.
+ *
+ * `nowMs` exists for the callers that have ALREADY decided, against one
+ * instant, whether a window is still running: reading the clock a second time
+ * here is how a row that survived the currency check acquires a countdown
+ * measured from a different moment.
  */
-export function fmtResetIn(epochSecs?: number): string | undefined {
+export function fmtResetIn(epochSecs?: number, nowMs = Date.now()): string | undefined {
   if (!epochSecs) return undefined;
-  const mins = Math.round((epochSecs * 1000 - Date.now()) / 60000);
+  const mins = Math.round((epochSecs * 1000 - nowMs) / 60000);
   if (mins <= 0) return undefined;
   if (mins < 60) return `${mins}m`;
   const h = Math.round(mins / 60);

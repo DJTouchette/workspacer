@@ -27,7 +27,7 @@ test.afterAll(() => {
 });
 test('light/dark, narrow/wide consumption and keyboard detail', async ({ page }, info) => {
   for (const theme of ['light', 'dark'])
-    for (const width of [360, 1200]) {
+    for (const width of [320, 360, 1200]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`${url}?theme=${theme}`);
       // "above pace", not "ahead": ahead of schedule is praise, ahead of your
@@ -137,7 +137,7 @@ test('usage schedule control: live switch and the unavailable state', async ({ p
  */
 test('inspector usage tab: account allowance at rail width', async ({ page }, info) => {
   for (const theme of ['light', 'dark'])
-    for (const width of [360, 1200]) {
+    for (const width of [320, 360, 1200]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.goto(`${url}?theme=${theme}&surface=inspector`);
 
@@ -147,9 +147,37 @@ test('inspector usage tab: account allowance at rail width', async ({ page }, in
       await expect(
         page.getByText(/shared with its other sessions, not this session/).first(),
       ).toBeVisible();
-      // …directly beside this session's own figures, which are untouched.
+      // …and it comes FIRST, above this session's own figures, which are
+      // untouched and now carry a heading of their own.
+      await expect(page.getByText('This session').first()).toBeVisible();
       await expect(page.getByText('Context window').first()).toBeVisible();
       await expect(page.getByText('Input tokens').first()).toBeVisible();
+
+      // What is spent, what is LEFT, and when the window turns over. The
+      // remainder is the figure a reader acts on and the one that used to be
+      // absent entirely.
+      await expect(page.getByText('70% used').first()).toBeVisible();
+      await expect(page.getByText('30% left').first()).toBeVisible();
+      await expect(page.getByText(/^resets in /).first()).toBeVisible();
+      // A window more than a day out reads as a wall clock, not as "3d".
+      await expect(page.getByText(/^resets (?!in )/).first()).toBeVisible();
+      // The tick is explained in words, not by its position alone.
+      await expect(page.getByText(/Tick marks the share expected by now/).first()).toBeVisible();
+
+      // The account's windows are drawn ONCE. The session's own status line
+      // used to draw a second, differently coloured 5-hour bar below them.
+      await expect(page.getByText('5-hour limit')).toHaveCount(0);
+      await expect(page.getByText('7-day limit')).toHaveCount(0);
+
+      // A stale observation keeps its number, says it is history, and loses
+      // its tick. A running window with no measurement says so and never
+      // implies a full allowance.
+      await expect(page.getByText(/Historical reading: the provider last observed/)).toBeVisible();
+      await expect(page.getByText('Usage unknown').first()).toBeVisible();
+      // `exact`, because "30% left" and "70% used" contain these as
+      // substrings and a loose match would pass on the wrong element.
+      await expect(page.getByText('100% left', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('0% used', { exact: true })).toHaveCount(0);
 
       // Identified login: the 7-day window at 89% against 57% expected is the
       // reading that used to read as praise.
@@ -175,8 +203,23 @@ test('inspector usage tab: account allowance at rail width', async ({ page }, in
       );
 
       // The two refusals, in the same column, in words rather than a blank.
-      await expect(page.getByText(/2 claude accounts are reported here/)).toBeVisible();
+      await expect(page.getByText(/\d+ claude accounts are reported here/)).toBeVisible();
       await expect(page.getByText(/runs on hub/)).toBeVisible();
+
+      // The live status-line windows did not vanish, they moved behind a
+      // labelled affordance that says whose reading they are.
+      // `exact`: the account card's own target is named "Show usage detail:
+      // claude · <identity>", and a loose match would open THAT dialog.
+      const detail = page.getByLabel('Show usage detail', { exact: true }).first();
+      await detail.focus();
+      await page.keyboard.press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Usage detail' });
+      await expect(
+        dialog.getByText(/Live provider telemetry, as reported to this session/),
+      ).toBeVisible();
+      await expect(dialog.getByText(/5 hours/)).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
 
       // Nothing overflows the rail-width column, and the page does not scroll
       // sideways at phone width.

@@ -3,6 +3,8 @@ import {
   usageAccountIdentity,
   usagePacingRows,
   usageReportAttribution,
+  usageResetPhrase,
+  usageStaleNote,
 } from '../src/lib/usagePacing';
 import type { UsageReportAccount, UsageReportWire } from '../../main/shared/usageReport';
 const now = 1_800_000_000;
@@ -98,6 +100,61 @@ describe('whole usage observations', () => {
     a.windows = { seven_day: { used_percent: { state: 'ok', value: 0 }, resets_at: now + 1000 } };
     expect(rows(a).map((r) => r.key)).toEqual(['seven_day']);
   });
+  /**
+   * WHAT IS LEFT is the number a reader actually wants, and it is the one that
+   * can be invented. `100 - used` is only meaningful when `used` is a real
+   * measurement, so an absent, malformed or unavailable reading has to leave
+   * the remainder absent too: "100% left" over an account nobody could read is
+   * a lie with no tell.
+   */
+  it('derives the remainder only from a valid measurement', () => {
+    expect(rows(account(70))[0]).toMatchObject({ usedPct: 70, left: 30 });
+    // Rounded once, so the pair always sums to 100 rather than to 101.
+    expect(rows(account(70.5))[0]).toMatchObject({ usedPct: 71, left: 29 });
+    expect(rows(account(0))[0]).toMatchObject({ usedPct: 0, left: 100 });
+    for (const value of [undefined, null, NaN, -1, 101]) {
+      const a = account();
+      a.windows!.five_hour!.used_percent!.value = value;
+      expect(rows(a)[0]).toMatchObject({ usedPct: undefined, left: undefined });
+    }
+    // …including a window that is only a reset time, with no measurement at all.
+    const resetOnly = account();
+    resetOnly.windows!.five_hour!.used_percent = undefined;
+    expect(rows(resetOnly)[0].left).toBeUndefined();
+  });
+
+  // Near resets read as a countdown; anything past a day reads as a wall clock,
+  // because "3d" is not a figure to plan a weekly allowance against.
+  it('speaks a near reset as a countdown and a far one as a local time', () => {
+    const at = now * 1000;
+    expect(usageResetPhrase(now + 9000, at)).toBe('resets in 3h');
+    expect(usageResetPhrase(now + 40 * 60, at)).toBe('resets in 40m');
+    const far = usageResetPhrase(now + 3 * 86400, at);
+    expect(far).toMatch(/^resets /);
+    expect(far).not.toMatch(/^resets in /);
+    // A reset already past gets no phrase; the window is dropped anyway, and a
+    // leftover "resets in 0m" would contradict that.
+    expect(usageResetPhrase(now - 1, at)).toBeUndefined();
+    expect(usageResetPhrase(undefined, at)).toBeUndefined();
+    expect(rows()[0].resetPhrase).toBe('resets in 3h');
+  });
+
+  /** A kept percentage from an unconfirmed observation is history, and the row
+   *  has to be able to say which of the two reasons produced it. */
+  it('marks a reading historical, naming the transport and the provider apart', () => {
+    expect(rows()[0].stale).toBe(false);
+    expect(usageStaleNote(report, account())).toBeUndefined();
+
+    const aged = account();
+    aged.fresh = false;
+    expect(rows(aged)[0]).toMatchObject({ stale: true, pct: 50, expected: undefined });
+    expect(usageStaleNote(report, aged)).toMatch(/provider last observed/);
+
+    const offline = { ...report, transport_stale: true };
+    expect(rows(account(), offline)[0]).toMatchObject({ stale: true, expected: undefined });
+    expect(usageStaleNote(offline, account())).toMatch(/refresh failed/);
+  });
+
   it('keeps canonical, default, unattributed and Windows identities distinct', () => {
     const keys = ['/a/work', '/b/work', '', null, 'C:\\accounts\\work'];
     expect(new Set(keys.map((account) => usageAccountIdentity({ account }))).size).toBe(

@@ -298,6 +298,24 @@ export const UsageDetailDialog: React.FC<{
         {/* ── Account windows ────────────────────────────────────────── */}
         <div style={{ marginTop: 16 }}>
           <SectionTitle>Account limits</SectionTitle>
+          {/* WHOSE reading this is. The Inspector's Usage tab now draws the
+              account allowance from the hub's account-level report, and these
+              are a different observation of the same account: whatever this
+              session's own provider last told it. Saying which one is showing
+              is the difference between a second opinion and a contradiction. */}
+          {sessionScoped && windows.length > 0 && (
+            <div
+              style={{
+                fontSize: '0.68rem',
+                color: 'var(--wks-text-muted)',
+                lineHeight: 1.5,
+                marginBottom: 8,
+              }}
+            >
+              Live provider telemetry, as reported to this session. The Inspector&rsquo;s account
+              allowance is the shared reading for the whole account.
+            </div>
+          )}
           {windows.length === 0 ? (
             <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-muted)', lineHeight: 1.5 }}>
               This provider has not reported any rate-limit windows for the account yet.

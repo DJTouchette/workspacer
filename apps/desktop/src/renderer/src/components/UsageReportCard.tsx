@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import type { UsageReportAccount, UsageReportWire } from '../../../main/shared/usageReport';
 import {
+  USAGE_EXPECTED_LEGEND,
   usageAccountIdentity,
   usagePaceFallbackLabel,
   usagePaceLook,
   usagePacingRows,
+  usageStaleNote,
 } from '../lib/usagePacing';
 import { UsageDetailDialog } from './claude/UsageDetailDialog';
 import { Surface } from './Surface';
-import { fmtResetIn } from '../lib/sessionStats';
 
 /** Report accounts belong to this backend's hub, never to federated sessions. */
 export function UsageReportCard({
@@ -33,6 +34,7 @@ export function UsageReportCard({
   const [open, setOpen] = useState(false);
   const { rows, fields } = usagePacingRows(report, account, nowMs ?? Date.now());
   const identity = usageAccountIdentity(account);
+  const staleNote = usageStaleNote(report, account);
   if (!rows.length) return null;
   return (
     <>
@@ -75,6 +77,9 @@ export function UsageReportCard({
             aria-label={`${row.label} · ${row.description}`}
             style={{ marginTop: 8 }}
           >
+            {/* One wrapping line per window. The numeric pair stays adjacent
+                and the reset and the verdict are what wrap away first, which is
+                what keeps a 320px rail readable without a second layout. */}
             <div
               style={{
                 display: 'flex',
@@ -85,15 +90,33 @@ export function UsageReportCard({
               }}
             >
               <span>{row.label}</span>
-              <span>{row.pct === undefined ? 'Unknown' : `${Math.round(row.pct)}%`}</span>
+              {/* An absent measurement says so. It is never turned into "0%
+                  used" or its mirror "100% left" — see UsagePacingRow.left. */}
+              <span>{row.usedPct === undefined ? 'Usage unknown' : `${row.usedPct}% used`}</span>
+              {row.left !== undefined && (
+                <span style={{ color: 'var(--wks-text-secondary)' }}>{row.left}% left</span>
+              )}
+              {row.resetPhrase !== undefined && (
+                <span style={{ color: 'var(--wks-text-secondary)' }}>{row.resetPhrase}</span>
+              )}
               <span style={{ color: usagePaceLook(row.verdict).color }}>
                 {usagePaceLook(row.verdict).label ?? usagePaceFallbackLabel(report, account)}
               </span>
-              {row.reset !== undefined && (
-                <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtResetIn(row.reset)}</span>
-              )}
             </div>
             <div
+              // The meter carries the whole row in its accessible name: window,
+              // what is spent, what is left and when it resets. Colour states
+              // none of that, and the tick is a 2px mark.
+              {...(row.usedPct === undefined
+                ? {}
+                : {
+                    role: 'meter',
+                    'aria-valuemin': 0,
+                    'aria-valuemax': 100,
+                    'aria-valuenow': row.usedPct,
+                    'aria-valuetext': row.description,
+                    'aria-label': `${row.label} allowance`,
+                  })}
               style={{
                 position: 'relative',
                 height: 6,
@@ -117,6 +140,7 @@ export function UsageReportCard({
               {row.expected !== undefined && (
                 <span
                   data-testid="usage-expected"
+                  title={`${Math.round(row.expected)}% expected by now`}
                   style={{
                     position: 'absolute',
                     left: `${row.expected}%`,
@@ -132,6 +156,47 @@ export function UsageReportCard({
             </div>
           </div>
         ))}
+        {/* The tick explained once, in words, for the rows that actually drew
+            one. A marker whose meaning is carried by position alone is a marker
+            only its author can read. */}
+        {rows.some((row) => row.expected !== undefined) && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: '0.6rem',
+              color: 'var(--wks-text-secondary)',
+              marginTop: 8,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                display: 'inline-block',
+                height: 9,
+                width: 2,
+                flexShrink: 0,
+                background: 'var(--wks-accent)',
+              }}
+            />
+            {USAGE_EXPECTED_LEGEND}
+          </div>
+        )}
+        {/* A percentage kept from an observation nobody has confirmed since is
+            history. It stays on screen, but it says which it is. */}
+        {staleNote !== undefined && (
+          <div
+            style={{
+              fontSize: '0.6rem',
+              color: 'var(--wks-text-secondary)',
+              marginTop: 8,
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {staleNote}
+          </div>
+        )}
         <div
           style={{
             fontSize: '0.6rem',

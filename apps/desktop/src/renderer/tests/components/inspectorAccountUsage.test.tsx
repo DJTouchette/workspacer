@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { InspectorCard } from '../../src/components/claude/InspectorCard';
 import { refreshUsageReport, __resetUsageReportCache } from '../../src/hooks/useUsageReport';
 import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
@@ -60,6 +60,24 @@ function fixture(accounts: UsageReportAccount[] = [acct('', 10, 52), acct(WORK_R
     providers: [{ provider: 'claude', accounts }],
   } as UsageReportWire;
 }
+
+/** The session's OWN provider telemetry: a second observation of the same
+ *  account, which is why the tab may not draw it as a second allowance. */
+const live = () => ({
+  modelDisplay: 'opus-5',
+  contextUsedPct: 41,
+  contextWindowSize: 200_000,
+  totalInputTokens: 1_200,
+  totalOutputTokens: 800,
+  costUSD: 0.42,
+  fiveHourPct: 11,
+  fiveHourResetsAt: now + 3 * 3600,
+  fiveHourWindowMins: 300,
+  sevenDayPct: 2,
+  sevenDayResetsAt: now + 4 * 86400,
+  sevenDayWindowMins: 10080,
+  receivedAt: new Date(now * 1000).toISOString(),
+});
 
 const snapshot = (overrides: Partial<ClaudeSessionSnapshot> = {}): ClaudeSessionSnapshot =>
   ({
@@ -121,12 +139,12 @@ describe('the Inspector’s account allowance', () => {
 
     // The work login's numbers, through the SHARED mapper: the same word and
     // the same error colour the Overview gives 70% against 52% expected.
-    expect(screen.getByText('70%')).toBeInTheDocument();
+    expect(screen.getByText('70% used')).toBeInTheDocument();
     expect(screen.getByText('above pace')).toHaveStyle({ color: 'var(--wks-error)' });
     expect(screen.getByTestId('usage-consumed')).toHaveStyle({ background: 'var(--wks-error)' });
     expect((screen.getByTestId('usage-expected') as HTMLElement).style.left).toBe('52%');
     // …and NOT the other login's, which is the whole point.
-    expect(screen.queryByText('10%')).not.toBeInTheDocument();
+    expect(screen.queryByText('10% used')).not.toBeInTheDocument();
 
     // Inspecting the other session flips the row. Nothing is remembered from
     // the previous one.
@@ -136,9 +154,87 @@ describe('the Inspector’s account allowance', () => {
         initialTab="usage"
       />,
     );
-    expect(screen.getByText('10%')).toBeInTheDocument();
-    expect(screen.queryByText('70%')).not.toBeInTheDocument();
+    expect(screen.getByText('10% used')).toBeInTheDocument();
+    expect(screen.queryByText('70% used')).not.toBeInTheDocument();
     expect(screen.queryByText('above pace')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The two-section order, and the duplicate it replaced.
+   *
+   * The tab used to draw the account's 5-hour window TWICE: once from the
+   * report (paced, error colour above the curve) and once from the opening
+   * session's live status line (a raw severity ramp), a few rows apart and
+   * neither labelled as account-wide. Whichever a reader believed, the other
+   * one was there to contradict it.
+   */
+  it('answers the account first, this session second, and draws the account once', async () => {
+    api.usageReport = vi.fn().mockResolvedValue(fixture([acct(WORK_ROOT, 70, 52)]));
+    mount(snapshot({ statusLine: live() }));
+    await flush();
+
+    const allowance = screen.getByText('Account allowance');
+    const thisSession = screen.getByText('This session');
+    expect(allowance.compareDocumentPosition(thisSession) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // One account meter in the whole tab, and it is the report's.
+    expect(screen.getAllByTestId('usage-consumed')).toHaveLength(1);
+    // The status line's own window bars are gone from the body.
+    expect(screen.queryByText('5-hour limit')).not.toBeInTheDocument();
+    expect(screen.queryByText('7-day limit')).not.toBeInTheDocument();
+    // The context meter is a session fact, not an account one, and it stays.
+    expect(screen.getByText('Context window')).toBeInTheDocument();
+  });
+
+  // What is LEFT, beside what is spent, with the tick explained in words rather
+  // than by its position.
+  it('states the allowance left, the reset and what the tick means', async () => {
+    api.usageReport = vi.fn().mockResolvedValue(fixture([acct(WORK_ROOT, 70, 52)]));
+    mount();
+    await flush();
+    expect(screen.getByText('70% used')).toBeInTheDocument();
+    expect(screen.getByText('30% left')).toBeInTheDocument();
+    expect(screen.getByText('resets in 3h')).toBeInTheDocument();
+    expect(screen.getByText(/Tick marks the share expected by now/)).toBeInTheDocument();
+    // The meter says the same thing to a reader who never sees the colour.
+    expect(screen.getByRole('meter')).toHaveAttribute(
+      'aria-valuetext',
+      expect.stringContaining('30% of the allowance left'),
+    );
+    expect(screen.getByRole('meter')).toHaveAttribute('aria-valuenow', '70');
+  });
+
+  // A reading nobody has confirmed since keeps its percentage, loses its tick,
+  // and says out loud that it is history rather than a present figure.
+  it('calls a stale reading historical and drops the pace marker', async () => {
+    const aged = fixture([acct(WORK_ROOT, 70, 52)]);
+    aged.providers![0].accounts![0].fresh = false;
+    api.usageReport = vi.fn().mockResolvedValue(aged);
+    mount();
+    await flush();
+    expect(screen.getByText('70% used')).toBeInTheDocument();
+    expect(screen.getByText(/Historical reading: the provider last observed/)).toBeInTheDocument();
+    expect(screen.queryByTestId('usage-expected')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tick marks/)).not.toBeInTheDocument();
+  });
+
+  // The live status-line windows did not just disappear: they moved behind a
+  // labelled affordance, where the dialog says whose reading they are. The
+  // session-only half of that dialog (cache, cost, context) rides along.
+  it('keeps the live telemetry reachable, and labelled, in the detail dialog', async () => {
+    api.usageReport = vi.fn().mockResolvedValue(fixture([acct(WORK_ROOT, 70, 52)]));
+    mount(snapshot({ statusLine: live() }));
+    await flush();
+    fireEvent.click(screen.getByLabelText('Show usage detail'));
+    const dialog = screen.getByRole('dialog', { name: 'Usage detail' });
+    expect(within(dialog).getByText('Account limits')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Live provider telemetry, as reported to this session/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/5 hours/)).toBeInTheDocument();
+    expect(within(dialog).getByText('11%')).toBeInTheDocument();
+    expect(within(dialog).getByText('Estimated cost')).toBeInTheDocument();
   });
 
   it('labels the allowance as the account’s, beside this session’s own figures', async () => {
@@ -163,8 +259,8 @@ describe('the Inspector’s account allowance', () => {
     mount(snapshot({ transcriptPath: undefined }));
     await flush();
     expect(screen.getByText(/2 claude accounts are reported here/)).toBeInTheDocument();
-    expect(screen.queryByText('70%')).not.toBeInTheDocument();
-    expect(screen.queryByText('10%')).not.toBeInTheDocument();
+    expect(screen.queryByText('70% used')).not.toBeInTheDocument();
+    expect(screen.queryByText('10% used')).not.toBeInTheDocument();
     expect(screen.queryByTestId('usage-consumed')).not.toBeInTheDocument();
   });
 
@@ -175,7 +271,7 @@ describe('the Inspector’s account allowance', () => {
     await flush();
     expect(screen.getByText(/runs on hub/)).toBeInTheDocument();
     expect(screen.getByText('studio')).toBeInTheDocument();
-    expect(screen.queryByText('10%')).not.toBeInTheDocument();
+    expect(screen.queryByText('10% used')).not.toBeInTheDocument();
   });
 
   it('names the absence when the report knows nothing about this provider', async () => {
@@ -194,7 +290,7 @@ describe('the Inspector’s account allowance', () => {
     mount();
     await flush();
     expect(screen.getByText(/No claude allowance window is currently running/)).toBeInTheDocument();
-    expect(screen.queryByText('70%')).not.toBeInTheDocument();
+    expect(screen.queryByText('70% used')).not.toBeInTheDocument();
   });
 
   it('shows an aged observation as stale rather than as a pace', async () => {
@@ -204,7 +300,7 @@ describe('the Inspector’s account allowance', () => {
     mount();
     await flush();
     expect(screen.getByText('Stale · pace unavailable')).toBeInTheDocument();
-    expect(screen.getByText('70%')).toBeInTheDocument();
+    expect(screen.getByText('70% used')).toBeInTheDocument();
     expect(screen.queryByTestId('usage-expected')).not.toBeInTheDocument();
   });
 
@@ -234,7 +330,7 @@ describe('the Inspector’s account allowance', () => {
     render(<InspectorCard snapshot={snapshot()} initialTab="usage" />);
     await flush();
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByText('70%')).toHaveLength(2);
+    expect(screen.getAllByText('70% used')).toHaveLength(2);
 
     // The minute poll, still one request for both cards.
     await act(async () => {
