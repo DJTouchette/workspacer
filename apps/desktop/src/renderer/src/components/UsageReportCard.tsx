@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import type { UsageReportAccount, UsageReportWire } from '../../../main/shared/usageReport';
-import { usageAccountIdentity, usagePaceLook, usagePacingRows } from '../lib/usagePacing';
+import {
+  usageAccountIdentity,
+  usagePaceFallbackLabel,
+  usagePaceLook,
+  usagePacingRows,
+} from '../lib/usagePacing';
 import { UsageDetailDialog } from './claude/UsageDetailDialog';
 import { Surface } from './Surface';
 import { fmtResetIn } from '../lib/sessionStats';
@@ -10,13 +15,23 @@ export function UsageReportCard({
   report,
   account,
   provider,
+  compact,
+  nowMs,
 }: {
   report: UsageReportWire;
   account: UsageReportAccount;
   provider: string;
+  /** Full width and tighter padding, for the Inspector's narrow column. The
+   *  card's CONTENT is identical either way — a second layout of the same
+   *  numbers is how two surfaces start disagreeing. */
+  compact?: boolean;
+  /** The clock the rows are judged against. Only a caller that has ALREADY
+   *  asked whether this account has a current window passes it, so its answer
+   *  and the card's cannot come from two different instants. */
+  nowMs?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const { rows, fields } = usagePacingRows(report, account, Date.now());
+  const { rows, fields } = usagePacingRows(report, account, nowMs ?? Date.now());
   const identity = usageAccountIdentity(account);
   if (!rows.length) return null;
   return (
@@ -34,7 +49,11 @@ export function UsageReportCard({
             setOpen(true);
           }
         }}
-        style={{ flex: '1 1 220px', minWidth: 0, padding: 16, cursor: 'pointer' }}
+        style={
+          compact
+            ? { width: '100%', minWidth: 0, padding: 10, cursor: 'pointer' }
+            : { flex: '1 1 220px', minWidth: 0, padding: 16, cursor: 'pointer' }
+        }
       >
         <div style={{ fontSize: '0.72rem', fontWeight: 600, overflowWrap: 'anywhere' }}>
           {provider} usage · {account.label || identity}
@@ -68,10 +87,7 @@ export function UsageReportCard({
               <span>{row.label}</span>
               <span>{row.pct === undefined ? 'Unknown' : `${Math.round(row.pct)}%`}</span>
               <span style={{ color: usagePaceLook(row.verdict).color }}>
-                {usagePaceLook(row.verdict).label ??
-                  (account.fresh === false || report.transport_stale
-                    ? 'Stale · pace unavailable'
-                    : 'Pace unavailable')}
+                {usagePaceLook(row.verdict).label ?? usagePaceFallbackLabel(report, account)}
               </span>
               {row.reset !== undefined && (
                 <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtResetIn(row.reset)}</span>

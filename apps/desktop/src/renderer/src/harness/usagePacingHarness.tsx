@@ -4,7 +4,9 @@ import { createRoot } from 'react-dom/client';
 import '../App.css';
 import { applyTheme, darkTheme, lightTheme } from '../themes';
 import { UsageReportCard } from '../components/UsageReportCard';
+import { InspectorCard } from '../components/claude/InspectorCard';
 import UsageScheduleRow from '../components/settings/UsageScheduleRow';
+import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import type {
   UsagePacingSchedule,
   UsagePacingScheduleWire,
@@ -27,6 +29,7 @@ let stored: UsagePacingScheduleWire | null =
         configurable: true,
       };
 (window as unknown as { electronAPI: unknown }).electronAPI = {
+  usageReport: async () => inspectorReport,
   usagePacingSchedule: async () => stored,
   setUsagePacingSchedule: async (schedule: UsagePacingSchedule) => {
     stored = { schedule, configurable: true };
@@ -46,7 +49,148 @@ const accounts = [
   { account: '/home/user/personal/accounts/work', label: 'work', pct: 52, expected: 52 },
   { account: null, label: 'Unattributed', pct: 14, expected: undefined },
 ];
-createRoot(document.getElementById('root')!).render(
+
+/**
+ * The Inspector's Usage tab, whose account block reads the SAME report through
+ * `window.electronAPI.usageReport` above — the shared hook, not a second fetch.
+ * Rendered at rail width, which is where clipping shows up: this column is
+ * ~320px on a 1200px window and full width on a phone-sized one.
+ */
+const inspectorReport: UsageReportWire = {
+  evaluated_at: now,
+  valid_until: now + 60,
+  providers: [
+    {
+      provider: 'claude',
+      accounts: [
+        { account: '', label: 'Default', pct: 12, expected: 52 },
+        { account: '/home/user/.claude/accounts/work', label: 'work', pct: 70, expected: 52 },
+      ].map((a) => ({
+        account: a.account,
+        label: a.label,
+        source: 'disk',
+        observed_at: now - 300,
+        windows: {
+          five_hour: {
+            used_percent: { state: 'ok' as const, value: a.pct },
+            resets_at: now + 9000,
+            window_minutes: 300,
+            is_current: true,
+            pace: {
+              known: true,
+              state: 'ahead',
+              usedPct: a.pct,
+              expectedPct: a.expected,
+              curve: 'calendar',
+            },
+          },
+          seven_day: {
+            used_percent: { state: 'ok' as const, value: a.pct + 19 },
+            resets_at: now + 3 * 86400,
+            window_minutes: 10080,
+            is_current: true,
+            pace: {
+              known: true,
+              state: 'ahead',
+              usedPct: a.pct + 19,
+              expectedPct: 57,
+              curve: 'five_day',
+            },
+          },
+        },
+      })),
+    },
+  ],
+};
+
+const inspectorSnapshot = (overrides: Partial<ClaudeSessionSnapshot>): ClaudeSessionSnapshot =>
+  ({
+    sessionId: 'sess-1',
+    cwd: '/home/user/Work/workspacer',
+    ptyId: 'sess-1',
+    status: 'active',
+    conversation: [],
+    activeToolCalls: [],
+    completedToolCalls: [],
+    fileChanges: [],
+    pendingApproval: null,
+    pendingQuestions: null,
+    subagents: [],
+    workflows: [],
+    ambientState: 'idle',
+    lastActivity: Date.now(),
+    totalToolCalls: 12,
+    provider: 'claude',
+    usage: {
+      model: 'claude-opus-5',
+      contextTokens: 96_000,
+      contextLimit: 200_000,
+      totalInputTokens: 412_000,
+      totalOutputTokens: 38_400,
+      costUSD: 4.17,
+    },
+    statusLine: {
+      fiveHourPct: 70,
+      fiveHourResetsAt: now + 9000,
+      fiveHourWindowMins: 300,
+      receivedAt: new Date().toISOString(),
+    },
+    ...overrides,
+  }) as unknown as ClaudeSessionSnapshot;
+
+/** One column per attribution the block can reach: the identified account, the
+ *  two-login case it refuses to guess at, and a session on a peer hub. */
+const inspectors: Array<{ title: string; snapshot: ClaudeSessionSnapshot }> = [
+  {
+    title: 'Identified account · above pace',
+    snapshot: inspectorSnapshot({
+      transcriptPath: '/home/user/.claude/accounts/work/projects/p/t.jsonl',
+    }),
+  },
+  {
+    title: 'Two logins, session names neither',
+    snapshot: inspectorSnapshot({ sessionId: 'sess-2', transcriptPath: undefined }),
+  },
+  {
+    title: 'Session on a peer hub',
+    snapshot: inspectorSnapshot({ sessionId: 'sess-3', transcriptPath: '', hub: 'studio' }),
+  },
+];
+
+const inspectorSurface = (
+  <main
+    style={{
+      padding: 16,
+      fontFamily: 'var(--wks-font-sans)',
+      background: 'var(--wks-bg-base)',
+      color: 'var(--wks-text-primary)',
+      minHeight: '100vh',
+      boxSizing: 'border-box',
+    }}
+  >
+    <h1 style={{ fontSize: '1.05rem' }}>Inspector · Usage</h1>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' }}>
+      {inspectors.map((i) => (
+        <section key={i.title} style={{ width: 320, maxWidth: '100%' }}>
+          <h2 style={{ fontSize: '0.8rem', fontWeight: 600 }}>{i.title}</h2>
+          <div
+            style={{
+              border: '1px solid var(--wks-border-subtle)',
+              borderRadius: 'var(--wks-radius-md, 8px)',
+              background: 'var(--wks-bg-surface)',
+              maxHeight: 720,
+              overflow: 'auto',
+            }}
+          >
+            <InspectorCard snapshot={i.snapshot} initialTab="usage" />
+          </div>
+        </section>
+      ))}
+    </div>
+  </main>
+);
+
+const overviewSurface = (
   <main
     style={{
       padding: 16,
@@ -92,5 +236,9 @@ createRoot(document.getElementById('root')!).render(
     <div style={{ maxWidth: 640 }}>
       <UsageScheduleRow />
     </div>
-  </main>,
+  </main>
+);
+
+createRoot(document.getElementById('root')!).render(
+  params.get('surface') === 'inspector' ? inspectorSurface : overviewSurface,
 );

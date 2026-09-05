@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { usageAccountIdentity, usagePacingRows } from '../src/lib/usagePacing';
+import {
+  usageAccountIdentity,
+  usagePacingRows,
+  usageReportAttribution,
+} from '../src/lib/usagePacing';
 import type { UsageReportAccount, UsageReportWire } from '../../main/shared/usageReport';
 const now = 1_800_000_000;
 const report: UsageReportWire = { evaluated_at: now, valid_until: now + 60 };
@@ -99,5 +103,116 @@ describe('whole usage observations', () => {
     expect(new Set(keys.map((account) => usageAccountIdentity({ account }))).size).toBe(
       keys.length,
     );
+  });
+});
+
+/**
+ * WHOSE allowance is this? The Overview never has to answer — it draws every
+ * account the report knows. A session surface does, and picking the wrong row
+ * puts another login's 91% on this session's card with nothing to give it away.
+ */
+describe('attributing a report row to one session', () => {
+  const acct = (path: string | null, label?: string): UsageReportAccount => ({
+    account: path,
+    label,
+    windows: { five_hour: { used_percent: { state: 'ok', value: 1 }, resets_at: now + 900 } },
+  });
+  const withAccounts = (
+    accounts: UsageReportAccount[],
+    provider = 'claude',
+  ): UsageReportWire => ({
+    ...report,
+    providers: [{ provider, accounts }],
+  });
+  const DEFAULT = acct('', 'default');
+  const WORK = acct('/home/u/.claude/accounts/work', 'work');
+
+  it('picks the row named by the session’s own config root', () => {
+    const r = withAccounts([DEFAULT, WORK]);
+    expect(
+      usageReportAttribution(r, {
+        provider: 'claude',
+        transcriptPath: '/home/u/.claude/accounts/work/projects/p/t.jsonl',
+      }),
+    ).toMatchObject({ state: 'match', account: WORK });
+    expect(
+      usageReportAttribution(r, {
+        provider: 'claude',
+        transcriptPath: '/home/u/.claude/projects/p/t.jsonl',
+      }),
+    ).toMatchObject({ state: 'match', account: DEFAULT });
+  });
+
+  // Two logins, and nothing in the session says which. The report HAS the
+  // numbers, which is exactly why the temptation to show one of them exists.
+  it('refuses to guess between two accounts of one provider', () => {
+    expect(usageReportAttribution(withAccounts([DEFAULT, WORK]), { provider: 'claude' })).toEqual({
+      state: 'ambiguous',
+      provider: 'claude',
+      count: 2,
+    });
+    // Two config roots whose basenames collide resolve to the same key, so the
+    // session's own path does not separate them either.
+    expect(
+      usageReportAttribution(withAccounts([acct('/a/work'), acct('/b/work')]), {
+        provider: 'claude',
+        transcriptPath: '/a/work/projects/p/t.jsonl',
+      }),
+    ).toMatchObject({ state: 'ambiguous', count: 2 });
+  });
+
+  // A provider with no per-session account marker: ONE row is an
+  // identification, more than one is a guess.
+  it('identifies a single-account provider and no more', () => {
+    const one = withAccounts([acct('codex-account')], 'codex');
+    expect(usageReportAttribution(one, { provider: 'codex' })).toMatchObject({ state: 'match' });
+    expect(
+      usageReportAttribution(withAccounts([acct('a'), acct('b')], 'codex'), { provider: 'codex' }),
+    ).toMatchObject({ state: 'ambiguous', count: 2 });
+    // …and never another provider's row.
+    expect(usageReportAttribution(one, { provider: 'claude' })).toEqual({
+      state: 'none',
+      provider: 'claude',
+    });
+  });
+
+  // The report's unattributed bucket is the daemon saying it could not name
+  // those sessions. It is not a fallback for a session that CAN name itself.
+  it('never folds a named session into the unattributed bucket', () => {
+    const r = withAccounts([acct(null), WORK]);
+    expect(
+      usageReportAttribution(r, {
+        provider: 'claude',
+        transcriptPath: '/home/u/.claude/projects/p/t.jsonl',
+      }),
+    ).toEqual({ state: 'none', provider: 'claude' });
+  });
+
+  // Federation blanks transcriptPath, which collapses to the DEFAULT account
+  // key — so without the hub check a peer's session would silently borrow the
+  // local default login's numbers.
+  it('withholds a local reading from a session on a peer hub', () => {
+    expect(
+      usageReportAttribution(withAccounts([DEFAULT]), {
+        provider: 'claude',
+        transcriptPath: '',
+        hub: 'studio',
+      }),
+    ).toEqual({ state: 'remote', provider: 'claude', hub: 'studio' });
+  });
+
+  it('reports no report at all as unavailable, defaulting the provider', () => {
+    expect(usageReportAttribution(null, { transcriptPath: '/x' })).toEqual({
+      state: 'unavailable',
+      provider: 'claude',
+    });
+    expect(usageReportAttribution(undefined, null)).toEqual({
+      state: 'unavailable',
+      provider: 'claude',
+    });
+    expect(usageReportAttribution({ ...report, providers: [] }, { provider: 'codex' })).toEqual({
+      state: 'none',
+      provider: 'codex',
+    });
   });
 });

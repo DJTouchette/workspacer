@@ -1,8 +1,10 @@
-import type {
-  UsageReportAccount,
-  UsageReportWire,
-  ReportWindowFields,
+import {
+  reportAccountKey,
+  type UsageReportAccount,
+  type UsageReportWire,
+  type ReportWindowFields,
 } from '../../../main/shared/usageReport';
+import { claudeAccountOf } from './claudeAccount';
 
 const windows = [
   ['five_hour', '5h', 'fiveHour'],
@@ -142,4 +144,87 @@ export function usageAccountIdentity(account: UsageReportAccount): string {
     : account.account === ''
       ? 'Default account'
       : account.account;
+}
+
+/**
+ * The word shown where a verdict would be when the pace is not known.
+ *
+ * Shared so the Overview card and the Inspector's account block cannot describe
+ * the same absence differently: a reading the provider itself has aged, or a
+ * report whose refresh failed, is STALE — a distinct fact from a hub that
+ * simply computes no pace for the window.
+ */
+export function usagePaceFallbackLabel(
+  report: UsageReportWire,
+  account: UsageReportAccount,
+): string {
+  return account.fresh === false || report.transport_stale
+    ? 'Stale · pace unavailable'
+    : 'Pace unavailable';
+}
+
+/**
+ * Which report row — if any — describes the allowance THIS session spends
+ * from.
+ *
+ * The Overview draws every account the report knows, so it never has to decide
+ * whose card is whose. A session surface does, and the wrong answer is worse
+ * than no answer: showing one login's 91% weekly figure on a session that runs
+ * under a different login is a lie a reader cannot detect. So the only
+ * attributions this makes are ones the session's own identity supports.
+ *
+ *  - `remote` — the session lives on a peer hub (`snapshot.hub`). This report
+ *    is the LOCAL hub's, describing accounts on this machine; the peer's
+ *    allowance is not in it and must not be guessed from it. Federation also
+ *    blanks `transcriptPath`, which would otherwise collapse to the default
+ *    account key and quietly borrow the local default login's numbers.
+ *  - `match` — exactly one row answers to the session's identity. For Claude
+ *    that is the config root behind its transcript path (`claudeAccountOf` vs
+ *    `reportAccountKey`, the same vocabulary on both sides); for a provider
+ *    with no per-session account marker it is the report having exactly ONE
+ *    row for that provider, which is an identification rather than a guess.
+ *  - `ambiguous` — the provider has several rows and nothing in the session
+ *    picks one. Two Claude logins on one machine is the case this exists for.
+ *  - `none` — the report was read and has nothing for this provider/account.
+ *  - `unavailable` — there is no report at all (an older hub, a failed fetch,
+ *    a backend with no `usageReport`). Callers render exactly what they
+ *    rendered before the report existed.
+ */
+export type UsageReportAttribution =
+  | { state: 'match'; provider: string; account: UsageReportAccount }
+  | { state: 'ambiguous'; provider: string; count: number }
+  | { state: 'none'; provider: string }
+  | { state: 'remote'; provider: string; hub: string }
+  | { state: 'unavailable'; provider: string };
+
+export function usageReportAttribution(
+  report: UsageReportWire | null | undefined,
+  session: { provider?: string | null; transcriptPath?: string; hub?: string } | null | undefined,
+): UsageReportAttribution {
+  const provider = session?.provider || 'claude';
+  if (!report) return { state: 'unavailable', provider };
+  const hub = session?.hub;
+  if (hub) return { state: 'remote', provider, hub };
+  const rows = ((report.providers ?? []).find((p) => p?.provider === provider)?.accounts ?? [])
+    .filter(Boolean)
+    .map((a) => a as UsageReportAccount);
+  if (!rows.length) return { state: 'none', provider };
+  // Claude is the provider whose sessions carry their login in a path. Anything
+  // else has no per-session marker, so `key` stays undefined and only a
+  // single-row provider can be identified at all.
+  const key =
+    provider === 'claude' && session?.transcriptPath
+      ? claudeAccountOf(session.transcriptPath)
+      : undefined;
+  if (key !== undefined) {
+    // `reportAccountKey` is null for the report's UNATTRIBUTED bucket, which is
+    // the daemon saying it could not name those sessions — never a match for a
+    // session that can name itself.
+    const matches = rows.filter((r) => reportAccountKey(r) === key);
+    if (matches.length === 1) return { state: 'match', provider, account: matches[0] };
+    if (!matches.length) return { state: 'none', provider };
+    return { state: 'ambiguous', provider, count: matches.length };
+  }
+  if (rows.length === 1) return { state: 'match', provider, account: rows[0] };
+  return { state: 'ambiguous', provider, count: rows.length };
 }

@@ -33,6 +33,7 @@ import {
   useRecordedUsageUnavailable,
 } from '../../contexts/RecordedUsageContext';
 import { capsFor } from '../../lib/providerCaps';
+import { SessionAccountUsage } from '../SessionAccountUsage';
 import type { AgentProvider } from '../../types/pane';
 
 export type RailTab = 'files' | 'plan' | 'workflows' | 'agents' | 'usage';
@@ -1017,134 +1018,137 @@ export const InspectorCard: React.FC<{
             </>
           ))}
 
-        {activeTab === 'usage' &&
-          // A LIVE source is not the only thing this tab can render. Gating on
-          // `!sl && !usage` alone meant the recorded cost/token tiles below
-          // were unreachable in the exact case they exist for: a cold start has
-          // no snapshot at all, so neither `sl` nor `usage` is ever set and the
-          // tab short-circuited to "No usage data yet" over a history DB that
-          // had the figures. The recorded pair opens the body too.
-          (!sl && !usage && cost === undefined && recordedBilled === undefined ? (
-            <EmptyState
-              icon={Gauge}
-              // Three states: nothing live, nothing recorded, and a record we
-              // could not consult. The last is not an empty history.
-              text={
-                usageUnavailable
-                  ? `Recorded usage could not be read (${usageUnavailable})`
-                  : 'No usage data yet'
-              }
-            />
-          ) : (
-            <div>
-              {model && (
-                <div
-                  style={{
-                    fontSize: '0.78rem',
-                    color: colors.textBright,
-                    fontWeight: 650,
-                    marginBottom: 10,
-                  }}
-                >
-                  {model}
-                </div>
-              )}
-              {sl?.capabilities &&
-                (() => {
-                  const c = sl.capabilities;
-                  // A chip with a `focus` deep-links into the Context pane's
-                  // matching section — what's actually taking up context space.
-                  const chips: { label: string; icon?: React.ReactNode; focus?: string }[] = [];
-                  if (c.fastMode)
-                    chips.push({ label: 'Fast', icon: <Zap size={10} strokeWidth={2.25} /> });
-                  if (c.apiKeySource && c.apiKeySource !== 'none')
-                    chips.push({ label: `key: ${c.apiKeySource}` });
-                  if (c.outputStyle && c.outputStyle !== 'default')
-                    chips.push({ label: `style: ${c.outputStyle}` });
-                  if (c.mcpServers) chips.push({ label: `${c.mcpServers} MCP`, focus: 'mcp' });
-                  if (c.skills) chips.push({ label: `${c.skills} skills`, focus: 'skills' });
-                  if (c.plugins) chips.push({ label: `${c.plugins} plugins`, focus: 'plugins' });
-                  if (c.agents) chips.push({ label: `${c.agents} agents`, focus: 'agents' });
-                  if (c.memoryFiles)
-                    chips.push({ label: `${c.memoryFiles} memory`, focus: 'memory' });
-                  if (!chips.length) return null;
-                  const openContext = (focus?: string) =>
-                    session &&
-                    requestContextPane({
-                      sessionId: session.sessionId,
-                      agentName,
-                      focus,
-                    });
-                  const chipStyle: React.CSSProperties = {
-                    fontSize: '0.67rem',
-                    color: colors.muted,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${colors.borderSubtle}`,
-                    borderRadius: 'var(--wks-radius-pill)',
-                    padding: '1px 8px',
-                    whiteSpace: 'nowrap',
-                    fontFamily: 'inherit',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 3,
-                  };
-                  return (
+        {activeTab === 'usage' && (
+          <>
+            {
+              // A LIVE source is not the only thing this tab can render. Gating on
+              // `!sl && !usage` alone meant the recorded cost/token tiles below
+              // were unreachable in the exact case they exist for: a cold start has
+              // no snapshot at all, so neither `sl` nor `usage` is ever set and the
+              // tab short-circuited to "No usage data yet" over a history DB that
+              // had the figures. The recorded pair opens the body too.
+              !sl && !usage && cost === undefined && recordedBilled === undefined ? (
+                <EmptyState
+                  icon={Gauge}
+                  // Three states: nothing live, nothing recorded, and a record we
+                  // could not consult. The last is not an empty history.
+                  text={
+                    usageUnavailable
+                      ? `Recorded usage could not be read (${usageUnavailable})`
+                      : 'No usage data yet'
+                  }
+                />
+              ) : (
+                <div>
+                  {model && (
                     <div
                       style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: 4,
-                        marginBottom: 12,
+                        fontSize: '0.78rem',
+                        color: colors.textBright,
+                        fontWeight: 650,
+                        marginBottom: 10,
                       }}
                     >
-                      {chips.map((chip) =>
-                        chip.focus ? (
-                          <button
-                            key={chip.label}
-                            onClick={() => openContext(chip.focus)}
-                            title="See what's taking up context space"
-                            style={{ ...chipStyle, cursor: 'pointer' }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.borderColor = 'var(--wks-border-active)';
-                              e.currentTarget.style.color = colors.text;
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.borderColor = colors.borderSubtle;
-                              e.currentTarget.style.color = colors.muted;
-                            }}
-                          >
-                            {chip.icon}
-                            {chip.label}
-                          </button>
-                        ) : (
-                          <span key={chip.label} style={chipStyle}>
-                            {chip.icon}
-                            {chip.label}
-                          </span>
-                        ),
-                      )}
+                      {model}
                     </div>
-                  );
-                })()}
-              {ctxPct !== undefined && (
-                <div
-                  role="button"
-                  title="See what's taking up context space"
-                  onClick={() =>
-                    session && requestContextPane({ sessionId: session.sessionId, agentName })
-                  }
-                  style={{ cursor: 'pointer' }}
-                >
-                  <UsageBar label="Context window" pct={ctxPct} />
-                </div>
-              )}
-              {ctxPct === undefined && sl?.contextUsageState === 'waitingForRuntimeUsage' && (
-                <div style={{ fontSize: '0.7rem', color: colors.muted, lineHeight: 1.45 }}>
-                  Context occupancy unavailable — waiting for current-request telemetry. Cumulative
-                  billed tokens are not the active context window.
-                </div>
-              )}
-              {/* One bar per window the provider actually reported. See
+                  )}
+                  {sl?.capabilities &&
+                    (() => {
+                      const c = sl.capabilities;
+                      // A chip with a `focus` deep-links into the Context pane's
+                      // matching section — what's actually taking up context space.
+                      const chips: { label: string; icon?: React.ReactNode; focus?: string }[] = [];
+                      if (c.fastMode)
+                        chips.push({ label: 'Fast', icon: <Zap size={10} strokeWidth={2.25} /> });
+                      if (c.apiKeySource && c.apiKeySource !== 'none')
+                        chips.push({ label: `key: ${c.apiKeySource}` });
+                      if (c.outputStyle && c.outputStyle !== 'default')
+                        chips.push({ label: `style: ${c.outputStyle}` });
+                      if (c.mcpServers) chips.push({ label: `${c.mcpServers} MCP`, focus: 'mcp' });
+                      if (c.skills) chips.push({ label: `${c.skills} skills`, focus: 'skills' });
+                      if (c.plugins)
+                        chips.push({ label: `${c.plugins} plugins`, focus: 'plugins' });
+                      if (c.agents) chips.push({ label: `${c.agents} agents`, focus: 'agents' });
+                      if (c.memoryFiles)
+                        chips.push({ label: `${c.memoryFiles} memory`, focus: 'memory' });
+                      if (!chips.length) return null;
+                      const openContext = (focus?: string) =>
+                        session &&
+                        requestContextPane({
+                          sessionId: session.sessionId,
+                          agentName,
+                          focus,
+                        });
+                      const chipStyle: React.CSSProperties = {
+                        fontSize: '0.67rem',
+                        color: colors.muted,
+                        background: 'rgba(255,255,255,0.04)',
+                        border: `1px solid ${colors.borderSubtle}`,
+                        borderRadius: 'var(--wks-radius-pill)',
+                        padding: '1px 8px',
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'inherit',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                      };
+                      return (
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 4,
+                            marginBottom: 12,
+                          }}
+                        >
+                          {chips.map((chip) =>
+                            chip.focus ? (
+                              <button
+                                key={chip.label}
+                                onClick={() => openContext(chip.focus)}
+                                title="See what's taking up context space"
+                                style={{ ...chipStyle, cursor: 'pointer' }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = 'var(--wks-border-active)';
+                                  e.currentTarget.style.color = colors.text;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = colors.borderSubtle;
+                                  e.currentTarget.style.color = colors.muted;
+                                }}
+                              >
+                                {chip.icon}
+                                {chip.label}
+                              </button>
+                            ) : (
+                              <span key={chip.label} style={chipStyle}>
+                                {chip.icon}
+                                {chip.label}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      );
+                    })()}
+                  {ctxPct !== undefined && (
+                    <div
+                      role="button"
+                      title="See what's taking up context space"
+                      onClick={() =>
+                        session && requestContextPane({ sessionId: session.sessionId, agentName })
+                      }
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <UsageBar label="Context window" pct={ctxPct} />
+                    </div>
+                  )}
+                  {ctxPct === undefined && sl?.contextUsageState === 'waitingForRuntimeUsage' && (
+                    <div style={{ fontSize: '0.7rem', color: colors.muted, lineHeight: 1.45 }}>
+                      Context occupancy unavailable — waiting for current-request telemetry.
+                      Cumulative billed tokens are not the active context window.
+                    </div>
+                  )}
+                  {/* One bar per window the provider actually reported. See
                   `usageWindows`. Codex has no monthly window and Claude has one
                   only while extra usage is enabled, so the list is built from
                   the data rather than fixed at three.
@@ -1152,128 +1156,136 @@ export const InspectorCard: React.FC<{
                   The group is a click target for the same dialog the status bar
                   opens: the rule is that usage is clickable wherever it is drawn,
                   and this card is where a reader looks for it. */}
-              {usageWindows(sl ?? {}).length > 0 && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Show usage detail"
-                  title="Account limits. Click for detail."
-                  onClick={() => setUsageOpen(true)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setUsageOpen(true);
-                    }
-                  }}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {usageWindows(sl ?? {}).map((w) => (
-                    <UsageBar
-                      key={w.key}
-                      label={w.label}
-                      pct={w.pct}
-                      sub={[
-                        fmtWindowLength(w.windowMins),
-                        w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    />
-                  ))}
-                </div>
-              )}
-              {/* Sibling, not child: a portal bubbles through the REACT tree, so
+                  {usageWindows(sl ?? {}).length > 0 && (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Show usage detail"
+                      title="Account limits. Click for detail."
+                      onClick={() => setUsageOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setUsageOpen(true);
+                        }
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {usageWindows(sl ?? {}).map((w) => (
+                        <UsageBar
+                          key={w.key}
+                          label={w.label}
+                          pct={w.pct}
+                          sub={[
+                            fmtWindowLength(w.windowMins),
+                            w.resetsAt ? `resets ${fmtReset(w.resetsAt)}` : undefined,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Sibling, not child: a portal bubbles through the REACT tree, so
                   a dialog inside the target above would reopen on its own
                   backdrop click. */}
-              {usageOpen && (
-                <UsageDetailDialog snapshot={snapshot} onClose={() => setUsageOpen(false)} />
-              )}
-              {sl?.rateLimitWarning && (
-                <div
-                  style={{
-                    fontSize: '0.72rem',
-                    color: colors.warning,
-                    marginBottom: 8,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 5,
-                  }}
-                >
-                  <AlertTriangle size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-                  {sl.rateLimitWarning}
-                </div>
-              )}
-              {sl?.overageOutOfCredits && (
-                <div style={{ fontSize: '0.72rem', color: colors.muted, marginBottom: 8 }}>
-                  Monthly overage: out of credits
-                </div>
-              )}
+                  {usageOpen && (
+                    <UsageDetailDialog snapshot={snapshot} onClose={() => setUsageOpen(false)} />
+                  )}
+                  {sl?.rateLimitWarning && (
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        color: colors.warning,
+                        marginBottom: 8,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <AlertTriangle size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+                      {sl.rateLimitWarning}
+                    </div>
+                  )}
+                  {sl?.overageOutOfCredits && (
+                    <div style={{ fontSize: '0.72rem', color: colors.muted, marginBottom: 8 }}>
+                      Monthly overage: out of credits
+                    </div>
+                  )}
 
-              {/* Session totals: 2×2 stat tiles, then the row-level extras. */}
-              {(inTok !== undefined ||
-                outTok !== undefined ||
-                cost !== undefined ||
-                recordedBilled !== undefined ||
-                session) && (
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 6,
-                    marginTop: 12,
-                  }}
-                >
-                  {inTok !== undefined && (
-                    <StatTile label="Input tokens" value={fmtTokens(inTok) || '0'} />
+                  {/* Session totals: 2×2 stat tiles, then the row-level extras. */}
+                  {(inTok !== undefined ||
+                    outTok !== undefined ||
+                    cost !== undefined ||
+                    recordedBilled !== undefined ||
+                    session) && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 6,
+                        marginTop: 12,
+                      }}
+                    >
+                      {inTok !== undefined && (
+                        <StatTile label="Input tokens" value={fmtTokens(inTok) || '0'} />
+                      )}
+                      {outTok !== undefined && (
+                        <StatTile label="Output tokens" value={fmtTokens(outTok) || '0'} />
+                      )}
+                      {recordedBilled !== undefined && (
+                        <StatTile
+                          label="Billed tokens · last recorded"
+                          value={fmtTokens(recordedBilled)}
+                        />
+                      )}
+                      {cost !== undefined && Number.isFinite(cost) && (
+                        <StatTile
+                          label={costIsRecorded ? 'Cost · last recorded' : 'Cost'}
+                          value={`$${cost.toFixed(2)}`}
+                        />
+                      )}
+                      {session && (
+                        <StatTile label="Tool calls" value={String(session.totalToolCalls)} />
+                      )}
+                    </div>
                   )}
-                  {outTok !== undefined && (
-                    <StatTile label="Output tokens" value={fmtTokens(outTok) || '0'} />
+                  {noUsageFigures && (
+                    <div
+                      title={absentUsageTitle(usageUnavailable)}
+                      style={{ marginTop: 12, fontSize: '0.72rem', color: colors.mutedDim }}
+                    >
+                      {usageUnavailable
+                        ? `Recorded usage could not be read (${usageUnavailable}).`
+                        : 'No cost or token usage was ever recorded for this session.'}
+                    </div>
                   )}
-                  {recordedBilled !== undefined && (
-                    <StatTile
-                      label="Billed tokens · last recorded"
-                      value={fmtTokens(recordedBilled)}
-                    />
-                  )}
-                  {cost !== undefined && Number.isFinite(cost) && (
-                    <StatTile
-                      label={costIsRecorded ? 'Cost · last recorded' : 'Cost'}
-                      value={`$${cost.toFixed(2)}`}
-                    />
-                  )}
-                  {session && (
-                    <StatTile label="Tool calls" value={String(session.totalToolCalls)} />
-                  )}
-                </div>
-              )}
-              {noUsageFigures && (
-                <div
-                  title={absentUsageTitle(usageUnavailable)}
-                  style={{ marginTop: 12, fontSize: '0.72rem', color: colors.mutedDim }}
-                >
-                  {usageUnavailable
-                    ? `Recorded usage could not be read (${usageUnavailable}).`
-                    : 'No cost or token usage was ever recorded for this session.'}
-                </div>
-              )}
-              <div style={{ marginTop: 10, fontSize: '0.72rem', lineHeight: 1.6 }}>
-                {session && (session.compactionCount ?? 0) > 0 && (
-                  <div
-                    title="Context compactions this session (frequent = context churn)"
-                    style={statRowStyle}
-                  >
-                    <span style={{ color: colors.muted }}>Compactions</span>
-                    <span style={{ color: colors.text, fontVariantNumeric: 'tabular-nums' }}>
-                      {session.compacting
-                        ? `${session.compactionCount} · now`
-                        : session.compactionCount}
-                    </span>
+                  <div style={{ marginTop: 10, fontSize: '0.72rem', lineHeight: 1.6 }}>
+                    {session && (session.compactionCount ?? 0) > 0 && (
+                      <div
+                        title="Context compactions this session (frequent = context churn)"
+                        style={statRowStyle}
+                      >
+                        <span style={{ color: colors.muted }}>Compactions</span>
+                        <span style={{ color: colors.text, fontVariantNumeric: 'tabular-nums' }}>
+                          {session.compacting
+                            ? `${session.compactionCount} · now`
+                            : session.compactionCount}
+                        </span>
+                      </div>
+                    )}
+                    {session && <BudgetRow sessionId={session.sessionId} cost={cost} />}
                   </div>
-                )}
-                {session && <BudgetRow sessionId={session.sessionId} cost={cost} />}
-              </div>
-            </div>
-          ))}
+                </div>
+              )
+            }
+            {/* The other half of "usage": not what THIS session spent, but the
+                account allowance it spends from. Own component, mounted only
+                while this tab is showing, so an Inspector parked on Files
+                subscribes to no report poll at all. */}
+            <SessionAccountUsage session={session} />
+          </>
+        )}
       </div>
     </div>
   );
