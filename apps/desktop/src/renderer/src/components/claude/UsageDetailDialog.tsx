@@ -155,8 +155,9 @@ export const UsageDetailDialog: React.FC<{
    *  `account` is for surfaces that speak for a whole account and have no one
    *  session behind them, where those figures would be somebody else's. */
   scope?: 'session' | 'account';
+  accountIdentity?: string;
   onClose: () => void;
-}> = ({ snapshot, scope = 'session', onClose }) => {
+}> = ({ snapshot, scope = 'session', accountIdentity, onClose }) => {
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -268,6 +269,12 @@ export const UsageDetailDialog: React.FC<{
             <X size={14} strokeWidth={2} />
           </button>
         </div>
+
+        {scope === 'account' && accountIdentity !== undefined && (
+          <div style={{ overflowWrap: 'anywhere', fontSize: '0.72rem', marginTop: 8 }}>
+            {accountIdentity}
+          </div>
+        )}
 
         {sl?.rateLimitWarning && (
           <div

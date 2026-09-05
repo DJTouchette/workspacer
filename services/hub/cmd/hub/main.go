@@ -652,20 +652,12 @@ func main() {
 
 	// Limit-aware routing: the hub's edge onto claudemon's usage document.
 	//
-	// This is the layer's FIRST HALF and it is deliberately dormant until
-	// something asks. The poller winds down exactly as the quiescence sampler
-	// does — nothing polls /usage/report on a machine nobody has asked for a
-	// routing decision on — and the ask surface (routing.select) is a later
-	// slice, so on this tip usage.Latest has no caller and no reading is ever
-	// taken. That is the intended state, not an oversight: the alternative is
-	// an unconditional background HTTP GET every 30s on every install, for an
-	// answer nothing reads.
-	//
-	// routing.select is the ONE method this layer registers, it is READ-ONLY,
-	// and it is the only one it will ever have: routing exposes no write RPC
-	// over the bus, ever. That, plus fs.write refusing the hub's state
-	// directory, is the whole security argument for routing.yaml's `ceilings:`
-	// block — a matrix an agent could edit is not a ceiling.
+	// The usage sampler is shared by routing decisions and Overview's
+	// usage.report reads. It winds down after callers stop asking.
+	// usage.report only projects usage; routing.select records its decision.
+	// Neither exposes a routing configuration write RPC. Together with fs.write
+	// refusing the hub's state directory, that keeps routing.yaml ceilings
+	// outside the authority of bus callers.
 	//
 	// Registered through the caller-aware door (RegisterLocalIdent) rather than
 	// the plain one, for the reason fleet.quiescence is and layout.set learned:
@@ -704,6 +696,8 @@ func main() {
 	// defaults on a deliberately stateless deployment is state that deployment
 	// said it did not want.
 	routingLog := routing.NewDecisionLog(routing.DecisionLogPathFor(*routingFile), routing.DefaultDecisionLogMaxBytes)
+
+	srv.RegisterLocalIdent("usage.report", usageReport(routingSvc, usage))
 
 	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, routingCat, b.Publish, routingLog))
 

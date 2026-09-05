@@ -32,7 +32,19 @@ export interface UsageReportMeasured {
   reason?: string | null;
 }
 
+export interface UsageReportPace {
+  known: boolean;
+  state: string;
+  usedPct?: number;
+  expectedPct?: number;
+  elapsedPct?: number;
+  ratio?: number;
+  curve?: string;
+  because?: string;
+}
+
 export interface UsageReportWindow {
+  pace?: UsageReportPace;
   used_percent?: UsageReportMeasured | null;
   /** Epoch seconds. `null` when the source reported no reset time, which is
    *  also why the report leaves `is_current` null there. */
@@ -52,6 +64,10 @@ export interface UsageReportAccount {
   account?: string | null;
   label?: string | null;
   is_default?: boolean | null;
+  source?: string | null;
+  observed_at?: number | null;
+  fresh?: boolean | null;
+  failure?: { kind: string; detail: string; at: number } | null;
   windows?: UsageReportWindows | null;
 }
 
@@ -63,6 +79,10 @@ export interface UsageReportProvider {
 
 export interface UsageReportWire {
   generated_at?: number;
+  evaluated_at?: number;
+  valid_until?: number;
+  /** Client transport failure: retained consumption is explicitly aged. */
+  transport_stale?: boolean;
   providers?: UsageReportProvider[] | null;
 }
 

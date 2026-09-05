@@ -9,7 +9,8 @@ import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectR
 import { claudeAccountOf } from '../lib/claudeAccount';
 import { usageWindows, fmtWindowLength } from '../lib/sessionStats';
 import { useUsageReport } from '../hooks/useUsageReport';
-import { reportAccountKeys, reportWindowsFor } from '../../../main/shared/usageReport';
+import { UsageReportCard } from '../components/UsageReportCard';
+import { reportWindowsFor, type UsageReportWire } from '../../../main/shared/usageReport';
 import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
 import { useRecordedUsageMap } from '../contexts/RecordedUsageContext';
 import { UsageDetailDialog } from '../components/claude/UsageDetailDialog';
@@ -152,6 +153,7 @@ const lastRateLimit: Record<
     fields: Partial<Record<RateLimitField, { value: number; ts: number }>>;
   }
 > = {};
+let rateLimitBackend: unknown;
 
 /** Providers whose sessions report account rate-limit windows, in display
  *  order. Each gets its own card — the windows are per-account, so a Claude
@@ -188,6 +190,10 @@ export const RateLimitCard: React.FC<{
   account?: string;
 }> = ({ snaps, provider, title, account }) => {
   const [detailOpen, setDetailOpen] = useState(false);
+  if (rateLimitBackend !== window.electronAPI?.usageReport) {
+    for (const key of Object.keys(lastRateLimit)) delete lastRateLimit[key];
+    rateLimitBackend = window.electronAPI?.usageReport;
+  }
   const cacheKey = account === undefined ? provider : `${provider}:${account}`;
   // The session-free source. Only the windows nothing live has spoken for are
   // taken from it (below) — a status line is first-hand and the report is the
@@ -222,6 +228,19 @@ export const RateLimitCard: React.FC<{
   // a reset time, and taking it wholesale is what empties the meter.
   const fields = { ...(cached?.fields ?? {}) };
   if (best) {
+    // A new reset identifies a different observation. A reset-only update
+    // must not inherit the preceding window's percentage or duration.
+    for (const prefix of ['fiveHour', 'sevenDay', 'monthly'] as const) {
+      const reset = `${prefix}ResetsAt` as const;
+      if (
+        best[reset] !== undefined &&
+        fields[reset]?.value !== best[reset] &&
+        bestTs >= (fields[reset]?.ts ?? -1)
+      ) {
+        delete fields[`${prefix}Pct`];
+        delete fields[`${prefix}WindowMins`];
+      }
+    }
     for (const f of RATE_LIMIT_FIELDS) {
       const v = best[f];
       if (v === undefined) continue;
@@ -291,7 +310,7 @@ export const RateLimitCard: React.FC<{
               style={{
                 display: 'block',
                 height: '100%',
-                width: `${Math.max(2, Math.min(100, pct))}%`,
+                width: `${Math.max(0, Math.min(100, pct))}%`,
                 background: limitColor(pct),
               }}
             />
@@ -373,26 +392,33 @@ export const RateLimitCard: React.FC<{
             own length where it is known. Codex has no monthly window and Claude
             has one only while extra usage is enabled, so the rows come from the
             data, not from a fixed list of three. */}
-        {usageWindows(best).map((w) => {
-          const length = fmtWindowLength(w.windowMins);
-          return (
-            <Row
-              key={w.key}
-              label={w.short}
-              pct={w.pct}
-              reset={w.resetsAt}
-              // The label column is 22px wide, so the window's full length rides
-              // in the tooltip — and in the dialog this card now opens.
-              title={[
-                length ? `${w.label} (${length} window)` : w.label,
-                w.pct !== undefined ? `${Math.round(w.pct)}% used` : undefined,
-                w.resetsAt ? fmtReset(w.resetsAt) : undefined,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            />
-          );
-        })}
+        {usageWindows(best)
+          .filter(
+            (w) =>
+              w.resetsAt !== undefined &&
+              Number.isFinite(w.resetsAt) &&
+              w.resetsAt * 1000 > Date.now(),
+          )
+          .map((w) => {
+            const length = fmtWindowLength(w.windowMins);
+            return (
+              <Row
+                key={w.key}
+                label={w.short}
+                pct={w.pct}
+                reset={w.resetsAt}
+                // The label column is 22px wide, so the window's full length rides
+                // in the tooltip — and in the dialog this card now opens.
+                title={[
+                  length ? `${w.label} (${length} window)` : w.label,
+                  w.pct !== undefined ? `${Math.round(w.pct)}% used` : undefined,
+                  w.resetsAt ? fmtReset(w.resetsAt) : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              />
+            );
+          })}
       </div>
       {/* Outside the card on purpose: a portal still bubbles its events through
           the REACT tree, so a dialog nested inside the card would reopen itself
@@ -409,6 +435,59 @@ export const RateLimitCard: React.FC<{
     </>
   );
 };
+
+/** The Overview's provider/account boundary, shared by cold and live starts. */
+export function OverviewUsageCards({
+  usageReport,
+  snaps,
+}: {
+  usageReport: UsageReportWire | null;
+  snaps: Snap[];
+}) {
+  return (
+    <>
+      {RATE_LIMIT_PROVIDERS.map((p) => {
+        const reported = usageReport?.providers?.find((row) => row.provider === p.id);
+        // A successful report owns the entire provider observation, even
+        // when a plan removes all windows. Never resurrect live caches.
+        if (usageReport)
+          return (reported?.accounts ?? []).map((account, index) => (
+            <UsageReportCard
+              key={JSON.stringify([p.id, account.account, index])}
+              report={usageReport}
+              account={account}
+              provider={p.id}
+            />
+          ));
+        if (p.id !== 'claude') {
+          return <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />;
+        }
+        // Cached groups keep their card after the last session of an
+        // account ends — same eviction-survival as the provider cache.
+        const accounts = new Set<string>(['']);
+        for (const s of snaps) {
+          if ((s.provider ?? 'claude') === 'claude') {
+            accounts.add(claudeAccountOf(s.transcriptPath));
+          }
+        }
+        for (const k of Object.keys(lastRateLimit)) {
+          if (k.startsWith('claude:')) accounts.add(k.slice('claude:'.length));
+        }
+        return [...accounts]
+          .sort()
+          .map((a) => (
+            <RateLimitCard
+              key={`claude:${a}`}
+              snaps={snaps}
+              provider="claude"
+              title={a ? `Claude usage — ${a}` : p.title}
+              account={a}
+            />
+          ));
+      })}
+    </>
+  );
+}
 
 /** Stat tile — mockup "Overview" card: uppercase mono label on top, large
  *  mono value, optional sub-line. Matches the Usage pane's Stat exactly.
@@ -936,38 +1015,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                 global to each account). For Claude that means one card per
                 login: a second-account profile's sessions group by config
                 root, each with its own windows. */}
-            {RATE_LIMIT_PROVIDERS.map((p) => {
-              if (p.id !== 'claude') {
-                return <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />;
-              }
-              // Cached groups keep their card after the last session of an
-              // account ends — same eviction-survival as the provider cache.
-              const accounts = new Set<string>(['']);
-              for (const s of snaps) {
-                if ((s.provider ?? 'claude') === 'claude') {
-                  accounts.add(claudeAccountOf(s.transcriptPath));
-                }
-              }
-              for (const k of Object.keys(lastRateLimit)) {
-                if (k.startsWith('claude:')) accounts.add(k.slice('claude:'.length));
-              }
-              // …and the accounts the daemon has a RUNNING window for, which is
-              // the only source that speaks before the first session starts.
-              for (const k of reportAccountKeys(usageReport, 'claude', Date.now())) {
-                accounts.add(k);
-              }
-              return [...accounts]
-                .sort()
-                .map((a) => (
-                  <RateLimitCard
-                    key={`claude:${a}`}
-                    snaps={snaps}
-                    provider="claude"
-                    title={a ? `Claude usage — ${a}` : p.title}
-                    account={a}
-                  />
-                ));
-            })}
+            <OverviewUsageCards usageReport={usageReport} snaps={snaps} />
           </div>
 
           {plugins.length > 0 && (

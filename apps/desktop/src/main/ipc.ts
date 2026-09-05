@@ -1022,6 +1022,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // because the daemon is loopback-confined and the renderer cannot reach it.
   ipcMain.handle(IPC.USAGE_REPORT, async () => {
     try {
+      const report = await callHub('usage.report', {});
+      if (report) return report;
+    } catch {
+      // Older or unavailable local hub: raw daemon data carries no pace.
+    }
+    try {
       const res = await fetch(`${CLAUDEMON_API_URL}/usage/report`, {
         signal: AbortSignal.timeout(USAGE_REPORT_TIMEOUT_MS),
       });

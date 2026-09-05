@@ -144,6 +144,7 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // subscription health is; it starts nothing and writes nothing, and routing
   // has no write capability at all. Not sensitive: the disclosure is model
   // names and one utilization percentage for the user's own subscription.
+  'usage.report': { label: 'Read account usage and pacing' },
   'routing.select': { label: 'Ask which model to use for a piece of work' },
   'nodes.list': { label: 'See your remote worker nodes and whether each is awake' },
   // sensitive: waking starts a billable cloud machine, and this hub has no way

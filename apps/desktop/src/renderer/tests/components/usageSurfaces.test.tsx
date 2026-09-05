@@ -199,6 +199,38 @@ describe('the Overview card speaks for an account, not a session', () => {
     expect(screen.getByText('2%')).toBeInTheDocument();
   });
 
+  it('does not join an old percentage to a new reset-only observation', () => {
+    const snap = (statusLine: SessionStatusLine) => [
+      {
+        sessionId: 'new-reset',
+        provider: 'claude',
+        transcriptPath: '/home/u/.claude/accounts/newreset/projects/p/t.jsonl',
+        statusLine,
+      },
+    ];
+    const view = render(
+      <RateLimitCard
+        snaps={snap(statusLine())}
+        provider="claude"
+        title="Claude usage"
+        account="newreset"
+      />,
+    );
+    expect(screen.getByText('11%')).toBeInTheDocument();
+    view.rerender(
+      <RateLimitCard
+        snaps={snap({
+          fiveHourResetsAt: NOW + 4 * 3600,
+          receivedAt: new Date(Date.now() + 1000).toISOString(),
+        })}
+        provider="claude"
+        title="Claude usage"
+        account="newreset"
+      />,
+    );
+    expect(screen.queryByText('11%')).not.toBeInTheDocument();
+  });
+
   it('prefers a fresher remembered reading over an older live one', () => {
     const account = 'older';
     const path = '/home/u/.claude/accounts/older/projects/p/t.jsonl';
@@ -539,7 +571,7 @@ describe('the Overview usage card with no session at all', () => {
     expect(screen.queryByLabelText('Show usage detail')).not.toBeInTheDocument();
   });
 
-  it('keeps the last good reading when a later read cannot answer', async () => {
+  it('shares the last good reading with later mounted cards without another request', async () => {
     // null is "we could not ask" — the daemon restarting, a timeout — not "no
     // windows". Letting it clear the cache would blank every card on the
     // desktop for a transient failure, which is the same lie as rendering 0%.
@@ -557,11 +589,11 @@ describe('the Overview usage card with no session at all', () => {
     );
     await waitFor(() => expect(within(first.container).getByText('18%')).toBeInTheDocument());
 
-    // A second card mounting re-reads, and this time the daemon cannot answer.
+    // A second card shares the bounded report rather than starting another poll.
     const second = render(
       <RateLimitCard snaps={[]} provider="claude" title="Claude usage" account="keeplast" />,
     );
-    await waitFor(() => expect(api.usageReport).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.usageReport).toHaveBeenCalledTimes(1));
     expect(within(first.container).getByText('18%')).toBeInTheDocument();
     expect(within(second.container).getByText('18%')).toBeInTheDocument();
   });

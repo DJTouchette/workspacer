@@ -840,6 +840,8 @@ func CompositionUnconsidered() []string {
 // surface beyond that.
 func CompositionActorsForTest() []string { return compositionActors() }
 
+// usage.report belongs to inertMethods, not compositionActors: it accepts no
+// caller values. cmd/hub/usagereport_test.go pins its no-parameter/read-only seam.
 func compositionActors() []string {
 	seen := map[string]bool{}
 	for m := range PathParam {

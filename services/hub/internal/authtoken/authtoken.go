@@ -98,6 +98,7 @@ func ParseScope(s string) (Scope, error) {
 // `agents.*` would silently grant agents.spawn, and any method added later
 // must be admitted here deliberately (fail closed for scoped tokens).
 var viewMethods = []string{
+	"usage.report",                  // Overview account quota and sampled pace
 	"agents.list",                   // fleet list (/remote, MCP list_agents)
 	"sessions.snapshots",            // full fleet snapshot seed (/m, webBackend)
 	"sessions.snapshot",             // one session's snapshot (webBackend, MCP)

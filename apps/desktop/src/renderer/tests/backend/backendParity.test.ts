@@ -1,3 +1,4 @@
+import { createRemoteBackend } from '../../src/backend/remoteBackend';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -25,6 +26,10 @@ function isBound(fn: unknown): boolean {
 //   (c) KNOWN_STUBS  — web-degraded: returns a safe default / no-ops (the
 //                      HUB-TODO + silent-stub methods in webBackend.ts).
 
+const usageBusCall = vi.hoisted(() =>
+  vi.fn(async (_method: string, _params: unknown, _url?: string) => ({})),
+);
+
 // Keep createWebBackend from opening a real WebSocket — a no-op bus client is
 // all we need to reflect over the built object's keys.
 vi.mock('../../src/backend/hubBusClient', () => ({
@@ -43,8 +48,8 @@ vi.mock('../../src/backend/hubBusClient', () => ({
     onReconnect() {
       return () => {};
     }
-    call() {
-      return Promise.resolve({});
+    call(method: string, params: unknown) {
+      return usageBusCall(method, params, this.busUrl);
     }
     subscribe() {
       return () => {};
@@ -322,10 +327,10 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
   // launch (bus mode) would take that null and the card would go back to
   // rendering nothing with no session running — the exact bug it was added to
   // fix, with every test in usageSurfaces still green.
-  it('the usage report comes from the daemon on desktop, not the web null stub', () => {
+  it('the desktop usage report preserves the IPC hub-first fallback', () => {
     expect(
       HOST_ONLY as readonly string[],
-      'usageReport must be delegated to the preload: the web backend stubs it to null',
+      'usageReport must use the desktop hub-first IPC handler',
     ).toContain('usageReport');
   });
 
@@ -394,6 +399,7 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
     // configured (see internal/federation).
     const HUB_CORE = new Set([
+      'usage.report',
       'layout.get',
       'layout.set',
       '__publish',
@@ -422,5 +428,28 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       missing,
       `webBackend calls hub capabilities that hubCapabilities.ts does not register: ${missing.join(', ')}`,
     ).toEqual([]);
+  });
+});
+
+describe('usage report backend compatibility', () => {
+  it('uses the selected web/remote hub and gracefully handles older hubs', async () => {
+    const report = { providers: [] };
+    usageBusCall.mockResolvedValueOnce(report);
+    const web = createWebBackend('token', 'ws://selected/bus');
+    expect(await web.usageReport()).toEqual(report);
+    expect(usageBusCall).toHaveBeenLastCalledWith('usage.report', {}, 'ws://selected/bus');
+    usageBusCall.mockRejectedValueOnce(new Error('unknown capability'));
+    expect(await web.usageReport()).toBeNull();
+    const ipc = { platform: 'linux', usageReport: vi.fn() } as unknown as Parameters<
+      typeof createRemoteBackend
+    >[0];
+    const remote = createRemoteBackend(ipc, 'token', 'ws://remote/bus');
+    usageBusCall.mockResolvedValueOnce(report);
+    expect(await remote.usageReport()).toEqual(report);
+    expect(usageBusCall).toHaveBeenLastCalledWith('usage.report', {}, 'ws://remote/bus');
+    expect(ipc.usageReport).not.toHaveBeenCalled();
+    const bridge = createBridgedBackend(ipc, 'token', 'ws://local/bus');
+    await bridge.usageReport();
+    expect(ipc.usageReport).toHaveBeenCalledOnce();
   });
 });

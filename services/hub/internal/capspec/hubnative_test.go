@@ -33,8 +33,8 @@ var hubLocalCapRe = regexp.MustCompile(`RegisterLocal(?:Ident)?\(\s*"([a-zA-Z][\
 // Raise it when the surface grows. Lowering it is the change that has to be
 // argued for.
 //
-// 22 as of routing.select, which is the twenty-second name cmd/hub registers.
-const hubNativeFloor = 22
+// 23 as of usage.report.
+const hubNativeFloor = 23
 
 // TestHubNativeCapabilitiesAllClassified is the METHOD-level completeness check
 // for the registry nobody was reading.

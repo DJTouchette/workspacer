@@ -419,3 +419,37 @@ describe('webview:check-preview / file:read confinement', () => {
     expect(readTextFileMock).toHaveBeenCalledWith(v.canonicalPath);
   });
 });
+
+describe('usage report hub-first IPC', () => {
+  it('returns the hub projection without contacting the daemon', async () => {
+    const { callHub } = await import('./services/hubClient');
+    const report = { evaluated_at: 123, providers: [] };
+    vi.mocked(callHub).mockResolvedValueOnce(report);
+    const fetcher = vi.spyOn(globalThis, 'fetch');
+    try {
+      expect(await handlers.get('usage:report')!(null)).toEqual(report);
+      expect(callHub).toHaveBeenLastCalledWith('usage.report', {});
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  it('falls back to raw daemon data for an older hub and returns null if both fail', async () => {
+    const { callHub } = await import('./services/hubClient');
+    vi.mocked(callHub).mockRejectedValue(new Error('unknown method'));
+    const report = { providers: [] };
+    const fetcher = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => report } as Response)
+      .mockRejectedValueOnce(new Error('offline'));
+    try {
+      expect(await handlers.get('usage:report')!(null)).toEqual(report);
+      expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/usage/report'), {
+        signal: expect.any(AbortSignal),
+      });
+      expect(await handlers.get('usage:report')!(null)).toBeNull();
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+});
