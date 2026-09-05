@@ -72,6 +72,8 @@ export const IPC = {
   PROVIDER_CHECK_ALL: 'provider:checkAll',
   KEEPWARM_HEARTBEATS: 'keepwarm:heartbeats',
   USAGE_REPORT: 'usage:report',
+  USAGE_PACING_SCHEDULE: 'usage:pacingSchedule', // invoke (read)
+  USAGE_SET_PACING_SCHEDULE: 'usage:setPacingSchedule', // invoke (write)
   CLAUDE_MESSAGE: 'claude:message',
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
   CLAUDE_SET_EFFORT: 'claude:setEffort',

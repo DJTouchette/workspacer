@@ -96,6 +96,10 @@ export const HOST_ONLY = [
   // Desktop IPC reads the local hub, falling back to its loopback daemon
   // when an older hub lacks the capability. Remote mode uses its selected bus.
   'usageReport',
+  // Same door as usageReport: desktop IPC calls the local hub, and answers
+  // null / { ok: false } when that hub is older than the methods.
+  'usagePacingSchedule',
+  'setUsagePacingSchedule',
   'pricingGetRates', // model-rate table + overrides read from the host rates file
   'pricingSaveOverrides', // writes the host's ~/.workspacer/model-rates.json
   'onLibraryChanged', // IPC change event; the bus has no library-change topic

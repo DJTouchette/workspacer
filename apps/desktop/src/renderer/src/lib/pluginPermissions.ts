@@ -145,6 +145,12 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // has no write capability at all. Not sensitive: the disclosure is model
   // names and one utilization percentage for the user's own subscription.
   'usage.report': { label: 'Read account usage and pacing' },
+  'usage.pacingSchedule': { label: 'Read the weekly usage pacing schedule' },
+  // Trusted-only at call time (usagePrefsTrusted in cmd/hub), so a plugin that
+  // declares it gets an honest consent line and then a refusal. Not sensitive:
+  // it stores one of two words and moves no routing decision, no spend and no
+  // grant — only which curve the Overview's weekly tick is drawn against.
+  'usage.setPacingSchedule': { label: 'Change the weekly usage pacing schedule' },
   'routing.select': { label: 'Ask which model to use for a piece of work' },
   'nodes.list': { label: 'See your remote worker nodes and whether each is awake' },
   // sensitive: waking starts a billable cloud machine, and this hub has no way

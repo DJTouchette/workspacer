@@ -218,3 +218,34 @@ export function reportAccountKeys(
   }
   return keys;
 }
+
+/**
+ * Settings -> "Usage schedule": which week the Overview's SEVEN-DAY pacing tick
+ * is drawn against. Hub-owned state, read and written by its own pair of RPCs
+ * (`usage.pacingSchedule` / `usage.setPacingSchedule`) rather than by anything
+ * on this report — `usage.report` takes no parameters and this does not change
+ * that.
+ *
+ *   'five_day'   Monday-Friday. Expected progress climbs on weekdays and is
+ *                FLAT across Saturday and Sunday; observed usage still counts
+ *                whenever it happens.
+ *   'seven_day'  the calendar shape: expected progress is linear in wall-clock
+ *                time, which is what shipped.
+ *   ''           nobody has chosen, so the hub's routing.yaml answers. This is
+ *                NOT the same as 'seven_day': an operator may have hand-set
+ *                `curve: workdays` there, and an unset preference leaves it be.
+ *
+ * The five-hour and monthly windows are untouched by this in every case.
+ */
+export type UsagePacingSchedule = 'five_day' | 'seven_day';
+
+/** What the two pacing-schedule RPCs answer. `null` is "this hub could not be
+ *  asked" — an older hub that does not know the methods, or no hub at all — and
+ *  a client must render the control as unavailable rather than guessing. */
+export interface UsagePacingScheduleWire {
+  /** The stored choice, or '' when nobody has made one. */
+  schedule: UsagePacingSchedule | '';
+  /** False when this hub was started with no preference file, so a save cannot
+   *  persist and the control must not offer one. */
+  configurable: boolean;
+}

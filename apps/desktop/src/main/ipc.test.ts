@@ -420,6 +420,61 @@ describe('webview:check-preview / file:read confinement', () => {
   });
 });
 
+describe('usage pacing schedule IPC', () => {
+  it('reads the hub and answers null for a hub that does not know the method', async () => {
+    const { callHub } = await import('./services/hubClient');
+    const state = { schedule: 'five_day', configurable: true };
+    vi.mocked(callHub).mockResolvedValueOnce(state);
+    expect(await handlers.get('usage:pacingSchedule')!(null)).toEqual(state);
+    expect(callHub).toHaveBeenLastCalledWith('usage.pacingSchedule', {});
+
+    // An older hub. null is "cannot be asked", which the control renders as
+    // unavailable — NOT as a default nobody chose.
+    vi.mocked(callHub).mockRejectedValueOnce(new Error('unknown method'));
+    expect(await handlers.get('usage:pacingSchedule')!(null)).toBeNull();
+  });
+
+  it('reports a failed save truthfully instead of swallowing it', async () => {
+    const { callHub } = await import('./services/hubClient');
+    const state = { schedule: 'seven_day', configurable: true };
+    vi.mocked(callHub).mockResolvedValueOnce(state);
+    expect(await handlers.get('usage:setPacingSchedule')!(null, 'seven_day')).toEqual({
+      ok: true,
+      state,
+    });
+    expect(callHub).toHaveBeenLastCalledWith('usage.setPacingSchedule', {
+      schedule: 'seven_day',
+    });
+
+    // The read above degrades to null; the WRITE must not. A save that reports
+    // success and stored nothing is the exact failure this plumbing exists to
+    // avoid, so the hub's reason comes back to the UI.
+    vi.mocked(callHub).mockRejectedValueOnce(new Error('requires host authority'));
+    expect(await handlers.get('usage:setPacingSchedule')!(null, 'five_day')).toEqual({
+      ok: false,
+      error: 'requires host authority',
+    });
+  });
+
+  it('never falls back to the daemon or to usage.report with a parameter', async () => {
+    const { callHub } = await import('./services/hubClient');
+    vi.mocked(callHub).mockRejectedValue(new Error('unknown method'));
+    const fetcher = vi.spyOn(globalThis, 'fetch');
+    try {
+      await handlers.get('usage:pacingSchedule')!(null);
+      await handlers.get('usage:setPacingSchedule')!(null, 'five_day');
+      // claudemon has no schedule; a fallback here would invent one.
+      expect(fetcher).not.toHaveBeenCalled();
+      for (const call of vi.mocked(callHub).mock.calls) {
+        expect(call[0]).not.toBe('usage.report');
+      }
+    } finally {
+      fetcher.mockRestore();
+      vi.mocked(callHub).mockReset();
+    }
+  });
+});
+
 describe('usage report hub-first IPC', () => {
   it('returns the hub projection without contacting the daemon', async () => {
     const { callHub } = await import('./services/hubClient');

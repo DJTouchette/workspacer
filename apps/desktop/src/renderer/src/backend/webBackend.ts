@@ -1,4 +1,4 @@
-import type { UsageReportWire } from '../../../main/shared/usageReport';
+import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/shared/usageReport';
 /**
  * Web build of the `window.electronAPI` surface.
  *
@@ -831,6 +831,20 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     keepWarmHeartbeats: async () => [],
     // The client is connected to the selected hub; never use local IPC here.
     usageReport: () => client.call<UsageReportWire>('usage.report', {}).catch(() => null),
+    // The pacing schedule is hub-owned state on the SELECTED hub, so the web
+    // and remote clients read and write it there directly, exactly as they do
+    // usage.report. A hub that does not know the method answers an error, which
+    // becomes null / { ok: false } rather than an invented default.
+    usagePacingSchedule: () =>
+      client.call<UsagePacingScheduleWire>('usage.pacingSchedule', {}).catch(() => null),
+    setUsagePacingSchedule: (schedule) =>
+      client
+        .call<UsagePacingScheduleWire>('usage.setPacingSchedule', { schedule })
+        .then((state) => ({ ok: true as const, state }))
+        .catch((err: unknown) => ({
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        })),
     claudeMessage: (sessionId, text) =>
       client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,

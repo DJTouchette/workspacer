@@ -3,7 +3,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { OverviewUsageCards } from '../../src/panes/OverviewPane';
 import { UsageReportCard } from '../../src/components/UsageReportCard';
-import { useUsageReport, __resetUsageReportCache } from '../../src/hooks/useUsageReport';
+import {
+  useUsageReport,
+  refreshUsageReport,
+  __resetUsageReportCache,
+} from '../../src/hooks/useUsageReport';
 import type { UsageReportWire } from '../../../main/shared/usageReport';
 const now = 1_800_000_000;
 function fixture(): UsageReportWire {
@@ -134,6 +138,67 @@ describe('paced Overview accounts', () => {
     view.unmount();
     expect(vi.getTimerCount()).toBe(0);
   });
+  // The pacing SCHEDULE is hub-side, so a Settings save changes what the very
+  // next usage.report computes. Two things have to hold or the setting reads as
+  // inert: the forced re-read must not be swallowed by the poll already in
+  // flight, and the older poll's reply must not land on top of the newer one
+  // just because it finished second.
+  it('re-reads on demand after a settings save, and an older reply cannot overwrite it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+    const before = fixture();
+    const after = fixture();
+    for (const a of after.providers![0].accounts!) a.windows!.five_hour!.pace!.expectedPct = 91;
+    // The post-save sample is evaluated at the moment it is fetched, a minute
+    // later, exactly as the hub would stamp it — otherwise the sixty-second
+    // sample window would drop its tick and this test would be measuring the
+    // validity guard instead of the refresh.
+    after.evaluated_at = now + 60;
+    after.valid_until = now + 120;
+
+    // The poll's fetch is still open when the save happens; the forced one
+    // resolves first with the NEW schedule's numbers.
+    let releaseStale!: (r: UsageReportWire) => void;
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockImplementationOnce(
+        () =>
+          new Promise<UsageReportWire>((r) => {
+            releaseStale = r;
+          }),
+      )
+      .mockResolvedValueOnce(after);
+    window.electronAPI.usageReport = fetcher;
+
+    // The tick's position IS the expected percentage the hub computed.
+    const tick = () => (screen.getAllByTestId('usage-expected')[0] as HTMLElement).style.left;
+    render(<Cards />);
+    await flush();
+    expect(tick()).toBe('52%');
+
+    // The minute poll fires and hangs.
+    await act(async () => {
+      vi.advanceTimersByTime(60000);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    // A save forces a third read even though one is in flight.
+    await act(async () => {
+      await refreshUsageReport();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(tick()).toBe('91%');
+
+    // Now the hung poll answers with the PRE-save projection. It must be
+    // dropped, not painted.
+    await act(async () => {
+      releaseStale(before);
+    });
+    await flush();
+    expect(tick()).toBe('91%');
+  });
+
   it('ages a failed transport and fences old responses when switching backend', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now * 1000);

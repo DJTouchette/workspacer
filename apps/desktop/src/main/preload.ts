@@ -17,7 +17,11 @@ import type {
   RecentAgentSession,
 } from './shared/ipcTypes';
 import type { BoardData, BoardLane, BoardMoveRequest } from './services/briefBoardService';
-import type { UsageReportWire } from './shared/usageReport';
+import type {
+  UsagePacingSchedule,
+  UsagePacingScheduleWire,
+  UsageReportWire,
+} from './shared/usageReport';
 
 // ── MessagePort storage (preload isolated world) ──
 // Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
@@ -315,6 +319,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   > => ipcRenderer.invoke(IPC.KEEPWARM_HEARTBEATS, limit),
   /** claudemon's sessionless account-usage report. null = could not ask. */
   usageReport: (): Promise<UsageReportWire | null> => ipcRenderer.invoke(IPC.USAGE_REPORT),
+  /** Settings -> "Usage schedule". null = this hub cannot answer (older hub, or
+   *  none), which the control renders as unavailable. */
+  usagePacingSchedule: (): Promise<UsagePacingScheduleWire | null> =>
+    ipcRenderer.invoke(IPC.USAGE_PACING_SCHEDULE),
+  /** Stores the schedule. A failure comes back as { ok: false, error } rather
+   *  than as a silent no-op, because a save that lies is the whole hazard. */
+  setUsagePacingSchedule: (
+    schedule: UsagePacingSchedule,
+  ): Promise<{ ok: true; state: UsagePacingScheduleWire } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(IPC.USAGE_SET_PACING_SCHEDULE, schedule),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
   claudeSetPermissionMode: (

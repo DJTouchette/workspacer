@@ -332,6 +332,12 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       HOST_ONLY as readonly string[],
       'usageReport must use the desktop hub-first IPC handler',
     ).toContain('usageReport');
+    // Same door for the pacing-schedule pair: the desktop asks its LOCAL hub
+    // through main, and a web/remote client asks its selected one. A stub that
+    // answered here would report "setting unavailable" on a hub that offers it.
+    for (const m of ['usagePacingSchedule', 'setUsagePacingSchedule']) {
+      expect(HOST_ONLY as readonly string[]).toContain(m);
+    }
   });
 
   it('bridged workflow drill-in preserves the IPC watcher path', async () => {
@@ -418,6 +424,10 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       'jobs.remove',
       'jobs.run',
       'jobs.history',
+      // Hub-owned Overview pacing preference (services/hub/internal/usageprefs).
+      // The reader is view tier beside usage.report; the writer is trusted-only.
+      'usage.pacingSchedule',
+      'usage.setPacingSchedule',
     ]);
 
     expect(called.size, 'expected to extract capability names from webBackend.ts').toBeGreaterThan(
@@ -428,6 +438,55 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       missing,
       `webBackend calls hub capabilities that hubCapabilities.ts does not register: ${missing.join(', ')}`,
     ).toEqual([]);
+  });
+});
+
+describe('usage pacing schedule backend compatibility', () => {
+  it('reads and writes the selected hub, and degrades honestly on an older one', async () => {
+    const state = { schedule: 'five_day', configurable: true };
+    const web = createWebBackend('token', 'ws://selected/bus');
+
+    usageBusCall.mockResolvedValueOnce(state);
+    expect(await web.usagePacingSchedule()).toEqual(state);
+    expect(usageBusCall).toHaveBeenLastCalledWith('usage.pacingSchedule', {}, 'ws://selected/bus');
+
+    usageBusCall.mockResolvedValueOnce(state);
+    expect(await web.setUsagePacingSchedule('five_day')).toEqual({ ok: true, state });
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'usage.setPacingSchedule',
+      { schedule: 'five_day' },
+      'ws://selected/bus',
+    );
+
+    // An older hub does not know the methods. The read must answer null (the
+    // control renders unavailable) and the WRITE must answer a failure — never
+    // a cheerful ok that stored nothing.
+    usageBusCall.mockRejectedValueOnce(new Error('unknown capability'));
+    expect(await web.usagePacingSchedule()).toBeNull();
+    usageBusCall.mockRejectedValueOnce(new Error('unknown capability'));
+    expect(await web.setUsagePacingSchedule('seven_day')).toEqual({
+      ok: false,
+      error: 'unknown capability',
+    });
+
+    // The remote client uses its own hub and never the local IPC; the bridged
+    // desktop uses the IPC handler (which asks the LOCAL hub).
+    const ipc = {
+      platform: 'linux',
+      usagePacingSchedule: vi.fn(),
+      setUsagePacingSchedule: vi.fn(),
+    } as unknown as Parameters<typeof createRemoteBackend>[0];
+    const remote = createRemoteBackend(ipc, 'token', 'ws://remote/bus');
+    usageBusCall.mockResolvedValueOnce(state);
+    expect(await remote.usagePacingSchedule()).toEqual(state);
+    expect(usageBusCall).toHaveBeenLastCalledWith('usage.pacingSchedule', {}, 'ws://remote/bus');
+    expect(ipc.usagePacingSchedule).not.toHaveBeenCalled();
+
+    const bridge = createBridgedBackend(ipc, 'token', 'ws://local/bus');
+    await bridge.usagePacingSchedule();
+    await bridge.setUsagePacingSchedule('five_day');
+    expect(ipc.usagePacingSchedule).toHaveBeenCalledOnce();
+    expect(ipc.setUsagePacingSchedule).toHaveBeenCalledWith('five_day');
   });
 });
 

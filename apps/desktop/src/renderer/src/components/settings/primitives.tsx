@@ -211,15 +211,25 @@ export function ModeButton({
   label,
   active,
   onClick,
+  disabled,
+  title,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
+  /** A control whose backing store cannot answer right now. Rendered dimmed and
+   *  inert rather than hidden, so a setting that exists but is unavailable does
+   *  not read as a setting that was removed. */
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
+      title={title}
       style={{
+        opacity: disabled ? 0.45 : 1,
         padding: '4px 14px',
         fontSize: '0.75rem',
         fontFamily: 'inherit',
@@ -231,7 +241,7 @@ export function ModeButton({
           ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
           : 'var(--wks-border-subtle)',
         borderRadius: 'var(--wks-radius-pill)',
-        cursor: 'pointer',
+        cursor: disabled ? 'default' : 'pointer',
         height: '28px',
         lineHeight: 1,
         margin: 0,

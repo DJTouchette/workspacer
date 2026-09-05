@@ -15,6 +15,7 @@ import {
   type SelectOption,
 } from './primitives';
 import HarnessModelSelect from './HarnessModelSelect';
+import UsageScheduleRow from './UsageScheduleRow';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
 import {
   WARMABLE_PROVIDERS,
@@ -613,6 +614,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         with a live session, so an idle machine asks for nothing. Takes effect the next time the
         daemon starts.
       </div>
+
+      <UsageScheduleRow />
 
       <CheckRow
         label="Keep 5-hour window warm"

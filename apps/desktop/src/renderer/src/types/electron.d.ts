@@ -2,7 +2,11 @@ import type { PluginManifest, PluginUpdateStatus } from './plugin';
 import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
-import type { UsageReportWire } from '../../../main/shared/usageReport';
+import type {
+  UsagePacingSchedule,
+  UsagePacingScheduleWire,
+  UsageReportWire,
+} from '../../../main/shared/usageReport';
 import type {
   BoardData,
   BoardLane,
@@ -254,6 +258,17 @@ export interface ElectronAPI {
    *  gone, or, on the web/remote transports, not reachable from the renderer at
    *  all), which every consumer must render as nothing rather than as zero. */
   usageReport: () => Promise<UsageReportWire | null>;
+  /** Settings -> "Usage schedule": which week the Overview's seven-day pacing
+   *  tick is drawn against. Hub-owned, so `null` means this hub could not be
+   *  asked — an older hub that does not know the method, or none reachable —
+   *  and the control must render as unavailable rather than as a default
+   *  nobody chose. */
+  usagePacingSchedule: () => Promise<UsagePacingScheduleWire | null>;
+  /** Stores the schedule hub-side. Answers { ok: false, error } on refusal or
+   *  transport failure; the caller must NOT show a saved state for one. */
+  setUsagePacingSchedule: (
+    schedule: UsagePacingSchedule,
+  ) => Promise<{ ok: true; state: UsagePacingScheduleWire } | { ok: false; error: string }>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeSetPermissionMode: (
     sessionId: string,

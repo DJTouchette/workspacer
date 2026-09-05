@@ -81,6 +81,7 @@ import { desiredSessionGrants } from './services/fullAccessGrants';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
+import type { UsagePacingScheduleWire } from './shared/usageReport';
 import { listFederationPeers } from './services/federationBridge';
 import { IPC } from './shared/ipcChannels';
 import type {
@@ -1037,6 +1038,30 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // Daemon still starting, or gone. null is "we could not ask", which the
       // card renders as nothing rather than as zero.
       return null;
+    }
+  });
+
+  // Settings -> "Usage schedule": which week the Overview's seven-day pacing
+  // tick is drawn against. Hub-only, with NO daemon fallback — claudemon has no
+  // equivalent, and an older hub simply does not know these methods. `null` is
+  // therefore "this hub cannot answer", which the control renders as
+  // unavailable rather than as a schedule nobody chose.
+  ipcMain.handle(IPC.USAGE_PACING_SCHEDULE, async () => {
+    try {
+      return await callHub<UsagePacingScheduleWire>('usage.pacingSchedule', {});
+    } catch {
+      return null;
+    }
+  });
+  // The WRITE is not allowed to swallow its failure the way the reads above do.
+  // A save that reports success and stored nothing is precisely the bug a
+  // hub-side setting exists to avoid, so the error text comes back to the UI.
+  ipcMain.handle(IPC.USAGE_SET_PACING_SCHEDULE, async (_event, schedule: string) => {
+    try {
+      const out = await callHub<UsagePacingScheduleWire>('usage.setPacingSchedule', { schedule });
+      return { ok: true as const, state: out };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
