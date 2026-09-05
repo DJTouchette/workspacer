@@ -4,8 +4,35 @@ import { createRoot } from 'react-dom/client';
 import '../App.css';
 import { applyTheme, darkTheme, lightTheme } from '../themes';
 import { UsageReportCard } from '../components/UsageReportCard';
-import type { UsageReportWire } from '../../../main/shared/usageReport';
-applyTheme(new URLSearchParams(location.search).get('theme') === 'light' ? lightTheme : darkTheme);
+import UsageScheduleRow from '../components/settings/UsageScheduleRow';
+import type {
+  UsagePacingSchedule,
+  UsagePacingScheduleWire,
+  UsageReportWire,
+} from '../../../main/shared/usageReport';
+const params = new URLSearchParams(location.search);
+applyTheme(params.get('theme') === 'light' ? lightTheme : darkTheme);
+
+// The Settings control that chooses WHICH week the cards above are paced
+// against. It reads window.electronAPI, so the fixture supplies one — a hub
+// that answers (?schedule=five_day|seven_day|unset, the default) or one that
+// cannot (?schedule=unavailable), which is the state an older server produces
+// and the one worth looking at with your own eyes.
+const requested = params.get('schedule') ?? 'five_day';
+let stored: UsagePacingScheduleWire | null =
+  requested === 'unavailable'
+    ? null
+    : {
+        schedule: requested === 'unset' ? '' : (requested as UsagePacingSchedule),
+        configurable: true,
+      };
+(window as unknown as { electronAPI: unknown }).electronAPI = {
+  usagePacingSchedule: async () => stored,
+  setUsagePacingSchedule: async (schedule: UsagePacingSchedule) => {
+    stored = { schedule, configurable: true };
+    return { ok: true as const, state: stored };
+  },
+};
 const now = Math.floor(Date.now() / 1000);
 const report: UsageReportWire = { evaluated_at: now, valid_until: now + 60 };
 const accounts = [
@@ -60,6 +87,10 @@ createRoot(document.getElementById('root')!).render(
           }}
         />
       ))}
+    </div>
+    <h2 style={{ fontSize: '0.95rem', marginTop: 24 }}>Settings · Usage schedule</h2>
+    <div style={{ maxWidth: 640 }}>
+      <UsageScheduleRow />
     </div>
   </main>,
 );

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { UsageReportAccount, UsageReportWire } from '../../../main/shared/usageReport';
-import { usageAccountIdentity, usagePacingRows } from '../lib/usagePacing';
+import { usageAccountIdentity, usagePaceLook, usagePacingRows } from '../lib/usagePacing';
 import { UsageDetailDialog } from './claude/UsageDetailDialog';
 import { Surface } from './Surface';
 import { fmtResetIn } from '../lib/sessionStats';
@@ -67,13 +67,8 @@ export function UsageReportCard({
             >
               <span>{row.label}</span>
               <span>{row.pct === undefined ? 'Unknown' : `${Math.round(row.pct)}%`}</span>
-              <span
-                style={{
-                  color:
-                    row.verdict === 'ahead' ? 'var(--wks-warning)' : 'var(--wks-text-secondary)',
-                }}
-              >
-                {row.verdict ??
+              <span style={{ color: usagePaceLook(row.verdict).color }}>
+                {usagePaceLook(row.verdict).label ??
                   (account.fresh === false || report.transport_stale
                     ? 'Stale · pace unavailable'
                     : 'Pace unavailable')}
@@ -97,8 +92,9 @@ export function UsageReportCard({
                     height: '100%',
                     width: `${row.pct}%`,
                     borderRadius: 'var(--wks-radius-pill)',
-                    background:
-                      row.verdict === 'ahead' ? 'var(--wks-warning)' : 'var(--wks-text-secondary)',
+                    // Same mapper as the word above it, so a bar can never be
+                    // one colour while the label claims another.
+                    background: usagePaceLook(row.verdict).color,
                   }}
                 />
               )}

@@ -51,8 +51,14 @@ describe('UsageScheduleRow', () => {
     await userEvent.click(week);
     expect(set).toHaveBeenCalledWith('five_day');
     // The hint must follow the stored value, so the user can see WHICH week
-    // they are on without opening the Overview.
+    // they are on without opening the Overview…
     await screen.findByText(/climbs Monday to Friday/i);
+    // …and so must the HIGHLIGHT. A hint that moves while the selected pill
+    // does not is a control that contradicts itself.
+    await waitFor(() => {
+      expect(week.style.backgroundColor).toBe('var(--wks-accent-bg)');
+      expect(every.style.backgroundColor).toBe('transparent');
+    });
     // And the visible report is re-read, or the change looks like it did
     // nothing for up to a minute.
     expect(refreshUsageReport).toHaveBeenCalledOnce();

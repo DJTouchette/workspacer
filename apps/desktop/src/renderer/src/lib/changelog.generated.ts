@@ -23,6 +23,25 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: 'Unreleased',
+    date: '',
+    unreleased: true,
+    sections: [
+      {
+        title: 'Changed',
+        items: [
+          '**Spending faster than your allowance refills now looks like a problem, not an achievement.** A usage window over its expected curve was labelled *ahead* in the amber needs-you colour, so a 7-day window at 89% with two days left read as encouraging news. Ahead of schedule is good; ahead of your allowance is the opposite. That state is now labelled **above pace** and drawn in the error colour, on the word and on the consumed bar together — they come from one presentation mapper, so they cannot disagree. On pace, under, and a window with no readable pace stay neutral, because a meter that colours every reading is a meter nobody reads. The comparison itself is untouched: the same inclusive ±2 percentage-point band, compared before rounding, and no routing threshold moved.',
+        ],
+      },
+      {
+        title: 'Added',
+        items: [
+          "**Overview's weekly usage pacing can follow a five-day working week.** Settings → Session now has a **Usage schedule** with two answers: *Work week (Mon–Fri)* and *Every day (7 days)*. On the work week, the expected-usage tick on a 7-day card climbs Monday to Friday and stays exactly where it is across Saturday and Sunday, in the hub machine's own timezone — so a week's allowance spent over five working days reads as on plan rather than 40% over it, and Sunday afternoon no longer suggests you are behind. Weekend work still counts: only the expectation pauses, never the observed figure. *Every day* is the calendar shape the cards shipped with. Leaving the setting untouched changes nothing at all, including for anyone who has hand-set a curve in the hub's `routing.yaml`, which keeps answering until a choice is made here. A window whose elapsed part is entirely weekend shows no pace verdict rather than a fabricated one, because there is no weekday progress yet to compare against. The 5-hour and monthly cards are untouched by the setting either way, and neither is any routing decision: the schedule is read only when the usage report is projected, never when a model is chosen. The choice is stored by the hub, so it survives a restart and applies to the desktop, the web client and the phone alike; changing it re-reads the visible cards immediately. Only a host-authority client may change it — a phone or a scoped pairing token can see which schedule is in force but not switch it. A server whose hub predates the setting shows the control dimmed with the reason, rather than a default nobody chose.",
+        ],
+      },
+    ],
+  },
+  {
     version: '0.164.0',
     date: '2026-09-03',
     unreleased: false,

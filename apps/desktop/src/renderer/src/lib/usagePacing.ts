@@ -12,14 +12,52 @@ const windows = [
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const percent = (v: unknown): v is number => finite(v) && v >= 0 && v <= 100;
 
+/** The three comparisons the +/-2pp band can produce. `ahead` is the STATE's
+ *  name (it mirrors the hub's own `PaceState`); what a user reads is
+ *  `usagePaceLook`'s label, which is deliberately not that word. */
+export type UsagePaceVerdict = 'ahead' | 'on pace' | 'under';
+
 export interface UsagePacingRow {
   key: string;
   label: string;
   pct?: number;
   reset?: number;
   expected?: number;
-  verdict?: 'ahead' | 'on pace' | 'under';
+  verdict?: UsagePaceVerdict;
   description: string;
+}
+
+/**
+ * How one verdict is SHOWN. One mapper, so the word and the bar can never
+ * disagree — they used to be two separate ternaries over `row.verdict`, and a
+ * third surface would have been a third.
+ *
+ * Being over the curve is UNFAVOURABLE, and the presentation now says so:
+ *
+ *  - The word was `ahead`, which reads as praise. Ahead of schedule is good;
+ *    ahead of your allowance is the opposite, and a user looking at a 7-day
+ *    window at 89% with two days left should not see an encouraging word. It
+ *    is `above pace`.
+ *  - The colour was `--wks-warning`, the token this app uses for NEEDS-YOU
+ *    (approval, input, stale). Overspending is not a prompt, it is a problem,
+ *    so it takes `--wks-error` — the token DESIGN_LANGUAGE.md assigns to
+ *    failure and danger.
+ *
+ * On pace and under stay NEUTRAL rather than turning green. A meter that
+ * colours itself at every reading trains people to ignore the one reading that
+ * is trying to say something, and `under` in particular is not a verdict worth
+ * a colour: it is what most windows look like most of the time.
+ *
+ * NONE OF THIS IS A THRESHOLD CHANGE. The band that produces the verdict is
+ * unchanged (inclusive +/-2 percentage points, compared before rounding), and
+ * the hub's routing bands are not involved in this file at all.
+ */
+export function usagePaceLook(verdict: UsagePaceVerdict | undefined): {
+  label: string | undefined;
+  color: string;
+} {
+  if (verdict === 'ahead') return { label: 'above pace', color: 'var(--wks-error)' };
+  return { label: verdict, color: 'var(--wks-text-secondary)' };
 }
 
 /** One report account, never overlaid with session fields or another observation.
@@ -80,7 +118,7 @@ export function usagePacingRows(
           ? 'Pacing disabled'
           : 'Pace unavailable'
         : `${Math.round(expected)}% expected by now · ${p?.curve} · evaluated ${new Date(report.evaluated_at! * 1000).toLocaleTimeString()}`,
-      verdict === 'ahead' ? 'Spending faster than expected' : verdict,
+      verdict === 'ahead' ? 'Above pace · spending faster than expected' : verdict,
       report.transport_stale ? 'Last known reading; report refresh failed' : undefined,
       account.fresh === false ? 'Stale provider observation' : undefined,
       account.source ? `Source: ${account.source}` : undefined,

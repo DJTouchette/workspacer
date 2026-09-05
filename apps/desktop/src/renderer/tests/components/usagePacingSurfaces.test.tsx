@@ -92,7 +92,11 @@ describe('paced Overview accounts', () => {
       fireEvent.click(within(dialog).getByLabelText('Close'));
     }
   });
-  it('uses attention colour and explanatory text for ahead', () => {
+  // Being over the curve is UNFAVOURABLE, and the presentation has to read that
+  // way: the encouraging word "ahead" and the needs-you warning colour together
+  // made 89% of a weekly allowance with two days left look like good news. The
+  // word and the bar come from ONE mapper now, so they cannot disagree.
+  it('shows above-pace consumption in the error colour, on both the word and the bar', () => {
     vi.useFakeTimers();
     vi.setSystemTime(now * 1000);
     const report = fixture();
@@ -100,11 +104,37 @@ describe('paced Overview accounts', () => {
     a.windows!.five_hour!.used_percent!.value = 70;
     a.windows!.five_hour!.pace!.usedPct = 70;
     render(<UsageReportCard report={report} account={a} provider="claude" />);
-    expect(screen.getByText('ahead')).toHaveStyle({ color: 'var(--wks-warning)' });
-    expect(screen.getByLabelText(/Spending faster than expected/)).toHaveAttribute(
+
+    expect(screen.queryByText('ahead')).toBeNull();
+    expect(screen.getByText('above pace')).toHaveStyle({ color: 'var(--wks-error)' });
+    expect(screen.getByTestId('usage-consumed')).toHaveStyle({
+      background: 'var(--wks-error)',
+    });
+    expect(screen.getByLabelText(/Above pace · spending faster than expected/)).toHaveAttribute(
       'title',
       expect.stringContaining('52% expected by now'),
     );
+  });
+
+  // …and the other verdicts stay NEUTRAL. A meter that colours every reading is
+  // a meter nobody reads, which would undo the point of colouring the one above.
+  it.each([
+    [52, 'on pace'],
+    [10, 'under'],
+  ])('leaves %s%% used (%s) uncoloured', (used, verdict) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+    const report = fixture();
+    const a = report.providers![0].accounts![0];
+    a.windows!.five_hour!.used_percent!.value = used as number;
+    a.windows!.five_hour!.pace!.usedPct = used as number;
+    render(<UsageReportCard report={report} account={a} provider="claude" />);
+    expect(screen.getByText(verdict as string)).toHaveStyle({
+      color: 'var(--wks-text-secondary)',
+    });
+    expect(screen.getByTestId('usage-consumed')).toHaveStyle({
+      background: 'var(--wks-text-secondary)',
+    });
   });
   it('shares polling and expires pace/reset locally while a response is pending', async () => {
     vi.useFakeTimers();
