@@ -482,13 +482,20 @@ fn subagent_from_thread(params: &Value) -> Option<SubagentUpdate> {
         .and_then(Value::as_str)
         .or_else(|| thread.get("preview").and_then(Value::as_str))
         .map(trimmed_summary);
+    // `Thread.model` is the child's configured/latest persisted model. Do not
+    // use the collab tool call's `model`: the app-server schema defines that
+    // as a requested model, which is not proof it became effective.
+    let model = thread
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     Some(SubagentUpdate {
         id,
         agent_type,
         status: SubagentStatus::Running,
         description,
         tool_use_id: None,
-        model: None,
+        model,
         last_tool_name: None,
         last_tool_summary: None,
     })
@@ -527,10 +534,6 @@ fn subagents_from_collab_item(item: &Value) -> Vec<SubagentUpdate> {
         .get("prompt")
         .and_then(Value::as_str)
         .map(trimmed_summary);
-    let model = item
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::to_string);
     if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
         if !states.is_empty() {
             return states
@@ -543,7 +546,10 @@ fn subagents_from_collab_item(item: &Value) -> Vec<SubagentUpdate> {
                     tool_use_id: (tool == "spawnAgent")
                         .then(|| tool_use_id.clone())
                         .flatten(),
-                    model: model.clone(),
+                    // This item only exposes a requested model. The child
+                    // thread's `thread/started` event supplies its actual
+                    // configured model when available.
+                    model: None,
                     last_tool_name: Some(tool.clone()),
                     last_tool_summary: state
                         .get("message")
@@ -566,7 +572,7 @@ fn subagents_from_collab_item(item: &Value) -> Vec<SubagentUpdate> {
             tool_use_id: (tool == "spawnAgent")
                 .then(|| tool_use_id.clone())
                 .flatten(),
-            model: model.clone(),
+            model: None,
             last_tool_name: Some(tool.clone()),
             last_tool_summary: None,
         })
@@ -3241,7 +3247,7 @@ mod tests {
     }
 
     #[test]
-    fn collab_spawn_agent_yields_tool_card_and_subagent_row() {
+    fn collab_spawn_agent_keeps_requested_model_off_subagent_row() {
         let p = json!({ "item": {
             "type": "collabAgentToolCall",
             "id": "call-1",
@@ -3263,7 +3269,7 @@ mod tests {
                 status: crate::session::state::SubagentStatus::Running,
                 description: Some("inspect the project".into()),
                 tool_use_id: Some("call-1".into()),
-                model: Some("gpt-5.5-codex".into()),
+                model: None,
                 last_tool_name: Some("spawnAgent".into()),
                 last_tool_summary: None,
             })
@@ -3277,6 +3283,32 @@ mod tests {
             }
             other => panic!("expected ToolUse, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn child_thread_started_yields_its_configured_model() {
+        let p = json!({ "thread": {
+            "id": "child-1",
+            "parentThreadId": "parent-1",
+            "agentRole": "reviewer",
+            "name": "Review the change",
+            "model": "gpt-5.5-codex"
+        }});
+        assert_eq!(
+            translate("thread/started", &p),
+            vec![AgentUpdate::Subagent(
+                crate::session::state::SubagentUpdate {
+                    id: "child-1".into(),
+                    agent_type: Some("reviewer".into()),
+                    status: crate::session::state::SubagentStatus::Running,
+                    description: Some("Review the change".into()),
+                    tool_use_id: None,
+                    model: Some("gpt-5.5-codex".into()),
+                    last_tool_name: None,
+                    last_tool_summary: None,
+                }
+            )]
+        );
     }
 
     #[test]

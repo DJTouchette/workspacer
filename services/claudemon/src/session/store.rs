@@ -5071,6 +5071,11 @@ mod tests {
         assert_eq!(row.subagents.len(), 1);
         assert_eq!(row.subagents[0].status, SubagentStatus::Complete);
         assert_eq!(row.subagents[0].description.as_deref(), Some("inspect"));
+        assert_eq!(
+            row.subagents[0].model.as_deref(),
+            Some("gpt-5.5-codex"),
+            "a partial completion update must not erase the known child model"
+        );
         assert_eq!(row.subagents[0].last_tool_summary.as_deref(), Some("done"));
         assert!(row.subagents[0].completed_at.is_some());
         assert_eq!(row.background_tasks, 0);

@@ -149,6 +149,7 @@ describe('InspectorCard', () => {
                 status: 'running',
                 startedAt: 1,
                 description: 'inspect this',
+                model: 'gpt-5.5-codex',
               },
             ],
           })}
@@ -157,6 +158,7 @@ describe('InspectorCard', () => {
       );
 
       expect(screen.queryByRole('button', { name: /Monitor/ })).not.toBeInTheDocument();
+      expect(screen.getByText('gpt-5.5-codex')).toBeInTheDocument();
       fireEvent.click(screen.getByTitle('Watch this agent in a pane'));
       expect(opened).toEqual([
         {

@@ -330,6 +330,7 @@ describe('managed pending → approval/question cards', () => {
           startedAt: 1000,
           description: 'inspect',
           toolUseId: 'call-1',
+          model: 'gpt-5.5-codex',
         },
       ],
     });
@@ -343,6 +344,7 @@ describe('managed pending → approval/question cards', () => {
         startedAt: 1000,
         description: 'inspect',
         toolUseId: 'call-1',
+        model: 'gpt-5.5-codex',
       },
     ]);
   });
