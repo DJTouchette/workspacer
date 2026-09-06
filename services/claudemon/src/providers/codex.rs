@@ -1209,6 +1209,8 @@ struct DriverEvidence {
     exit_status: Option<std::process::ExitStatus>,
     #[cfg(test)]
     records: Vec<&'static str>,
+    #[cfg(test)]
+    registration_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl DriverEvidence {
@@ -1222,6 +1224,15 @@ impl DriverEvidence {
             exit_status: None,
             #[cfg(test)]
             records: Vec::new(),
+            #[cfg(test)]
+            registration_hook: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn before_registration(&mut self) {
+        if let Some(hook) = self.registration_hook.take() {
+            hook();
         }
     }
 
@@ -1263,6 +1274,7 @@ pub fn spawn_session(
     store: SessionStore,
     conv: ConversationStore,
     session_id: String,
+    generation: u64,
     cwd: String,
     model: Option<String>,
     effort: Option<String>,
@@ -1277,9 +1289,7 @@ pub fn spawn_session(
     // profile means, it only stops dropping it. See `SpawnExtras`.
     extras: SpawnExtras,
 ) {
-    // Claimed before the task starts: on a restart this driver's tail can
-    // outlive its own lifetime, and must not tear down a successor.
-    let generation = store.claim_generation(&session_id);
+    // The caller claimed this token atomically with managed row publication.
     tokio::spawn(async move {
         let mut evidence = DriverEvidence::new(&session_id, generation);
         let result = run_session(
@@ -1313,9 +1323,9 @@ pub fn spawn_session(
 }
 
 fn finish_driver(store: &SessionStore, conv: &ConversationStore, evidence: &mut DriverEvidence) {
-    if store.deregister_managed(&evidence.session, evidence.generation) {
+    let _ = store.deregister_managed_with(&evidence.session, evidence.generation, || {
         conv.forget(&evidence.session);
-    }
+    });
     evidence.record("driver_terminal");
 }
 
@@ -1506,11 +1516,6 @@ async fn run_rollout_fallback(
     from_headless: bool,
     evidence: &mut DriverEvidence,
 ) -> anyhow::Result<()> {
-    // Cleanup/startup waits may have outlived a restart. A fallback must not
-    // replace the successor's channels or spawn another TUI under its id.
-    if !store.owns_generation(session_id, evidence.generation) {
-        return Ok(());
-    }
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
     let argv = fallback_tui_argv(
         bin,
@@ -1524,43 +1529,61 @@ async fn run_rollout_fallback(
     );
     // The degraded path is where a dropped profile would hide longest — the
     // pane works, so nothing looks wrong — so it carries CODEX_HOME too.
-    evidence.reason = DriverExit::FallbackSpawnFailed;
-    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd, &extras.env)
+    #[cfg(test)]
+    evidence.before_registration();
+    let registration = store.with_generation(session_id, evidence.generation, || {
+        store.set_transport(session_id, crate::session::state::Transport::Pty);
+        evidence.reason = DriverExit::FallbackSpawnFailed;
+        let tui = super::spawn_attach_pty_owned(
+            store,
+            session_id,
+            &argv,
+            cwd,
+            &extras.env,
+            Some(evidence.generation),
+        )
         .context("spawning fallback codex TUI")?;
-    // Make the degradation visible. It is not a failure — the pane works — but
-    // it is a different, thinner session than the one that was asked for, and
-    // whoever dispatched it has to be able to see that.
-    tracing::warn!(
-        session = %session_id,
-        facade = facade.mcp_url.is_some(),
-        instructions = pending_instructions.is_some(),
-        from_headless,
-        "codex degraded to the rollout fallback (Term + transcript-tailed GUI): \
-         structural approvals and token-level streaming are unavailable"
-    );
-    conv.push(
-        session_id,
-        vec![ConversationItem::AssistantText {
-            text: if from_headless {
-                DEGRADED_FROM_HEADLESS_NOTICE.to_string()
-            } else {
-                DEGRADED_NOTICE.to_string()
-            },
-            timestamp: None,
-        }],
-    );
-    // Drive the GUI conversation from the rollout transcript.
-    super::codex_rollout::spawn_tailer(
-        store.clone(),
-        conv.clone(),
-        session_id.to_string(),
-        cwd.to_string(),
-    );
+        // Make the degradation visible. It is not a failure — the pane works — but
+        // it is a different, thinner session than the one that was asked for, and
+        // whoever dispatched it has to be able to see that.
+        tracing::warn!(
+            session = %session_id,
+            facade = facade.mcp_url.is_some(),
+            instructions = pending_instructions.is_some(),
+            from_headless,
+            "codex degraded to the rollout fallback (Term + transcript-tailed GUI): \
+             structural approvals and token-level streaming are unavailable"
+        );
+        conv.push(
+            session_id,
+            vec![ConversationItem::AssistantText {
+                text: if from_headless {
+                    DEGRADED_FROM_HEADLESS_NOTICE.to_string()
+                } else {
+                    DEGRADED_NOTICE.to_string()
+                },
+                timestamp: None,
+            }],
+        );
+        // Drive the GUI conversation from the rollout transcript.
+        super::codex_rollout::spawn_tailer_owned(
+            store.clone(),
+            conv.clone(),
+            session_id.to_string(),
+            cwd.to_string(),
+            Some(evidence.generation),
+        );
 
-    // GUI-composer prompts arrive here; write them into the TUI's PTY (there's no
-    // RPC channel in this mode — approvals and everything else happen in the Term).
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    store.register_managed_input(session_id, tx);
+        // GUI-composer prompts arrive here; write them into the TUI's PTY (there's no
+        // RPC channel in this mode — approvals and everything else happen in the Term).
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input(session_id, tx);
+        Ok::<_, anyhow::Error>((tui, rx))
+    });
+    let Some(registration) = registration else {
+        return Ok(());
+    };
+    let (tui, mut rx) = registration?;
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
     // Replay the undelivered ws-path prompts. They were already pushed into the
@@ -1581,13 +1604,16 @@ async fn run_rollout_fallback(
                     // Echo verbatim, but prepend the role instructions (once) to
                     // what the agent actually receives — same contract as the ws
                     // path, which is what carries the `wks-result` schema.
-                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    if store.with_generation(session_id, evidence.generation, || {
+                        conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    }).is_none() { break; }
                     let sent = with_instructions(&mut pending_instructions, text);
                     write_prompt(&tui, &sent).await;
                 }
                 None => { evidence.reason = DriverExit::InputClosed; break; },
             },
             _ = tui_check.tick() => {
+                if !store.owns_generation(session_id, evidence.generation) { break; }
                 if pty::has_exited(&tui) {
                     tracing::info!(session = %session_id, "codex fallback TUI exited; tearing down");
                     evidence.reason = DriverExit::TuiExited;
@@ -1736,15 +1762,6 @@ async fn run_session(
             if evidence.cleanup.failed() {
                 return Err(err);
             }
-            if !store.owns_generation(session_id, evidence.generation) {
-                return Ok(());
-            }
-            if headless {
-                // The session is no longer headless. Say so where every client
-                // reads it, BEFORE the PTY exists, so no snapshot ever shows a
-                // stream-stamped session that has a terminal.
-                store.set_transport(session_id, crate::session::state::Transport::Pty);
-            }
             return run_rollout_fallback(
                 store,
                 conv,
@@ -1766,17 +1783,6 @@ async fn run_session(
             .await;
         }
     };
-    if !store.owns_generation(session_id, evidence.generation) {
-        evidence.reason = DriverExit::Superseded;
-        evidence.cleanup = child.cleanup().await;
-        evidence.exit_status = child.exit_status;
-        evidence.record("appserver_terminal");
-        anyhow::ensure!(
-            !evidence.cleanup.failed(),
-            "superseded codex cleanup incomplete"
-        );
-        return Ok(());
-    }
     let (ws_write, mut ws_read) = ws_stream.split();
 
     // Serialize all outgoing JSON-RPC through one task that owns the ws sink, so
@@ -1793,60 +1799,78 @@ async fn run_session(
         "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
     }));
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    store.register_managed_input(session_id, tx);
-    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
-    store.register_managed_decision(session_id, dtx);
-    // Live model/effort switch (POST /sessions/:id/model): applied to the
-    // running thread via `thread/settings/update`, so subsequent turns — from
-    // the GUI or the TUI — use the new model. No restart, thread untouched.
-    let (mtx, mut mrx) = mpsc::unbounded_channel::<crate::session::ModelSwitch>();
-    store.register_managed_model_switch(session_id, mtx);
-    // Structural interrupt (POST /sessions/:id/signal SIGINT): `turn/interrupt`
-    // stops the running turn while keeping the thread alive — same semantics as
-    // the Claude stream driver's `interrupt` control request, and it works for
-    // clients with no PTY to Ctrl-C into (mobile remote, the inbox, wks-tui).
-    let (itx, mut irx) = mpsc::unbounded_channel::<()>();
-    store.register_managed_interrupt(session_id, itx);
-    // Approval policy, live-switchable via `/permission-mode`: the adapter
-    // mediates every approval request on this ws path, so flipping the flag
-    // takes effect on the next request without touching the session. A
-    // yolo-spawned TUI bypasses approvals at the source, though — that
-    // direction needs a restart (`spawned_yolo` records it). Headless never
-    // spawns anything in bypass mode — yolo there is pure adapter mediation —
-    // so ask↔yolo stay live-switchable in BOTH directions (spawned_yolo=false).
-    let yolo_live = Arc::new(AtomicBool::new(yolo));
-    store.register_managed_yolo(session_id, yolo_live.clone(), yolo && !headless);
-    // The sandbox/approval posture that rides on every headless `turn/start`.
-    // It shares `yolo_live` with the store, so a live `/permission-mode` flip
-    // moves the REAL sandbox with the adapter's auto-accept instead of only
-    // half of it.
-    let policy = TurnPolicy::new(headless, yolo_live.clone());
+    #[cfg(test)]
+    evidence.before_registration();
+    let registration = store.with_generation(session_id, evidence.generation, || {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input(session_id, tx);
+        let (dtx, drx) = mpsc::unbounded_channel::<bool>();
+        store.register_managed_decision(session_id, dtx);
+        // Live model/effort switch (POST /sessions/:id/model): applied to the
+        // running thread via `thread/settings/update`, so subsequent turns — from
+        // the GUI or the TUI — use the new model. No restart, thread untouched.
+        let (mtx, mrx) = mpsc::unbounded_channel::<crate::session::ModelSwitch>();
+        store.register_managed_model_switch(session_id, mtx);
+        // Structural interrupt (POST /sessions/:id/signal SIGINT): `turn/interrupt`
+        // stops the running turn while keeping the thread alive — same semantics as
+        // the Claude stream driver's `interrupt` control request, and it works for
+        // clients with no PTY to Ctrl-C into (mobile remote, the inbox, wks-tui).
+        let (itx, irx) = mpsc::unbounded_channel::<()>();
+        store.register_managed_interrupt(session_id, itx);
+        // Approval policy, live-switchable via `/permission-mode`: the adapter
+        // mediates every approval request on this ws path, so flipping the flag
+        // takes effect on the next request without touching the session. A
+        // yolo-spawned TUI bypasses approvals at the source, though — that
+        // direction needs a restart (`spawned_yolo` records it). Headless never
+        // spawns anything in bypass mode — yolo there is pure adapter mediation —
+        // so ask↔yolo stay live-switchable in BOTH directions (spawned_yolo=false).
+        let yolo_live = Arc::new(AtomicBool::new(yolo));
+        store.register_managed_yolo(session_id, yolo_live.clone(), yolo && !headless);
+        // The sandbox/approval posture that rides on every headless `turn/start`.
+        // It shares `yolo_live` with the store, so a live `/permission-mode` flip
+        // moves the REAL sandbox with the adapter's auto-accept instead of only
+        // half of it.
+        let policy = TurnPolicy::new(headless, yolo_live.clone());
 
-    // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
-    // runs it (a real, "running", resumable rollout) — then we rejoin it over
-    // RPC (below) to drive the GUI, exactly the validated owner/rejoiner split.
-    // The reverse (RPC `thread/start` here + TUI `resume`) fails because a
-    // just-started thread has no rollout yet: "no rollout found for thread id …".
-    // Model / YOLO are set on the thread's creator (the TUI) as config
-    // overrides. Kept so we can kill it when the session ends.
-    // Headless (stream transport): no TUI at all — this client creates the
-    // thread itself via `thread/start` below, the GUI is the only surface.
-    let tui_pty = if headless {
-        None
-    } else {
-        spawn_codex_tui(
-            store,
-            session_id,
-            cwd,
-            bin,
-            &ws_url,
-            model.as_deref(),
-            effort.as_deref(),
-            context_window,
-            yolo,
-            extras,
-        )
+        // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
+        // runs it (a real, "running", resumable rollout) — then we rejoin it over
+        // RPC (below) to drive the GUI, exactly the validated owner/rejoiner split.
+        // The reverse (RPC `thread/start` here + TUI `resume`) fails because a
+        // just-started thread has no rollout yet: "no rollout found for thread id …".
+        // Model / YOLO are set on the thread's creator (the TUI) as config
+        // overrides. Kept so we can kill it when the session ends.
+        // Headless (stream transport): no TUI at all — this client creates the
+        // thread itself via `thread/start` below, the GUI is the only surface.
+        let tui_pty = if headless {
+            None
+        } else {
+            spawn_codex_tui(
+                store,
+                session_id,
+                evidence.generation,
+                cwd,
+                bin,
+                &ws_url,
+                model.as_deref(),
+                effort.as_deref(),
+                context_window,
+                yolo,
+                extras,
+            )
+        };
+
+        (rx, drx, mrx, irx, policy, tui_pty)
+    });
+    let Some((mut rx, mut drx, mut mrx, mut irx, policy, tui_pty)) = registration else {
+        evidence.reason = DriverExit::Superseded;
+        evidence.cleanup = child.cleanup().await;
+        evidence.exit_status = child.exit_status;
+        evidence.record("appserver_terminal");
+        anyhow::ensure!(
+            !evidence.cleanup.failed(),
+            "superseded codex cleanup incomplete"
+        );
+        return Ok(());
     };
 
     let mut thread_id: Option<String> = resume_thread;
@@ -1920,7 +1944,7 @@ async fn run_session(
     // dead thread. try_wait is cheap; a coarse tick is fine.
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
-    let reason = loop {
+    let reason = 'driver: loop {
         tokio::select! {
             msg = ws_read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -1930,12 +1954,13 @@ async fn run_session(
                         let line = line.trim();
                         if line.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-                        handle_message(
+                        let applied = store.with_generation(session_id, evidence.generation, || handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
                             &mut cur_mode, &mut acc, &policy, &mut pending_approvals,
                             &mut pending_switch, headless,
-                        );
+                        ));
+                        if applied.is_none() { break 'driver DriverExit::Superseded; }
                     }
                 }
                 Some(Ok(Message::Close(_))) => break DriverExit::WebsocketClose,
@@ -1975,9 +2000,11 @@ async fn run_session(
                 Some(text) => {
                     // Echo the user's message verbatim, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
-                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    if store.with_generation(session_id, evidence.generation, || {
+                        conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                        note_user_send(store, session_id, &mut cur_mode);
+                    }).is_none() { break DriverExit::Superseded; }
                     let sent = with_instructions(&mut pending_instructions, text);
-                    note_user_send(store, session_id, &mut cur_mode);
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
@@ -1991,7 +2018,9 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
+                    if store.with_generation(session_id, evidence.generation, || {
+                        resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
+                    }).is_none() { break DriverExit::Superseded; }
                 }
                 None => break DriverExit::DecisionClosed,
             },
@@ -2114,6 +2143,7 @@ async fn run_session(
 fn spawn_codex_tui(
     store: &SessionStore,
     session_id: &str,
+    generation: u64,
     cwd: &str,
     bin: &str,
     ws_url: &str,
@@ -2132,7 +2162,14 @@ fn spawn_codex_tui(
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
     }
     argv.extend(extras.extra_args.iter().cloned());
-    match super::spawn_attach_pty(store, session_id, &argv, cwd, &extras.env) {
+    match super::spawn_attach_pty_owned(
+        store,
+        session_id,
+        &argv,
+        cwd,
+        &extras.env,
+        Some(generation),
+    ) {
         Ok(h) => Some(h),
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex TUI (--remote) failed; Term view unavailable");
@@ -3114,6 +3151,191 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             evidence.records,
             ["appserver_started", "appserver_terminal", "driver_terminal"]
         );
+    }
+
+    // Supersede at the old check/registration boundary, after app-server
+    // startup (or failure), rather than before run_session even starts.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn generation_registration_race_preserves_successor() {
+        for (fallback, headless) in [(false, true), (false, false), (true, true), (true, false)] {
+            let fake = FakeAppServer::new("idle");
+            let store = SessionStore::new();
+            let conv = ConversationStore::new();
+            let sid = "registration-race";
+            let first = store.claim_generation_with(sid, |_| {
+                store.register_managed(sid, "/fixture", "codex");
+                1
+            });
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let (dtx, mut drx) = mpsc::unbounded_channel();
+            let (mtx, mut mrx) = mpsc::unbounded_channel();
+            let (itx, mut irx) = mpsc::unbounded_channel();
+            let yolo = Arc::new(AtomicBool::new(false));
+            let successor_pty = super::super::spawn_attach_pty(
+                &store,
+                sid,
+                &["/bin/sleep".into(), "60".into()],
+                "/",
+                &Default::default(),
+            )
+            .unwrap();
+            let hook_store = store.clone();
+            let hook_conv = conv.clone();
+            let hook_yolo = yolo.clone();
+            let hook_pty = successor_pty.clone();
+            let mut evidence = DriverEvidence::new(sid, first);
+            evidence.registration_hook = Some(Box::new(move || {
+                assert!(
+                    hook_store.owns_generation(sid, first),
+                    "old precheck passes"
+                );
+                hook_store.claim_generation_with(sid, |_| {
+                    hook_store.register_managed(sid, "/successor", "codex");
+                    hook_store.set_transport(sid, crate::session::state::Transport::Stream);
+                    hook_store.register_managed_input(sid, tx);
+                    hook_store.register_managed_decision(sid, dtx);
+                    hook_store.register_managed_model_switch(sid, mtx);
+                    hook_store.register_managed_interrupt(sid, itx);
+                    hook_store.register_managed_yolo(sid, hook_yolo, false);
+                    hook_store.register_pty(sid, hook_pty);
+                    hook_conv.push(
+                        sid,
+                        vec![ConversationItem::AssistantText {
+                            text: "successor history".into(),
+                            timestamp: None,
+                        }],
+                    );
+                });
+            }));
+            let mut events = store.subscribe();
+            run_session(
+                &store,
+                &conv,
+                sid,
+                fake.dir.to_str().unwrap(),
+                None,
+                None,
+                None,
+                if fallback {
+                    "/missing-codex-fixture"
+                } else {
+                    &fake.bin
+                },
+                false,
+                headless,
+                Some("fixture-thread".into()),
+                &Facade::default(),
+                &fake.extras,
+                &mut evidence,
+            )
+            .await
+            .unwrap();
+            assert!(
+                evidence.registration_hook.is_none(),
+                "race boundary exercised"
+            );
+            finish_driver(&store, &conv, &mut evidence);
+            finish_driver(&store, &conv, &mut evidence);
+            assert_eq!(
+                evidence.cleanup,
+                if fallback {
+                    CleanupOutcome::NotSpawned
+                } else {
+                    CleanupOutcome::GroupGone
+                }
+            );
+            assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
+            assert_eq!(
+                store.get(sid).unwrap().transport,
+                crate::session::state::Transport::Stream
+            );
+            assert!(Arc::ptr_eq(&store.pty_handle(sid).unwrap(), &successor_pty));
+            assert!(store.wrapper(sid).is_some());
+            assert!(
+                !pty::has_exited(&successor_pty),
+                "old cleanup spares successor PTY"
+            );
+            store.submit_message(sid, "successor input".into());
+            assert_eq!(rx.try_recv().unwrap(), "successor input");
+            assert!(store.submit_managed_decision(sid, true));
+            assert!(drx.try_recv().unwrap());
+            store
+                .set_managed_model(
+                    sid,
+                    crate::session::ModelSwitch {
+                        model: Some("fixture-model".into()),
+                        effort: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                mrx.try_recv().unwrap().model.as_deref(),
+                Some("fixture-model")
+            );
+            assert!(store.interrupt_managed(sid));
+            irx.try_recv().unwrap();
+            store.set_managed_permission_mode(sid, "yolo").unwrap();
+            assert!(yolo.load(Ordering::Relaxed));
+            assert_eq!(
+                conv.snapshot(sid).unwrap().1.len(),
+                1,
+                "no stale notice/history deletion"
+            );
+            while let Ok(event) = events.try_recv() {
+                assert_ne!(event.event, "SessionEnd");
+            }
+            let _ = pty::signal_child(&successor_pty, Signal::Sigkill);
+            store.reap_pty_owned(sid, &successor_pty);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn generation_owned_fallback_still_registers_and_ends_once() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "owned-fallback";
+        store.register_managed(sid, "/", "codex");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        let generation = store.claim_generation(sid);
+        let mut evidence = DriverEvidence::new(sid, generation);
+        let mut events = store.subscribe();
+        // The fixture executable exits normally even with Codex config args.
+        run_rollout_fallback(
+            &store,
+            &conv,
+            sid,
+            "/",
+            None,
+            None,
+            None,
+            "/bin/true",
+            false,
+            &Facade::default(),
+            &SpawnExtras::default(),
+            None,
+            Vec::new(),
+            true,
+            &mut evidence,
+        )
+        .await
+        .unwrap();
+        assert_eq!(evidence.reason, DriverExit::TuiExited);
+        assert_eq!(
+            store.get(sid).unwrap().transport,
+            crate::session::state::Transport::Pty
+        );
+        assert!(store.is_managed(sid));
+        assert!(store.wrapper(sid).is_some());
+        assert_eq!(conv.snapshot(sid).unwrap().1.len(), 1);
+        finish_driver(&store, &conv, &mut evidence);
+        finish_driver(&store, &conv, &mut evidence);
+        let mut ends = 0;
+        while let Ok(event) = events.try_recv() {
+            ends += usize::from(event.event == "SessionEnd");
+        }
+        assert_eq!(ends, 1);
     }
 
     #[tokio::test]

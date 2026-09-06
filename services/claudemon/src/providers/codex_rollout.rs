@@ -514,6 +514,16 @@ async fn discover_rollout(
 /// session id is already registered (as a PTY) by the caller. Ends when the
 /// session is deregistered or the daemon shuts down.
 pub fn spawn_tailer(store: SessionStore, conv: ConversationStore, session_id: String, cwd: String) {
+    spawn_tailer_owned(store, conv, session_id, cwd, None);
+}
+
+pub(crate) fn spawn_tailer_owned(
+    store: SessionStore,
+    conv: ConversationStore,
+    session_id: String,
+    cwd: String,
+    generation: Option<u64>,
+) {
     tokio::spawn(async move {
         let since = std::time::SystemTime::now();
         let Some(path) = discover_rollout(&store, &session_id, &cwd, since).await else {
@@ -521,7 +531,7 @@ pub fn spawn_tailer(store: SessionStore, conv: ConversationStore, session_id: St
             return;
         };
         tracing::info!(session = %session_id, path = %path.display(), "tailing codex rollout");
-        if let Err(err) = tail(&store, &conv, &session_id, &path).await {
+        if let Err(err) = tail(&store, &conv, &session_id, &path, generation).await {
             tracing::warn!(?err, session = %session_id, "codex rollout tail ended with error");
         }
     });
@@ -548,6 +558,32 @@ fn drain_complete_lines(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
         .collect()
 }
 
+fn apply_for_generation(
+    store: &SessionStore,
+    session_id: &str,
+    generation: Option<u64>,
+    apply: impl FnOnce(),
+) -> bool {
+    match generation {
+        Some(generation) => store
+            .with_generation(session_id, generation, || {
+                if store
+                    .get(session_id)
+                    .is_none_or(|s| s.mode == SessionMode::Stopped)
+                {
+                    return false;
+                }
+                apply();
+                true
+            })
+            .unwrap_or(false),
+        None => {
+            apply();
+            true
+        }
+    }
+}
+
 /// Tail a rollout file from the beginning, folding each new line into the stores
 /// until the session is gone. Reads any already-written lines first (so a
 /// resumed session replays its history into the GUI), then polls for appends by
@@ -557,6 +593,7 @@ async fn tail(
     conv: &ConversationStore,
     session_id: &str,
     path: &Path,
+    generation: Option<u64>,
 ) -> anyhow::Result<()> {
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
@@ -565,18 +602,24 @@ async fn tail(
     acc.estimate_costs();
     // The session is ready for input until a turn starts (the TUI is idle on
     // launch); reflect that so the GUI composer's /message isn't mode-gated away.
-    store.set_managed_mode(
-        session_id,
-        SessionMode::Input,
-        PendingWrite::Resolve(PendingOwner::Primary),
-    );
+    if !apply_for_generation(store, session_id, generation, || {
+        store.set_managed_mode(
+            session_id,
+            SessionMode::Input,
+            PendingWrite::Resolve(PendingOwner::Primary),
+        );
+    }) {
+        return Ok(());
+    }
 
     let mut offset: u64 = 0;
     // Bytes of a trailing record caught mid-write (see `drain_complete_lines`).
     let mut carry: Vec<u8> = Vec::new();
     loop {
         // The session vanished (deregistered / exited) — stop tailing.
-        if store.get(session_id).is_none() {
+        if store.get(session_id).is_none()
+            || !apply_for_generation(store, session_id, generation, || {})
+        {
             break;
         }
         let mut file = match tokio::fs::File::open(path).await {
@@ -601,8 +644,19 @@ async fn tail(
                 }
                 if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
                     let updates = translate(&value);
-                    if !updates.is_empty() {
-                        apply_updates(store, conv, session_id, updates, &mut cur_mode, &mut acc);
+                    if !updates.is_empty()
+                        && !apply_for_generation(store, session_id, generation, || {
+                            apply_updates(
+                                store,
+                                conv,
+                                session_id,
+                                updates,
+                                &mut cur_mode,
+                                &mut acc,
+                            );
+                        })
+                    {
+                        return Ok(());
                     }
                 }
             }
@@ -650,6 +704,41 @@ mod tests {
     }
     fn item(payload: Value) -> Value {
         json!({ "type": "response_item", "payload": payload })
+    }
+
+    #[test]
+    fn generation_rollout_updates_stop_at_supersession_and_end() {
+        let store = SessionStore::new();
+        store.register_managed("tail-race", "/", "codex");
+        let first = store.claim_generation("tail-race");
+        assert!(apply_for_generation(
+            &store,
+            "tail-race",
+            Some(first),
+            || {}
+        ));
+        let second = store.claim_generation("tail-race");
+        assert!(!apply_for_generation(
+            &store,
+            "tail-race",
+            Some(first),
+            || panic!("stale rollout applied")
+        ));
+        assert!(apply_for_generation(
+            &store,
+            "tail-race",
+            Some(second),
+            || {}
+        ));
+        assert!(store.deregister_managed("tail-race", second));
+        assert!(!apply_for_generation(
+            &store,
+            "tail-race",
+            Some(second),
+            || panic!("ended rollout applied")
+        ));
+        // Ordinary PTY caller preserves its existing behavior.
+        assert!(apply_for_generation(&store, "tail-race", None, || {}));
     }
 
     #[test]

@@ -639,167 +639,182 @@ pub async fn handle_managed(
     // Same as the PTY path: a profile config dir relocates the transcript root.
     crate::session::transcript::allow_spawn_env(&payload.env);
 
-    store.register_managed(&session_id, &payload.cwd, &payload.provider);
-    // Same attribution stamp as the PTY path, and for the same reason. Only
-    // Claude has per-config-root accounts, so recording it for a codex/copilot
-    // session would assert something that has no meaning there.
-    if payload.provider == "claude" {
-        store.set_config_root(
-            &session_id,
-            &crate::session::account_usage::root_from_spawn_env(&payload.env),
-        );
-    }
-    // Queued BEFORE the driver task starts and before the 200 below, so it is
-    // waiting when `register_managed_input` drains it. Doing it here rather
-    // than leaving it to the caller is the whole point: `register_managed`
-    // above marks the row `Input` while attaching no wrapper, so a caller that
-    // spawned and then posted a message would be refused with a 404 for as long
-    // as the provider takes to boot.
-    let first_message_queued = payload
-        .first_message
-        .as_deref()
-        .is_some_and(|text| store.queue_first_message(&session_id, text));
-    // Before the driver starts, so the very first snapshot knows this session's
-    // window instead of guessing 200k from the marker-stripped transcript id.
-    if let Some(selection) = &persisted_selection {
-        store.set_requested_model_selection(&session_id, selection);
-        // Persisted too, so a daemon restart rehydrates a 1M session as 1M
-        // instead of reverting it to the table's guess for its stripped id.
-        db.note_requested_model_selection(&session_id, selection);
-    }
-    let facade = crate::providers::Facade {
-        mcp_url: payload.mcp.clone(),
-        instructions: payload.instructions.clone(),
-    };
-    match payload.provider.as_str() {
-        // Claude over the headless stream-json transport (2nd claude
-        // transport; the PTY path on `/sessions/spawn` is untouched). The
-        // transport is stamped *before* the driver starts so `ingest`'s hooks
-        // guard and the first snapshot already see it.
-        "claude" => {
-            store.set_transport(&session_id, crate::session::state::Transport::Stream);
-            crate::providers::claude_stream::spawn_session(
-                store.clone(),
-                conv.clone(),
-                crate::providers::claude_stream::SpawnConfig {
-                    session_id: session_id.clone(),
-                    cwd: payload.cwd.clone(),
-                    bin,
-                    model: payload.model.clone(),
-                    effort: payload.effort.clone(),
-                    permission_mode: payload.permission_mode.clone(),
-                    resume: payload.resume.clone(),
-                    extra_args: payload.extra_args.clone(),
-                    env: payload.env.clone(),
-                    yolo: payload.yolo,
-                    facade,
-                },
+    // Codex row publication and driver ownership are one transaction. Other
+    // providers retain their existing claim points and lifecycle behavior.
+    let is_codex = payload.provider == "codex";
+    let register_and_spawn = |codex_generation: Option<u64>| {
+        store.register_managed(&session_id, &payload.cwd, &payload.provider);
+        // Same attribution stamp as the PTY path, and for the same reason. Only
+        // Claude has per-config-root accounts, so recording it for a codex/copilot
+        // session would assert something that has no meaning there.
+        if payload.provider == "claude" {
+            store.set_config_root(
+                &session_id,
+                &crate::session::account_usage::root_from_spawn_env(&payload.env),
             );
         }
-        "opencode" => crate::providers::opencode::spawn_session(
-            store.clone(),
-            conv.clone(),
-            session_id.clone(),
-            payload.cwd.clone(),
-            payload.model.clone(),
-            bin,
-            payload.yolo,
-            facade,
-        ),
-        "codex" => {
-            // Resume: rejoin the prior life's app-server thread (persisted in
-            // the codex-threads sidecar) and pre-seed the conversation from its
-            // rollout, so the pane shows the history immediately. Resume is
-            // headless-only — the TUI can't rejoin an arbitrary thread — so it
-            // forces the stream transport.
-            let resume_thread = payload
-                .resume
-                .as_deref()
-                .and_then(crate::providers::codex_rollout::thread_for);
-            if payload.resume.is_some() && resume_thread.is_none() {
-                tracing::warn!(session = %session_id, "codex resume requested but no thread recorded — starting fresh");
-            }
-            let headless =
-                payload.transport.as_deref() == Some("stream") || resume_thread.is_some();
-            if headless {
-                // Stamped before the driver starts (like claude-stream above)
-                // so every snapshot/frame gates the pane GUI-only from the
-                // session's first instant.
+        // Queued BEFORE the driver task starts and before the 200 below, so it is
+        // waiting when `register_managed_input` drains it. Doing it here rather
+        // than leaving it to the caller is the whole point: `register_managed`
+        // above marks the row `Input` while attaching no wrapper, so a caller that
+        // spawned and then posted a message would be refused with a 404 for as long
+        // as the provider takes to boot.
+        let first_message_queued = payload
+            .first_message
+            .as_deref()
+            .is_some_and(|text| store.queue_first_message(&session_id, text));
+        // Before the driver starts, so the very first snapshot knows this session's
+        // window instead of guessing 200k from the marker-stripped transcript id.
+        if let Some(selection) = &persisted_selection {
+            store.set_requested_model_selection(&session_id, selection);
+            // Persisted too, so a daemon restart rehydrates a 1M session as 1M
+            // instead of reverting it to the table's guess for its stripped id.
+            db.note_requested_model_selection(&session_id, selection);
+        }
+        let facade = crate::providers::Facade {
+            mcp_url: payload.mcp.clone(),
+            instructions: payload.instructions.clone(),
+        };
+        match payload.provider.as_str() {
+            // Claude over the headless stream-json transport (2nd claude
+            // transport; the PTY path on `/sessions/spawn` is untouched). The
+            // transport is stamped *before* the driver starts so `ingest`'s hooks
+            // guard and the first snapshot already see it.
+            "claude" => {
                 store.set_transport(&session_id, crate::session::state::Transport::Stream);
+                crate::providers::claude_stream::spawn_session(
+                    store.clone(),
+                    conv.clone(),
+                    crate::providers::claude_stream::SpawnConfig {
+                        session_id: session_id.clone(),
+                        cwd: payload.cwd.clone(),
+                        bin,
+                        model: payload.model.clone(),
+                        effort: payload.effort.clone(),
+                        permission_mode: payload.permission_mode.clone(),
+                        resume: payload.resume.clone(),
+                        extra_args: payload.extra_args.clone(),
+                        env: payload.env.clone(),
+                        yolo: payload.yolo,
+                        facade,
+                    },
+                );
             }
-            if let Some(tid) = &resume_thread {
-                // Seed only when the conversation isn't already resident (a
-                // resume in the same daemon life would otherwise duplicate it).
-                let empty = conv
-                    .snapshot(&session_id)
-                    .is_none_or(|(_, items)| items.is_empty());
-                if empty {
-                    if let Some(path) = crate::providers::codex_rollout::rollout_for_thread(tid) {
-                        let items = crate::providers::codex_rollout::replay_conversation(&path);
-                        if !items.is_empty() {
-                            conv.push(&session_id, items);
-                        }
-                    }
-                }
-            }
-            crate::providers::codex::spawn_session(
+            "opencode" => crate::providers::opencode::spawn_session(
                 store.clone(),
                 conv.clone(),
                 session_id.clone(),
                 payload.cwd.clone(),
                 payload.model.clone(),
-                payload.effort.clone(),
-                managed_codex_context_window_for_spawn(
-                    payload.context_window,
-                    store
-                        .requested_model_selection(&session_id)
-                        .and_then(|selection| selection.selection.context_window),
-                    payload.resume.is_some(),
-                ),
                 bin,
                 payload.yolo,
-                headless,
-                resume_thread,
                 facade,
-                crate::providers::SpawnExtras {
-                    env: payload.env.clone(),
-                    extra_args: payload.extra_args.clone(),
+            ),
+            "codex" => {
+                // Resume: rejoin the prior life's app-server thread (persisted in
+                // the codex-threads sidecar) and pre-seed the conversation from its
+                // rollout, so the pane shows the history immediately. Resume is
+                // headless-only — the TUI can't rejoin an arbitrary thread — so it
+                // forces the stream transport.
+                let resume_thread = payload
+                    .resume
+                    .as_deref()
+                    .and_then(crate::providers::codex_rollout::thread_for);
+                if payload.resume.is_some() && resume_thread.is_none() {
+                    tracing::warn!(session = %session_id, "codex resume requested but no thread recorded — starting fresh");
+                }
+                let headless =
+                    payload.transport.as_deref() == Some("stream") || resume_thread.is_some();
+                if headless {
+                    // Stamped before the driver starts (like claude-stream above)
+                    // so every snapshot/frame gates the pane GUI-only from the
+                    // session's first instant.
+                    store.set_transport(&session_id, crate::session::state::Transport::Stream);
+                }
+                if let Some(tid) = &resume_thread {
+                    // Seed only when the conversation isn't already resident (a
+                    // resume in the same daemon life would otherwise duplicate it).
+                    let empty = conv
+                        .snapshot(&session_id)
+                        .is_none_or(|(_, items)| items.is_empty());
+                    if empty {
+                        if let Some(path) = crate::providers::codex_rollout::rollout_for_thread(tid)
+                        {
+                            let items = crate::providers::codex_rollout::replay_conversation(&path);
+                            if !items.is_empty() {
+                                conv.push(&session_id, items);
+                            }
+                        }
+                    }
+                }
+                crate::providers::codex::spawn_session(
+                    store.clone(),
+                    conv.clone(),
+                    session_id.clone(),
+                    codex_generation.expect("Codex publication claims its generation"),
+                    payload.cwd.clone(),
+                    payload.model.clone(),
+                    payload.effort.clone(),
+                    managed_codex_context_window_for_spawn(
+                        payload.context_window,
+                        store
+                            .requested_model_selection(&session_id)
+                            .and_then(|selection| selection.selection.context_window),
+                        payload.resume.is_some(),
+                    ),
+                    bin,
+                    payload.yolo,
+                    headless,
+                    resume_thread,
+                    facade,
+                    crate::providers::SpawnExtras {
+                        env: payload.env.clone(),
+                        extra_args: payload.extra_args.clone(),
+                    },
+                )
+            }
+            // GitHub Copilot CLI. One `copilot -p` process per TURN (not per
+            // session): `--session-id <uuid>` both creates and resumes, so the
+            // conversation survives across processes and across daemon restarts
+            // without a sidecar. See providers/copilot.rs for why `-p` over `--acp`.
+            "copilot" => crate::providers::copilot::spawn_session(
+                store.clone(),
+                conv.clone(),
+                crate::providers::copilot::SpawnConfig {
+                    session_id: session_id.clone(),
+                    cwd: payload.cwd.clone(),
+                    bin,
+                    model: payload.model.clone(),
+                    effort: payload.effort.clone(),
+                    yolo: payload.yolo,
+                    facade,
+                    extras: crate::providers::SpawnExtras {
+                        env: payload.env.clone(),
+                        extra_args: payload.extra_args.clone(),
+                    },
                 },
-            )
-        }
-        // GitHub Copilot CLI. One `copilot -p` process per TURN (not per
-        // session): `--session-id <uuid>` both creates and resumes, so the
-        // conversation survives across processes and across daemon restarts
-        // without a sidecar. See providers/copilot.rs for why `-p` over `--acp`.
-        "copilot" => crate::providers::copilot::spawn_session(
-            store.clone(),
-            conv.clone(),
-            crate::providers::copilot::SpawnConfig {
-                session_id: session_id.clone(),
-                cwd: payload.cwd.clone(),
+            ),
+            "pi" => crate::providers::pi::spawn_session(
+                store.clone(),
+                conv.clone(),
+                session_id.clone(),
+                payload.cwd.clone(),
+                payload.model.clone(),
                 bin,
-                model: payload.model.clone(),
-                effort: payload.effort.clone(),
-                yolo: payload.yolo,
+                payload.yolo,
                 facade,
-                extras: crate::providers::SpawnExtras {
-                    env: payload.env.clone(),
-                    extra_args: payload.extra_args.clone(),
-                },
-            },
-        ),
-        "pi" => crate::providers::pi::spawn_session(
-            store.clone(),
-            conv.clone(),
-            session_id.clone(),
-            payload.cwd.clone(),
-            payload.model.clone(),
-            bin,
-            payload.yolo,
-            facade,
-        ),
-        _ => unreachable!(),
-    }
+            ),
+            _ => unreachable!(),
+        }
+        first_message_queued
+    };
+    let first_message_queued = if is_codex {
+        store.claim_generation_with(&session_id, |generation| {
+            register_and_spawn(Some(generation))
+        })
+    } else {
+        register_and_spawn(None)
+    };
     tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, first_message_queued, "spawned managed session");
 
     // The caller's CONFIRMATION that the first prompt was accepted for

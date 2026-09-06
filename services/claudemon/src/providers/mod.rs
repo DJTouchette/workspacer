@@ -1108,6 +1108,19 @@ pub(crate) fn spawn_attach_pty(
     cwd: &str,
     env: &HashMap<String, String>,
 ) -> anyhow::Result<Arc<pty::PtyHandle>> {
+    spawn_attach_pty_owned(store, session_id, argv, cwd, env, None)
+}
+
+/// Codex calls this inside its registration transaction. The token also guards
+/// the delayed output pump; other adapters keep the original unowned path.
+pub(crate) fn spawn_attach_pty_owned(
+    store: &SessionStore,
+    session_id: &str,
+    argv: &[String],
+    cwd: &str,
+    env: &HashMap<String, String>,
+    generation: Option<u64>,
+) -> anyhow::Result<Arc<pty::PtyHandle>> {
     let handle = Arc::new(pty::spawn(
         argv,
         cwd,
@@ -1155,7 +1168,14 @@ pub(crate) fn spawn_attach_pty(
     let handle_for_reader = handle.clone();
     tokio::spawn(async move {
         while let Some(chunk) = out_rx.recv().await {
-            store_out.record_output(&sid, &chunk).await;
+            match generation {
+                Some(generation) => {
+                    store_out
+                        .record_output_owned(&sid, &chunk, generation)
+                        .await
+                }
+                None => store_out.record_output(&sid, &chunk).await,
+            }
         }
         // TUI exited (reader EOF) — reap it so it isn't left a zombie, but only
         // clear the registry slot if it still holds *this* TUI: a restart on the
