@@ -133,6 +133,26 @@ describe('ClaudePane send pipeline', () => {
     (window.electronAPI.claudeApprove as any) = vi.fn().mockResolvedValue(undefined);
   });
 
+  it('matches all insert identifiers and preserves the draft without sending', () => {
+    render(<ClaudePane paneId="card-pane" title="Claude" isActive cwd="/repo" />);
+    fireEvent.change(composer(), { target: { value: 'draft  ' } });
+    for (const detail of [
+      { paneId: 'other', sessionId: 'sess-1', text: 'wrong pane' },
+      { paneId: 'card-pane', sessionId: 'stale', text: 'wrong session' },
+    ])
+      fireEvent(window, new CustomEvent('library:insert', { detail }));
+    expect(composer().value).toBe('draft  ');
+    fireEvent(
+      window,
+      new CustomEvent('library:insert', {
+        detail: { paneId: 'card-pane', sessionId: 'sess-1', text: 'review me' },
+      }),
+    );
+    expect(composer().value).toBe('draft  \nreview me');
+    expect(window.electronAPI.claudeMessage).not.toHaveBeenCalled();
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
   it('submitting a message calls claudeMessage with the session id and the typed text', async () => {
     render(<ClaudePane paneId="p1" title="Claude" isActive cwd="/repo" />);
     fireEvent.change(composer(), { target: { value: 'fix the failing test' } });

@@ -15,6 +15,10 @@
  * status/diff/add path conventions all agree (see workRoot below).
  */
 
+import * as path from 'path';
+import { readHtmlCardFile } from './htmlCardPaths';
+import { canonicalRoot, isWithin } from '../lib/pathConfinement';
+import type { HtmlCardDiffResult } from '../shared/htmlCardDiff';
 import { execFile } from 'child_process';
 import { gitArgs } from '../lib/gitExec';
 
@@ -427,4 +431,39 @@ export function commit(cwd: string, message: string): Promise<string> {
 
 export function push(cwd: string): Promise<string> {
   return action(cwd, ['push']);
+}
+
+function cardGit(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) =>
+    execFile(
+      'git',
+      gitArgs(args),
+      { cwd, encoding: 'utf8', timeout: 10000, maxBuffer: 256 * 1024 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    ),
+  );
+}
+
+/** Bounded HEAD-to-working-file snapshot. Untracked files are additions. All
+ * working bytes are obtained by the confined descriptor reader, never git's
+ * untracked --no-index route or ReviewPane's basename fallback. */
+export async function readHtmlCardDiff(target: string, cwd: string): Promise<HtmlCardDiffResult> {
+  try {
+    const root = canonicalRoot((await cardGit(cwd, ['rev-parse', '--show-toplevel'])).trim());
+    if (!root) throw new Error('Project is not a git worktree');
+    const current = readHtmlCardFile(target, cwd);
+    if (!isWithin(current.path, root)) throw new Error('File is outside this git worktree');
+    const rel = path.relative(root, current.path).split(path.sep).join('/');
+    let before = '';
+    // ls-tree distinguishes a missing baseline from a failed/oversized show.
+    const entry = await cardGit(root, ['ls-tree', '-z', 'HEAD', '--', rel]);
+    if (entry) {
+      if (!entry.startsWith('100')) throw new Error('Baseline is not a regular file');
+      before = await cardGit(root, ['show', '--no-textconv', `HEAD:${rel}`]);
+      if (before.includes('\0')) throw new Error('Baseline is binary');
+    }
+    return { ok: true, path: current.path, before, after: current.text };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Diff unavailable' };
+  }
 }

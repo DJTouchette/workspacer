@@ -11,6 +11,8 @@ import { langForInfo } from '../lib/diff/highlight';
 import { useHighlight, renderLine } from './claude/highlight';
 import { FileLink, isAbsolutePath } from './claude/FileLink';
 import { detectFilePath, linkifyText, type DetectedPath } from '../lib/filePathDetect';
+import { HTML_CARD_FENCE } from '../../../main/shared/htmlCard';
+import { HtmlCardFence } from './claude/HtmlResponseCard';
 
 /**
  * Working directory for resolving relative file paths mentioned in rendered
@@ -417,7 +419,32 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
         codeLines.push(lines[i]);
         i++;
       }
+      // Whether the fence actually CLOSED, decided before `i` is stepped past
+      // it: running out of lines is how a streaming block arrives, and a
+      // response card must not be mounted from a partial document.
+      const closed = i < lines.length;
       i++;
+      // A response card (`wks-html-card`). The gate is inside HtmlCardFence,
+      // read from context — an assistant bubble turns it on, everything else
+      // (user text, tool output, a library preview) renders the ordinary code
+      // block passed in below. Deciding here instead would key the module-level
+      // parse cache on something other than the text.
+      if (lang === HTML_CARD_FENCE) {
+        const raw = codeLines.join('\n');
+        blocks.push(
+          <HtmlCardFence
+            key={key++}
+            raw={raw}
+            closed={
+              closed &&
+              /^ {0,3}```wks-html-card\s*$/.test(line) &&
+              /^ {0,3}```\s*$/.test(lines[i - 1])
+            }
+            code={<CodeBlock code={raw} info={lang} />}
+          />,
+        );
+        continue;
+      }
       // CLI tool output arrives fenced; if the whole block is a drawn table,
       // render it as a real table instead of preformatted text.
       const fenceTable = drawnTableFromBlock(codeLines);

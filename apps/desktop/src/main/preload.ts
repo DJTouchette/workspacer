@@ -817,6 +817,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     expectedCanonicalPath?: string,
   ): Promise<{ path: string; contents: string; size: number }> =>
     ipcRenderer.invoke(IPC.FILE_READ, filePath, expectedCanonicalPath),
+  // A response card's `view_diff` target: may this path open, given the OWNING
+  // pane's cwd? Containment (symlink-aware) is decided in main; the canonical
+  // path it returns is the one the caller must hand downstream.
+  htmlCardReadDiff: (
+    target: string,
+    ownerSessionId: string,
+  ): Promise<import('./shared/htmlCardDiff').HtmlCardDiffResult> =>
+    ipcRenderer.invoke(IPC.HTML_CARD_READ_DIFF, target, ownerSessionId),
   // Write a pasted screenshot to a temp PNG so it can be attached by path.
   // Resolves null when the clipboard holds no image.
   saveClipboardImage: (): Promise<{ path: string; width: number; height: number } | null> =>

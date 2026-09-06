@@ -57,6 +57,7 @@ import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { checkPreviewFileUrl } from './lib/webviewGuard';
 import { webviewFileRoots } from './lib/webviewRoots';
 import { canonicalizePath, isSecretPath } from './lib/pathConfinement';
+import { readHtmlCardDiff } from './services/gitService';
 import { loadBoard, applyBoardMove, type BoardMoveRequest } from './services/briefBoardService';
 import { readImagePreview } from './services/imagePreview';
 import { savePastedImage } from './services/clipboardImage';
@@ -1372,6 +1373,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // renderer passes a lane KEY, never a path, so it cannot name a file for main
   // to write. A move that loses its compare-and-swap rejects, and the pane
   // reloads rather than retrying blind.
+  // A response card's view_diff target, decided by the shared containment walk
+  // against the OWNING pane's cwd (which the renderer supplies from its own
+  // live state, never from the card). Returns the canonical path the caller
+  // must then open.
+  ipcMain.handle(IPC.HTML_CARD_READ_DIFF, async (_event, target: unknown, ownerId: unknown) => {
+    if (typeof target !== 'string' || target.length > 4096 || typeof ownerId !== 'string')
+      return { ok: false, error: 'Invalid card target' };
+    const owner = claudeSessionStore.getSnapshot(ownerId);
+    if (!owner || owner.status === 'ended' || owner.hub)
+      return { ok: false, error: 'Owning session is no longer available locally' };
+    const cwd = owner.liveCwd || owner.cwd;
+    const result = await readHtmlCardDiff(target, cwd);
+    const current = claudeSessionStore.getSnapshot(ownerId);
+    if (
+      !current ||
+      current.status === 'ended' ||
+      current.hub ||
+      (current.liveCwd || current.cwd) !== cwd
+    )
+      return { ok: false, error: 'Owning session changed during read' };
+    return result;
+  });
+
   ipcMain.handle(IPC.BRIEF_BOARD_LOAD, () => loadBoard());
   ipcMain.handle(IPC.BRIEF_BOARD_MOVE, (_event, req: BoardMoveRequest) => applyBoardMove(req));
 

@@ -15,6 +15,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const cardSkill = vi.hoisted(() => vi.fn(() => ''));
+vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
   return { ...actual, existsSync: vi.fn().mockReturnValue(false) };
@@ -141,6 +144,7 @@ function lastSpawn(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cardSkill.mockReturnValue('');
   mockConfig = {};
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
@@ -739,4 +743,14 @@ describe('spawnClaudeAgent — role effort reaches the argv', () => {
     await spawnClaudeAgent({ cwd: '/proj', manager: true });
     expect(argvEffort()).toBeUndefined();
   });
+});
+
+it('delivers the product skill fallback pointer through the Claude instruction channel', async () => {
+  cardSkill.mockReturnValue('Read /project/product-skill/SKILL.md for cards.');
+  await spawnClaudeAgent({ cwd: '/proj' });
+  const argv = lastArgv();
+  expect(cardSkill).toHaveBeenCalledWith('claude', '/proj');
+  expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain(
+    'Read /project/product-skill/SKILL.md for cards.',
+  );
 });

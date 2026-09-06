@@ -221,6 +221,11 @@ export const IPC = {
   FILE_SHOW_IN_FOLDER: 'file:show-in-folder', // invoke: reveal in the OS file manager
   SHELL_OPEN_EXTERNAL: 'shell:open-external', // invoke: open an http(s) URL in the OS default browser
 
+  // ── Response cards (wks-html-card) ──
+  // May a card's view_diff action open this path? Only main can read symlinks,
+  // and containment is decided there — see services/htmlCardPaths.
+  HTML_CARD_READ_DIFF: 'html-card:read-diff',
+
   // ── Brief board (BoardPane) ──
   BRIEF_BOARD_LOAD: 'brief-board:load', // invoke: every project's brief as cards
   BRIEF_BOARD_MOVE: 'brief-board:move', // invoke: drag a card to a column (or Archive)

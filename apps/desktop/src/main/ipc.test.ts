@@ -44,6 +44,8 @@ const {
   cfg: { value: {} as Record<string, unknown> },
 }));
 
+const cardMocks = vi.hoisted(() => ({ owner: vi.fn(), read: vi.fn() }));
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
@@ -95,7 +97,9 @@ vi.mock('./services/worktreeService', () => ({
   worktreeInfo: vi.fn(),
   createWorktree: vi.fn(),
 }));
-vi.mock('./services/claudeSessionStore', () => ({ claudeSessionStore: {} }));
+vi.mock('./services/claudeSessionStore', () => ({
+  claudeSessionStore: { getSnapshot: cardMocks.owner },
+}));
 vi.mock('./services/claudeModels', () => ({ listClaudeModels: vi.fn() }));
 vi.mock('./services/workflowWatcher', () => ({ workflowWatcher: {} }));
 vi.mock('./services/agentNotifier', () => ({ agentNotifier: {} }));
@@ -127,7 +131,7 @@ vi.mock('./services/fileWatchService', () => ({
   setEmitSink: vi.fn(),
 }));
 vi.mock('./services/searchService', () => ({ searchProject: vi.fn() }));
-vi.mock('./services/gitService', () => ({}));
+vi.mock('./services/gitService', () => ({ readHtmlCardDiff: cardMocks.read }));
 vi.mock('./services/hubDaemon', () => ({
   hubHttpUrl: () => 'http://127.0.0.1:0',
   HUB_PORT: 0,
@@ -506,5 +510,36 @@ describe('usage report hub-first IPC', () => {
     } finally {
       fetcher.mockRestore();
     }
+  });
+});
+
+it('card diff IPC derives cwd from its live owner and refuses stale or remote owners', async () => {
+  const invoke = (target: unknown, owner: unknown) =>
+    handlers.get('html-card:read-diff')!(null, target, owner);
+  cardMocks.read.mockResolvedValue({ ok: true, path: '/live/a', before: '', after: 'a' });
+  cardMocks.owner.mockReturnValue({
+    sessionId: 'owner',
+    status: 'active',
+    cwd: '/original',
+    liveCwd: '/live',
+  });
+  expect(await invoke('a', 'owner')).toMatchObject({ ok: true });
+  expect(cardMocks.read).toHaveBeenCalledWith('a', '/live');
+  for (const owner of [null, { status: 'ended' }, { status: 'active', hub: 'remote' }]) {
+    cardMocks.read.mockClear();
+    cardMocks.owner.mockReturnValue(owner);
+    expect(await invoke('a', 'owner')).toMatchObject({ ok: false });
+    expect(cardMocks.read).not.toHaveBeenCalled();
+  }
+  expect(await invoke({}, 'owner')).toMatchObject({ ok: false });
+});
+it('card diff IPC drops bytes if the owning session changes during read', async () => {
+  cardMocks.owner
+    .mockReset()
+    .mockReturnValueOnce({ sessionId: 'owner', status: 'active', cwd: '/live' })
+    .mockReturnValue(null);
+  cardMocks.read.mockResolvedValue({ ok: true, path: '/live/a', before: '', after: 'a' });
+  expect(await handlers.get('html-card:read-diff')!(null, 'a', 'owner')).toMatchObject({
+    ok: false,
   });
 });
