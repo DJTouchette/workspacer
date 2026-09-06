@@ -83,7 +83,7 @@ The existing secret-path gate plus conservative credential filename exclusions
 (including `.env*`, `.ssh`, `.aws`, private-key suffixes) reject the entire range.
 These exclusions are not a general secret scanner for arbitrary committed source.
 
-## Validation
+## Feature validation (c7949851f96817ba70ea04d0ad2a3f01c2392477)
 
 Linux, Node 22.22.2, `CI=1`; checks run sequentially with one test worker.
 The supplied dependency directories were isolated into this worktree; renderer
@@ -110,3 +110,30 @@ The supplied dependency directories were isolated into this worktree; renderer
 Independent review and local merge remain the manager's next step. Full Electron
 runtime against a live daemon, remote/headless evidence service, a future history-wide
 delete primitive, and general credential-content scanning are outside this slice.
+
+## Bridged desktop integration (c17a92290bf87d58888cacd94aa4ac7aeaa65bcf)
+
+The feature was merged onto `bf11ba4f` locally before this integration repair.
+`createBridgedBackend` now treats `fleetReviewRead` and `fleetReviewForget` as
+host-only preload methods. They keep the existing IPC record-owner and exact
+evidence/file-selector validation; there is no hub-bus registration, generic
+file permission, or remote fallback.
+
+Linux, Node 22.23.2, `CI=1`:
+
+- Before the repair, `backendParity.test.ts` had 8 passing tests and one failure:
+  both Fleet review preload methods vanished in default bridged desktop mode.
+- Renderer typecheck passed. `backendParity.test.ts`, `fleetReview.test.tsx`, and
+  `structuredResultCard.test.tsx` passed: 23 tests total. The Fleet production-card
+  regression uses `createBridgedBackend` with local preload stubs, verifies read
+  and Forget's exact owner/worker/evidence selectors (including a file read), and
+  proves an older preload remains unsupported rather than falling back.
+- Main typecheck passed. `ipc.test.ts`, `preload.test.ts`, and
+  `fleetReviewStore.test.ts` passed: 46 tests total, covering the existing IPC
+  ownership/selector guards.
+
+The renderer dependency link inherited from the live primary checkout was replaced
+only in this worktree with `npm ci --ignore-scripts` from the existing renderer
+lockfile. No primary application, dependency target, manifest, remote, or branch
+was modified. The Electron live-runtime path was not launched; this is a focused
+component/IPC integration check.
