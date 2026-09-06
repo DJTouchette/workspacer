@@ -1,15 +1,50 @@
 # Codex driver cleanup — slice B review handoff
 
-Date: 2026-09-06. Branch: `wks/workspacer-owned-codex-driver-cleanup`.
-This is a local isolated change for independent review and subsequent local
-merge by the manager. No push, merge, service restart, or live-agent cleanup
-was performed.
+Date: 2026-09-06. Branch: `wks/workspacer-fix-codex-generation-ownershi`.
+Cleanup baseline: `9b12360880b7386314fc5eaddd81ab826c3ba14f`.
+Repair implementation commit: `09c5e791f54fd6767dd3d49ff3e19517660ca213`.
+The baseline was merged into this isolated branch, preserving landed cwd fix
+`ab85e61a`. This handoff accompanies the repair for fresh focused concurrency
+review before a manager's local merge. No push, primary-branch write, service
+restart, or live-session operation was performed.
 
 ## Review entry points and behavior
 
-Read `services/claudemon/src/providers/codex.rs` (`DriverEvidence`,
-`OwnedAppServer`, `start_appserver`, `run_session`, and the local fixtures),
-then `services/claudemon/src/session/store.rs::deregister_managed`.
+Read these repair files in order:
+
+1. `services/claudemon/src/daemon/spawn.rs::handle_managed`: Codex claims its
+   generation and publishes its row/metadata/transport/resume history in one
+   synchronous transaction, then passes that exact token to `spawn_session`.
+2. `services/claudemon/src/session/store.rs`: `claim_generation_with`,
+   `with_generation`, `deregister_managed_with`, `record_output_owned`, and
+   the deterministic generation fixtures.
+3. `services/claudemon/src/providers/codex.rs`: `spawn_session`, `run_session`,
+   `run_rollout_fallback`, `finish_driver`, and registration race fixtures.
+4. `services/claudemon/src/providers/mod.rs::spawn_attach_pty_owned` and
+   `services/claudemon/src/providers/codex_rollout.rs::apply_for_generation`:
+   delayed Codex output/update ownership. The legacy PTY entry points remain
+   available for their existing callers.
+
+The accompanying files are this handoff and
+`.rivet/learnings/2026-09-06-codex-ownership-must-cover-publication-and-regis-fb72be.md`.
+
+- Publication, RPC input/decision/model/interrupt/yolo installation, hybrid PTY
+  installation, fallback PTY/input/transport/notice installation, and shared
+  teardown all serialize on the exclusive generation entry. Conversation
+  removal is inside teardown, so an old exit cannot erase newly seeded history.
+  Codex event application, PTY output and fallback rollout updates recheck
+  ownership at their synchronous mutation boundary.
+- Lock order is generation then synchronous registries/conversation. Do not
+  nest generation operations: separate ids may share a DashMap shard. No
+  generation guard crosses an await. PTY output waits on its buffer first,
+  then acquires generation for publication; registration/teardown never wait
+  on the buffer mutex. Owned process cleanup runs outside these transactions.
+- Shared-helper caller verification: OpenCode and Pi still use
+  `spawn_attach_pty` with the original output path; the ordinary PTY spawn
+  route still uses `spawn_tailer` without a managed token. Claude-stream,
+  Copilot, OpenCode and Pi retain their existing generation claim points and
+  use the unchanged `deregister_managed` signature. Their lifecycles were not
+  rewritten. The complete provider/store suites cover these callers.
 
 - Lifecycle tracing uses a fixed reason/outcome vocabulary, session id,
   generation, direct app-server PID, Unix PGID, and the reaped exit status.
@@ -33,11 +68,11 @@ then `services/claudemon/src/session/store.rs::deregister_managed`.
   reap, probes use signal zero only; repeated cleanup returns its stored
   outcome and never sends another numeric group signal.
 - Process ownership is the captured child handle/group, not the current store
-  generation: a stale driver must still clean its own processes. Shared-store
-  teardown remains generation guarded. Startup/fallback checks prevent an
-  already superseded attempt from registering replacement channels.
-  `deregister_managed` holds the generation read guard through its mutations
-  and emits no duplicate SessionEnd for a row already stopped.
+  generation: a stale driver still cleans its own processes. Generation
+  transactions prevent supersession between a check and shared registration
+  or teardown. Teardown emits no duplicate SessionEnd for an already stopped
+  row and no SessionEnd for a superseded driver. The original Linux process
+  tree fixtures and lifecycle reason/correlation/privacy vocabulary are unchanged.
 - A residual group, failed signal, failed wait, or timeout is a cleanup failure,
   logged with a distinct outcome and returned as an error. A failed app-server
   cleanup also prevents entering fallback. SessionEnd still means the driver
@@ -70,7 +105,17 @@ The hardened Linux fixtures prove:
   `ChildExited`, preserving exit status 7, then cleans the group;
 - a failing sink reports writer failure without requiring a read event;
 - one SessionEnd per owning lifetime, zero for a superseded lifetime, and an
-  already superseded startup cleans its own child without replacing channels.
+  already superseded startup cleans its own child without replacing channels;
+- deterministic barriers after ownership checking and during successor row
+  publication exclude overlapping registration/teardown; conversation removal
+  excludes successor history publication;
+- per-driver hooks supersede between the former startup/fallback precheck and
+  registration, in both headless and hybrid modes: successor channel delivery,
+  yolo identity, PTY identity/liveness, wrapper, row, transport and history
+  survive, with no stale SessionEnd or degradation notice;
+- output superseded while awaiting its buffer cannot publish stale bytes;
+  rollout application stops on supersession/end; an owning fallback still
+  installs its terminal transport and emits exactly one SessionEnd.
 
 Linux descendant fixtures run in dedicated test subprocesses which alone set
 `PR_SET_CHILD_SUBREAPER`; they reap only fixture PIDs. The daemon does **not**
@@ -89,6 +134,12 @@ process helpers; this change's verified boundary is the managed app-server.
 
 **Platform limits:** Runtime verification is Linux only. Other Unix targets use
 the same POSIX group/waitid code but were not cross-compiled or executed here.
+A Windows cross-check with system Rust 1.95 failed because that sysroot lacks
+Windows std/core. Retrying with the already installed Rustup 1.94.1 Windows
+MSVC target reached native dependencies but failed because MSVC `lib.exe` is
+absent (see ignored `target/windows-check-194.log`). No Windows build or runtime
+success is claimed, and no toolchain was installed. The non-Unix owned-child
+source branches are unchanged by this repair.
 Windows/non-Unix retain direct-child kill/reap and explicitly report
 `DirectChildOnly`, never GroupGone. Existing daemon-wide Windows job-object
 confinement is unchanged; per-generation Windows jobs require separate design
@@ -99,10 +150,16 @@ and runtime validation. No daemon-wide job is terminated for a session.
 Environment: Linux 7.0.9-arch2-1 x86_64, Rust/Cargo 1.95.0, Python 3.14.5.
 Builds use the ignored worktree `target/`, outside `/tmp`.
 
-- Full `cargo test`: 849 library tests passed, 4 ignored; 8 integration tests
+- Focused `cargo test --lib generation_`: 9 passed.
+- Full `cargo test`: 857 library tests passed, 4 ignored; 8 integration tests
   passed; 1 doc test ignored. This includes provider, store and daemon tests.
-- Final provider suite (including Codex rollout): 89 passed, 2 ignored, after
-  adding the superseded-startup assertion.
+- `cargo test --lib providers::`: 254 passed, 3 ignored, including the unchanged
+  Linux owned-process fixture and actual fake websocket idle/root-child cases.
+- `cargo test --lib session::store::tests`: 97 passed.
+- Tests use the isolated HOME files/PID/network namespaces shown below. Logs
+  are in ignored `target/{race,provider,store,full}-tests*.log`.
+- Rivet `witness select` reviewed: its cross-stack co-change suggestions are
+  broader than this Rust ownership change; full claudemon checks were selected.
 - `cargo fmt --check` and `git diff --check`: passed.
 - Strict `cargo clippy --all-targets -- -D warnings` hits two **pre-existing**
   Rust 1.95 `collapsible_match` findings: `codex.rs`'s `"error"` translation
@@ -119,7 +176,7 @@ services, from this worktree root (Bubblewrap required):
 ```sh
 mkdir -p target/test-home
 export CARGO_TARGET_DIR="$PWD/target"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="bwrap --die-with-parent --unshare-pid --unshare-net --unshare-ipc --ro-bind / / --bind $PWD/target/test-home /home/djtouchette --bind $PWD $PWD --tmpfs /tmp --dev /dev --proc /proc --"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="bwrap --die-with-parent --unshare-pid --unshare-net --unshare-ipc --ro-bind / / --bind $PWD/target/test-home $HOME --bind $PWD $PWD --tmpfs /tmp --dev /dev --proc /proc --"
 cargo test --manifest-path services/claudemon/Cargo.toml
 ```
 
@@ -127,6 +184,7 @@ The PID/network namespace permits loopback fake servers but no live daemon
 access. Home is mounted from an ignored fixture directory without changing
 HOME. Focused commands append `--lib direct_child_cleanup_gap_fixture`,
 `--lib owned_group_cleanup_fixture`, `--lib fake_appserver`, or
-`--lib superseded_startup` to the same cargo invocation. The fixture scripts
+`--lib superseded_startup`, `--lib generation_`, `--lib providers::`, or
+`--lib session::store::tests` to the same cargo invocation. The fixture scripts
 are embedded in the existing provider test module; generated scripts and logs
 remain ignored in `target/`.
