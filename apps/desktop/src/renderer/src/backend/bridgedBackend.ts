@@ -63,6 +63,11 @@ export const LOCAL_TERMINAL = [
  * they reach native/OS/main-process facilities the bus doesn't expose.
  */
 export const HOST_ONLY = [
+  // Captured Fleet review evidence is local main-process state.  It remains
+  // owner/selector-validated by the IPC store and deliberately has no bus or
+  // remote fallback.
+  'fleetReviewRead',
+  'fleetReviewForget',
   'htmlCardReadDiff', // owner-validated, descriptor-pinned local snapshot; no unchecked bus fallback
   'setTitleBarOverlay', // Windows native caption-button theming
   'onTerminalExit', // MessagePort exit signal; no bus event for it

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { ConversationMessage } from '../src/components/claude/ConversationMessage';
 import { HtmlCardHostProvider } from '../src/components/claude/HtmlResponseCard';
+import { createBridgedBackend } from '../src/backend/bridgedBackend';
 import { buildFleetMessage } from '../../main/shared/fleetMessages';
 import type { FleetReviewEvidence } from '../../main/shared/fleetReview';
 const id = '11111111-1111-4111-8111-111111111111';
@@ -43,12 +44,15 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-it('click expands the production Fleet card and only sends owning session/id/file selectors', async () => {
+it('click expands the production Fleet card through the bridged preload and only sends owning session/id/file selectors', async () => {
   const read = vi.fn(async () => ({ ok: true as const, evidence }));
-  window.electronAPI = {
+  const forget = vi.fn(async () => ({ ok: true }));
+  const preload = {
+    platform: 'linux',
     fleetReviewRead: read,
-    fleetReviewForget: vi.fn(async () => ({ ok: true })),
-  } as unknown as typeof window.electronAPI;
+    fleetReviewForget: forget,
+  } as unknown as Parameters<typeof createBridgedBackend>[0];
+  window.electronAPI = createBridgedBackend(preload, 'token', 'ws://local/bus');
   mount();
   expect(read).not.toHaveBeenCalled();
   expect(screen.getByText(/Worker-reported/)).toBeTruthy();
@@ -70,10 +74,22 @@ it('click expands the production Fleet card and only sends owning session/id/fil
   );
   fireEvent.click(screen.getByRole('button', { name: 'Forget review data' }));
   await waitFor(() => expect(screen.getByText('Review data forgotten.')).toBeTruthy());
+  expect(forget).toHaveBeenCalledWith({
+    evidenceId: id,
+    ownerSessionId: 'manager',
+    workerSessionId: 'worker',
+  });
   expect(screen.queryByTestId('fleet-inline-review')).toBeNull();
 });
 it('shows backend and missing metadata states without a live git fallback', () => {
-  window.electronAPI = {} as typeof window.electronAPI;
+  // The web backend has no review transport.  A desktop whose older preload
+  // lacks the optional methods must preserve that absence instead of trying a
+  // bus, filesystem, or remote fallback.
+  window.electronAPI = createBridgedBackend(
+    { platform: 'linux' } as Parameters<typeof createBridgedBackend>[0],
+    'token',
+    'ws://local/bus',
+  );
   const view = mount();
   expect(screen.getByText(/Remote\/headless review is not supported/)).toBeTruthy();
   view.unmount();
