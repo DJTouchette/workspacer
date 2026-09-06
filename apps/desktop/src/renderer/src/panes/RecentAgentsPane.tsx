@@ -165,7 +165,7 @@ export default function RecentAgentsPane(): React.ReactElement {
                 key={t.taskId}
                 task={t}
                 owner={owner}
-                isCurrent={() => currentOwner.current === owner}
+                isCurrent={() => currentOwner.current === t.ownerSessionId}
               />
             ))
           )}

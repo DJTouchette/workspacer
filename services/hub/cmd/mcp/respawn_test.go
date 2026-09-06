@@ -95,6 +95,7 @@ type respawnHub struct {
 	// a lagging headless brain). The spawn looks perfectly successful and the
 	// prompt went nowhere, which is the skew the fallback exists for.
 	noMessageQueued bool
+	noDispatchIDs   bool
 	sendErr         bool
 }
 
@@ -122,6 +123,9 @@ func (h *respawnHub) Call(_ context.Context, method string, params any) (json.Ra
 			return json.RawMessage(`{"sessionId":"new-1"}`), nil
 		}
 		// A current provider acknowledges that it took delivery of the prompt.
+		if h.noDispatchIDs {
+			return json.RawMessage(`{"sessionId":"new-1","messageQueued":true}`), nil
+		}
 		return json.RawMessage(`{"sessionId":"new-1","messageQueued":true,"taskId":"task-1","dispatchId":"dispatch-2"}`), nil
 	case "agents.sendMessage":
 		if h.sendErr {
@@ -253,6 +257,27 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 	// prompt would make the successor read its whole dispatch twice.
 	if send := hub.call("agents.sendMessage"); send != nil {
 		t.Errorf("the task must not also be sent separately, got %v", send.params)
+	}
+}
+
+func TestRespawnOmitsUnavailableHistoryIDs(t *testing.T) {
+	hub := newRespawnHub()
+	hub.noDispatchIDs = true
+	res, _ := callRespawn(t, hub, true, map[string]any{
+		"sessionId": "old-1", "amendment": "narrow it",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected respawn error: %s", resultText(res))
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(resultText(res)), &result); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := result["taskId"]; ok {
+		t.Fatalf("unrecorded respawn advertised taskId: %s", resultText(res))
+	}
+	if _, ok := result["dispatchId"]; ok {
+		t.Fatalf("unrecorded respawn advertised dispatchId: %s", resultText(res))
 	}
 }
 

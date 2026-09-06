@@ -28,11 +28,24 @@ const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 /** No transcripts, parent reconstruction, schema parsing, or filesystem grants. */
 export class DispatchHistoryStore {
   private tasks?: DispatchTask[];
+  // Session updates are the hot path. Keep these small indexes alongside the
+  // bounded in-memory history instead of re-scanning every task on each update.
+  private tasksByID = new Map<string, DispatchTask>();
+  private attemptsBySessionID = new Map<string, { task: DispatchTask; attempt: DispatchAttempt }>();
   private timer?: ReturnType<typeof setTimeout>;
   constructor(
     private filename: () => string,
     private limits = DISPATCH_LIMITS,
   ) {}
+  private index(): void {
+    this.tasksByID.clear();
+    this.attemptsBySessionID.clear();
+    for (const task of this.tasks ?? []) {
+      this.tasksByID.set(task.taskId, task);
+      for (const attempt of task.attempts)
+        this.attemptsBySessionID.set(attempt.sessionId, { task, attempt });
+    }
+  }
   private load(): DispatchTask[] {
     if (this.tasks) return this.tasks;
     this.tasks = [];
@@ -66,6 +79,7 @@ export class DispatchHistoryStore {
     } catch {
       /* absent/corrupt history is not reconstructed */
     }
+    this.index();
     return this.tasks!;
   }
   private sameProject(task: DispatchTask, cwd: string): boolean {
@@ -75,20 +89,17 @@ export class DispatchHistoryStore {
     );
   }
   validate(input: Admission): void {
-    const { owner, taskId, stage, afterDispatchId, retrySourceSessionId } = input;
+    const { owner, taskId, stage, afterDispatchId } = input;
     if (stage !== undefined && !TASK_STAGES.includes(stage))
       throw new Error('Unknown dispatch stage');
     if (!owner?.isWakeTarget || owner.status === 'ended' || owner.hub) {
-      if (
-        taskId ||
-        stage ||
-        afterDispatchId ||
-        (retrySourceSessionId && this.find(retrySourceSessionId))
-      )
-        throw new Error('Task links require a live local manager');
+      // Stage describes a launch; host retry provenance is automatic. Neither
+      // may turn an otherwise valid spawn into a manager-attributed one. Explicit
+      // task/predecessor links are different: they request existing authority.
+      if (taskId || afterDispatchId) throw new Error('Task links require a live local manager');
       return;
     }
-    const task = taskId ? this.load().find((t) => t.taskId === taskId) : undefined;
+    const task = taskId ? this.task(taskId) : undefined;
     if (
       taskId &&
       (!task ||
@@ -98,18 +109,9 @@ export class DispatchHistoryStore {
       throw new Error('Task is unavailable or belongs to another manager/project');
     if (afterDispatchId && !task?.attempts.some((a) => a.dispatchId === afterDispatchId))
       throw new Error('Predecessor must belong to the same task');
-    if (retrySourceSessionId) {
-      const source = this.load().find((t) =>
-        t.attempts.some((a) => a.sessionId === retrySourceSessionId),
-      );
-      if (
-        source &&
-        (source.ownerSessionId !== owner.sessionId ||
-          !this.sameProject(source, input.projectCwd) ||
-          (taskId && source.taskId !== taskId))
-      )
-        throw new Error('Retry source is unavailable or outside this manager/project');
-    }
+    // A retry source is host provenance, not a caller-authorized task link.
+    // Known foreign/departed sources deliberately degrade to a fresh unlinked
+    // attempt below; they must never lend their owner or history to this launch.
   }
   accept(
     input: Admission & {
@@ -127,9 +129,9 @@ export class DispatchHistoryStore {
     if (!input.owner?.isWakeTarget || input.owner.status === 'ended' || input.owner.hub) return;
     const existing = this.find(input.sessionId);
     if (existing) return { taskId: existing.task.taskId, dispatchId: existing.attempt.dispatchId };
-    const source = input.retrySourceSessionId ? this.find(input.retrySourceSessionId) : undefined;
+    const source = this.retrySource(input);
     const now = new Date().toISOString();
-    let task = this.load().find((t) => t.taskId === (source?.task.taskId ?? input.taskId));
+    let task = source?.task ?? (input.taskId ? this.task(input.taskId) : undefined);
     if (!task) {
       task = {
         taskId: randomUUID(),
@@ -141,6 +143,7 @@ export class DispatchHistoryStore {
         attempts: [],
       };
       this.load().push(task);
+      this.tasksByID.set(task.taskId, task);
     }
     const attempt: DispatchAttempt = {
       dispatchId: randomUUID(),
@@ -164,14 +167,37 @@ export class DispatchHistoryStore {
       metrics: {},
     };
     task.attempts.push(attempt);
+    this.attemptsBySessionID.set(attempt.sessionId, { task, attempt });
     this.flush();
     return { taskId: task.taskId, dispatchId: attempt.dispatchId };
   }
   private find(sessionId: string): { task: DispatchTask; attempt: DispatchAttempt } | undefined {
-    for (const task of this.load()) {
-      const attempt = task.attempts.find((a) => a.sessionId === sessionId);
-      if (attempt) return { task, attempt };
-    }
+    this.load();
+    return this.attemptsBySessionID.get(sessionId);
+  }
+  private task(taskId: string): DispatchTask | undefined {
+    this.load();
+    return this.tasksByID.get(taskId);
+  }
+  private retrySource(
+    input: Admission,
+  ): { task: DispatchTask; attempt: DispatchAttempt } | undefined {
+    if (
+      !input.retrySourceSessionId ||
+      !input.owner?.isWakeTarget ||
+      input.owner.status === 'ended' ||
+      input.owner.hub
+    )
+      return undefined;
+    const source = this.find(input.retrySourceSessionId);
+    if (
+      !source ||
+      source.task.ownerSessionId !== input.owner.sessionId ||
+      !this.sameProject(source.task, input.projectCwd) ||
+      (input.taskId !== undefined && source.task.taskId !== input.taskId)
+    )
+      return undefined;
+    return source;
   }
   /** Absolute cumulative snapshots replace prior values. Never add process generations. */
   observe(
@@ -279,7 +305,6 @@ export class DispatchHistoryStore {
     this.timer.unref();
   }
   flush(): void {
-    if (!this.tasks?.length) return;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -295,6 +320,7 @@ export class DispatchHistoryStore {
       Buffer.byteLength(JSON.stringify({ version: 1, tasks })) > this.limits.bytes
     )
       tasks.shift();
+    this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
     atomicWriteFileSync(this.filename(), JSON.stringify({ version: 1, tasks }), { mode: 0o600 });
   }

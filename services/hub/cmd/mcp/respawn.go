@@ -293,8 +293,7 @@ func addRespawnTool(b *build) {
 				DispatchID string `json:"dispatchId"`
 			}
 			_ = json.Unmarshal([]byte(resultText(res)), &dispatchIDs)
-			out, merr := json.Marshal(map[string]any{
-				"taskId": dispatchIDs.TaskID, "dispatchId": dispatchIDs.DispatchID,
+			outcome := map[string]any{
 				"sessionId":  newID,
 				"clonedFrom": in.SessionID,
 				"cwd":        spawn.Cwd,
@@ -302,7 +301,16 @@ func addRespawnTool(b *build) {
 				"role":       spawn.Role,
 				"capability": spawn.Capability,
 				"note":       "The successor was sent the original task plus your correction. Its permission mode was re-judged by the same grant check a fresh spawn_agent gets — it is not inherited.",
-			})
+			}
+			// An unrecorded retry is still a successful respawn. Do not advertise
+			// empty history ids as though there were a task to resume.
+			if dispatchIDs.TaskID != "" {
+				outcome["taskId"] = dispatchIDs.TaskID
+			}
+			if dispatchIDs.DispatchID != "" {
+				outcome["dispatchId"] = dispatchIDs.DispatchID
+			}
+			out, merr := json.Marshal(outcome)
 			if merr != nil {
 				return res, nil, nil
 			}

@@ -102,14 +102,15 @@ describe('private persisted dispatch history', () => {
       retryOfDispatchId: first.dispatchId,
       stage: 'implement',
     });
-    expect(() =>
-      store.accept({
-        ...admission,
-        owner: { ...owner, sessionId: 'foreign' },
-        sessionId: 'bad',
-        retrySourceSessionId: 'one',
-      }),
-    ).toThrow();
+    const afterHandoff = store.accept({
+      ...admission,
+      owner: { ...owner, sessionId: 'foreign' },
+      sessionId: 'after-handoff',
+      retrySourceSessionId: 'one',
+    })!;
+    expect(afterHandoff.taskId).not.toBe(first.taskId);
+    expect(store.list()[0].attempts[0].kind).toBe('fresh');
+    expect(store.list()[0].attempts[0].retryOfDispatchId).toBeUndefined();
     store.observe(observation('one', { statusLine: { totalInputTokens: 42, costUSD: 0 } }));
     store.observe(observation('one', { statusLine: { totalInputTokens: 42, costUSD: 0 } }));
     store.observe(observation('one', { status: 'ended' }));
@@ -117,10 +118,40 @@ describe('private persisted dispatch history', () => {
       observation('one', { ambientState: 'streaming', statusLine: { totalInputTokens: 45 } }),
     );
     expect(store.accept({ ...admission, sessionId: 'one' })).toEqual(first);
-    expect(store.list()[0].attempts).toHaveLength(2);
-    expect(store.list()[0].attempts[0].metrics).toMatchObject({ inputTokens: 45, costUSD: 0 });
-    expect(store.list()[0].attempts[0].resultContract).toBe('absent');
+    const original = store.list().find((task) => task.taskId === first.taskId)!;
+    expect(original.attempts).toHaveLength(2);
+    expect(original.attempts[0].metrics).toMatchObject({ inputTokens: 45, costUSD: 0 });
+    expect(original.attempts[0].resultContract).toBe('absent');
     store.flush();
+  });
+  it('lets optional stages and automatic retry provenance degrade when no manager owns the launch', () => {
+    const { store } = fixture();
+    const first = store.accept({ ...admission, sessionId: 'source', stage: 'implement' })!;
+    expect(() =>
+      store.validate({
+        ...admission,
+        owner: undefined,
+        stage: 'review',
+        retrySourceSessionId: 'source',
+      }),
+    ).not.toThrow();
+    expect(
+      store.accept({
+        ...admission,
+        owner: undefined,
+        sessionId: 'unattributed',
+        stage: 'review',
+        retrySourceSessionId: 'source',
+      }),
+    ).toBeUndefined();
+    expect(() =>
+      store.validate({
+        ...admission,
+        owner: undefined,
+        taskId: first.taskId,
+        afterDispatchId: first.dispatchId,
+      }),
+    ).toThrow(/Task links require a live local manager/);
   });
   it('retains closed rows, unknown metrics, contract validity and exact-only stale reattachment after reload', () => {
     const { store, filename } = fixture();
@@ -200,4 +231,11 @@ it('advances live wall time without fabricating new telemetry and freezes ended/
   } finally {
     now.mockRestore();
   }
+});
+
+it('flushes an empty bounded store so eviction persists instead of resurrecting history', () => {
+  const { store, filename } = fixture({ tasks: 0, attempts: 0, bytes: 20000 });
+  store.accept({ ...admission, sessionId: 'evicted' });
+  expect(JSON.parse(fs.readFileSync(filename, 'utf8'))).toEqual({ version: 1, tasks: [] });
+  expect(new DispatchHistoryStore(() => filename).list()).toEqual([]);
 });

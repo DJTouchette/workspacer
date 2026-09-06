@@ -2805,4 +2805,136 @@ describe('accepted manager task links through the actual spawn handler', () => {
     expect(spawnManagedAgent.mock.calls.length).toBe(launches);
     getSnapshot.mockImplementation(() => null);
   });
+
+  it('launches optional stages and retry provenance without inventing manager history', async () => {
+    const { dispatchHistoryStore } = await import('./dispatchHistoryStore');
+    const oldOwner = {
+      sessionId: 'old-history-manager',
+      isWakeTarget: true,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    const newOwner = {
+      sessionId: 'new-history-manager',
+      isWakeTarget: true,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    const nonManager = {
+      sessionId: 'plain-parent',
+      isWakeTarget: false,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    getSnapshot.mockImplementation((id: unknown) =>
+      id === oldOwner.sessionId
+        ? oldOwner
+        : id === newOwner.sessionId
+          ? newOwner
+          : id === nonManager.sessionId
+            ? nonManager
+            : null,
+    );
+    spawnManagedAgent
+      .mockResolvedValueOnce('old-source')
+      .mockResolvedValueOnce('no-parent')
+      .mockResolvedValueOnce('plain-parent-worker')
+      .mockResolvedValueOnce('handoff-worker')
+      .mockResolvedValueOnce('unknown-retry-worker');
+    const old = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: oldOwner.sessionId,
+      dispatchOwnerSessionId: oldOwner.sessionId,
+      stage: 'implement',
+    })) as { taskId: string; dispatchId: string };
+    const noParent = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      stage: 'review',
+    })) as Record<string, unknown>;
+    const plainParent = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: nonManager.sessionId,
+      dispatchOwnerSessionId: nonManager.sessionId,
+      stage: 'review',
+    })) as Record<string, unknown>;
+    expect(noParent).not.toHaveProperty('taskId');
+    expect(noParent).not.toHaveProperty('dispatchId');
+    expect(plainParent).not.toHaveProperty('taskId');
+    expect(plainParent).not.toHaveProperty('dispatchId');
+    const handoff = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: newOwner.sessionId,
+      dispatchOwnerSessionId: newOwner.sessionId,
+      retrySourceSessionId: 'old-source',
+      stage: 'fix',
+    })) as { taskId: string };
+    const unknown = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: newOwner.sessionId,
+      dispatchOwnerSessionId: newOwner.sessionId,
+      retrySourceSessionId: 'unknown-source',
+      stage: 'fix',
+    })) as { taskId: string };
+    expect(handoff.taskId).not.toBe(old.taskId);
+    expect(unknown.taskId).not.toBe(old.taskId);
+    const handoffAttempt = dispatchHistoryStore.list().find((t) => t.taskId === handoff.taskId)!
+      .attempts[0];
+    expect(handoffAttempt).toMatchObject({ kind: 'fresh', stage: 'fix' });
+    expect(handoffAttempt.retryOfDispatchId).toBeUndefined();
+    getSnapshot.mockImplementation(() => null);
+  });
+
+  it('refuses forged and foreign explicit task/predecessor links before provider launch', async () => {
+    const oldOwner = {
+      sessionId: 'explicit-owner',
+      isWakeTarget: true,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    const otherOwner = {
+      sessionId: 'other-explicit-owner',
+      isWakeTarget: true,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    getSnapshot.mockImplementation((id: unknown) =>
+      id === oldOwner.sessionId ? oldOwner : id === otherOwner.sessionId ? otherOwner : null,
+    );
+    spawnManagedAgent.mockResolvedValueOnce('explicit-source');
+    const first = (await call('agents.spawn', {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: oldOwner.sessionId,
+      dispatchOwnerSessionId: oldOwner.sessionId,
+      stage: 'scout',
+    })) as { taskId: string; dispatchId: string };
+    const launches = spawnManagedAgent.mock.calls.length;
+    await expect(
+      call('agents.spawn', {
+        provider: 'codex',
+        cwd: cfg.dir,
+        parentSessionId: oldOwner.sessionId,
+        dispatchOwnerSessionId: 'forged',
+        taskId: first.taskId,
+        afterDispatchId: first.dispatchId,
+      }),
+    ).rejects.toThrow(/Task links require a live local manager/);
+    await expect(
+      call('agents.spawn', {
+        provider: 'codex',
+        cwd: cfg.dir,
+        parentSessionId: otherOwner.sessionId,
+        dispatchOwnerSessionId: otherOwner.sessionId,
+        taskId: first.taskId,
+        afterDispatchId: first.dispatchId,
+      }),
+    ).rejects.toThrow(/another manager/);
+    expect(spawnManagedAgent.mock.calls.length).toBe(launches);
+    getSnapshot.mockImplementation(() => null);
+  });
 });

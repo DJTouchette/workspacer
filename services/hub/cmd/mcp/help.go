@@ -51,8 +51,8 @@ Reading another agent's activity, cheapest first:
   is to read it and reply with a digest, so it never enters your own context.
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
-	"spawn": strings.TrimSpace(`
-Task loops (local desktop): pass stage=scout|implement|review|fix|validate|land|other for the actual dispatch. Save the returned taskId and dispatchId. Every later scout/implement/review/fix/validate/land continuation of that SAME task passes taskId and afterDispatchId from its predecessor, under the same manager and project. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
+		"spawn": strings.TrimSpace(`
+Task loops (local desktop): stage=scout|implement|review|fix|validate|land|other is optional descriptive history metadata. To attribute or continue a task, parentSessionId must name your live local manager; save the returned taskId and dispatchId, then pass taskId and afterDispatchId under that same manager and project. Without valid manager attribution, stage and automatic respawn provenance may launch but are not recorded or linked. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
 
 spawn_agent starts a new coding-agent session and returns its sessionId.
 - Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is
