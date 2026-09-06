@@ -42,7 +42,7 @@ export default defineConfig({
   projects: [
     { name: 'app', testMatch: /(app[A-Z][A-Za-z]*|stateIsolation)\.test\.ts$/ },
     { name: 'mobile', testMatch: /mobile[A-Z][A-Za-z]*\.test\.ts$/ },
-    { name: 'renderer', testMatch: /(chatTailPin|usagePacing)\.test\.ts$/ },
+    { name: 'renderer', testMatch: /(chatTailPin|usagePacing|htmlCard)\.test\.ts$/ },
     { name: 'electron', testMatch: /libraryPane\.test\.ts$/ },
   ],
 });

@@ -33,6 +33,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // normalization real and stub only the assertion — its own behavior is pinned in
 // lib/spawnCwd.test.ts, and the test below pins that this path still calls it.
 const assertSpawnCwdMock = vi.fn();
+const cardSkill = vi.hoisted(() => vi.fn(() => ''));
+vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
+
 vi.mock('../lib/spawnCwd', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/spawnCwd')>()),
   assertSpawnCwd: (...a: unknown[]) => assertSpawnCwdMock(...a),
@@ -131,6 +134,7 @@ function lastMeta(): Payload {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cardSkill.mockReturnValue('');
   mockConfig = {};
 });
 
@@ -1287,4 +1291,21 @@ describe('spawnManagedAgent — per-harness profiles', () => {
     expect(lastManaged()).not.toHaveProperty('env');
     expect(lastManaged()).not.toHaveProperty('extraArgs');
   });
+});
+
+it('delivers the product skill pointer through managed and hybrid instruction channels', async () => {
+  const note = 'Read /project/product-skill/SKILL.md for cards.';
+  cardSkill.mockReturnValue(note);
+  await spawnManagedAgent({ provider: 'codex', cwd: '/proj', transport: 'stream' });
+  expect(lastManaged().instructions).toContain(note);
+  expect(cardSkill).toHaveBeenCalledWith('codex', '/proj');
+  const platform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', transport: 'pty' });
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform });
+  }
+  const argv = (spawnMock.mock.calls.at(-1)![0] as Payload).argv as string[];
+  expect(argv.find((arg) => arg.startsWith('developer_instructions='))).toContain(note);
 });

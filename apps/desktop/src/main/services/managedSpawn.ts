@@ -47,6 +47,7 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { installManagerSkills } from './managerSkills';
+import { installResponseCardSkill } from './responseCardSkill';
 import { notifySystem } from './systemNotice';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
@@ -439,6 +440,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   if (opts.manager) {
     installManagerSkills(provider);
   }
+  // Response cards are a capability of the app, not of one role, so every
+  // managed session gets the skill — discovered natively where the harness has
+  // a skills root, and pointed at by one line of instructions where it does not
+  // (see responseCardSkill for why the split, and why nothing is pasted).
+  const cardInstruction = installResponseCardSkill(provider, cwd);
   // Claude stream + facade: the per-session config file (token as an
   // Authorization header — a file path on argv, never the token itself, since
   // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
@@ -509,6 +515,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       : '',
     isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
     resultSchema ? buildResultContract(resultSchema) : '',
+    cardInstruction,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -596,6 +603,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
 async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   assertSpawnCwd(cwd);
+  const cardInstruction = installResponseCardSkill('codex', cwd);
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
   // Same resolution as the managed path: record what actually runs, not a hole.
@@ -681,8 +689,11 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     // rollout path. Keep the task as the user turn (so transcript
     // reconstruction never displays host contract text), while the contract
     // remains present before and without a firstMessage.
-    ...(isFleetDispatchedWorker(opts)
-      ? ['-c', `developer_instructions=${JSON.stringify(buildWorkerEscalationContract())}`]
+    ...(isFleetDispatchedWorker(opts) || cardInstruction
+      ? [
+          '-c',
+          `developer_instructions=${JSON.stringify([isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '', cardInstruction].filter(Boolean).join('\n'))}`,
+        ]
       : []),
     ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
   ];

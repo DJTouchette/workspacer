@@ -63,6 +63,7 @@ export const LOCAL_TERMINAL = [
  * they reach native/OS/main-process facilities the bus doesn't expose.
  */
 export const HOST_ONLY = [
+  'htmlCardReadDiff', // owner-validated, descriptor-pinned local snapshot; no unchecked bus fallback
   'setTitleBarOverlay', // Windows native caption-button theming
   'onTerminalExit', // MessagePort exit signal; no bus event for it
   'pickFolder', // native OS folder dialog

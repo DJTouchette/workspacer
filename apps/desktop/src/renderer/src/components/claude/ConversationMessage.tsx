@@ -5,6 +5,7 @@ import { parseMarkdownBlocks } from '../markdown';
 import { CopyTextButton } from './CopyTextButton';
 import { MessageImages } from './MessageImages';
 import { FleetMessageCard } from './FleetMessageCard';
+import { HtmlCardAllowedProvider } from './HtmlResponseCard';
 import { extractImageAttachments, imagePathsInText } from '../../lib/messageImages';
 import { parseFleetMessage, type FleetMessageEntry } from '../../../../main/shared/fleetMessages';
 import {
@@ -241,7 +242,12 @@ const ConversationMessageInner: React.FC<{
                 color: colors.text,
               }}
             >
-              {parsedContent}
+              {/* The ONLY place a `wks-html-card` fence is allowed to become a
+                  live card. The user bubble above renders the same parse
+                  result without this provider, so a fence a person pastes —
+                  or one a tool result echoes back — stays an ordinary code
+                  block. Default-deny, one opt-in, at the message level. */}
+              <HtmlCardAllowedProvider value={true}>{parsedContent}</HtmlCardAllowedProvider>
             </div>
             {showTimestamp && <TurnStamp ms={turn.timestamp} />}
           </div>

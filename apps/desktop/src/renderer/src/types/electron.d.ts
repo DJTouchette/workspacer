@@ -638,6 +638,14 @@ export interface ElectronAPI {
     filePath: string,
     expectedCanonicalPath?: string,
   ) => Promise<{ path: string; contents: string; size: number }>;
+  /** A response card's `view_diff` target, contained (symlink-aware) against
+   *  the owning pane's cwd in main. Optional: a client without it — the web
+   *  build's bus polyfill today — makes the action refuse rather than act
+   *  unchecked. */
+  htmlCardReadDiff?: (
+    target: string,
+    ownerSessionId: string,
+  ) => Promise<import('../../../main/shared/htmlCardDiff').HtmlCardDiffResult>;
   /** Write a pasted screenshot to a temp PNG so it can be attached by path.
    *  Resolves null when the clipboard holds no image (and always on web, where
    *  the host clipboard isn't the one the user pasted from). */

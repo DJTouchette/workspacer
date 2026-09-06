@@ -38,6 +38,7 @@ import { clearTokenCache } from '../lib/diff/highlight';
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { TasksCard, planSignature } from '../components/claude/TasksCard';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
+import { HtmlCardHostProvider } from '../components/claude/HtmlResponseCard';
 import { WorkingTimer } from '../components/claude/WorkingTimer';
 import { CommandCard } from '../components/claude/CommandCard';
 import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
@@ -647,10 +648,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         { text?: string; sessionId?: string; paneId?: string } | undefined;
       if (!d?.text) return;
       const targeted = d.sessionId || d.paneId;
-      const matches = targeted ? d.sessionId === sessionId || d.paneId === paneId : isActive;
+      const matches = targeted
+        ? (!d.sessionId || d.sessionId === sessionId) && (!d.paneId || d.paneId === paneId)
+        : isActive;
       if (!matches) return;
       setViewMode('gui');
-      setInputValue((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n${d.text}` : d.text!));
+      setInputValue((prev) => (prev ? `${prev}\n${d.text}` : d.text!));
       requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener('library:insert', handler as EventListener);
@@ -1969,6 +1972,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Build rendered conversation with dividers (windowed to last visibleCount
   // turns). Consecutive tool-call turns collapse into one WorkCard so the
   // timeline reads as: user said → Claude worked → Claude said.
+  // Identity a response card's actions are performed with. Memoized so the
+  // provider below does not hand a new object to every card on every render.
+  const cardIdentityRef = useRef({ sessionId, paneId, cwd: effectiveCwd });
+  cardIdentityRef.current = { sessionId, paneId, cwd: effectiveCwd };
+  useEffect(() => {
+    cardIdentityRef.current = { sessionId, paneId, cwd: effectiveCwd };
+    return () => {
+      cardIdentityRef.current = { sessionId: null, paneId: '', cwd: '' };
+    };
+  }, [sessionId, paneId, effectiveCwd]);
+  const cardHost = useMemo(
+    () => ({
+      sessionId: sessionId ?? undefined,
+      paneId,
+      cwd: effectiveCwd,
+      isCurrent: () =>
+        cardIdentityRef.current.sessionId === sessionId &&
+        cardIdentityRef.current.paneId === paneId &&
+        cardIdentityRef.current.cwd === effectiveCwd,
+    }),
+    [sessionId, paneId, effectiveCwd],
+  );
+
   const renderedConversation = useMemo(() => {
     const items: React.ReactNode[] = [];
     const startIdx = Math.max(0, conversation.length - visibleCount);
@@ -2529,7 +2555,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                       command output resolve + open like tool-call FileLinks. */}
                     <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
                       <MarkdownFileCwdProvider value={effectiveCwd}>
-                        {renderedConversation}
+                        {/* Response-card actions act through THIS pane's own
+                          live session/pane/cwd, bound here at render time. A
+                          card three turns up, or one replayed out of history,
+                          gets the same binding — it can name a target but never
+                          the authority it is acted on with. */}
+                        <HtmlCardHostProvider value={cardHost}>
+                          {renderedConversation}
+                        </HtmlCardHostProvider>
                       </MarkdownFileCwdProvider>
                     </ErrorBoundary>
 
