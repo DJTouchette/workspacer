@@ -704,9 +704,39 @@ impl SessionStore {
     /// session down. See [`SessionStore::generations`] for why teardown cannot
     /// key on the id alone.
     pub fn claim_generation(&self, session_id: &str) -> u64 {
+        self.claim_generation_with(session_id, |generation| generation)
+    }
+
+    /// Publish a new lifetime under the same exclusive lock used by its drivers.
+    /// Lock order: generation -> store registries -> conversation. The closure
+    /// must be synchronous and must not call another generation-locking method.
+    pub(crate) fn claim_generation_with<T>(
+        &self,
+        session_id: &str,
+        publish: impl FnOnce(u64) -> T,
+    ) -> T {
         let mut entry = self.generations.entry(session_id.to_string()).or_insert(0);
         *entry += 1;
-        *entry
+        publish(*entry)
+    }
+
+    /// Check and mutate one lifetime atomically, including against its teardown.
+    /// A closure cannot carry this lock across an await. Do not nest generation
+    /// operations (DashMap shards can also contain other session ids).
+    pub(crate) fn with_generation<T>(
+        &self,
+        session_id: &str,
+        generation: u64,
+        mutate: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let entry = self
+            .generations
+            .entry(session_id.to_string())
+            .or_insert(generation);
+        if *entry != generation {
+            return None;
+        }
+        Some(mutate())
     }
 
     fn fresh_context_telemetry_epoch(&self) -> u64 {
@@ -1886,14 +1916,35 @@ impl SessionStore {
     /// for driver-fed providers.
     #[must_use]
     pub fn deregister_managed(&self, session_id: &str, generation: u64) -> bool {
-        if !self.owns_generation(session_id, generation) {
+        self.deregister_managed_with(session_id, generation, || {})
+    }
+
+    /// Include provider-owned shared state (e.g. conversation) in the teardown
+    /// transaction, before a successor can publish its row or history.
+    pub(crate) fn deregister_managed_with(
+        &self,
+        session_id: &str,
+        generation: u64,
+        after: impl FnOnce(),
+    ) -> bool {
+        self.with_generation(session_id, generation, || {
+            let ended = self.deregister_managed_current(session_id);
+            if ended {
+                after();
+            }
+            ended
+        })
+        .unwrap_or_else(|| {
             tracing::debug!(
                 session = %session_id,
                 generation,
                 "skipping deregister from a superseded generation"
             );
-            return false;
-        }
+            false
+        })
+    }
+
+    fn deregister_managed_current(&self, session_id: &str) -> bool {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
         self.managed_model.remove(session_id);
@@ -1909,6 +1960,9 @@ impl SessionStore {
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
+            if entry.mode == SessionMode::Stopped {
+                return false; // This generation already published its end.
+            }
             entry.mode = SessionMode::Stopped;
             // A stopped session runs nothing — a leftover live-task count would
             // badge a dead row as "working in background".
@@ -2832,6 +2886,42 @@ impl SessionStore {
         if let Some(tx) = tx {
             let _ = tx.send(chunk.to_vec());
         }
+    }
+
+    /// Codex output may have waited on the buffer mutex while superseded. Lock
+    /// the buffer first, then check ownership and publish synchronously. No
+    /// generation transaction waits on this async mutex (registration only
+    /// installs buffer Arcs), so this introduces no reverse blocking edge.
+    pub(crate) async fn record_output_owned(
+        &self,
+        session_id: &str,
+        chunk: &[u8],
+        generation: u64,
+    ) {
+        let Some(buf) = self.buffers.get(session_id).map(|e| e.clone()) else {
+            return;
+        };
+        let mut buffer = buf.lock().await;
+        self.with_generation(session_id, generation, || {
+            if self
+                .get(session_id)
+                .is_none_or(|s| s.mode == SessionMode::Stopped)
+            {
+                return;
+            }
+            let toggled_on = {
+                let mut tracker = self.paste_modes.entry(session_id.to_string()).or_default();
+                tracker.scan(chunk) == Some(true)
+            };
+            if toggled_on && self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input)
+            {
+                self.schedule_pending_flush(session_id);
+            }
+            buffer.push(chunk);
+            if let Some(tx) = self.bytes_tx.get(session_id) {
+                let _ = tx.send(chunk.to_vec());
+            }
+        });
     }
 
     pub async fn output_snapshot(&self, session_id: &str) -> Option<Vec<u8>> {
@@ -4880,6 +4970,175 @@ mod tests {
 
         assert!(!store.is_managed("m1"), "its own channels are released");
         assert_eq!(store.get("m1").map(|s| s.mode), Some(SessionMode::Stopped));
+    }
+
+    #[test]
+    fn generation_transaction_excludes_supersession_after_check() {
+        let store = SessionStore::new();
+        let first = store.claim_generation_with("race", |g| {
+            store.register_managed("race", "/old", "codex");
+            g
+        });
+        let mut events = store.subscribe();
+        let (checked_tx, checked_rx) = std::sync::mpsc::channel();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let old = store.clone();
+        let thread = std::thread::spawn(move || {
+            old.with_generation("race", first, || {
+                // Ownership has passed. The successor now attempts to claim
+                // before the old channel is installed, the formerly open gap.
+                checked_tx.send(()).unwrap();
+                attempt_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                let (tx, _rx) = mpsc::unbounded_channel();
+                old.register_managed_input("race", tx);
+            })
+            .unwrap();
+        });
+        checked_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(
+            store.generations.try_get_mut("race"),
+            dashmap::try_result::TryResult::Locked
+        ));
+        attempt_tx.send(()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let second = store.claim_generation_with("race", |g| {
+            store.register_managed("race", "/new", "codex");
+            store.register_managed_input("race", tx);
+            g
+        });
+        thread.join().unwrap();
+        assert!(!store.deregister_managed("race", first));
+        store.submit_message("race", "new".into());
+        assert_eq!(rx.try_recv().unwrap(), "new");
+        assert_eq!(store.get("race").unwrap().mode, SessionMode::Input);
+        while let Ok(event) = events.try_recv() {
+            assert_ne!(event.event, "SessionEnd");
+        }
+        assert!(store.deregister_managed("race", second));
+        assert!(!store.deregister_managed("race", second));
+        assert_eq!(events.try_recv().unwrap().event, "SessionEnd");
+        assert!(events.try_recv().is_err());
+    }
+
+    #[test]
+    fn generation_publication_excludes_old_teardown() {
+        let store = SessionStore::new();
+        let first = store.claim_generation("race");
+        store.register_managed("race", "/old", "codex");
+        let mut events = store.subscribe();
+        let (published_tx, published_rx) = std::sync::mpsc::channel();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let new = store.clone();
+        let thread = std::thread::spawn(move || {
+            new.claim_generation_with("race", |_| {
+                new.register_managed("race", "/new", "codex");
+                published_tx.send(()).unwrap();
+                attempt_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            });
+        });
+        published_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        // Successor row exists, but old teardown cannot even acquire its guard.
+        assert!(matches!(
+            store.generations.try_get_mut("race"),
+            dashmap::try_result::TryResult::Locked
+        ));
+        attempt_tx.send(()).unwrap();
+        assert!(!store.deregister_managed("race", first));
+        thread.join().unwrap();
+        assert_eq!(store.get("race").unwrap().mode, SessionMode::Input);
+        while let Ok(event) = events.try_recv() {
+            assert_ne!(event.event, "SessionEnd");
+        }
+    }
+
+    #[test]
+    fn generation_teardown_keeps_conversation_removal_inside_transaction() {
+        let store = SessionStore::new();
+        let conv = crate::session::ConversationStore::new();
+        store.register_managed("race", "/old", "codex");
+        let first = store.claim_generation("race");
+        let (ended_tx, ended_rx) = std::sync::mpsc::channel();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let old = store.clone();
+        let old_conv = conv.clone();
+        let thread = std::thread::spawn(move || {
+            assert!(old.deregister_managed_with("race", first, || {
+                ended_tx.send(()).unwrap();
+                attempt_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                old_conv.forget("race");
+            }));
+        });
+        ended_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(
+            store.generations.try_get_mut("race"),
+            dashmap::try_result::TryResult::Locked
+        ));
+        attempt_tx.send(()).unwrap();
+        store.claim_generation_with("race", |_| {
+            store.register_managed("race", "/new", "codex");
+            conv.push(
+                "race",
+                vec![
+                    crate::session::conversation::ConversationItem::AssistantText {
+                        text: "successor".into(),
+                        timestamp: None,
+                    },
+                ],
+            );
+        });
+        thread.join().unwrap();
+        assert_eq!(conv.snapshot("race").unwrap().1.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn generation_output_rechecks_after_waiting_for_buffer() {
+        let store = SessionStore::new();
+        store.register_managed("race", "/old", "codex");
+        let first = store.claim_generation("race");
+        let buffer = store.buffers.get("race").unwrap().clone();
+        let held = buffer.lock().await;
+        let mut output = Box::pin(store.record_output_owned("race", b"stale", first));
+        assert!(futures_util::poll!(&mut output).is_pending());
+        store.claim_generation_with("race", |_| {
+            store.register_managed("race", "/new", "codex");
+        });
+        drop(held);
+        output.await;
+        assert!(store.output_snapshot("race").await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn managed_generation_publishes_end_once_and_never_for_successor() {
+        let store = SessionStore::new();
+        store.register_managed("once", "/fixture", "codex");
+        let first = store.claim_generation("once");
+        let mut events = store.subscribe();
+        assert!(store.deregister_managed("once", first));
+        assert!(!store.deregister_managed("once", first));
+        assert_eq!(events.try_recv().unwrap().event, "SessionEnd");
+        assert!(events.try_recv().is_err());
+
+        store.register_managed("once", "/fixture", "codex");
+        let second = store.claim_generation("once");
+        while events.try_recv().is_ok() {}
+        assert!(!store.deregister_managed("once", first));
+        assert!(events.try_recv().is_err());
+        assert_eq!(store.get("once").unwrap().mode, SessionMode::Input);
+        assert!(store.deregister_managed("once", second));
+        assert_eq!(events.try_recv().unwrap().event, "SessionEnd");
+        assert!(events.try_recv().is_err());
     }
 
     /// The PTY twin of the same race. `reap_pty` used to remove whatever handle
