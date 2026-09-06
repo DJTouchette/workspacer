@@ -820,6 +820,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // A response card's `view_diff` target: may this path open, given the OWNING
   // pane's cwd? Containment (symlink-aware) is decided in main; the canonical
   // path it returns is the one the caller must hand downstream.
+  fleetReviewRead: (
+    request: import('./shared/fleetReview').FleetReviewRequest,
+  ): Promise<import('./shared/fleetReview').FleetReviewResponse> =>
+    ipcRenderer.invoke(IPC.FLEET_REVIEW_READ, request),
+  fleetReviewForget: (
+    request: import('./shared/fleetReview').FleetReviewRequest,
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.FLEET_REVIEW_FORGET, request),
   htmlCardReadDiff: (
     target: string,
     ownerSessionId: string,

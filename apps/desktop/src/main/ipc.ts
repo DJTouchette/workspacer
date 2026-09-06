@@ -1,3 +1,4 @@
+import { fleetReviewStore } from './services/fleetReviewStore';
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { windowFor } from './shared/modelContextWindows';
 import * as os from 'os';
@@ -1373,6 +1374,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // renderer passes a lane KEY, never a path, so it cannot name a file for main
   // to write. A move that loses its compare-and-swap rejects, and the pane
   // reloads rather than retrying blind.
+  // Same record ownership/selector validation for every caller; no filesystem grant.
+  ipcMain.handle(IPC.FLEET_REVIEW_READ, (_event, request: unknown) =>
+    fleetReviewStore.read(request),
+  );
+  ipcMain.handle(IPC.FLEET_REVIEW_FORGET, (_event, request: unknown) =>
+    fleetReviewStore.forget(request),
+  );
+
   // A response card's view_diff target, decided by the shared containment walk
   // against the OWNING pane's cwd (which the renderer supplies from its own
   // live state, never from the card). Returns the canonical path the caller

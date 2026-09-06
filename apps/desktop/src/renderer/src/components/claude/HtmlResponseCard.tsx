@@ -67,7 +67,7 @@ const HtmlCardAllowedContext = createContext(false);
 /** Turned on around an assistant bubble's rendered markdown, nowhere else. */
 export const HtmlCardAllowedProvider = HtmlCardAllowedContext.Provider;
 
-const HtmlCardHostContext = createContext<HtmlCardHost | null>(null);
+export const HtmlCardHostContext = createContext<HtmlCardHost | null>(null);
 /** Provided by the owning chat pane with its OWN live session/pane/cwd. */
 export const HtmlCardHostProvider = HtmlCardHostContext.Provider;
 

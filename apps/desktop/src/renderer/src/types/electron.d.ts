@@ -642,6 +642,12 @@ export interface ElectronAPI {
    *  the owning pane's cwd in main. Optional: a client without it — the web
    *  build's bus polyfill today — makes the action refuse rather than act
    *  unchecked. */
+  fleetReviewRead?: (
+    request: import('../../../main/shared/fleetReview').FleetReviewRequest,
+  ) => Promise<import('../../../main/shared/fleetReview').FleetReviewResponse>;
+  fleetReviewForget?: (
+    request: import('../../../main/shared/fleetReview').FleetReviewRequest,
+  ) => Promise<{ ok: boolean }>;
   htmlCardReadDiff?: (
     target: string,
     ownerSessionId: string,

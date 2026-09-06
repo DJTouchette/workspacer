@@ -543,3 +543,54 @@ it('card diff IPC drops bytes if the owning session changes during read', async 
     ok: false,
   });
 });
+
+it('Fleet review IPC uses the record owner/selector guard without a trusted-user bypass', async () => {
+  const { FleetReviewStore, fleetReviewStore } = await import('./services/fleetReviewStore');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-review-ipc-'));
+  const file = path.join(dir, 'evidence.json');
+  const evidence = {
+    id: 'opaque',
+    ownerSessionId: 'manager',
+    workerSessionId: 'worker',
+    availability: 'captured',
+    files: [{ path: 'recorded.ts', status: 'M', diff: 'captured bytes' }],
+  };
+  fs.writeFileSync(file, JSON.stringify({ allocations: [], records: [evidence] }));
+  const store = new FleetReviewStore(() => file);
+  const read = vi
+    .spyOn(fleetReviewStore, 'read')
+    .mockImplementation((request) => store.read(request));
+  const forget = vi
+    .spyOn(fleetReviewStore, 'forget')
+    .mockImplementation((request) => store.forget(request));
+  try {
+    const request = {
+      ownerSessionId: 'manager',
+      workerSessionId: 'worker',
+      evidenceId: 'opaque',
+      file: 'recorded.ts',
+    };
+    const invoke = (r: unknown) => handlers.get('fleet-review:read')!(null, r);
+    expect(await invoke(request)).toMatchObject({
+      ok: true,
+      evidence: { files: [{ diff: 'captured bytes' }] },
+    });
+    for (const bad of [
+      { ownerSessionId: 'other' },
+      { workerSessionId: 'other' },
+      { file: '../secret' },
+      { revision: 'HEAD' },
+      { cwd: '/primary' },
+    ])
+      expect(await invoke({ ...request, ...bad })).toMatchObject({ ok: false });
+    expect(
+      await handlers.get('fleet-review:forget')!(null, { ...request, ownerSessionId: 'other' }),
+    ).toEqual({ ok: false });
+    expect(await handlers.get('fleet-review:forget')!(null, request)).toEqual({ ok: true });
+    expect(await invoke(request)).toMatchObject({ ok: false });
+  } finally {
+    read.mockRestore();
+    forget.mockRestore();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

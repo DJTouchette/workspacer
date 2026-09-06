@@ -13,6 +13,7 @@
  */
 
 import { exec, execFile } from 'child_process';
+import { fleetReviewStore, reviewAllocation, type ReviewAllocation } from './fleetReviewStore';
 import { gitArgs } from '../lib/gitExec';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -28,6 +29,7 @@ export interface WorktreeInfo {
 }
 
 export interface WorktreeCreateResult {
+  reviewAllocation?: ReviewAllocation;
   ok: boolean;
   /** Absolute path of the new worktree (the agent's cwd), when ok. */
   path?: string;
@@ -391,6 +393,7 @@ export async function createWorktree(opts: {
     const res = await git(['worktree', 'add', '-b', branch, wtPath], info.root);
     if (res.ok) {
       console.log(`[worktree] created ${wtPath} (${branch}) from ${info.root}`);
+      const review = await reviewAllocation(info.root, wtPath, branch).catch(() => undefined);
       // Give the agent working deps without an install step; best-effort.
       await linkNodeModules(info.root, wtPath);
       // Then the project's own setup commands (deterministic, configured),
@@ -402,7 +405,7 @@ export async function createWorktree(opts: {
         resolveWorktreeSetup(opts.config, [opts.repoCwd, info.root]),
         { source: info.root, worktree: wtPath },
       );
-      return { ok: true, path: wtPath, branch, setup };
+      return { ok: true, path: wtPath, branch, setup, reviewAllocation: review };
     }
     // Branch collision → retry with a suffix; anything else is terminal.
     if (!/already exists/i.test(res.stderr)) {
@@ -448,6 +451,7 @@ export async function removeAgentWorktree(opts: {
     return { ok: false, skipped: true };
   }
   const mainRoot = path.dirname(common.stdout); // <repo>/.git → <repo>
+  await fleetReviewStore.beforeRemove(cwd);
   const res = await git(['worktree', 'remove', cwd], mainRoot);
   if (!res.ok) {
     // The common refusal is "contains modified or untracked files" — leave it.
