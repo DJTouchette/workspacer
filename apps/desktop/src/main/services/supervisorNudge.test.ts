@@ -622,3 +622,26 @@ describe('supervisorNudge.onFinished — error vs completion', () => {
     expect(text).toContain('did NOT complete its task');
   });
 });
+
+it('does not deliver a finish if the worker resumes while review evidence is being captured', async () => {
+  const { fleetReviewStore } = await import('./fleetReviewStore');
+  let release!: (id: string | undefined) => void;
+  const capturing = vi.spyOn(fleetReviewStore, 'capture').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  try {
+    const w = worker();
+    supervisorNudge.onFinished(w, 'mgr', 'done');
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(capturing).toHaveBeenCalled();
+    w.ambientState = 'streaming';
+    release('11111111-1111-4111-8111-111111111111');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(message).not.toHaveBeenCalled();
+  } finally {
+    capturing.mockRestore();
+  }
+});

@@ -143,3 +143,18 @@ describe('preload MessagePort plumbing', () => {
     expect(rejections).toEqual([]);
   });
 });
+
+it('bridges captured Fleet review selectors without adding filesystem or revision arguments', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  const request = {
+    ownerSessionId: 'manager',
+    workerSessionId: 'worker',
+    evidenceId: 'opaque',
+    file: 'recorded.ts',
+  };
+  await api.fleetReviewRead(request);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.FLEET_REVIEW_READ, request);
+  await api.fleetReviewForget(request);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.FLEET_REVIEW_FORGET, request);
+});

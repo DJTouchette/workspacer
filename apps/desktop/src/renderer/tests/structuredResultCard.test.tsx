@@ -114,7 +114,7 @@ describe('<StructuredResultCard> inside a fleet wake', () => {
     // The dispatch's schema required `commit`; this worker ran out of context
     // and reported neither it nor the file list.
     render(<ConversationMessage turn={wake({ merged: false, caveats: 'ran out of context' })} />);
-    expect(screen.getByTitle('merged: no')).toBeTruthy();
+    expect(screen.getByTitle('merged: no (worker-reported)')).toBeTruthy();
     expect(screen.getByText('ran out of context')).toBeTruthy();
     expect(screen.queryByText(/undefined/)).toBeNull();
     expect(screen.queryByLabelText(/Copy commit/)).toBeNull();

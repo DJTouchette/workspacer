@@ -4,6 +4,7 @@
  * can *ask workspacer to do*. Kept small and explicit; each is a future MCP tool.
  */
 
+import { fleetReviewStore, type ReviewAllocation } from './fleetReviewStore';
 import { Notification, shell } from 'electron';
 import { randomUUID } from 'crypto';
 import * as os from 'os';
@@ -934,6 +935,7 @@ export function registerHubCapabilities(): void {
     // is done here. A soft failure (cwd not a repo, git error) falls back to
     // `cwd` with a warning rather than refusing the dispatch.
     let spawnCwd = cwd;
+    let reviewAllocation: ReviewAllocation | undefined;
     let worktreeResult:
       | {
           projectCwd: string;
@@ -959,6 +961,7 @@ export function registerHubCapabilities(): void {
         });
         if (wt.ok && wt.path) {
           spawnCwd = wt.path;
+          reviewAllocation = wt.reviewAllocation;
           worktreeResult = {
             projectCwd: projectCwd ?? requestedExecutionCwd,
             executionCwd: normalizeSpawnCwd(spawnCwd),
@@ -1007,6 +1010,14 @@ export function registerHubCapabilities(): void {
         projectCwd: projectCwd ?? requestedExecutionCwd,
       });
     }
+    const recordReviewAllocation = (sessionId: string): void => {
+      if (!parentSessionId || !reviewAllocation) return;
+      try {
+        fleetReviewStore.register(parentSessionId, sessionId, reviewAllocation);
+      } catch (err) {
+        console.warn('[fleet-review] Could not retain allocation; review unavailable', err);
+      }
+    };
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did
@@ -1077,6 +1088,7 @@ export function registerHubCapabilities(): void {
         routing,
         firstMessage: message,
       });
+      recordReviewAllocation(sessionId);
       return spawnResult(
         sessionId,
         message,
@@ -1125,6 +1137,7 @@ export function registerHubCapabilities(): void {
         routing,
         firstMessage: message,
       });
+      recordReviewAllocation(sessionId);
       return spawnResult(
         sessionId,
         message,
@@ -1160,6 +1173,7 @@ export function registerHubCapabilities(): void {
       routing,
       firstMessage: message,
     });
+    recordReviewAllocation(sessionId);
     return spawnResult(
       sessionId,
       message,

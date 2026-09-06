@@ -27,7 +27,7 @@
  * card and never a thrown render.
  */
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ChevronRight, ClipboardList, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, ClipboardList } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
 import { CopyTextButton } from './CopyTextButton';
@@ -119,26 +119,12 @@ const chipStyle: React.CSSProperties = {
  *  boolean a schema invents gets the same badge. */
 const BooleanChip: React.FC<{ field: ResultField }> = ({ field }) => {
   const yes = field.value === true;
-  const tint = yes ? colors.success : colors.muted;
   return (
     <span
-      title={`${field.label}: ${yes ? 'yes' : 'no'}`}
-      style={{
-        ...chipStyle,
-        fontWeight: 600,
-        color: tint,
-        background: `color-mix(in srgb, ${tint} 12%, transparent)`,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-      }}
+      title={`${field.label}: ${yes ? 'yes' : 'no'} (worker-reported)`}
+      style={{ ...chipStyle, color: colors.muted }}
     >
-      {yes ? (
-        <Check size={11} strokeWidth={2.25} aria-hidden />
-      ) : (
-        <X size={11} strokeWidth={2.25} aria-hidden />
-      )}
-      {field.label}
-      <span style={{ opacity: 0.75, fontWeight: 500 }}>{yes ? 'yes' : 'no'}</span>
+      {field.label} <span>{yes ? 'yes' : 'no'}</span>
     </span>
   );
 };
@@ -483,6 +469,11 @@ const StructuredResultCardInner: React.FC<{
         )}
       </div>
 
+      {json && (
+        <div style={{ marginTop: 4, fontSize: '0.66rem', color: colors.muted }}>
+          Worker-reported · checks and outcomes have no host verification
+        </div>
+      )}
       {error && (
         <div style={{ marginTop: 5 }}>
           <MissingNotice reason={error} label={errorLabel} />
