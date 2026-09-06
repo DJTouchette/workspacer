@@ -85,6 +85,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   sessions: History,
   guide: LifeBuoy,
   board: LayoutGrid,
+  recentagents: LayoutGrid,
 };
 
 export interface IconProps {

@@ -47,6 +47,8 @@
     "TestDangerousParamVocabularyMatchesTheGolden."
   ],
   "params": {
+    "dispatchOwnerSessionId": "id",
+    "retrySourceSessionId": "id",
     "answers": "shell",
     "args": "argv",
     "argv": "argv",

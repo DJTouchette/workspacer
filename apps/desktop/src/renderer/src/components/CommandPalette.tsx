@@ -172,6 +172,7 @@ interface CommandPaletteProps {
   /** Open the Sessions pane (browse + resume past daemon sessions). */
   onOpenSessions?: () => void;
   /** Open the brief Board (kanban over every project's .workspacer/brief.md). */
+  onOpenRecentAgents?: () => void;
   onOpenBoard?: () => void;
   /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
   onOpenInspector?: () => void;
@@ -247,6 +248,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenAnalytics,
   onOpenAgents,
   onOpenSessions,
+  onOpenRecentAgents,
   onOpenBoard,
   onOpenInspector,
   onOpenContext,
@@ -408,6 +410,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenAgents,
     );
     add(
+      'cmd-recentagents',
+      'Recent agents',
+      'Inspect dispatched agents, metrics and actual task loops',
+      <ClipboardList size={16} strokeWidth={1.75} />,
+      onOpenRecentAgents,
+    );
+    add(
       'cmd-board',
       'Open Brief Board',
       'Every project’s brief as cards — drag to move an entry, or to archive it',
@@ -556,6 +565,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenAnalytics,
     onOpenAgents,
     onOpenSessions,
+    onOpenRecentAgents,
     onOpenBoard,
     onOpenInspector,
     onOpenContext,

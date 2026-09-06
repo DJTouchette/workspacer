@@ -161,3 +161,22 @@ func TestProfileGrantNonObjectParamsPassUntouched(t *testing.T) {
 		t.Fatalf("non-object params were rewritten: %s", raw)
 	}
 }
+
+func TestDispatchProvenanceOnlySurvivesLocalHostConnection(t *testing.T) {
+	for _, token := range []string{"tok-manager", "tok-operator", "plug-tok", "host-secret"} {
+		t.Run(token, func(t *testing.T) {
+			url, got := profileGrantServer(t)
+			params := spawnVia(t, url, token, `{"dispatchOwnerSessionId":"manager","retrySourceSessionId":"worker","taskId":"task","stage":"fix","afterDispatchId":"first"}`, got)
+			if token == "host-secret" {
+				if params["dispatchOwnerSessionId"] != "manager" || params["retrySourceSessionId"] != "worker" {
+					t.Fatal("host provenance lost")
+				}
+			} else if params["dispatchOwnerSessionId"] != nil || params["retrySourceSessionId"] != nil {
+				t.Fatal("forged provenance survived")
+			}
+			if params["taskId"] != "task" || params["stage"] != "fix" || params["afterDispatchId"] != "first" {
+				t.Fatal("public task links lost")
+			}
+		})
+	}
+}

@@ -224,6 +224,7 @@ export const IPC = {
   // ── Response cards (wks-html-card) ──
   // May a card's view_diff action open this path? Only main can read symlinks,
   // and containment is decided there — see services/htmlCardPaths.
+  DISPATCH_HISTORY_READ: 'dispatch-history:read',
   FLEET_REVIEW_READ: 'fleet-review:read',
   FLEET_REVIEW_FORGET: 'fleet-review:forget',
   HTML_CARD_READ_DIFF: 'html-card:read-diff',

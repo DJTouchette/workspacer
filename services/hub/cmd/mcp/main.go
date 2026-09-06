@@ -1053,7 +1053,20 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	if peer != "" {
 		m = "hub:" + peer + "/" + method
 	}
-	res, aux, err := b.forward(ctx, m, in)
+	// Serialize public inputs first, then add host-derived identity/provenance.
+	raw, marshalErr := json.Marshal(in)
+	if marshalErr != nil {
+		return nil, nil, marshalErr
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, nil, err
+	}
+	wire["dispatchOwnerSessionId"], _ = json.Marshal(callerSessionID(ctx))
+	if in.RetrySourceSessionID != "" {
+		wire["retrySourceSessionId"], _ = json.Marshal(in.RetrySourceSessionID)
+	}
+	res, aux, err := b.forward(ctx, m, wire)
 	if err != nil || res == nil || res.IsError {
 		return res, aux, err
 	}
@@ -1518,6 +1531,12 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
+	TaskID          string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
+	Stage           string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
+	AfterDispatchID string `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`
+	// Private to respawn_with. Never decoded from the public spawn tool input.
+	RetrySourceSessionID string `json:"-"`
+
 	// Hub gets its own field (not the hubArg embed) for its distinct
 	// description: a remote spawn's meaning differs from "this session lives
 	// there", and the peer's clamp is worth stating where the model reads it.

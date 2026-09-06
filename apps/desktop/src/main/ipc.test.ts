@@ -98,7 +98,7 @@ vi.mock('./services/worktreeService', () => ({
   createWorktree: vi.fn(),
 }));
 vi.mock('./services/claudeSessionStore', () => ({
-  claudeSessionStore: { getSnapshot: cardMocks.owner },
+  claudeSessionStore: { getSnapshot: cardMocks.owner, getAllSnapshots: vi.fn(() => []) },
 }));
 vi.mock('./services/claudeModels', () => ({ listClaudeModels: vi.fn() }));
 vi.mock('./services/workflowWatcher', () => ({ workflowWatcher: {} }));
@@ -592,5 +592,24 @@ it('Fleet review IPC uses the record owner/selector guard without a trusted-user
     read.mockRestore();
     forget.mockRestore();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('history read derives the current manager from live host state, ignoring caller row identity', async () => {
+  const { claudeSessionStore } = await import('./services/claudeSessionStore');
+  const { dispatchHistoryStore } = await import('./services/dispatchHistoryStore');
+  const snaps = vi.spyOn(claudeSessionStore, 'getAllSnapshots').mockReturnValue([
+    { sessionId: 'stopped', isWakeTarget: true, status: 'ended', startedAt: 99 },
+    { sessionId: 'remote', isWakeTarget: true, status: 'active', startedAt: 100, hub: 'peer' },
+    { sessionId: 'manager', isWakeTarget: true, status: 'active', startedAt: 5 },
+  ] as never);
+  const list = vi.spyOn(dispatchHistoryStore, 'list').mockReturnValue([]);
+  try {
+    expect(
+      await handlers.get('dispatch-history:read')!(null, { ownerSessionId: 'forged' }),
+    ).toEqual({ available: true, currentOwnerSessionId: 'manager', tasks: [] });
+  } finally {
+    snaps.mockRestore();
+    list.mockRestore();
   }
 });

@@ -2751,3 +2751,58 @@ describe('busContextLimit — the raw pair, and where it falls through to', () =
     expect(busContextLimit({ usage: null })).toBe(0);
   });
 });
+
+describe('accepted manager task links through the actual spawn handler', () => {
+  it('returns host IDs and consumes them on a later stage; refuses cross-owner before spawning', async () => {
+    const { dispatchHistoryStore } = await import('./dispatchHistoryStore');
+    const owner = {
+      sessionId: 'history-manager',
+      isWakeTarget: true,
+      status: 'active',
+      cwd: cfg.dir,
+    };
+    getSnapshot.mockImplementation((id: unknown) => (id === owner.sessionId ? owner : null));
+    spawnManagedAgent
+      .mockResolvedValueOnce('history-scout')
+      .mockResolvedValueOnce('history-implement');
+    const common = {
+      provider: 'codex',
+      cwd: cfg.dir,
+      parentSessionId: owner.sessionId,
+      dispatchOwnerSessionId: owner.sessionId,
+    };
+    const first = (await call('agents.spawn', { ...common, stage: 'scout' })) as {
+      taskId: string;
+      dispatchId: string;
+    };
+    expect(first.taskId).toEqual(expect.any(String));
+    expect(first.dispatchId).toEqual(expect.any(String));
+    const next = (await call('agents.spawn', {
+      ...common,
+      taskId: first.taskId,
+      stage: 'implement',
+      afterDispatchId: first.dispatchId,
+    })) as { taskId: string };
+    expect(next.taskId).toBe(first.taskId);
+    const task = dispatchHistoryStore.list().find((t) => t.taskId === first.taskId)!;
+    expect(task.attempts.map((a) => a.stage)).toEqual(['scout', 'implement']);
+    spawnManagedAgent.mockResolvedValueOnce('history-worktree');
+    const tree = (await call('agents.spawn', { ...common, worktree: true })) as { taskId: string };
+    expect(
+      dispatchHistoryStore.list().find((t) => t.taskId === tree.taskId)?.attempts[0],
+    ).toMatchObject({
+      executionCwd: '/wt/proj-abc',
+      worktree: { requested: true, allocated: true, fallback: false, branch: 'agent/x' },
+    });
+    const count = dispatchHistoryStore.list().length;
+    spawnManagedAgent.mockRejectedValueOnce(new Error('provider refused'));
+    await expect(call('agents.spawn', common)).rejects.toThrow('provider refused');
+    expect(dispatchHistoryStore.list()).toHaveLength(count);
+    const launches = spawnManagedAgent.mock.calls.length;
+    await expect(
+      call('agents.spawn', { ...common, dispatchOwnerSessionId: 'forged', taskId: first.taskId }),
+    ).rejects.toThrow();
+    expect(spawnManagedAgent.mock.calls.length).toBe(launches);
+    getSnapshot.mockImplementation(() => null);
+  });
+});

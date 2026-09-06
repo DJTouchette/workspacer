@@ -405,6 +405,12 @@ func jsonStr(s string) string {
 // is neither in spawnParams' JSON tags nor here fails the drift guard below —
 // mirror it or decline it explicitly.
 var spawnParamsDeclined = map[string]string{
+	"taskId":                 "desktop-only local dispatch projection",
+	"stage":                  "desktop-only explicit task stage",
+	"afterDispatchId":        "desktop-only exact predecessor",
+	"dispatchOwnerSessionId": "desktop-only host-stamped history owner",
+	"retrySourceSessionId":   "desktop-only host respawn provenance",
+
 	// `manager` IS mirrored (see spawnParams.Manager) — only its historical
 	// full-access companion is declined, because authority is resolved from
 	// local config/token stamps at mint time, never from this caller field.

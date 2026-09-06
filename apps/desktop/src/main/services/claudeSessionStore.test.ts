@@ -1216,3 +1216,44 @@ describe('applyManagedMode carries the daemon selection slice', () => {
     expect(snap.statusLine?.contextUsedPct).toBeUndefined();
   });
 });
+
+// The history projection uses real atomic persistence, confined to this test.
+vi.mock('./dispatchHistoryStore', async () => {
+  const actual =
+    await vi.importActual<typeof import('./dispatchHistoryStore')>('./dispatchHistoryStore');
+  const fs = await import('fs');
+  const os = await import('os');
+  const path = await import('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-adapter-'));
+  return {
+    ...actual,
+    dispatchHistoryStore: new actual.DispatchHistoryStore(() => path.join(dir, 'history.json')),
+  };
+});
+
+it('persists exact session lifecycle across close and same-ID restart without adding attempts', async () => {
+  const { dispatchHistoryStore } = await import('./dispatchHistoryStore');
+  const sid = uniqueId();
+  dispatchHistoryStore.accept({
+    owner: { sessionId: 'manager', isWakeTarget: true, status: 'active' },
+    projectCwd: '/proj',
+    executionCwd: '/proj',
+    sessionId: sid,
+  });
+  hook(sid, 'SessionStart');
+  hook(sid, 'Stop');
+  hook(sid, 'SessionEnd');
+  expect(
+    dispatchHistoryStore.list().find((t) => t.attempts[0].sessionId === sid)?.attempts[0],
+  ).toMatchObject({ lifecycle: 'ended', live: false, resultContract: 'absent' });
+  hook(sid, 'SessionStart');
+  hook(sid, 'Stop');
+  vi.advanceTimersByTime(31_000);
+  expect(
+    dispatchHistoryStore.list().find((t) => t.attempts[0].sessionId === sid)?.attempts,
+  ).toHaveLength(1);
+  claudeSessionStore.closeSession(sid);
+  expect(
+    dispatchHistoryStore.list().find((t) => t.attempts[0].sessionId === sid)?.attempts[0].live,
+  ).toBe(false);
+});

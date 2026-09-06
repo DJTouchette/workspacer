@@ -23,7 +23,9 @@ const buttonStyle: React.CSSProperties = {
 export function FleetReview({
   evidenceId,
   workerSessionId,
+  requireLiveOwner = false,
 }: {
+  requireLiveOwner?: boolean;
   evidenceId?: string;
   workerSessionId: string;
 }): React.ReactElement {
@@ -32,16 +34,19 @@ export function FleetReview({
     <FleetReviewBody
       key={`${host?.sessionId}:${workerSessionId}:${evidenceId}`}
       host={host}
+      requireLiveOwner={requireLiveOwner}
       evidenceId={evidenceId}
       workerSessionId={workerSessionId}
     />
   );
 }
 function FleetReviewBody({
+  requireLiveOwner,
   host,
   evidenceId,
   workerSessionId,
 }: {
+  requireLiveOwner: boolean;
   host: HtmlCardHost | null;
   evidenceId?: string;
   workerSessionId: string;
@@ -71,6 +76,23 @@ function FleetReviewBody({
     setBusy(true);
     setError('');
     try {
+      if (requireLiveOwner) {
+        const liveOwner = host?.sessionId
+          ? await window.electronAPI.getClaudeSession(host.sessionId)
+          : null;
+        if (
+          !liveOwner ||
+          liveOwner.sessionId !== host?.sessionId ||
+          liveOwner.status === 'ended' ||
+          liveOwner.hub ||
+          host?.isCurrent?.() === false
+        ) {
+          setError('The current owning manager is no longer available.');
+          setEvidence(undefined);
+          setSelected(undefined);
+          return;
+        }
+      }
       const result = await window.electronAPI.fleetReviewRead!(
         file === undefined ? request : { ...request, file },
       );

@@ -60,6 +60,7 @@ const defaultTitles: Record<PaneType, string> = {
   sessions: 'Sessions',
   guide: 'Guide',
   board: 'Board',
+  recentagents: 'Recent agents',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -1156,19 +1157,32 @@ export function useAgentManager() {
       pluginId?: string,
     ): string => {
       const ws = agentsRef.current.find((a) => a.id === workspaceId);
-      const existing = ws?.tabs.find(
-        (t) =>
-          t.panes.length === 1 &&
-          t.panes[0].type === type &&
-          t.panes[0].title === title &&
-          t.panes[0].url === url,
+      const existing = ws?.tabs.find((t) =>
+        type === 'recentagents'
+          ? t.panes.some((p) => p.type === type)
+          : t.panes.length === 1 &&
+            t.panes[0].type === type &&
+            t.panes[0].title === title &&
+            t.panes[0].url === url,
       );
       const paneId = generateId('pane');
       const tabId = existing?.id ?? generateId('tab');
       setAgents((prev) =>
         withGlobalWorkspace(prev).map((a) => {
           if (a.id !== workspaceId) return a;
-          if (existing) return { ...a, activeTabId: existing.id };
+          if (existing)
+            return {
+              ...a,
+              activeTabId: existing.id,
+              tabs:
+                type === 'recentagents'
+                  ? a.tabs.map((t) =>
+                      t.id === existing.id
+                        ? { ...t, activePaneId: t.panes.find((p) => p.type === type)!.id }
+                        : t,
+                    )
+                  : a.tabs,
+            };
           const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true, pluginId };
           return {
             ...a,

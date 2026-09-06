@@ -1491,6 +1491,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // The host's clipboard is not the one the browser user pasted from, so
     // there is nothing to spill. null sends the paste handler down the upload
     // path with the bytes the browser itself gave it.
+    dispatchHistoryRead: async () => ({
+      available: false,
+      reason:
+        'Recent agents history is available only on the originating local desktop; remote/headless collection is unsupported.',
+    }),
     saveClipboardImage: () => Promise.resolve(null),
     importChromeCookies: () =>
       Promise.resolve({ imported: 0, skipped: 0, errors: ['not available on web'] }),

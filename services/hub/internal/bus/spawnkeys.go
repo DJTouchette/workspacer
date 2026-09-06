@@ -65,6 +65,7 @@ import (
 //   - apps/desktop/src/main/services/hubCapabilities.ts  the desktop provider
 //   - services/hub/cmd/mcp/main.go         spawnAgentIn (the facade's caller side)
 var spawnParamKeys = []string{
+	"taskId", "stage", "afterDispatchId", "dispatchOwnerSessionId", "retrySourceSessionId",
 	// ── identity / grant fields the router itself strips or stamps ──────────
 	"profileId",
 	"profileGranted",

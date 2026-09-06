@@ -508,6 +508,8 @@ func KnownKind(k ParamKind) bool { return knownKinds[k] }
 // already owns, carried by two dozen read/control methods, and adding it would
 // drown the signal rather than sharpen it.
 var dangerousParams = map[string]ParamKind{
+	"dispatchOwnerSessionId": KindID,
+	"retrySourceSessionId":   KindID,
 	// Filesystem locations.
 	"path": KindPath, "cwd": KindPath, "dir": KindPath, "directory": KindPath,
 	"filePath": KindPath, "root": KindPath, "paths": KindPath,
@@ -898,9 +900,11 @@ const (
 // refused.
 var unscopedParams = map[string]map[string]ParamDecision{
 	"agents.spawn": {
-		"cwd":        {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},
-		"mcpItemIds": {KindID, "each id resolves through libraryService -> toClaudeEntry -> buildSessionMcpConfig into a --mcp-config entry whose command/args/env come verbatim from a library item, pre-approved by --allowedTools mcp__<id>; the BUS path therefore forces it to nil (busMcpItemIds / spawn_bypass) and only a locally-initiated spawn honours a selection"},
-		"profileId":  {KindID, "resolves to a stored profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv, so it is the other way to smuggle a bypass; both bus providers scrub the RESOLVED profile before spawning (scrubProfileBypass in hubCapabilities.ts, scrubBypassProfile in the brain — see spawn_bypass_test.go). One verified exception: the hub router (internal/bus sanitizeSpawnParams) strips this field unless the caller's token record grants that exact id (authtoken profilesAllowed), stamping hub-only `profileGranted` beside a survivor — and a GRANTED spawn keeps the LOCAL profile's configDir (remoteSpawnProfile in the brain) while the bypass-flag/mcpItemIds scrub still applies, because bus-written profiles have configDir scrubbed at write time so an honored configDir was always typed in locally"},
+		"dispatchOwnerSessionId": {KindID, "private facade stamp from the session credential; bus strips non-host copies"},
+		"retrySourceSessionId":   {KindID, "private respawn_with stamp, excluded from spawn_agent schema; bus strips non-host copies and desktop validates known source owner/project"},
+		"cwd":                    {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},
+		"mcpItemIds":             {KindID, "each id resolves through libraryService -> toClaudeEntry -> buildSessionMcpConfig into a --mcp-config entry whose command/args/env come verbatim from a library item, pre-approved by --allowedTools mcp__<id>; the BUS path therefore forces it to nil (busMcpItemIds / spawn_bypass) and only a locally-initiated spawn honours a selection"},
+		"profileId":              {KindID, "resolves to a stored profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv, so it is the other way to smuggle a bypass; both bus providers scrub the RESOLVED profile before spawning (scrubProfileBypass in hubCapabilities.ts, scrubBypassProfile in the brain — see spawn_bypass_test.go). One verified exception: the hub router (internal/bus sanitizeSpawnParams) strips this field unless the caller's token record grants that exact id (authtoken profilesAllowed), stamping hub-only `profileGranted` beside a survivor — and a GRANTED spawn keeps the LOCAL profile's configDir (remoteSpawnProfile in the brain) while the bypass-flag/mcpItemIds scrub still applies, because bus-written profiles have configDir scrubbed at write time so an honored configDir was always typed in locally"},
 		// The two fields the SECURITY comment in both spawn handlers is actually
 		// about. They were never in the vocabulary, so the clamp that is the
 		// whole argument for this method's exemption was pinned by behavioural

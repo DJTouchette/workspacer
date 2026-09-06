@@ -60,3 +60,30 @@ describe('openPaneIn — editor plugin dedupe by full url, not basename', () => 
     expect(b).toBe(a);
   });
 });
+
+it('restores and focuses the one global Recent agents pane even in a split tab', () => {
+  const { result } = renderHook(() => useAgentManager());
+  let first = '';
+  act(() => {
+    first = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
+  });
+  const saved = JSON.parse(JSON.stringify(result.current.agents));
+  const ws = saved.find((a: { id: string }) => a.id === GLOBAL_WORKSPACE_ID);
+  const tab = ws.tabs.find((t: { id: string }) => t.id === first);
+  const recentId = tab.panes[0].id;
+  tab.panes.push({ id: 'other', type: 'board', title: 'Board' });
+  tab.activePaneId = 'other';
+  act(() => {
+    result.current.loadAgentsFromSession(saved, GLOBAL_WORKSPACE_ID);
+  });
+  let again = '';
+  act(() => {
+    again = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
+  });
+  expect(again).toBe(first);
+  const restored = result.current.agents.find((a) => a.id === GLOBAL_WORKSPACE_ID)!;
+  expect(
+    restored.tabs.flatMap((t) => t.panes).filter((p) => p.type === 'recentagents'),
+  ).toHaveLength(1);
+  expect(restored.tabs.find((t) => t.id === first)?.activePaneId).toBe(recentId);
+});

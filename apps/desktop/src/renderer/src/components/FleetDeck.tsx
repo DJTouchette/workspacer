@@ -107,6 +107,7 @@ function relTime(ts: number | undefined): string {
 }
 
 interface Props {
+  onOpenRecentAgents?: () => void;
   /** Inset so the deck sits inside the content area (right of sidebar, below navbar). */
   top: number;
   left: number;
@@ -235,7 +236,7 @@ const expandBtn: React.CSSProperties = {
  * pane: the agents keep running underneath, and clicking a card simply reveals
  * the one you picked (setActiveAgentId + viewLevel='piloting').
  */
-const FleetDeck: React.FC<Props> = ({ top, left }) => {
+const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
   ensureFleetKeyframes();
   const {
     agents,
@@ -817,6 +818,9 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           }}
         >
           <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Dispatch agent
+        </button>
+        <button onClick={onOpenRecentAgents} style={expandBtn}>
+          Recent agents
         </button>
         <button
           onClick={() => setViewLevel('piloting')}

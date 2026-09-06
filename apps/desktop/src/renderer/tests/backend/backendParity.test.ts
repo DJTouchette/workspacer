@@ -1,3 +1,4 @@
+import type { ElectronAPI } from '../../src/types/electron';
 import { createRemoteBackend } from '../../src/backend/remoteBackend';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
@@ -510,5 +511,32 @@ describe('usage report backend compatibility', () => {
     const bridge = createBridgedBackend(ipc, 'token', 'ws://local/bus');
     await bridge.usageReport();
     expect(ipc.usageReport).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Recent agents stays on the local host path', () => {
+  it('uses preload through the actual bridged factory and distinguishes absent preload from empty history', async () => {
+    const read = vi.fn(async () => ({
+      available: true,
+      currentOwnerSessionId: 'manager',
+      tasks: [],
+    }));
+    const ipc = { platform: 'linux', dispatchHistoryRead: read } as unknown as ElectronAPI;
+    const bridged = createBridgedBackend(ipc, 'fixture', 'ws://fixture');
+    expect(await bridged.dispatchHistoryRead?.()).toEqual({
+      available: true,
+      currentOwnerSessionId: 'manager',
+      tasks: [],
+    });
+    expect(read).toHaveBeenCalledOnce();
+    const absent = createBridgedBackend(
+      { platform: 'linux' } as ElectronAPI,
+      'fixture',
+      'ws://fixture',
+    );
+    expect(await absent.dispatchHistoryRead?.()).toMatchObject({ available: false });
+    expect(await createWebBackend('fixture', 'ws://fixture').dispatchHistoryRead?.()).toMatchObject(
+      { available: false },
+    );
   });
 });

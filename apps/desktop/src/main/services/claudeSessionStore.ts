@@ -1,3 +1,4 @@
+import { dispatchHistoryStore } from './dispatchHistoryStore';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
@@ -2104,6 +2105,14 @@ class ClaudeSessionStore {
     // close_session both come through it, and a manager dismissed by hand
     // orphans its workers exactly as a crashed one does.
     const dying = this.sessions.get(sessionId);
+    if (dying) {
+      try {
+        dispatchHistoryStore.observe({ ...dying, status: 'ended' });
+        dispatchHistoryStore.flush();
+      } catch (err) {
+        console.warn('[dispatch-history] close observation unavailable', err);
+      }
+    }
     if (dying?.isWakeTarget && !dying.hub) {
       this.managerTombstones.set(sessionId, {
         sessionId,
@@ -2318,6 +2327,11 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
+    try {
+      dispatchHistoryStore.observe(session);
+    } catch (err) {
+      console.warn('[dispatch-history] observation unavailable', err);
+    }
     this.refreshOrphanStatus(session);
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).

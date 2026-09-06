@@ -122,7 +122,7 @@ func (h *respawnHub) Call(_ context.Context, method string, params any) (json.Ra
 			return json.RawMessage(`{"sessionId":"new-1"}`), nil
 		}
 		// A current provider acknowledges that it took delivery of the prompt.
-		return json.RawMessage(`{"sessionId":"new-1","messageQueued":true}`), nil
+		return json.RawMessage(`{"sessionId":"new-1","messageQueued":true,"taskId":"task-1","dispatchId":"dispatch-2"}`), nil
 	case "agents.sendMessage":
 		if h.sendErr {
 			return nil, errFake
@@ -209,18 +209,22 @@ func TestRespawnClonesTheTaskAndAppendsTheCorrection(t *testing.T) {
 		t.Fatalf("unexpected error: %s", resultText(res))
 	}
 
+	if !strings.Contains(resultText(res), `"taskId":"task-1"`) || !strings.Contains(resultText(res), `"dispatchId":"dispatch-2"`) {
+		t.Fatalf("lost dispatch IDs: %s", resultText(res))
+	}
 	spawn := hub.call("agents.spawn")
 	if spawn == nil {
 		t.Fatal("no agents.spawn call")
 	}
 	// Everything the manager would otherwise have had to remember.
 	for field, want := range map[string]string{
-		"cwd":             "/w/alpha-wt",
-		"model":           "claude-opus-5[1m]",
-		"effort":          "high",
-		"provider":        "claude",
-		"parentSessionId": "mgr-1",
-		"label":           "alpha: parser (redispatch)",
+		"cwd":                  "/w/alpha-wt",
+		"model":                "claude-opus-5[1m]",
+		"effort":               "high",
+		"provider":             "claude",
+		"parentSessionId":      "mgr-1",
+		"label":                "alpha: parser (redispatch)",
+		"retrySourceSessionId": "old-1",
 	} {
 		if got, _ := spawn.params[field].(string); got != want {
 			t.Errorf("spawn %s = %q, want %q", field, got, want)
@@ -540,5 +544,44 @@ func TestRespawnRoleOverrideWinsOverTheOriginal(t *testing.T) {
 	}
 	if got, _ := p["capability"].(string); got != "frontier" {
 		t.Errorf("spawn capability = %q, want the override", got)
+	}
+}
+
+func TestSpawnInputCannotForgeRetryProvenance(t *testing.T) {
+	var in spawnAgentIn
+	if err := json.Unmarshal([]byte(`{"retrySourceSessionId":"forged","RetrySourceSessionID":"forged","taskId":"task-1","stage":"review","afterDispatchId":"first"}`), &in); err != nil {
+		t.Fatal(err)
+	}
+	if in.RetrySourceSessionID != "" {
+		t.Fatal("public spawn decoded private retry provenance")
+	}
+	if in.TaskID != "task-1" || in.Stage != "review" || in.AfterDispatchID != "first" {
+		t.Fatal("task parameters lost")
+	}
+}
+
+func TestSpawnTaskLinksAndOwnerStampReachProvider(t *testing.T) {
+	ctx := context.WithValue(context.Background(), tokenLabelKey{}, "session:manager")
+	var wire map[string]any
+	b := &build{caller: func(_ context.Context, _ string, params any) (json.RawMessage, error) {
+		raw, _ := json.Marshal(params)
+		_ = json.Unmarshal(raw, &wire)
+		return json.RawMessage(`{"sessionId":"worker","taskId":"task","dispatchId":"second"}`), nil
+	}}
+	no := false
+	result, _, err := spawnWithGrants(ctx, b, "agents.spawn", spawnAgentIn{Provider: "codex", SkipPermissions: &no, ParentSessionId: "manager", TaskID: "task", Stage: "review", AfterDispatchID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"dispatchOwnerSessionId": "manager", "taskId": "task", "stage": "review", "afterDispatchId": "first"} {
+		if wire[key] != want {
+			t.Fatalf("%s lost: %#v", key, wire)
+		}
+	}
+	if wire["retrySourceSessionId"] != nil {
+		t.Fatal("fresh dispatch became retry")
+	}
+	if !strings.Contains(resultText(result), `"dispatchId":"second"`) {
+		t.Fatal("result lost IDs")
 	}
 }

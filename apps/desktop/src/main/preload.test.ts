@@ -153,6 +153,8 @@ it('bridges captured Fleet review selectors without adding filesystem or revisio
     evidenceId: 'opaque',
     file: 'recorded.ts',
   };
+  await api.dispatchHistoryRead();
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.DISPATCH_HISTORY_READ);
   await api.fleetReviewRead(request);
   expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.FLEET_REVIEW_READ, request);
   await api.fleetReviewForget(request);

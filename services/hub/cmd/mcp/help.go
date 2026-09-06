@@ -52,6 +52,8 @@ Reading another agent's activity, cheapest first:
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
 	"spawn": strings.TrimSpace(`
+Task loops (local desktop): pass stage=scout|implement|review|fix|validate|land|other for the actual dispatch. Save the returned taskId and dispatchId. Every later scout/implement/review/fix/validate/land continuation of that SAME task passes taskId and afterDispatchId from its predecessor, under the same manager and project. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
+
 spawn_agent starts a new coding-agent session and returns its sessionId.
 - Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is
   one call — you do not spawn, wait for the id, and then send_message. The host

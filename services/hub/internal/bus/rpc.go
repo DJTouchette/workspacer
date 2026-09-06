@@ -699,6 +699,12 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 		log.Printf("SECURITY: %v (caller %s)", err, caller.tokenID)
 		return nil, err
 	}
+	// Only the local host control plane can stamp dispatch provenance. Scoped
+	// operator promotion is not host identity; federation never inherits it.
+	if !caller.trusted || caller.viaScopedToken || caller.pluginID != "" || caller.federated {
+		delete(m, "dispatchOwnerSessionId")
+		delete(m, "retrySourceSessionId")
+	}
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
 	delete(m, "escalationScrubbed")

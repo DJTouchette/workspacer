@@ -212,21 +212,22 @@ func addRespawnTool(b *build) {
 			}
 
 			spawn := spawnAgentIn{
-				Hub:             peer,
-				Provider:        snap.Provider,
-				Transport:       snap.Transport,
-				Cwd:             firstNonEmpty(in.Cwd, snap.Cwd),
-				Model:           model,
-				ModelIdentity:   modelIdentity,
-				ContextWindow:   contextWindow,
-				Effort:          firstNonEmpty(in.Effort, snap.Settings.Effort),
-				Label:           firstNonEmpty(in.Label, retryLabel(snap.Label)),
-				ParentSessionId: snap.ParentSessionID,
-				ToolScope:       in.ToolScope,
-				Worktree:        in.Worktree,
-				ResultSchema:    snap.ResultSchema,
-				Role:            firstNonEmpty(in.Role, snap.Routing.Role),
-				Capability:      firstNonEmpty(in.Capability, snap.Routing.Capability),
+				RetrySourceSessionID: in.SessionID,
+				Hub:                  peer,
+				Provider:             snap.Provider,
+				Transport:            snap.Transport,
+				Cwd:                  firstNonEmpty(in.Cwd, snap.Cwd),
+				Model:                model,
+				ModelIdentity:        modelIdentity,
+				ContextWindow:        contextWindow,
+				Effort:               firstNonEmpty(in.Effort, snap.Settings.Effort),
+				Label:                firstNonEmpty(in.Label, retryLabel(snap.Label)),
+				ParentSessionId:      snap.ParentSessionID,
+				ToolScope:            in.ToolScope,
+				Worktree:             in.Worktree,
+				ResultSchema:         snap.ResultSchema,
+				Role:                 firstNonEmpty(in.Role, snap.Routing.Role),
+				Capability:           firstNonEmpty(in.Capability, snap.Routing.Capability),
 				// The composed dispatch rides the SPAWN now, rather than a
 				// follow-up sendMessage below.
 				//
@@ -287,7 +288,13 @@ func addRespawnTool(b *build) {
 			// sends here would be worse than none: the successor would read the
 			// whole dispatch twice.
 
+			var dispatchIDs struct {
+				TaskID     string `json:"taskId"`
+				DispatchID string `json:"dispatchId"`
+			}
+			_ = json.Unmarshal([]byte(resultText(res)), &dispatchIDs)
 			out, merr := json.Marshal(map[string]any{
+				"taskId": dispatchIDs.TaskID, "dispatchId": dispatchIDs.DispatchID,
 				"sessionId":  newID,
 				"clonedFrom": in.SessionID,
 				"cwd":        spawn.Cwd,

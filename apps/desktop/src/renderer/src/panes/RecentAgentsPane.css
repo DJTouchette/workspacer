@@ -1,0 +1,95 @@
+.recent-agents {
+  padding: 16px;
+  overflow: auto;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--wks-bg-base);
+  color: var(--wks-text-primary);
+  font: 0.8rem var(--wks-font-sans);
+}
+.recent-agents header,
+.recent-step-heading,
+.recent-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.recent-agents header {
+  justify-content: space-between;
+}
+.recent-agents h2 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+.recent-agents h3 {
+  font-size: 0.9rem;
+}
+.recent-agents p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.recent-filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.recent-filters label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.72rem;
+  max-width: 100%;
+}
+.recent-filters select {
+  max-width: 100%;
+  min-width: 140px;
+  background: var(--wks-bg-input);
+  color: var(--wks-text-primary);
+  border: 1px solid var(--wks-border-input);
+  border-radius: var(--wks-radius-sm);
+  padding: 6px 8px;
+  font: inherit;
+}
+.recent-agents :is(button, select, summary):focus-visible {
+  outline: 2px solid var(--wks-accent);
+  outline-offset: 2px;
+}
+.recent-note {
+  font-size: 0.66rem;
+  color: var(--wks-text-tertiary);
+}
+.recent-task {
+  margin-top: 12px;
+}
+.recent-task summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.recent-task summary > span {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--wks-text-secondary);
+}
+.recent-task ol {
+  padding-left: 20px;
+  margin-bottom: 0;
+}
+.recent-attempt {
+  border-top: 1px solid var(--wks-border-subtle);
+  padding: 12px 0;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.recent-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+  font-family: var(--wks-font-mono);
+  font-size: 0.66rem;
+}
+.recent-actions {
+  align-items: flex-start;
+}

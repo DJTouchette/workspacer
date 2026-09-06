@@ -1,3 +1,4 @@
+export type { DispatchHistoryResponse } from './dispatchHistory';
 /**
  * Canonical shared payload types for the high-traffic IPC surfaces.
  *

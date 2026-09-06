@@ -1,3 +1,4 @@
+import { dispatchHistoryStore } from './services/dispatchHistoryStore';
 import { fleetReviewStore } from './services/fleetReviewStore';
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { windowFor } from './shared/modelContextWindows';
@@ -1375,6 +1376,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // to write. A move that loses its compare-and-swap rejects, and the pane
   // reloads rather than retrying blind.
   // Same record ownership/selector validation for every caller; no filesystem grant.
+  ipcMain.handle(IPC.DISPATCH_HISTORY_READ, () => {
+    const currentOwner = claudeSessionStore
+      .getAllSnapshots()
+      .filter((s) => s.isWakeTarget && s.status !== 'ended' && !s.hub)
+      .sort((a, b) => b.startedAt - a.startedAt)[0];
+    return {
+      available: true,
+      currentOwnerSessionId: currentOwner?.sessionId,
+      tasks: dispatchHistoryStore.list(),
+    };
+  });
   ipcMain.handle(IPC.FLEET_REVIEW_READ, (_event, request: unknown) =>
     fleetReviewStore.read(request),
   );

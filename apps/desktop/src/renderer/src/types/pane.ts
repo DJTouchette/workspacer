@@ -18,7 +18,8 @@ export type PaneType =
   | 'context'
   | 'sessions'
   | 'guide'
-  | 'board';
+  | 'board'
+  | 'recentagents';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions

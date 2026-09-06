@@ -645,3 +645,53 @@ it('does not deliver a finish if the worker resumes while review evidence is bei
     capturing.mockRestore();
   }
 });
+
+// The history projection uses real atomic persistence, confined to this test.
+vi.mock('./dispatchHistoryStore', async () => {
+  const actual =
+    await vi.importActual<typeof import('./dispatchHistoryStore')>('./dispatchHistoryStore');
+  const fs = await import('fs');
+  const os = await import('os');
+  const path = await import('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-adapter-'));
+  return {
+    ...actual,
+    dispatchHistoryStore: new actual.DispatchHistoryStore(() => path.join(dir, 'history.json')),
+  };
+});
+
+it('records only the existing validator outcome in persisted history, never prose success', async () => {
+  const { dispatchHistoryStore } = await import('./dispatchHistoryStore');
+  for (const [sessionId, reply, schema, expected] of [
+    ['history-prose', 'All checks pass.', undefined, 'absent'],
+    ['history-invalid', 'All checks pass.', { type: 'object', required: ['commit'] }, 'invalid'],
+    [
+      'history-valid',
+      '```wks-result\n{"commit":"abc"}\n```',
+      { type: 'object', required: ['commit'] },
+      'valid',
+    ],
+  ] as const) {
+    dispatchHistoryStore.accept({
+      owner: { sessionId: 'mgr', isWakeTarget: true, status: 'active' },
+      projectCwd: '/fixture',
+      executionCwd: '/fixture',
+      sessionId,
+    });
+    supervisorNudge.onFinished(
+      worker({
+        sessionId,
+        resultSchema: schema as Record<string, unknown>,
+        conversation: turns(['user', 'task'], ['assistant', reply]),
+      }),
+      'mgr',
+      reply,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(
+      dispatchHistoryStore.list().find((t) => t.attempts[0].sessionId === sessionId)?.attempts[0]
+        .resultContract,
+    ).toBe(expected);
+    supervisorNudge.forgetWorker(sessionId);
+  }
+});

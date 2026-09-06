@@ -1,3 +1,4 @@
+import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
  * Event-driven supervisor wake. When an agent transitions *into* a blocked
  * state (pending approval / question), nudge every live supervisor session with
@@ -430,6 +431,21 @@ class SupervisorNudge {
         continue;
       const currentReply = lastAssistantReply(session);
       if (currentReply && currentReply !== reply) continue;
+      try {
+        dispatchHistoryStore.validated(
+          session.sessionId,
+          entry.escalation
+            ? 'escalated'
+            : entry.result
+              ? 'valid'
+              : entry.resultError
+                ? 'invalid'
+                : 'absent',
+          entry.reviewEvidenceId,
+        );
+      } catch (err) {
+        console.warn('[dispatch-history] result unavailable', err);
+      }
       delivered.push([session.sessionId, signature]);
       entries.push(entry);
     }

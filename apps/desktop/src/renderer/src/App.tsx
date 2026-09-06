@@ -1312,6 +1312,12 @@ function App() {
   /** Open the brief Board — the kanban over every project's
    *  `.workspacer/brief.md`, one swimlane per project plus the fleet brief.
    *  Global rather than per-agent: it is the Fleet Manager's cross-project view. */
+  const openRecentAgentsPane = useCallback(() => {
+    setShowCommandPalette(false);
+    setViewLevel('piloting');
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab, setViewLevel]);
   const openBoardPane = useCallback(() => {
     setShowCommandPalette(false);
     const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'board', 'Board');
@@ -2923,6 +2929,7 @@ function App() {
                 onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
                 onOpenSessions={openSessionsPane}
                 onOpenBoard={openBoardPane}
+                onOpenRecentAgents={openRecentAgentsPane}
                 onOpenInspector={openInspectorForActive}
                 onOpenContext={openContextForActive}
                 onOpenLayouts={() => {
@@ -3101,7 +3108,11 @@ function App() {
           per-agent workspaces, so entering/leaving never remounts a pane.
           Never mounts in focus mode (manifest.fleetDeck). */}
               {uiManifest.fleetDeck && viewLevel === 'fleet' && agents.some((a) => !a.global) && (
-                <FleetDeck top={navHeight} left={contentLeft} />
+                <FleetDeck
+                  top={navHeight}
+                  left={contentLeft}
+                  onOpenRecentAgents={openRecentAgentsPane}
+                />
               )}
 
               {/* Triage Inbox — top-level drawer, reachable from any agent. */}

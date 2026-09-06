@@ -1,3 +1,4 @@
+import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
  * Real capabilities the main process exposes on the hub bus. These are the
  * inverse of events — things a plugin (or, later, Claude via the MCP facade)
@@ -650,7 +651,17 @@ export function registerHubCapabilities(): void {
       role,
       capability,
       decisionId,
+      taskId,
+      stage,
+      afterDispatchId,
+      dispatchOwnerSessionId,
+      retrySourceSessionId,
     } = (params ?? {}) as {
+      taskId?: string;
+      stage?: import('../shared/dispatchHistory').TaskStage;
+      afterDispatchId?: string;
+      dispatchOwnerSessionId?: string;
+      retrySourceSessionId?: string;
       provider?: AgentProvider;
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
       transport?: 'pty' | 'stream';
@@ -801,6 +812,21 @@ export function registerHubCapabilities(): void {
     // for host-owned template/metadata values too, so a template never names a
     // different directory from the worker's actual execution cwd.
     const requestedExecutionCwd = normalizeSpawnCwd(cwd);
+    // These two private fields are stamped by the MCP facade and stripped
+    // from non-host bus callers. Parent/routing labels alone are not ownership.
+    const dispatchOwner =
+      parentSessionId && dispatchOwnerSessionId === parentSessionId
+        ? claudeSessionStore.getSnapshot(parentSessionId)
+        : null;
+    const dispatchAdmission = {
+      owner: dispatchOwner,
+      projectCwd: requestedExecutionCwd,
+      taskId,
+      stage,
+      afterDispatchId,
+      retrySourceSessionId,
+    };
+    dispatchHistoryStore.validate(dispatchAdmission);
     // Whether the first message was WRITTEN by the caller or RENDERED here — it
     // decides whether the result echoes the text back (spawnResult).
     let renderedFromTemplate = false;
@@ -1010,6 +1036,33 @@ export function registerHubCapabilities(): void {
         projectCwd: projectCwd ?? requestedExecutionCwd,
       });
     }
+    const recordDispatch = (sessionId: string) => {
+      // Resumes are observations of the original attempt, never new dispatches.
+      if (resumeSessionId) return {};
+      try {
+        const ids = dispatchHistoryStore.accept({
+          ...dispatchAdmission,
+          owner:
+            parentSessionId && dispatchOwnerSessionId === parentSessionId
+              ? claudeSessionStore.getSnapshot(parentSessionId)
+              : null,
+          sessionId,
+          title: label,
+          executionCwd: normalizeSpawnCwd(spawnCwd),
+          requestedProvider: reqProvider,
+          provider,
+          requestedModel: modelIdentity ?? model,
+          role,
+          worktree: worktreeResult,
+        });
+        const snapshot = claudeSessionStore.getSnapshot(sessionId);
+        if (snapshot) dispatchHistoryStore.observe(snapshot);
+        return ids ?? {};
+      } catch (err) {
+        console.warn('[dispatch-history] Accepted dispatch could not be retained', err);
+        return { dispatchHistoryUnavailable: true };
+      }
+    };
     const recordReviewAllocation = (sessionId: string): void => {
       if (!parentSessionId || !reviewAllocation) return;
       try {
@@ -1089,14 +1142,17 @@ export function registerHubCapabilities(): void {
         firstMessage: message,
       });
       recordReviewAllocation(sessionId);
-      return spawnResult(
-        sessionId,
-        message,
-        escalation(),
-        renderedFromTemplate,
-        routing,
-        worktreeResult,
-      );
+      return {
+        ...recordDispatch(sessionId),
+        ...spawnResult(
+          sessionId,
+          message,
+          escalation(),
+          renderedFromTemplate,
+          routing,
+          worktreeResult,
+        ),
+      };
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -1138,14 +1194,17 @@ export function registerHubCapabilities(): void {
         firstMessage: message,
       });
       recordReviewAllocation(sessionId);
-      return spawnResult(
-        sessionId,
-        message,
-        escalation(),
-        renderedFromTemplate,
-        routing,
-        worktreeResult,
-      );
+      return {
+        ...recordDispatch(sessionId),
+        ...spawnResult(
+          sessionId,
+          message,
+          escalation(),
+          renderedFromTemplate,
+          routing,
+          worktreeResult,
+        ),
+      };
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -1174,14 +1233,17 @@ export function registerHubCapabilities(): void {
       firstMessage: message,
     });
     recordReviewAllocation(sessionId);
-    return spawnResult(
-      sessionId,
-      message,
-      escalation(),
-      renderedFromTemplate,
-      routing,
-      worktreeResult,
-    );
+    return {
+      ...recordDispatch(sessionId),
+      ...spawnResult(
+        sessionId,
+        message,
+        escalation(),
+        renderedFromTemplate,
+        routing,
+        worktreeResult,
+      ),
+    };
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
