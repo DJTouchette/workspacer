@@ -996,6 +996,266 @@ fn model_info_from_value(model: &Value) -> Option<ModelInfo> {
 
 // ── Live client ─────────────────────────────────────────────────────────────
 
+/// Fixed vocabulary only: lifecycle records never include protocol payloads,
+/// command arguments, error strings, prompts, or facade credentials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DriverExit {
+    ReservePortFailed,
+    SpawnFailed,
+    ReadinessFailed,
+    ConnectFailed,
+    WebsocketClose,
+    WebsocketEof,
+    WebsocketReadFailed,
+    WebsocketWriteFailed,
+    WriterTaskFailed,
+    OutboundClosed,
+    InputClosed,
+    DecisionClosed,
+    InterruptClosed,
+    ModelClosed,
+    ChildExited,
+    ChildWaitFailed,
+    DiscoveryExpired,
+    TuiExited,
+    FallbackSpawnFailed,
+    Superseded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CleanupOutcome {
+    NotSpawned,
+    Pending,
+    GroupGone,
+    GroupStillPresent,
+    SignalFailed,
+    ReapFailed,
+    ReapTimedOut,
+    // Windows retains daemon-level job confinement; a per-driver job is not
+    // established here. Never describe a direct-child reap as tree success.
+    #[cfg(not(unix))]
+    DirectChildOnly,
+}
+
+impl CleanupOutcome {
+    fn failed(self) -> bool {
+        matches!(
+            self,
+            Self::GroupStillPresent | Self::SignalFailed | Self::ReapFailed | Self::ReapTimedOut
+        )
+    }
+}
+
+/// Owns precisely one app-server attempt. No lookup by session id, cwd, or
+/// provider name. A superseded driver still cleans THIS handle, never its heir.
+struct OwnedAppServer {
+    child: tokio::process::Child,
+    pid: u32,
+    session: String,
+    generation: u64,
+    // Once signaling is finished, Drop must never signal the numeric group
+    // again: wait() may have released its PID for reuse.
+    signal_pending: bool,
+    cleanup: Option<CleanupOutcome>,
+    exit_status: Option<std::process::ExitStatus>,
+}
+
+impl OwnedAppServer {
+    fn spawn(cmd: &mut Command, evidence: &DriverEvidence) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let child = cmd.kill_on_drop(true).spawn()?;
+        let pid = child.id().expect("newly spawned app-server has a PID");
+        Ok(Self {
+            child,
+            pid,
+            session: evidence.session.clone(),
+            generation: evidence.generation,
+            signal_pending: true,
+            cleanup: None,
+            exit_status: None,
+        })
+    }
+
+    /// Observe exit WITHOUT reaping on Unix. The unreaped direct child pins
+    /// the group identity even when the server exits before its descendants.
+    fn has_exited(&mut self) -> std::io::Result<bool> {
+        #[cfg(unix)]
+        {
+            use nix::libc;
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.pid as libc::id_t,
+                    info.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(unsafe { info.assume_init().si_pid() } != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            self.child.try_wait().map(|status| status.is_some())
+        }
+    }
+
+    async fn exited(&mut self) -> std::io::Result<()> {
+        loop {
+            if self.has_exited()? {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    fn signal_owned(&mut self) -> std::io::Result<()> {
+        if !self.signal_pending {
+            return Ok(());
+        }
+        self.signal_pending = false;
+        #[cfg(unix)]
+        {
+            // Refuse a numeric group signal if something outside this owner
+            // reaped the anchor. WNOWAIT above is essential to this contract.
+            self.has_exited()?;
+            use nix::{
+                errno::Errno,
+                sys::signal::{killpg, Signal},
+                unistd::Pid,
+            };
+            match killpg(Pid::from_raw(self.pid as i32), Signal::SIGKILL) {
+                Ok(()) | Err(Errno::ESRCH) => Ok(()),
+                Err(err) => Err(std::io::Error::from_raw_os_error(err as i32)),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.child.start_kill()
+        }
+    }
+
+    async fn cleanup(&mut self) -> CleanupOutcome {
+        if let Some(outcome) = self.cleanup {
+            return outcome;
+        }
+        let signaled = self.signal_owned().is_ok();
+        let reaped =
+            tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
+        if let Ok(Ok(status)) = &reaped {
+            self.exit_status = Some(*status);
+        }
+        let outcome = match reaped {
+            Err(_) => CleanupOutcome::ReapTimedOut,
+            Ok(Err(_)) => CleanupOutcome::ReapFailed,
+            Ok(Ok(_)) if !signaled => CleanupOutcome::SignalFailed,
+            Ok(Ok(_)) => {
+                #[cfg(unix)]
+                {
+                    use nix::{errno::Errno, sys::signal::killpg, unistd::Pid};
+                    // Probe only after reap. Never send another signal to a
+                    // numeric PGID whose anchor has been released.
+                    let gone = async {
+                        loop {
+                            match killpg(Pid::from_raw(self.pid as i32), None) {
+                                Err(Errno::ESRCH) => return true,
+                                Err(_) => return false,
+                                Ok(()) => {
+                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await
+                                }
+                            }
+                        }
+                    };
+                    if tokio::time::timeout(std::time::Duration::from_secs(2), gone).await
+                        == Ok(true)
+                    {
+                        CleanupOutcome::GroupGone
+                    } else {
+                        CleanupOutcome::GroupStillPresent
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    CleanupOutcome::DirectChildOnly
+                }
+            }
+        };
+        self.cleanup = Some(outcome);
+        outcome
+    }
+}
+
+impl Drop for OwnedAppServer {
+    fn drop(&mut self) {
+        if self.cleanup.is_none() {
+            let signaled = self.signal_owned().is_ok();
+            // Cancellation/panic is only best effort: no async wait is possible
+            // in Drop. Do not call it verified cleanup.
+            tracing::warn!(session = %self.session, generation = self.generation, appserver_pid = self.pid, signaled,
+                "codex app-server owner dropped without verified cleanup");
+        }
+    }
+}
+
+struct DriverEvidence {
+    session: String,
+    generation: u64,
+    pid: Option<u32>,
+    reason: DriverExit,
+    cleanup: CleanupOutcome,
+    exit_status: Option<std::process::ExitStatus>,
+    #[cfg(test)]
+    records: Vec<&'static str>,
+}
+
+impl DriverEvidence {
+    fn new(session: &str, generation: u64) -> Self {
+        Self {
+            session: session.to_owned(),
+            generation,
+            pid: None,
+            reason: DriverExit::ReservePortFailed,
+            cleanup: CleanupOutcome::NotSpawned,
+            exit_status: None,
+            #[cfg(test)]
+            records: Vec::new(),
+        }
+    }
+
+    // One record per attempt/terminal boundary, independent of turn count.
+    fn record(&mut self, event: &'static str) {
+        #[cfg(test)]
+        self.records.push(event);
+        if !matches!(
+            self.cleanup,
+            CleanupOutcome::NotSpawned | CleanupOutcome::Pending | CleanupOutcome::GroupGone
+        ) {
+            tracing::warn!(session = %self.session, generation = self.generation,
+                appserver_pid = ?self.pid, cleanup = ?self.cleanup, event,
+                "codex process-tree cleanup not verified");
+        }
+        let terminal_reason = (event != "appserver_started").then_some(self.reason);
+        tracing::info!(session = %self.session, generation = self.generation,
+            appserver_pid = ?self.pid, reason = ?terminal_reason, exit_status = ?self.exit_status,
+            cleanup = ?self.cleanup, process_group = ?self.pid.filter(|_| cfg!(unix)), event, "codex lifecycle");
+    }
+}
+
+async fn write_rpc<S>(mut sink: S, mut rx: mpsc::UnboundedReceiver<Value>) -> DriverExit
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
+    while let Some(value) = rx.recv().await {
+        if sink.send(Message::Text(value.to_string())).await.is_err() {
+            return DriverExit::WebsocketWriteFailed;
+        }
+    }
+    DriverExit::OutboundClosed
+}
+
 /// Spawn and drive a Codex-managed session in the background. Returns
 /// immediately; the session id is already registered in `store` by the caller.
 #[allow(clippy::too_many_arguments)]
@@ -1021,7 +1281,8 @@ pub fn spawn_session(
     // outlive its own lifetime, and must not tear down a successor.
     let generation = store.claim_generation(&session_id);
     tokio::spawn(async move {
-        if let Err(err) = run_session(
+        let mut evidence = DriverEvidence::new(&session_id, generation);
+        let result = run_session(
             &store,
             &conv,
             &session_id,
@@ -1035,20 +1296,27 @@ pub fn spawn_session(
             resume_thread,
             &facade,
             &extras,
+            &mut evidence,
         )
-        .await
-        {
-            tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
+        .await;
+        if result.is_err() {
+            tracing::warn!(session = %session_id, generation, reason = ?evidence.reason,
+                cleanup = ?evidence.cleanup, "codex managed session ended with error");
         }
         // Both drops belong to this lifetime or to neither. Forgetting the
         // conversation unconditionally was the hole left beside the guarded
         // teardown: for a driver-fed provider there is no transcript to rebuild
         // from, so a superseded exit erased the successor's visible history for
         // good.
-        if store.deregister_managed(&session_id, generation) {
-            conv.forget(&session_id);
-        }
+        finish_driver(&store, &conv, &mut evidence);
     });
+}
+
+fn finish_driver(store: &SessionStore, conv: &ConversationStore, evidence: &mut DriverEvidence) {
+    if store.deregister_managed(&evidence.session, evidence.generation) {
+        conv.forget(&evidence.session);
+    }
+    evidence.record("driver_terminal");
 }
 
 /// Shown in the conversation when a codex session degrades to the rollout
@@ -1122,7 +1390,8 @@ async fn start_appserver(
     // on the server instead. `None` in hybrid mode — the TUI owns the config.
     overrides: Option<(Option<String>, Option<String>, Option<u64>)>,
     extras: &SpawnExtras,
-) -> anyhow::Result<(tokio::process::Child, CodexWs, String)> {
+    evidence: &mut DriverEvidence,
+) -> anyhow::Result<(OwnedAppServer, CodexWs, String)> {
     // Each managed session gets its own app-server, so threads/approvals are
     // isolated per pane.
     let port = {
@@ -1152,22 +1421,43 @@ async fn start_appserver(
     // than replacing it, which is what a profile means: read your config from
     // here, keep everything else.
     cmd.envs(&extras.env);
-    let child = cmd
-        .current_dir(cwd)
+    evidence.reason = DriverExit::SpawnFailed;
+    cmd.current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("spawning `{bin} app-server --listen {ws_url}`"))?;
-
-    // Wait for the server's HTTP `/readyz` before opening the ws client.
-    wait_ready(&http_base).await?;
-
-    let (ws, _resp) = connect_async(&ws_url)
-        .await
-        .with_context(|| format!("connecting to codex app-server at {ws_url}"))?;
-    Ok((child, ws, ws_url))
+        .stderr(Stdio::null());
+    let mut child =
+        OwnedAppServer::spawn(&mut cmd, evidence).context("spawning codex app-server")?;
+    evidence.pid = Some(child.pid);
+    evidence.cleanup = CleanupOutcome::Pending;
+    evidence.record("appserver_started");
+    evidence.reason = DriverExit::ReadinessFailed;
+    let connect = async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), wait_ready(&http_base))
+            .await
+            .context("codex readiness timeout")??;
+        evidence.reason = DriverExit::ConnectFailed;
+        let (ws, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), connect_async(&ws_url))
+                .await
+                .context("codex websocket connect timeout")??;
+        Ok::<_, anyhow::Error>(ws)
+    };
+    let result = tokio::select! {
+        result = connect => result,
+        status = child.exited() => {
+            evidence.reason = if status.is_ok() { DriverExit::ChildExited } else { DriverExit::ChildWaitFailed };
+            Err(anyhow::anyhow!("codex app-server exited during startup"))
+        }
+    };
+    match result {
+        Ok(ws) => Ok((child, ws, ws_url)),
+        Err(err) => {
+            evidence.cleanup = child.cleanup().await;
+            evidence.exit_status = child.exit_status;
+            Err(err)
+        }
+    }
 }
 
 /// Fallback when the app-server ws path is unavailable: run the plain `codex` TUI
@@ -1214,7 +1504,13 @@ async fn run_rollout_fallback(
     // wording of the ⚠️ notice changes: a headless caller was promised no
     // terminal, and one has just appeared, which is the part they need told.
     from_headless: bool,
+    evidence: &mut DriverEvidence,
 ) -> anyhow::Result<()> {
+    // Cleanup/startup waits may have outlived a restart. A fallback must not
+    // replace the successor's channels or spawn another TUI under its id.
+    if !store.owns_generation(session_id, evidence.generation) {
+        return Ok(());
+    }
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
     let argv = fallback_tui_argv(
         bin,
@@ -1228,6 +1524,7 @@ async fn run_rollout_fallback(
     );
     // The degraded path is where a dropped profile would hide longest — the
     // pane works, so nothing looks wrong — so it carries CODEX_HOME too.
+    evidence.reason = DriverExit::FallbackSpawnFailed;
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd, &extras.env)
         .context("spawning fallback codex TUI")?;
     // Make the degradation visible. It is not a failure — the pane works — but
@@ -1288,11 +1585,12 @@ async fn run_rollout_fallback(
                     let sent = with_instructions(&mut pending_instructions, text);
                     write_prompt(&tui, &sent).await;
                 }
-                None => break, // managed input dropped → terminated
+                None => { evidence.reason = DriverExit::InputClosed; break; },
             },
             _ = tui_check.tick() => {
                 if pty::has_exited(&tui) {
                     tracing::info!(session = %session_id, "codex fallback TUI exited; tearing down");
+                    evidence.reason = DriverExit::TuiExited;
                     break;
                 }
             }
@@ -1397,6 +1695,7 @@ async fn run_session(
     resume_thread: Option<String>,
     facade: &Facade,
     extras: &SpawnExtras,
+    evidence: &mut DriverEvidence,
 ) -> anyhow::Result<()> {
     // Start the app-server + ws client. If that fails, the ws path is unavailable
     // for this Codex build (e.g. a version that dropped/renamed `app-server
@@ -1425,13 +1724,21 @@ async fn run_session(
     // overrides that hybrid mode sets on the TUI go on the server instead.
     let overrides = headless.then(|| (model.clone(), effort.clone(), context_window));
     let (mut child, ws_stream, ws_url) = match start_appserver(
-        session_id, cwd, bin, facade, overrides, extras,
+        session_id, cwd, bin, facade, overrides, extras, evidence,
     )
     .await
     {
         Ok(t) => t,
         Err(err) => {
-            tracing::warn!(?err, session = %session_id, headless, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
+            evidence.record("appserver_start_failed");
+            tracing::warn!(session = %session_id, headless, reason = ?evidence.reason,
+                "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
+            if evidence.cleanup.failed() {
+                return Err(err);
+            }
+            if !store.owns_generation(session_id, evidence.generation) {
+                return Ok(());
+            }
             if headless {
                 // The session is no longer headless. Say so where every client
                 // reads it, BEFORE the PTY exists, so no snapshot ever shows a
@@ -1454,24 +1761,31 @@ async fn run_session(
                 facade.instructions.clone(),
                 Vec::new(),
                 headless,
+                evidence,
             )
             .await;
         }
     };
-    let (mut ws_write, mut ws_read) = ws_stream.split();
+    if !store.owns_generation(session_id, evidence.generation) {
+        evidence.reason = DriverExit::Superseded;
+        evidence.cleanup = child.cleanup().await;
+        evidence.exit_status = child.exit_status;
+        evidence.record("appserver_terminal");
+        anyhow::ensure!(
+            !evidence.cleanup.failed(),
+            "superseded codex cleanup incomplete"
+        );
+        return Ok(());
+    }
+    let (ws_write, mut ws_read) = ws_stream.split();
 
     // Serialize all outgoing JSON-RPC through one task that owns the ws sink, so
     // the several send sites (handshake, turns, approval replies) never contend
     // for the writer. Dropping `out_tx` (on return) closes the sink.
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
-    tokio::spawn(async move {
-        while let Some(v) = out_rx.recv().await {
-            if ws_write.send(Message::Text(v.to_string())).await.is_err() {
-                break;
-            }
-        }
-        let _ = ws_write.close().await;
-    });
+    let (out_tx, out_rx) = mpsc::unbounded_channel::<Value>();
+    // JoinSet aborts its task on Drop too (driver cancellation/panic).
+    let mut writer = tokio::task::JoinSet::new();
+    writer.spawn(write_rpc(ws_write, out_rx));
 
     // The app server requires an `initialize` handshake before any other request.
     let _ = out_tx.send(json!({
@@ -1606,7 +1920,7 @@ async fn run_session(
     // dead thread. try_wait is cheap; a coarse tick is fine.
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
-    loop {
+    let reason = loop {
         tokio::select! {
             msg = ws_read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -1624,9 +1938,10 @@ async fn run_session(
                         );
                     }
                 }
-                Some(Ok(Message::Close(_))) | None => break, // server gone
+                Some(Ok(Message::Close(_))) => break DriverExit::WebsocketClose,
+                None => break DriverExit::WebsocketEof,
                 Some(Ok(_)) => {} // ping/pong/binary — ignore
-                Some(Err(err)) => return Err(err.into()),
+                Some(Err(_)) => break DriverExit::WebsocketReadFailed,
             },
             // Drive discovery + rejoin until we're subscribed to the TUI's thread:
             // ask which threads are loaded (there's only ever one on this
@@ -1638,7 +1953,7 @@ async fn run_session(
                 if tokio::time::Instant::now() >= discover_deadline {
                     tracing::warn!(session = %session_id, "codex: couldn't rejoin the TUI thread in time; falling back to the rollout hybrid");
                     needs_fallback = true;
-                    break;
+                    break DriverExit::DiscoveryExpired;
                 } else {
                     match &thread_id {
                         None => {
@@ -1653,7 +1968,7 @@ async fn run_session(
             _ = tui_check.tick(), if tui_pty.is_some() => {
                 if tui_pty.as_ref().is_some_and(|h| pty::has_exited(h)) {
                     tracing::info!(session = %session_id, "codex TUI exited; tearing down session");
-                    break;
+                    break DriverExit::TuiExited;
                 }
             },
             msg = rx.recv() => match msg {
@@ -1672,13 +1987,13 @@ async fn run_session(
                         None => pending_prompts.push(sent),
                     }
                 }
-                None => break, // managed input dropped → terminated
+                None => break DriverExit::InputClosed, // managed input dropped → terminated
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
                     resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
                 }
-                None => break,
+                None => break DriverExit::DecisionClosed,
             },
             intr = irx.recv() => match intr {
                 Some(()) => {
@@ -1694,7 +2009,7 @@ async fn run_session(
                         }
                     }
                 }
-                None => break,
+                None => break DriverExit::InterruptClosed,
             },
             switch = mrx.recv() => match switch {
                 Some(sw) => {
@@ -1714,20 +2029,33 @@ async fn run_session(
                         }
                     }
                 }
-                None => break,
+                None => break DriverExit::ModelClosed,
             },
-            status = child.wait() => {
-                tracing::info!(?status, session = %session_id, "codex app-server exited");
-                break;
+            result = writer.join_next() => break result.and_then(Result::ok).unwrap_or(DriverExit::WriterTaskFailed),
+            status = child.exited() => {
+                break if status.is_ok() { DriverExit::ChildExited } else { DriverExit::ChildWaitFailed };
             }
         }
-    }
+    };
+
+    evidence.reason = reason;
 
     // Tear down the ws attempt (app-server + the `--remote` TUI) before any
     // fallback, so the rollout path starts from a clean slate.
-    let _ = child.start_kill();
+    writer.abort_all();
+    // abort is idempotent even if the writer itself triggered teardown.
+    evidence.cleanup = child.cleanup().await;
+    evidence.exit_status = child.exit_status;
+    evidence.record("appserver_terminal");
     if let Some(handle) = &tui_pty {
         let _ = pty::signal_child(handle, Signal::Sigkill);
+    }
+
+    if evidence.cleanup.failed() {
+        anyhow::bail!(
+            "codex owned app-server cleanup incomplete: {:?}",
+            evidence.cleanup
+        );
     }
 
     // The thread protocol drifted (ws up, but we never rejoined): degrade to the
@@ -1755,8 +2083,24 @@ async fn run_session(
             // Hybrid-only: `needs_fallback` is set exclusively in the
             // TUI-thread discovery arm, which is gated on `!headless`.
             false,
+            evidence,
         )
         .await;
+    }
+    if reason == DriverExit::ChildExited
+        && evidence.exit_status.is_some_and(|status| !status.success())
+    {
+        anyhow::bail!("codex app-server exited unsuccessfully");
+    }
+    if matches!(
+        reason,
+        DriverExit::WebsocketReadFailed
+            | DriverExit::WebsocketWriteFailed
+            | DriverExit::WriterTaskFailed
+            | DriverExit::OutboundClosed
+            | DriverExit::ChildWaitFailed
+    ) {
+        anyhow::bail!("codex driver ended: {reason:?}");
     }
     Ok(())
 }
@@ -2202,6 +2546,596 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // This subprocess alone becomes a subreaper. Never alter the daemon or the
+    // parallel test runner's process adoption policy, and never select live PIDs.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn direct_child_cleanup_gap_fixture() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "providers::codex::tests::owned_process_fixture_worker",
+                "--nocapture",
+            ])
+            .env("WKS_CODEX_FIXTURE", "baseline")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn owned_group_cleanup_fixture() {
+        for mode in [
+            "group",
+            "child_exit",
+            "unreaped_descendant",
+            "driver_child_exit",
+            "driver_cleanup_failure",
+        ] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "providers::codex::tests::owned_process_fixture_worker",
+                    "--nocapture",
+                ])
+                .env("WKS_CODEX_FIXTURE", mode)
+                .status()
+                .unwrap();
+            assert!(status.success(), "fixture mode {mode}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn reap_fixture_descendant(pid: i32) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let mut status = 0;
+            let result = unsafe { nix::libc::waitpid(pid, &mut status, nix::libc::WNOHANG) };
+            if result == pid {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fixture descendant not reaped"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn fake_process_tree() -> (OwnedAppServer, i32) {
+        let mut command = Command::new("python3");
+        command.args([
+            "-c",
+            r#"
+import os, signal, time
+r, w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(r)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    os.write(w, b'ready')
+    os.close(w)
+    while True: time.sleep(60)
+os.close(w)
+os.read(r, 5)
+os.close(r)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print(pid, flush=True)
+while True: time.sleep(60)
+"#,
+        ]);
+        command
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child =
+            OwnedAppServer::spawn(&mut command, &DriverEvidence::new("fixture", 1)).unwrap();
+        let mut lines = BufReader::new(child.child.stdout.take().unwrap()).lines();
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .parse()
+            .unwrap();
+        (child, pid)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn owned_process_fixture_worker() {
+        let Ok(mode) = std::env::var("WKS_CODEX_FIXTURE") else {
+            return;
+        };
+        use nix::{
+            libc,
+            sys::signal::{kill, Signal},
+            unistd::Pid,
+        };
+        assert_eq!(
+            unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
+            0
+        );
+        if mode == "driver_child_exit" {
+            fake_driver_case("child_exit", DriverExit::ChildExited).await;
+            return;
+        }
+        if mode == "driver_cleanup_failure" {
+            fake_driver_case("cleanup_failure", DriverExit::WebsocketClose).await;
+            return;
+        }
+        let (mut child, descendant) = fake_process_tree().await;
+        if mode != "baseline" {
+            let (mut successor, successor_descendant) = fake_process_tree().await;
+            let (mut idle, idle_descendant) = fake_process_tree().await;
+            let store = SessionStore::new();
+            store.register_managed("fixture", "/fixture", "codex");
+            let first = store.claim_generation("fixture");
+            let second = store.claim_generation("fixture");
+            assert!(second > first);
+            if mode == "child_exit" {
+                child.child.start_kill().unwrap();
+                child.exited().await.unwrap(); // WNOWAIT must keep the group anchor reserved.
+            }
+            let expected_cleanup = if mode == "unreaped_descendant" {
+                // A zombie is still a group member: do not report tree success
+                // until the OS/adopting parent actually reaps it.
+                let outcome = child.cleanup().await;
+                assert_eq!(outcome, CleanupOutcome::GroupStillPresent);
+                assert!(outcome.failed());
+                reap_fixture_descendant(descendant).await;
+                outcome
+            } else {
+                let reaper = tokio::spawn(reap_fixture_descendant(descendant));
+                let outcome = child.cleanup().await;
+                reaper.await.unwrap();
+                assert_eq!(outcome, CleanupOutcome::GroupGone);
+                outcome
+            };
+            assert_eq!(
+                child.cleanup().await,
+                expected_cleanup,
+                "idempotent cleanup"
+            );
+            let mut evidence = DriverEvidence::new("fixture", first);
+            let conv = ConversationStore::new();
+            let mut events = store.subscribe();
+            finish_driver(&store, &conv, &mut evidence);
+            assert!(
+                events.try_recv().is_err(),
+                "old generation cannot end successor"
+            );
+            assert_eq!(store.get("fixture").unwrap().mode, SessionMode::Input);
+            assert!(
+                !successor.has_exited().unwrap(),
+                "successor process must survive"
+            );
+            assert!(
+                !idle.has_exited().unwrap(),
+                "healthy idle process must survive"
+            );
+            for (owner, pid) in [
+                (&mut successor, successor_descendant),
+                (&mut idle, idle_descendant),
+            ] {
+                let reaper = tokio::spawn(reap_fixture_descendant(pid));
+                assert_eq!(owner.cleanup().await, CleanupOutcome::GroupGone);
+                reaper.await.unwrap();
+            }
+            eprintln!("{mode}: owned child and descendant reaped; successor and idle survived; repeated cleanup harmless");
+            return;
+        }
+        child.child.start_kill().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), child.child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        child.signal_pending = false; // baseline deliberately released its PID already
+        let survived = kill(Pid::from_raw(descendant), None).is_ok();
+        // Always clean and reap the exact fixture descendant, even if the proof fails.
+        kill(Pid::from_raw(descendant), Signal::SIGKILL).unwrap();
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(descendant, &mut status, 0) },
+            descendant
+        );
+        assert!(
+            survived,
+            "direct-child kill must demonstrate the existing descendant gap"
+        );
+        eprintln!("baseline: direct child reaped; owned descendant survived; fixture descendant then killed and reaped");
+    }
+
+    #[cfg(unix)]
+    struct FakeAppServer {
+        dir: std::path::PathBuf,
+        bin: String,
+        extras: SpawnExtras,
+    }
+
+    #[cfg(unix)]
+    impl FakeAppServer {
+        fn new(mode: &str) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            // Ignored worktree directory, never the real Codex home or /tmp.
+            let dir = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join(format!("codex-fixture-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let bin = dir.join("fake-codex");
+            std::fs::write(&bin, r#"#!/usr/bin/env python3
+import base64, hashlib, http.server, json, os, struct, sys, time
+mode = os.environ['WKS_FAKE_MODE']
+port = int(sys.argv[sys.argv.index('--listen') + 1].rsplit(':', 1)[1])
+if mode == 'startup_exit': sys.exit(7)
+class Server(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    def log_message(self, *args): pass
+    def do_GET(self):
+        if self.path == '/readyz':
+            if mode == 'readiness': time.sleep(30)
+            self.send_response(200)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if mode == 'connect':
+            self.send_response(403)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        key = self.headers['Sec-WebSocket-Key']
+        digest = hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', base64.b64encode(digest).decode())
+        self.end_headers()
+        def send(value):
+            body = json.dumps(value).encode()
+            length = bytes([len(body)]) if len(body) < 126 else b'\x7e' + struct.pack('!H', len(body))
+            self.connection.sendall(b'\x81' + length + body)
+        # Resume id is preseeded by the test: no real thread sidecar is written.
+        send({'id': 2, 'result': {}})
+        send({'method': 'turn/started', 'params': {}})
+        send({'method': 'thread/started', 'params': {'thread': {'id': 'child', 'parentThreadId': 'fixture-thread'}}})
+        send({'method': 'item/completed', 'params': {'item': {'id': 'activity', 'type': 'subAgentActivity', 'agentThreadId': 'child', 'kind': 'completed'}}})
+        send({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}})
+        # Give the client's writer time to drain handshake traffic so the
+        # close/error fixture tests the read arm, not a competing write failure.
+        time.sleep(.15)
+        if mode in ('child_exit', 'cleanup_failure'):
+            pid = os.fork()
+            if pid == 0:
+                while True: time.sleep(60)
+            with open(os.environ['WKS_FAKE_DIR'] + '/descendant', 'w') as f: f.write(str(pid))
+            if mode == 'child_exit': os._exit(7)
+        if mode in ('close', 'cleanup_failure'): self.connection.sendall(b'\x88\x00'); time.sleep(30)
+        if mode == 'read_error': self.connection.sendall(b'\x83\x00'); time.sleep(30)
+        while True:
+            if not self.connection.recv(4096): return
+http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
+"#).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut extras = SpawnExtras::default();
+            extras.env.insert("WKS_FAKE_MODE".into(), mode.into());
+            extras
+                .env
+                .insert("WKS_FAKE_DIR".into(), dir.to_string_lossy().into_owned());
+            Self {
+                dir,
+                bin: bin.to_string_lossy().into_owned(),
+                extras,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for FakeAppServer {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fake_appserver_startup_reasons_and_cleanup() {
+        for (mode, reason) in [
+            ("startup_exit", DriverExit::ChildExited),
+            ("readiness", DriverExit::ReadinessFailed),
+            ("connect", DriverExit::ConnectFailed),
+            ("missing", DriverExit::SpawnFailed),
+        ] {
+            let fake = FakeAppServer::new(mode);
+            let mut evidence = DriverEvidence::new("startup-fixture", 42);
+            let bin = if mode == "missing" {
+                "/no-such-codex-fixture"
+            } else {
+                &fake.bin
+            };
+            let result = start_appserver(
+                "startup-fixture",
+                fake.dir.to_str().unwrap(),
+                bin,
+                &Facade::default(),
+                None,
+                &fake.extras,
+                &mut evidence,
+            )
+            .await;
+            assert!(result.is_err(), "{mode}");
+            assert_eq!(evidence.reason, reason, "{mode}");
+            assert_eq!(
+                evidence.cleanup,
+                if mode == "missing" {
+                    CleanupOutcome::NotSpawned
+                } else {
+                    CleanupOutcome::GroupGone
+                }
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fake_appserver_driver_reasons_idle_and_single_end() {
+        for (mode, expected) in [
+            ("close", DriverExit::WebsocketClose),
+            ("read_error", DriverExit::WebsocketReadFailed),
+            ("input", DriverExit::InputClosed),
+            ("decision", DriverExit::DecisionClosed),
+            ("interrupt", DriverExit::InterruptClosed),
+            ("model", DriverExit::ModelClosed),
+            ("successor", DriverExit::InputClosed),
+        ] {
+            fake_driver_case(mode, expected).await;
+        }
+    }
+
+    #[cfg(unix)]
+    async fn fake_driver_case(mode: &str, expected: DriverExit) {
+        let fake = FakeAppServer::new(mode);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "driver-fixture";
+        store.register_managed(sid, fake.dir.to_str().unwrap(), "codex");
+        let generation = store.claim_generation(sid);
+        let mut events = store.subscribe();
+        let task_store = store.clone();
+        let task_conv = conv.clone();
+        #[cfg(target_os = "linux")]
+        let descendant_path = fake.dir.join("descendant");
+        let task = tokio::spawn(async move {
+            let mut evidence = DriverEvidence::new(sid, generation);
+            let result = run_session(
+                &task_store,
+                &task_conv,
+                sid,
+                fake.dir.to_str().unwrap(),
+                None,
+                None,
+                None,
+                &fake.bin,
+                false,
+                true,
+                Some("fixture-thread".into()),
+                &Facade::default(),
+                &fake.extras,
+                &mut evidence,
+            )
+            .await;
+            finish_driver(&task_store, &task_conv, &mut evidence);
+            (result, evidence)
+        });
+        #[cfg(target_os = "linux")]
+        let reaper = if matches!(mode, "child_exit" | "cleanup_failure") {
+            let path = descendant_path;
+            let delayed = mode == "cleanup_failure";
+            Some(tokio::spawn(async move {
+                let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        if let Ok(raw) = std::fs::read_to_string(&path) {
+                            if let Ok(pid) = raw.parse::<i32>() {
+                                break pid;
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                if delayed {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+                reap_fixture_descendant(pid).await;
+            }))
+        } else {
+            None
+        };
+        if matches!(
+            mode,
+            "input" | "decision" | "interrupt" | "model" | "successor"
+        ) {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let state = store.get(sid).unwrap();
+                    if state.mode == SessionMode::Input
+                        && state
+                            .subagents
+                            .iter()
+                            .any(|s| s.status == SubagentStatus::Complete)
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("fake completion notifications applied");
+            assert!(
+                !task.is_finished(),
+                "turn and child completion keep app-server idle"
+            );
+            while let Ok(event) = events.try_recv() {
+                assert_ne!(
+                    event.event, "SessionEnd",
+                    "completion is not root termination"
+                );
+            }
+            // Replace ONE sender; the old receiver must report precisely
+            // that channel. Retain successor senders in the store.
+            if mode == "successor" {
+                store.claim_generation(sid);
+                store.register_managed(sid, "/fixture-successor", "codex");
+            }
+            match mode {
+                "input" | "successor" => {
+                    let (tx, _rx) = mpsc::unbounded_channel();
+                    store.register_managed_input(sid, tx);
+                }
+                "decision" => {
+                    let (tx, _rx) = mpsc::unbounded_channel();
+                    store.register_managed_decision(sid, tx);
+                }
+                "interrupt" => {
+                    let (tx, _rx) = mpsc::unbounded_channel();
+                    store.register_managed_interrupt(sid, tx);
+                }
+                "model" => {
+                    let (tx, _rx) = mpsc::unbounded_channel();
+                    store.register_managed_model_switch(sid, tx);
+                }
+                _ => unreachable!(),
+            }
+        }
+        let (result, evidence) = tokio::time::timeout(std::time::Duration::from_secs(8), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(evidence.reason, expected, "{mode}");
+        if mode == "child_exit" {
+            assert_eq!(evidence.exit_status.unwrap().code(), Some(7));
+        }
+        assert_eq!(evidence.session, sid);
+        assert_eq!(evidence.generation, generation);
+        assert!(evidence.pid.is_some());
+        #[cfg(target_os = "linux")]
+        if let Some(reaper) = reaper {
+            reaper.await.unwrap();
+        }
+        assert_eq!(
+            evidence.cleanup,
+            if mode == "cleanup_failure" {
+                CleanupOutcome::GroupStillPresent
+            } else {
+                CleanupOutcome::GroupGone
+            }
+        );
+        assert_eq!(
+            result.is_err(),
+            matches!(mode, "read_error" | "cleanup_failure" | "child_exit")
+        );
+        assert_eq!(
+            evidence.records,
+            ["appserver_started", "appserver_terminal", "driver_terminal"]
+        );
+        assert!(!store.deregister_managed(sid, generation));
+        let mut ends = 0;
+        while let Ok(event) = events.try_recv() {
+            if event.event == "SessionEnd" {
+                ends += 1;
+            }
+        }
+        assert_eq!(
+            ends,
+            usize::from(mode != "successor"),
+            "owned end only for {mode}"
+        );
+        if mode == "successor" {
+            assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
+            assert!(store.is_managed(sid));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn superseded_startup_cleans_its_child_before_registering_channels() {
+        let fake = FakeAppServer::new("idle");
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "superseded-startup";
+        store.register_managed(sid, "/fixture", "codex");
+        let first = store.claim_generation(sid);
+        let second = store.claim_generation(sid);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        store.register_managed_input(sid, tx);
+        conv.push(
+            sid,
+            vec![ConversationItem::AssistantText {
+                text: "successor".into(),
+                timestamp: None,
+            }],
+        );
+        let mut events = store.subscribe();
+        let mut evidence = DriverEvidence::new(sid, first);
+        run_session(
+            &store,
+            &conv,
+            sid,
+            fake.dir.to_str().unwrap(),
+            None,
+            None,
+            None,
+            &fake.bin,
+            false,
+            true,
+            Some("fixture-thread".into()),
+            &Facade::default(),
+            &fake.extras,
+            &mut evidence,
+        )
+        .await
+        .unwrap();
+        finish_driver(&store, &conv, &mut evidence);
+        assert_eq!(evidence.reason, DriverExit::Superseded);
+        assert_eq!(evidence.cleanup, CleanupOutcome::GroupGone);
+        assert!(store.owns_generation(sid, second));
+        assert!(events.try_recv().is_err());
+        store.submit_message(sid, "successor message".into());
+        assert_eq!(rx.try_recv().unwrap(), "successor message");
+        assert!(
+            conv.snapshot(sid).is_some(),
+            "successor conversation survives"
+        );
+        assert_eq!(
+            evidence.records,
+            ["appserver_started", "appserver_terminal", "driver_terminal"]
+        );
+    }
+
+    #[tokio::test]
+    async fn websocket_writer_failure_is_observable_without_a_read_event() {
+        let sink = futures_util::sink::unfold((), |(), _message: Message| async {
+            Err::<(), _>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "fixture",
+            ))
+        });
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(json!({"method": "initialize"})).unwrap();
+        let reason = write_rpc(Box::pin(sink), rx).await;
+        assert_eq!(reason, DriverExit::WebsocketWriteFailed);
+        // Retaining the producer proves a write failure alone wakes the owner.
+        assert!(tx.is_closed());
+
+        let sink = futures_util::sink::drain::<Message>();
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(tx);
+        assert_eq!(write_rpc(sink, rx).await, DriverExit::OutboundClosed);
+    }
 
     // ── Headless bypass: sandbox + approval policy on the wire ──────────────
     //

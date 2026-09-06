@@ -1886,7 +1886,13 @@ impl SessionStore {
     /// for driver-fed providers.
     #[must_use]
     pub fn deregister_managed(&self, session_id: &str, generation: u64) -> bool {
-        if !self.owns_generation(session_id, generation) {
+        // Hold the generation read lock through teardown so claim_generation
+        // cannot advance between the ownership check and SessionEnd.
+        let generation_guard = self.generations.get(session_id);
+        if generation_guard
+            .as_ref()
+            .is_some_and(|live| **live != generation)
+        {
             tracing::debug!(
                 session = %session_id,
                 generation,
@@ -1909,6 +1915,9 @@ impl SessionStore {
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
+            if entry.mode == SessionMode::Stopped {
+                return false; // This generation already published its end.
+            }
             entry.mode = SessionMode::Stopped;
             // A stopped session runs nothing — a leftover live-task count would
             // badge a dead row as "working in background".
@@ -1929,6 +1938,7 @@ impl SessionStore {
                 state,
             });
         }
+        drop(generation_guard);
         true
     }
 
@@ -4880,6 +4890,28 @@ mod tests {
 
         assert!(!store.is_managed("m1"), "its own channels are released");
         assert_eq!(store.get("m1").map(|s| s.mode), Some(SessionMode::Stopped));
+    }
+
+    #[test]
+    fn managed_generation_publishes_end_once_and_never_for_successor() {
+        let store = SessionStore::new();
+        store.register_managed("once", "/fixture", "codex");
+        let first = store.claim_generation("once");
+        let mut events = store.subscribe();
+        assert!(store.deregister_managed("once", first));
+        assert!(!store.deregister_managed("once", first));
+        assert_eq!(events.try_recv().unwrap().event, "SessionEnd");
+        assert!(events.try_recv().is_err());
+
+        store.register_managed("once", "/fixture", "codex");
+        let second = store.claim_generation("once");
+        while events.try_recv().is_ok() {}
+        assert!(!store.deregister_managed("once", first));
+        assert!(events.try_recv().is_err());
+        assert_eq!(store.get("once").unwrap().mode, SessionMode::Input);
+        assert!(store.deregister_managed("once", second));
+        assert_eq!(events.try_recv().unwrap().event, "SessionEnd");
+        assert!(events.try_recv().is_err());
     }
 
     /// The PTY twin of the same race. `reap_pty` used to remove whatever handle
