@@ -21,6 +21,8 @@ export type FleetMessageKind =
   'worker-finished' | 'worker-escalated' | 'catch-up' | 'blocked' | 'threshold' | 'progress';
 
 export interface FleetMessageEntry {
+  /** Opaque host capture reference; never authority without owner validation. */
+  reviewEvidenceId?: string;
   /** Worker label (or cwd-basename fallback). */
   label: string;
   sessionId: string;
@@ -295,6 +297,10 @@ export function buildReplyPrefix(entry: Pick<FleetMessageEntry, 'sessionId' | 'l
 export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageEntry[]): string {
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
   const extras: string[] = [];
+  for (const e of entries) {
+    if (e.reviewEvidenceId)
+      extras.push(`Review evidence — session:${e.sessionId}: ${e.reviewEvidenceId}`);
+  }
   if (entries.some((e) => e.failed)) extras.push(FAILED_NOTE);
   if (entries.some((e) => e.failed && isCreditBalanceTooLowError(e.failed))) {
     extras.push(CREDIT_BALANCE_NOTE);
@@ -428,6 +434,12 @@ function attachResultBlocks(tail: string[], entries: FleetMessageEntry[]): void 
   for (const raw of tail.join('\n').split('\n\n')) {
     const block = raw.trim();
     if (block.startsWith(FULL_REPLY_MARK)) return;
+    const review = /^Review evidence — session:([\w-]+): ([a-f0-9-]{36})$/.exec(block);
+    if (review) {
+      const entry = byId.get(review[1]);
+      if (entry) entry.reviewEvidenceId = review[2];
+      continue;
+    }
     const ok = RESULT_BLOCK_RE.exec(block);
     if (ok) {
       const entry = byId.get(ok[1]);

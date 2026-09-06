@@ -58,6 +58,11 @@ vi.mock('./managedSpawn', () => ({
 const spawnClaudeAgent = vi.fn(async () => 'claude-session-id');
 vi.mock('./claudeSpawn', () => ({ spawnClaudeAgent: (...a: unknown[]) => spawnClaudeAgent(...a) }));
 
+const registerReview = vi.fn();
+vi.mock('./fleetReviewStore', () => ({
+  fleetReviewStore: { register: (...args: unknown[]) => registerReview(...args) },
+}));
+
 const createWorktree = vi.fn(async () => ({ ok: true, path: '/wt/proj-abc', branch: 'agent/x' }));
 vi.mock('./worktreeService', () => ({
   createWorktree: (...a: unknown[]) => createWorktree(...a),
@@ -884,6 +889,39 @@ describe('agents.spawn — dispatch', () => {
     // The worker's cwd is the worktree, not the checkout.
     expect((spawnClaudeAgent.mock.calls[0][0] as { cwd: string }).cwd).toBe('/wt/proj-abc');
   });
+
+  it.each([
+    ['claude', 'pty'],
+    ['claude', 'stream'],
+    ['codex', 'stream'],
+  ])(
+    'records host allocation for %s/%s without accepting caller review metadata',
+    async (provider, transport) => {
+      const allocation = {
+        projectRoot: '/canonical/project',
+        allocatedCwd: '/wt/proj-abc',
+        commonDir: '/canonical/project/.git',
+        branch: 'agent/x',
+        baseCommit: 'a'.repeat(40),
+      };
+      createWorktree.mockResolvedValueOnce({
+        ok: true,
+        path: '/wt/proj-abc',
+        branch: 'agent/x',
+        reviewAllocation: allocation,
+      });
+      registerReview.mockClear();
+      const result = await call('agents.spawn', {
+        provider,
+        transport,
+        cwd: '/proj',
+        worktree: true,
+        parentSessionId: 'manager',
+        reviewAllocation: { projectRoot: '/forged' },
+      });
+      expect(registerReview).toHaveBeenCalledWith('manager', result.sessionId, allocation);
+    },
+  );
 
   it('a worktree failure falls back to cwd rather than refusing the dispatch', async () => {
     createWorktree.mockResolvedValueOnce({ ok: false, error: 'not a git repo' });

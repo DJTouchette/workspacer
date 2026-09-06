@@ -1,3 +1,4 @@
+import { FleetReview } from './FleetReview';
 /**
  * A fleet/supervisor system message as a structured card. The wakes that
  * workspacer injects into a manager's conversation ("[fleet] Worker finished",
@@ -170,8 +171,9 @@ const ReplyButton: React.FC<{
  *  last-reply excerpt (if the wake carried one). */
 const EntryRow: React.FC<{
   entry: FleetMessageEntry;
+  review?: boolean;
   onReply?: (entry: FleetMessageEntry) => void;
-}> = ({ entry, onReply }) => {
+}> = ({ entry, onReply, review }) => {
   const [showReply, setShowReply] = useState(false);
   return (
     <div style={{ padding: '6px 12px' }}>
@@ -325,6 +327,9 @@ const EntryRow: React.FC<{
         label="worker escalation"
         errorLabel="invalid worker escalation"
       />
+      {review && (
+        <FleetReview evidenceId={entry.reviewEvidenceId} workerSessionId={entry.sessionId} />
+      )}
       {entry.lastReply && (
         <div style={{ marginTop: 4 }}>
           <button
@@ -427,7 +432,12 @@ const FleetMessageCardInner: React.FC<{
       </div>
       <div style={{ padding: '2px 0 4px 0' }}>
         {message.entries.map((e) => (
-          <EntryRow key={e.sessionId} entry={e} onReply={onReply} />
+          <EntryRow
+            key={e.sessionId}
+            entry={e}
+            onReply={onReply}
+            review={message.kind === 'worker-finished' || message.kind === 'catch-up'}
+          />
         ))}
       </div>
     </Surface>

@@ -10,6 +10,7 @@
  * wake, not a storm.
  */
 
+import { fleetReviewStore } from './fleetReviewStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import type { ClaudeSessionState } from './claudeSessionStore';
 import type { PendingReadOnlySession } from './sessionStore/pendingSlot';
@@ -417,6 +418,18 @@ class SupervisorNudge {
         `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''} ` +
         `${entry.escalation ? 'escalated' : entry.escalationError ? 'invalid-escalation' : ''}`;
       if (this.lastReportedReply.get(session.sessionId) === signature) continue;
+      entry.reviewEvidenceId = await fleetReviewStore
+        .capture(parentId, session.sessionId, entry.stopped ? 'session-ended' : 'turn-ended')
+        .catch(() => undefined);
+      // Capture can take time: preserve the finish gate across that await.
+      if (
+        session.status !== 'ended' &&
+        session.ambientState !== undefined &&
+        session.ambientState !== 'idle'
+      )
+        continue;
+      const currentReply = lastAssistantReply(session);
+      if (currentReply && currentReply !== reply) continue;
       delivered.push([session.sessionId, signature]);
       entries.push(entry);
     }
