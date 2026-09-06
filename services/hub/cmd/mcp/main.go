@@ -1567,8 +1567,8 @@ type spawnAgentIn struct {
 	// spawn argument still comes from THIS call and passes the same clamps.
 	// Required placeholders make an unfilled task slot a refused spawn, never a
 	// silently-defaulted one.
-	Template       string            `json:"template,omitempty" jsonschema:"the id of a library DISPATCH TEMPLATE (an item of kind 'dispatch'; list_library shows them) to render as the worker's first message instead of composing 'message' yourself. The template's default resultSchema applies unless this call passes its own resultSchema. Mutually exclusive with 'message'. Desktop-only (the headless brain declines it)"`
-	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"values for the template's named placeholders ({{task}} etc.). Placeholders are REQUIRED unless the template marks them optional with a default, and a spawn with an unfilled required placeholder is refused naming the missing param — write the task-specific text yourself; the template only supplies the framing"`
+	Template       string            `json:"template,omitempty" jsonschema:"the id of a library DISPATCH TEMPLATE (an item of kind 'dispatch'; list_library shows them) to render as the worker's first message instead of composing 'message' yourself. The template's default resultSchema applies unless this call passes its own resultSchema. Mutually exclusive with 'message'. {{cwd}} is the host-owned actual execution directory; {{projectCwd}} is the host-owned original validated project directory. Desktop-only (the headless brain declines it)"`
+	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"values for the template's named placeholders ({{task}} etc.). {{cwd}} and {{projectCwd}} are host-owned automatic variables and cannot be set here. Placeholders are REQUIRED unless the template marks them optional with a default, and a spawn with an unfilled required placeholder is refused naming the missing param — write the task-specific text yourself; the template only supplies the framing"`
 
 	// ── the routing wire ────────────────────────────────────────────────────
 	//

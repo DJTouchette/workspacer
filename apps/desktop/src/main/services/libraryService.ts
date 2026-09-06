@@ -101,7 +101,8 @@ export interface LibraryItem {
    *  the WHOLE listing (every item, every body) and read the description or
    *  eyeball the markdown. Parsed by lib/dispatchTemplate's dispatchTemplateParams
    *  — the SAME parser the spawn path then enforces, so what is advertised and
-   *  what is required cannot drift. Auto-filled vars ({{cwd}}) are excluded:
+   *  what is required cannot drift. Auto-filled vars ({{cwd}}, {{projectCwd}})
+   *  are excluded:
    *  this is what a CALLER must/may pass, not every token in the file. */
   params?: DispatchTemplateParam[];
   /** Which root a claude-scoped item came from. Absent for global/project. */

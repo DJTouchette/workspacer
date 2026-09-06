@@ -41,12 +41,7 @@
     "blocks": {
       "cases": {
         "why": "One template body in, one ordered param list out. Both parsers must produce this array exactly — same names, same order, same required flags, same defaults.",
-        "required": [
-          "name",
-          "template",
-          "expect",
-          "why"
-        ],
+        "required": ["name", "template", "expect", "why"],
         "loaders": [
           "services/hub/cmd/brain/dispatchparams_test.go::TestDispatchTemplateParamsContractCases",
           "apps/desktop/src/main/lib/dispatchTemplate.test.ts::dispatch template params — cross-language contract"
@@ -104,15 +99,15 @@
       "why": "The shipped ship-task shape. Order is normative — a caller reads the list top-down to fill it."
     },
     {
-      "name": "the {{cwd}} auto var is never advertised",
-      "template": "In {{cwd}}: {{task}}",
+      "name": "the cwd auto vars are never advertised",
+      "template": "In {{cwd}} / {{projectCwd}}: {{task}}",
       "expect": [
         {
           "name": "task",
           "required": true
         }
       ],
-      "why": "cwd is filled by the HOST from the spawn's own cwd. Advertising it would invite a caller to pass a value for a slot it does not own, and the render prefers the caller's value on a name collision."
+      "why": "cwd is filled by the HOST from the actual execution cwd and projectCwd from the original validated project directory. Advertising either would invite a caller to pass a value for a slot it does not own."
     },
     {
       "name": "an auto var with a default is still not advertised",

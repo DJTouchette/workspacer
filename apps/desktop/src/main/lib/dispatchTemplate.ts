@@ -14,8 +14,10 @@
  *   {{?task}} {{?d:x}}    the same two, in the renderer's prompt-var spelling
  *                         (the leading '?' is tolerated so a template authored
  *                         for the insert dialog renders here unchanged)
- *   {{cwd}}               auto-filled with the spawn's project directory (the
- *                         caller-named cwd, NOT the worktree carved from it)
+ *   {{cwd}}               auto-filled with the spawn's actual execution
+ *                         directory (the allocated worktree when one exists)
+ *   {{projectCwd}}        auto-filled with the original validated project
+ *                         directory, retained for task identity/reference
  *
  * THE ONE HARD RULE, and the reason this does not reuse the renderer's
  * applyTemplate: placeholders are REQUIRED BY DEFAULT, and rendering with an
@@ -37,7 +39,7 @@ import { hasNonBlankText } from './asciiWhitespace';
 const TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 /** Auto context vars filled by the host, not the caller's params. */
-const AUTO_VARS = new Set(['cwd']);
+const AUTO_VARS = new Set(['cwd', 'projectCwd']);
 
 interface Placeholder {
   /** The param name (leading '?' stripped, default stripped). */
@@ -86,8 +88,8 @@ export function dispatchTemplateParams(text: string): DispatchTemplateParam[] {
   TOKEN_RE.lastIndex = 0;
   while ((m = TOKEN_RE.exec(text)) !== null) {
     const p = parsePlaceholder(m[1].trim());
-    // AUTO_VARS are excluded on purpose: {{cwd}} is filled by the HOST from the
-    // spawn's own cwd, so advertising it would invite a caller to pass a value
+    // AUTO_VARS are excluded on purpose: {{cwd}} and {{projectCwd}} are filled
+    // by the HOST, so advertising either would invite a caller to pass a value
     // for a slot it does not own. The list is what a caller must/may pass.
     if (!p.name || AUTO_VARS.has(p.name)) continue;
     if (seen.has(p.name)) continue;
@@ -105,19 +107,25 @@ export function dispatchTemplateParams(text: string): DispatchTemplateParam[] {
  * Render a dispatch template with the caller's params. Throws (never defaults)
  * on an unfilled required placeholder, and on a param naming no placeholder.
  *
- * `params` values win over auto vars on a name collision; a value must carry
- * non-blank text to count as filling a REQUIRED placeholder — an empty string
- * is the same dodge as omitting it.
+ * Automatic variables are host-owned and cannot be supplied in `params`; a
+ * value must carry non-blank text to count as filling a REQUIRED placeholder
+ * — an empty string is the same dodge as omitting it.
  */
-export function renderDispatchTemplate(
+export function validateDispatchTemplateParams(
   text: string,
   params: Record<string, string> = {},
-  ctx: { cwd?: string } = {},
-): string {
+): void {
   const declared = new Set<string>();
   TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = TOKEN_RE.exec(text)) !== null) declared.add(parsePlaceholder(m[1].trim()).name);
+  const auto = Object.keys(params).filter((k) => AUTO_VARS.has(k));
+  if (auto.length) {
+    throw new Error(
+      `dispatch template: host-owned automatic variable${auto.length === 1 ? '' : 's'} ` +
+        `${auto.map((k) => `"${k}"`).join(', ')} cannot be set through templateParams`,
+    );
+  }
   const unknown = Object.keys(params).filter((k) => !declared.has(k));
   if (unknown.length) {
     throw new Error(
@@ -125,11 +133,33 @@ export function renderDispatchTemplate(
         `this template's placeholders are: ${[...declared].map((n) => `{{${n}}}`).join(' ') || '(none)'}`,
     );
   }
+  TOKEN_RE.lastIndex = 0;
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    const p = parsePlaceholder(m[1].trim());
+    if (AUTO_VARS.has(p.name)) continue;
+    const supplied = params[p.name];
+    if (typeof supplied === 'string' && hasNonBlankText(supplied)) continue;
+    if (p.defaultValue !== undefined) continue;
+    throw new Error(
+      `dispatch template: required placeholder {{${p.name}}} is unfilled — ` +
+        `pass templateParams: {"${p.name}": "..."} with the task-specific text ` +
+        `(a template may mark a placeholder optional with {{${p.name}:default}})`,
+    );
+  }
+}
+
+export function renderDispatchTemplate(
+  text: string,
+  params: Record<string, string> = {},
+  ctx: { cwd?: string; projectCwd?: string } = {},
+): string {
+  validateDispatchTemplateParams(text, params);
   return text.replace(TOKEN_RE, (_full, raw: string) => {
     const p = parsePlaceholder(String(raw).trim());
+    if (p.name === 'cwd') return ctx.cwd ?? '';
+    if (p.name === 'projectCwd') return ctx.projectCwd ?? '';
     const supplied = params[p.name];
     if (typeof supplied === 'string' && hasNonBlankText(supplied)) return supplied;
-    if (AUTO_VARS.has(p.name) && !(p.name in params)) return ctx.cwd ?? '';
     if (p.defaultValue !== undefined) return p.defaultValue;
     // HARD ERROR, by design — see the module header. Never a silent default.
     throw new Error(

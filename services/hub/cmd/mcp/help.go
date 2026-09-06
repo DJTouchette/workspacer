@@ -109,7 +109,10 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   silently defaulted. The spawn result then echoes the text that was actually
   sent back as "renderedMessage" (with renderedMessageTruncated:true if it was
   clipped), so verifying the render costs nothing — do not call
-  get_conversation just to see what your own dispatch said.
+  get_conversation just to see what your own dispatch said. {{cwd}} and
+  {{projectCwd}} are host-owned automatic variables, never templateParams:
+  {{cwd}} is the actual execution directory (an allocated worktree when one
+  exists), while {{projectCwd}} is the original validated project directory.
 - role, capability and decisionId carry a select_model answer onto the dispatch,
   alongside the provider, model and effort it named. role is what the work IS
   (implementer, reviewer, scout and the rest); capability is the model tier the

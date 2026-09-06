@@ -12,14 +12,14 @@ import { describe, it, expect } from 'vitest';
 import { renderDispatchTemplate, dispatchTemplateParams } from './dispatchTemplate';
 
 describe('renderDispatchTemplate — happy path', () => {
-  it('fills required placeholders from params and {{cwd}} from context', () => {
+  it('fills required placeholders plus host-owned execution and project cwd values', () => {
     const out = renderDispatchTemplate(
-      'SHIP TASK in {{cwd}}.\n\n{{task}}\n\nReport when done.',
+      'SHIP TASK in {{cwd}} for {{projectCwd}}.\n\n{{task}}\n\nReport when done.',
       { task: 'Fix the off-by-one in parse()' },
-      { cwd: '/home/u/proj' },
+      { cwd: '/home/u/worktrees/proj-agent', projectCwd: '/home/u/proj' },
     );
     expect(out).toBe(
-      'SHIP TASK in /home/u/proj.\n\nFix the off-by-one in parse()\n\nReport when done.',
+      'SHIP TASK in /home/u/worktrees/proj-agent for /home/u/proj.\n\nFix the off-by-one in parse()\n\nReport when done.',
     );
   });
 
@@ -42,10 +42,21 @@ describe('renderDispatchTemplate — happy path', () => {
     );
   });
 
-  it('a param named cwd overrides the auto var', () => {
-    expect(renderDispatchTemplate('in {{cwd}}', { cwd: '/elsewhere' }, { cwd: '/proj' })).toBe(
-      'in /elsewhere',
-    );
+  it('refuses caller attempts to override host-owned auto vars', () => {
+    expect(() =>
+      renderDispatchTemplate(
+        'in {{cwd}} / {{projectCwd}}',
+        { cwd: '/elsewhere' },
+        { cwd: '/wt', projectCwd: '/proj' },
+      ),
+    ).toThrow(/host-owned automatic variable "cwd"/);
+    expect(() =>
+      renderDispatchTemplate(
+        'in {{cwd}} / {{projectCwd}}',
+        { projectCwd: '/elsewhere' },
+        { cwd: '/wt', projectCwd: '/proj' },
+      ),
+    ).toThrow(/host-owned automatic variable "projectCwd"/);
   });
 });
 
@@ -71,15 +82,15 @@ describe('renderDispatchTemplate — the hard rule', () => {
     );
   });
 
-  it('{{cwd}} is an auto var, not a required param', () => {
-    expect(renderDispatchTemplate('in {{cwd}}', {}, {})).toBe('in ');
+  it('auto vars are not required params', () => {
+    expect(renderDispatchTemplate('in {{cwd}} / {{projectCwd}}', {}, {})).toBe('in  / ');
   });
 });
 
 describe('dispatchTemplateParams', () => {
   it('lists distinct placeholder names in first-seen order, auto vars excluded', () => {
     const params = dispatchTemplateParams(
-      'in {{cwd}}: {{task}} then {{delivery:open a PR}} and {{task}} again',
+      'in {{cwd}} / {{projectCwd}}: {{task}} then {{delivery:open a PR}} and {{task}} again',
     );
     expect(params.map((p) => p.name)).toEqual(['task', 'delivery']);
     expect(params[0]).toEqual({ name: 'task', required: true });

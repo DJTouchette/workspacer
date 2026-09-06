@@ -53,7 +53,7 @@ import { libraryService, type ClaudeOrigin, type LibraryFileGuard } from './libr
 // Not from libraryService: every suite that mocks that module away still needs
 // the kind vocabulary library.list validates its filter against.
 import { LIBRARY_KINDS, type LibraryKind } from '../shared/libraryKinds';
-import { renderDispatchTemplate } from '../lib/dispatchTemplate';
+import { renderDispatchTemplate, validateDispatchTemplateParams } from '../lib/dispatchTemplate';
 import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
@@ -137,6 +137,15 @@ function spawnResult(
   /** The routing fields as this host RECEIVED them — i.e. after the hub
    *  router's ceiling clamp, which is not always what was sent. */
   routing?: { role?: string; capability?: string; decisionId?: string },
+  worktree?: {
+    projectCwd: string;
+    executionCwd: string;
+    requested: true;
+    allocated: boolean;
+    fallback: boolean;
+    branch?: string;
+    error?: string;
+  },
 ): Record<string, unknown> {
   // NO SILENT DOWNGRADES (2026-08-26). `fullAccess` is what the session ACTUALLY
   // runs with — not what was requested — and rides EVERY spawn answer, so a
@@ -158,6 +167,7 @@ function spawnResult(
   // none of them. TWIN: cmd/brain/handlers.go spawnResult.
   const routed = normalizeRouting(routing ?? {});
   if (routed) out.routing = routed;
+  if (worktree) out.worktree = worktree;
   // THE RENDER, echoed back — the point being that a template spawn is the one
   // case where the dispatcher does not know what it sent. Before this, checking
   // that {{task}} landed where it should meant agents.getConversation, which has
@@ -773,16 +783,23 @@ export function registerHubCapabilities(): void {
        *  routing.yaml). The hub writes both rows; this is the key. */
       decisionId?: string;
     };
-    // ── Dispatch templates: resolve + render BEFORE anything else ─────────
-    // The rendered text becomes the first message; the template's default
-    // resultSchema applies only when the call brought none of its own. Every
-    // failure here is a REFUSED SPAWN, never a worker started on boilerplate:
+    // ── Dispatch templates: resolve + validate BEFORE allocation ──────────
+    // The rendered text becomes the first message, but final rendering waits
+    // until worktree allocation has chosen its actual execution cwd. The
+    // template's default resultSchema applies only when the call brought none
+    // of its own. Every failure here is a REFUSED SPAWN, never a worker started on boilerplate:
     // the whole point of a required placeholder is that a template renders
     // finished-looking text, so a dispatch missing its task slot must fail
     // loudly instead of dispatching without the reasoning only the caller can
     // write (lib/dispatchTemplate.ts carries the rule).
     let message = reqMessage;
     let resultSchema = reqResultSchema;
+    let templateBody: string | undefined;
+    let projectCwd: string | undefined;
+    // The provider helpers normalize this same value before launching. Use it
+    // for host-owned template/metadata values too, so a template never names a
+    // different directory from the worker's actual execution cwd.
+    const requestedExecutionCwd = normalizeSpawnCwd(cwd);
     // Whether the first message was WRITTEN by the caller or RENDERED here — it
     // decides whether the result echoes the text back (spawnResult).
     let renderedFromTemplate = false;
@@ -813,12 +830,13 @@ export function registerHubCapabilities(): void {
             'only dispatch templates render into a spawn',
         );
       }
-      // {{cwd}} renders as the PROJECT directory the dispatch names — the
-      // worktree (if any) is carved below, after this, and is where the worker
-      // runs, not what the task is about.
-      message = renderDispatchTemplate(item.body, templateParams ?? {}, {
-        cwd: templateCwd ?? cwd,
-      });
+      // Validate all caller-controlled slots before allocating a worktree, but
+      // do not render yet: {{cwd}} is the directory the worker will actually
+      // execute in, which allocation may change. Lookup/authorization remain
+      // rooted at the original project cwd above.
+      validateDispatchTemplateParams(item.body, templateParams ?? {});
+      templateBody = item.body;
+      projectCwd = templateCwd ?? requestedExecutionCwd;
       renderedFromTemplate = true;
       if (resultSchema === undefined && item.resultSchema) resultSchema = item.resultSchema;
     } else if (templateParams && Object.keys(templateParams).length) {
@@ -916,6 +934,17 @@ export function registerHubCapabilities(): void {
     // is done here. A soft failure (cwd not a repo, git error) falls back to
     // `cwd` with a warning rather than refusing the dispatch.
     let spawnCwd = cwd;
+    let worktreeResult:
+      | {
+          projectCwd: string;
+          executionCwd: string;
+          requested: true;
+          allocated: boolean;
+          fallback: boolean;
+          branch?: string;
+          error?: string;
+        }
+      | undefined;
     if (worktree && cwd) {
       try {
         const wt = await createWorktree({
@@ -930,6 +959,14 @@ export function registerHubCapabilities(): void {
         });
         if (wt.ok && wt.path) {
           spawnCwd = wt.path;
+          worktreeResult = {
+            projectCwd: projectCwd ?? requestedExecutionCwd,
+            executionCwd: normalizeSpawnCwd(spawnCwd),
+            requested: true,
+            allocated: true,
+            fallback: false,
+            ...(typeof wt.branch === 'string' && wt.branch ? { branch: wt.branch } : {}),
+          };
           if (wt.setup?.failed) {
             // The worktree is usable; the project's setup hook is not — same
             // fall-back-and-warn stance as worktree failure itself.
@@ -939,10 +976,36 @@ export function registerHubCapabilities(): void {
           }
         } else {
           console.warn(`[hub] agents.spawn: worktree for ${cwd} failed (${wt.error}); using cwd`);
+          worktreeResult = {
+            projectCwd: projectCwd ?? requestedExecutionCwd,
+            executionCwd: requestedExecutionCwd,
+            requested: true,
+            allocated: false,
+            fallback: true,
+            ...(typeof wt.error === 'string' && wt.error ? { error: wt.error } : {}),
+          };
         }
       } catch (err) {
         console.warn(`[hub] agents.spawn: worktree for ${cwd} threw; using cwd`, err);
+        worktreeResult = {
+          projectCwd: projectCwd ?? requestedExecutionCwd,
+          executionCwd: requestedExecutionCwd,
+          requested: true,
+          allocated: false,
+          fallback: true,
+          ...(err instanceof Error && err.message ? { error: err.message } : {}),
+        };
       }
+    }
+    if (templateBody !== undefined) {
+      // Pass exactly the directory rendered into {{cwd}} to the helper. Its
+      // own normalization is intentionally idempotent, but keeping the value
+      // equal here makes the first-message/execution-cwd contract explicit.
+      spawnCwd = normalizeSpawnCwd(spawnCwd);
+      message = renderDispatchTemplate(templateBody, templateParams ?? {}, {
+        cwd: spawnCwd,
+        projectCwd: projectCwd ?? requestedExecutionCwd,
+      });
     }
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
@@ -1014,7 +1077,14 @@ export function registerHubCapabilities(): void {
         routing,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
+      return spawnResult(
+        sessionId,
+        message,
+        escalation(),
+        renderedFromTemplate,
+        routing,
+        worktreeResult,
+      );
     }
     // Claude on the 'stream' transport is managed too (claudemon's headless
     // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
@@ -1055,7 +1125,14 @@ export function registerHubCapabilities(): void {
         routing,
         firstMessage: message,
       });
-      return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
+      return spawnResult(
+        sessionId,
+        message,
+        escalation(),
+        renderedFromTemplate,
+        routing,
+        worktreeResult,
+      );
     }
     const sessionId = await spawnClaudeAgent({
       cwd: spawnCwd,
@@ -1083,7 +1160,14 @@ export function registerHubCapabilities(): void {
       routing,
       firstMessage: message,
     });
-    return spawnResult(sessionId, message, escalation(), renderedFromTemplate, routing);
+    return spawnResult(
+      sessionId,
+      message,
+      escalation(),
+      renderedFromTemplate,
+      routing,
+      worktreeResult,
+    );
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the

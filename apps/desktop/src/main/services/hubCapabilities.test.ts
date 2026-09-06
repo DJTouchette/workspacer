@@ -1283,6 +1283,97 @@ describe('agents.spawn — dispatch templates', () => {
     });
   });
 
+  it.each([
+    ['managed Codex', { provider: 'codex' }, spawnManagedAgent, 'managed-session-id'],
+    ['Claude PTY', { provider: 'claude', transport: 'pty' }, spawnClaudeAgent, 'claude-session-id'],
+  ])(
+    'renders the actual worktree cwd into the first message delivered to %s',
+    async (_providerName, provider, spawner, sessionId) => {
+      const projectCwd = fs.realpathSync(process.cwd());
+      libraryMock.list.mockReturnValueOnce([
+        tpl({ body: 'EXECUTE {{cwd}}; PROJECT {{projectCwd}}; {{task}}' }),
+      ] as never);
+      createWorktree.mockResolvedValueOnce({ ok: true, path: '/wt/proj-abc', branch: 'agent/x' });
+
+      const res = (await call('agents.spawn', {
+        ...provider,
+        cwd: projectCwd,
+        worktree: true,
+        template: 'ship-task',
+        templateParams: { task: 'fix it' },
+      })) as Record<string, unknown>;
+      const arg = spawner.mock.calls[0][0] as { cwd?: string; firstMessage?: string };
+
+      // Lookup remains anchored to the original project, while the rendered
+      // dispatch and the child both receive the allocated execution cwd.
+      expect(libraryMock.list.mock.calls[0][0]).toBe(projectCwd);
+      expect(arg.cwd).toBe('/wt/proj-abc');
+      expect(arg.firstMessage).toBe(`EXECUTE ${arg.cwd}; PROJECT ${projectCwd}; fix it`);
+      expect(res).toMatchObject({
+        sessionId,
+        renderedMessage: arg.firstMessage,
+        worktree: {
+          projectCwd,
+          executionCwd: arg.cwd,
+          requested: true,
+          allocated: true,
+          fallback: false,
+          branch: 'agent/x',
+        },
+      });
+    },
+  );
+
+  it('falls back honestly when worktree allocation fails, rendering and spawning in the project cwd', async () => {
+    const projectCwd = fs.realpathSync(process.cwd());
+    libraryMock.list.mockReturnValueOnce([
+      tpl({ body: 'EXECUTE {{cwd}}; PROJECT {{projectCwd}}; {{task}}' }),
+    ] as never);
+    createWorktree.mockResolvedValueOnce({ ok: false, error: 'not a git repo' });
+
+    const res = (await call('agents.spawn', {
+      cwd: projectCwd,
+      worktree: true,
+      template: 'ship-task',
+      templateParams: { task: 'inspect only' },
+    })) as Record<string, unknown>;
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { cwd?: string; firstMessage?: string };
+
+    expect(arg.cwd).toBe(projectCwd);
+    expect(arg.firstMessage).toBe(`EXECUTE ${arg.cwd}; PROJECT ${projectCwd}; inspect only`);
+    expect(res).toMatchObject({
+      renderedMessage: arg.firstMessage,
+      worktree: {
+        projectCwd,
+        executionCwd: arg.cwd,
+        requested: true,
+        allocated: false,
+        fallback: true,
+        error: 'not a git repo',
+      },
+    });
+    expect((res.worktree as Record<string, unknown>).branch).toBeUndefined();
+  });
+
+  it('uses the project cwd for both host variables when no worktree was requested', async () => {
+    const projectCwd = fs.realpathSync(process.cwd());
+    libraryMock.list.mockReturnValueOnce([
+      tpl({ body: 'EXECUTE {{cwd}}; PROJECT {{projectCwd}}; {{task}}' }),
+    ] as never);
+
+    const res = (await call('agents.spawn', {
+      cwd: projectCwd,
+      template: 'ship-task',
+      templateParams: { task: 'inspect only' },
+    })) as Record<string, unknown>;
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { cwd?: string; firstMessage?: string };
+
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(arg.cwd).toBe(projectCwd);
+    expect(arg.firstMessage).toBe(`EXECUTE ${projectCwd}; PROJECT ${projectCwd}; inspect only`);
+    expect(res).not.toHaveProperty('worktree');
+  });
+
   it('renderedMessage is exactly the text the worker was given', async () => {
     libraryMock.list.mockReturnValueOnce([tpl()] as never);
     const res = (await call('agents.spawn', {
@@ -1355,6 +1446,31 @@ describe('agents.spawn — dispatch templates', () => {
     expect(spawnManagedAgent).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['required', {}, /\{\{task\}\}/],
+    ['unknown', { task: 'x', tska: 'typo' }, /unknown templateParams "tska"/],
+    ['host-owned', { task: 'x', cwd: '/elsewhere' }, /host-owned automatic variable "cwd"/],
+  ])(
+    'validates %s template params before allocating a worktree',
+    async (_name, templateParams, error) => {
+      const projectCwd = fs.realpathSync(process.cwd());
+      libraryMock.list.mockReturnValueOnce([
+        tpl({ body: '{{cwd}} {{projectCwd}} {{task}}' }),
+      ] as never);
+      await expect(
+        call('agents.spawn', {
+          cwd: projectCwd,
+          worktree: true,
+          template: 'ship-task',
+          templateParams,
+        }),
+      ).rejects.toThrow(error);
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(spawnClaudeAgent).not.toHaveBeenCalled();
+      expect(spawnManagedAgent).not.toHaveBeenCalled();
+    },
+  );
+
   it('template and message are mutually exclusive (the template IS the message)', async () => {
     // No list stub on purpose: the refusal must fire BEFORE any library read.
     await expect(
@@ -1413,7 +1529,9 @@ describe('agents.spawn — dispatch templates', () => {
     expect(res.escalationScrubbed).toEqual(['skipPermissions']);
     // Nothing from the item leaked into the spawn options.
     expect(arg.toolScope).toBeUndefined();
-    expect(arg.cwd).toBeUndefined();
+    // The host resolves its own default cwd for a template render; the forged
+    // item's cwd never reaches the child.
+    expect(arg.cwd).toBe(os.homedir());
   });
 });
 

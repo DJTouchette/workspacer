@@ -200,13 +200,14 @@ describe('dispatch items — the advertised params', () => {
       scope: 'project',
       title: 'Ship it',
       kind: 'dispatch',
-      body: 'In {{cwd}}: SHIP {{task}}\nDeliver: {{delivery:open a PR}}',
+      body: 'In {{cwd}} / {{projectCwd}}: SHIP {{task}}\nDeliver: {{delivery:open a PR}}',
       cwd,
     });
     const item = libraryService.list(cwd).find((i) => i.id === 'ship-it');
     expect(item!.params).toEqual([
       { name: 'task', required: true },
-      // {{cwd}} is filled by the HOST, so it is not something a caller passes.
+      // {{cwd}} and {{projectCwd}} are filled by the HOST, so neither is a
+      // value a caller passes.
       { name: 'delivery', required: false, default: 'open a PR' },
     ]);
   });

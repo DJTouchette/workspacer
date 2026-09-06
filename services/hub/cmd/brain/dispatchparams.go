@@ -55,8 +55,10 @@ func trimJS(s string) string { return strings.Trim(s, jsWhitespace) }
 
 // dispatchAutoVars are filled by the HOST from the spawn's own context, not by
 // the caller's templateParams, so they are excluded from the advertised list —
-// what `params` describes is what a CALLER must or may pass. TWIN: AUTO_VARS.
-var dispatchAutoVars = map[string]bool{"cwd": true}
+// what `params` describes is what a CALLER must or may pass. cwd is the actual
+// execution cwd; projectCwd is the original validated project directory. TWIN:
+// AUTO_VARS.
+var dispatchAutoVars = map[string]bool{"cwd": true, "projectCwd": true}
 
 // parseDispatchPlaceholder splits one token's inner text ("task", "?task",
 // "delivery:open a PR"). The leading '?' is the renderer's prompt-var spelling
