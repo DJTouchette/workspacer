@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.main.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["tests/integration/dispatchChain.integration.ts", "vitest.dispatch-chain.config.ts"]
+}

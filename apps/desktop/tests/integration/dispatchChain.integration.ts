@@ -1,0 +1,433 @@
+/** Real HTTP MCP auth → Go bus → desktop hubClient → agents.spawn → disk.
+ * Only provider launch is mocked. Electron is a headless runtime shim; no
+ * production capability, identity, config, session or history store is mocked.
+ */
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once, on } from 'node:events';
+import { createInterface } from 'node:readline';
+import WebSocket from 'ws';
+import type { DispatchTask } from '../../src/main/shared/dispatchHistory';
+
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+    getPath: () => process.env.HOME,
+    getAppPath: () => process.cwd(),
+  },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  Notification: class {
+    static isSupported() {
+      return false;
+    }
+  },
+  shell: {},
+  nativeImage: {},
+}));
+const launch = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/services/managedSpawn', () => ({ spawnManagedAgent: launch }));
+vi.mock('../../src/main/services/claudeSpawn', () => ({
+  spawnClaudeAgent: () => {
+    throw new Error('Unexpected Claude launch');
+  },
+}));
+
+// Workspacer worktrees may auto-link dependencies into the primary checkout.
+// Refuse that layout before writing any build cache or fixture state there.
+if (fs.realpathSync('node_modules') !== path.resolve('node_modules')) {
+  throw new Error('test:dispatch-chain requires a private desktop node_modules directory');
+}
+const cache = path.resolve('node_modules/.cache/dispatch-chain');
+fs.mkdirSync(cache, { recursive: true });
+const scratch = fs.mkdtempSync(path.join(cache, 'run-'));
+const configRoot = path.join(scratch, 'config');
+const configDir = path.join(configRoot, 'workspacer');
+fs.mkdirSync(configDir, { recursive: true });
+fs.mkdirSync(path.join(scratch, 'home'));
+fs.writeFileSync(path.join(configDir, 'remote-token'), 'dispatch-chain-synthetic-host', {
+  mode: 0o600,
+});
+fs.writeFileSync(path.join(configDir, 'config.yaml'), 'claude:\n  skipPermissionsDefault: false\n');
+const project = path.join(scratch, 'project');
+fs.mkdirSync(project);
+const fixtureEnv = {
+  // Deliberate allowlist: no inherited user tokens, provider credentials, or
+  // remote-server settings can enter the subprocess.
+  PATH: process.env.PATH,
+  HOME: path.join(scratch, 'home'),
+  USERPROFILE: path.join(scratch, 'home'),
+  XDG_CONFIG_HOME: configRoot,
+  APPDATA: configRoot,
+  TMPDIR: scratch,
+  GOCACHE: path.join(cache, 'go-build'),
+  GOMODCACHE: path.join(cache, 'go-mod'),
+  WKS_DISPATCH_CHAIN_FIXTURE: '1',
+};
+let child: ChildProcessWithoutNullStreams | undefined;
+let childExit: Promise<unknown> | undefined;
+let busURL: string;
+let facadeURL: string;
+let credentials: Array<{ label: string; token: string }>;
+let hub: typeof import('../../src/main/services/hubClient') | undefined;
+let sessions: typeof import('../../src/main/services/claudeSessionStore').claudeSessionStore;
+let history: typeof import('../../src/main/services/dispatchHistoryStore').dispatchHistoryStore;
+let validate: ReturnType<typeof vi.spyOn>;
+let sequence = 0;
+
+const tokenFor = (label: string) => {
+  const rec = credentials.find((rec) => rec.label === label);
+  if (!rec) throw new Error('Missing synthetic fixture credential');
+  return rec.token;
+};
+const persisted = (): DispatchTask[] =>
+  JSON.parse(fs.readFileSync(path.join(configDir, 'dispatch-history.json'), 'utf8')).tasks;
+
+beforeAll(async () => {
+  const binary = path.join(scratch, 'mcp-fixture');
+  const build = spawn('go', ['test', '-c', '-o', binary, './cmd/mcp'], {
+    cwd: path.resolve('../../services/hub'),
+    env: fixtureEnv,
+    stdio: 'pipe',
+    timeout: 120_000,
+  });
+  let buildErrors = '';
+  build.stderr.on('data', (data) => {
+    buildErrors += data;
+  });
+  const [code] = await once(build, 'exit');
+  if (code !== 0) throw new Error(`Go fixture build failed: ${buildErrors}`);
+  child = spawn(binary, ['-test.run=^TestDesktopDispatchChainFixture$', '-test.timeout=120s'], {
+    cwd: path.resolve('../../services/hub'),
+    env: fixtureEnv,
+    stdio: 'pipe',
+  });
+  childExit = once(child, 'exit');
+  // Do not echo subprocess logs: even synthetic bearer material stays private.
+  child.stderr.resume();
+  const lines = createInterface({ input: child.stdout });
+  const ready = await Promise.race([
+    once(lines, 'line').then(([line]) => JSON.parse(line)),
+    childExit.then(() => {
+      throw new Error('Go fixture exited before readiness');
+    }),
+  ]);
+  lines.close();
+  ({ busURL, facadeURL } = ready);
+  credentials = JSON.parse(fs.readFileSync(path.join(configDir, 'tokens.json'), 'utf8'));
+
+  vi.stubEnv('HOME', fixtureEnv.HOME);
+  vi.stubEnv('USERPROFILE', fixtureEnv.HOME);
+  vi.stubEnv('XDG_CONFIG_HOME', configRoot);
+  vi.stubEnv('APPDATA', configRoot);
+  vi.stubEnv('WORKSPACER_REMOTE_SHARE', '');
+  vi.stubEnv('WORKSPACER_PORT_OFFSET', String(Number(new URL(busURL).port) - 7895));
+  // Import only after the scratch paths and allocated port exist. These are
+  // consumed by real configService/hubDaemon/daemonUtils, not stub accessors.
+  hub = await import('../../src/main/services/hubClient');
+  const daemon = await import('../../src/main/services/hubDaemon');
+  expect(daemon.hubBusUrl()).toBe(busURL);
+  expect(daemon.getHubToken() === 'dispatch-chain-synthetic-host').toBe(true);
+  const config = await import('../../src/main/services/configService');
+  expect(config.getConfigDir()).toBe(configDir);
+  ({ claudeSessionStore: sessions } = await import('../../src/main/services/claudeSessionStore'));
+  ({ dispatchHistoryStore: history } =
+    await import('../../src/main/services/dispatchHistoryStore'));
+  validate = vi.spyOn(history, 'validate'); // Observation only: real validation still executes.
+  for (const sessionId of ['manager-other', 'manager-current']) {
+    // Distinct observed start times make manager-current the newest local manager.
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    sessions.setSpawnMeta(sessionId, { isWakeTarget: true, provider: 'codex', label: sessionId });
+    sessions.ensureManagedSession(sessionId, project);
+  }
+  expect(
+    sessions
+      .getAllSnapshots()
+      .filter((s) => s.isWakeTarget && s.status !== 'ended' && !s.hub)
+      .sort((a, b) => b.startedAt - a.startedAt)[0].sessionId,
+  ).toBe('manager-current');
+  launch.mockImplementation(async () => `synthetic-worker-${++sequence}`);
+  const { registerHubCapabilities } = await import('../../src/main/services/hubCapabilities');
+  registerHubCapabilities();
+  // Catalog delegation is production-default ON; register config.get using
+  // the real service because this fixture intentionally has no brain process.
+  hub.registerCapability('config.get', () => config.configService.getConfig());
+  hub.startHubClient();
+  await vi.waitFor(
+    async () => {
+      expect(hub!.isHubConnected()).toBe(true);
+      const rows = await hub!.callHub<Array<{ sessionId: string }>>('agents.list');
+      expect(rows.some((row) => row.sessionId === 'manager-current')).toBe(true);
+      const health = (await fetch(`${facadeURL}/health`).then((r) => r.json())) as {
+        hubConnected: boolean;
+      };
+      expect(health.hubConnected).toBe(true);
+    },
+    { timeout: 10_000 },
+  );
+});
+
+afterAll(async () => {
+  hub?.stopHubClient();
+  history?.flush();
+  child?.stdin.end();
+  if (childExit) await childExit;
+  vi.unstubAllEnvs();
+  fs.rmSync(scratch, { recursive: true, force: true });
+});
+
+const mcpSessions = new Map<string, string>();
+function decodeMcp(body: string, contentType: string | null) {
+  return contentType?.includes('text/event-stream')
+    ? JSON.parse(
+        body
+          .split('\n')
+          .find((line) => line.startsWith('data: '))!
+          .slice(6),
+      )
+    : JSON.parse(body);
+}
+async function mcpPost(label: string, message: Record<string, unknown>) {
+  return fetch(`${facadeURL}/mcp`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${tokenFor(label)}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      ...(mcpSessions.has(label) ? { 'Mcp-Session-Id': mcpSessions.get(label)! } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', ...message }),
+    signal: AbortSignal.timeout(15_000),
+  });
+}
+async function mcpSpawn(label: string, args: Record<string, unknown>) {
+  if (!mcpSessions.has(label)) {
+    const init = await mcpPost(label, {
+      id: ++sequence,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'dispatch-chain-fixture', version: '1' },
+      },
+    });
+    expect(init.status).toBe(200);
+    const envelope = decodeMcp(await init.text(), init.headers.get('content-type'));
+    expect(envelope.error).toBeUndefined();
+    const session = init.headers.get('mcp-session-id');
+    expect(session).toEqual(expect.any(String));
+    mcpSessions.set(label, session!);
+    const initialized = await mcpPost(label, { method: 'notifications/initialized' });
+    expect(initialized.status).toBe(202);
+    await initialized.text();
+  }
+  const response = await mcpPost(label, {
+    id: ++sequence,
+    method: 'tools/call',
+    params: {
+      name: 'spawn_agent',
+      arguments: {
+        cwd: project,
+        provider: 'codex',
+        model: 'gpt-5',
+        skipPermissions: false,
+        ...args,
+      },
+    },
+  });
+  expect(response.status).toBe(200);
+  const envelope = decodeMcp(await response.text(), response.headers.get('content-type'));
+  expect(envelope.error).toBeUndefined();
+  const text = envelope.result.content.map((c: { text: string }) => c.text).join('');
+  return {
+    isError: envelope.result.isError === true,
+    text,
+    value: envelope.result.isError ? undefined : JSON.parse(text),
+  };
+}
+
+async function busSpawn(token: string, params: Record<string, unknown>, federated = false) {
+  const socket = new WebSocket(
+    `${busURL}?token=${encodeURIComponent(token)}${federated ? '&peer=1' : ''}`,
+  );
+  try {
+    await once(socket, 'open');
+    socket.send(
+      JSON.stringify({ op: 'call', id: 'fixture-spawn', method: 'agents.spawn', params }),
+    );
+    for await (const [raw] of on(socket, 'message', { signal: AbortSignal.timeout(10_000) })) {
+      const frame = JSON.parse(raw.toString());
+      if (frame.id === 'fixture-spawn') return frame;
+    }
+  } finally {
+    socket.close();
+  }
+}
+
+it('rejects an unknown HTTP credential before launch', async () => {
+  const before = launch.mock.calls.length;
+  const response = await fetch(`${facadeURL}/mcp`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer dispatch-chain-invalid', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'spawn_agent',
+        arguments: { cwd: project, parentSessionId: 'manager-current' },
+      },
+    }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  expect(response.status).toBe(401);
+  await response.text();
+  expect(launch).toHaveBeenCalledTimes(before);
+});
+
+it('derives current manager from the HTTP credential and persists a linked task continuation', async () => {
+  const first = await mcpSpawn('session:manager-current', {
+    parentSessionId: 'manager-current',
+    stage: 'implement',
+  });
+  expect(first.isError).toBe(false);
+  expect(first.value).toMatchObject({ taskId: expect.any(String), dispatchId: expect.any(String) });
+  const second = await mcpSpawn('session:manager-current', {
+    parentSessionId: 'manager-current',
+    taskId: first.value.taskId,
+    afterDispatchId: first.value.dispatchId,
+    stage: 'review',
+  });
+  expect(second.isError).toBe(false);
+  expect(second.value.taskId).toBe(first.value.taskId);
+  expect(second.value.dispatchId).not.toBe(first.value.dispatchId);
+  expect(launch).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      cwd: project,
+      parentSessionId: 'manager-current',
+      provider: 'codex',
+    }),
+  );
+  const tasks = persisted();
+  expect(tasks).toHaveLength(1);
+  expect(tasks[0]).toMatchObject({
+    taskId: first.value.taskId,
+    ownerSessionId: 'manager-current',
+    projectCwd: project,
+  });
+  expect(tasks[0].attempts).toMatchObject([
+    { dispatchId: first.value.dispatchId, sessionId: first.value.sessionId, stage: 'implement' },
+    {
+      dispatchId: second.value.dispatchId,
+      sessionId: second.value.sessionId,
+      stage: 'review',
+      afterDispatchId: first.value.dispatchId,
+    },
+  ]);
+  expect(fs.statSync(path.join(configDir, 'dispatch-history.json')).mode & 0o777).toBe(0o600);
+  const { DispatchHistoryStore } = await import('../../src/main/services/dispatchHistoryStore');
+  const reloaded = new DispatchHistoryStore(() => path.join(configDir, 'dispatch-history.json'));
+  expect(reloaded.list()[0].attempts).toHaveLength(2);
+  expect(reloaded.list()[0].attempts.every((attempt) => attempt.stale && !attempt.live)).toBe(true);
+});
+
+it('refuses cross-owner explicit links before launch, including a forged parent', async () => {
+  const task = persisted()[0];
+  for (const parentSessionId of ['manager-other', 'manager-current']) {
+    const before = launch.mock.calls.length;
+    const result = await mcpSpawn('session:manager-other', {
+      parentSessionId,
+      taskId: task.taskId,
+      afterDispatchId: task.attempts[0].dispatchId,
+      stage: 'fix',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/another manager|live local manager/);
+    expect(launch).toHaveBeenCalledTimes(before);
+  }
+  expect(persisted()[0].attempts).toHaveLength(2);
+});
+
+it('allows optional stage with unattributed facade credentials without recording history', async () => {
+  const before = launch.mock.calls.length;
+  const result = await mcpSpawn('pairing', { parentSessionId: 'manager-current', stage: 'review' });
+  expect(result.isError).toBe(false);
+  expect(result.value.sessionId).toEqual(expect.any(String));
+  expect(result.value.taskId).toBeUndefined();
+  expect(result.value.dispatchId).toBeUndefined();
+  expect(launch).toHaveBeenCalledTimes(before + 1);
+  expect(persisted()).toHaveLength(1);
+  expect(persisted()[0].attempts).toHaveLength(2);
+});
+
+it('keeps an unowned host retry launch valid without borrowing the source task', async () => {
+  const task = persisted()[0];
+  const before = launch.mock.calls.length;
+  const result = await busSpawn('dispatch-chain-synthetic-host', {
+    cwd: project,
+    provider: 'codex',
+    parentSessionId: 'manager-current',
+    stage: 'fix',
+    retrySourceSessionId: task.attempts[0].sessionId,
+  });
+  expect(result.op).toBe('result');
+  expect(result.result.sessionId).toEqual(expect.any(String));
+  expect(result.result.taskId).toBeUndefined();
+  expect(result.result.dispatchId).toBeUndefined();
+  expect(validate).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      owner: null,
+      retrySourceSessionId: task.attempts[0].sessionId,
+      stage: 'fix',
+    }),
+  );
+  expect(launch).toHaveBeenCalledTimes(before + 1);
+  expect(persisted()).toHaveLength(1);
+  expect(persisted()[0].attempts).toHaveLength(2);
+});
+
+it.each(['scoped', 'plugin', 'federated'] as const)(
+  '%s strips owner/retry stamps, preserves optional stage, and refuses explicit links',
+  async (kind) => {
+    const token =
+      kind === 'scoped'
+        ? tokenFor('session:manager-current')
+        : kind === 'plugin'
+          ? 'dispatch-chain-synthetic-plugin'
+          : 'dispatch-chain-synthetic-host';
+    const task = persisted()[0];
+    const params = {
+      cwd: project,
+      provider: 'codex',
+      parentSessionId: 'manager-current',
+      stage: 'fix',
+      dispatchOwnerSessionId: 'manager-current',
+      retrySourceSessionId: task.attempts[0].sessionId,
+    };
+    const before = launch.mock.calls.length;
+    const accepted = await busSpawn(token, params, kind === 'federated');
+    expect(accepted.op).toBe('result');
+    expect(accepted.result.sessionId).toEqual(expect.any(String));
+    expect(accepted.result.taskId).toBeUndefined();
+    expect(accepted.result.dispatchId).toBeUndefined();
+    expect(validate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ owner: null, retrySourceSessionId: undefined, stage: 'fix' }),
+    );
+    expect(launch).toHaveBeenCalledTimes(before + 1);
+    const refused = await busSpawn(
+      token,
+      { ...params, taskId: task.taskId, afterDispatchId: task.attempts[0].dispatchId },
+      kind === 'federated',
+    );
+    expect(refused.op).toBe('error');
+    expect(refused.error).toMatch(/live local manager/);
+    expect(launch).toHaveBeenCalledTimes(before + 1);
+    expect(persisted()).toHaveLength(1);
+    expect(persisted()[0].attempts).toHaveLength(2);
+  },
+);

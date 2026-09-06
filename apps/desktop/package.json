@@ -33,6 +33,7 @@
     "typecheck:renderer": "cd src/renderer && tsc -p tsconfig.json --noEmit",
     "test": "npm run test:main && npm run test:renderer",
     "test:main": "vitest run",
+    "test:dispatch-chain": "tsc -p tsconfig.dispatch-chain.json && vitest run --config vitest.dispatch-chain.config.ts",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",
     "test:e2e:ci": "npx playwright test --project=app --project=mobile --project=renderer",

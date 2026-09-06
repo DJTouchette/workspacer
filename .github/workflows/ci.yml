@@ -141,6 +141,9 @@ jobs:
           go-version: '1.25.4'
           cache-dependency-path: services/hub/go.sum
 
+      - name: MCP to desktop dispatch provenance integration
+        run: npm run test:dispatch-chain
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
