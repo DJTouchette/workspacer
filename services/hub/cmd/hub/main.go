@@ -731,6 +731,11 @@ func main() {
 	srv.RegisterLocalIdent("usage.setPacingSchedule", usageSetPacingSchedule(usagePrefs))
 
 	srv.RegisterLocalIdent("routing.select", routingSelect(routingSvc, usage, routingCat, b.Publish, routingLog))
+	srv.RegisterLocalIdent("routing.preferences.get", routingPreferencesGet(routingSvc))
+	srv.RegisterLocalIdent("routing.preferences.validate", routingPreferencesValidate(routingSvc))
+	srv.RegisterLocalIdent("routing.preferences.save", routingPreferencesSave(routingSvc))
+	srv.RegisterLocalIdent("routing.preferences.reset", routingPreferencesReset(routingSvc))
+	srv.RegisterLocalIdent("routing.preview", routingPreview(routingSvc, usage, routingCat))
 
 	// AND THIS IS WHERE THE ANSWER STOPS BEING ADVICE. Until this line, a
 	// manager could ask routing.select, ignore the answer, and spawn whatever it

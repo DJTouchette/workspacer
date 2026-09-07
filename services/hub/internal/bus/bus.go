@@ -1001,7 +1001,8 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cn := &conn{
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
-		emits: events.Emits, consumes: events.Consumes, provides: provides,
+		authenticatedHost: trusted && !viaScoped && s.token != "" && tok == s.token && r.URL.Query().Get(PeerLinkParam) != "1",
+		emits:             events.Emits, consumes: events.Consumes, provides: provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
 		// Self-asserted and downgrade-only — see [conn.federated]. Read as a
@@ -1211,9 +1212,10 @@ type conn struct {
 	// Capability authorization, set at handshake. A trusted conn (host token) may
 	// call anything; a plugin conn may call only the methods it was granted, and
 	// path-scoped ones only within their granted roots.
-	trusted  bool
-	caps     map[string]capGrant
-	pluginID string
+	authenticatedHost bool
+	trusted           bool
+	caps              map[string]capGrant
+	pluginID          string
 	// Scoped user token (tokens.json): the tier name (for deny errors) and the
 	// method patterns it may call. scopeMethods non-nil marks the conn as
 	// token-scoped: it may subscribe to and receive every event (view includes
@@ -1367,11 +1369,12 @@ func (cn *conn) markActive(now time.Time) {
 
 func (cn *conn) identity() CallerIdentity {
 	id := CallerIdentity{
-		Trusted:  cn.trusted,
-		Scope:    cn.scope,
-		PluginID: cn.pluginID,
-		TokenID:  cn.tokenID,
-		ConnID:   cn.id,
+		Trusted:           cn.trusted,
+		AuthenticatedHost: cn.authenticatedHost,
+		Scope:             cn.scope,
+		PluginID:          cn.pluginID,
+		TokenID:           cn.tokenID,
+		ConnID:            cn.id,
 	}
 	if cn.trusted {
 		id.Scope = "operator"

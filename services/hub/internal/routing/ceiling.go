@@ -377,6 +377,9 @@ func (m *Matrix) capabilityOfModel(provider, model, effort string) (rank int, ca
 		return 0, "", false
 	}
 	best, bestName, found := 0, "", false
+	if m.preferenceAuthority != nil {
+		best, bestName, found = m.preferenceAuthority.capabilityOfModel(provider, model, effort)
+	}
 	for _, pname := range sortedKeys(m.Profiles) {
 		for _, cname := range sortedKeys(m.Profiles[pname]) {
 			// THE ALTERNATIVES COUNT AS READINGS OF THIS CAPABILITY. A model

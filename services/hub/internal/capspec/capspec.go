@@ -89,7 +89,11 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
-	"agents.spawn": "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
+	"routing.preferences.validate": "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
+	"routing.preferences.save":     "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
+	"routing.preferences.reset":    "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
+	"routing.preview":              "Pure routing.Select projection with bounded usage and cached availability; cwd is canonicalized only for the existing ceiling lookup. No spawn, audit id, log, event, provider launch or policy write. Security mapping and paths are redacted.",
+	"agents.spawn":                 "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
 	// The reason used to stop at `cwd`, and that was the whole record for a
 	// capability taking TWO process identifiers: `shell` is argv[0], handed
 	// straight to Command::new / claudemonSessionClient.spawn with no existence
@@ -343,7 +347,8 @@ var unscopedByDecision = map[string]string{
 // none of it reaches a sink. "It is read-only" on its own is the shrug this map
 // replaced.
 var inertMethods = map[string]string{
-	"usage.report": "no parameters; reads only the hub-owned usage watcher, installed pace configuration and the hub's own pacing-schedule preference, returning account identity, provenance, quota windows and sampled pace. No credentials, tokens, spend, config, decisions, probing or writes",
+	"routing.preferences.get": "No arguments; returns only typed safe policy, defaults, inherited values, source badges, cached catalog and opaque revision. No security fields, paths or writes.",
+	"usage.report":            "no parameters; reads only the hub-owned usage watcher, installed pace configuration and the hub's own pacing-schedule preference, returning account identity, provenance, quota windows and sampled pace. No credentials, tokens, spend, config, decisions, probing or writes",
 
 	"usage.pacingSchedule": "no parameters; returns the hub's own Overview pacing-schedule preference (five_day, seven_day, or empty for \"nobody has chosen\") and whether this hub can store one. It reads a single enum out of the hub's own 0600 preference file and discloses no path, no credential, no usage figure and no account. The WRITE half, usage.setPacingSchedule, is a separate method behind a separate trusted-only gate",
 
@@ -931,6 +936,7 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	},
 	// Hub-native, and hand-written for the reason layout.set's block above is:
 	// neither params scan reaches cmd/hub.
+	"routing.preview": {"cwd": {KindPath, "Canonicalized only to select the existing trusted directory ceiling; no caller path is written or returned."}},
 	"routing.select": {
 		"cwd":    {KindPath, "NOT a directory the hub opens, joins, stats or spawns in. It SELECTS which per-directory entry of the hub's own routing.yaml `ceilings:` block applies to the answer — the same shape as nodes.wake's `id` selecting a row of the hub's own nodes.json — and the matching is a lexical ancestor test over the string (routing.Matrix.CeilingFor), never a filesystem operation. Nothing downstream of this method touches the path: the answer is a (provider, model, effort) and every action taken on it goes through agents.spawn, whose OWN `cwd` decision is the row above"},
 		"effort": {KindShell, "not a caller value at all on this method — it is REPORTED, not accepted: the level comes out of routing.yaml's profile table and is validated at matrix-load time against the provider's own ladder (ValidateAgainstCatalog). It appears here because the response carries the name and the vocabulary scans on names"},

@@ -57,11 +57,11 @@ func normalizeProvider(p string) string {
 
 // CatalogModel is one model a provider can actually launch right now.
 type CatalogModel struct {
-	ID string
+	ID string `json:"id"`
 	// EffortLevels is the reasoning-effort ladder this model accepts, when the
 	// provider reports one. Empty means "not reported" and effort goes
 	// unvalidated — never "no efforts allowed".
-	EffortLevels []string
+	EffortLevels []string `json:"effortLevels,omitempty"`
 }
 
 // Catalog is the live model catalog, injected rather than dialled here: this

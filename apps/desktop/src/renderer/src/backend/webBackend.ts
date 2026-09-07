@@ -1,3 +1,4 @@
+import { routingAPI } from '../../../main/shared/routingPreferences';
 import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/shared/usageReport';
 /**
  * Web build of the `window.electronAPI` surface.
@@ -835,6 +836,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // and remote clients read and write it there directly, exactly as they do
     // usage.report. A hub that does not know the method answers an error, which
     // becomes null / { ok: false } rather than an invented default.
+    ...routingAPI((method, params) => client.call(method, params)),
     usagePacingSchedule: () =>
       client.call<UsagePacingScheduleWire>('usage.pacingSchedule', {}).catch(() => null),
     setUsagePacingSchedule: (schedule) =>

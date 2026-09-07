@@ -613,3 +613,35 @@ it('history read derives the current manager from live host state, ignoring call
     list.mockRestore();
   }
 });
+
+describe('routing preferences IPC', () => {
+  it('forwards only the five connected-hub methods and preserves errors', async () => {
+    const { callHub } = await import('./services/hubClient');
+    vi.mocked(callHub).mockReset();
+    const request = { baseRevision: 'revision', patch: { roles: { scout: 'cheap' } } };
+    for (const method of [
+      'routing.preferences.get',
+      'routing.preferences.validate',
+      'routing.preferences.save',
+      'routing.preferences.reset',
+      'routing.preview',
+    ]) {
+      vi.mocked(callHub).mockResolvedValueOnce({ status: 'applied' });
+      expect(await handlers.get('routing:call')!(null, method, request)).toEqual({
+        status: 'applied',
+      });
+      expect(callHub).toHaveBeenLastCalledWith(method, request);
+    }
+    for (const method of ['hub:peer/routing.preferences.save', 'config.save', 'fs.write']) {
+      const calls = vi.mocked(callHub).mock.calls.length;
+      await expect(handlers.get('routing:call')!(null, method, request)).rejects.toThrow(
+        'unavailable',
+      );
+      expect(vi.mocked(callHub).mock.calls).toHaveLength(calls);
+    }
+    vi.mocked(callHub).mockRejectedValueOnce(new Error('source conflict'));
+    await expect(
+      handlers.get('routing:call')!(null, 'routing.preferences.save', request),
+    ).rejects.toThrow('source conflict');
+  });
+});

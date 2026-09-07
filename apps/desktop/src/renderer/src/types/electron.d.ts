@@ -1,3 +1,4 @@
+import type { RoutingAPI } from '../../../main/shared/routingPreferences';
 import type { PluginManifest, PluginUpdateStatus } from './plugin';
 import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
@@ -105,7 +106,7 @@ export interface UpdateStatus {
   error?: string;
 }
 
-export interface ElectronAPI {
+export interface ElectronAPI extends RoutingAPI {
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
 

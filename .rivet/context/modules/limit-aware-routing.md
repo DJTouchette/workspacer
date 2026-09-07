@@ -14,7 +14,7 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/settings/SupervisorSection.tsx"
   - "docs/limit-aware-routing.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-07
 ---
 
 # Limit-aware routing
@@ -103,10 +103,17 @@ two mechanisms that each claim to pick the supervisor's model, with neither
 naming the other, is a bug this project has already had once.
 
 ## Gotchas
-- **No UI, by design.** There is no routing write RPC and there must never be
-  one. `ceilings:` is a ceiling only because no bus caller can edit the file it
-  comes from (that plus `fs.write` refusing the hub's state directory is the
-  whole argument). Editing routing.yaml is a text editor and nothing else.
+- **Safe preferences have a UI and MCP surface; host YAML has no writer.**
+  `preferences.go` composes a fixed private typed sidecar over the host policy,
+  with combined-source CAS and immediate Service install. Reset reveals the
+  inherited policy. The immutable host model classifications, ranks, ceilings
+  and freshness floors cannot be weakened by the managed patch. See
+  `docs/limit-aware-routing.md` for the API and persistence contract.
+- **Host authority is stronger than operator tier here.** The new
+  `CallerIdentity.AuthenticatedHost` bit excludes scoped operator, untokened
+  loopback and federation links. MCP also checks the authenticated static facade
+  credential before borrowing its outbound host connection. HTTP/SSE tests pin
+  that boundary. Peer edits are unavailable; direct connected-hub web works.
 - **`select_model` is operator tier only.** It is absent from capspec's
   `viewMethods` and `triageMethods`, so `ScopeOperator`'s `["*"]` is what grants
   it. A Fleet Manager holds it; a phone token does not.

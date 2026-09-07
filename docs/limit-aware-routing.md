@@ -3,9 +3,8 @@
 **Status:** built and wired. The hub reads each provider's remaining
 subscription capacity, resolves the work role a caller names into a concrete
 `(provider, model, effort)`, and clamps every bus `agents.spawn` to a
-per-directory ceiling. There is no GUI for the matrix; the file is the
-interface, and this document plus the comments inside the shipped file are the
-reference.
+per-directory ceiling. Settings → Routing edits safe model-policy preferences
+on the connected hub. Host security policy remains in the trusted matrix file.
 
 Relevant code:
 
@@ -972,12 +971,101 @@ arms:
 cd services/hub && go test ./internal/routing/... ./internal/limits/... ./cmd/hub/...
 ```
 
-## Why there is no GUI
+## Routing preferences and Settings
 
-Routing exposes no write RPC over the bus and will not get one. `config.save`
-cannot address another file, `library.save` is confined to the library, and
-`fs.write` refuses the hub's state directory. That is the whole reason the
-`ceilings:` block is a ceiling rather than a suggestion: an operator-tier Fleet
-Manager can read a routing decision and cannot raise its own cap. Editing the
-file is a deliberate act by a person with a text editor, which is the property
-being protected.
+Settings → Agents & AI → Routing is separate from the Fleet Manager’s own model
+controls and workflow definitions. It offers the shipped `mixed`, `codex_only`
+and `anthropic_only` presets, work-role mappings, provider/model/effort/minimum
+effort assignments and ordered alternatives. Advanced controls cover provider
+availability policy, modes, shifts, pacing, thresholds and forecast weights.
+All product values come from the hub’s compiled `routing.default.yaml`.
+
+The hub composes three layers: compiled defaults, trusted host `routing.yaml`,
+and a versioned sparse `routing-preferences.json` sidecar beside it. The sidecar
+is created privately (0600 on Unix, protected DACL on Windows), fsynced and
+atomically renamed. Neither Settings nor MCP rewrites host YAML; comments and
+unknown trusted fields remain byte-for-byte intact. A successful Apply installs
+the composed matrix in the live Service immediately and survives restart.
+
+Every response separates shipped defaults, inherited host/shipped values,
+managed overrides and effective policy. Source badges name `shipped`, `host` or
+`managed`. Reset clears **all managed preferences**, revealing the inherited
+policy. It does not overwrite a host override to simulate factory defaults.
+
+| Hub API | MCP tool | Contract |
+| --- | --- | --- |
+| `routing.preferences.get` | `routing_preferences_get` | Safe projection, opaque source revision, cached catalog |
+| `routing.preferences.validate` | `routing_preferences_validate` | `{baseRevision, patch}`; validate without candidate installation or disk writes |
+| `routing.preferences.save` | `routing_preferences_save` | `{baseRevision, patch}`; validate, CAS, atomic sidecar write, immediate installation |
+| `routing.preferences.reset` | `routing_preferences_reset` | `{baseRevision}`; clear managed layer using the same CAS |
+| `routing.preview` | `routing_preview` | Applied-policy route choice and reasons, without audit, events, decisionId or spawn |
+
+Patch keys are typed and sparse. Arrays (including alternatives) replace the
+whole array. Unknown fields, null, duplicate keys, caller paths, raw YAML, new
+profiles/roles/capabilities, ranks, ceilings, tool scopes and arbitrary nodes
+are rejected. Existing host-defined profiles and roles can be edited. A patch
+can map a role only to an existing capability. Unedited fields survive every
+save. See `internal/routing/preferences.go` for the exact schema.
+
+The revision fingerprints both source layers. A concurrent managed save or
+human YAML edit invalidates a draft; conflict responses include the current
+view and write nothing. Reload explicitly discards the stale UI draft. The
+normal service poll recomposes after human edits. Invalid or temporarily
+missing host policy and invalid/newer sidecars retain the last valid matrix,
+expose a warning and disable managed edits until the source is repaired.
+
+Validation reads only bounded cached provider state. Unknown is not
+unavailable. A changed model/effort tuple needs a current catalog answer before
+Apply; unrelated unchanged unavailable assignments do not block edits or reset.
+Catalog IDs are displayed verbatim when labels are absent; a missing effort
+ladder shows the current setting and provider default without inventing levels.
+Save and preview never synchronously launch a CLI or initiate a login.
+
+A new model must first be classified by the trusted host policy. Managed edits
+cannot relabel a stronger host-classified model as a cheaper capability. A
+lower effort on a classified model inherits its nearest trusted upper rung;
+an unspecified effort uses the strongest reading. The immutable host model
+classification is retained even when managed rows replace every reference to a
+strong tuple. Host freshness requirements and minimum effort floors cannot be
+lowered. The existing canonical `CheckSpawn` clamp remains authoritative for
+capability, provider/model/effort, tool scope and fresh-context refusal.
+
+### Authority and ownership
+
+Mutations and validation require an **authenticated host-token connection plus
+operator tier**. `IsTrusted()` alone is insufficient: historically it also
+accepts scoped operator tokens and untokened loopback connections. The new
+handshake-derived `AuthenticatedHost` bit excludes both, as well as federation
+links. MCP additionally requires its static authenticated facade credential;
+a session’s operator tier cannot borrow the facade’s outbound hub credential.
+HTTP requests carry server-stamped identity metadata. SSE host sessions use a
+separate session registry so another tier cannot post into a host session.
+
+Each connected hub owns its preferences. Desktop direct IPC, desktop bus mode,
+remote desktop and direct connected-hub web use the same API. No replication or
+peer-qualified mutation is supported. Connect directly to the owning hub with
+host authority to edit it. An older hub shows unavailable; there is no
+`config.yaml` fallback. `config.save` cannot address this sidecar, and
+`fs.write` continues to refuse the hub state directory.
+
+### Verification
+
+`make test-routing-harness` exercises the production registered handlers with a
+scratch hub and fake claudemon, including apply/select, preview without audit,
+CAS, host gating, reset and unchanged YAML alongside existing routing and spawn
+clamps. Go tests additionally cover restart persistence, invalid sources,
+forbidden fields, catalog uncertainty, model relabel attempts, the authenticated
+bus handshake and actual MCP `select_model` consumption over HTTP and SSE.
+
+The renderer shares the Go-generated safe projection fixture at
+`internal/routing/testdata/preferences-view.json`. Regenerate after a wire or
+compiled-default change with:
+
+```sh
+cd services/hub
+UPDATE_ROUTING_FIXTURE=1 go test ./internal/routing -run TestPreferencesWireFixture
+```
+
+Renderer tests pin sparse payloads, validation, conflict reload, unavailable
+hubs and reset semantics. The `routingSettings` Playwright fixture covers 360px
+and desktop widths in light and Dracula themes without real provider calls.

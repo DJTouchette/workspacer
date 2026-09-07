@@ -72,6 +72,7 @@ export const IPC = {
   PROVIDER_CHECK_ALL: 'provider:checkAll',
   KEEPWARM_HEARTBEATS: 'keepwarm:heartbeats',
   USAGE_REPORT: 'usage:report',
+  ROUTING_CALL: 'routing:call', // closed method allowlist; connected hub only
   USAGE_PACING_SCHEDULE: 'usage:pacingSchedule', // invoke (read)
   USAGE_SET_PACING_SCHEDULE: 'usage:setPacingSchedule', // invoke (write)
   CLAUDE_MESSAGE: 'claude:message',

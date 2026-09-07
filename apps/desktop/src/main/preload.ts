@@ -1,3 +1,4 @@
+import { routingAPI } from './shared/routingPreferences';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from './shared/ipcChannels';
 import type {
@@ -321,6 +322,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   usageReport: (): Promise<UsageReportWire | null> => ipcRenderer.invoke(IPC.USAGE_REPORT),
   /** Settings -> "Usage schedule". null = this hub cannot answer (older hub, or
    *  none), which the control renders as unavailable. */
+  ...routingAPI((method, params) => ipcRenderer.invoke(IPC.ROUTING_CALL, method, params)),
   usagePacingSchedule: (): Promise<UsagePacingScheduleWire | null> =>
     ipcRenderer.invoke(IPC.USAGE_PACING_SCHEDULE),
   /** Stores the schedule. A failure comes back as { ok: false, error } rather

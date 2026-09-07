@@ -64,6 +64,11 @@ vi.mock('../../src/backend/hubBusClient', () => ({
 // Methods that ride the hub bus. Registered-capability calls, event
 // subscriptions, and hub-core plumbing (layout doc, __publish) all count.
 const BUS_BACKED = [
+  'routingPreferencesGet',
+  'routingPreferencesValidate',
+  'routingPreferencesSave',
+  'routingPreferencesReset',
+  'routingPreview',
   // Discovery / model / provider
   'claudeListModels',
   'providerListModels',
@@ -539,4 +544,50 @@ describe('Recent agents stays on the local host path', () => {
       { available: false },
     );
   });
+});
+
+it('routing preferences use the connected hub across desktop bus, remote and web', async () => {
+  usageBusCall.mockReset();
+  const state = { schemaVersion: 1, revision: 'owner-revision', configurable: true };
+  usageBusCall.mockResolvedValue(state);
+  const ipc = { platform: 'linux', routingPreferencesSave: vi.fn() } as unknown as ElectronAPI;
+  const apis = [
+    createWebBackend('token', 'ws://owner/bus'),
+    createRemoteBackend(ipc, 'token', 'ws://owner/bus'),
+    createBridgedBackend(ipc, 'token', 'ws://owner/bus'),
+  ];
+  for (const api of apis) {
+    expect(await api.routingPreferencesGet()).toEqual(state);
+    const patch = { baseRevision: 'owner-revision', patch: { roles: { scout: 'cheap' } } };
+    await api.routingPreferencesSave(patch);
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'routing.preferences.save',
+      patch,
+      'ws://owner/bus',
+    );
+    await api.routingPreferencesValidate(patch);
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'routing.preferences.validate',
+      patch,
+      'ws://owner/bus',
+    );
+    await api.routingPreferencesReset({ baseRevision: 'owner-revision' });
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'routing.preferences.reset',
+      { baseRevision: 'owner-revision' },
+      'ws://owner/bus',
+    );
+    await api.routingPreview({ role: 'scout' });
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'routing.preview',
+      { role: 'scout' },
+      'ws://owner/bus',
+    );
+  }
+  expect(ipc.routingPreferencesSave).not.toHaveBeenCalled();
+  usageBusCall.mockRejectedValue(new Error('no provider for routing.preferences.save'));
+  for (const api of apis)
+    await expect(api.routingPreferencesSave({ baseRevision: 'stale', patch: {} })).rejects.toThrow(
+      'no provider',
+    );
 });

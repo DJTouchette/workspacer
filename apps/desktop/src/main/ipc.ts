@@ -1049,6 +1049,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // equivalent, and an older hub simply does not know these methods. `null` is
   // therefore "this hub cannot answer", which the control renders as
   // unavailable rather than as a schedule nobody chose.
+  ipcMain.handle(IPC.ROUTING_CALL, (_event, method: string, params: unknown) => {
+    if (
+      ![
+        'routing.preferences.get',
+        'routing.preferences.validate',
+        'routing.preferences.save',
+        'routing.preferences.reset',
+        'routing.preview',
+      ].includes(method)
+    ) {
+      throw new Error('Routing method unavailable; peer editing is unavailable');
+    }
+    return callHub(method, params);
+  });
   ipcMain.handle(IPC.USAGE_PACING_SCHEDULE, async () => {
     try {
       return await callHub<UsagePacingScheduleWire>('usage.pacingSchedule', {});

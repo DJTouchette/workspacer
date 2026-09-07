@@ -45,7 +45,7 @@ export default defineConfig({
     {
       name: 'renderer',
       testMatch:
-        /(chatTailPin|usagePacing|htmlCard|fleetReview|fleetContextMenu|recentAgents|statusSummary)\.test\.ts$/,
+        /(chatTailPin|usagePacing|htmlCard|fleetReview|fleetContextMenu|recentAgents|statusSummary|routingSettings)\.test\.ts$/,
     },
     { name: 'electron', testMatch: /libraryPane\.test\.ts$/ },
   ],

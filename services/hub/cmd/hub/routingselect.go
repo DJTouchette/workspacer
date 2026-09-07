@@ -9,18 +9,10 @@ package main
 // something constructed routing.Service, routing.yaml was never seeded and
 // never read. Both are done here and in main.go.
 //
-// ROUTING EXPOSES NO WRITE RPC OVER THE BUS, EVER — that, plus the secret gate
-// refusing the hub's state directory to fs.write, is the entire security
-// argument for the matrix file's `ceilings:` block, and the moment a routing
-// write RPC exists the ceiling stops meaning anything.
-//
-// routing.select STARTS NOTHING AND CHANGES NOTHING. It answers a question.
-// What it does do, since the decision became binding, is put its own answer on
-// the record: one `routing.decision` event and one line in the append-only
-// decision log beside routing.yaml. Neither is a write RPC in the sense above —
-// no caller can move a threshold, a profile, a mode or a ceiling through any bus
-// method, and causing a record of your own question to be written is the
-// opposite kind of act from editing the policy that answers it.
+// routing.yaml has no bus writer. The separate typed preferences API preserves
+// its security envelope and installs only validated safe model-policy fields.
+// routing.select records decisions; routing.preview reuses pure Select without
+// an audit row, event or decision id. Neither starts an agent.
 //
 // Registered with the LITERAL method name through the caller-aware door, for
 // the reason fleet.quiescence is: the answer is caller-dependent (a caller's
@@ -523,12 +515,8 @@ func paceOf(d routing.Decision) (state string, ratio *float64, window string) {
 // because claudemon was restarting would be worse than one that routed
 // conservatively and said why.
 //
-// STILL NO WRITE RPC. This handler now publishes an event and appends a line to
-// an audit file, and neither of those is a write RPC in the sense that matters:
-// no caller can change the matrix, the ceilings, the thresholds or the modes
-// through any bus method, which is what makes routing.yaml's `ceilings:` block a
-// ceiling. A caller can cause a record OF ITS OWN QUESTION to be written, which
-// is the opposite kind of thing.
+// This decision handler never writes policy. Managed preferences have their
+// own authenticated host gate and cannot modify the trusted security envelope.
 func routingSelect(svc *routing.Service, usage *usageWatcher, avail availabilitySource, pub func(event.Envelope), logf *routing.DecisionLog) bus.LocalIdentHandler {
 	return func(_ bus.CallerIdentity, params json.RawMessage) (any, error) {
 		var req routing.Request
@@ -641,4 +629,26 @@ func ceilingMax(v *routing.CeilingVerdict) string {
 		return ""
 	}
 	return v.MaxCapability
+}
+
+// Snapshot reads the existing catalog cache only. Settings and preview must
+// never synchronously launch a provider CLI to fill an empty catalog.
+func (c *routingCatalog) Snapshot() map[string]routing.CatalogSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := map[string]routing.CatalogSnapshot{}
+	for p, e := range c.cached {
+		state := "unknown"
+		if e.answered && time.Since(e.at) <= catalogTTL {
+			state = "available"
+			if len(e.models) == 0 {
+				state = "unknown"
+				if p != "claude" {
+					state = "unavailable"
+				}
+			}
+		}
+		out[p] = routing.CatalogSnapshot{State: state, ObservedAt: e.at.UnixMilli(), Models: append([]routing.CatalogModel(nil), e.models...)}
+	}
+	return out
 }

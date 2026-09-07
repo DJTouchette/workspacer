@@ -1,3 +1,4 @@
+import RoutingSection from '../components/settings/RoutingSection';
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { usePlugins } from '../hooks/usePlugins';
@@ -43,6 +44,12 @@ const GROUPS = ['Agents & AI', 'Workspace', 'Tools', 'Plugins', 'System'] as con
 
 const SECTIONS: SectionDef[] = [
   // Agents & AI
+  {
+    key: 'routing',
+    label: 'Routing',
+    group: 'Agents & AI',
+    keywords: ['routing', 'matrix', 'model', 'preset', 'role', 'capability', 'pace'],
+  },
   {
     key: 'session',
     label: 'Session',
@@ -522,6 +529,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <ClaudeProfilesSection />;
       case 'jobs':
         return <JobsSection />;
+      case 'routing':
+        return <RoutingSection />;
       case 'supervisor':
         return <SupervisorSection config={config} save={save} />;
       case 'pricing':

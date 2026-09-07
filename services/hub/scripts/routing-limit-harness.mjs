@@ -320,6 +320,38 @@ function routingRequest(scenario, providerName = 'codex') {
   };
 }
 
+// Exercises the registered production handlers against the same scratch hub.
+async function runPreferencesAssertions(caller, hubPort, fakeURL) {
+  console.log('\nsafe routing preferences:');
+  await setScenario(fakeURL, 'healthy-current', true);
+  const hostBytes = fs.readFileSync(path.join(tmp, 'routing.yaml'));
+  const initial = await caller.call('routing.preferences.get');
+  check('preferences expose compiled defaults and no security mappings', initial.schemaVersion === 1 && initial.defaults.activeProfile === 'mixed' && !JSON.stringify(initial).includes('maxToolScope'));
+  const request = { baseRevision: initial.revision, patch: { roles: { mechanical: 'balanced' }, modes: { global: 'normal' } } };
+  const validation = await caller.call('routing.preferences.validate', request);
+  check('typed draft validates without writing a sidecar', validation.status === 'valid' && !fs.existsSync(path.join(tmp, 'routing-preferences.json')));
+  const applied = await caller.call('routing.preferences.save', request);
+  check('preferences apply immediately', applied.status === 'applied');
+  const selected = await caller.call('routing.select', { role: 'mechanical', cwd: tmp });
+  check('production routing.select consumes the saved role', selected.baseCapability === 'balanced');
+  const auditBefore = fs.readFileSync(decisionLog, 'utf8');
+  const eventBefore = caller.events.length;
+  const preview = await caller.call('routing.preview', { role: 'mechanical', cwd: tmp });
+  check('preview matches production choice without a decision id', preview.model === selected.model && preview.effort === (selected.effort || '') && !preview.decisionId);
+  await sleep(30);
+  check('preview emits no decision row or event', auditBefore === fs.readFileSync(decisionLog, 'utf8') && caller.events.length === eventBefore);
+  const conflict = await caller.call('routing.preferences.save', request);
+  check('stale source revision conflicts', conflict.status === 'conflict');
+  const operator = await connectWithRetry(hubPort, 'preferences-operator', 40, OPERATOR_TOKEN);
+  let refused = false;
+  try { await operator.call('routing.preferences.save', { ...request, baseRevision: applied.view.revision }); } catch { refused = true; }
+  operator.close();
+  check('operator tier cannot mutate host routing preferences', refused);
+  const reset = await caller.call('routing.preferences.reset', { baseRevision: applied.view.revision });
+  check('reset reveals inherited policy', reset.status === 'applied' && reset.view.effective.roles.mechanical === initial.inherited.roles.mechanical && reset.view.managedFields.length === 0);
+  check('save and reset preserve trusted routing YAML byte-for-byte', hostBytes.equals(fs.readFileSync(path.join(tmp, 'routing.yaml'))));
+}
+
 async function maybeCallRouting(caller, scenario, request) {
   try {
     return { ok: true, result: await caller.call('routing.select', request) };
@@ -1102,6 +1134,7 @@ try {
   check('absent-opencode-pi: pi is absent from the usage report', !names.includes('pi'), JSON.stringify(names));
 
   await clearFakeRequests(fake.url);
+  await runPreferencesAssertions(caller, hubPort, fake.url);
   await runRoutingCases(caller, fake.url);
 
   await runPacingAssertions(caller, fake.url);

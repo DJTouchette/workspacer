@@ -18,13 +18,10 @@
 // a job is persisted argv, and a matrix that decides how much capability and how
 // much autonomy a spawned agent gets is host-trusted state by the same rule.
 //
-// Two things follow from that placement and both are load-bearing:
-//
-//  1. There is NO routing write RPC over the bus, and there must never be one.
-//     That, plus the secret gate refusing the hub's state directory to fs.write,
-//     is the whole security argument for the `ceilings:` block.
-//  2. This layer is hub-native Go with NO TypeScript twin. Nothing routing-shaped
-//     belongs in apps/desktop, cmd/brain or claudemon.
+// Host security policy has no bus writer. Safe model-policy preferences live
+// in a separate typed sidecar (preferences.go), behind authenticated host
+// authority. They retain the host's ranks, model classifications, ceilings and
+// freshness floors; renderer code holds only the safe wire projection.
 //
 // THE FAILURE POLICY IS THE FEATURE. A file that cannot be read, or that does
 // not parse, leaves the running matrix EXACTLY as it was and logs; and because
@@ -325,9 +322,11 @@ func (i Issue) String() string { return i.Where + ": " + i.Detail }
 
 // Matrix is the merged, validated document.
 type Matrix struct {
-	Version       int      `yaml:"version" json:"version"`
-	ActiveProfile string   `yaml:"active_profile" json:"activeProfile"`
-	Capabilities  []string `yaml:"capabilities" json:"capabilities"`
+	// Immutable host model classifications survive managed row replacements.
+	preferenceAuthority *Matrix
+	Version             int      `yaml:"version" json:"version"`
+	ActiveProfile       string   `yaml:"active_profile" json:"activeProfile"`
+	Capabilities        []string `yaml:"capabilities" json:"capabilities"`
 	// CapabilityRanks orders the capability names by STRENGTH, which is the one
 	// question `capabilities:` cannot answer.
 	//

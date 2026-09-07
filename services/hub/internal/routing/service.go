@@ -2,7 +2,6 @@ package routing
 
 import (
 	"context"
-	"crypto/sha256"
 	"log"
 	"os"
 	"path/filepath"
@@ -46,19 +45,14 @@ func seedMarkerFor(path string) string { return path + ".seeded" }
 // wrote is also how the service tells its own seed write apart from a person's
 // edit.
 type Service struct {
-	mu     sync.Mutex
-	path   string
-	cat    Catalog
-	matrix *Matrix
-
-	// specHash fingerprints the file's bytes as this service last saw them.
-	specHash [sha256.Size]byte
-	// haveSpecHash stays false until the file has been read or written once, so
-	// the first look at an existing file is not mistaken for "unchanged".
-	haveSpecHash bool
-	// readErrLogged keeps an unreadable file from logging on every tick; it
-	// resets as soon as a read succeeds.
-	readErrLogged bool
+	preferencesBase     *Matrix
+	preferencesPatch    PreferencesPatch
+	preferencesRevision string
+	preferencesWarning  string
+	mu                  sync.Mutex
+	path                string
+	cat                 Catalog
+	matrix              *Matrix
 
 	// baseIssues are the PURE load-time findings for the live matrix, kept apart
 	// from the catalog's so a repeated catalog check rebuilds Matrix.Issues
@@ -176,36 +170,38 @@ func (s *Service) reloadIfChangedLocked() bool {
 	if s.path == "" {
 		return false
 	}
-	raw, err := os.ReadFile(s.path)
+	host, pref, revision, err := s.readSourcesLocked()
+	if host == nil && s.matrix != nil {
+		s.preferencesWarning = "Host policy is temporarily missing; last valid policy retained"
+		return false
+	}
 	if err != nil {
-		if !s.readErrLogged {
-			s.readErrLogged = true
-			if s.matrix != nil {
-				log.Printf("[routing] %s cannot be read — keeping the matrix already loaded: %v", s.path, err)
-			}
-		}
+		s.preferencesWarning = err.Error()
 		return false
 	}
-	s.readErrLogged = false
-	sum := sha256.Sum256(raw)
-	if s.haveSpecHash && sum == s.specHash {
+	if revision == s.preferencesRevision {
+		s.preferencesWarning = ""
 		return false
 	}
-	// Recorded BEFORE the parse, so a file that is broken the same way every
-	// tick is complained about once rather than twice a minute. Any further edit
-	// changes the bytes and therefore gets another look.
-	s.specHash, s.haveSpecHash = sum, true
-
-	m, err := Load(s.path, raw)
+	patch, err := parsePreferences(pref)
 	if err != nil {
-		if s.matrix == nil {
-			log.Printf("[routing] %s does not parse, running on the compiled-in defaults: %v", s.path, err)
-		} else {
-			log.Printf("[routing] %s does not parse — keeping the matrix already loaded: %v", s.path, err)
-		}
+		s.preferencesWarning = "Managed preferences are invalid or from a newer hub; last valid policy retained"
 		return false
 	}
-	s.installLocked(m)
+	base, m, err := composePreferences(host, patch)
+	if err != nil {
+		s.preferencesWarning = "Host policy or managed preferences are invalid; last valid policy retained"
+		return false
+	}
+	if len(host) > 0 {
+		m.Source = s.path
+		base.Source = s.path
+	}
+	s.preferencesBase = base
+	s.preferencesPatch = patch
+	s.preferencesRevision = revision
+	s.preferencesWarning = ""
+	s.installWithCachedCatalogLocked(m)
 	s.report(m)
 	return true
 }

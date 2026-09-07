@@ -56,7 +56,7 @@ Reading another agent's activity:
   is to read it and reply with a digest, so it never enters your own context.
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
-		"spawn": strings.TrimSpace(`
+	"spawn": strings.TrimSpace(`
 Task loops (local desktop): stage=scout|implement|review|fix|validate|land|other is optional descriptive history metadata. To attribute or continue a task, parentSessionId must name your live local manager; save the returned taskId and dispatchId, then pass taskId and afterDispatchId under that same manager and project. Without valid manager attribution, stage and automatic respawn provenance may launch but are not recorded or linked. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
 
 spawn_agent starts a new coding-agent session and returns its sessionId.
@@ -143,6 +143,19 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   list_agents rows). The peer clamps remote spawns itself — permission bypass
   is refused there — and driving the new agent needs the same hub value.`),
 	"routing": strings.TrimSpace(`
+Routing preferences: routing_preferences_get returns this connected hub's safe
+policy, shipped defaults, inherited host values, sparse overrides and revision.
+routing_preferences_validate/save accept {baseRevision, patch}; reset accepts
+{baseRevision} and clears managed preferences to the inherited baseline.
+Mutations require the static authenticated facade credential AND an authenticated
+host connection to the hub; an agent's operator tier alone is insufficient.
+Unknown changed model catalogs leave a draft pending and unapplied. New model
+IDs need trusted host classification before assigning them to a capability.
+No caller can edit ranks, directory ceilings, tool scope or host freshness floors.
+Peer-qualified preference edits are unavailable; connect directly to the owner.
+routing_preview uses the applied policy and bounded usage/cache snapshots, returns
+choice and reasons without decisionId, decision log, event or agent launch.
+
 select_model is the ask-before-you-dispatch tool. You name the ROLE the work is
 (scout, mechanical, implementer, reviewer, deep_reviewer, fixer, complex_fixer,
 validator, diagnostician, judge) and the project directory as cwd, and the hub

@@ -37,6 +37,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/redact"
+	"github.com/djtouchette/workspacer-hub/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -137,7 +138,18 @@ func newMux(cache *serverCache, client *busclient.Client, gate *authGate) *http.
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", requireScope(gate, mcp.NewStreamableHTTPHandler(getServer, nil)))
-	mux.Handle("/sse", requireScope(gate, mcp.NewSSEHandler(getServer, nil)))
+	// The SDK SSE transport does not carry POST headers into tool requests.
+	// Partition its session registry by authenticated host authority, so an
+	// operator POST cannot address a host session even with a known session id.
+	hostSSE, scopedSSE := mcp.NewSSEHandler(getServer, nil), mcp.NewSSEHandler(getServer, nil)
+	mux.Handle("/sse", requireScope(gate, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(routingHostHeader) == "authenticated" {
+			r = r.WithContext(context.WithValue(r.Context(), routingHostSSEKey{}, true))
+			hostSSE.ServeHTTP(w, r)
+		} else {
+			scopedSSE.ServeHTTP(w, r)
+		}
+	})))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -399,6 +411,13 @@ func requireScope(gate *authGate, h http.Handler) http.Handler {
 		if rec.Label != "" {
 			r = r.WithContext(context.WithValue(r.Context(), tokenLabelKey{}, rec.Label))
 		}
+		// Never let a session's operator tier borrow the facade's outbound host
+		// credential for preference writes. This header is internal request
+		// metadata, replaced after authentication, never caller authority.
+		r.Header.Del(routingHostHeader)
+		if gate.static != "" && subtle.ConstantTimeCompare([]byte(presentedToken(r)), []byte(gate.static)) == 1 {
+			r.Header.Set(routingHostHeader, "authenticated")
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -628,6 +647,12 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addTool[routingSelectIn](b, "select_model",
 		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer is PREFERRED to land on a different model family from the implementer — the matrix tries candidates in that order where capacity allows, and requireIndependentFamily makes it required rather than merely preferred, with the answer saying plainly if it could not be arranged), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). When the matrix's primary pairing for the capability could not be used — its allowance is red, its provider is conserving, or the host asked that provider's CLI what it can launch and the CLI answered with no launchable model — the answer falls over to the next candidate on its own `alternatives:` list and names the primary it passed over in fellOverFrom. That live check detects only the CLI-ran-and-listed-nothing case: a probe that FAILED (a CLI that is not installed makes the host's spawn fail and the daemon answer 502, or the daemon is down) is unknown and is used as normal, claude is never reported unavailable because its model list comes from aliases and past transcripts rather than from a running CLI, and the check runs only inside the fallover walk, so it is not applied to a provider you PIN, to a capability with no alternatives, or to the provider a mode shift lands on. A routing mode may also step the EFFORT one notch along the provider's own ladder without changing the model at all, reported as effortStep (from, to, why), and under conserve the tier shift and the effort step can both fire on one decision: pass the `provider`, `model` and `effort` the answer gives you rather than the ones you expected. The answer also carries capacity.pace when the host has pacing on: the same allowance judged against the CLOCK (consumed vs expected-by-now on the running window), which can make a decision CONSERVE that the used-percentage alone would call normal, and which never promotes anything. Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent. See help topic 'routing'.",
 		"routing.select")
+
+	addRoutingPreferencesGetTool(b, "routing_preferences_get", "Read this connected hub's safe routing defaults, managed preferences, source revision and cached catalog.", "routing.preferences.get")
+	addRoutingPreferenceTool[routing.PreferencesRequest](b, "routing_preferences_validate", "Validate a sparse typed routing patch against its source revision without writing; authenticated host authority required.", "routing.preferences.validate")
+	addRoutingPreferenceTool[routing.PreferencesRequest](b, "routing_preferences_save", "Atomically apply a validated routing patch on this hub; authenticated host authority and current baseRevision required.", "routing.preferences.save")
+	addRoutingPreferenceTool[routingPreferencesResetIn](b, "routing_preferences_reset", "Clear managed routing preferences to inherited host/shipped values; authenticated host authority and current baseRevision required.", "routing.preferences.reset")
+	addTool[routingSelectIn](b, "routing_preview", "Preview a route and reasons without spawning, audit rows or decision events; uses bounded cached provider state.", "routing.preview")
 
 	// ── Drive ──────────────────────────────────────────────────────────────
 	b.group = "drive"
@@ -1769,4 +1794,58 @@ type notifyIn struct {
 	Key         string `json:"key,omitempty" jsonschema:"stable key: a later notification with the same key REPLACES the earlier one instead of stacking. Use it for repeated alerts about the same condition"`
 	Silent      bool   `json:"silent,omitempty" jsonschema:"record it in the notification center only — no toast and no OS notification. For things worth logging that are not worth interrupting for"`
 	InAppOnly   bool   `json:"inAppOnly,omitempty" jsonschema:"skip the OS notification but still show the in-app toast"`
+}
+
+type routingPreferencesResetIn struct {
+	BaseRevision string `json:"baseRevision"`
+}
+
+type routingHostSSEKey struct{}
+
+const routingHostHeader = "X-Workspacer-Internal-Routing-Host"
+
+func addRoutingPreferenceTool[In any](b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc}, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		if !routingHostRequest(ctx, req) {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Routing preference mutations require the authenticated facade host credential; operator tier alone is insufficient"}}}, nil, nil
+		}
+		// Validate the original bytes too: typed MCP decoding must not silently
+		// drop an explicit null or a case-insensitive alias before the hub sees it.
+		var strict In
+		if err := routing.DecodePreferences(req.Params.Arguments, &strict); err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+		}
+		return forward(ctx, b.c, method, in)
+	})
+}
+
+func routingHostRequest(ctx context.Context, req *mcp.CallToolRequest) bool {
+	sseHost, _ := ctx.Value(routingHostSSEKey{}).(bool)
+	return sseHost || (req.Extra != nil && req.Extra.Header.Get(routingHostHeader) == "authenticated")
+}
+func addRoutingPreferencesGetTool(b *build, name, desc, method string) {
+	if !b.allowed(method) {
+		return
+	}
+	b.tools = append(b.tools, toolInfo{Name: name, Desc: desc, Method: method, Group: b.group})
+	mcp.AddTool(b.s, &mcp.Tool{Name: name, Description: desc}, func(ctx context.Context, req *mcp.CallToolRequest, in listAgentsIn) (*mcp.CallToolResult, any, error) {
+		raw, err := b.c.Call(ctx, method, in)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+		}
+		var view routing.PreferencesView
+		if err = json.Unmarshal(raw, &view); err != nil {
+			return nil, nil, err
+		}
+		view.Configurable = view.Configurable && routingHostRequest(ctx, req)
+		raw, err = json.Marshal(view)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}, nil, nil
+	})
 }

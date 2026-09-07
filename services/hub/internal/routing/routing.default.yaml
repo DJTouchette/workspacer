@@ -44,11 +44,11 @@
 # ---------------------------------------------------------------------------
 # WHY IT LIVES HERE, and not in config.yaml
 #
-# 0600, in the hub's own state directory, beside jobs.json. There is NO routing
-# write RPC over the bus and there never will be one; `config.save` cannot
-# address another file at all; `library.save` is confined to the library; and
-# `fs.write` refuses this whole directory. That is what makes the `ceilings:`
-# block at the bottom mean something rather than merely say something.
+# 0600, in the hub's own state directory, beside jobs.json. No bus API writes
+# this file. Settings/MCP manage a separate typed preferences sidecar through an
+# authenticated host gate, retaining these security limits and model ranks.
+# `config.save` cannot address this file, `library.save` is confined to the
+# library, and `fs.write` refuses this whole directory.
 #
 # PROVIDER IDS ARE WORKSPACER'S, NOT THE VENDORS'. The design spec writes
 # "openai" and "anthropic"; the ids the spawn wire actually takes are `codex`

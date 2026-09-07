@@ -28,6 +28,8 @@ type LocalHandler func(params json.RawMessage) (any, error)
 // restart, so without the subscriber's identity, revoking that phone's token cut
 // its bus access while leaving it notified forever.
 type CallerIdentity struct {
+	// AuthenticatedHost excludes untokened, scoped-tier and peer-link callers.
+	AuthenticatedHost bool
 	// Trusted is the host token (or an operator-tier token, which is promoted to
 	// the same authority at the handshake).
 	Trusted bool
