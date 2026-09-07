@@ -368,6 +368,15 @@ func composePreferences(host []byte, patch PreferencesPatch) (*Matrix, *Matrix, 
 		}
 	}
 	if patch.Modes != nil {
+		validMode := func(v string) bool { mode, ok := ParseMode(v); return ok && string(mode) == v }
+		if patch.Modes.Global != nil && !validMode(*patch.Modes.Global) {
+			return nil, nil, fmt.Errorf("global mode must be auto, normal, conserve or spend_down")
+		}
+		for _, mode := range patch.Modes.Providers {
+			if !validMode(mode) {
+				return nil, nil, fmt.Errorf("provider mode must be auto, normal, conserve or spend_down")
+			}
+		}
 		for p := range patch.Modes.Providers {
 			if _, ok := base.Providers[p]; !ok {
 				return nil, nil, fmt.Errorf("unknown provider %q", p)
@@ -391,7 +400,10 @@ func composePreferences(host []byte, patch PreferencesPatch) (*Matrix, *Matrix, 
 			}
 		}
 	}
-	for phase := range patch.ForecastWeights {
+	for phase, weight := range patch.ForecastWeights {
+		if weight < 0 || weight > 1e6 {
+			return nil, nil, fmt.Errorf("forecast weight %s must be between 0 and 1000000", phase)
+		}
 		if _, ok := base.ForecastWeights[phase]; !ok {
 			return nil, nil, fmt.Errorf("unknown forecast phase %q", phase)
 		}

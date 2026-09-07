@@ -147,6 +147,8 @@ func TestPreferencesRejectsSecurityBypassAndUnknownFields(t *testing.T) {
 		`{"profiles":{"codex_only":{"reviewer":{"fresh":false}}}}`,
 		`{"roles":{"reviewer":"cheap"},"modeShifts":{"spend_down":{"roles":{"reviewer":"cheap"}}}}`,
 		`{"profiles":{"new_profile":{}}}`, `{"roles":{"scout":"invented"}}`,
+		`{"modes":{"global":"typo"}}`, `{"modes":{"providers":{"codex":"CONSERVE"}}}`,
+		`{"forecastWeights":{"implementation":-1}}`, `{"forecastWeights":{"review":1000001}}`,
 		`{"thresholds":{"health":{"yellowAtUsedPct":99,"redAtUsedPct":20}}}`,
 	} {
 		before := s.Matrix()

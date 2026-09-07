@@ -1006,7 +1006,8 @@ whole array. Unknown fields, null, duplicate keys, caller paths, raw YAML, new
 profiles/roles/capabilities, ranks, ceilings, tool scopes and arbitrary nodes
 are rejected. Existing host-defined profiles and roles can be edited. A patch
 can map a role only to an existing capability. Unedited fields survive every
-save. See `internal/routing/preferences.go` for the exact schema.
+save. Manual modes use a closed enum; forecast weights must be between 0 and
+1,000,000. See `internal/routing/preferences.go` for the exact schema.
 
 The revision fingerprints both source layers. A concurrent managed save or
 human YAML edit invalidates a draft; conflict responses include the current

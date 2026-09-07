@@ -672,7 +672,7 @@ function setPolicyValue(policy: RoutingPolicy, path: string, value: string | num
   target[parts.at(-1)!] = value;
 }
 const enums: Record<string, string[]> = {
-  curve: ['calendar', 'workdays'],
+  curve: ['calendar', 'workdays', 'five_day'],
   weekend: ['spend_tail', 'reserve'],
 };
 function PolicyControls({
