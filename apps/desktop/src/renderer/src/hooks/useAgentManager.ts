@@ -42,7 +42,11 @@ export function providerLabel(provider: AgentProvider | undefined): string {
 }
 import { agentIdForSession, dedupeByCardId, dedupeBySessionId } from '../lib/agentIdentity';
 import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
-import { FLEET_MANAGER_NAME, buildManagerKickoff } from '../lib/fleetManager';
+import {
+  FLEET_MANAGER_NAME,
+  buildManagerKickoff,
+  buildManagerWorkflowAsk,
+} from '../lib/fleetManager';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
 import { buildRespawnSpawnOptions } from '../lib/respawnOptions';
@@ -748,7 +752,10 @@ export function useAgentManager() {
         } catch (err) {
           console.warn('[fleet-manager] token grant reconcile failed:', err);
         }
-        const result = await window.electronAPI.claudeMessage(live.sessionId, ask.trim());
+        const result = await window.electronAPI.claudeMessage(
+          live.sessionId,
+          buildManagerWorkflowAsk(ask),
+        );
         if (result?.ok === false) throw new Error(spawnFailureMessage(provider));
         return live.sessionId;
       }
@@ -773,7 +780,11 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(record, stopped.lastSessionId, ask.trim());
+        const sessionId = await respawnFromRecord(
+          record,
+          stopped.lastSessionId,
+          buildManagerWorkflowAsk(ask),
+        );
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
         if (!stopped.manager) {
           mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));

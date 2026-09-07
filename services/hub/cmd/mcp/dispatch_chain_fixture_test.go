@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/djtouchette/workspacer-hub/internal/limits"
+	"github.com/djtouchette/workspacer-hub/internal/routing"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
@@ -39,6 +42,30 @@ func TestDesktopDispatchChainFixture(t *testing.T) {
 	srv := bus.NewServer(broker.New())
 	// Public fixture constants, never read from the user's environment or files.
 	srv.SetToken("dispatch-chain-synthetic-host")
+	matrix, err := routing.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matrix.ActiveProfile = "codex_only"
+	matrix.Ceilings = map[string]routing.Ceiling{"default": {MaxCapability: "frontier", MaxToolScope: "view"}}
+	srv.RegisterLocal("routing.select", func(raw json.RawMessage) (any, error) {
+		var req routing.Request
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		decision := routing.Select(matrix, limits.Snapshot{}, nil, nil, time.Now(), req)
+		decision.DecisionID = routing.NewDecisionID()
+		return decision, nil
+	})
+	srv.SetSpawnCeiling(func(req bus.SpawnCeilingRequest) bus.SpawnCeilingVerdict {
+		// Legacy identity-only assertions below declare no role; workflow tests use real routing.
+		if req.Role == "" {
+			return bus.SpawnCeilingVerdict{}
+		}
+		v := matrix.CheckSpawn(routing.SpawnRequest{CanonicalCwd: req.CanonicalCwd, Capability: req.Capability, Role: req.Role, Resuming: req.Resuming, ResumeSessionID: req.ResumeSessionID, ToolScope: req.ToolScope, Provider: req.Provider, Model: req.Model, Effort: req.Effort})
+		return bus.SpawnCeilingVerdict{Key: v.Key, MaxCapability: v.MaxCapability, MaxToolScope: v.MaxToolScope, CapabilityRefused: v.CapabilityRefused, Capability: v.Capability, ToolScopeRefused: v.ToolScopeRefused, ToolScope: v.ToolScope, Provider: v.Provider, Model: v.Model, Effort: v.Effort, ResumeRefused: v.ResumeRefused, FreshCapability: v.FreshCapability, Denied: v.Denied, Because: v.Because}
+	}, nil)
+
 	srv.SetScopedTokenLookup(func(token string) (bus.ScopedIdent, bool) {
 		rec, ok := store.Lookup(token)
 		return bus.ScopedIdent{Scope: string(rec.Scope), Methods: rec.Scope.Methods(), Label: rec.Label}, ok

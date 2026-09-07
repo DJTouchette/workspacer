@@ -94,6 +94,7 @@ var unscopedByDecision = map[string]string{
 	"routing.preferences.reset":    "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
 	"routing.preview":              "Pure routing.Select projection with bounded usage and cached availability; cwd is canonicalized only for the existing ceiling lookup. No spawn, audit id, log, event, provider launch or policy write. Security mapping and paths are redacted.",
 	"agents.spawn":                 "starting an agent is a separate authorization decision — the cwd picks where a process runs, and confining it would need the spawn paths to learn root containment first (see cmd/brain's TestSpawnStaysDeliberatelyUnscoped)",
+	"fleetWorkflows.request":       "Local desktop-only declarative policy and pinned task management. The bus refuses scoped/plugin/federated connections before provider dispatch. The facade stamps callerSessionId from its authenticated session; task access additionally verifies live manager and exact project ownership. Definitions accept text/templates and typed steps only, never privileges. Revisioned locked writes do not launch agents. Headless returns unavailable.",
 	// The reason used to stop at `cwd`, and that was the whole record for a
 	// capability taking TWO process identifiers: `shell` is argv[0], handed
 	// straight to Command::new / claudemonSessionClient.spawn with no existence
@@ -985,6 +986,10 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	},
 	"claude.setModel": {
 		"effort": {KindShell, "delivered structurally only for managed providers. A Claude PTY request that includes effort is refused before queue/persistence mutation because its daemon-built `/model` command cannot apply effort; callers must use claude.setEffort, whose separate `/effort` message path genuinely delivers it"},
+	},
+	"fleetWorkflows.request": {
+		"callerSessionId": {KindID, "Facade-stamped request identity; the raw bus requires the actual local host credential, not promoted operator trust. Start/next/decide verify a live local manager and exact task owner in fleetWorkflowService."},
+		"cwd":             {KindPath, "A project selection and task identity, checked against browse roots by desktop assertPathAllowed. Never a store filename or process argv; headless refuses the capability."},
 	},
 	"agents.reportProgress": {
 		"note":            {KindShell, "prompt text for an already-running agent, like claude.setEffort's value and unlike claude.answer's — it is delivered with claudemonSessionClient.message (the queued /message endpoint every other [fleet] wake uses), never written to a PTY, and never composed into argv. The caller controls the SENTENCE and nothing around it: the host flattens it to one line, refuses it over 500 chars, and wraps it in a header and tail it composes itself (buildFleetMessage('progress')), which state that the sender is still running and that this is not a completion"},

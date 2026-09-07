@@ -81,7 +81,7 @@ describe('first-use spawn outcome', () => {
     });
     expect(api.spawnClaude.mock.calls.at(-1)[0]).toMatchObject({
       resumeSessionId: 'real-session',
-      message: 'next',
+      message: expect.stringContaining('next\n\nFor each NEW project task, call start_workflow'),
     });
     expect(api.claudeMessage).not.toHaveBeenCalled();
   });

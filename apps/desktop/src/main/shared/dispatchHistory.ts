@@ -10,6 +10,7 @@ export const TASK_STAGES = [
 ] as const;
 export type TaskStage = (typeof TASK_STAGES)[number];
 export interface DispatchLink {
+  workflowStepId?: string;
   taskId?: string;
   stage?: TaskStage;
   afterDispatchId?: string;
@@ -52,6 +53,7 @@ export interface DispatchAttempt extends DispatchLink {
   reviewEvidenceId?: string;
 }
 export interface DispatchTask {
+  workflow?: import('./fleetWorkflow').WorkflowPin;
   taskId: string;
   ownerSessionId: string;
   ownerLabel: string;

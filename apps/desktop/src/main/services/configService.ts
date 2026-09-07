@@ -1,3 +1,4 @@
+import { preserveWorkflowSelections } from '../shared/fleetWorkflowSelection';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -14,6 +15,8 @@ import {
   ManagerSelectionError,
   type ManagerContextWindows,
 } from '../shared/managerSelection';
+
+class WorkflowSelectionError extends Error {}
 
 interface ShellOption {
   name: string;
@@ -209,6 +212,8 @@ interface Config {
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
+    defaultWorkflowId?: string;
+    workflowSelectionRevision?: number;
     /** Coding-agent backend pre-selected in the spawn dialog. */
     defaultProvider: string;
     /** Directory the spawn dialog opens at. '' = app launch cwd. */
@@ -939,14 +944,23 @@ export class ConfigService {
     return this.config;
   }
 
-  saveConfig(partial: Partial<Config>): Config {
+  saveConfig(partial: Partial<Config>, workflowSelection = false): Config {
     // config.yaml has a second writer in another process (the Go brain, which
     // answers config.save for the web and mobile Settings panes). The refresh →
     // merge → write below is exactly the sequence that must not interleave with
     // theirs: the mtime gate closes the refresh, nothing spans the three. Hold
     // the cross-process lock across all of it — see contracts/config-lock.json.
     try {
-      return withConfigLock(getConfigFilePath(), () => this.saveConfigLocked(partial));
+      return withConfigLock(getConfigFilePath(), () => {
+        if (!workflowSelection) {
+          try {
+            preserveWorkflowSelections(this.getConfig(), partial);
+          } catch (error) {
+            throw new WorkflowSelectionError(String(error));
+          }
+        }
+        return this.saveConfigLocked(partial);
+      });
     } catch (err) {
       // A malformed wholesale value is REFUSED OUT LOUD, not swallowed into a
       // success carrying the old config. That refusal replaces the branch that
@@ -955,6 +969,7 @@ export class ConfigService {
       // handler in hubCapabilities turns it into an error reply, and the IPC
       // handler rejects the renderer's promise.
       if (
+        err instanceof WorkflowSelectionError ||
         err instanceof WholesaleValueError ||
         err instanceof ModelSelectionError ||
         err instanceof ManagerSelectionError

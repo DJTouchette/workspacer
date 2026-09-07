@@ -228,6 +228,11 @@ var claudemonCallers = []callerScan{
 		what: "the /conversation/stream delta feed", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 1,
 	},
 	{
+		file: "apps/desktop/src/main/services/agentRuntimeStatus.ts", server: "claudemon-api",
+		what: "first-task readiness probes claudemon /health through the shared probeHealth helper",
+		res:  []*regexp.Regexp{regexp.MustCompile("\\$\\{PORTS\\.claudemonApi\\}([^`'\"]*)")}, floor: 1,
+	},
+	{
 		file: "apps/desktop/src/main/services/claudemonDaemon.ts", server: "claudemon-api",
 		what: "the daemon supervisor's own adopt/health probe", res: []*regexp.Regexp{tsApiPortRe}, floor: 2,
 	},

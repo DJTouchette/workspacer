@@ -1,3 +1,4 @@
+import { WORKFLOW_DISCOVERY } from '../../../main/shared/fleetWorkflow';
 /**
  * The Fleet Manager — ONE conversation orchestrating many agents
  * (FLEET_MANAGER_SPIKE.md). A real agent — on whichever harness config
@@ -351,7 +352,7 @@ const FULL_ACCESS_NOTE =
 /** Compose the manager's first (auto-sent) message from a user ask. */
 export function buildManagerKickoff(ask: string, fullAccess = false): string {
   const mode = fullAccess ? `\n\n${FULL_ACCESS_NOTE}` : '';
-  return `${MANAGER_PREAMBLE}${mode}\n\nThe user says:\n\n${ask.trim()}`;
+  return `${MANAGER_PREAMBLE}${mode}\n\nSELECTED FLEET POLICY (takes precedence over generic dispatch examples): ${WORKFLOW_DISCOVERY}\n\nThe user says:\n\n${ask.trim()}`;
 }
 
 /**
@@ -433,3 +434,7 @@ export const MANAGER_PRESETS: ManagerPreset[] = [
       'Report on every worker you have dispatched: which finished (and their outcomes), which are still running, which are blocked on me.',
   },
 ];
+
+export function buildManagerWorkflowAsk(ask: string): string {
+  return `${ask.trim()}\n\n${WORKFLOW_DISCOVERY}`;
+}

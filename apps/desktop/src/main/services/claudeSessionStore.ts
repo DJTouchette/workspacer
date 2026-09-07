@@ -1013,6 +1013,7 @@ class ClaudeSessionStore {
     // A wake for these workers may already be sitting in the coalesce window
     // addressed to the old manager. Re-address it rather than let it land on a
     // manager that is being retired.
+    dispatchHistoryStore.adoptWorkflowTasks(oldManagerId, newManagerId);
     supervisorNudge.reassignPendingFinish(oldManagerId, newManagerId);
 
     // The per-worker "nothing new to report" signature (supervisorNudge's
