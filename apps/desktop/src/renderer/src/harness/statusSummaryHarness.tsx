@@ -33,7 +33,9 @@ function Harness() {
     return next;
   };
   return (
-    <main style={{ padding: 16, maxWidth: 760, margin: '0 auto' }}>
+    <main
+      style={{ padding: 16, maxWidth: 760, margin: '0 auto', fontFamily: 'var(--wks-font-sans)' }}
+    >
       <StatusSummarySettings config={config} save={save} />
       <output data-testid="saved-summary" style={{ display: 'block', overflowWrap: 'anywhere' }}>
         {JSON.stringify(config.agents?.statusSummary)}

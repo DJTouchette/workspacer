@@ -316,3 +316,16 @@ it('disable during the initial authorization prevents any source or model read',
   expect(f.read).not.toHaveBeenCalled();
   expect(f.runner).not.toHaveBeenCalled();
 });
+
+it('an observed invalid config or cleared conversation invalidates earlier answers', async () => {
+  const f = setup();
+  await f.service.summarize('s');
+  f.config({ enabled: true, provider: 'missing' });
+  await f.service.summarize('s');
+  f.config({ enabled: true, provider: 'claude', model: 'haiku' });
+  expect((await f.service.summarize('s')).cached).toBe(false);
+  f.source({ ...sourceFixture(), throughSeq: 0, firstSeq: 0, events: [] });
+  expect((await f.service.summarize('s')).reason).toBe('empty');
+  f.source(sourceFixture());
+  expect((await f.service.summarize('s')).cached).toBe(false);
+});

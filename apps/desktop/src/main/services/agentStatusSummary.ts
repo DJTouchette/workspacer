@@ -197,6 +197,7 @@ export class AgentStatusSummaryService {
   private cache = new Map<string, { sessionKey: string; at: number; result: StatusSummary }>();
   private flights = new Map<string, Flight>();
   private epoch = 0;
+  private observedConfigKey: string | undefined;
   constructor(private deps: Dependencies) {}
   invalidate(): void {
     this.epoch++;
@@ -254,6 +255,12 @@ export class AgentStatusSummaryService {
   ): Promise<StatusSummary> {
     const cfg = this.config();
     const configKey = JSON.stringify(cfg);
+    // Also observe changes at read time: a disk refresh can precede the config
+    // watch notification, and an invalid intermediate config must evict A->B->A.
+    if (configKey !== this.observedConfigKey) {
+      this.invalidate();
+      this.observedConfigKey = configKey;
+    }
     const epoch = this.epoch;
     const failure = (reason: string, source?: SummarySource) => base(cfg, reason, source);
     try {
@@ -289,7 +296,10 @@ export class AgentStatusSummaryService {
     }
     if (epoch !== this.epoch || configKey !== JSON.stringify(this.config()))
       return failure('config-changed');
-    if (!source.events.length) return failure('empty', source);
+    if (!source.events.length) {
+      this.invalidate();
+      return failure('empty', source);
+    }
     const prompt = summaryPrompt(source);
     if (prompt.length > MAX_PROMPT_CHARS) return failure('source-unavailable');
     const sessionKey = createHash('sha256')
