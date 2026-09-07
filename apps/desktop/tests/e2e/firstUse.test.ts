@@ -380,3 +380,312 @@ test('Guide pane front door retains a failed question and retries', async ({ pag
   await question.press('Enter');
   expect((await calls(page)).filter((c: any) => c.method === 'spawnClaude')).toHaveLength(2);
 });
+
+for (const state of ['starting', 'down', 'degraded', 'ready', 'adopted', 'unknown']) {
+  test(`host lifecycle ${state} keeps real launch failures retryable`, async ({ page }) => {
+    await page.goto(`${base}?runtime=${state}`);
+    await openFirstTask(page);
+    await page.getByLabel('What should this agent do?').fill('Runtime recovery task');
+    if (state === 'starting' || state === 'down') {
+      await expect(launch(page)).toBeDisabled();
+      await expect(page.locator('#spawn-runtime-status')).toContainText(
+        state === 'starting' ? 'starting' : 'unavailable',
+      );
+      expect((await calls(page)).filter((c: any) => c.method === 'spawnClaude')).toEqual([]);
+      await page.evaluate(() => (window as any).firstUse.readiness('ready'));
+      await dialog(page).getByRole('button', { name: 'Check runtime again' }).click();
+    }
+    await expect(launch(page)).toBeEnabled();
+    await launch(page).click();
+    await expect(page.getByRole('alert')).toContainText('could not start');
+    await dialog(page).getByRole('button', { name: 'Check runtime again' }).click();
+    await expect(page.getByRole('alert')).toContainText('could not start');
+    await assertNoAgentWrites(page);
+    await page.evaluate(() => (window as any).firstUse.spawnMode('success'));
+    await page.getByRole('button', { name: 'Retry dispatch' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+  });
+}
+
+test('hub-only degradation permits direct launch but blocks Fleet Manager', async ({ page }) => {
+  await page.goto(`${base}?runtime=degraded`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.getByLabel('Ask the Fleet Manager').fill('Coordinate this task');
+  await expect(page.getByRole('button', { name: 'Ask Fleet Manager', exact: true })).toBeDisabled();
+  await expect(page.locator('#fleet-runtime-status')).toContainText('hub or action tools failed');
+  await page.evaluate(() => (window as any).firstUse.readiness('ready'));
+  await page.getByRole('button', { name: 'Check runtime again' }).click();
+  await expect(page.getByRole('button', { name: 'Ask Fleet Manager', exact: true })).toBeEnabled();
+});
+
+test('folder truth rejects invalid paths and drops stale git replies', async ({ page }) => {
+  await page.goto(`${base}?spawn=success`);
+  await openFirstTask(page);
+  await page.getByLabel('What should this agent do?').fill('Folder task');
+  const cwd = page.getByLabel('Working directory');
+  await expect(page.locator('#spawn-folder-status')).toContainText('non-git folder');
+  await cwd.fill('/fixture/git-folder');
+  await expect(page.locator('#spawn-folder-status')).toContainText('main');
+  await cwd.fill('/fixture/deferred');
+  await expect
+    .poll(
+      async () =>
+        (await calls(page)).filter(
+          (c: any) => c.method === 'worktreeInfo' && c.args[0] === '/fixture/deferred',
+        ).length,
+    )
+    .toBe(1);
+  await cwd.fill('/fixture/invalid');
+  await expect(launch(page)).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).firstUse.folderReply('/fixture/deferred', {
+      isRepo: true,
+      directory: 'accessible',
+      branch: 'stale-branch',
+    }),
+  );
+  await expect(page.locator('#spawn-folder-status')).toContainText('Choose an existing');
+  await expect(page.locator('#spawn-folder-status')).not.toContainText('stale-branch');
+  await expect(launch(page)).toBeDisabled();
+  await cwd.fill('~');
+  await expect(page.locator('#spawn-folder-status')).toContainText('not expanded');
+  await expect(launch(page)).toBeDisabled();
+  await assertNoAgentWrites(page);
+});
+
+test('remote cwd never borrows local folder or runtime facts', async ({ page }) => {
+  await page.goto(`${base}?remote=1&runtime=ready&spawn=success`);
+  await openFirstTask(page);
+  await page.getByLabel('What should this agent do?').fill('Remote task');
+  await page.getByRole('button', { name: /advanced/i }).click();
+  const machine = dialog(page)
+    .getByRole('combobox')
+    .filter({ has: page.getByRole('option', { name: 'This machine', exact: true }) });
+  await machine.selectOption('Remote fixture');
+  await page.getByLabel('Working directory').fill('/remote/owner-only');
+  await expect(page.locator('#spawn-folder-status')).toContainText('selected remote machine');
+  await expect(page.locator('#spawn-runtime-status')).toContainText('unknown');
+  await page.getByRole('button', { name: 'Check folder again' }).click();
+  expect(
+    (await calls(page)).filter(
+      (c: any) => c.method === 'worktreeInfo' && c.args[0] === '/remote/owner-only',
+    ),
+  ).toEqual([]);
+  await expect(
+    dialog(page).getByRole('button', { name: 'Browse…', exact: true }).first(),
+  ).toBeDisabled();
+  await launch(page).click();
+  const spawn = (await calls(page)).find((c: any) => c.method === 'spawnClaude');
+  expect(spawn.args[0]).toMatchObject({ cwd: '/remote/owner-only', targetHub: 'Remote fixture' });
+  expect(spawn.args[0].worktree).toBeUndefined();
+});
+
+for (const theme of ['light', 'dracula']) {
+  for (const width of [360, 1280]) {
+    test(`first conversation result and restart ${theme} ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${base}?theme=${theme}&spawn=success&runtime=ready`);
+      await openFirstTask(page);
+      const task = 'Explain the first result';
+      await page.getByLabel('What should this agent do?').fill(task);
+      await launch(page).click();
+      await expect(page.getByText(task, { exact: true }).first()).toBeVisible();
+      await expect(page.getByRole('complementary', { name: 'First task guidance' })).toBeVisible();
+      await page.getByRole('button', { name: 'Dismiss task guidance' }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('complementary', { name: 'First task guidance' })).toHaveCount(0);
+      const id = await page.evaluate(() => Object.keys((window as any).firstUse.snapshots())[0]);
+      await page.evaluate(
+        (id) => (window as any).firstUse.update(id, { ambientState: 'streaming' }),
+        id,
+      );
+      await page.evaluate(
+        (id) =>
+          (window as any).firstUse.update(id, {
+            ambientState: 'waiting_input',
+            pendingQuestions: [
+              {
+                question: 'Choose the next step',
+                header: 'Decision',
+                options: [{ label: 'Continue', description: 'Explain the result' }],
+              },
+            ],
+          }),
+        id,
+      );
+      await expect(page.getByText('Choose the next step', { exact: true }).first()).toBeVisible();
+      await page.evaluate(
+        (id) =>
+          (window as any).firstUse.update(id, { ambientState: 'idle', pendingQuestions: null }),
+        id,
+      );
+      await page.evaluate(
+        (id) => (window as any).firstUse.reply(id, 'I need your decision before continuing.'),
+        id,
+      );
+      await expect(
+        page.getByText('I need your decision before continuing.', { exact: true }).first(),
+      ).toBeVisible();
+      await page.evaluate(
+        (id) =>
+          (window as any).firstUse.reply(
+            id,
+            'The explanation is complete.\n\n```wks-result\n{"commit":"fixture-only","checksRun":["mock check"]}\n```',
+          ),
+        id,
+      );
+      await expect(
+        page.getByText('The explanation is complete.', { exact: true }).first(),
+      ).toBeVisible();
+      await expect(page.getByText(/fixture-only/).first()).toBeVisible();
+      await page.evaluate(
+        (id) =>
+          (window as any).firstUse.reply(
+            id,
+            'Malformed payload remains visible.\n\n```wks-result\n{ broken json\n```',
+          ),
+        id,
+      );
+      await expect(
+        page.getByText('Malformed payload remains visible.', { exact: true }).first(),
+      ).toBeVisible();
+      await page.evaluate(
+        (id) =>
+          (window as any).firstUse.reply(
+            id,
+            'Plain prose is still useful; no structured result was supplied.',
+          ),
+        id,
+      );
+      await expect(
+        page
+          .getByText('Plain prose is still useful; no structured result was supplied.', {
+            exact: true,
+          })
+          .first(),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as any).firstUse.layout()?.agents.filter((a: any) => !a.global).length,
+          ),
+        )
+        .toBe(1);
+      await page.evaluate(() => (window as any).firstUse.restart());
+      await page.reload();
+      await expect(page.getByRole('dialog', { name: 'Welcome' })).toHaveCount(0);
+      await expect(
+        page
+          .getByText('Plain prose is still useful; no structured result was supplied.', {
+            exact: true,
+          })
+          .first(),
+      ).toBeVisible();
+      await expect
+        .poll(async () => (await calls(page)).filter((c: any) => c.method === 'spawnClaude').length)
+        .toBe(1);
+      const resumed = (await calls(page)).filter((c: any) => c.method === 'spawnClaude');
+      expect(resumed[0].args[0].resumeSessionId).toBe(id);
+      expect(await page.evaluate(() => Object.keys((window as any).firstUse.snapshots()))).toEqual([
+        id,
+      ]);
+      await expect(page.getByRole('complementary', { name: 'First task guidance' })).toHaveCount(0);
+      await page.screenshot({
+        animations: 'disabled',
+        path: test.info().outputPath('resumed-first-result.png'),
+      });
+    });
+  }
+}
+
+test('first managed chat distinguishes escalation, results and missing contracts', async ({
+  page,
+}) => {
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.getByLabel('Ask the Fleet Manager').fill('Coordinate a fixture task');
+  await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => Object.keys((window as any).firstUse.snapshots()).length))
+    .toBe(1);
+  const id = await page.evaluate(() => Object.keys((window as any).firstUse.snapshots())[0]);
+  await page.evaluate(
+    (id) =>
+      (window as any).firstUse.wake(id, 'worker-escalated', {
+        label: 'Fixture worker',
+        sessionId: 'fixture-worker',
+        cwd: '/fixture/project',
+        escalation: JSON.stringify({
+          type: 'worker-escalation',
+          status: 'blocked',
+          reason: 'Choose the target release',
+          requiredAuthorityOrDecision: 'Release target',
+          changed: false,
+          nextAction: 'Name the release',
+        }),
+      }),
+    id,
+  );
+  await expect(page.getByText('worker escalation', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Choose the target release', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('structured result', { exact: true })).toHaveCount(0);
+  await page.evaluate(
+    (id) =>
+      (window as any).firstUse.wake(id, 'worker-finished', {
+        label: 'Fixture worker',
+        sessionId: 'fixture-worker',
+        cwd: '/fixture/project',
+        lastReply: 'Fixture work is complete.',
+        result: JSON.stringify({ commit: 'abc12345', checksRun: ['Fixture checks pass'] }),
+      }),
+    id,
+  );
+  await expect(page.getByText('structured result', { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel('Copy commit abc12345').first()).toBeVisible();
+  await page.evaluate(
+    (id) =>
+      (window as any).firstUse.wake(id, 'worker-finished', {
+        label: 'Prose worker',
+        sessionId: 'fixture-prose',
+        cwd: '/fixture/project',
+        lastReply: 'The prose report is retained.',
+        resultError: 'No wks-result block was supplied',
+      }),
+    id,
+  );
+  await expect(
+    page.getByText('No wks-result block was supplied', { exact: true }).first(),
+  ).toBeVisible();
+  await page.evaluate(
+    (id) =>
+      (window as any).firstUse.wake(id, 'worker-finished', {
+        label: 'Malformed worker',
+        sessionId: 'fixture-malformed',
+        cwd: '/fixture/project',
+        lastReply: 'Malformed result still has readable prose.',
+        resultError: 'Result JSON could not be parsed',
+      }),
+    id,
+  );
+  await expect(
+    page.getByText('Result JSON could not be parsed', { exact: true }).first(),
+  ).toBeVisible();
+  await page.getByText('last reply', { exact: true }).last().click();
+  await expect(
+    page.getByText('Malformed result still has readable prose.', { exact: true }).first(),
+  ).toBeVisible();
+});
+
+test('CLI install notice opens the actual Command Line settings section', async ({ page }) => {
+  await page.goto(base);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.evaluate(() =>
+    (window as any).firstUse.notice({
+      level: 'info',
+      key: 'cli-install',
+      title: 'workspacer command installed',
+    }),
+  );
+  await page.getByRole('button', { name: 'Settings → Command Line', exact: true }).click();
+  await expect(page.getByText('workspacer serve', { exact: true }).first()).toBeVisible();
+});

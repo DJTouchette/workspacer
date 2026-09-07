@@ -1,3 +1,4 @@
+import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
 /**
  * Spawns and supervises the `mcp` facade — the workspacer MCP server (Go, in
  * `services/hub/cmd/mcp`). It exposes the hub's capabilities (list / spawn /
@@ -73,6 +74,7 @@ export function startMcpFacade(): Promise<void> {
 
   const bin = mcpBinaryPath();
   if (!fs.existsSync(bin)) {
+    noteRuntimePhase('facade', 'failed');
     return Promise.reject(
       new Error(
         `mcp facade binary not found at ${bin} (run: cd services/hub && go build -o mcp ./cmd/mcp)`,
@@ -172,19 +174,20 @@ function launch(bin: string): Promise<void> {
   child.on('exit', (code, signal) => {
     console.log(`[mcp] exited code=${code} signal=${signal}`);
     child = null;
+    noteRuntimePhase('facade', 'failed');
     readyPromise = null;
     healthAbort.abort();
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealth(
-    `http://${ADDR}/health`,
-    HEALTH_TIMEOUT_MS,
-    'mcp',
-    healthAbort.signal,
-  ).then(() => {
-    backoff.reset();
-  });
+  readyPromise = observeRuntimeStart(
+    'facade',
+    waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal).then(
+      () => {
+        backoff.reset();
+      },
+    ),
+  );
   return readyPromise;
 }
 

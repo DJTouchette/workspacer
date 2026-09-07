@@ -1,3 +1,6 @@
+import { SmallButton } from './settings/primitives';
+import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
+import type { WorktreeInfo } from '../types/electron';
 import { containDialogTab } from '../lib/dialogKeyboard';
 import { spawnFailureMessage } from '../lib/spawnFailure';
 import { ProjectMark } from './ProjectMark';
@@ -289,30 +292,42 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     Array<{ sessionId: string; timestamp: string; summary: string }>
   >([]);
   const [resumeSessionId, setResumeSessionId] = useState('');
-  // Git worktree isolation: available when the cwd is a git repo (host only —
-  // the web mirror can't shell out, so the pill hides there).
+  // Facts belong to the selected owner and exact path, never the last reply.
+  const runtimeStatus = useAgentRuntimeStatus(!!toolScope, !!targetHub);
   const [useWorktree, setUseWorktree] = useState(!!defaultWorktree);
-  const [repoInfo, setRepoInfo] = useState<{ isRepo: boolean; branch?: string } | null>(null);
+  const [folderResult, setFolderResult] = useState<{ key: string; info: WorktreeInfo } | null>(
+    null,
+  );
+  const [folderCheck, setFolderCheck] = useState(0);
+  const folderKey = JSON.stringify([targetHub, cwd.trim()]);
+  const repoInfo = folderResult?.key === folderKey ? folderResult.info : null;
   useEffect(() => {
     const dir = cwd.trim();
-    if (!dir || !window.electronAPI.worktreeInfo) {
-      setRepoInfo(null);
-      return;
-    }
+    setFolderResult(null);
+    if (!dir || targetHub || !window.electronAPI.worktreeInfo) return;
     let cancelled = false;
     window.electronAPI
       .worktreeInfo(dir)
       .then((info) => {
-        if (!cancelled) setRepoInfo(info);
+        if (!cancelled && info) setFolderResult({ key: folderKey, info });
       })
-      .catch(() => {
-        if (!cancelled) setRepoInfo(null);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [cwd]);
-  const worktreeEligible = !!repoInfo?.isRepo && !resumeSessionId;
+  }, [folderKey, folderCheck]);
+  const worktreeEligible = !targetHub && repoInfo?.isRepo === true && !resumeSessionId;
+  const folderDetail = targetHub
+    ? 'Folder belongs to the selected remote machine. Its host has not verified this path; local folders are not checked.'
+    : repoInfo?.directory === 'invalid'
+      ? 'Choose an existing accessible directory. A leading ~ is not expanded; use an absolute path.'
+      : repoInfo?.isRepo === true
+        ? `Existing git folder${repoInfo.branch ? ` · ${repoInfo.branch}` : ''}. Branch isolation is available in Advanced.`
+        : repoInfo?.directory === 'accessible'
+          ? repoInfo.gitStatus === 'non-git'
+            ? 'Existing non-git folder. Agents can work here; no branch isolation.'
+            : 'Existing accessible folder. Git eligibility could not be verified.'
+          : 'Folder has not been verified by this host. Use an existing absolute path on the agent’s machine.';
 
   useEffect(() => {
     setCwd(defaultCwd);
@@ -349,7 +364,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // Discover resumable sessions whenever the directory settles (debounced).
   useEffect(() => {
     const dir = cwd.trim();
-    if (!dir) {
+    if (!dir || targetHub) {
       setSessions([]);
       return;
     }
@@ -368,7 +383,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [cwd]);
+  }, [cwd, targetHub]);
 
   // If the picked session disappears from the list (cwd changed), reset to fresh.
   useEffect(() => {
@@ -448,7 +463,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     window.electronAPI
       .providerListModels?.(
         provider as 'codex' | 'copilot' | 'opencode' | 'pi',
-        cwd.trim() || undefined,
+        targetHub ? undefined : cwd.trim() || undefined,
       )
       .then((list) => {
         if (!cancelled) setProviderModels(list ?? []);
@@ -469,6 +484,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // live under the chosen cwd's .workspacer/library.
   useEffect(() => {
     const dir = cwd.trim();
+    if (targetHub) {
+      setMcpItems([]);
+      return;
+    }
     let cancelled = false;
     const handle = setTimeout(() => {
       window.electronAPI
@@ -482,7 +501,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [cwd]);
+  }, [cwd, targetHub]);
 
   // Plugins contributing agent tools, for the workspacer-tier picker. One-shot:
   // the installed-plugin set doesn't change while the dialog is open.
@@ -620,6 +639,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const canSubmit =
     !!cwd.trim() &&
     !missingProvider &&
+    !runtimeStatus.blocked &&
+    repoInfo?.directory !== 'invalid' &&
     (!!prompt.trim() || (!requireTask && blankSession)) &&
     !busy;
   const submit = async () => {
@@ -709,7 +730,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // to the directory basename, which is the same thing when nobody set a label
   // — so this only differs where the user actually said what to call the place.
   const placeholderName = cwd.trim()
-    ? (resolveProject(cwd.trim(), projects)?.label ?? deriveAgentName(cwd.trim()))
+    ? (!targetHub && resolveProject(cwd.trim(), projects)?.label) || deriveAgentName(cwd.trim())
     : 'agent';
   const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
   const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
@@ -1457,7 +1478,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   padding: 0,
                 }}
               />
-              <button onClick={browse} className="wks-composer-ctl" style={ghostBtnSmall}>
+              <button
+                disabled={!!targetHub}
+                onClick={browse}
+                className="wks-composer-ctl"
+                style={ghostBtnSmall}
+              >
                 Browse…
               </button>
             </div>
@@ -1467,7 +1493,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 this is the last moment anyone would notice. The mark is the same
                 one the sidebar will draw for the agent, so the confirmation and
                 the result are visibly the same thing. */}
-            {cwd.trim() && (
+            {cwd.trim() && !targetHub && (
               <div
                 style={{
                   display: 'flex',
@@ -1490,10 +1516,33 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   {resolveProject(cwd.trim(), projects)?.label}
                 </span>
                 {!projects?.[projectKey(cwd.trim())] && (
-                  <span style={{ color: 'var(--wks-text-faint)' }}>· new project</span>
+                  <span style={{ color: 'var(--wks-text-faint)' }}>· unregistered folder</span>
                 )}
               </div>
             )}
+
+            <div
+              id="spawn-folder-status"
+              aria-live="polite"
+              style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}
+            >
+              {folderDetail}
+              <SmallButton
+                onClick={() => setFolderCheck((n) => n + 1)}
+                label="Check folder again"
+              />
+            </div>
+            <div
+              id="spawn-runtime-status"
+              aria-live="polite"
+              style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}
+            >
+              {runtimeStatus.detail}
+              <SmallButton
+                onClick={() => void runtimeStatus.refresh()}
+                label="Check runtime again"
+              />
+            </div>
 
             {/* Optional name — a ghost input, not a form row */}
             <input
@@ -1929,7 +1978,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             <button
               onClick={submit}
               disabled={!canSubmit}
-              aria-describedby="spawn-task-help spawn-availability"
+              aria-describedby="spawn-task-help spawn-availability spawn-runtime-status spawn-folder-status"
               style={{
                 fontSize: '0.82rem',
                 fontFamily: 'inherit',

@@ -57,8 +57,19 @@ describe('worktreeInfo', () => {
   });
 
   it('reports non-repos and missing paths', async () => {
-    expect((await worktreeInfo(tmp)).isRepo).toBe(false);
-    expect((await worktreeInfo(path.join(tmp, 'nope'))).isRepo).toBe(false);
+    expect(await worktreeInfo(tmp)).toMatchObject({
+      isRepo: false,
+      directory: 'accessible',
+      gitStatus: 'non-git',
+    });
+    expect(await worktreeInfo(path.join(tmp, 'nope'))).toMatchObject({
+      isRepo: false,
+      directory: 'invalid',
+    });
+    expect(await worktreeInfo('~/not-expanded')).toMatchObject({ directory: 'invalid' });
+    expect(await worktreeInfo(path.join(repo, '.git', 'HEAD'))).toMatchObject({
+      directory: 'invalid',
+    });
     expect((await worktreeInfo('')).isRepo).toBe(false);
   });
 });

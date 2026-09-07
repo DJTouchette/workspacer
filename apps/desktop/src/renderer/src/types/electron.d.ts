@@ -1,4 +1,5 @@
 import type { RoutingAPI } from '../../../main/shared/routingPreferences';
+import type { AgentRuntimeStatus } from '../../../main/shared/agentRuntimeStatus';
 import type { PluginManifest, PluginUpdateStatus } from './plugin';
 import type { ClaudeOrigin, LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
@@ -65,6 +66,9 @@ export interface LayoutDoc<T = unknown> {
 
 /** Git-repo detection for a directory (worktree spawn support). */
 export interface WorktreeInfo {
+  /** Absent on old hosts: never infer directory validity from isRepo=false. */
+  directory?: 'accessible' | 'invalid';
+  gitStatus?: 'repo' | 'non-git' | 'unknown';
   isRepo: boolean;
   root?: string;
   branch?: string;
@@ -111,6 +115,7 @@ export interface ElectronAPI extends RoutingAPI {
   platform: NodeJS.Platform;
 
   // Git worktrees (agent isolation); absent on the web mirror
+  agentRuntimeStatus?: () => Promise<AgentRuntimeStatus>;
   worktreeInfo?: (cwd: string) => Promise<WorktreeInfo>;
   worktreeCreate?: (opts: {
     repoCwd: string;

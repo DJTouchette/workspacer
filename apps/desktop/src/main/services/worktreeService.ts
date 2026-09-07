@@ -20,6 +20,9 @@ import * as os from 'os';
 import * as path from 'path';
 
 export interface WorktreeInfo {
+  /** Absent on old hosts: never infer directory validity from isRepo=false. */
+  directory?: 'accessible' | 'invalid';
+  gitStatus?: 'repo' | 'non-git' | 'unknown';
   /** True when the directory is inside a git work tree. */
   isRepo: boolean;
   /** Repo top-level (the main working tree root), when isRepo. */
@@ -104,16 +107,32 @@ export function defaultWorktreeRoot(): string {
 
 /** Is `cwd` a git repo, and if so where/what branch? Never throws. */
 export async function worktreeInfo(cwd: string): Promise<WorktreeInfo> {
-  if (!cwd || !fs.existsSync(cwd)) return { isRepo: false };
+  try {
+    if (!cwd || !fs.statSync(cwd).isDirectory()) return { isRepo: false, directory: 'invalid' };
+    fs.accessSync(cwd, fs.constants.R_OK | fs.constants.X_OK);
+  } catch {
+    return { isRepo: false, directory: 'invalid' };
+  }
   const top = await git(['rev-parse', '--show-toplevel'], cwd);
-  if (!top.ok || !top.stdout) return { isRepo: false };
+  if (!top.ok || !top.stdout)
+    return {
+      isRepo: false,
+      directory: 'accessible',
+      gitStatus: /not a git repository/i.test(top.stderr) ? 'non-git' : 'unknown',
+    };
   const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
   let name = branch.ok ? branch.stdout : '';
   if (name === 'HEAD') {
     const sha = await git(['rev-parse', '--short', 'HEAD'], cwd);
     name = sha.ok ? sha.stdout : '';
   }
-  return { isRepo: true, root: top.stdout, branch: name || undefined };
+  return {
+    isRepo: true,
+    directory: 'accessible',
+    gitStatus: 'repo',
+    root: top.stdout,
+    branch: name || undefined,
+  };
 }
 
 /**

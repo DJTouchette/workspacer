@@ -553,6 +553,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.FEDERATION_SAVE_PEERS_CONFIG, peers),
 
   // ── Git worktrees (agent isolation) ──
+  agentRuntimeStatus: () => ipcRenderer.invoke(IPC.AGENT_RUNTIME_STATUS),
   worktreeInfo: (cwd: string): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_INFO, cwd),
   worktreeCreate: (opts: {
     repoCwd: string;

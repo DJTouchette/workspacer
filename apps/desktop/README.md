@@ -23,13 +23,50 @@ client surface and local development.
 - **Phone and web access** - Share this desktop with `/m` phone access, `/remote` terminal mirror, or `/app/`; connect the desktop shell to another Workspacer server when needed
 - **Advanced overview** - Agent Overview and Agent Monitor remain available for larger multi-agent runs without being required for the main workflow
 
-## Getting Started
+## First task
+
+The packaged desktop app starts its own runtime. You do not need Node, Go, Rust,
+or the Workspacer CLI to use it.
+
+1. Install a supported provider CLI on the machine where the agent will run
+   (for example Claude Code or Codex), then complete that provider's account
+   sign-in in its CLI. Workspacer uses your provider account; finding a binary
+   does not verify authentication. The Guide specifically requires Claude Code.
+2. Choose **Start your first task**, describe one bounded task, and choose an
+   existing accessible folder. Git folders can optionally use a separate
+   worktree in Advanced. Non-git folders work without branch isolation.
+   Use an absolute path: a typed `~` is not expanded. On a remote target, the
+   folder and provider must exist on that machine.
+3. Keep the default permission mode, which requests approval where the provider
+   requires it. Full access is an explicit opt-in. Send the task once; if launch
+   fails, the task and folder remain available for retry. **Check runtime again**
+   only reads status; it does not restart anything or sign in for you.
+4. Follow the agent's chat for replies and results. Approval requests and
+   questions appear in chat and Inbox. Fleet shows your agents and available
+   summaries; **Back to fleet** preserves the open chat and draft. A prose reply
+   is still a reply, and a malformed result is not proof of success.
+5. Use **Resume** on a stopped session to continue its existing conversation.
+   Conversation history can return after restarting the desktop; this does not
+   promise persistence of the Fleet Manager's live coordination graph.
+
+Use a **direct agent** for a single bounded task. Ask the **Fleet Manager** in
+Overview to coordinate work across projects; it also needs the hub and its
+Workspacer action tools. When only those services are degraded, a supported
+direct local launch may still work. A runtime-ready label is not a guarantee of
+provider authentication or task success. Startup failures appear in system
+notices with an **Open logs** action.
+
+Open **Help: First task** in the command palette to return to this page.
+**Settings → Command Line** installs the optional Workspacer CLI for terminal use
+and `workspacer serve`; it does not install or authenticate provider CLIs.
+
+## Local development
 
 ### Prerequisites
 
-- Node.js 18+ (repo pins Node 22 via `mise`)
+- Node.js 22 (repo pins it via `mise`)
 - npm
-- Go 1.25 (to build the `hub` binary the app launches)
+- Go 1.25 and Rust (to build the bundled hub and claudemon daemons)
 
 ### Install dependencies
 
