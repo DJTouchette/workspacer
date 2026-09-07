@@ -41,7 +41,11 @@ export function providerLabel(provider: AgentProvider | undefined): string {
 }
 import { agentIdForSession, dedupeByCardId, dedupeBySessionId } from '../lib/agentIdentity';
 import { GUIDE_AGENT_NAME, buildGuideKickoff } from '../lib/guide';
-import { FLEET_MANAGER_NAME, buildManagerKickoff } from '../lib/fleetManager';
+import {
+  FLEET_MANAGER_NAME,
+  buildManagerKickoff,
+  buildManagerWorkflowAsk,
+} from '../lib/fleetManager';
 import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 import { markRespawning, isRespawning, settleRespawning } from '../lib/respawnGuard';
 import { buildRespawnSpawnOptions } from '../lib/respawnOptions';
@@ -744,7 +748,7 @@ export function useAgentManager() {
           console.warn('[fleet-manager] token grant reconcile failed:', err);
         }
         try {
-          await window.electronAPI.claudeMessage(live.sessionId, ask.trim());
+          await window.electronAPI.claudeMessage(live.sessionId, buildManagerWorkflowAsk(ask));
         } catch (err) {
           console.warn('[fleet-manager] message to live manager failed:', err);
         }
@@ -779,7 +783,7 @@ export function useAgentManager() {
         if (revived?.sessionId) {
           setActiveAgentId(revived.id);
           try {
-            await window.electronAPI.claudeMessage(revived.sessionId, ask.trim());
+            await window.electronAPI.claudeMessage(revived.sessionId, buildManagerWorkflowAsk(ask));
           } catch (err) {
             console.warn('[fleet-manager] message to revived manager failed:', err);
           }

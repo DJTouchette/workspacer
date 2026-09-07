@@ -81,6 +81,7 @@ func (r *registry) methods() []string {
 		brainProbeMethod,
 		// agents + sessions (claudemon-backed)
 		"agents.list",
+		"fleetWorkflows.request",
 		"agents.spawn",
 		"agents.sendMessage",
 		"terminals.create",
@@ -244,6 +245,8 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 			return jsonResult(r.visibleSnapshots(ctx))
 		}
 		return r.cm.listSessions(ctx)
+	case "fleetWorkflows.request":
+		return jsonResult(map[string]any{"ok": false, "code": "unavailable", "error": "Fleet workflows require a local desktop runtime; headless execution is unavailable"})
 	case "agents.spawn":
 		return r.spawn(ctx, params)
 	case "agents.sendMessage":
@@ -722,6 +725,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err == nil {
 		_, p.contextWindowSet = present["contextWindow"]
+		if v, ok := present["workflowStepId"]; ok && string(v) != "null" && string(v) != `""` {
+			return nil, fmt.Errorf("Fleet workflow execution requires the local desktop runtime")
+		}
 	}
 
 	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the

@@ -484,6 +484,7 @@ export interface InAppNotification {
  * other.
  */
 export interface ProjectIdentity {
+  workflowId?: string;
   /** Display name. Defaults to the directory's basename. */
   label?: string;
   /** Badge tint (any CSS color). Derived from the path when unset. */

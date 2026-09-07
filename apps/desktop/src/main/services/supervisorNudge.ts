@@ -1,3 +1,4 @@
+import { workflowWakeInstructions, workflowResultSchema } from './fleetWorkflowRuntime';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
  * Event-driven supervisor wake. When an agent transitions *into* a blocked
@@ -340,7 +341,10 @@ class SupervisorNudge {
     ] as const) {
       if (group.length === 0) continue;
       try {
-        await claudemonSessionClient.message(parentId, buildFleetMessage(kind, group));
+        await claudemonSessionClient.message(
+          parentId,
+          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId)),
+        );
       } catch {
         /* still unreachable — the next sweep retries */
       }
@@ -405,8 +409,9 @@ class SupervisorNudge {
       // the prose comes from. Strictly additive: success adds the object,
       // failure adds a one-line reason, and neither touches lastReply/fullReply
       // — the manager always still receives what the worker actually wrote.
-      if (session.resultSchema && !entry.escalation) {
-        const outcome = readStructuredResult(reply, session.resultSchema);
+      const pinnedResultSchema = workflowResultSchema(session.sessionId) ?? session.resultSchema;
+      if (pinnedResultSchema && !entry.escalation) {
+        const outcome = readStructuredResult(reply, pinnedResultSchema);
         if (outcome.json) entry.result = outcome.json;
         else if (outcome.error) entry.resultError = outcome.error;
       }
@@ -442,6 +447,7 @@ class SupervisorNudge {
                 ? 'invalid'
                 : 'absent',
           entry.reviewEvidenceId,
+          entry.result ? JSON.parse(entry.result) : entry.escalation,
         );
       } catch (err) {
         console.warn('[dispatch-history] result unavailable', err);
@@ -459,7 +465,10 @@ class SupervisorNudge {
     ] as const) {
       if (group.length === 0) continue;
       try {
-        await claudemonSessionClient.message(parentId, buildFleetMessage(kind, group));
+        await claudemonSessionClient.message(
+          parentId,
+          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId)),
+        );
       } catch {
         /* the parent may have just ended — best-effort */
         continue; // NOT delivered: leave this group's signatures unrecorded

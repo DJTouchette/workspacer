@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once, on } from 'node:events';
 import { createInterface } from 'node:readline';
 import WebSocket from 'ws';
@@ -56,6 +56,19 @@ fs.writeFileSync(path.join(configDir, 'remote-token'), 'dispatch-chain-synthetic
 fs.writeFileSync(path.join(configDir, 'config.yaml'), 'claude:\n  skipPermissionsDefault: false\n');
 const project = path.join(scratch, 'project');
 fs.mkdirSync(project);
+execFileSync('git', ['init', '-q', project]);
+execFileSync('git', [
+  '-C',
+  project,
+  '-c',
+  'user.name=Fixture',
+  '-c',
+  'user.email=fixture@example.test',
+  'commit',
+  '--allow-empty',
+  '-qm',
+  'fixture',
+]);
 const fixtureEnv = {
   // Deliberate allowlist: no inherited user tokens, provider credentials, or
   // remote-server settings can enter the subprocess.
@@ -151,7 +164,18 @@ beforeAll(async () => {
       .filter((s) => s.isWakeTarget && s.status !== 'ended' && !s.hub)
       .sort((a, b) => b.startedAt - a.startedAt)[0].sessionId,
   ).toBe('manager-current');
-  launch.mockImplementation(async () => `synthetic-worker-${++sequence}`);
+  launch.mockImplementation(async (opts) => {
+    const id = `synthetic-worker-${++sequence}`;
+    if (opts.firstMessage) {
+      sessions.setSpawnMeta(id, {
+        provider: 'codex',
+        parentSessionId: opts.parentSessionId,
+        resultSchema: opts.resultSchema,
+      });
+      sessions.ensureManagedSession(id, opts.cwd);
+    }
+    return id;
+  });
   const { registerHubCapabilities } = await import('../../src/main/services/hubCapabilities');
   registerHubCapabilities();
   // Catalog delegation is production-default ON; register config.get using
@@ -205,7 +229,7 @@ async function mcpPost(label: string, message: Record<string, unknown>) {
     signal: AbortSignal.timeout(15_000),
   });
 }
-async function mcpSpawn(label: string, args: Record<string, unknown>) {
+async function mcpTool(label: string, name: string, args: Record<string, unknown>) {
   if (!mcpSessions.has(label)) {
     const init = await mcpPost(label, {
       id: ++sequence,
@@ -230,14 +254,8 @@ async function mcpSpawn(label: string, args: Record<string, unknown>) {
     id: ++sequence,
     method: 'tools/call',
     params: {
-      name: 'spawn_agent',
-      arguments: {
-        cwd: project,
-        provider: 'codex',
-        model: 'gpt-5',
-        skipPermissions: false,
-        ...args,
-      },
+      name,
+      arguments: args,
     },
   });
   expect(response.status).toBe(200);
@@ -251,15 +269,27 @@ async function mcpSpawn(label: string, args: Record<string, unknown>) {
   };
 }
 
-async function busSpawn(token: string, params: Record<string, unknown>, federated = false) {
+const mcpSpawn = (label: string, args: Record<string, unknown>) =>
+  mcpTool(label, 'spawn_agent', {
+    cwd: project,
+    provider: 'codex',
+    model: 'gpt-5',
+    skipPermissions: false,
+    ...args,
+  });
+
+async function busSpawn(
+  token: string,
+  params: Record<string, unknown>,
+  federated = false,
+  method = 'agents.spawn',
+) {
   const socket = new WebSocket(
     `${busURL}?token=${encodeURIComponent(token)}${federated ? '&peer=1' : ''}`,
   );
   try {
     await once(socket, 'open');
-    socket.send(
-      JSON.stringify({ op: 'call', id: 'fixture-spawn', method: 'agents.spawn', params }),
-    );
+    socket.send(JSON.stringify({ op: 'call', id: 'fixture-spawn', method, params }));
     for await (const [raw] of on(socket, 'message', { signal: AbortSignal.timeout(10_000) })) {
       const frame = JSON.parse(raw.toString());
       if (frame.id === 'fixture-spawn') return frame;
@@ -431,3 +461,368 @@ it.each(['scoped', 'plugin', 'federated'] as const)(
     expect(persisted()[0].attempts).toHaveLength(2);
   },
 );
+
+it('executes two selected policies through authenticated facade, desktop spawn, real wake validation and pinned history', async () => {
+  const manager = 'session:manager-current';
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = await mcpTool(manager, name, args);
+    expect(r.isError, r.text).toBe(false);
+    return r.value;
+  };
+  const route = async (role: string) => {
+    const d = await call('select_model', { role, cwd: project });
+    expect(d.eligible).toBe(true);
+    return {
+      provider: d.provider,
+      model: d.model,
+      effort: d.effort,
+      capability: d.capability,
+      decisionId: d.decisionId,
+    };
+  };
+  const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
+  const { supervisorNudge } = await import('../../src/main/services/supervisorNudge');
+  const delivery = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
+  const finish = async (sessionId: string, result: unknown) => {
+    const snapshot = sessions.getSnapshot(sessionId)!;
+    const reply =
+      'Actual fixture provider output\n```wks-result\n' + JSON.stringify(result) + '\n```';
+    supervisorNudge.onFinished(
+      {
+        ...snapshot,
+        resultSchema: undefined,
+        status: 'active',
+        ambientState: 'idle',
+        conversation: [
+          { role: 'user', content: 'fixture task' },
+          { role: 'assistant', content: reply },
+        ],
+      },
+      'manager-current',
+      reply,
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          history
+            .task(
+              history.list().find((t) => t.attempts.some((a) => a.sessionId === sessionId))!.taskId,
+            )
+            ?.workflow?.steps.find((s) => s.sessionId === sessionId)?.state,
+        ).toBe('completed'),
+      { timeout: 8000 },
+    );
+    expect(delivery).toHaveBeenLastCalledWith(
+      'manager-current',
+      expect.stringContaining('Fleet workflow'),
+    );
+  };
+  try {
+    let listed = await call('list_workflows');
+    expect(listed.catalog.definitions).toHaveLength(2);
+    const clone = await call('clone_workflow', {
+      id: 'scout-implement-review',
+      expectedRevision: 1,
+      name: 'Pinned custom policy',
+    });
+    const id = clone.definition.id;
+    expect(
+      (
+        await call('select_project_workflow', {
+          cwd: project,
+          workflowId: id,
+          expectedRevision: listed.catalog.selectionRevision,
+        })
+      ).ok,
+    ).toBe(true);
+    const started = await call('start_workflow', { cwd: project, title: 'Pinned reviewed task' });
+    const taskId = started.task.taskId;
+    expect(started.task.workflow.steps.map((s: { state: string }) => s.state)).toEqual([
+      'planned',
+      'planned',
+      'planned',
+    ]);
+    expect(
+      (
+        await call('decide_workflow_step', {
+          cwd: project,
+          taskId,
+          stepId: 'scout',
+          run: false,
+          reason: 'No unresolved material risk',
+        })
+      ).task.workflow.steps[0].state,
+    ).toBe('skipped');
+    const edit = { ...clone.definition, name: 'Changed for later tasks' };
+    expect(
+      (await call('update_workflow', { id, expectedRevision: 1, definition: edit })).definition
+        .revision,
+    ).toBe(2);
+    expect(
+      (await call('update_workflow', { id, expectedRevision: 1, definition: edit })).code,
+    ).toBe('conflict');
+    // Template edits after task start must not change the worker prompt or result contract.
+    const { libraryService } = await import('../../src/main/services/libraryService');
+    const original = libraryService
+      .list()
+      .find((t) => t.id === 'ship-task' && t.scope === 'global')!;
+    const source = fs.readFileSync(original.path, 'utf8');
+    fs.writeFileSync(original.path, source.replace('SHIP TASK', 'ALTERED TEMPLATE'));
+    const implementation = await mcpSpawn(manager, {
+      parentSessionId: 'manager-current',
+      taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      role: 'implementer',
+      ...(await route('implementer')),
+      template: 'ship-task',
+      templateParams: { task: 'Implement the fixture' },
+      skipPermissions: true,
+    });
+    fs.writeFileSync(original.path, source);
+    expect(implementation.isError, implementation.text).toBe(false);
+    const opts = launch.mock.lastCall![0];
+    expect(opts.firstMessage).toContain('SHIP TASK');
+    expect(opts.firstMessage).not.toContain('ALTERED TEMPLATE');
+    expect(opts.toolScope).toBe('view');
+    expect(opts.skipPermissions).toBe(false);
+    expect(opts.cwd).not.toBe(project);
+    expect(opts.resultSchema.required).toContain('commit');
+    const stillPinned = await call('next_workflow_step', { taskId, cwd: project });
+    expect(stillPinned.task.workflow.definition.revision).toBe(1);
+    expect(stillPinned.task.workflow.steps[1].state).toBe('dispatched');
+    await finish(implementation.value.sessionId, {
+      commit: 'fixture-commit',
+      caveats: 'Example reported outcome; no success verdict inferred',
+    });
+    const reviewArgs = {
+      parentSessionId: 'manager-current',
+      taskId,
+      workflowStepId: 'review',
+      stage: 'review',
+      role: 'reviewer',
+      afterDispatchId: implementation.value.dispatchId,
+      ...(await route('reviewer')),
+      template: 'review-task',
+      templateParams: { task: 'Check fixture criteria', handoff: 'fixture branch and checks' },
+    };
+    const reused = await mcpSpawn(manager, {
+      ...reviewArgs,
+      resumeSessionId: implementation.value.sessionId,
+    });
+    expect(reused.isError).toBe(true);
+    listed = await call('list_workflows');
+    expect(
+      (
+        await call('select_project_workflow', {
+          cwd: project,
+          workflowId: null,
+          expectedRevision: listed.catalog.selectionRevision,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await call('disable_workflow', { id, expectedRevision: 2 })).ok).toBe(true);
+    const review = await mcpSpawn(manager, reviewArgs);
+    expect(review.isError, review.text).toBe(false);
+    expect(review.value.sessionId).not.toBe(implementation.value.sessionId);
+    expect(launch.mock.lastCall![0].toolScope).toBe('view');
+    await finish(review.value.sessionId, {
+      verdict: 'changes required',
+      blocking: ['A reported blocker remains'],
+    });
+    const done = await call('next_workflow_step', { cwd: project, taskId });
+    expect(done.task.workflow.steps[2].outcome.verdict).toBe('changes required');
+    expect(done.instructions).toContain('NOT a passing verdict');
+    listed = await call('list_workflows');
+    expect(
+      (
+        await call('select_default_workflow', {
+          workflowId: 'direct-implementation',
+          expectedRevision: listed.catalog.selectionRevision,
+        })
+      ).ok,
+    ).toBe(true);
+    const direct = await call('start_workflow', { cwd: project, title: 'Explicit direct task' });
+    expect(direct.instructions).toContain('review omitted by selected policy');
+    const worker = await mcpSpawn(manager, {
+      parentSessionId: 'manager-current',
+      taskId: direct.task.taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      role: 'implementer',
+      ...(await route('implementer')),
+      template: 'ship-task',
+      templateParams: { task: 'Direct implementation fixture' },
+    });
+    expect(worker.isError, worker.text).toBe(false);
+    await finish(worker.value.sessionId, { commit: 'direct-fixture' });
+    expect(history.task(taskId)!.attempts.map((a) => a.stage)).toEqual(['implement', 'review']);
+    expect(history.task(direct.task.taskId)!.attempts.map((a) => a.stage)).toEqual(['implement']);
+    const foreign = await mcpTool('session:manager-other', 'next_workflow_step', {
+      taskId,
+      cwd: project,
+    });
+    expect(foreign.value.ok).toBe(false);
+    const { DispatchHistoryStore } = await import('../../src/main/services/dispatchHistoryStore');
+    const reopened = new DispatchHistoryStore(() => path.join(configDir, 'dispatch-history.json'));
+    expect(reopened.task(taskId)!.workflow).toEqual(history.task(taskId)!.workflow);
+    expect(
+      (
+        await call('next_workflow_step', {
+          taskId: history.list().find((t) => !t.workflow)!.taskId,
+          cwd: project,
+        })
+      ).ok,
+    ).toBe(false);
+  } finally {
+    delivery.mockRestore();
+  }
+}, 60000);
+
+it('confines workflow management to local host facade and rejects peer forwarding', async () => {
+  for (const token of [tokenFor('session:manager-current'), 'dispatch-chain-synthetic-plugin']) {
+    const frame = await busSpawn(
+      token,
+      { op: 'list', callerSessionId: 'manager-current' },
+      false,
+      'fleetWorkflows.request',
+    );
+    expect(frame.op).toBe('error');
+  }
+  const peer = await busSpawn(
+    'dispatch-chain-synthetic-host',
+    { op: 'list' },
+    false,
+    'hub:foreign/fleetWorkflows.request',
+  );
+  expect(peer.op).toBe('error');
+  expect(peer.error).toContain('local desktop');
+  const external = await mcpTool('pairing', 'list_workflows', {});
+  expect(external.isError).toBe(true);
+});
+
+it('runs a custom research-only template, refuses missing inputs, and records invalid results and escalation honestly', async () => {
+  const manager = 'session:manager-current';
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = await mcpTool(manager, name, args);
+    expect(r.isError, r.text).toBe(false);
+    return r.value;
+  };
+  fs.writeFileSync(
+    path.join(configDir, 'library', 'workflow-research.md'),
+    '---\ntitle: Research fixture\nkind: dispatch\nresultSchema:\n  type: object\n  required: [proven]\n  properties:\n    proven:\n      type: boolean\n---\n\n{{task}}\nResearch subject: {{subject}}\n',
+  );
+  const definition = {
+    id: 'research-only',
+    revision: 1,
+    name: 'Research only',
+    description: 'No implementation required',
+    enabled: true,
+    steps: [
+      {
+        id: 'inspect',
+        label: 'Inspect source',
+        kind: 'research',
+        stage: 'other',
+        role: 'diagnostician',
+        when: 'always',
+        template: 'workflow-research',
+        instructions: 'Preserve this exact custom instruction.',
+      },
+    ],
+  };
+  expect((await call('create_workflow', { definition })).ok).toBe(true);
+  const listed = await call('list_workflows');
+  expect(
+    (
+      await call('select_project_workflow', {
+        cwd: project,
+        workflowId: definition.id,
+        expectedRevision: listed.catalog.selectionRevision,
+      })
+    ).ok,
+  ).toBe(true);
+  const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
+  const message = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
+  const { supervisorNudge } = await import('../../src/main/services/supervisorNudge');
+  try {
+    for (const state of ['failed', 'blocked'] as const) {
+      const task = (await call('start_workflow', { cwd: project, title: `Research ${state}` }))
+        .task;
+      const d = await call('select_model', { role: 'diagnostician', cwd: project });
+      const params = {
+        parentSessionId: 'manager-current',
+        taskId: task.taskId,
+        workflowStepId: 'inspect',
+        stage: 'other',
+        role: 'diagnostician',
+        template: 'workflow-research',
+        provider: d.provider,
+        model: d.model,
+        effort: d.effort,
+        capability: d.capability,
+        decisionId: d.decisionId,
+      };
+      const before = launch.mock.calls.length;
+      const missing = await mcpSpawn(manager, {
+        ...params,
+        templateParams: { task: 'Read the source' },
+      });
+      expect(missing.isError).toBe(true);
+      expect(launch.mock.calls).toHaveLength(before);
+      const worker = await mcpSpawn(manager, {
+        ...params,
+        templateParams: { task: 'Read the source', subject: 'the parser' },
+      });
+      expect(worker.isError, worker.text).toBe(false);
+      expect(launch.mock.lastCall![0]).toMatchObject({
+        cwd: project,
+        toolScope: 'view',
+        routing: { role: 'diagnostician' },
+      });
+      expect(launch.mock.lastCall![0].firstMessage).toContain(
+        'Preserve this exact custom instruction.',
+      );
+      const reply =
+        state === 'failed'
+          ? '```wks-result\n{"proven":"not a boolean"}\n```'
+          : '```wks-escalation\n' +
+            JSON.stringify({
+              type: 'worker-escalation',
+              status: 'blocked',
+              reason: 'Need a decision',
+              requiredAuthorityOrDecision: 'Choose scope',
+              changed: false,
+              nextAction: 'Clarify scope',
+            }) +
+            '\n```';
+      supervisorNudge.onFinished(
+        {
+          ...sessions.getSnapshot(worker.value.sessionId)!,
+          status: 'active',
+          ambientState: 'idle',
+          conversation: [
+            { role: 'user', content: 'Read source' },
+            { role: 'assistant', content: reply },
+          ],
+        },
+        'manager-current',
+        reply,
+      );
+      await vi.waitFor(
+        () => expect(history.task(task.taskId)!.workflow!.steps[0].state).toBe(state),
+        { timeout: 8000 },
+      );
+      expect(
+        (await call('next_workflow_step', { taskId: task.taskId, cwd: project })).instructions,
+      ).toContain('Do not launch another step');
+      const retry = await mcpSpawn(manager, {
+        ...params,
+        templateParams: { task: 'Read the source', subject: 'the parser' },
+      });
+      expect(retry.isError).toBe(true);
+    }
+  } finally {
+    message.mockRestore();
+  }
+});

@@ -1,3 +1,5 @@
+import { fleetWorkflowRequest } from './fleetWorkflowService';
+import { workflowSpawn, pinnedWorkflowTemplate } from './fleetWorkflowRuntime';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
  * Real capabilities the main process exposes on the hub bus. These are the
@@ -618,7 +620,16 @@ export function registerHubCapabilities(): void {
   // meaning NO Fleet Manager spawned over the bus (codex, opencode, pi, or
   // even Claude) ever came up as isWakeTarget, so it never received a single
   // worker-finished wake.
-  registerCapability('agents.spawn', async (params: unknown) => {
+  registerCapability('fleetWorkflows.request', (params: unknown) => {
+    const { callerSessionId, ...request } = (params ??
+      {}) as import('../shared/fleetWorkflow').WorkflowRequest & { callerSessionId?: string };
+    if (request.cwd)
+      request.cwd = assertPathAllowed('fleetWorkflows.request', request.cwd, browseRoots());
+    return fleetWorkflowRequest(request, callerSessionId);
+  });
+  // Keep the spawn handler at its existing indentation for shared seam changes.
+  // prettier-ignore
+  registerCapability('agents.spawn', workflowSpawn(async (params: unknown) => {
     const {
       provider: reqProvider,
       transport: reqTransport,
@@ -657,7 +668,9 @@ export function registerHubCapabilities(): void {
       afterDispatchId,
       dispatchOwnerSessionId,
       retrySourceSessionId,
+      workflowStepId,
     } = (params ?? {}) as {
+      workflowStepId?: string;
       taskId?: string;
       stage?: import('../shared/dispatchHistory').TaskStage;
       afterDispatchId?: string;
@@ -826,12 +839,20 @@ export function registerHubCapabilities(): void {
       stage,
       afterDispatchId,
       retrySourceSessionId,
+      workflowStepId,
     };
     dispatchHistoryStore.validate(dispatchAdmission);
     // Whether the first message was WRITTEN by the caller or RENDERED here — it
     // decides whether the result echoes the text back (spawnResult).
     let renderedFromTemplate = false;
-    if (typeof template === 'string' && template) {
+    if (workflowStepId && taskId) {
+      const pinned = pinnedWorkflowTemplate(taskId, workflowStepId);
+      validateDispatchTemplateParams(pinned.body, templateParams ?? {});
+      templateBody = pinned.body;
+      resultSchema = pinned.resultSchema;
+      projectCwd = requestedExecutionCwd;
+      renderedFromTemplate = true;
+    } else if (typeof template === 'string' && template) {
       if (typeof reqMessage === 'string' && reqMessage.trim()) {
         throw new Error(
           'agents.spawn: pass template OR message, not both — the template renders INTO the ' +
@@ -981,8 +1002,9 @@ export function registerHubCapabilities(): void {
           name: label,
           // worktreeRoot is a renderer-config field (not in config_defaults), so
           // read it loosely; absent → createWorktree uses its default root.
-          rootOverride: (configService.getConfig().agents as { worktreeRoot?: string } | undefined)
-            ?.worktreeRoot,
+          rootOverride: (
+            configService.getConfig().agents as { worktreeRoot?: string } | undefined
+          )?.worktreeRoot,
           // Supplies projects[dir].worktreeSetup (+ scripts for script:<name>).
           config: configService.getConfig(),
         });
@@ -1027,6 +1049,8 @@ export function registerHubCapabilities(): void {
         };
       }
     }
+    if (workflowStepId && worktree && !worktreeResult?.allocated)
+      throw new Error('Workflow ship step requires successful worktree allocation');
     if (templateBody !== undefined) {
       // Pass exactly the directory rendered into {{cwd}} to the helper. Its
       // own normalization is intentionally idempotent, but keeping the value
@@ -1060,6 +1084,7 @@ export function registerHubCapabilities(): void {
         if (snapshot) dispatchHistoryStore.observe(snapshot);
         return ids ?? {};
       } catch (err) {
+        if (workflowStepId) throw err;
         console.warn('[dispatch-history] Accepted dispatch could not be retained', err);
         return { dispatchHistoryUnavailable: true };
       }
@@ -1245,7 +1270,7 @@ export function registerHubCapabilities(): void {
         worktreeResult,
       ),
     };
-  });
+  }));
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
   // `terminal:create` IPC handler. Returns the new PTY's session id.

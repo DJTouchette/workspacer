@@ -1,3 +1,4 @@
+import { fleetWorkflowRequest } from './services/fleetWorkflowService';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
 import { fleetReviewStore } from './services/fleetReviewStore';
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
@@ -1376,6 +1377,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // to write. A move that loses its compare-and-swap rejects, and the pane
   // reloads rather than retrying blind.
   // Same record ownership/selector validation for every caller; no filesystem grant.
+  ipcMain.handle(
+    IPC.FLEET_WORKFLOW_REQUEST,
+    (_event, request: import('./shared/fleetWorkflow').WorkflowRequest) =>
+      fleetWorkflowRequest(request),
+  );
   ipcMain.handle(IPC.DISPATCH_HISTORY_READ, () => {
     const currentOwner = claudeSessionStore
       .getAllSnapshots()

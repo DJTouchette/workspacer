@@ -66,6 +66,7 @@ export const HOST_ONLY = [
   // Captured Fleet review evidence is local main-process state.  It remains
   // owner/selector-validated by the IPC store and deliberately has no bus or
   // remote fallback.
+  'fleetWorkflowRequest',
   'dispatchHistoryRead',
   'fleetReviewRead',
   'fleetReviewForget',

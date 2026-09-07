@@ -1,3 +1,4 @@
+import { ProjectWorkflowSelector } from './FleetWorkflowsSection';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RotateCcw, Check, AlertTriangle, Star } from 'lucide-react';
 import { Config, ProjectIdentity } from '../../hooks/useConfig';
@@ -371,6 +372,7 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 />
                 Full access
               </label>
+              <ProjectWorkflowSelector cwd={dir} />
             </div>
             {/* Deterministic setup for THIS project's agent worktrees: shell
                 commands run (in order) in a fresh worktree right after `git

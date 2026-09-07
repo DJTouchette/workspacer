@@ -693,6 +693,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"search.project")
 
 	// ── Config ─────────────────────────────────────────────────────────────
+	addWorkflowTools(b)
 	b.group = "config"
 	addTool[listAgentsIn](b, "get_config",
 		"Get the full workspacer config (theme, keybindings, pane and session settings).",
@@ -927,6 +928,10 @@ func addSpawnTool(b *build, name, desc, method string) {
 // original's recorded permission mode and forward it without the grant check
 // this function performs.
 func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+	// Bound workflows ask the router to judge their maximum scope BEFORE desktop narrows by kind.
+	if in.WorkflowStepID != "" && in.ToolScope == "" {
+		in.ToolScope = "operator"
+	}
 	if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -1051,6 +1056,9 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	in.SkipPermissions = &skip
 	m := method
 	peer := in.takeHub()
+	if peer != "" && in.WorkflowStepID != "" {
+		return nil, nil, fmt.Errorf("Fleet workflow execution is local desktop only")
+	}
 	if peer != "" {
 		m = "hub:" + peer + "/" + method
 	}
@@ -1532,6 +1540,7 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
+	WorkflowStepID  string `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
 	TaskID          string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
 	Stage           string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
 	AfterDispatchID string `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`

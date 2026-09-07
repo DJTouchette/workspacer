@@ -804,6 +804,9 @@ func (c *configService) saveLocked(partial map[string]any) (map[string]any, erro
 		// (configService.ts saveConfigLocked).
 		c.current = c.loadFromDisk()
 		c.loadedAt = configStamp()
+		if err := preserveFleetWorkflowSelections(c.current, dropped); err != nil {
+			return c.current, err
+		}
 		merged = deepMerge(c.current, dropped)
 		for _, dotted := range wholesaleConfigPaths {
 			if err := applyWholesale(merged, dropped, dotted); err != nil {

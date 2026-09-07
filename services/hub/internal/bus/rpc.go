@@ -1054,6 +1054,12 @@ var methodSanitizers = map[string]paramSanitizer{
 // sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
 func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) (json.RawMessage, error) {
+	if method == "fleetWorkflows.request" {
+		if !caller.trusted || caller.viaScopedToken || caller.pluginID != "" || caller.federated {
+			return nil, fmt.Errorf("Fleet workflow management is local host only")
+		}
+		return raw, nil
+	}
 	if s, ok := methodSanitizers[method]; ok {
 		return s(rt, caller, raw)
 	}
@@ -1193,6 +1199,10 @@ func (rt *router) call(caller *conn, f Frame) {
 // the local one would both reject valid calls and approve invalid ones. The
 // peer enforces its own confinement against the link token's grants.
 func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
+	if bare == "fleetWorkflows.request" {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "Fleet workflows are local desktop only"})
+		return
+	}
 	rt.mu.Lock()
 	fed := rt.fed
 	rt.mu.Unlock()

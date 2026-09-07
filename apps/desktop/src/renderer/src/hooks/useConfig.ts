@@ -287,6 +287,8 @@ export interface Config {
   };
   /** Defaults applied when spawning a new agent. */
   agents?: {
+    defaultWorkflowId?: string;
+    workflowSelectionRevision?: number;
     /** Coding-agent backend pre-selected in the spawn dialog. */
     defaultProvider?: AgentProvider;
     /** Directory the spawn dialog opens at (and where Browse… starts). Absent

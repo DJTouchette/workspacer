@@ -1,3 +1,4 @@
+import FleetWorkflowsSection from './FleetWorkflowsSection';
 /**
  * Settings → Fleet Manager.
  *
@@ -291,6 +292,7 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         terminal or as chat only follows that CLI’s own setting under Settings → Session, and the
         CLI path it uses follows Settings → Session → Tool paths.
       </div>
+      <FleetWorkflowsSection />
     </Section>
   );
 };

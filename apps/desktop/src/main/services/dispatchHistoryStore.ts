@@ -70,7 +70,7 @@ export class DispatchHistoryStore {
         this.tasks!.length > this.limits.tasks ||
         this.tasks!.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
       )
-        this.tasks!.shift();
+        this.pruneOne(this.tasks!);
       for (const t of this.tasks!)
         for (const a of t.attempts) {
           a.stale = true;
@@ -107,6 +107,13 @@ export class DispatchHistoryStore {
         !this.sameProject(task, input.projectCwd))
     )
       throw new Error('Task is unavailable or belongs to another manager/project');
+    if (
+      task?.workflow &&
+      (!input.workflowStepId || !task.workflow.steps.some((s) => s.id === input.workflowStepId))
+    )
+      throw new Error('Workflow-bound task requires an explicit workflowStepId');
+    if (input.workflowStepId && !task?.workflow)
+      throw new Error('Workflow step requires a pinned task');
     if (afterDispatchId && !task?.attempts.some((a) => a.dispatchId === afterDispatchId))
       throw new Error('Predecessor must belong to the same task');
     // A retry source is host provenance, not a caller-authorized task link.
@@ -146,6 +153,7 @@ export class DispatchHistoryStore {
       this.tasksByID.set(task.taskId, task);
     }
     const attempt: DispatchAttempt = {
+      workflowStepId: input.workflowStepId,
       dispatchId: randomUUID(),
       sessionId: input.sessionId,
       kind: source ? 'retry' : 'fresh',
@@ -167,6 +175,13 @@ export class DispatchHistoryStore {
       metrics: {},
     };
     task.attempts.push(attempt);
+    const step = task.workflow?.steps.find((s) => s.id === input.workflowStepId);
+    if (step) {
+      step.state = 'dispatched';
+      step.sessionId = input.sessionId;
+      step.dispatchId = attempt.dispatchId;
+      delete step.reason;
+    }
     this.attemptsBySessionID.set(attempt.sessionId, { task, attempt });
     this.flush();
     return { taskId: task.taskId, dispatchId: attempt.dispatchId };
@@ -175,7 +190,7 @@ export class DispatchHistoryStore {
     this.load();
     return this.attemptsBySessionID.get(sessionId);
   }
-  private task(taskId: string): DispatchTask | undefined {
+  task(taskId: string): DispatchTask | undefined {
     this.load();
     return this.tasksByID.get(taskId);
   }
@@ -192,6 +207,7 @@ export class DispatchHistoryStore {
     const source = this.find(input.retrySourceSessionId);
     if (
       !source ||
+      (source.task.workflow && !input.workflowStepId) ||
       source.task.ownerSessionId !== input.owner.sessionId ||
       !this.sameProject(source.task, input.projectCwd) ||
       (input.taskId !== undefined && source.task.taskId !== input.taskId)
@@ -230,6 +246,23 @@ export class DispatchHistoryStore {
             : s.ambientState === 'idle'
               ? 'idle'
               : 'running';
+    const run = this.find(s.sessionId)?.task.workflow?.steps.find(
+      (r) => r.sessionId === s.sessionId,
+    );
+    if (run && a.resultContract === 'absent') {
+      run.state =
+        a.lifecycle === 'needs-decision'
+          ? 'blocked'
+          : s.status === 'ended'
+            ? 'failed'
+            : 'dispatched';
+      run.reason =
+        a.lifecycle === 'needs-decision'
+          ? 'Worker needs a decision'
+          : s.status === 'ended'
+            ? 'Worker ended without a validated result'
+            : undefined;
+    }
     if (s.status === 'ended') a.endedAt ??= now;
     else delete a.endedAt;
     a.metrics.wallMs = Math.max(0, Date.parse(a.endedAt ?? now) - Date.parse(a.acceptedAt));
@@ -276,11 +309,83 @@ export class DispatchHistoryStore {
     sessionId: string,
     resultContract: DispatchAttempt['resultContract'],
     evidenceId?: string,
+    outcome?: unknown,
   ): void {
     const a = this.find(sessionId)?.attempt;
     if (!a) return;
     a.resultContract = resultContract;
+    const step = this.find(sessionId)?.task.workflow?.steps.find((s) => s.sessionId === sessionId);
+    if (step) {
+      step.state =
+        resultContract === 'valid'
+          ? 'completed'
+          : resultContract === 'escalated'
+            ? 'blocked'
+            : 'failed';
+      step.reason =
+        resultContract === 'valid' ? undefined : `Worker result contract: ${resultContract}`;
+      step.outcome = outcome;
+    }
     if (evidenceId) a.reviewEvidenceId = evidenceId;
+    this.flush();
+  }
+  startWorkflow(
+    owner: Owner,
+    projectCwd: string,
+    title: string,
+    workflow: import('../shared/fleetWorkflow').WorkflowPin,
+  ): DispatchTask {
+    if (!owner.isWakeTarget || owner.status === 'ended' || owner.hub)
+      throw new Error('Workflow requires a live local manager');
+    const task: DispatchTask = {
+      taskId: randomUUID(),
+      ownerSessionId: owner.sessionId,
+      ownerLabel: owner.label ?? owner.sessionId,
+      projectCwd,
+      title: title.slice(0, 300),
+      createdAt: new Date().toISOString(),
+      attempts: [],
+      workflow: structuredClone(workflow),
+    };
+    const previous = [...this.load()];
+    this.load().push(task);
+    this.index();
+    try {
+      this.flush();
+    } catch (error) {
+      this.tasks = previous;
+      this.index();
+      throw error;
+    }
+    return structuredClone(task);
+  }
+  workflowDecision(taskId: string, stepId: string, run: boolean, reason: string): void {
+    const task = this.task(taskId);
+    const index = task?.workflow?.steps.findIndex((s) => s.id === stepId) ?? -1;
+    if (!task?.workflow || index < 0) throw new Error('Workflow step unavailable');
+    const step = task.workflow.steps[index];
+    const definition = task.workflow.definition.steps[index];
+    if (
+      step.state !== 'planned' ||
+      step.decision !== undefined ||
+      task.workflow.steps.slice(0, index).some((s) => !['completed', 'skipped'].includes(s.state))
+    )
+      throw new Error('Only the next planned conditional step accepts a decision');
+    if (definition.when !== 'material_risk' && !definition.repairOf)
+      throw new Error('Required step cannot be skipped');
+    if (!reason.trim() || reason.length > 2000)
+      throw new Error('A decision requires a reason (at most 2000 characters)');
+    step.decision = run;
+    step.reason = reason;
+    if (!run) step.state = 'skipped';
+    this.flush();
+  }
+  adoptWorkflowTasks(oldOwner: string, newOwner: string): void {
+    for (const task of this.load())
+      if (task.workflow && task.ownerSessionId === oldOwner) {
+        task.ownerSessionId = newOwner;
+        task.ownerLabel = newOwner;
+      }
     this.flush();
   }
   list(): DispatchTask[] {
@@ -291,6 +396,15 @@ export class DispatchHistoryStore {
           a.metrics.wallMs = Math.max(0, Date.now() - Date.parse(a.acceptedAt));
       }
     return tasks;
+  }
+  private pruneOne(tasks: DispatchTask[]): void {
+    const index = tasks.findIndex(
+      (t) =>
+        !t.workflow || t.workflow.steps.every((s) => ['completed', 'skipped'].includes(s.state)),
+    );
+    if (index < 0)
+      throw new Error('Workflow history capacity reached; active tasks cannot be evicted');
+    tasks.splice(index, 1);
   }
   private schedule(): void {
     if (this.timer) return;
@@ -314,12 +428,12 @@ export class DispatchHistoryStore {
       tasks.length > this.limits.tasks ||
       tasks.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
     )
-      tasks.shift();
+      this.pruneOne(tasks);
     while (
       tasks.length &&
       Buffer.byteLength(JSON.stringify({ version: 1, tasks })) > this.limits.bytes
     )
-      tasks.shift();
+      this.pruneOne(tasks);
     this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
     atomicWriteFileSync(this.filename(), JSON.stringify({ version: 1, tasks }), { mode: 0o600 });

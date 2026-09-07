@@ -1,3 +1,4 @@
+import FleetWorkflowTask from '../components/FleetWorkflowTask';
 import type { AgentProvider } from '../types/pane';
 import React, { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
@@ -203,6 +204,7 @@ function Task({
         <p className="recent-note">
           Task {task.taskId} · Ordered by accepted dispatch. Only declared stages appear.
         </p>
+        <FleetWorkflowTask task={task} />
         <ol>
           {task.attempts.map((a) => (
             <Attempt
