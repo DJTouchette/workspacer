@@ -421,8 +421,7 @@ describe('manager-first Fleet navigation', () => {
     [...document.querySelectorAll<HTMLElement>('[data-fleet-agent]')].map(
       (e) => e.dataset.fleetAgent,
     );
-  it('pins authoritative managers across status changes, additions, filtering and list sorting', () => {
-    localStorage.setItem('wks-fleet-view', 'cards');
+  it('pins authoritative managers across status changes, additions and filtering', () => {
     const snaps = {
       ...snapshotBySession,
       m1: { ...snapshotBySession['sess-2'], ambientState: 'idle' },
@@ -445,15 +444,9 @@ describe('manager-first Fleet navigation', () => {
       target: { value: 'no workers match' },
     });
     expect(order()).toEqual(['manager-one', 'manager-two']);
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(order()).toEqual(['manager-one', 'manager-two']);
-    fireEvent.click(screen.getByRole('button', { name: /Active/ }));
-    expect(order()).toEqual(['manager-one', 'manager-two']);
     view.unmount();
-    localStorage.removeItem('wks-fleet-view');
   });
-  it('list opens full-width chat with only Back beside the title, keeping managers first', () => {
-    localStorage.setItem('wks-fleet-view', 'list');
+  it('timeline opens full-width chat with only Back beside the title, keeping managers first', () => {
     const open = vi.fn();
     render(
       <Harness
@@ -472,6 +465,5 @@ describe('manager-first Fleet navigation', () => {
     expect(screen.queryByRole('navigation', { name: 'Fleet agents' })).not.toBeInTheDocument();
     expect(order().slice(0, 2)).toEqual(['manager-one', 'manager-two']);
     expect(open).not.toHaveBeenCalled();
-    localStorage.removeItem('wks-fleet-view');
   });
 });

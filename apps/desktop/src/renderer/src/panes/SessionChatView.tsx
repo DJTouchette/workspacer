@@ -21,6 +21,7 @@ import { RefreshCw } from '../components/icons';
 import { MarkdownFileCwdProvider } from '../components/markdown';
 import { SkillInventoryProvider } from '../contexts/SkillInventoryContext';
 import { permissionModeLabel } from '../lib/providerCaps';
+import { useSessionChatState } from '../hooks/useSessionChatUiState';
 import { CONVERSATION_PAGE_SIZE, type useClaudePaneModel } from './ClaudePane';
 
 /** The single chat/compose/inspection renderer. Lifecycle and transport remain in ClaudePane. */
@@ -107,6 +108,17 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
     workStartedAt,
     workflows,
   } = model;
+  const [sendError, setSendError] = useSessionChatState(
+    sessionId ?? attachSessionId,
+    'composerSendError',
+    '',
+  );
+  const sendFromComposer = async () => {
+    setSendError('');
+    // The shared owner restores failed drafts and retracts pending turns.
+    const result = await handleSend();
+    if (!result.ok) setSendError(result.error ?? 'Message could not be sent');
+  };
   return (
     // The session's skill inventory, provided once for the whole pane: a Skill
     // tool call carries only a name, and every card that renders one looks the
@@ -534,10 +546,26 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                 />
 
                 {/* Composer / Input area — session pills live inside its bottom row */}
+                {sendError && (
+                  <div
+                    role="alert"
+                    style={{
+                      width: '100%',
+                      maxWidth: 'var(--wks-chat-width)',
+                      margin: '0 auto',
+                      padding: '8px 16px',
+                      boxSizing: 'border-box',
+                      color: 'var(--wks-error)',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {sendError}
+                  </div>
+                )}
                 <Composer
                   value={inputValue}
                   onChange={setInputValue}
-                  onSend={handleSend}
+                  onSend={sendFromComposer}
                   onPaste={handlePaste}
                   onPickFiles={openFilePicker}
                   attachedFiles={attachedFiles}

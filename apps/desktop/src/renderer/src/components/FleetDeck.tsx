@@ -11,38 +11,18 @@ import {
   Search,
   Radar,
   CornerDownLeft,
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
+  History,
+  ChevronRight,
   Compass,
 } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { ProjectMark } from './ProjectMark';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
-import { HubChip } from './HubChip';
 import { Surface } from './Surface';
 import { InspectorCard } from './claude/InspectorCard';
 import { AgentLogo } from './agentLogos';
 import { requestInspector } from '../lib/watchBus';
-import { StatusGlyph } from './statusGlyph';
-import { shortModelLabel } from '../lib/modelLabel';
-import { agentAttentionScore } from '../lib/attentionRouter';
-import {
-  deriveSessionStats,
-  planProgress,
-  fmtUSD,
-  ctxColor,
-  isSnapshotStale,
-  withRecordedUsage,
-} from '../lib/sessionStats';
-import {
-  absentUsageTitle,
-  useRecordedUsageMap,
-  useRecordedUsageUnavailable,
-} from '../contexts/RecordedUsageContext';
 import { useConfig } from '../hooks/useConfig';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 import {
@@ -52,24 +32,8 @@ import {
   resolveLeader,
 } from '../lib/shortcuts';
 import { isLayerArmed } from '../lib/layerArmed';
-
-const CARD_MIN = 360; // matches the old minmax(360px) grid
-const GRID_GAP = 18;
-const GRID_PAD_X = 22; // horizontal padding each side of the scroll area
-// Every collapsed card occupies exactly one CARD_H cell, so a row is never taller
-// than its shortest sibling needs — the deck used to let one card with a long
-// question stretch its whole row to ~700px and strand the quadrant beside it.
-// A card that genuinely wants more scrolls inside its own cell.
-const CARD_H = 300;
-// An expanded (inspector) card takes a full-width row of its own.
-const EXPANDED_H = 440;
-// A card paints outside its own box: the hover lift is `0 6px 20px` and a
-// blocked card's `fleetPulse` ring is a 3px spread plus an 18px glow. So the
-// cell contains a runaway card with `overflow: clip` + this clip margin rather
-// than `overflow: auto` — a scroll box clips at its *padding* box, which sliced
-// both effects into a hard rectangle. Clip margin costs no layout, so cells sit
-// exactly on their grid area and two cards are still GRID_GAP apart.
-const CELL_CLIP_MARGIN = 20;
+import { orderFleetTimeline, FleetActivityTime } from './FleetTimeline';
+import './FleetTimeline.css';
 
 const STYLE_ID = 'fleet-deck-keyframes';
 function ensureFleetKeyframes() {
@@ -99,18 +63,6 @@ function ensureFleetKeyframes() {
   document.head.appendChild(s);
 }
 
-/** Compact relative time for the list's "Active" column. */
-function relTime(ts: number | undefined): string {
-  if (!ts) return '—';
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
-}
-
 interface Props {
   onOpenRecentAgents?: () => void;
   onTerminateAgent?: (id: string) => Promise<void>;
@@ -124,9 +76,8 @@ interface Props {
  * An agent card flipped in place into its live Inspector — the shared
  * {@link InspectorCard} fed the same `snapshotBySession` entry the collapsed card
  * uses, so it stays live for any agent (not just the piloted one). Sits in its
- * own full-width row (see the row plan); collapse or "open as pane" from the
- * header. The row is EXPANDED_H tall and the card stretches into it, so the
- * card's inner tab body scrolls rather than the deck.
+ * own full-width area below its timeline row; collapse or "open as pane"
+ * from the header. The inspector body scrolls within its bounded height.
  *
  * Surface `raised` = fill only: the old 1.5px accent border is now the accent
  * `tone` rail, so the card separates itself on one channel, not three.
@@ -236,10 +187,9 @@ const expandBtn: React.CSSProperties = {
 };
 
 /**
- * The Fleet — an advanced cross-agent radar. Every agent is a live
- * telemetry-face card, arranged by the Attention Router so the ones that need
- * you float to the front and pulse. Rendered as an overlay OVER the still-
- * mounted per-agent workspaces, so entering/leaving the deck never remounts a
+ * The Fleet runbook: metadata-defined manager anchors above workers ordered by
+ * recorded last activity. Rendered OVER the still-mounted per-agent workspaces,
+ * so entering/leaving the deck never remounts a
  * pane. Card activation selects the same retained GUI inside the Fleet shell;
  * Inspector is a separate action and does not replace chat navigation.
  */
@@ -331,30 +281,6 @@ const FleetDeck: React.FC<Props> = ({
     [config.keybindings?.commandLayer?.leaderOverride, config.keybindings?.prefix],
   );
 
-  // Cards (default) vs a dense List table — mirrors the overview toggle.
-  // Persisted so the deck reopens in the layout you last used.
-  const [fleetView, setFleetView] = useState<'cards' | 'list'>(() => {
-    try {
-      return localStorage.getItem('wks-fleet-view') === 'list' ? 'list' : 'cards';
-    } catch {
-      return 'cards';
-    }
-  });
-  const pickView = (v: 'cards' | 'list') => {
-    setFleetView(v);
-    try {
-      localStorage.setItem('wks-fleet-view', v);
-    } catch {
-      /* private mode */
-    }
-  };
-  const listScrollRef = useRef<HTMLDivElement>(null);
-  // Last-recorded cost/tokens per session — the only figures a cold-start fleet
-  // has, since every restored agent's session is a stopped row with no snapshot.
-  const recordedUsage = useRecordedUsageMap();
-  // Whether a missing figure below means "never recorded" or "never asked".
-  const usageUnavailable = useRecordedUsageUnavailable();
-
   // Type-to-filter by name or provider. Applied before sort, so cards, list, and
   // keyboard nav all operate on the filtered set; header counts stay whole-fleet.
   const [query, setQuery] = useState('');
@@ -367,134 +293,20 @@ const FleetDeck: React.FC<Props> = ({
     return () => clearInterval(t);
   }, []);
 
-  // Agent → most-urgent open item, shared with the SideBar via the attention
-  // feed (topByAgent) so both surfaces buoy cards by the same rule.
-  const sorted = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const matches = (a: (typeof realAgents)[number]) =>
-      !q || a.name.toLowerCase().includes(q) || (a.provider ?? 'claude').toLowerCase().includes(q);
-    return realAgents
-      .filter((a) => a.manager || matches(a))
-      .sort((a, b) => {
-        if (a.manager || b.manager)
-          return a.manager && b.manager
-            ? realAgents.indexOf(a) - realAgents.indexOf(b)
-            : a.manager
-              ? -1
-              : 1;
-        const sa = agentAttentionScore(
-          a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined,
-          topByAgent.get(a.id)?.priority ?? 0,
-        );
-        const sb = agentAttentionScore(
-          b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined,
-          topByAgent.get(b.id)?.priority ?? 0,
-        );
-        return sb - sa;
-      });
-  }, [realAgents, snapshotBySession, topByAgent, query]);
-
-  // List-view column sort. 'attn' keeps the needy-first order (the default); the
-  // other keys sort by live stats. Cards always use the attention order.
-  const [listSort, setListSort] = useState<{
-    key: 'attn' | 'name' | 'ctx' | 'cost' | 'act';
-    dir: 1 | -1;
-  }>({ key: 'attn', dir: -1 });
-  const toggleSort = (key: typeof listSort.key) =>
-    setListSort((s) =>
-      s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'name' ? 1 : -1 },
-    );
-  const listRows = useMemo(() => {
-    if (listSort.key === 'attn') return sorted;
-    const keyOf = (a: (typeof sorted)[number]): number | string => {
-      const snap = a.sessionId ? snapshotBySession[a.sessionId] : undefined;
-      const st = withRecordedUsage(
-        deriveSessionStats(snap),
-        a.sessionId ? recordedUsage[a.sessionId] : undefined,
-      );
-      switch (listSort.key) {
-        case 'name':
-          return a.name.toLowerCase();
-        case 'ctx':
-          return st.ctxPct ?? -1;
-        case 'cost':
-          return st.costUSD ?? -1;
-        case 'act':
-          return snap?.lastActivity ?? 0;
-        default:
-          return 0;
-      }
-    };
-    return [...sorted].sort((a, b) => {
-      if (a.manager || b.manager)
-        return a.manager && b.manager ? sorted.indexOf(a) - sorted.indexOf(b) : a.manager ? -1 : 1;
-      const ka = keyOf(a);
-      const kb = keyOf(b);
-      const c =
-        typeof ka === 'string' ? ka.localeCompare(kb as string) : (ka as number) - (kb as number);
-      return c * listSort.dir;
-    });
-  }, [sorted, listSort, snapshotBySession]);
-  // The order the user is actually looking at — keyboard nav + selection follow it.
-  const displayOrder = fleetView === 'list' ? listRows : sorted;
-
-  // Clickable, sortable list-column header. Click toggles direction; the active
-  // column shows a caret.
-  const SortBtn: React.FC<{ k: typeof listSort.key; label: string }> = ({ k, label }) => {
-    const active = listSort.key === k;
-    return (
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleSort(k);
-        }}
-        style={{
-          background: 'none',
-          border: 'none',
-          padding: 0,
-          font: 'inherit',
-          cursor: 'pointer',
-          color: active ? 'var(--wks-text-secondary)' : 'inherit',
-          fontWeight: active ? 700 : 'inherit',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 3,
-        }}
-      >
-        {label}
-        {active &&
-          (listSort.dir === 1 ? (
-            <ChevronUp size={10} strokeWidth={2.25} />
-          ) : (
-            <ChevronDown size={10} strokeWidth={2.25} />
-          ))}
-      </button>
-    );
-  };
+  // Managers are a stable metadata-defined anchor. Only workers are time ordered.
+  const displayOrder = useMemo(
+    () => orderFleetTimeline(realAgents, snapshotBySession, query),
+    [realAgents, snapshotBySession, query],
+  );
 
   const working = realAgents.filter((a) => {
     const s = a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined;
     return s === 'thinking' || s === 'streaming' || s === 'background';
   }).length;
 
-  // Windowed grid measurement (also feeds keyboard grid-nav): track the content
-  // width so we can pack cards into rows of `cols` and move selection by row.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [avail, setAvail] = useState(0);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const measure = () => {
-      if (el.clientWidth > 0) setAvail(Math.max(0, el.clientWidth - GRID_PAD_X * 2));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [fleetView, realAgents.length]);
-  const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (CARD_MIN + GRID_GAP)));
 
-  // Card selection (needy-first order == `displayOrder`), with approve/answer
+  // Timeline selection follows `displayOrder`, with approve/answer
   // acting on the selected agent's top attention item — kept entirely within
   // the deck.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -530,41 +342,6 @@ const FleetDeck: React.FC<Props> = ({
   useEffect(() => {
     if (expandedId && !displayOrder.some((a) => a.id === expandedId)) setExpandedId(null);
   }, [displayOrder, expandedId]);
-
-  // The row plan — the single source of truth for how cards are packed, read by
-  // BOTH the renderer and the keyboard handler so they can never disagree.
-  // `rows` holds indices into `displayOrder`; `posOf[i]` is where card `i` sits.
-  // Ordinary cards pack `cols` to a row; the expanded card gets a full-width row
-  // of its own so it never drags a neighbour's height with it. Linear order is
-  // preserved, so left/right nav and every index-keyed shortcut are untouched.
-  const { rows, posOf } = useMemo(() => {
-    const rows: number[][] = [];
-    const posOf: { row: number; col: number }[] = [];
-    let i = 0;
-    while (i < displayOrder.length) {
-      if (displayOrder[i].id === expandedId) {
-        posOf[i] = { row: rows.length, col: 0 };
-        rows.push([i]);
-        i++;
-        continue;
-      }
-      const chunk: number[] = [];
-      while (
-        i < displayOrder.length &&
-        chunk.length < cols &&
-        displayOrder[i].id !== expandedId &&
-        (chunk.length === 0 || !!displayOrder[i].manager === !!displayOrder[chunk[0]].manager)
-      ) {
-        posOf[i] = { row: rows.length, col: chunk.length };
-        chunk.push(i);
-        i++;
-      }
-      rows.push(chunk);
-    }
-    return { rows, posOf };
-  }, [displayOrder, cols, expandedId]);
-  const isExpandedRow = (row: number[] | undefined) =>
-    !!row && row.length === 1 && displayOrder[row[0]]?.id === expandedId;
 
   // Open the selected/expanded agent's inspector as its own pane, leaving the
   // deck (the pane lands in the currently-piloted workspace, like a watch pane).
@@ -611,7 +388,7 @@ const FleetDeck: React.FC<Props> = ({
         return;
       }
       // 'i' flips the focused card in place into its live InspectorCard (toggle).
-      if (e.key === 'i' && idx >= 0) {
+      if (e.key === 'i' && idx >= 0 && !chatId) {
         stop();
         setExpandedId((cur) => (cur === displayOrder[idx].id ? null : displayOrder[idx].id));
         return;
@@ -619,70 +396,34 @@ const FleetDeck: React.FC<Props> = ({
 
       if (t instanceof Element && t.closest('button')) return;
 
-      // Movement adapts to the active fleet view: the Cards grid navigates
-      // spatially (down = the card BELOW, per the row plan), the List linearly.
-      // Each view has its own bindings; arrows are fixed fallbacks.
-      const select = (n: number) =>
-        setSelectedId(displayOrder[Math.max(0, Math.min(displayOrder.length - 1, n))].id);
-      if (fleetView === 'cards') {
-        if (idx < 0) {
-          // Nothing selected yet: any movement key just lands on the first card.
-          if (
-            ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key) ||
-            eventMatchesCombo(e, sc['fleet-cards-down']) ||
-            eventMatchesCombo(e, sc['fleet-cards-up']) ||
-            eventMatchesCombo(e, sc['fleet-cards-left']) ||
-            eventMatchesCombo(e, sc['fleet-cards-right'])
-          ) {
-            stop();
-            select(0);
-            return;
-          }
-        } else {
-          // Row moves are true vertical moves, resolved through the row plan
-          // rather than `idx ± cols` arithmetic (rows are no longer uniformly
-          // packed once a card is expanded). They clamp into the (possibly
-          // shorter) neighbouring row; at the edge rows they no-op rather than
-          // sliding sideways.
-          const pos = posOf[idx];
-          const stepRow = (delta: -1 | 1) => {
-            if (!pos) return;
-            const next = rows[pos.row + delta];
-            if (!next || next.length === 0) return;
-            select(next[Math.min(pos.col, next.length - 1)]);
-          };
-          if (eventMatchesCombo(e, sc['fleet-cards-down']) || e.key === 'ArrowDown') {
-            stop();
-            stepRow(1);
-            return;
-          }
-          if (eventMatchesCombo(e, sc['fleet-cards-up']) || e.key === 'ArrowUp') {
-            stop();
-            stepRow(-1);
-            return;
-          }
-          if (eventMatchesCombo(e, sc['fleet-cards-left']) || e.key === 'ArrowLeft') {
-            stop();
-            select(idx - 1);
-            return;
-          }
-          if (eventMatchesCombo(e, sc['fleet-cards-right']) || e.key === 'ArrowRight') {
-            stop();
-            select(idx + 1);
-            return;
-          }
-        }
-      } else {
-        if (eventMatchesCombo(e, sc['fleet-list-down']) || e.key === 'ArrowDown') {
-          stop();
-          select((idx < 0 ? -1 : idx) + 1);
-          return;
-        }
-        if (eventMatchesCombo(e, sc['fleet-list-up']) || e.key === 'ArrowUp') {
-          stop();
-          select((idx < 0 ? 1 : idx) - 1);
-          return;
-        }
+      // Keep both existing navigation binding families usable in the timeline.
+      const select = (n: number) => {
+        const id = displayOrder[Math.max(0, Math.min(displayOrder.length - 1, n))].id;
+        setSelectedId(id);
+        // Move actual focus too: Shift+F10 must address the row navigation selected.
+        Array.from(scrollRef.current?.querySelectorAll<HTMLElement>('[data-fleet-agent]') ?? [])
+          .find((element) => element.dataset.fleetAgent === id)
+          ?.focus({ preventScroll: true });
+      };
+      if (
+        ['ArrowDown', 'ArrowRight'].includes(e.key) ||
+        eventMatchesCombo(e, sc['fleet-list-down']) ||
+        eventMatchesCombo(e, sc['fleet-cards-down']) ||
+        eventMatchesCombo(e, sc['fleet-cards-right'])
+      ) {
+        stop();
+        select(idx + 1);
+        return;
+      }
+      if (
+        ['ArrowUp', 'ArrowLeft'].includes(e.key) ||
+        eventMatchesCombo(e, sc['fleet-list-up']) ||
+        eventMatchesCombo(e, sc['fleet-cards-up']) ||
+        eventMatchesCombo(e, sc['fleet-cards-left'])
+      ) {
+        stop();
+        select(idx - 1);
+        return;
       }
 
       if (idx < 0) return;
@@ -733,52 +474,69 @@ const FleetDeck: React.FC<Props> = ({
     openAgent,
     sc,
     kbPrefix,
-    fleetView,
-    rows,
-    posOf,
   ]);
 
-  // In list mode, keep the j/k-selected row visible as it moves.
   useEffect(() => {
-    if (fleetView !== 'list' || !selectedId) return;
-    listScrollRef.current
-      ?.querySelector(`[data-fleet-row="${selectedId}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [selectedId, fleetView]);
+    if (!selectedId || chatId) return;
+    const row = Array.from(
+      scrollRef.current?.querySelectorAll<HTMLElement>('[data-fleet-agent]') ?? [],
+    ).find((el) => el.dataset.fleetAgent === selectedId);
+    row?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedId, chatId]);
 
-  // Windowed grid: virtualize the packed rows — only on-screen cards (plus
-  // overscan) are in the DOM, so a 50+-agent fleet stays smooth.
-  // Row heights are now DECIDED, not measured: every row is CARD_H (or
-  // EXPANDED_H for the expanded card's own row) plus the gap. Self-measurement
-  // (`measureElement`) is what let a single card stretch its row, so it's gone.
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (isExpandedRow(rows[i]) ? EXPANDED_H : CARD_H) + GRID_GAP,
-    // Keyed by the row's leading card rather than its index, so a re-pack moves
-    // rows instead of silently reusing an index's cached offset. Keying on the
-    // lead (not the whole membership) means gaining/losing a trailing sibling
-    // doesn't remount the row — a card's compose draft survives a re-sort.
-    getItemKey: (i) => {
-      const lead = rows[i]?.[0];
-      return lead === undefined ? i : displayOrder[lead].id;
-    },
-    overscan: 2,
-  });
-
-  // …and drop the cached offsets whenever the plan itself changes.
-  useEffect(() => {
-    rowVirtualizer.measure();
-  }, [cols, expandedId, rows.length, rowVirtualizer]);
-
-  // In card mode, keep the j/k-selected card visible by scrolling its row into
-  // view (the list mode has its own scroll effect above).
-  useEffect(() => {
-    if (fleetView !== 'cards' || !selectedId) return;
-    const i = displayOrder.findIndex((a) => a.id === selectedId);
-    const pos = i >= 0 ? posOf[i] : undefined;
-    if (pos) rowVirtualizer.scrollToIndex(pos.row, { align: 'auto' });
-  }, [selectedId, fleetView, displayOrder, posOf, rowVirtualizer]);
+  const renderAgent = (agent: AgentWorkspace) => {
+    const snapshot = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+    return (
+      <div
+        key={agent.id}
+        data-fleet-agent={agent.id}
+        data-fleet-row={agent.id}
+        className={`fleet-timeline-row${agent.manager ? ' fleet-manager-anchor' : ''}`}
+        tabIndex={0}
+        aria-label={agent.name}
+        onFocus={(e) => {
+          if (e.target === e.currentTarget) setSelectedId(agent.id);
+        }}
+        onMouseDown={(e) => {
+          if (e.button !== 0) e.preventDefault();
+        }}
+        onClick={(e) => {
+          if (!(e.target as Element).closest('button, input, textarea')) openChat(agent.id);
+        }}
+        {...agentMenu.handlers(agent.id)}
+      >
+        <div className="fleet-timeline-time">
+          {agent.manager ? (
+            <span className="fleet-manager-label">
+              <Compass size={12} /> Manager
+            </span>
+          ) : null}
+          <FleetActivityTime timestamp={snapshot?.lastActivity} now={now} />
+        </div>
+        <div className="fleet-timeline-entry">
+          <AgentCard
+            agent={agent}
+            snapshot={snapshot}
+            timeline
+            onOpen={() => openChat(agent.id)}
+            actions={agentMenu.overflow(agent)}
+            prepareChat={() => prepareChat(agent)}
+            onInspect={() => setExpandedId(agent.id)}
+          />
+          {expandedId === agent.id && (
+            <div style={{ height: 440, display: 'flex', flexDirection: 'column' }}>
+              <ExpandedAgentCard
+                agent={agent}
+                snapshot={snapshot}
+                onCollapse={() => setExpandedId(null)}
+                onOpenAsPane={() => openInspectorPane(agent)}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const selectedAgent = displayOrder.find((a) => a.id === selectedId);
 
@@ -798,197 +556,150 @@ const FleetDeck: React.FC<Props> = ({
       }}
     >
       {agentMenu.menu}
-      <style>{`
-        .fleet-toolbar { flex-wrap: wrap; }
-        .fleet-recent { min-height: 36px; padding: 8px 16px; white-space: nowrap; }
-        .fleet-chat-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
-        @media (max-width: 650px) {
-          .fleet-toolbar { padding: 10px 12px !important; gap: 8px !important; }
-          .fleet-recent { flex-basis: 100%; text-align: left; }
-          .fleet-chat-layout { flex-direction: column; }
-          .fleet-table thead { display: none; }
-          .fleet-table tbody, .fleet-table tr { display: block; }
-          .fleet-table tr { display: grid; grid-template-columns: minmax(0, 1fr) 130px; }
-          .fleet-table td { display: none; min-width: 0; max-width: none !important; }
-          .fleet-table td:nth-child(1), .fleet-table td:nth-child(2) { display: block; grid-column: 1; }
-          .fleet-table td:nth-child(7) { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; grid-column: 2; grid-row: 1 / span 2; white-space: normal !important; }
-
-        }
-      `}</style>
-      {/* Deck header */}
-      <div
-        className="fleet-toolbar"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '14px 22px 12px',
-          borderBottom: '1px solid var(--wks-border-subtle)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: '1.1rem',
-              fontWeight: 700,
-              letterSpacing: '-0.01em',
-              color: 'var(--wks-text-primary)',
-            }}
-          >
-            <Radar size={17} strokeWidth={2.2} style={{ color: 'var(--wks-accent)' }} />
-            Fleet
-          </div>
-          {/* Scannable status chips — dot + count, colour-keyed by state. */}
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 12,
-              fontSize: '0.72rem',
-              fontVariantNumeric: 'tabular-nums',
-              color: 'var(--wks-text-secondary)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <StatChip color="var(--wks-text-tertiary)" glow={false}>
-              {realAgents.length} agent{realAgents.length === 1 ? '' : 's'}
-            </StatChip>
-            <StatChip color="var(--wks-busy)" glow={working > 0}>
-              {working} working
-            </StatChip>
-            <StatChip color="var(--wks-warning)" glow={counts.needsYou > 0}>
-              {counts.needsYou} need{counts.needsYou === 1 ? 's' : ''} you
-            </StatChip>
-          </div>
-        </div>
-        <div style={{ flex: 1 }} />
-        {/* Filter with a leading search glyph */}
-        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-          <Search
-            size={13}
-            strokeWidth={2.2}
-            style={{
-              position: 'absolute',
-              left: 9,
-              color: 'var(--wks-text-faint)',
-              pointerEvents: 'none',
-            }}
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter agents…"
-            spellCheck={false}
-            style={{
-              width: 168,
-              fontSize: '0.72rem',
-              fontFamily: 'inherit',
-              padding: '6px 10px 6px 28px',
-              borderRadius: 'var(--wks-radius-md)',
-              // Border OR fill, never both — the field reads on --wks-bg-base
-              // from its edge alone.
-              border: '1px solid var(--wks-border-subtle)',
-              background: 'transparent',
-              color: 'var(--wks-text-primary)',
-              transition: 'border-color 0.12s, box-shadow 0.12s',
-            }}
-          />
-        </div>
-        {/* Cards / List toggle */}
+      {/* Overview chrome yields all available width and height to selected chat. */}
+      {!chatAgent && (
         <div
+          className="fleet-toolbar"
           style={{
             display: 'flex',
-            // Fill only: the active thumb already draws the second level, so the
-            // shell's border was a third rectangle for one control.
-            background: 'var(--wks-bg-surface)',
-            borderRadius: 'var(--wks-radius-md)',
-            padding: 4,
+            alignItems: 'center',
+            gap: 12,
+            padding: '14px 22px 12px',
+            borderBottom: '1px solid var(--wks-border-subtle)',
           }}
         >
-          <SegBtn active={fleetView === 'cards'} onClick={() => pickView('cards')}>
-            Cards
-          </SegBtn>
-          <SegBtn active={fleetView === 'list'} onClick={() => pickView('list')}>
-            List
-          </SegBtn>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: '1.05rem',
+                fontWeight: 700,
+                letterSpacing: '-0.01em',
+                color: 'var(--wks-text-primary)',
+              }}
+            >
+              <Radar size={17} strokeWidth={2.2} style={{ color: 'var(--wks-accent)' }} />
+              Fleet
+            </div>
+            {/* Scannable status chips — dot + count, colour-keyed by state. */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 12,
+                fontSize: '0.72rem',
+                fontVariantNumeric: 'tabular-nums',
+                color: 'var(--wks-text-secondary)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <StatChip color="var(--wks-text-tertiary)" glow={false}>
+                {realAgents.length} agent{realAgents.length === 1 ? '' : 's'}
+              </StatChip>
+              <StatChip color="var(--wks-busy)" glow={working > 0}>
+                {working} working
+              </StatChip>
+              <StatChip color="var(--wks-warning)" glow={counts.needsYou > 0}>
+                {counts.needsYou} need{counts.needsYou === 1 ? 's' : ''} you
+              </StatChip>
+            </div>
+          </div>
+          <div style={{ flex: 1 }} />
+          {/* Filter with a leading search glyph */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <Search
+              size={13}
+              strokeWidth={2.2}
+              style={{
+                position: 'absolute',
+                left: 9,
+                color: 'var(--wks-text-faint)',
+                pointerEvents: 'none',
+              }}
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter agents…"
+              spellCheck={false}
+              style={{
+                width: 168,
+                fontSize: '0.72rem',
+                fontFamily: 'inherit',
+                padding: '6px 10px 6px 28px',
+                borderRadius: 'var(--wks-radius-md)',
+                // Border OR fill, never both — the field reads on --wks-bg-base
+                // from its edge alone.
+                border: '1px solid var(--wks-border-subtle)',
+                background: 'transparent',
+                color: 'var(--wks-text-primary)',
+                transition: 'border-color 0.12s, box-shadow 0.12s',
+              }}
+            />
+          </div>
+          <button
+            onClick={spawnAgent}
+            title="Dispatch a new agent"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: '0.72rem',
+              fontFamily: 'inherit',
+              fontWeight: 700,
+              cursor: 'pointer',
+              border: 'none',
+              borderRadius: 'var(--wks-radius-md)',
+              padding: '6px 13px',
+              background: 'var(--wks-accent)',
+              color: 'var(--wks-text-on-accent)',
+              boxShadow: '0 1px 3px var(--wks-shadow)',
+              transition: 'filter 0.12s',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.filter = 'brightness(1.08)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.filter = '';
+            }}
+          >
+            <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Dispatch agent
+          </button>
+          <button
+            onClick={() => setViewLevel('piloting')}
+            title="Back to agent (Esc)"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: '0.72rem',
+              fontFamily: 'inherit',
+              fontWeight: 600,
+              cursor: 'pointer',
+              // Border only — it sits on --wks-bg-base beside the filled Dispatch
+              // button, and the contrast between them is the hierarchy.
+              border: '1px solid var(--wks-glass-border)',
+              borderRadius: 'var(--wks-radius-md)',
+              padding: '6px 12px',
+              background: 'transparent',
+              color: 'var(--wks-text-secondary)',
+              transition: 'border-color 0.12s, color 0.12s',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
+            }}
+          >
+            <X size={13} strokeWidth={2} /> Exit fleet <kbd style={kbdStyle}>Esc</kbd>
+          </button>
         </div>
-        <button
-          onClick={spawnAgent}
-          title="Dispatch a new agent"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            fontSize: '0.72rem',
-            fontFamily: 'inherit',
-            fontWeight: 700,
-            cursor: 'pointer',
-            border: 'none',
-            borderRadius: 'var(--wks-radius-md)',
-            padding: '6px 13px',
-            background: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent)',
-            boxShadow: '0 1px 3px var(--wks-shadow)',
-            transition: 'filter 0.12s',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.filter = 'brightness(1.08)';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.filter = '';
-          }}
-        >
-          <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Dispatch agent
-        </button>
-        <button
-          className="fleet-recent"
-          onClick={onOpenRecentAgents}
-          style={{
-            ...expandBtn,
-            width: 'auto',
-            height: 'auto',
-            minWidth: 144,
-            padding: '8px 16px',
-            flexShrink: 0,
-          }}
-        >
-          Recent agents
-        </button>
-        <button
-          onClick={() => setViewLevel('piloting')}
-          title="Back to agent (Esc)"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            fontSize: '0.72rem',
-            fontFamily: 'inherit',
-            fontWeight: 600,
-            cursor: 'pointer',
-            // Border only — it sits on --wks-bg-base beside the filled Dispatch
-            // button, and the contrast between them is the hierarchy.
-            border: '1px solid var(--wks-glass-border)',
-            borderRadius: 'var(--wks-radius-md)',
-            padding: '6px 12px',
-            background: 'transparent',
-            color: 'var(--wks-text-secondary)',
-            transition: 'border-color 0.12s, color 0.12s',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
-            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border)';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
-          }}
-        >
-          <X size={13} strokeWidth={2} /> Exit fleet <kbd style={kbdStyle}>Esc</kbd>
-        </button>
-      </div>
+      )}
 
       {chatAgent && (
         <div className="fleet-chat-layout">
@@ -1009,25 +720,11 @@ const FleetDeck: React.FC<Props> = ({
                 {chatAgent.name}
               </strong>
             </div>
-            {expandedId === chatAgent.id && (
-              <div style={{ height: 240, overflow: 'auto' }}>
-                <ExpandedAgentCard
-                  agent={chatAgent}
-                  snapshot={
-                    chatAgent.sessionId ? snapshotBySession[chatAgent.sessionId] : undefined
-                  }
-                  onCollapse={() => setExpandedId(null)}
-                  onOpenAsPane={() => openInspectorPane(chatAgent)}
-                />
-              </div>
-            )}
             <FleetChatDestination
               sessionId={chatAgent.sessionId ?? chatAgent.lastSessionId ?? null}
               paneId={findAgentChatPane(chatAgent)?.id}
             />
-            {!chatAgent.sessionId && (
-              <p style={{ padding: 12 }}>Session stopped. Open its inspector to resume.</p>
-            )}
+            {!chatAgent.sessionId && <p style={{ padding: 12 }}>Session stopped.</p>}
           </main>
         </div>
       )}
@@ -1044,466 +741,106 @@ const FleetDeck: React.FC<Props> = ({
           minHeight: 0,
         }}
       >
-        {!chatAgent &&
-          fleetView === 'list' &&
-          expandedId &&
-          realAgents.find((a) => a.id === expandedId) && (
-            <div style={{ height: 280, flexShrink: 0 }}>
-              <ExpandedAgentCard
-                agent={realAgents.find((a) => a.id === expandedId)!}
-                snapshot={
-                  snapshotBySession[realAgents.find((a) => a.id === expandedId)!.sessionId ?? '']
-                }
-                onCollapse={() => setExpandedId(null)}
-                onOpenAsPane={() => openInspectorPane(realAgents.find((a) => a.id === expandedId)!)}
-              />
-            </div>
-          )}
-        {/* Content: empty state · dense list · windowed card grid */}
-        {realAgents.length === 0 ? (
-          <div style={CONTENT_SCROLL}>
-            <div
-              style={{
-                marginTop: 80,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                textAlign: 'center',
-                color: 'var(--wks-text-faint)',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 56,
-                  height: 56,
-                  borderRadius: '50%',
-                  marginBottom: 20,
-                  // Border only (see the Surface rule) — a ring around the glyph.
-                  border: '1px solid var(--wks-border-subtle)',
-                  color: 'var(--wks-text-tertiary)',
-                }}
-              >
-                <Radar size={26} strokeWidth={1.8} />
-              </div>
-              <div
-                style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}
-              >
-                No agents in the fleet
-              </div>
-              <div style={{ fontSize: '0.8rem', marginTop: 6, maxWidth: 300 }}>
-                Dispatch an agent and it'll appear here as a live card.
-              </div>
-              <button
-                onClick={spawnAgent}
-                style={{
-                  marginTop: 20,
-                  fontSize: '0.8rem',
-                  fontFamily: 'inherit',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  background: 'var(--wks-accent)',
-                  color: 'var(--wks-text-on-accent)',
-                  border: 'none',
-                  borderRadius: 'var(--wks-radius-md)',
-                  padding: '8px 16px',
-                  boxShadow: '0 1px 3px var(--wks-shadow)',
-                }}
-              >
-                + Dispatch agent
+        <div ref={scrollRef} className="fleet-timeline-scroll">
+          <div className="fleet-timeline-content">
+            <header className="fleet-timeline-intro">
+              <h1>Runbook timeline</h1>
+              <p>Workers by last activity, newest first. Open a conversation to follow the work.</p>
+            </header>
+            <section aria-label="Fleet managers">
+              {displayOrder.filter((agent) => agent.manager).map(renderAgent)}
+            </section>
+            <section aria-label="Worker timeline" className="fleet-worker-timeline">
+              {displayOrder.filter((agent) => !agent.manager).map(renderAgent)}
+              {!displayOrder.some((agent) => !agent.manager) && (
+                <p className="fleet-timeline-empty">
+                  {realAgents.length === 0
+                    ? 'No agents in the fleet. Dispatch an agent to start.'
+                    : query.trim()
+                      ? 'No workers match this filter.'
+                      : 'No workers in the fleet.'}
+                </p>
+              )}
+            </section>
+            {onOpenRecentAgents && (
+              <button className="fleet-recent" onClick={onOpenRecentAgents}>
+                <History size={20} />
+                <span>
+                  <strong>Recent agents</strong>
+                  <span>Review earlier tasks and session history</span>
+                </span>
+                <ChevronRight size={16} />
               </button>
-            </div>
+            )}
           </div>
-        ) : fleetView === 'list' ? (
-          <div ref={listScrollRef} style={CONTENT_SCROLL}>
-            <table
-              className="fleet-table"
-              style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}
-            >
-              <thead>
-                <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
-                  <th style={lth}>
-                    <SortBtn k="name" label="Agent" />
-                  </th>
-                  <th style={lth}>Status</th>
-                  <th style={lth}>Model</th>
-                  <th style={lthNum}>
-                    <SortBtn k="ctx" label="Context" />
-                  </th>
-                  <th style={lthNum}>
-                    <SortBtn k="cost" label="Cost" />
-                  </th>
-                  <th style={lthNum}>Plan</th>
-                  <th style={lth}>Actions</th>
-                  <th style={lthNum}>
-                    <SortBtn k="act" label="Active" />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayOrder.map((agent) => {
-                  const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
-                  const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
-                  const stats = withRecordedUsage(
-                    deriveSessionStats(snap),
-                    agent.sessionId ? recordedUsage[agent.sessionId] : undefined,
-                  );
-                  const plan = planProgress(snap?.plan);
-                  const sel = selectedId === agent.id;
-                  return (
-                    <tr
-                      key={agent.id}
-                      data-fleet-row={agent.id}
-                      data-fleet-agent={agent.id}
-                      tabIndex={0}
-                      onFocus={(e) => {
-                        if (e.target === e.currentTarget) setSelectedId(agent.id);
-                      }}
-                      onMouseDown={(e) => {
-                        if (e.button === 0) setSelectedId(agent.id);
-                        else e.preventDefault();
-                      }}
-                      {...agentMenu.handlers(agent.id)}
-                      onClick={() => openChat(agent.id)}
-                      title={`${agent.name} — ${vis.label}\n${agent.cwd ?? ''}`}
-                      style={{
-                        cursor: 'pointer',
-                        borderTop: '1px solid var(--wks-border-subtle)',
-                        background: sel ? 'var(--wks-bg-selected)' : 'transparent',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!sel)
-                          (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!sel) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                      }}
-                    >
-                      <td
-                        style={sel ? { ...ltd, boxShadow: `inset 3px 0 0 var(--wks-accent)` } : ltd}
-                      >
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            minWidth: 0,
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              flexShrink: 0,
-                              background: vis.color,
-                              boxShadow: vis.glow ? `0 0 8px ${vis.color}` : 'none',
-                            }}
-                          />
-                          {/* The deck is the CROSS-AGENT view, so which repo a row
-                            belongs to is the fact it most needs and least had —
-                            every row was the same shape with the cwd in a
-                            tooltip. Status dot first: state is why you are
-                            looking, project is which one. */}
-                          <ProjectMark cwd={agent.cwd} projects={config.projects} size={13} />
-                          <span
-                            style={{
-                              fontWeight: 600,
-                              color: 'var(--wks-text-primary)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {agent.manager && (
-                              <Compass
-                                size={11}
-                                strokeWidth={2}
-                                style={{ flexShrink: 0, marginRight: 4, verticalAlign: '-1px' }}
-                              />
-                            )}
-                            {agent.name}
-                          </span>
-                        </span>
-                      </td>
-                      <td style={ltd}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            fontSize: '0.66rem',
-                            fontWeight: 600,
-                            color: vis.color,
-                            border: `1px solid ${vis.color}`,
-                            borderRadius: 'var(--wks-radius-pill)',
-                            padding: '1px 9px',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <StatusGlyph
-                            state={agent.sessionId ? snap?.ambientState : undefined}
-                            size={12}
-                            strokeWidth={2.2}
-                            accent="currentColor"
-                          />
-                          {vis.label}
-                        </span>
-                      </td>
-                      <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          {stats.model ? shortModelLabel(stats.model) : '—'}
-                          {/* Federation: which machine this row's agent runs on. */}
-                          {(snap?.hub ?? agent.hub) && (
-                            <HubChip
-                              name={(snap?.hub ?? agent.hub)!}
-                              offline={!!snap?.hubOffline}
-                            />
-                          )}
-                        </span>
-                      </td>
-                      <td style={ltdNum}>
-                        {stats.ctxPct !== undefined ? (
-                          <span style={{ color: ctxColor(stats.ctxPct), fontWeight: 600 }}>
-                            {Math.round(stats.ctxPct)}%
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td
-                        style={{ ...ltdNum, color: 'var(--wks-accent)' }}
-                        // Dash = no figure at all, not $0.00. A recorded figure
-                        // says it is the last one written, not a live reading.
-                        title={
-                          stats.costUSD === undefined
-                            ? absentUsageTitle(usageUnavailable)
-                            : stats.recorded
-                              ? 'Last recorded for this session — not a live reading'
-                              : undefined
-                        }
-                      >
-                        {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}
-                      </td>
-                      <td style={ltdNum}>
-                        {plan ? (
-                          <span
-                            title={
-                              plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'
-                            }
-                            style={{
-                              color:
-                                plan.done >= plan.total
-                                  ? 'var(--wks-success)'
-                                  : 'var(--wks-text-secondary)',
-                              fontWeight: 600,
-                            }}
-                          >
-                            {plan.done}/{plan.total}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td style={ltd}>
-                        <SmallButton label="Inspect" onClick={() => setExpandedId(agent.id)} />
-                        {agentMenu.overflow(agent)}
-                      </td>
-                      {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
-                        <td
-                          style={{ ...ltdNum, color: 'var(--wks-warning)', fontWeight: 700 }}
-                          title="Says it's working but nothing has arrived — the stream may have stalled."
-                        >
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                            <AlertTriangle size={10} strokeWidth={2.25} />
-                            {relTime(snap?.lastActivity)}
-                          </span>
-                        </td>
-                      ) : (
-                        <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div ref={scrollRef} style={CONTENT_SCROLL}>
-            <div
-              style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}
-            >
-              {rowVirtualizer.getVirtualItems().map((vr) => {
-                const row = rows[vr.index] ?? [];
-                const expandedRow = isExpandedRow(row);
-                return (
-                  <div
-                    key={vr.key}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${vr.start}px)`,
-                      // A row's height is its own, not the tallest card's. The gap
-                      // lives in the virtual row size, below this box.
-                      height: expandedRow ? EXPANDED_H : CARD_H,
-                      display: 'grid',
-                      gridTemplateColumns: expandedRow ? '1fr' : `repeat(${cols}, minmax(0, 1fr))`,
-                      gap: GRID_GAP,
-                      // `stretch` (was `start`) is what closes the dead quadrant:
-                      // every cell fills its share of the row.
-                      alignItems: 'stretch',
-                    }}
-                  >
-                    {row.map((i) => {
-                      const agent = displayOrder[i];
-                      return (
-                        <div
-                          key={agent.id}
-                          data-fleet-agent={agent.id}
-                          tabIndex={0}
-                          onFocus={(e) => {
-                            if (e.target === e.currentTarget) setSelectedId(agent.id);
-                          }}
-                          onMouseDown={(e) => {
-                            if (e.button === 0) setSelectedId(agent.id);
-                            else e.preventDefault();
-                          }}
-                          {...agentMenu.handlers(agent.id)}
-                          style={{
-                            // Grid cell → grid container, so the card stretches to
-                            // the full cell in both axes with no `height: 100%`
-                            // needed on AgentCard itself.
-                            display: 'grid',
-                            minHeight: 0,
-                            // Safety valve: a card that still wants more than
-                            // CARD_H is cut off here instead of stretching the row
-                            // (and its siblings) with it. `clip` rather than
-                            // `auto` — the clip margin keeps the card's hover
-                            // shadow and pulse ring whole, and no cell of the deck
-                            // becomes its own scroll box.
-                            overflow: 'clip',
-                            overflowClipMargin: CELL_CLIP_MARGIN,
-                            borderRadius: 'var(--wks-radius-lg)',
-                            outline:
-                              selectedId === agent.id
-                                ? '2px solid var(--wks-accent)'
-                                : '2px solid transparent',
-                            // The cell now sits exactly on the card, so the ring
-                            // lands 2px outside the card itself.
-                            outlineOffset: 2,
-                            transition: 'outline-color 0.12s',
-                          }}
-                        >
-                          {expandedId === agent.id && !chatAgent ? (
-                            <ExpandedAgentCard
-                              agent={agent}
-                              snapshot={
-                                agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                              }
-                              onCollapse={() => setExpandedId(null)}
-                              onOpenAsPane={() => openInspectorPane(agent)}
-                            />
-                          ) : (
-                            <AgentCard
-                              agent={agent}
-                              snapshot={
-                                agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                              }
-                              onOpen={() => openChat(agent.id)}
-                              actions={agentMenu.overflow(agent)}
-                              prepareChat={() => prepareChat(agent)}
-                              onInspect={() => setExpandedId(agent.id)}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
       {/* Footer console — persistent, contextual keyboard affordances + the
           currently-selected agent. Moved out of the cramped header so hints stay
           visible without stealing header width. */}
-      <div
-        style={{
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 16,
-          padding: '7px 22px',
-          borderTop: '1px solid var(--wks-border-subtle)',
-          background: 'var(--wks-bg-surface)',
-          fontSize: '0.66rem',
-          color: 'var(--wks-text-faint)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-        }}
-      >
-        <Hint>
-          {fleetView === 'cards' ? (
-            <>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-left'] ?? '')}</kbd>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-down'] ?? '')}</kbd>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-up'] ?? '')}</kbd>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-right'] ?? '')}</kbd>
-            </>
-          ) : (
-            <>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-down'] ?? '')}</kbd>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-up'] ?? '')}</kbd>
-            </>
-          )}
-          <span>move</span>
-        </Hint>
-        <Hint>
-          <kbd style={kbdStyle}>i</kbd>
-          <span>inspect</span>
-        </Hint>
-        <Hint>
-          <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-yes'] ?? '')}</kbd>
-          <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-no'] ?? '')}</kbd>
-          <span>approve</span>
-        </Hint>
-        <Hint>
-          <kbd style={kbdStyle}>{formatBinding(sc['fleet-answer'] ?? '')}</kbd>
-          <span>answer</span>
-        </Hint>
-        <div style={{ flex: 1, minWidth: 8 }} />
-        {selectedAgent && (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              color: 'var(--wks-text-secondary)',
-              minWidth: 0,
-            }}
-          >
-            <span style={{ color: 'var(--wks-text-faint)' }}>Selected</span>
+      {!chatAgent && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            padding: '7px 22px',
+            borderTop: '1px solid var(--wks-border-subtle)',
+            background: 'var(--wks-bg-surface)',
+            fontSize: '0.66rem',
+            color: 'var(--wks-text-faint)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+          }}
+        >
+          <Hint>
+            <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-down'] ?? '')}</kbd>
+            <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-up'] ?? '')}</kbd>
+            <span>move</span>
+          </Hint>
+          <Hint>
+            <kbd style={kbdStyle}>i</kbd>
+            <span>inspect</span>
+          </Hint>
+          <Hint>
+            <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-yes'] ?? '')}</kbd>
+            <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-no'] ?? '')}</kbd>
+            <span>approve</span>
+          </Hint>
+          <Hint>
+            <kbd style={kbdStyle}>{formatBinding(sc['fleet-answer'] ?? '')}</kbd>
+            <span>answer</span>
+          </Hint>
+          <div style={{ flex: 1, minWidth: 8 }} />
+          {selectedAgent && (
             <span
               style={{
-                fontWeight: 700,
-                color: 'var(--wks-text-primary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                color: 'var(--wks-text-secondary)',
+                minWidth: 0,
               }}
             >
-              {selectedAgent.name}
+              <span style={{ color: 'var(--wks-text-faint)' }}>Selected</span>
+              <span
+                style={{
+                  fontWeight: 700,
+                  color: 'var(--wks-text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {selectedAgent.name}
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <CornerDownLeft size={11} strokeWidth={2.2} /> chat
+              </span>
             </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <CornerDownLeft size={11} strokeWidth={2.2} /> chat
-            </span>
-          </span>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -1556,94 +893,6 @@ const kbdStyle: React.CSSProperties = {
   background: 'color-mix(in srgb, var(--wks-text-primary) 7%, transparent)',
   padding: '0 4px',
   fontFamily: 'var(--wks-font-mono)',
-};
-
-const CONTENT_SCROLL: React.CSSProperties = {
-  flex: 1,
-  overflowY: 'auto',
-  padding: '6px 22px 28px',
-};
-
-/** Segmented Cards/List toggle button (mockup style). */
-const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({
-  active,
-  onClick,
-  children,
-}) => (
-  <button
-    onClick={onClick}
-    style={{
-      border: 'none',
-      borderRadius: 'var(--wks-radius-sm)',
-      padding: '5px 13px',
-      cursor: 'pointer',
-      fontFamily: 'inherit',
-      fontSize: '0.72rem',
-      fontWeight: 600,
-      background: active ? 'var(--wks-bg-selected)' : 'transparent',
-      color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
-      boxShadow: active ? '0 1px 2px var(--wks-shadow)' : 'none',
-      transition: 'color 0.12s',
-    }}
-  >
-    {children}
-  </button>
-);
-
-/** Status dot/pill colour + label for the list row. `busy` (thinking/streaming)
- *  uses the dedicated busy token so it matches the cards and sidebar. */
-function listStateVisual(s: string | undefined): { color: string; label: string; glow: boolean } {
-  switch (s) {
-    case 'waiting_approval':
-      return { color: 'var(--wks-warning)', label: 'Needs approval', glow: true };
-    case 'waiting_input':
-      return { color: 'var(--wks-warning)', label: 'Waiting', glow: true };
-    case 'thinking':
-      return {
-        color: 'var(--wks-busy)',
-        label: 'Thinking',
-        glow: true,
-      };
-    case 'streaming':
-      return { color: 'var(--wks-busy)', label: 'In flight', glow: true };
-    case 'background':
-      return {
-        color: 'var(--wks-busy)',
-        label: 'Background work',
-        glow: false,
-      };
-    case 'idle':
-      return { color: 'var(--wks-success)', label: 'Standing by', glow: false };
-    default:
-      return { color: 'var(--wks-text-faint)', label: 'Stopped', glow: false };
-  }
-}
-
-const lth: React.CSSProperties = {
-  position: 'sticky',
-  top: 0,
-  zIndex: 2,
-  background: 'var(--wks-bg-base)',
-  boxShadow: 'inset 0 -1px 0 var(--wks-border-subtle)',
-  padding: '7px 10px',
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.06em',
-  fontSize: '0.6rem',
-};
-const lthNum: React.CSSProperties = { ...lth, textAlign: 'right' };
-const ltd: React.CSSProperties = {
-  padding: '8px 10px',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  maxWidth: 280,
-};
-const ltdNum: React.CSSProperties = {
-  ...ltd,
-  textAlign: 'right',
-  fontVariantNumeric: 'tabular-nums',
-  color: 'var(--wks-text-secondary)',
 };
 
 export default FleetDeck;

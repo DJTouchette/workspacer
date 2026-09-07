@@ -138,16 +138,17 @@ describe('FleetDeck yields to the command layer', () => {
   });
 });
 
-it('Enter expands chat, i remains secondary inspection, and Escape returns to Fleet', () => {
+it('i inspects from overview; chat has only Back navigation and Escape returns to Fleet', () => {
   render(<FleetDeck top={0} left={0} />);
-  fireEvent.keyDown(window, { key: 'Enter' });
-  expect(document.querySelector('[data-fleet-chat="s1"]')).toBeInTheDocument();
-  expect(h.attention.openAgent).not.toHaveBeenCalled();
   fireEvent.keyDown(window, { key: 'i' });
   expect(screen.getByTitle('Collapse (Esc)')).toBeInTheDocument();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByTitle('Collapse (Esc)')).not.toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Enter' });
   expect(document.querySelector('[data-fleet-chat="s1"]')).toBeInTheDocument();
+  expect(h.attention.openAgent).not.toHaveBeenCalled();
+  fireEvent.keyDown(window, { key: 'i' });
+  expect(screen.queryByTitle('Collapse (Esc)')).not.toBeInTheDocument();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByRole('button', { name: 'Back to fleet' })).not.toBeInTheDocument();
   expect(h.attention.setViewLevel).not.toHaveBeenCalled();

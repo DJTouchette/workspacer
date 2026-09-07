@@ -3,7 +3,8 @@ import { AlertTriangle, Compass, Diamond, Maximize2, Settings } from 'lucide-rea
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { QuestionPicker } from './claude/QuestionPicker';
-import { AgentCardBody } from './AgentCardBody';
+import { AgentCardBody, excerptForCard } from './AgentCardBody';
+import { formatToolSummary } from './claude-shared';
 import { Surface } from './Surface';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
@@ -94,6 +95,8 @@ function lastMessage(turns: ClaudeSessionSnapshot['conversation'] = []) {
 }
 
 interface Props {
+  /** Runbook row presentation; all sends still use the retained chat controller. */
+  timeline?: boolean;
   agent: AgentWorkspace;
   snapshot?: ClaudeSessionSnapshot;
   /** Score-derived buoyancy badge ("needs you" etc.), already computed by the deck. */
@@ -129,6 +132,7 @@ export const AgentCard: React.FC<Props> = ({
   onInspect,
   actions,
   prepareChat,
+  timeline = false,
 }) => {
   const { openAgent, approve, answer, feed } = useAttention();
   const pageVisible = usePageVisible();
@@ -144,7 +148,9 @@ export const AgentCard: React.FC<Props> = ({
         label: hubOfflineLabel(snapshot?.lastActivity, Date.now()),
         pulse: false,
       }
-    : stateVisual(agent.sessionId ? state : undefined);
+    : timeline && agent.sessionId && !state
+      ? { color: 'var(--wks-text-tertiary)', label: 'Status unknown', pulse: false }
+      : stateVisual(agent.sessionId ? state : undefined);
   // Managed providers (codex/opencode) have no transcript-derived `usage` —
   // their telemetry rides the statusLine. deriveSessionStats merges both (same
   // fallback InspectorCard's Usage tab uses), so the tile's model / context
@@ -153,6 +159,7 @@ export const AgentCard: React.FC<Props> = ({
   // a stopped daemon row), so every figure below would be absent even though
   // the history DB recorded them. Merge the recorded ones UNDER the live ones.
   const stats = withRecordedUsage(deriveSessionStats(snapshot), useRecordedUsage(agent.sessionId));
+  const model = stats.model ?? (timeline ? snapshot?.settings?.model : undefined);
   // Why the figures below are missing, when they are. Null means the recorded
   // source answered and simply had nothing for this session; a string means it
   // was never asked, which is a different sentence to put on screen.
@@ -251,30 +258,37 @@ export const AgentCard: React.FC<Props> = ({
 
   return (
     <Surface
+      className={timeline ? 'fleet-timeline-card' : undefined}
       elevation="raised"
       radius="lg"
-      tone={v.color}
+      tone={timeline ? undefined : v.color}
       interactive
       onClick={onOpen ?? (() => openAgent(agent.id))}
       title={`${agent.name} — ${v.label}\n${agent.cwd}`}
       style={{
+        ['--fleet-status' as string]: v.color,
+        position: timeline ? 'relative' : undefined,
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 260,
+        minHeight: timeline ? 0 : 260,
+        background: timeline ? 'transparent' : undefined,
         // Only the blocked-on-you ring is drawn here; at rest the surface's own
         // hairline shadow is the whole treatment (leaving this undefined lets
         // the class rule through instead of out-specifying it).
-        boxShadow: v.pulse ? `0 0 0 1px ${v.color}` : undefined,
-        animation: v.pulse && pageVisible ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
+        boxShadow: timeline ? 'none' : v.pulse ? `0 0 0 1px ${v.color}` : undefined,
+        animation:
+          !timeline && v.pulse && pageVisible ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
         transition: 'transform 0.12s ease, box-shadow 0.14s ease, background-color 0.12s',
       }}
       onMouseEnter={(e) => {
+        if (timeline) return;
         const el = e.currentTarget as HTMLElement;
         el.style.transform = 'translateY(-2px)';
         // Don't fight the pulse animation's box-shadow on blocked cards.
         if (!v.pulse) el.style.boxShadow = '0 6px 20px var(--wks-shadow)';
       }}
       onMouseLeave={(e) => {
+        if (timeline) return;
         const el = e.currentTarget as HTMLElement;
         el.style.transform = '';
         // Clearing (rather than restoring a literal) hands the shadow back to
@@ -284,7 +298,10 @@ export const AgentCard: React.FC<Props> = ({
     >
       {/* Header — the state rail on the card's edge is the ambient colour, so
           the label + glyph are the only status marks needed here. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}>
+      <div
+        className={timeline ? 'fleet-timeline-identity' : undefined}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 8px' }}
+      >
         <span
           style={{
             display: 'inline-flex',
@@ -300,14 +317,21 @@ export const AgentCard: React.FC<Props> = ({
         >
           {agent.manager ? (
             <Compass size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
-          ) : (
+          ) : !timeline || agent.provider ? (
             <AgentLogo
               provider={agent.provider ?? 'claude'}
               size={14}
               style={{ color: 'var(--wks-text-tertiary)', flexShrink: 0 }}
             />
-          )}
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          ) : null}
+          <span
+            style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: timeline ? 'normal' : 'nowrap',
+              overflowWrap: 'anywhere',
+            }}
+          >
             {agent.name}
           </span>
         </span>
@@ -331,6 +355,19 @@ export const AgentCard: React.FC<Props> = ({
           />
           {v.label}
         </span>
+        {timeline && (
+          <button
+            type="button"
+            data-fleet-action="chat"
+            className="fleet-row-chat"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen?.();
+            }}
+          >
+            Chat
+          </button>
+        )}
         {actions}
         {onInspect && (
           <button
@@ -382,8 +419,17 @@ export const AgentCard: React.FC<Props> = ({
           color: 'var(--wks-text-faint)',
         }}
       >
-        {stats.model && (
-          <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(stats.model)}</span>
+        {timeline && (snapshot?.provider ?? agent.provider) && (
+          <span>{snapshot?.provider ?? agent.provider}</span>
+        )}
+        {model && (
+          <span
+            style={{ color: 'var(--wks-text-secondary)' }}
+            title={!stats.model ? 'Requested launch model; runtime model not reported' : undefined}
+          >
+            {shortModelLabel(model)}
+            {!stats.model ? ' (requested)' : ''}
+          </span>
         )}
         {hub && <HubChip name={hub} offline={hubOffline} />}
         {turns > 0 && (
@@ -391,7 +437,9 @@ export const AgentCard: React.FC<Props> = ({
             · {turns} turn{turns > 1 ? 's' : ''}
           </span>
         )}
-        {snapshot?.lastActivity ? <span>· {relTime(snapshot.lastActivity)}</span> : null}
+        {!timeline && snapshot?.lastActivity ? (
+          <span>· {relTime(snapshot.lastActivity)}</span>
+        ) : null}
         {stale && (
           <span
             title={`Says "${v.label}" but nothing has arrived since ${relTime(snapshot?.lastActivity)} — the stream may have stalled.`}
@@ -443,21 +491,37 @@ export const AgentCard: React.FC<Props> = ({
           {messageLabel}
         </div>
       )}
+      {timeline && plan?.active && (
+        <p className="fleet-current-work">{plan.active.activeForm ?? plan.active.content}</p>
+      )}
       {/* Body: tool chips + last message as markdown + changed-files line */}
-      <div style={{ flex: 1, paddingBottom: 10, minHeight: 0, display: 'flex' }}>
-        <AgentCardBody
-          text={bodyText}
-          fallback={bodyFallback}
-          active={working ? activeTool : undefined}
-          recent={recentTools}
-          fileStats={fileStats}
-          plan={plan}
-          compact={hasAction}
-        />
-      </div>
-
+      {timeline ? (
+        <div className="fleet-timeline-excerpt">
+          {activeTool && working && (
+            <div className="fleet-current-tool">Running: {formatToolSummary(activeTool).call}</div>
+          )}
+          <p>
+            {latest?.role === 'assistant' && bodyText.startsWith('```wks-html-card')
+              ? 'HTML response card · open Chat to view'
+              : excerptForCard(bodyText) ||
+                (agent.sessionId ? 'No conversation recorded yet' : 'Session stopped')}
+          </p>
+        </div>
+      ) : (
+        <div style={{ flex: 1, paddingBottom: 10, minHeight: 0, display: 'flex' }}>
+          <AgentCardBody
+            text={bodyText}
+            fallback={bodyFallback}
+            active={working ? activeTool : undefined}
+            recent={recentTools}
+            fileStats={fileStats}
+            plan={plan}
+            compact={hasAction}
+          />
+        </div>
+      )}
       {/* Orchestration mini-progress */}
-      {(runningSubs > 0 || runningWf.length > 0) && (
+      {!timeline && (runningSubs > 0 || runningWf.length > 0) && (
         <div
           style={{
             padding: '0 14px 8px',
@@ -484,80 +548,88 @@ export const AgentCard: React.FC<Props> = ({
       )}
 
       {/* Metrics: context bar + cost */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px 10px' }}>
-        {ctxPct !== undefined ? (
-          <>
-            <span
-              data-testid="agent-row-context-bar"
-              aria-label={`Active context ${Math.round(ctxPct)}% of runtime-confirmed window`}
-              style={{
-                flex: 1,
-                height: 5,
-                borderRadius: 'var(--wks-radius-pill)',
-                background: 'var(--wks-border-subtle)',
-                overflow: 'hidden',
-              }}
-            >
+      {!timeline && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px 10px' }}>
+          {ctxPct !== undefined ? (
+            <>
+              <span
+                data-testid="agent-row-context-bar"
+                aria-label={`Active context ${Math.round(ctxPct)}% of runtime-confirmed window`}
+                style={{
+                  flex: 1,
+                  height: 5,
+                  borderRadius: 'var(--wks-radius-pill)',
+                  background: 'var(--wks-border-subtle)',
+                  overflow: 'hidden',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'block',
+                    height: '100%',
+                    width: `${Math.min(100, Math.max(2, ctxPct))}%`,
+                    background: ctxColor(ctxPct),
+                  }}
+                />
+              </span>
               <span
                 style={{
-                  display: 'block',
-                  height: '100%',
-                  width: `${Math.min(100, Math.max(2, ctxPct))}%`,
-                  background: ctxColor(ctxPct),
+                  fontSize: '0.66rem',
+                  color: ctxColor(ctxPct),
+                  fontVariantNumeric: 'tabular-nums',
+                  flexShrink: 0,
                 }}
-              />
-            </span>
-            <span
-              style={{
-                fontSize: '0.66rem',
-                color: ctxColor(ctxPct),
-                fontVariantNumeric: 'tabular-nums',
-                flexShrink: 0,
-              }}
-            >
-              {ctxTokens !== undefined ? `${fmtTokens(ctxTokens)} · ` : ''}
-              {Math.round(ctxPct)}%
-            </span>
-            {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
-            {stats.costUSD !== undefined && (
-              <span
-                title={
-                  stats.recorded ? 'Last recorded for this session — not a live reading' : undefined
-                }
-                style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}
               >
-                {fmtUSD(stats.costUSD)}
+                {ctxTokens !== undefined ? `${fmtTokens(ctxTokens)} · ` : ''}
+                {Math.round(ctxPct)}%
               </span>
-            )}
-          </>
-        ) : stats.costUSD !== undefined || stats.billedTokens !== undefined ? (
-          // No live context reading, but this session HAS recorded figures.
-          // Labelled as last-recorded so it can't be read as live spend.
-          <span
-            title="Last recorded for this session — not a live reading"
-            style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
-          >
-            {[
-              stats.billedTokens !== undefined ? `${fmtTokens(stats.billedTokens)} billed` : '',
-              stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '',
-            ]
-              .filter(Boolean)
-              .join(' · ')}{' '}
-            <span style={{ color: 'var(--wks-text-disabled)' }}>last recorded</span>
-          </span>
-        ) : (
-          // Nothing live and nothing recorded. "No usage yet" claimed the
-          // stronger of the two facts available — that this agent has spent
-          // nothing — when the weaker one is all we have, and when the source
-          // is unreachable we do not even have that. Say which it is.
-          <span
-            title={agent.sessionId ? absentUsageTitle(usageUnavailable) : undefined}
-            style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
-          >
-            {agent.sessionId ? (usageUnavailable ? 'Usage unavailable' : 'No usage recorded') : ''}
-          </span>
-        )}
-      </div>
+              {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
+              {stats.costUSD !== undefined && (
+                <span
+                  title={
+                    stats.recorded
+                      ? 'Last recorded for this session — not a live reading'
+                      : undefined
+                  }
+                  style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}
+                >
+                  {fmtUSD(stats.costUSD)}
+                </span>
+              )}
+            </>
+          ) : stats.costUSD !== undefined || stats.billedTokens !== undefined ? (
+            // No live context reading, but this session HAS recorded figures.
+            // Labelled as last-recorded so it can't be read as live spend.
+            <span
+              title="Last recorded for this session — not a live reading"
+              style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
+            >
+              {[
+                stats.billedTokens !== undefined ? `${fmtTokens(stats.billedTokens)} billed` : '',
+                stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}{' '}
+              <span style={{ color: 'var(--wks-text-disabled)' }}>last recorded</span>
+            </span>
+          ) : (
+            // Nothing live and nothing recorded. "No usage yet" claimed the
+            // stronger of the two facts available — that this agent has spent
+            // nothing — when the weaker one is all we have, and when the source
+            // is unreachable we do not even have that. Say which it is.
+            <span
+              title={agent.sessionId ? absentUsageTitle(usageUnavailable) : undefined}
+              style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
+            >
+              {agent.sessionId
+                ? usageUnavailable
+                  ? 'Usage unavailable'
+                  : 'No usage recorded'
+                : ''}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Action zone: approve / answer a question / compose a message */}
       {(hasAction || showCompose) && (
@@ -579,7 +651,9 @@ export const AgentCard: React.FC<Props> = ({
             // hover too — `--wks-bg-hover` would have matched the card's own
             // hover fill exactly and vanished under the pointer.
             padding: '10px 14px 12px',
-            background: 'color-mix(in srgb, var(--wks-text-primary) 7%, transparent)',
+            background: timeline
+              ? 'transparent'
+              : 'color-mix(in srgb, var(--wks-text-primary) 7%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 8,
@@ -654,6 +728,7 @@ export const AgentCard: React.FC<Props> = ({
                 rows={1}
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   resize: 'none',
                   minHeight: 30,
                   maxHeight: 90,

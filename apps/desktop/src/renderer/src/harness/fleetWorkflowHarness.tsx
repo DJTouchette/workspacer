@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import '../App.css';
 import { DEFAULT_CONFIG } from '../hooks/configDefaults';
 import type { AgentWorkspace } from '../types/pane';
+import { buildFleetMessage } from '../../../main/shared/fleetMessages';
 
 const theme = new URLSearchParams(location.search).get('theme') ?? 'everforest';
 const config = {
@@ -39,13 +40,26 @@ const makeAgent = (id: string, manager = false, hub?: string): AgentWorkspace =>
   ],
   activeTabId: `t-${id}`,
 });
-const initialAgents = [
+let initialAgents = [
   makeAgent('worker'),
   makeAgent('manager', true),
   makeAgent('remote', false, 'fixture-peer'),
   makeAgent('manager-two', true),
   makeAgent('offline', false, 'offline-peer'),
 ];
+const params = new URLSearchParams(location.search);
+if (params.get('fleet') === 'few') initialAgents = initialAgents.slice(0, 2);
+if (params.get('fleet') === 'empty') initialAgents = [];
+if (params.get('fleet') === 'busy')
+  initialAgents.push(...Array.from({ length: 12 }, (_, i) => makeAgent(`task-${i}`)));
+if (params.get('labels') === 'tasks') {
+  initialAgents = initialAgents.map((agent) => ({
+    ...agent,
+    name: agent.manager
+      ? 'Coordinate release validation'
+      : `Implement retained session navigation — ${agent.id}`,
+  }));
+}
 if (new URLSearchParams(location.search).get('missingChat') === 'worker') {
   initialAgents[0].tabs = [];
 }
@@ -61,7 +75,8 @@ let snapshots: Record<string, any> = Object.fromEntries(
       hubOffline: a.id === 'offline',
       status: 'active',
       ambientState: a.manager ? 'idle' : 'streaming',
-      lastActivity: Date.now(),
+      lastActivity: a.manager ? Date.now() - 3600000 : Date.now(),
+      settings: { model: 'gpt-5.4' },
       activeToolCalls: [],
       completedToolCalls: [],
       fileChanges: [],
@@ -82,7 +97,16 @@ let snapshots: Record<string, any> = Object.fromEntries(
     },
   ]),
 );
-snapshots['s-manager'].conversation.push({
+if (params.get('longChat') === '1' && snapshots['s-manager']) {
+  snapshots['s-manager'].conversation.push(
+    ...Array.from({ length: 40 }, (_, i) => ({
+      role: i % 2 ? 'assistant' : 'user',
+      content: `Recorded fixture turn ${i}: verify retained conversation state.`,
+      timestamp: 200 + i,
+    })),
+  );
+}
+snapshots['s-manager']?.conversation.push({
   role: 'assistant',
   timestamp: 102,
   content:
@@ -96,6 +120,21 @@ snapshots['s-manager'].conversation.push({
     }) +
     '\n```',
 });
+const reviewId = '11111111-1111-4111-8111-111111111111';
+if (params.get('longChat') === '1')
+  snapshots['s-manager']?.conversation.push({
+    role: 'user',
+    timestamp: 500,
+    content: buildFleetMessage('worker-finished', [
+      {
+        sessionId: 's-worker',
+        label: 'Navigation implementation',
+        cwd: '/fixture/project',
+        reviewEvidenceId: reviewId,
+        lastReply: 'Fixture implementation report.',
+      },
+    ]),
+  });
 const sessionListeners = new Set<(id: string, snapshot: any) => void>();
 const calls: { method: string; args: unknown[] }[] = [];
 let failTerminate = false;
@@ -148,6 +187,31 @@ const record = async (method: string, ...args: unknown[]) => {
     claudeSignal: (id: string, signal: string) => record('signal', id, signal),
     federationConversation: async () => null,
     libraryList: async () => [],
+    fleetReviewRead: async (request: any) => ({
+      ok: request.ownerSessionId === 's-manager' && request.evidenceId === reviewId,
+      evidence: {
+        id: reviewId,
+        ownerSessionId: 's-manager',
+        workerSessionId: 's-worker',
+        projectRoot: '/fixture/project',
+        allocatedCwd: '/fixture/project',
+        branch: 'wks/fixture',
+        baseCommit: 'a'.repeat(40),
+        headCommit: 'b'.repeat(40),
+        capturedAt: '2026-09-06T00:00:00Z',
+        lifecycle: 'turn-ended',
+        availability: 'captured',
+        files: [
+          {
+            path: 'src/navigation.ts',
+            status: 'M',
+            diff: request.file
+              ? '--- a/src/navigation.ts\n+++ b/src/navigation.ts\n@@ -1 +1 @@\n-old\n+retained\n'
+              : undefined,
+          },
+        ],
+      },
+    }),
   },
   {
     get(target: any, name: string) {

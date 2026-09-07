@@ -82,7 +82,7 @@ for (const width of [360, 1280]) {
     await page.getByText('Fleet', { exact: true }).click();
     await expect(menu).toHaveCount(0);
     expect(await calls()).toEqual([]);
-    // Manager stays first after activity changes and when switching to List.
+    // Manager stays first after activity changes in the timeline.
     await page.evaluate(() =>
       (window as any).fleetHarness.activity('s-worker', { ambientState: 'waiting-input' }),
     );
@@ -90,7 +90,6 @@ for (const width of [360, 1280]) {
       'data-fleet-agent',
       'manager',
     );
-    await page.getByRole('button', { name: 'List', exact: true }).click();
     await expect(page.locator('[data-fleet-row]').first()).toHaveAttribute(
       'data-fleet-row',
       'manager',
@@ -275,4 +274,194 @@ test('card send restores a missing owning chat without opening it', async ({ pag
   expect(await page.evaluate(() => (window as any).fleetHarness.calls)).toEqual([
     { method: 'message', args: ['s-worker', 'Send through the restored owner'] },
   ]);
+});
+
+for (const width of [360, 1280]) {
+  for (const theme of ['dracula', 'light']) {
+    test(`timeline data, fleets and retained state at ${width}px ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      for (const fleet of ['empty', 'few', 'busy']) {
+        await page.goto(`${base}?theme=${theme}&fleet=${fleet}&labels=tasks`);
+        await expect(page.getByRole('heading', { name: 'Runbook timeline' })).toBeVisible({
+          timeout: 15000,
+        });
+        if (fleet === 'empty') {
+          await expect(
+            page.getByText('No agents in the fleet. Dispatch an agent to start.'),
+          ).toBeVisible();
+          await expect(page.locator('[data-fleet-agent]')).toHaveCount(0);
+        } else {
+          const managers = page.getByRole('region', { name: 'Fleet managers' });
+          await expect(managers.locator('[data-fleet-agent]').first()).toHaveAttribute(
+            'data-fleet-agent',
+            'manager',
+          );
+          await expect(managers.getByText('Coordinate release validation').first()).toBeVisible();
+          await expect(managers.getByText('gpt-5.4 (requested)').first()).toBeVisible();
+          const managerY = (await managers.boundingBox())!.y;
+          await page.evaluate(() => {
+            const h = (window as any).fleetHarness;
+            h.activity('s-worker', { lastActivity: 1788716580000, ambientState: 'waiting_input' });
+            if (h.agents().includes('remote')) {
+              h.activity('s-remote', { lastActivity: 1788716700000 });
+              h.activity('s-offline', { lastActivity: null });
+              for (let i = 0; i < 12; i++)
+                h.activity(`s-task-${i}`, { lastActivity: 1788716400000 });
+            }
+          });
+          expect((await managers.boundingBox())!.y).toBe(managerY);
+          const workers = page.getByRole('region', { name: 'Worker timeline' });
+          if (fleet === 'busy') {
+            await expect(workers.locator('[data-fleet-agent]').first()).toHaveAttribute(
+              'data-fleet-agent',
+              'remote',
+            );
+            await expect(workers.locator('[data-fleet-agent]').last()).toHaveAttribute(
+              'data-fleet-agent',
+              'offline',
+            );
+            await expect(page.locator('[data-fleet-agent="offline"]')).toContainText(
+              'Time unknown',
+            );
+          }
+          await expect(page.locator('[data-fleet-agent="worker"]')).toContainText(
+            'Waiting for input',
+          );
+        }
+        const recent = page.getByRole('button', { name: /Recent agents/ });
+        expect((await recent.boundingBox())!.height).toBeGreaterThanOrEqual(80);
+        await recent.click();
+        await expect(page.getByRole('dialog', { name: 'Recent agents' })).toBeVisible();
+        await page.getByRole('button', { name: 'Close history' }).click();
+        await page.locator('.fleet-timeline-scroll').evaluate((el) => {
+          el.scrollTop = 0;
+        });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+          true,
+        );
+        expect(
+          await page
+            .locator('.fleet-timeline-scroll')
+            .evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+        await page.screenshot({
+          path: test.info().outputPath(`timeline-${width}-${theme}-${fleet}.png`),
+        });
+      }
+
+      await page.goto(`${base}?theme=${theme}&fleet=few&longChat=1`);
+      await page
+        .locator('[data-fleet-agent="manager"]')
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      const chat = page.locator('[data-fleet-chat="s-manager"]');
+      const composer = chat.locator('textarea:visible').first();
+      const iframe = chat.frameLocator('iframe').getByRole('textbox', { name: 'Inline note' });
+      await iframe.fill('HTML survives Back');
+      await chat.getByRole('button', { name: 'Review changes' }).click();
+      const review = chat.getByTestId('fleet-inline-review');
+      await expect(review.getByRole('button', { name: 'M · src/navigation.ts' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await composer.fill('Keep this selected draft');
+      await composer.evaluate((el: HTMLTextAreaElement) => {
+        el.setSelectionRange(5, 9);
+        el.dataset.retention = 'same-node';
+      });
+      // Mark the actual production scroll container without assuming DOM depth.
+      await chat.locator('iframe').evaluate((el) => {
+        let parent = el.parentElement;
+        while (parent && getComputedStyle(parent).overflowY !== 'auto')
+          parent = parent.parentElement;
+        if (!parent) throw new Error('Conversation scroll container missing');
+        parent.dataset.retentionScroll = 'true';
+        parent.scrollTop = 200;
+      });
+      const scroller = chat.locator('[data-retention-scroll]');
+      await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(200);
+      await page.getByRole('button', { name: 'Back to fleet' }).click();
+      await page
+        .locator('[data-fleet-agent="worker"]')
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await page.getByRole('button', { name: 'Back to fleet' }).click();
+      await page
+        .locator('[data-fleet-agent="manager"]')
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await expect(composer).toHaveValue('Keep this selected draft');
+      await expect(composer).toHaveAttribute('data-retention', 'same-node');
+      expect(
+        await composer.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd]),
+      ).toEqual([5, 9]);
+      await expect(iframe).toHaveValue('HTML survives Back');
+      await expect(review.getByRole('button', { name: 'M · src/navigation.ts' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(await scroller.evaluate((el) => el.scrollTop)).toBe(200);
+      await expect(page.locator('.fleet-toolbar:visible')).toHaveCount(0);
+      expect((await chat.boundingBox())!.width).toBe(width);
+      await page.screenshot({
+        path: test.info().outputPath(`retained-chat-${width}-${theme}.png`),
+      });
+
+      // Expanded composer uses the same pending/echo/failure owner as overview sends.
+      await page.evaluate(() => (window as any).fleetHarness.sendMode('defer'));
+      const message = 'Sent from retained chat';
+      await composer.fill(message);
+      await chat.getByRole('button', { name: 'Send message', exact: true }).click();
+      await expect(chat.getByText(message, { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Back to fleet' }).click();
+      await expect(
+        page.locator('[data-fleet-agent="manager"]').getByText(message, { exact: true }),
+      ).toBeVisible();
+      await page.evaluate((text) => {
+        const h = (window as any).fleetHarness;
+        h.settleSend();
+        h.echo('s-manager', text);
+        h.repeatSnapshot('s-manager');
+      }, message);
+      await page
+        .locator('[data-fleet-agent="manager"]')
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await expect(chat.getByText(message, { exact: true })).toHaveCount(1);
+      await page.evaluate(() => (window as any).fleetHarness.sendMode('throw'));
+      await composer.fill('Keep failed chat draft');
+      await chat.getByRole('button', { name: 'Send message', exact: true }).click();
+      await expect(composer).toHaveValue('Keep failed chat draft');
+      await expect(chat.getByText(/transport unavailable/).first()).toBeVisible();
+      await expect(scroller.getByText('Keep failed chat draft', { exact: true })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Back to fleet' }).click();
+      await page
+        .locator('[data-fleet-agent="manager"]')
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await expect(composer).toHaveValue('Keep failed chat draft');
+      await expect(chat.getByRole('alert')).toContainText('transport unavailable');
+      await page.evaluate(() => (window as any).fleetHarness.sendMode('accept'));
+      await chat.getByRole('button', { name: 'Send message', exact: true }).click();
+      await expect(chat.getByRole('alert')).toHaveCount(0);
+      await expect(scroller.getByText('Keep failed chat draft', { exact: true })).toHaveCount(1);
+      expect(errors).toEqual([]);
+    });
+  }
+}
+
+test('timeline navigation focuses the same worker used by the keyboard menu', async ({ page }) => {
+  await page.goto(`${base}?fleet=few`);
+  const manager = page.locator('[data-fleet-agent="manager"]');
+  const worker = page.locator('[data-fleet-agent="worker"]');
+  await manager.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(worker).toBeFocused();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menu').getByLabel('Actions for worker agent')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(worker).toBeFocused();
+  expect(await page.evaluate(() => (window as any).fleetHarness.calls)).toEqual([]);
 });
