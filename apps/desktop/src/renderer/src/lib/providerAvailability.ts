@@ -45,9 +45,9 @@ export function providerAvailability(
   provider: string,
 ): ProviderAvailability {
   if (!detection?.length) return 'unknown';
-  const row = detection.find((d) => d.provider === provider);
+  const row = detection.find((d) => d?.provider === provider);
   if (!row) return 'unknown';
-  return row.found ? 'installed' : 'missing';
+  return row.found === true ? 'installed' : row.found === false ? 'missing' : 'unknown';
 }
 
 /** Convenience: false only when detection positively says the CLI is missing. */

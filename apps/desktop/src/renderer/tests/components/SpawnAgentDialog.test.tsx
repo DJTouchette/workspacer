@@ -7,7 +7,14 @@ const api = window.electronAPI as unknown as Record<string, ReturnType<typeof vi
 let localStore: Record<string, string>;
 
 function renderDialog(onSpawn = vi.fn()) {
-  render(<SpawnAgentDialog defaultCwd="/repo" onSpawn={onSpawn} onCancel={vi.fn()} />);
+  render(
+    <SpawnAgentDialog
+      defaultPrompt="Fixture task"
+      defaultCwd="/repo"
+      onSpawn={onSpawn}
+      onCancel={vi.fn()}
+    />,
+  );
   return { onSpawn };
 }
 

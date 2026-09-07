@@ -1,3 +1,6 @@
+import { spawnFailureMessage } from './lib/spawnFailure';
+import { useProviderDetection } from './hooks/useProviderDetection';
+import { providerAvailability } from './lib/providerAvailability';
 import { useRef, useCallback, useState, useEffect, useMemo, lazy, Suspense, memo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import './App.css';
@@ -188,6 +191,14 @@ export function migrateSessionData(
     name: 'Default',
     recognised: data == null,
   };
+}
+
+function reportSpawnFailure(error: unknown): void {
+  postNotification({
+    title: 'Agent could not start',
+    body: error instanceof Error ? error.message : spawnFailureMessage('Agent'),
+    source: 'workspacer',
+  });
 }
 
 export function shouldShowFirstRunWelcome({
@@ -451,6 +462,8 @@ function App() {
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split' | 'cmdline'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  const [welcomeTask, setWelcomeTask] = useState(false);
+  const { detection: launchDetection } = useProviderDetection();
   // When the new-agent view is opened for a specific directory (e.g. a
   // dashboard favourite/recent), this holds its cwd so the dialog opens
   // pre-filled there instead of at the configured default. Cleared on close.
@@ -637,7 +650,7 @@ function App() {
           model: s.model || undefined,
         }),
         resumeSessionId: s.sessionId,
-      });
+      }).catch(reportSpawnFailure);
     },
     [spawnAgent],
   );
@@ -1148,7 +1161,7 @@ function App() {
   );
 
   const handleSpawnAgent = useCallback(
-    (opts: {
+    async (opts: {
       cwd: string;
       name?: string;
       provider?: AgentProvider;
@@ -1168,10 +1181,14 @@ function App() {
       worktree?: boolean;
       /** Pre-fills the new agent's composer (not sent) — see spawnAgent. */
       initialPrompt?: string;
+      kickoffMessage?: string;
       /** Federation: spawn on this peer hub (main may ignore until the bus
        *  route lands) — see spawnAgent. */
       targetHub?: string;
     }) => {
+      await spawnAgent(opts);
+      if (welcomeTask) dismissWelcome();
+      setWelcomeTask(false);
       setShowSpawnDialog(false);
       setSpawnDialogCwd(null);
       setSpawnDialogPrompt(null);
@@ -1208,9 +1225,8 @@ function App() {
           .catch(() => {});
       }
       recordRecentDir(opts.cwd);
-      void spawnAgent(opts);
     },
-    [spawnAgent, recordRecentDir],
+    [spawnAgent, recordRecentDir, welcomeTask, dismissWelcome],
   );
 
   // --- Layout templates ---
@@ -1252,8 +1268,8 @@ function App() {
   const handleRestoreLayout = useCallback(
     async (layout: Layout) => {
       for (const la of layout.agents) {
-        recordRecentDir(la.cwd);
         const agentId = await spawnAgent({ cwd: la.cwd, name: la.name, model: la.model });
+        recordRecentDir(la.cwd);
         for (const tab of la.tabs) {
           for (const pane of tab.panes) {
             if (pane.type === 'claude') continue; // primary Claude tab already created
@@ -1369,18 +1385,15 @@ function App() {
    *  and jump straight into its live chat (the card carries the usage note, so
    *  the click is the informed consent to send). */
   const startGuideTour = useCallback(
-    (question: string) => {
+    async (question: string) => {
+      if (providerAvailability(launchDetection, 'claude') === 'missing') {
+        throw new Error(spawnFailureMessage('claude'));
+      }
+      const agentId = await spawnGuide(question);
       dismissWelcome();
-      void (async () => {
-        try {
-          const agentId = await spawnGuide(question);
-          handleSelectAgent(agentId);
-        } catch (err) {
-          console.error('[Guide] tour spawn failed:', err);
-        }
-      })();
+      handleSelectAgent(agentId);
     },
-    [dismissWelcome, spawnGuide, handleSelectAgent],
+    [dismissWelcome, spawnGuide, handleSelectAgent, launchDetection],
   );
 
   /** Jump to a specific agent by id — passed down to the Ask pane. */
@@ -1427,6 +1440,9 @@ function App() {
       const cwd = config.agents?.defaultCwd?.trim() || appCwdRef.current;
       if (!cwd) return;
       const provider = config.agents?.defaultProvider ?? 'claude';
+      if (providerAvailability(launchDetection, provider) === 'missing') {
+        throw new Error(spawnFailureMessage(provider));
+      }
       // Claude's saved model/permission defaults are Claude's alone — sending
       // them to a Codex/OpenCode spawn would be meaningless at best. They're
       // read the same way the new-agent view reads them (claudeListModels), so
@@ -1436,7 +1452,7 @@ function App() {
         ? await window.electronAPI.claudeListModels?.().catch(() => null)
         : null;
       const skipPermissions = saved?.skipPermissionsDefault === true;
-      handleSpawnAgent({
+      await handleSpawnAgent({
         cwd,
         provider,
         transport: isClaude ? config.claude?.transport : undefined,
@@ -1448,10 +1464,10 @@ function App() {
           : saved?.defaultPermissionMode || undefined,
         skipPermissions,
         worktree: config.agents?.spawnInWorktree ?? false,
-        initialPrompt: prompt,
+        kickoffMessage: prompt,
       });
     },
-    [config.agents, config.claude?.transport, handleSpawnAgent],
+    [config.agents, config.claude?.transport, handleSpawnAgent, launchDetection],
   );
 
   // The single cross-agent attention feed — lifted here so the SAME instance
@@ -1692,7 +1708,15 @@ function App() {
   // keyboard" deserves better than being found by accident in Settings.
   useEffect(() => {
     if (!configLoaded) return;
-    if (config.ui.commandLayerAnnounced) return;
+    if (
+      !configLoaded ||
+      sessionPhase !== 'active' ||
+      config.ui.commandLayerAnnounced ||
+      firstRunWelcome ||
+      showWelcome ||
+      showSpawnDialog
+    )
+      return;
     if (config.keybindings?.commandLayer?.enabled !== true) {
       postNotification({
         id: 'command-layer-intro',
@@ -1703,7 +1727,7 @@ function App() {
     }
     void saveConfig({ ui: { ...config.ui, commandLayerAnnounced: true } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configLoaded]);
+  }, [configLoaded, sessionPhase, firstRunWelcome, showWelcome, showSpawnDialog]);
 
   // Fleet Manager entry (Overview hero + palette dispatch here): resolve the
   // manager's home — explicit agents.fleetRoot, else the common parent of the
@@ -1711,7 +1735,8 @@ function App() {
   // parent) — and hand the ask to spawnFleetManager (reuse-by-name inside).
   useEffect(() => {
     const handler = (e: Event) => {
-      const ask = ((e as CustomEvent).detail?.ask ?? '').toString().trim();
+      const detail = (e as CustomEvent).detail;
+      const ask = (detail?.ask ?? '').toString().trim();
       if (!ask) return;
       void (async () => {
         let home = '';
@@ -1737,6 +1762,9 @@ function App() {
         // Fleet Manager). Everything the role needs is provider-blind below
         // this call; only the entry point ever hardcoded 'claude'.
         const provider = config.agents?.managerProvider ?? 'claude';
+        if (providerAvailability(launchDetection, provider) === 'missing') {
+          throw new Error(spawnFailureMessage(provider));
+        }
         // …and the model it runs on, for THAT harness. Per-harness because a
         // model id is not portable between them; blank = the harness's own
         // default, which main re-resolves anyway (lib/roleModels).
@@ -1756,7 +1784,20 @@ function App() {
           contextWindow,
           effort,
         );
-      })();
+      })().then(
+        () => detail?.onSettled?.(),
+        () => {
+          const error = spawnFailureMessage(config.agents?.managerProvider ?? 'claude');
+          if (detail?.onSettled) detail.onSettled(error);
+          else
+            postNotification({
+              id: 'fleet-manager-launch',
+              title: 'Fleet Manager could not start',
+              body: error,
+              source: 'workspacer',
+            });
+        },
+      );
     };
     window.addEventListener('fleet-manager:ask', handler);
     return () => window.removeEventListener('fleet-manager:ask', handler);
@@ -1769,6 +1810,7 @@ function App() {
     config.agents?.managerContextWindows,
     config.projects,
     spawnFleetManager,
+    launchDetection,
   ]);
 
   // A facade agent (an operator worker or the Fleet Manager) asked to open a
@@ -2334,7 +2376,7 @@ function App() {
           `You are taking over an in-progress session from another AI coding agent. ` +
           `First read the handoff brief at ${t.briefPath}, then continue the work from where it left off — ` +
           `don't start over or redo completed steps. Reply with a one-paragraph summary of the state and your next step.`,
-      });
+      }).catch(reportSpawnFailure);
     };
     window.addEventListener(AGENT_HANDOFF_EVENT, handler);
     return () => window.removeEventListener(AGENT_HANDOFF_EVENT, handler);
@@ -2458,8 +2500,9 @@ function App() {
     spawnAgent: (opts) => {
       const cwd = opts.cwd || activeAgent?.cwd || appCwdRef.current;
       if (cwd) {
-        recordRecentDir(cwd);
-        void spawnAgent({ cwd, name: opts.name, model: opts.model });
+        void spawnAgent({ cwd, name: opts.name, model: opts.model })
+          .then(() => recordRecentDir(cwd))
+          .catch(reportSpawnFailure);
       }
     },
     openSpawnDialog: (opts) => {
@@ -2877,12 +2920,12 @@ function App() {
                 shortcuts={resolvedShortcuts}
               />
 
-              {(firstRunWelcome || showWelcome) && (
+              {(firstRunWelcome || showWelcome) && !showSpawnDialog && (
                 <Onboarding
                   overlay
                   firstRun={firstRunWelcome}
                   onSpawn={() => {
-                    dismissWelcome();
+                    setWelcomeTask(true);
                     openSpawnDialog();
                   }}
                   onDismiss={dismissWelcome}
@@ -2965,7 +3008,11 @@ function App() {
                   const prompt = opts?.prompt?.trim();
                   if (!prompt) openSpawnDialog();
                   else if (opts?.openDialog) openSpawnDialogWithPrompt(prompt);
-                  else void spawnAgentWithPrompt(prompt);
+                  else
+                    void spawnAgentWithPrompt(prompt).catch((error) => {
+                      openSpawnDialogWithPrompt(prompt);
+                      reportSpawnFailure(error);
+                    });
                 }}
                 onShowWelcome={() => {
                   setShowCommandPalette(false);
@@ -3019,9 +3066,7 @@ function App() {
               <LibraryHost
                 activeAgent={activeAgent}
                 appCwd={appCwd}
-                spawnAgent={(opts) => {
-                  void spawnAgent(opts);
-                }}
+                spawnAgent={spawnAgent}
                 recordRecentDir={recordRecentDir}
               />
 
@@ -3031,7 +3076,7 @@ function App() {
               <DraftWithAgentHost
                 agents={agents}
                 spawnAgent={(opts) => {
-                  void spawnAgent(opts);
+                  void spawnAgent(opts).catch(reportSpawnFailure);
                 }}
                 onSelectAgent={handleSelectAgent}
               />
@@ -3078,9 +3123,11 @@ function App() {
                   defaultTransport={config.claude?.transport}
                   defaultCodexTransport={config.codex?.transport}
                   defaultWorktree={config.agents?.spawnInWorktree ?? false}
+                  requireTask={welcomeTask}
                   defaultPrompt={spawnDialogPrompt ?? undefined}
                   onSpawn={handleSpawnAgent}
                   onCancel={() => {
+                    setWelcomeTask(false);
                     setShowSpawnDialog(false);
                     setSpawnDialogCwd(null);
                     setSpawnDialogPrompt(null);
@@ -3092,7 +3139,7 @@ function App() {
                 <LayoutsDialog
                   agentCount={agents.filter((a) => !a.global).length}
                   onSaveCurrent={handleSaveLayout}
-                  onRestore={handleRestoreLayout}
+                  onRestore={(layout) => void handleRestoreLayout(layout).catch(reportSpawnFailure)}
                   onClose={() => setShowLayouts(false)}
                 />
               )}

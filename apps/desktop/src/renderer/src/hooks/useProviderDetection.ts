@@ -31,6 +31,7 @@ const TTL_MS = 5000;
 let cached: ProviderDetection[] | null = null;
 let cachedAt = 0;
 let inflight: Promise<void> | null = null;
+let rerunForced = false;
 const listeners = new Set<(d: ProviderDetection[] | null) => void>();
 let configHookInstalled = false;
 
@@ -49,23 +50,43 @@ function emit() {
  * ago and is asking us to look again, so it forces a rescan on both sides.
  */
 function fetchNow(force = false): Promise<void> {
-  if (inflight) return inflight;
+  if (inflight) {
+    if (force) rerunForced = true;
+    return inflight;
+  }
   const api = window.electronAPI?.providerCheckAll;
-  if (!api) return Promise.resolve();
-  inflight = Promise.resolve(api(force))
+  if (!api) {
+    cached = null;
+    emit();
+    return Promise.resolve();
+  }
+  inflight = Promise.resolve()
+    .then(() => api(force))
     .then((list) => {
       // An empty array is not "nothing is installed" — every host that answers
       // this returns one row per provider. Treat it as no answer (unknown)
       // rather than hiding every harness in the app.
-      cached = Array.isArray(list) && list.length ? (list as ProviderDetection[]) : null;
+      cached =
+        Array.isArray(list) && list.length
+          ? (list.filter((row) => row && typeof row.provider === 'string') as ProviderDetection[])
+          : null;
       cachedAt = Date.now();
       emit();
     })
     .catch(() => {
-      // Leave the last good answer in place; unknown beats wrongly-hidden.
+      // A failed recheck cannot keep a stale missing verdict blocking launch.
+      cached = null;
+      cachedAt = 0;
+      emit();
     })
     .finally(() => {
       inflight = null;
+      // An override save or Check again during a cached scan still needs a
+      // forced host scan. Coalesce requests instead of losing that refresh.
+      if (rerunForced) {
+        rerunForced = false;
+        return fetchNow(true);
+      }
     });
   return inflight;
 }
@@ -95,6 +116,7 @@ export function __resetProviderDetectionCache(): void {
   cachedAt = 0;
   inflight = null;
   configHookInstalled = false;
+  rerunForced = false;
 }
 
 export function useProviderDetection(): {

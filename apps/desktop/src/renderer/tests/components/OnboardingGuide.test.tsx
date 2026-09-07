@@ -21,7 +21,7 @@ describe('Onboarding guide section', () => {
     render(<Onboarding {...baseProps} onAskGuide={() => {}} />);
 
     expect(screen.getByText(/built-in guide/)).toBeInTheDocument();
-    expect(screen.getByText(/uses a little of your usage/)).toBeInTheDocument();
+    expect(screen.getByText(/consumes provider usage/)).toBeInTheDocument();
     for (const preset of GUIDE_PRESETS.slice(0, 3)) {
       expect(screen.getByRole('button', { name: preset.label })).toBeInTheDocument();
     }

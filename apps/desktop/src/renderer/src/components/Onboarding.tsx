@@ -1,4 +1,9 @@
-import React from 'react';
+import { SmallButton } from './settings/primitives';
+import { containDialogTab } from '../lib/dialogKeyboard';
+import React, { useRef, useState, useEffect } from 'react';
+import { useProviderDetection } from '../hooks/useProviderDetection';
+import { providerAvailability } from '../lib/providerAvailability';
+import { spawnFailureMessage } from '../lib/spawnFailure';
 import { BrandMark, Wordmark } from './Brand';
 import { ClaudeLogo, OpenAILogo, OpenCodeLogo, PiLogo } from './agentLogos';
 import { formatBinding } from '../lib/shortcuts';
@@ -73,7 +78,7 @@ const Onboarding: React.FC<{
   onChoosePreset?: (id: PresetId) => void;
   /** Ask the Workspacer guide a question: dismisses the card, spawns the guide
    *  agent, and jumps into its chat. Section hidden when absent. */
-  onAskGuide?: (question: string) => void;
+  onAskGuide?: (question: string) => Promise<unknown> | void;
   /** Render as a modal overlay instead of filling the content area. */
   overlay?: boolean;
   /** First-run showing (dismiss persists the flag) vs a palette replay. */
@@ -90,6 +95,29 @@ const Onboarding: React.FC<{
   overlay,
   firstRun,
 }) => {
+  const { detection, refresh } = useProviderDetection();
+  const guideMissing = providerAvailability(detection, 'claude') === 'missing';
+  const [guideBusy, setGuideBusy] = useState(false);
+  const guidePending = useRef(false);
+  const [guideError, setGuideError] = useState('');
+  const guideErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (guideError) guideErrorRef.current?.focus();
+  }, [guideError]);
+  const askGuide = async (question: string) => {
+    if (guideMissing || guidePending.current) return;
+    guidePending.current = true;
+    setGuideBusy(true);
+    setGuideError('');
+    try {
+      await onAskGuide?.(question);
+    } catch (error) {
+      setGuideError(spawnFailureMessage('claude', error));
+    } finally {
+      guidePending.current = false;
+      setGuideBusy(false);
+    }
+  };
   // Fallbacks mirror configDefaults.ts; the map is normally already merged
   // with defaults, so these only cover a not-yet-loaded config.
   const k = (id: string, fallback: string) => formatBinding(shortcuts[id] || fallback, prefix);
@@ -186,6 +214,7 @@ const Onboarding: React.FC<{
         </div>
 
         <button
+          autoFocus
           className="wks-welcome-cta"
           onClick={onSpawn}
           style={{
@@ -204,8 +233,7 @@ const Onboarding: React.FC<{
             padding: '11px 22px',
           }}
         >
-          + Dispatch your first agent
-          <Keys combo={k('spawn-agent', 'ctrl+shift+n')} onAccent />
+          Start your first task
         </button>
       </div>
 
@@ -231,7 +259,14 @@ const Onboarding: React.FC<{
           >
             Keymap
           </div>
-          <div style={{ display: 'flex', gap: 8, padding: '0 8px' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+              gap: 8,
+              padding: '0 8px',
+            }}
+          >
             {PRESET_ORDER.map((id) => {
               const active = isPresetId(presetId) && presetId === id;
               const p = KEYBINDING_PRESETS[id];
@@ -364,7 +399,7 @@ const Onboarding: React.FC<{
       </div>
 
       {/* Ask the guide — a live tour agent, one chip-click away. */}
-      {onAskGuide && (
+      {onAskGuide && !guideMissing && (
         <div
           style={{
             position: 'relative',
@@ -415,7 +450,8 @@ const Onboarding: React.FC<{
             {GUIDE_PRESETS.slice(0, 3).map((preset) => (
               <button
                 key={preset.id}
-                onClick={() => onAskGuide(preset.prompt)}
+                disabled={guideBusy}
+                onClick={() => void askGuide(preset.prompt)}
                 title={preset.prompt}
                 style={{
                   padding: '4px 11px',
@@ -442,12 +478,34 @@ const Onboarding: React.FC<{
               lineHeight: 1.5,
             }}
           >
-            Runs on your own Claude account and uses a little of your usage — nothing runs until you
-            tap a question.
+            The live Guide requires Claude Code and a signed-in Claude account. Binary detection
+            does not check sign-in. A question starts a session and consumes provider usage.
           </div>
         </div>
       )}
 
+      {guideError && (
+        <div
+          ref={guideErrorRef}
+          tabIndex={-1}
+          role="alert"
+          style={{ padding: 16, color: 'var(--wks-error)' }}
+        >
+          {guideError}
+        </div>
+      )}
+      {guideMissing && (
+        <div role="status" style={{ padding: 16, fontSize: '0.8rem' }}>
+          The live Guide requires Claude Code, which was not found. You can start a task with
+          another installed provider.
+          <SmallButton onClick={refresh} label="Check again" />
+        </div>
+      )}
+      <div style={{ padding: '8px 24px', fontSize: '0.8rem' }}>
+        <a href="https://www.workspacer.app/docs.html" target="_blank" rel="noreferrer">
+          Read the Workspacer docs
+        </a>
+      </div>
       {/* Footer — quiet provider strip + dismiss. */}
       <div
         style={{
@@ -501,6 +559,11 @@ const Onboarding: React.FC<{
       <div
         role="dialog"
         aria-label="Welcome"
+        aria-modal="true"
+        onKeyDown={(e) => {
+          containDialogTab(e);
+          if (e.key === 'Escape' && !guidePending.current) onDismiss();
+        }}
         className="wks-welcome-backdrop"
         onClick={onDismiss}
         style={{

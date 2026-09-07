@@ -1,3 +1,4 @@
+import { spawnFailureMessage } from '../lib/spawnFailure';
 import { postNotification } from '../lib/notificationBus';
 import { clearSessionChatUiState } from './useSessionChatUiState';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -324,7 +325,7 @@ export function useAgentManager() {
           console.error('[Agent] worktree creation failed:', err);
         }
       }
-      let sessionId: string | undefined;
+      let sessionId: string;
       try {
         // Built as a variable (not a fresh literal) so the extra federation
         // field passes the IPC's typed signature — main may ignore `targetHub`
@@ -354,7 +355,10 @@ export function useAgentManager() {
         };
         sessionId = await window.electronAPI.spawnClaude(spawnOpts);
       } catch (err) {
-        console.error('[Agent] spawn failed:', err);
+        throw new Error(spawnFailureMessage(opts.provider ?? 'claude', err));
+      }
+      if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        throw new Error(spawnFailureMessage(opts.provider ?? 'claude'));
       }
       const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(
         sessionId,
@@ -368,9 +372,8 @@ export function useAgentManager() {
         opts.profileId,
       );
       const agent: AgentWorkspace = {
-        // Deterministic id when we have a session, so every client converges on one
-        // card for it; fall back to a random id only if the spawn failed.
-        id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
+        // Every successful spawn has a session; adoption converges on this id.
+        id: agentIdForSession(sessionId),
         name: opts.name?.trim() || deriveAgentName(opts.cwd),
         // A name typed in the spawn dialog is the user's — auto-titling stays off it.
         nameSetByUser: !!opts.name?.trim(),
@@ -423,7 +426,7 @@ export function useAgentManager() {
    *  Takes the agent RECORD (not an id) so callers that just captured the
    *  pre-mutation state (reconcile) aren't racing agentsRef. */
   const respawnFromRecord = useCallback(
-    async (agent: AgentWorkspace, resumeSessionId: string | undefined) => {
+    async (agent: AgentWorkspace, resumeSessionId: string | undefined, message?: string) => {
       // A federated session lives on the peer hub — spawning locally with its
       // (remote) cwd would create a broken doppelgänger, so remote agents
       // never respawn here. Their card tombstones instead (hubOffline).
@@ -437,13 +440,14 @@ export function useAgentManager() {
         // Everything the record persisted rides along — including the
         // manager role flags, so a revived Fleet Manager re-mints
         // its facade token with its grants intact (lib/respawnOptions.ts).
-        sessionId = await window.electronAPI.spawnClaude(
-          buildRespawnSpawnOptions(agent, resumeSessionId),
-        );
+        sessionId = await window.electronAPI.spawnClaude({
+          ...buildRespawnSpawnOptions(agent, resumeSessionId),
+          ...(message && { message }),
+        });
       } catch (err) {
         console.error('[Agent] respawn failed:', err);
       }
-      if (!sessionId) {
+      if (typeof sessionId !== 'string' || !sessionId.trim()) {
         settleRespawning(resumeSessionId);
         return;
       }
@@ -477,6 +481,7 @@ export function useAgentManager() {
       }));
       settleRespawning(resumeSessionId);
       settleRespawning(sessionId);
+      return sessionId;
     },
     [mutateAgent],
   );
@@ -747,11 +752,8 @@ export function useAgentManager() {
         } catch (err) {
           console.warn('[fleet-manager] token grant reconcile failed:', err);
         }
-        try {
-          await window.electronAPI.claudeMessage(live.sessionId, buildManagerWorkflowAsk(ask));
-        } catch (err) {
-          console.warn('[fleet-manager] message to live manager failed:', err);
-        }
+        const result = await window.electronAPI.claudeMessage(live.sessionId, buildManagerWorkflowAsk(ask));
+        if (result?.ok === false) throw new Error(spawnFailureMessage(provider));
         return live.sessionId;
       }
       // A stopped manager card respawns (resuming its conversation) before
@@ -775,20 +777,13 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
+        const sessionId = await respawnFromRecord(record, stopped.lastSessionId, buildManagerWorkflowAsk(ask));
+        if (!sessionId) throw new Error(spawnFailureMessage(provider));
         if (!stopped.manager) {
           mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
         }
-        await respawnFromRecord(record, stopped.lastSessionId);
-        const revived = agentsRef.current.find((a) => a.id === stopped.id);
-        if (revived?.sessionId) {
-          setActiveAgentId(revived.id);
-          try {
-            await window.electronAPI.claudeMessage(revived.sessionId, buildManagerWorkflowAsk(ask));
-          } catch (err) {
-            console.warn('[fleet-manager] message to revived manager failed:', err);
-          }
-          return revived.sessionId;
-        }
+        setActiveAgentId(stopped.id);
+        return sessionId;
       }
       return spawnAgent({
         cwd: root,

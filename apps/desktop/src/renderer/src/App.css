@@ -644,3 +644,19 @@ body {
     opacity: 0.55;
   }
 }
+
+/* Welcome keeps its keyboard hints and recovery actions readable on phones. */
+@media (max-width: 480px) {
+  .wks-welcome-card .wks-welcome-row {
+    flex-wrap: wrap;
+  }
+  .wks-welcome-card .wks-welcome-row > span:nth-child(2) {
+    display: none;
+  }
+  .wks-welcome-card .wks-welcome-row > span:last-child {
+    margin-left: auto;
+  }
+  .wks-welcome-card {
+    overflow-x: hidden;
+  }
+}
