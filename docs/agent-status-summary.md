@@ -61,3 +61,61 @@ budget to fit the existing 25-second federation hop. A cancelled caller does not
 cancel other waiters; the last waiter cancels the completion transport. Claude's
 daemon independently kills its child at its own deadline even if the HTTP caller
 disconnects. No model tools, project working directory or worker session is used.
+
+### Codex completion blocker (verified 2026-09-06)
+
+The requested Codex support is **not complete**. The installed `codex-cli
+0.153.4` cannot be enabled under this feature's empty-tool-registry contract
+using the verified CLI/app-server interfaces:
+
+- `codex exec --help` offers `--ignore-user-config` (retains CLI auth),
+  `--ignore-rules`, `--ephemeral`, and sandbox options, but no blanket tool
+  deny/allowlist. Ignoring config is not disabling tools.
+- The installed `app-server generate-json-schema --experimental` exposes
+  `thread/start.dynamicTools` and `thread/start.environments`. Neither
+  `thread/start` nor `turn/start` has a complete tools allowlist or
+  `tool_choice` override. `dynamicTools: []` only removes client-supplied tools.
+- `environments: []` removes environment access, and the matching version's
+  tool builder gates shell, apply-patch, and view-image on environment presence.
+  It does **not** empty the registry. `add_core_utility_tools` registers
+  `RequestUserInputAsyncHandler` when the model catalog advertises it, and
+  `CurrentTimeHandler` when the catalog advertises `clock`, even if the current
+  time feature is disabled. The synchronous question and plan settings do not
+  disable those model-driven registrations.
+- The matching config schema's `ToolsToml` only contains `web_search`,
+  `experimental_request_user_input`, and `update_plan`. Its `tool_registry`
+  settings concern collisions and metadata, not denial. Code-mode namespace
+  exclusions only affect the nested tool surface. An empty MCP configuration,
+  disabled plugins, read-only sandbox, or prompt instructions cannot establish
+  the required empty registry.
+
+Evidence: [app-server protocol documentation](https://developers.openai.com/codex/app-server),
+[0.153.4 tool registration source](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/tools/spec_plan.rs#L1131),
+and [0.153.4 config schema](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/config.schema.json).
+The source tag matches the installed binary; the generated protocol schema
+comes from that binary, not the latest online documentation.
+
+Non-spending reproduction (use the actual installed binary, since a shell/npm
+launcher may update itself; choose an output directory in an isolated checkout):
+
+```sh
+"$SUMMARY_CODEX_BIN" --version
+"$SUMMARY_CODEX_BIN" exec --help
+"$SUMMARY_CODEX_BIN" app-server --help
+"$SUMMARY_CODEX_BIN" app-server generate-json-schema --experimental --out "$SUMMARY_SCHEMA_DIR"
+```
+
+The design decision is whether to retain the strict contract and require an
+upstream Codex control that both empties the registry and denies dispatch, or
+explicitly revise the contract to permit enumerated utility tools while
+forbidding environment access, MCPs, extensions, and writes. The latter still
+needs an adapter implementation and effective-request/denial tests; it is not
+authorized or implemented here. Replacing model metadata, impersonating an
+internal guardian session, or intercepting authenticated provider requests is
+not an established supported no-tools route.
+
+OpenCode 1.15.7's `run --help` likewise describes `--pure` as disabling external
+plugins only. Its existing fail-closed UI warning and adapter remain in place;
+an alternative OpenCode configuration/server route was not verified in this
+Codex-focused investigation. No authenticated model request, provider session,
+credential read, or live daemon rebuild/restart was used for these checks.
