@@ -102,6 +102,9 @@ interface HarnessModelSelectProps {
   warningSuffix?: string;
   /** Compact control rendered beside the model picker (for example Context). */
   controlAddon?: React.ReactNode;
+  /** Completion consumers refuse foreign ids rather than applying spawn fallback. */
+  refuseForeignModel?: boolean;
+  wrap?: boolean;
 }
 
 const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
@@ -113,6 +116,8 @@ const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
   hint,
   warningSuffix,
   controlAddon,
+  refuseForeignModel,
+  wrap,
 }) => {
   const { options: catalog, loaded } = useModelOptions(provider);
   const { options, unknown, foreign } = harnessModelOptions(
@@ -125,7 +130,7 @@ const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
 
   return (
     <>
-      <Row label={label}>
+      <Row label={label} wrap={wrap}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <SearchableSelect
             value={value}
@@ -141,7 +146,9 @@ const HarnessModelSelect: React.FC<HarnessModelSelectProps> = ({
         <div style={{ fontSize: '0.72rem', color: 'var(--wks-warning)' }}>
           <strong>{value}</strong>{' '}
           {foreign
-            ? `belongs to a different harness, so a ${provider} spawn drops it and uses ${provider}’s own default.`
+            ? refuseForeignModel
+              ? `belongs to a different harness and will be refused.`
+              : `belongs to a different harness, so a ${provider} spawn drops it and uses ${provider}’s own default.`
             : `is not in ${provider}’s model list, so a ${provider} spawn may be refused it.`}{' '}
           {warningSuffix ?? `Pick one above, or leave it on the ${provider} default.`}
         </div>

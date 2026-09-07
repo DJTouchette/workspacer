@@ -725,3 +725,21 @@ func TestHostTrustedContractCases(t *testing.T) {
 	}
 	t.Log(tally.String())
 }
+
+func TestStatusSummaryDefaultsAndNullRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := newConfigService()
+	summary := c.get()["agents"].(map[string]any)["statusSummary"].(map[string]any)
+	if summary["enabled"] != true || summary["provider"] != "claude" || summary["model"] != "haiku" {
+		t.Fatalf("defaults: %#v", summary)
+	}
+	mustSave(t, c, map[string]any{"agents": map[string]any{"statusSummary": map[string]any{"enabled": false, "provider": "codex", "model": nil}}, "customSummarySibling": "keep"})
+	fresh := newConfigService().get()
+	summary = fresh["agents"].(map[string]any)["statusSummary"].(map[string]any)
+	if model, exists := summary["model"]; !exists || model != nil || summary["provider"] != "codex" || summary["enabled"] != false {
+		t.Fatalf("null/provider round-trip: %#v", summary)
+	}
+	if fresh["customSummarySibling"] != "keep" {
+		t.Fatal("lost sibling config")
+	}
+}

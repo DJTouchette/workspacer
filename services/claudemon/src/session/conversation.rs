@@ -155,6 +155,7 @@ struct TailLog {
     /// for any `since` before the last fragment folded into it — which is what a
     /// client polling mid-stream needs.
     item_seqs: Vec<u64>,
+    history_truncated: bool,
     /// Folded TaskCreate/TaskUpdate state — the task-tool counterpart of the
     /// TodoWrite plan, carried across batches because task edits are
     /// incremental (unlike TodoWrite's full rewrites).
@@ -175,6 +176,7 @@ impl TailLog {
             self.item_seqs.push(first_of + i as u64);
         }
         if self.items.len() > MAX_CONVERSATION_ITEMS {
+            self.history_truncated = true;
             let overflow = self.items.len() - MAX_CONVERSATION_ITEMS;
             self.items.drain(0..overflow);
             self.item_seqs.drain(0..overflow);
@@ -194,6 +196,7 @@ impl TailLog {
         self.items.clear();
         self.item_seqs.clear();
         self.seq = 0;
+        self.history_truncated = false;
         // Sub-agent usage was cleared with the items — rewind those cursors so
         // the next subagent pass re-emits it into the new log.
         self.side.clear();
@@ -274,6 +277,26 @@ impl ConversationStore {
         self.logs
             .get(session_id)
             .map(|l| (l.seq, l.first_seq(), l.items.clone()))
+    }
+
+    /// Project under the log lock: never clone arbitrary tool inputs/results.
+    pub fn summary_source(&self, session_id: &str) -> super::summary_source::SummarySource {
+        match self.logs.get(session_id) {
+            Some(l) => super::summary_source::project(
+                session_id,
+                l.seq,
+                l.first_seq(),
+                l.history_truncated,
+                l.items.iter().zip(l.item_seqs.iter().copied()),
+            ),
+            None => super::summary_source::project(session_id, 0, 0, false, std::iter::empty()),
+        }
+    }
+
+    pub fn has_conversation(&self, session_id: &str) -> bool {
+        self.logs
+            .get(session_id)
+            .is_some_and(|l| !l.items.is_empty())
     }
 
     /// Append items for a *managed* session — one not backed by a transcript
@@ -1196,6 +1219,36 @@ fn parse_created_task_id(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn summary_tracks_eviction_without_mistaking_coalescing_for_history_loss() {
+        let conv = ConversationStore::new();
+        for _ in 0..5 {
+            conv.push(
+                "stream",
+                vec![ConversationItem::AssistantText {
+                    text: "chunk".into(),
+                    timestamp: None,
+                }],
+            );
+        }
+        let source = serde_json::to_value(conv.summary_source("stream")).unwrap();
+        assert_eq!(source["headTruncated"], false);
+        conv.push(
+            "retained",
+            (0..MAX_CONVERSATION_ITEMS + 1)
+                .map(|_| ConversationItem::UserMessage {
+                    text: "task".into(),
+                    timestamp: None,
+                })
+                .collect(),
+        );
+        let source = serde_json::to_value(conv.summary_source("retained")).unwrap();
+        assert_eq!(source["headTruncated"], true);
+        conv.logs.get_mut("retained").unwrap().reset_log();
+        let source = serde_json::to_value(conv.summary_source("retained")).unwrap();
+        assert_eq!(source["headTruncated"], false);
+    }
 
     #[test]
     fn push_then_forget_reclaims_the_log() {

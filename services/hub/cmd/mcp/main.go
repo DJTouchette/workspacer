@@ -559,6 +559,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	addHubTool[transcriptIn](b, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
+	addStatusSummaryTool(b)
 	addConversationTool(b, "get_conversation",
 		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling). Reductions: lastMessage:true returns just the final assistant message (a finished worker's report); textOnly:true returns only user/assistant text turns, stripping tool calls/results and usage. Both compose with sinceSeq.",
 		"sessions.conversation")

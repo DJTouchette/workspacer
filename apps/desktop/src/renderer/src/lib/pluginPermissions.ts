@@ -63,6 +63,9 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   'claude.handoffAgentBrief': { label: 'Hand an agent off to another provider', sensitive: true },
 
   // Reading a session reads its whole conversation.
+  'agents.summarizeStatus': {
+    label: 'Summarize visible agent activity using your configured CLI model',
+  },
   'sessions.conversation': { label: 'Read your agent conversations' },
   'sessions.subagentConversation': { label: 'Read your subagent conversations' },
   'sessions.transcript': { label: 'Read your agent transcripts' },

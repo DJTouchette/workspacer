@@ -484,14 +484,32 @@ async fn list_sessions(
     Json(sessions)
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionQuery {
+    summary_meta: Option<u8>,
+}
+
 async fn get_session(
     State(store): State<SessionStore>,
     Path(id): Path<String>,
+    Query(q): Query<SessionQuery>,
 ) -> impl IntoResponse {
     match store.get(&id) {
         Some(state) => {
             let now = time::OffsetDateTime::now_utc().unix_timestamp();
             let archived = state.is_archived(now);
+            if let Some(version) = q.summary_meta {
+                if version != 1 {
+                    return (StatusCode::BAD_REQUEST, "unsupported summary metadata")
+                        .into_response();
+                }
+                // Authorization metadata must never trigger usage/transcript IO.
+                return Json(
+                    json!({"projection":"agent-status-access/v1", "session_id":state.session_id,
+                    "mode":state.mode, "archived":archived}),
+                )
+                .into_response();
+            }
             // Same reason `list_sessions` does this: `usage_for_path` reads (and
             // on a cache miss re-parses) the transcript from disk, which must
             // not happen on a runtime worker — it would stall that worker's SSE
@@ -1337,6 +1355,8 @@ async fn get_transcript(
 
 #[derive(Debug, Deserialize)]
 struct ConversationQuery {
+    /// Versioned, fixed-budget internal status-summary projection.
+    summary_source: Option<u8>,
     /// Return only items *after* this sequence number (1-based). Lets a client
     /// poll cheap incremental deltas — e.g. a supervisor digesting just the new
     /// turns since it last looked, instead of the whole transcript every time.
@@ -1361,26 +1381,23 @@ async fn get_conversation(
     if !valid_session_id(&id) {
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
-    let (seq, first_seq, items) = conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()));
-    // Codex restart durability: the ws adapter's conversation lives in daemon
-    // memory, so a restarted daemon serves Stopped codex rows empty — but the
-    // codex-threads sidecar knows which rollout backed the session, and the
-    // rollout is the durable transcript. Replay it once, lazily, on first read.
-    let (seq, first_seq, mut items) = if items.is_empty() {
-        match crate::providers::codex_rollout::thread_for(&id)
+    // Replay before either projection, without first cloning the full log.
+    if !conv.has_conversation(&id) {
+        if let Some(replayed) = crate::providers::codex_rollout::thread_for(&id)
             .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
             .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
             .filter(|replayed| !replayed.is_empty())
         {
-            Some(replayed) => {
-                conv.push(&id, replayed);
-                conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()))
-            }
-            None => (seq, first_seq, items),
+            conv.push(&id, replayed);
         }
-    } else {
-        (seq, first_seq, items)
-    };
+    }
+    if let Some(version) = q.summary_source {
+        if version != 1 {
+            return (StatusCode::BAD_REQUEST, "unsupported summary projection").into_response();
+        }
+        return Json(conv.summary_source(&id)).into_response();
+    }
+    let (seq, first_seq, mut items) = conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()));
     if let Some(since) = q.since {
         let skip = items_skip(first_seq, items.len(), since);
         items.drain(0..skip);
@@ -2061,6 +2078,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn summary_metadata_never_includes_usage_or_source() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("summary-meta", "/private/project", "codex");
+        let (status, body) = request(state, get("/sessions/summary-meta?summary_meta=1")).await;
+        assert_eq!(status, StatusCode::OK);
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["projection"], "agent-status-access/v1");
+        assert_eq!(value["session_id"], "summary-meta");
+        assert_eq!(value.as_object().unwrap().len(), 4);
+        assert!(!String::from_utf8_lossy(&body).contains("/private"));
+        assert!(value.get("usage").is_none());
+    }
+
+    #[tokio::test]
     async fn get_session_returns_the_registered_state() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
@@ -2229,6 +2262,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_conversation_summary_projection_is_additive_and_bounded() {
+        let state = test_state();
+        state.conv.push(
+            "summary-1",
+            vec![
+                ConversationItem::UserMessage {
+                    text: "task".into(),
+                    timestamp: None,
+                },
+                ConversationItem::ToolResult {
+                    tool_use_id: "x".into(),
+                    content: "PRIVATE".repeat(10000),
+                    is_error: false,
+                    timestamp: None,
+                },
+            ],
+        );
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/summary-1/conversation?summary_source=1&since=999"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.len() <= 5000);
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["projection"], "agent-status-source/v1");
+        assert_eq!(value["throughSeq"], 2);
+        assert_eq!(value["events"][0]["text"], "task");
+        assert!(!String::from_utf8_lossy(&body).contains("PRIVATE"));
+        let (_, ordinary) = request(state.clone(), get("/sessions/summary-1/conversation")).await;
+        assert!(String::from_utf8_lossy(&ordinary).contains("PRIVATE"));
+        let (status, _) = request(
+            state,
+            get("/sessions/summary-1/conversation?summary_source=2"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (_, empty) = request(
+            test_state(),
+            get("/sessions/no-such-summary/conversation?summary_source=1"),
+        )
+        .await;
+        let empty: Value = serde_json::from_slice(&empty).unwrap();
+        assert_eq!(empty["events"], json!([]));
+        assert_eq!(empty["projection"], "agent-status-source/v1");
+        let (status, _) = request(
+            test_state(),
+            get("/sessions/..%2Fetc/conversation?summary_source=1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn get_conversation_since_filters_to_the_delta() {
         let state = test_state();
         state.conv.push(
@@ -2305,7 +2392,18 @@ mod tests {
         codex_rollout::record_thread(&sid, &thread);
         let state = test_state();
 
-        // First read replays the rollout, advancing seq past the items.
+        // A summary can be the first read after restart; it must replay once
+        // and leave the ordinary transcript endpoint intact.
+        let (status, projected) = request(
+            state.clone(),
+            get(&format!("/sessions/{sid}/conversation?summary_source=1")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let projected: Value = serde_json::from_slice(&projected).unwrap();
+        assert_eq!(projected["throughSeq"], 2);
+        assert_eq!(projected["events"][0]["text"], "hi");
+        // Ordinary read sees the same sequence, without replaying again.
         let (status, body) =
             request(state.clone(), get(&format!("/sessions/{sid}/conversation"))).await;
         assert_eq!(status, StatusCode::OK);

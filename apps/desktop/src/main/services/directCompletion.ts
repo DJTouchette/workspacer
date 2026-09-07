@@ -57,6 +57,8 @@ export type CompletionProvider = AgentProvider;
 export type CompletionFailureReason =
   /** No adapter for this provider id (or an id from an older config). */
   | 'unsupported-provider'
+  | 'no-tools-unsupported'
+  | 'cancelled'
   /** The requested model is not in this provider's vocabulary. */
   | 'unsupported-model'
   /** The provider's CLI isn't installed / isn't on PATH. */
@@ -110,6 +112,9 @@ export interface CompletionRequest {
   timeoutMs?: number;
   /** Hard cap on captured output; anything past it is dropped. */
   maxOutputChars?: number;
+  /** Refuse adapters without an enforced empty tool registry. */
+  requireNoTools?: boolean;
+  signal?: AbortSignal;
 }
 
 /** Prompts here are one entry or one exchange, never a document. */
@@ -144,6 +149,8 @@ interface CompletionAdapter {
 }
 
 interface RunContext {
+  requireNoTools?: boolean;
+  signal?: AbortSignal;
   prompt: string;
   /** Already validated against `servesModel`, or null for the CLI's default. */
   model: string | null;
@@ -276,6 +283,7 @@ export function extractOpencodeText(stdout: string): string {
 // ---------------------------------------------------------------------------
 
 interface CliRun {
+  signal?: AbortSignal;
   bin: string;
   args: string[];
   /** Written to the child's stdin, which is then closed. Empty = close at once. */
@@ -302,6 +310,10 @@ interface CliRun {
  */
 function runCli(run: CliRun): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (run.signal?.aborted) {
+      reject(new CompletionFailure('cancelled', 'cancelled'));
+      return;
+    }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(run.bin, run.args, {
@@ -325,6 +337,7 @@ function runCli(run: CliRun): Promise<string> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      run.signal?.removeEventListener('abort', onAbort);
       fn();
     };
 
@@ -335,15 +348,23 @@ function runCli(run: CliRun): Promise<string> {
       });
     }, run.timeoutMs);
 
+    const onAbort = () =>
+      finish(() => {
+        child.kill('SIGKILL');
+        reject(new CompletionFailure('cancelled', 'cancelled'));
+      });
+    run.signal?.addEventListener('abort', onAbort, { once: true });
+    if (run.signal?.aborted) onAbort();
+
     // Capped independently: a runaway stderr must not be able to push the
     // answer we care about out of memory either.
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
-      if (out.length < run.maxOutputChars) out += chunk;
+      if (out.length < run.maxOutputChars) out += chunk.slice(0, run.maxOutputChars - out.length);
     });
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (chunk: string) => {
-      if (err.length < run.maxOutputChars) err += chunk;
+      if (err.length < run.maxOutputChars) err += chunk.slice(0, run.maxOutputChars - err.length);
     });
 
     child.on('error', (e: NodeJS.ErrnoException) => {
@@ -431,7 +452,7 @@ const claudeAdapter: CompletionAdapter = {
   provider: 'claude',
   defaultModel: 'haiku',
   servesModel: (model) => vocabularyServesModel('claude', model),
-  async run({ prompt, model, timeoutMs }) {
+  async run({ prompt, model, timeoutMs, requireNoTools, signal }) {
     let res: Response;
     try {
       res = await fetch(`${CLAUDEMON_API_URL}/oneshot`, {
@@ -439,18 +460,24 @@ const claudeAdapter: CompletionAdapter = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           argv: claudeBaseArgv(),
-          model: model ?? claudeAdapter.defaultModel,
+          model,
+          no_tools: requireNoTools === true,
+          harness_default: requireNoTools === true && model === null,
           prompt,
           timeout_secs: Math.max(1, Math.round(timeoutMs / 1000)),
         }),
         // The daemon enforces its own deadline; ours is the outer bound on a
         // daemon that has stopped answering at all.
-        signal: AbortSignal.timeout(timeoutMs + 5_000),
+        signal: signal ?? AbortSignal.timeout(timeoutMs + 5_000),
       });
     } catch (err) {
       const e = err as Error;
       throw new CompletionFailure(
-        e.name === 'TimeoutError' ? 'timeout' : 'daemon-unavailable',
+        e.name === 'TimeoutError'
+          ? 'timeout'
+          : signal?.aborted
+            ? 'cancelled'
+            : 'daemon-unavailable',
         `claudemon /oneshot: ${e.message}`,
       );
     }
@@ -491,7 +518,7 @@ const codexAdapter: CompletionAdapter = {
   provider: 'codex',
   defaultModel: null,
   servesModel: (model) => vocabularyServesModel('codex', model),
-  async run({ prompt, model, timeoutMs, maxOutputChars }) {
+  async run({ prompt, model, timeoutMs, maxOutputChars, signal }) {
     assertInstalled('codex');
     const [bin, ...prefix] = launcherArgv('codex');
     const args = [
@@ -507,7 +534,9 @@ const codexAdapter: CompletionAdapter = {
     ];
     if (model) args.push('--model', model);
     args.push('-');
-    return extractCodexText(await runCli({ bin, args, stdin: prompt, timeoutMs, maxOutputChars }));
+    return extractCodexText(
+      await runCli({ bin, args, stdin: prompt, timeoutMs, maxOutputChars, signal }),
+    );
   },
 };
 
@@ -529,13 +558,13 @@ const opencodeAdapter: CompletionAdapter = {
   provider: 'opencode',
   defaultModel: null,
   servesModel: (model) => vocabularyServesModel('opencode', model),
-  async run({ prompt, model, timeoutMs, maxOutputChars }) {
+  async run({ prompt, model, timeoutMs, maxOutputChars, signal }) {
     assertInstalled('opencode');
     const [bin, ...prefix] = launcherArgv('opencode');
     const args = [...prefix, 'run', '--pure', '--format', 'json'];
     if (model) args.push('--model', model);
     return extractOpencodeText(
-      await runCli({ bin, args, stdin: prompt, timeoutMs, maxOutputChars }),
+      await runCli({ bin, args, stdin: prompt, timeoutMs, maxOutputChars, signal }),
     );
   },
 };
@@ -554,13 +583,14 @@ const piAdapter: CompletionAdapter = {
   provider: 'pi',
   defaultModel: null,
   servesModel: (model) => vocabularyServesModel('pi', model),
-  async run({ prompt, model, timeoutMs, maxOutputChars }) {
+  async run({ prompt, model, timeoutMs, maxOutputChars, signal, requireNoTools }) {
     assertInstalled('pi');
     const [bin, ...prefix] = launcherArgv('pi');
     const args = [...prefix, '--print', '--no-tools', '--no-session', '--mode', 'text'];
+    if (requireNoTools) args.push('--no-extensions', '--no-skills', '--no-prompt-templates');
     if (model) args.push('--model', model);
     args.push(prompt);
-    return stripAnsi(await runCli({ bin, args, stdin: '', timeoutMs, maxOutputChars }));
+    return stripAnsi(await runCli({ bin, args, stdin: '', timeoutMs, maxOutputChars, signal }));
   },
 };
 
@@ -593,7 +623,7 @@ const copilotAdapter: CompletionAdapter = {
   provider: 'copilot',
   defaultModel: null,
   servesModel: (model) => model.trim().toLowerCase() === 'auto',
-  async run({ prompt, model, timeoutMs, maxOutputChars }) {
+  async run({ prompt, model, timeoutMs, maxOutputChars, signal, requireNoTools }) {
     assertInstalled('copilot');
     const [bin, ...prefix] = launcherArgv('copilot');
     const args = [
@@ -607,9 +637,10 @@ const copilotAdapter: CompletionAdapter = {
       '--no-custom-instructions',
       '--available-tools=',
     ];
+    if (requireNoTools) args.push('--disable-builtin-mcps');
     if (model) args.push('--model', model);
     args.push('--prompt', prompt);
-    return stripAnsi(await runCli({ bin, args, stdin: '', timeoutMs, maxOutputChars }));
+    return stripAnsi(await runCli({ bin, args, stdin: '', timeoutMs, maxOutputChars, signal }));
   },
 };
 
@@ -627,7 +658,7 @@ const ADAPTERS: Record<CompletionProvider, CompletionAdapter> = {
 
 /** True when this provider has a one-shot implementation at all. */
 export function completionSupported(provider: string): provider is CompletionProvider {
-  return provider in ADAPTERS;
+  return Object.prototype.hasOwnProperty.call(ADAPTERS, provider);
 }
 
 /**
@@ -691,7 +722,7 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
   const startedAt = Date.now();
   const provider = req.provider;
 
-  const adapter = ADAPTERS[provider];
+  const adapter = completionSupported(provider) ? ADAPTERS[provider] : undefined;
   if (!adapter) {
     return fail(
       'unsupported-provider',
@@ -721,7 +752,18 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
       startedAt,
     );
   }
-  const model = wanted || adapter.defaultModel;
+  if (req.requireNoTools && (provider === 'codex' || provider === 'opencode')) {
+    // Read-only sandbox / --pure is NOT no-tools. No verified blanket tool
+    // restriction exists in these adapters; never expose transcript to them.
+    return fail(
+      'no-tools-unsupported',
+      'adapter cannot enforce no tools',
+      provider,
+      req.model ?? null,
+      startedAt,
+    );
+  }
+  const model = wanted || (req.requireNoTools ? null : adapter.defaultModel);
 
   const timeoutMs = Math.min(
     MAX_TIMEOUT_MS,
@@ -730,7 +772,14 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
   const maxOutputChars = Math.max(1, req.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS);
 
   try {
-    const raw = await adapter.run({ prompt: capped, model, timeoutMs, maxOutputChars });
+    const raw = await adapter.run({
+      prompt: capped,
+      model,
+      timeoutMs,
+      maxOutputChars,
+      requireNoTools: req.requireNoTools,
+      signal: req.signal,
+    });
     const text = (raw ?? '').trim().slice(0, maxOutputChars);
     if (!text) {
       return fail('empty', `${provider} returned no text`, provider, model, startedAt);

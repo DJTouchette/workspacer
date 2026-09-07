@@ -15,6 +15,7 @@ import {
   type SelectOption,
 } from './primitives';
 import HarnessModelSelect from './HarnessModelSelect';
+import StatusSummarySettings from './StatusSummarySettings';
 import UsageScheduleRow from './UsageScheduleRow';
 import { isForeignModel } from '../../../../main/shared/modelVocabulary';
 import {
@@ -459,6 +460,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         Parent directory for agent worktrees (created as &lt;repo&gt;/&lt;agent&gt; inside it).
         Leave blank for the default.
       </div>
+
+      <StatusSummarySettings config={config} save={save} />
 
       <CheckRow
         label="Name agents after their first exchange"

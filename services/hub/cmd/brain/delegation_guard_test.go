@@ -287,3 +287,12 @@ func TestFsReadImageIsOwnedByMainNotDelegated(t *testing.T) {
 		t.Error("fs.readImage should be registered with registerCapability so main provides it under delegation")
 	}
 }
+
+func TestStatusSummaryRemainsDesktopOwnedInV1(t *testing.T) {
+	if brainScopeSet("all")["agents.summarizeStatus"] || brainMethodSet()["agents.summarizeStatus"] {
+		t.Fatal("headless completion subsystem must not be registered")
+	}
+	if !strings.Contains(readDesktopCapabilities(t), "registerCapability('agents.summarizeStatus'") {
+		t.Fatal("summary needs an unconditional desktop provider")
+	}
+}

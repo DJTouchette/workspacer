@@ -209,6 +209,11 @@ export const CONFIG_DEFAULTS = {
       opencode: '',
       pi: '',
     },
+    statusSummary: {
+      enabled: true,
+      provider: 'claude',
+      model: 'haiku',
+    },
     autoTitle: {
       enabled: true,
       model: 'haiku',

@@ -251,6 +251,11 @@ interface Config {
       pi: string;
     };
     /** Name new agents after their first exchange (see services/agentTitler). */
+    statusSummary?: {
+      enabled?: boolean;
+      provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
+      model?: string | null;
+    };
     autoTitle?: {
       enabled?: boolean;
       /** Legacy single model for the one-shot title call. Ships `'haiku'`, a
@@ -521,6 +526,15 @@ function normalizeManagerConfigPreferences(
   strict = true,
 ): Config {
   applyManagerContextPatch(config, source);
+  // Explicit null selects the completion adapter default; deepMerge skips null.
+  const summaryPatch = (source as Config | undefined)?.agents?.statusSummary;
+  if (
+    summaryPatch &&
+    Object.prototype.hasOwnProperty.call(summaryPatch, 'model') &&
+    summaryPatch.model === null
+  ) {
+    config.agents.statusSummary = { ...config.agents.statusSummary, model: null };
+  }
   const normalized = canonicalManagerPreferences(config.agents, strict);
   if (normalized.managerModels !== undefined) {
     config.agents.managerModels = normalized.managerModels as Record<string, string>;

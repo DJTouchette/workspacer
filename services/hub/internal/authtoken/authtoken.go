@@ -112,6 +112,7 @@ var viewMethods = []string{
 	"sessions.recent",               // resumable-session list for the Sessions pane (webBackend)
 	"sessions.transcript",           // transcript reads (/remote, MCP get_transcript)
 	"sessions.conversation",         // normalized conversation reads (MCP, webBackend)
+	"agents.summarizeStatus",        // on-demand bounded interpretation, desktop-owned
 	"sessions.subagentConversation", // provider-owned child-thread conversation reads (webBackend)
 	"layout.get",                    // shared workspace layout document (read side)
 	"config.get",                    // /m reads UI config at boot (read-only twin of config.save)

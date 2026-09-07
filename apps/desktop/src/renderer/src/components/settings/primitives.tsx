@@ -125,9 +125,17 @@ const rowLabel: React.CSSProperties = {
   flexShrink: 0,
 };
 
-export function Row({ label, children }: { label: string; children: React.ReactNode }) {
+export function Row({
+  label,
+  children,
+  wrap,
+}: {
+  label: string;
+  children: React.ReactNode;
+  wrap?: boolean;
+}) {
   return (
-    <div style={rowFrame}>
+    <div style={{ ...rowFrame, ...(wrap ? { flexWrap: 'wrap' as const } : {}) }}>
       <span style={rowLabel}>{label}</span>
       {children}
     </div>

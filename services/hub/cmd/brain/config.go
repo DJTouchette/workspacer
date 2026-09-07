@@ -204,6 +204,18 @@ func applyManagerContextPatch(config, source map[string]any) {
 
 func normalizeManagerConfigPreferences(config, source map[string]any, strict bool) error {
 	applyManagerContextPatch(config, source)
+	// Null is an explicit completion-adapter-default choice at this leaf.
+	if agents, ok := source["agents"].(map[string]any); ok {
+		if patch, ok := agents["statusSummary"].(map[string]any); ok {
+			if model, present := patch["model"]; present && model == nil {
+				if dstAgents, ok := config["agents"].(map[string]any); ok {
+					if dst, ok := dstAgents["statusSummary"].(map[string]any); ok {
+						dst["model"] = nil
+					}
+				}
+			}
+		}
+	}
 	agents, _ := config["agents"].(map[string]any)
 	if agents == nil {
 		return nil

@@ -639,6 +639,11 @@ export interface AppConfig {
     };
     /** Name new agents after their first exchange, like a chat service names a
      *  conversation. A rename you type always wins and is never overwritten. */
+    statusSummary?: {
+      enabled?: boolean;
+      provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';
+      model?: string | null;
+    };
     autoTitle?: {
       /** Absent/true = on. */
       enabled?: boolean;

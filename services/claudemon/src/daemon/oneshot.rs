@@ -48,6 +48,10 @@ pub struct OneshotRequest {
     pub prompt: String,
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub no_tools: bool,
+    #[serde(default)]
+    pub harness_default: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,9 +80,10 @@ fn bad_request(msg: &str) -> Response {
 /// `claude` (not logged in, unknown model) says why there.
 async fn run_claude_print(
     argv: &[String],
-    model: &str,
+    model: Option<&str>,
     prompt: &str,
     session_id: &str,
+    no_tools: bool,
 ) -> anyhow::Result<String> {
     use anyhow::Context;
 
@@ -89,8 +94,25 @@ async fn run_claude_print(
     // `cmd.exe /c claude`, where a quote in the prompt ends cmd's quoting and
     // the rest is a command. stdin has no such grammar, so the whole class is
     // gone regardless of the launcher.
-    cmd.args(base)
-        .args(["--print", "--model", model, "--session-id", session_id]);
+    cmd.args(base).args(["--print", "--session-id", session_id]);
+    if let Some(model) = model {
+        cmd.args(["--model", model]);
+    }
+    if no_tools {
+        // --tools only removes built-ins; strict empty MCP removes external
+        // tools too. Keep subscription auth (do NOT use --bare).
+        cmd.args([
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "{\"mcpServers\":{}}",
+            "--disable-slash-commands",
+            "--no-session-persistence",
+            "--settings",
+            "{\"disableAllHooks\":true}",
+        ]);
+    }
     let mut child = cmd
         // Home, not a repo: a one-shot has no project context to pick up.
         .current_dir(super::heartbeat::home_dir())
@@ -168,7 +190,17 @@ pub async fn handle(State(state): State<ApiState>, Json(req): Json<OneshotReques
     state.store.mark_heartbeat(&sid);
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
-        run_claude_print(&req.argv, &model, prompt, &sid),
+        run_claude_print(
+            &req.argv,
+            if req.harness_default {
+                None
+            } else {
+                Some(&model)
+            },
+            prompt,
+            &sid,
+            req.no_tools,
+        ),
     )
     .await;
     // The child has exited (or been killed on timeout via kill_on_drop), so
@@ -194,5 +226,33 @@ pub async fn handle(State(state): State<ApiState>, Json(req): Json<OneshotReques
             error: Some(format!("timed out after {timeout_secs}s")),
         })
         .into_response(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod summary_tests {
+    use super::*;
+    // The executable is a fake CLI that only echoes argv. No auth/model/session.
+    #[tokio::test]
+    async fn summary_no_tools_reaches_the_process_and_null_omits_model() {
+        let argv = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"printf '%s\n' "$@""#.into(),
+            "fake-cli".into(),
+        ];
+        let out = run_claude_print(&argv, None, "data", "fake-session", true)
+            .await
+            .unwrap();
+        assert!(out.contains("--tools"));
+        assert!(out.contains("--strict-mcp-config"));
+        assert!(out.contains("mcpServers"));
+        assert!(out.contains("disableAllHooks"));
+        assert!(!out.contains("--model"));
+        let ordinary = run_claude_print(&argv, Some("haiku"), "data", "fake-session", false)
+            .await
+            .unwrap();
+        assert!(ordinary.contains("haiku"));
+        assert!(!ordinary.contains("--tools"));
     }
 }

@@ -277,6 +277,7 @@ const MANAGER_PREAMBLE =
   '- list_providers {} to see which harnesses (claude/codex/copilot/opencode/pi) are installed ' +
   'before naming a non-default provider.\n' +
   '- send_message {"sessionId":"<worker id>","text":"..."} to drive a worker.\n' +
+  '- summarize_agent_status {"sessionId":"<worker id>","hub":"<hub from list_agents, omit for local>"} for an on-demand answer to what a worker is doing. Never poll summaries; availability is not lifecycle, and summaries do not replace direct blocker/escalation/final-result evidence.\n' +
   '- get_conversation {"sessionId":"<worker id>","sinceSeq":<last seen seq>} to read only ' +
   'new turns.\n' +
   '- approve {"sessionId":"<worker id>","decision":"yes"} for a pending permission prompt.\n' +

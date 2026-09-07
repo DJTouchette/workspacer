@@ -364,6 +364,7 @@ var inertMethods = map[string]string{
 	"config.reload":                 "no params; re-reads the provider's own config file from disk",
 	"layouts.list":                  "no params; the entry names come from a readdir of the layouts store and are re-contained by the store resolver before anything is opened",
 	"providers.checkAll":            "no params; it stats a fixed set of provider binary names against the process's own PATH, and the answer is a boolean per provider rather than a path the caller chose",
+	"agents.summarizeStatus":        "sessionId selects a visible session on the owning desktop hub; the daemon projects a bounded data-only source and the no-tools completion receives no paths or argv from the caller",
 	"sessions.conversation":         "sessionId selects an existing session row; it is never joined into a path (the transcript location is derived by the provider) and never becomes argv",
 	"sessions.subagentConversation": "sessionId plus agentId select an existing provider-owned child thread already attached to that session; neither value is joined into a path by the hub, and claudemon validates the child belongs to the parent before reading its rollout",
 	"sessions.detachTerminal":       "sessionId only, and the effect is to STOP streaming — the narrowing direction. The attach half carries its own decision",

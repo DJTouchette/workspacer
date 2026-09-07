@@ -38,6 +38,7 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
+import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
@@ -1638,6 +1639,14 @@ export function registerHubCapabilities(): void {
   // Read-only: parsed conversation items + latest sequence number. With
   // sinceSeq, returns only items after that sequence — cheap incremental polling
   // so a supervisor digests just the new turns since it last looked.
+  let statusSummary: ReturnType<typeof createAgentStatusSummaryService> | undefined;
+  registerCapability('agents.summarizeStatus', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: unknown };
+    if (typeof sessionId !== 'string')
+      throw new Error('agents.summarizeStatus requires { sessionId }');
+    statusSummary ??= createAgentStatusSummaryService();
+    return statusSummary.summarize(sessionId);
+  });
   registerCapability('sessions.conversation', async (params: unknown) => {
     const { sessionId, sinceSeq } = (params ?? {}) as { sessionId?: string; sinceSeq?: number };
     if (!sessionId) throw new Error('sessions.conversation requires { sessionId }');

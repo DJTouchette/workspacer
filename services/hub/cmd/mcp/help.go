@@ -33,7 +33,12 @@ value must round-trip: pass it as the hub input on the per-session tools
 (get_snapshot, get_conversation, get_transcript, send_message, approve,
 answer, signal, set_approval_gate) to reach the remote session; omit it for
 local sessions.
-Reading another agent's activity, cheapest first:
+Reading another agent's activity:
+- summarize_agent_status {sessionId, hub?}: on-demand compact interpretation of
+  bounded task and recent text, using the source hub's configured CLI model.
+  Requires a compatible desktop and daemon on that hub; headless/old peers
+  return unavailable. Never poll summaries. Availability is not worker lifecycle;
+  use direct blocker/escalation/final reports as evidence, not a summary.
 - get_conversation with lastMessage:true: returns { seq, lastMessage } — just
   the session's final assistant message. The right way to read a finished
   worker's report without paying for its whole conversation.
@@ -43,7 +48,7 @@ Reading another agent's activity, cheapest first:
   both are set.
 - get_conversation with sinceSeq: track the returned seq per session and pass
   it back next time, so you only ever digest new turns. This is the right tool
-  for polling "what has agent X done since I last looked".
+  for an explicit follow-up inspection, never an automatic polling loop.
 - get_snapshot: full live detail for one session (turns, tools, usage, pending
   approval/question). Heavier; use when you need everything at once.
 - get_transcript: the raw transcript. Largest payload — prefer the two above,

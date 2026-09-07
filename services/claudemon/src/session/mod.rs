@@ -5,6 +5,7 @@ pub mod permission_mode;
 pub mod pricing;
 pub mod state;
 pub mod store;
+pub mod summary_source;
 pub mod transcript;
 pub mod usage;
 pub mod usage_report;

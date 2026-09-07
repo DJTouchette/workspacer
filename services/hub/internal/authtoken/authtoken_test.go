@@ -84,6 +84,7 @@ func TestScopeMethods(t *testing.T) {
 	}{
 		// read-only surface
 		{"agents.list", true, true, true},
+		{"agents.summarizeStatus", true, true, true},
 		{"sessions.snapshots", true, true, true},
 		{"sessions.recent", true, true, true},
 		{"sessions.transcript", true, true, true},
