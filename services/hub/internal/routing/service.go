@@ -45,14 +45,15 @@ func seedMarkerFor(path string) string { return path + ".seeded" }
 // wrote is also how the service tells its own seed write apart from a person's
 // edit.
 type Service struct {
-	preferencesBase     *Matrix
-	preferencesPatch    PreferencesPatch
-	preferencesRevision string
-	preferencesWarning  string
-	mu                  sync.Mutex
-	path                string
-	cat                 Catalog
-	matrix              *Matrix
+	preferencesHostPresent bool
+	preferencesBase        *Matrix
+	preferencesPatch       PreferencesPatch
+	preferencesRevision    string
+	preferencesWarning     string
+	mu                     sync.Mutex
+	path                   string
+	cat                    Catalog
+	matrix                 *Matrix
 
 	// baseIssues are the PURE load-time findings for the live matrix, kept apart
 	// from the catalog's so a repeated catalog check rebuilds Matrix.Issues
@@ -171,7 +172,7 @@ func (s *Service) reloadIfChangedLocked() bool {
 		return false
 	}
 	host, pref, revision, err := s.readSourcesLocked()
-	if host == nil && s.matrix != nil {
+	if host == nil && s.matrix != nil && s.preferencesHostPresent {
 		s.preferencesWarning = "Host policy is temporarily missing; last valid policy retained"
 		return false
 	}
@@ -197,6 +198,7 @@ func (s *Service) reloadIfChangedLocked() bool {
 		m.Source = s.path
 		base.Source = s.path
 	}
+	s.preferencesHostPresent = host != nil
 	s.preferencesBase = base
 	s.preferencesPatch = patch
 	s.preferencesRevision = revision

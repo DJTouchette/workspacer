@@ -334,6 +334,10 @@ async function runPreferencesAssertions(caller, hubPort, fakeURL) {
   check('preferences apply immediately', applied.status === 'applied');
   const selected = await caller.call('routing.select', { role: 'mechanical', cwd: tmp });
   check('production routing.select consumes the saved role', selected.baseCapability === 'balanced');
+  // The event and RPC response use independent queues. Drain the preceding
+  // selection's specific event before measuring whether preview emits one.
+  const selectedEvent = await waitFor(async () => caller.events.find(e => e?.type === 'routing.decision' && e?.data?.decisionId === selected.decisionId), 5000);
+  check('the preceding selection event is observed before preview', !!selectedEvent);
   const auditBefore = fs.readFileSync(decisionLog, 'utf8');
   const eventBefore = caller.events.length;
   const preview = await caller.call('routing.preview', { role: 'mechanical', cwd: tmp });

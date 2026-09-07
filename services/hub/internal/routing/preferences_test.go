@@ -260,3 +260,105 @@ func TestPreferencesLowerEffortUsesTrustedUpperRung(t *testing.T) {
 		t.Fatalf("lower effort laundered model strength %s %v", r.Status, e)
 	}
 }
+
+func TestPreferencesAfterHostFileDeletedBeforeRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.yaml")
+	_ = New(path, nil)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s := New(path, nil)
+	if !s.Preferences().Configurable {
+		t.Fatal("deliberately absent host file disables inherited preferences after restart")
+	}
+	r, e := s.UpdatePreferences(prefsRequest(t, s, `{"roles":{"scout":"cheap"}}`), "save")
+	if e != nil || r.Status != "applied" {
+		t.Fatalf("save without host file %s %v", r.Status, e)
+	}
+	r, e = s.UpdatePreferences(PreferencesRequest{BaseRevision: r.View.Revision}, "reset")
+	if e != nil || r.Status != "applied" || r.View.Effective.Roles["scout"] != r.View.Defaults.Roles["scout"] {
+		t.Fatalf("reset did not reveal shipped baseline %s %v", r.Status, e)
+	}
+	if _, e := os.Stat(path); !os.IsNotExist(e) {
+		t.Fatal("preferences recreated deleted host YAML")
+	}
+}
+
+func TestPreferencesAdvancedFieldsReachSelection(t *testing.T) {
+	t.Run("mode shifts effort and forecast", func(t *testing.T) {
+		s, _, _ := preferenceFixture(t)
+		r, e := s.UpdatePreferences(prefsRequest(t, s, `{"modes":{"global":"conserve"},"modeShifts":{"conserve":{"roles":{"scout":"balanced"},"effortStep":-1,"effortStepCapabilities":["balanced"]}},"forecastWeights":{"implementation":7}}`), "save")
+		if e != nil || r.Status != "applied" {
+			t.Fatalf("save %s %v %v", r.Status, r.Validation.Issues, e)
+		}
+		d := Select(s.Matrix(), limits.Snapshot{}, nil, nil, policyNow, Request{Role: "scout", ExpectedWork: []limits.Work{{Phase: "implementation", Count: 2}}})
+		if d.Mode != ModeConserve || d.Capability != "balanced" || d.Effort != "medium" || d.Demand.Units != 14 {
+			t.Fatalf("advanced controls did not reach selection %+v", d)
+		}
+	})
+	t.Run("health thresholds", func(t *testing.T) {
+		s, _, _ := preferenceFixture(t)
+		snap := snapshotOf(t, "codex", "", map[string]winSpec{"five_hour": {used: 80, resets: 3 * time.Hour}, "seven_day": {used: 10, resets: 24 * time.Hour}})
+		before := Select(s.Matrix(), snap, nil, nil, policyNow, Request{Role: "scout"})
+		r, e := s.UpdatePreferences(prefsRequest(t, s, `{"thresholds":{"health":{"yellowAtUsedPct":60,"redAtUsedPct":75}}}`), "save")
+		if e != nil || r.Status != "applied" {
+			t.Fatal(r.Status, e)
+		}
+		after := Select(s.Matrix(), snap, nil, nil, policyNow, Request{Role: "scout"})
+		if before.Capacity.Health == after.Capacity.Health || after.Capacity.Health != limits.HealthRed || after.Mode != ModeConserve {
+			t.Fatalf("health threshold not consumed: before %s after %+v", before.Capacity.Health, after)
+		}
+	})
+	t.Run("pace threshold", func(t *testing.T) {
+		s, _, _ := preferenceFixture(t)
+		snap := snapshotOf(t, "codex", "", map[string]winSpec{"five_hour": {used: 40, resets: 200 * time.Minute, minutes: 300}, "seven_day": {used: 10, resets: 24 * time.Hour}})
+		before := Select(s.Matrix(), snap, nil, nil, policyNow, Request{Role: "scout"})
+		r, e := s.UpdatePreferences(prefsRequest(t, s, `{"thresholds":{"pacing":{"conserveAtRatio":1.1,"blockSpendDownAtRatio":1.05}}}`), "save")
+		if e != nil || r.Status != "applied" {
+			t.Fatal(r.Status, e)
+		}
+		after := Select(s.Matrix(), snap, nil, nil, policyNow, Request{Role: "scout"})
+		if before.Mode != ModeNormal || after.Mode != ModeConserve {
+			t.Fatalf("pace threshold not consumed: %s -> %s", before.Mode, after.Mode)
+		}
+	})
+	t.Run("provider disabled", func(t *testing.T) {
+		s, _, _ := preferenceFixture(t)
+		r, e := s.UpdatePreferences(prefsRequest(t, s, `{"providers":{"codex":{"enabled":false}}}`), "save")
+		if e != nil || r.Status != "applied" {
+			t.Fatal(r.Status, e)
+		}
+		if d := Select(s.Matrix(), limits.Snapshot{}, nil, nil, policyNow, Request{Role: "scout"}); d.Eligible {
+			t.Fatalf("disabled provider ignored %+v", d)
+		}
+	})
+	t.Run("assignment and ordered alternative", func(t *testing.T) {
+		s, _, _ := preferenceFixture(t)
+		s.cat = preferenceCatalog{"claude": {State: "available", ObservedAt: time.Now().UnixMilli(), Models: []CatalogModel{{ID: "sonnet", EffortLevels: []string{"high"}}}}}
+		r, e := s.UpdatePreferences(prefsRequest(t, s, `{"profiles":{"codex_only":{"balanced":{"enabled":false,"alternatives":[{"provider":"claude","model":"sonnet","effort":"high"}]}}}}`), "save")
+		if e != nil || r.Status != "applied" {
+			t.Fatalf("save %s %v %v", r.Status, r.Validation.Issues, e)
+		}
+		d := Select(s.Matrix(), limits.Snapshot{}, nil, nil, policyNow, Request{Role: "scout"})
+		if d.Provider != "claude" || d.Model != "sonnet" || d.Effort != "high" || d.FellOverFrom == nil {
+			t.Fatalf("alternative not consumed %+v", d)
+		}
+	})
+}
+
+func TestPreferencesSourcesTrackExplicitEqualHostFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.yaml")
+	host := []byte("roles: {scout: balanced}\nmode_shifts:\n  conserve: {scout: cheap, effort_step: -1}\nthresholds:\n  pacing:\n    bootstrap: {min_elapsed_pct: 5}\n")
+	if e := os.WriteFile(path, host, 0600); e != nil {
+		t.Fatal(e)
+	}
+	v := New(path, nil).Preferences()
+	for _, path := range []string{"roles.scout", "modeShifts.conserve.roles.scout", "modeShifts.conserve.effortStep", "thresholds.pacing.bootstrap.minElapsedPct"} {
+		if v.SourceByPath[path] != "host" {
+			t.Errorf("equal host value lost provenance at %s: %s", path, v.SourceByPath[path])
+		}
+	}
+	if v.SourceByPath["roles.mechanical"] != "shipped" {
+		t.Fatal("omitted field falsely attributed to host")
+	}
+}

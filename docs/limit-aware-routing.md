@@ -989,7 +989,8 @@ the composed matrix in the live Service immediately and survives restart.
 
 Every response separates shipped defaults, inherited host/shipped values,
 managed overrides and effective policy. Source badges name `shipped`, `host` or
-`managed`. Reset clears **all managed preferences**, revealing the inherited
+`managed`. An explicit host field remains host-sourced even when its value
+equals the shipped value (including an unchanged seeded YAML file). Reset clears **all managed preferences**, revealing the inherited
 policy. It does not overwrite a host override to simulate factory defaults.
 
 | Hub API | MCP tool | Contract |

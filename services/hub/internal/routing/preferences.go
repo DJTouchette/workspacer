@@ -544,9 +544,13 @@ func (s *Service) preferencesViewLocked() PreferencesView {
 	leafPaths(jsonObject(v.Defaults), "", defaults)
 	leafPaths(jsonObject(v.Inherited), "", host)
 	leafPaths(jsonObject(v.Overrides), "", managed)
+	hostFields := map[string]bool{}
+	for _, path := range base.Applied {
+		hostFields[path] = true
+	}
 	for k, val := range host {
 		v.SourceByPath[k] = "shipped"
-		if !reflect.DeepEqual(defaults[k], val) {
+		if hostFields[policyYAMLPath(k)] || !reflect.DeepEqual(defaults[k], val) {
 			v.SourceByPath[k] = "host"
 		}
 	}
@@ -579,6 +583,7 @@ func (s *Service) UpdatePreferences(req PreferencesRequest, action string) (Pref
 		return result, err
 	}
 	if req.BaseRevision == "" || req.BaseRevision != rev {
+		result.View = s.preferencesViewLocked()
 		result.Status = "conflict"
 		return result, nil
 	}
@@ -769,4 +774,45 @@ func (s *Service) installWithCachedCatalogLocked(m *Matrix) {
 		s.matrix = &next
 		s.catalogIssues = found
 	}
+}
+
+// Derive provenance from the schema tags, including ModeShift's inline roles.
+// Equal-valued explicit host fields still inherit from the host, not shipped.
+func policyYAMLPath(path string) string {
+	t := reflect.TypeOf(Matrix{})
+	out := []string{}
+	for _, part := range strings.Split(path, ".") {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		switch t.Kind() {
+		case reflect.Struct:
+			found := false
+			for i := 0; i < t.NumField(); i++ {
+				f := t.Field(i)
+				if strings.Split(f.Tag.Get("json"), ",")[0] != part {
+					continue
+				}
+				y := strings.Split(f.Tag.Get("yaml"), ",")[0]
+				if y == "-" {
+					return ""
+				}
+				if y != "" {
+					out = append(out, y)
+				}
+				t = f.Type
+				found = true
+				break
+			}
+			if !found {
+				return ""
+			}
+		case reflect.Map:
+			out = append(out, part)
+			t = t.Elem()
+		default:
+			return ""
+		}
+	}
+	return strings.Join(out, ".")
 }

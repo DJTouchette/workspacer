@@ -32,6 +32,14 @@ const api: RoutingAPI = {
   routingPreferencesSave: async (req: RoutingPreferencesRequest) => {
     merge(view.effective, req.patch);
     merge(view.overrides, req.patch);
+    const mark = (obj: object, prefix = '') => {
+      for (const [key, value] of Object.entries(obj)) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (value && typeof value === 'object' && !Array.isArray(value)) mark(value, path);
+        else view.sourceByPath[path] = 'managed';
+      }
+    };
+    mark(req.patch);
     view.managedFields = ['roles.scout'];
     view.revision += '-saved';
     return { status: 'applied', view: copy(view), validation };

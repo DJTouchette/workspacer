@@ -20,9 +20,10 @@ last_reviewed: 2026-09-07
 # Limit-aware routing
 
 ## Overview
-One file decides which model a piece of work is worth:
-`<config>/workspacer-hub/routing.yaml`, seeded from the compiled-in
-`routing.default.yaml` and re-read on a content hash every 30s. The chain is
+The hub composes compiled `routing.default.yaml`, trusted host
+`<config>/workspacer-hub/routing.yaml` and safe managed preferences to decide
+which model a piece of work is worth. Both source layers are re-read on a
+content hash every 30s and preferences apply immediately. The chain is
 `role -> capability -> (provider, model, effort)`, and the point of the
 indirection is that nothing outside the matrix names a model, so a vendor
 rename is one edit. Roles are the vocabulary on the wire: `scout`,
