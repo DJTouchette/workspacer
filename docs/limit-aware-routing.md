@@ -974,7 +974,10 @@ cd services/hub && go test ./internal/routing/... ./internal/limits/... ./cmd/hu
 ## Routing preferences and Settings
 
 Settings → Agents & AI → Routing is separate from the Fleet Manager’s own model
-controls and workflow definitions. It offers the shipped `mixed`, `codex_only`
+controls and workflow definitions. First-task guidance links to Routing and Fleet
+Manager → Workflows; both policy editors link to each other. The actual Settings
+keys are `routing` and `supervisor`. Links are disabled while a policy draft is
+being edited. It offers the shipped `mixed`, `codex_only`
 and `anthropic_only` presets, work-role mappings, provider/model/effort/minimum
 effort assignments and ordered alternatives. Advanced controls cover provider
 availability policy, modes, shifts, pacing, thresholds and forecast weights.

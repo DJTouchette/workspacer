@@ -1,3 +1,4 @@
+import { openPolicySettings } from '../../lib/settingsBus';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { inputStyle, SmallButton } from './primitives';
@@ -145,6 +146,11 @@ export default function FleetWorkflowsSection() {
         Choose the ordered policy for new Fleet tasks. Active tasks retain their definition,
         templates and result contracts. Editing never launches an agent.
       </p>
+      <SmallButton
+        label="Model routing"
+        disabled={busy || editing}
+        onClick={() => openPolicySettings('routing')}
+      />
       {error && (
         <div role="alert" style={{ color: 'var(--wks-error)', overflowWrap: 'anywhere' }}>
           {error} <SmallButton label="Reload current values" onClick={() => void reload()} />

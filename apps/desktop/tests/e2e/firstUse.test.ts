@@ -689,3 +689,27 @@ test('CLI install notice opens the actual Command Line settings section', async 
   await page.getByRole('button', { name: 'Settings → Command Line', exact: true }).click();
   await expect(page.getByText('workspacer serve', { exact: true }).first()).toBeVisible();
 });
+
+test('first-task help reaches the actual routing and workflow settings without dispatching', async ({
+  page,
+}) => {
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await openFirstTask(page);
+  await page.getByLabel('What should this agent do?').fill('Explain this fixture');
+  await launch(page).click();
+  const guidance = page.getByRole('complementary', { name: 'First task guidance' });
+  await expect(guidance).toBeVisible();
+  const before = (await calls(page)).filter((c: any) => c.method === 'spawnClaude').length;
+  await guidance.getByRole('button', { name: 'Model routing', exact: true }).click();
+  const routing = page.getByRole('region', { name: 'Routing settings', exact: true });
+  await expect(routing).toBeVisible();
+  await routing.getByRole('button', { name: 'Fleet workflows', exact: true }).click();
+  const workflows = page.getByRole('region', { name: 'Fleet workflows', exact: true });
+  await expect(workflows).toBeVisible();
+  await workflows.getByRole('button', { name: 'Model routing', exact: true }).click();
+  await expect(routing).toBeVisible();
+  expect((await calls(page)).filter((c: any) => c.method === 'spawnClaude')).toHaveLength(before);
+  expect(await page.evaluate(() => Object.keys((window as any).firstUse.snapshots()).length)).toBe(
+    1,
+  );
+});

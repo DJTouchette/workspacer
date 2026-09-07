@@ -23,3 +23,10 @@ export function consumePendingSettingsSection(): string | null {
   pendingSection = null;
   return key;
 }
+
+/** Policy help links open/focus Settings as well as choosing its real section.
+ * Workflows live inside Fleet Manager ('supervisor'), not a 'workflows' pane. */
+export const POLICY_SETTINGS_EVENT = 'settings:open-policy';
+export function openPolicySettings(key: 'routing' | 'supervisor'): void {
+  window.dispatchEvent(new CustomEvent(POLICY_SETTINGS_EVENT, { detail: { key } }));
+}

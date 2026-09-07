@@ -39,7 +39,7 @@ import {
   type InspectorTarget,
   type ContextTarget,
 } from './lib/watchBus';
-import { requestSettingsSection } from './lib/settingsBus';
+import { requestSettingsSection, POLICY_SETTINGS_EVENT } from './lib/settingsBus';
 import type { UpdateStatus } from './types/electron';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
@@ -1050,6 +1050,17 @@ function App() {
       requestAnimationFrame(() => scrollToTab(newId));
     }
   }, [tabs, addTabWithConfig, setActiveTabId, scrollToTab]);
+
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      if (key !== 'routing' && key !== 'supervisor') return;
+      openSettings();
+      requestSettingsSection(key);
+    };
+    window.addEventListener(POLICY_SETTINGS_EVENT, navigate);
+    return () => window.removeEventListener(POLICY_SETTINGS_EVENT, navigate);
+  }, [openSettings]);
 
   // Open (or focus) a Review/changes pane for the active agent's work tree.
   const openReview = useCallback(() => {

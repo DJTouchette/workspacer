@@ -1,3 +1,4 @@
+import { openPolicySettings } from '../../lib/settingsBus';
 import React, { useEffect, useState } from 'react';
 import { Section, SmallButton as SettingsButton, inputStyle } from './primitives';
 import { Surface } from '../Surface';
@@ -308,12 +309,21 @@ export default function RoutingSection() {
   };
   return (
     <Section title="Routing">
-      <div style={{ display: 'grid', gap: 16, minWidth: 0, fontSize: '0.8rem' }}>
+      <div
+        role="region"
+        aria-label="Routing settings"
+        style={{ display: 'grid', gap: 16, minWidth: 0, fontSize: '0.8rem' }}
+      >
         <p style={muted}>
           Choose models for routed worker roles. The Fleet Manager’s own model is configured in
           Fleet Manager settings; workflow stages are configured separately. Project safety limits
           are enforced by this hub and are not editable here.
         </p>
+        <div>
+          <SmallButton onClick={() => openPolicySettings('supervisor')} disabled={busy || dirty}>
+            Fleet workflows
+          </SmallButton>
+        </div>
         <div
           role="status"
           style={{ ...muted, color: conflict ? 'var(--wks-warning)' : 'var(--wks-text-secondary)' }}
