@@ -1,4 +1,3 @@
-import { TerminateAgentButton } from './TerminateAgentButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Compass, Diamond, Maximize2, Settings } from 'lucide-react';
 import type { AgentWorkspace } from '../types/pane';
@@ -28,6 +27,12 @@ import {
   useRecordedUsage,
   useRecordedUsageUnavailable,
 } from '../contexts/RecordedUsageContext';
+import { findAgentChatPane } from '../hooks/useAgentManager';
+import {
+  useSessionChatController,
+  type SessionChatController,
+} from '../hooks/useSessionChatController';
+import { useSessionChatRef, useSessionChatState } from '../hooks/useSessionChatUiState';
 import { useGitBranch } from '../hooks/useGitBranch';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
@@ -81,12 +86,11 @@ function stateVisual(s: SessionAmbientState | undefined): StateVisual {
   }
 }
 
-function lastAssistant(snap: ClaudeSessionSnapshot | undefined): string {
-  const turns = snap?.conversation ?? [];
+function lastMessage(turns: ClaudeSessionSnapshot['conversation'] = []) {
   for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].role === 'assistant' && turns[i].content?.trim()) return turns[i].content.trim();
+    if (['assistant', 'user'].includes(turns[i].role) && turns[i].content?.trim()) return turns[i];
   }
-  return '';
+  return undefined;
 }
 
 interface Props {
@@ -100,8 +104,8 @@ interface Props {
   /** When set, a small expand button appears in the header — the Fleet Deck
    *  wires it to flip the card in place into the live InspectorCard. */
   onInspect?: () => void;
-  onTerminate?: (id: string) => Promise<void>;
-  terminationDisabledReason?: string;
+  actions?: React.ReactNode;
+  prepareChat?: () => Promise<SessionChatController | undefined>;
 }
 
 /**
@@ -123,10 +127,10 @@ export const AgentCard: React.FC<Props> = ({
   snapshot,
   onOpen,
   onInspect,
-  onTerminate,
-  terminationDisabledReason,
+  actions,
+  prepareChat,
 }) => {
-  const { openAgent, approve, answer, sendMessage, feed } = useAttention();
+  const { openAgent, approve, answer, feed } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
   // Federation: a peer hub's agent wears a hub chip; when that peer's link is
@@ -184,7 +188,18 @@ export const AgentCard: React.FC<Props> = ({
 
   // Body: the last message always leads (as markdown); tool activity lives in
   // the chip row, so the two no longer alternate.
-  const bodyText = lastAssistant(snapshot);
+  const chat = useSessionChatController(agent.sessionId, findAgentChatPane(agent)?.id);
+  const latest = lastMessage(chat?.conversation ?? snapshot?.conversation);
+  const bodyText = latest?.content?.trim() ?? '';
+  const pending = latest && chat?.pending.includes(latest);
+  const messageLabel =
+    latest?.role === 'user'
+      ? pending
+        ? chat?.pending.at(-1)?.queued
+          ? 'You · queued'
+          : 'You · sending…'
+        : 'You'
+      : undefined;
   // Remote agents never respawn locally, so their stopped card drops the hint.
   const bodyFallback = agent.sessionId
     ? 'No activity yet'
@@ -201,11 +216,32 @@ export const AgentCard: React.FC<Props> = ({
   );
   const plan = useMemo(() => planProgress(snapshot?.plan), [snapshot?.plan]);
 
-  const [draft, setDraft] = useState('');
-  const submitDraft = () => {
-    if (!agent.sessionId || !draft.trim()) return;
-    sendMessage(agent.sessionId, draft.trim());
-    setDraft('');
+  const stateKey = agent.sessionId ?? agent.lastSessionId ?? `agent:${agent.id}`;
+  const [draft, setDraft] = useSessionChatState(stateKey, 'fleetDraft', '');
+  const [sendError, setSendError] = useSessionChatState(stateKey, 'fleetSendError', '');
+  const [sending, setSending] = useSessionChatState(stateKey, 'fleetSending', false);
+  const sendPending = useSessionChatRef(stateKey, 'fleetSending', false);
+  const submitDraft = async () => {
+    if (!agent.sessionId || !draft.trim() || sendPending.current) return;
+    setSendError('');
+    const submitted = draft;
+    sendPending.current = true;
+    setSending(true);
+    try {
+      const controller = chat ?? (await prepareChat?.());
+      if (!controller) {
+        setSendError('Chat is not ready. Your draft is saved; try opening the agent’s chat.');
+        return;
+      }
+      const result = await controller.send(submitted.trim());
+      if (result.ok) setDraft((current) => (current === submitted ? '' : current));
+      else setSendError(result.error ?? 'Message could not be sent');
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : String(error));
+    } finally {
+      sendPending.current = false;
+      setSending(false);
+    }
   };
 
   const hasAction = !!(approvalItem || questionItem);
@@ -295,6 +331,7 @@ export const AgentCard: React.FC<Props> = ({
           />
           {v.label}
         </span>
+        {actions}
         {onInspect && (
           <button
             onClick={(e) => {
@@ -333,16 +370,6 @@ export const AgentCard: React.FC<Props> = ({
         )}
       </div>
 
-      {onTerminate && (
-        <div style={{ padding: '0 12px 8px' }}>
-          <TerminateAgentButton
-            agent={agent}
-            snapshot={snapshot}
-            onTerminate={onTerminate}
-            disabledReason={terminationDisabledReason}
-          />
-        </div>
-      )}
       {/* Meta line: model · turns · last activity · folder */}
       <div
         style={{
@@ -408,6 +435,14 @@ export const AgentCard: React.FC<Props> = ({
         </span>
       </div>
 
+      {messageLabel && (
+        <div
+          data-testid="fleet-message-status"
+          style={{ padding: '0 12px 4px', fontSize: '0.66rem', color: 'var(--wks-text-secondary)' }}
+        >
+          {messageLabel}
+        </div>
+      )}
       {/* Body: tool chips + last message as markdown + changed-files line */}
       <div style={{ flex: 1, paddingBottom: 10, minHeight: 0, display: 'flex' }}>
         <AgentCardBody
@@ -528,6 +563,7 @@ export const AgentCard: React.FC<Props> = ({
       {(hasAction || showCompose) && (
         <div
           onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
           style={{
             // Depth 2 and last: a flush footer band separated by its fill
             // alone. Not a `Surface` — it has no corners of its own, it just
@@ -597,6 +633,11 @@ export const AgentCard: React.FC<Props> = ({
             />
           )}
 
+          {sendError && (
+            <span role="alert" style={{ color: 'var(--wks-error)', fontSize: '0.72rem' }}>
+              {sendError}
+            </span>
+          )}
           {/* Compose — drop a free message to the agent without leaving the deck */}
           {showCompose && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
@@ -631,21 +672,25 @@ export const AgentCard: React.FC<Props> = ({
               />
               <button
                 onClick={submitDraft}
-                disabled={!draft.trim()}
+                disabled={!draft.trim() || sending}
                 style={{
                   fontSize: '0.72rem',
                   fontWeight: 600,
                   fontFamily: 'inherit',
                   padding: '6px 12px',
                   borderRadius: 'var(--wks-radius-md)',
-                  cursor: draft.trim() ? 'pointer' : 'default',
+                  cursor: draft.trim() && !sending ? 'pointer' : 'default',
                   flexShrink: 0,
                   border: 'none',
-                  background: draft.trim() ? 'var(--wks-accent)' : 'var(--wks-bg-hover)',
-                  color: draft.trim() ? 'var(--wks-text-on-accent)' : 'var(--wks-text-disabled)',
+                  background:
+                    draft.trim() && !sending ? 'var(--wks-accent)' : 'var(--wks-bg-hover)',
+                  color:
+                    draft.trim() && !sending
+                      ? 'var(--wks-text-on-accent)'
+                      : 'var(--wks-text-disabled)',
                 }}
               >
-                Send
+                {sending ? 'Sending…' : 'Send'}
               </button>
             </div>
           )}

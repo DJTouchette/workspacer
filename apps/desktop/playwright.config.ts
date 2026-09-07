@@ -44,7 +44,8 @@ export default defineConfig({
     { name: 'mobile', testMatch: /mobile[A-Z][A-Za-z]*\.test\.ts$/ },
     {
       name: 'renderer',
-      testMatch: /(chatTailPin|usagePacing|htmlCard|fleetReview|recentAgents)\.test\.ts$/,
+      testMatch:
+        /(chatTailPin|usagePacing|htmlCard|fleetReview|fleetContextMenu|recentAgents)\.test\.ts$/,
     },
     { name: 'electron', testMatch: /libraryPane\.test\.ts$/ },
   ],

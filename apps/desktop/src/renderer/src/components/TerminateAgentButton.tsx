@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Square } from 'lucide-react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
+import { ContextMenuItem } from './ContextMenu';
 import { SmallButton } from './settings/primitives';
 
 export function terminationUnavailable(
@@ -21,16 +22,25 @@ export function TerminateAgentButton({
   snapshot,
   onTerminate,
   disabledReason,
+  menu = false,
+  onClose,
 }: {
   agent: AgentWorkspace;
   snapshot?: ClaudeSessionSnapshot;
   onTerminate?: (id: string) => Promise<void>;
   disabledReason?: string;
+  menu?: boolean;
+  onClose?: () => void;
 }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef(false);
+  const root = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (menu && armed)
+      root.current?.querySelector<HTMLButtonElement>('[data-cancel] button')?.focus();
+  }, [menu, armed]);
   const reason = disabledReason ?? terminationUnavailable(agent, snapshot, !!onTerminate);
   const confirm = async () => {
     if (pending.current || reason || !onTerminate) return;
@@ -40,6 +50,7 @@ export function TerminateAgentButton({
     try {
       await onTerminate(agent.id);
       setArmed(false);
+      onClose?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -49,17 +60,19 @@ export function TerminateAgentButton({
   };
   return (
     <span
+      ref={root}
       title={reason ?? `Terminate ${agent.name}`}
       data-fleet-action="terminate"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
+      onKeyDown={menu ? undefined : (e) => e.stopPropagation()}
       style={{
         display: 'inline-flex',
         flexWrap: 'wrap',
         alignItems: 'center',
         gap: 6,
         fontSize: '0.72rem',
+        maxWidth: menu ? 'min(280px, calc(100vw - 32px))' : undefined,
       }}
     >
       {armed ? (
@@ -71,15 +84,25 @@ export function TerminateAgentButton({
             onClick={() => void confirm()}
             label={busy ? 'Terminating…' : 'Confirm terminate'}
           />
-          <SmallButton
-            disabled={busy}
-            onClick={() => {
-              setArmed(false);
-              setError('');
-            }}
-            label="Cancel"
-          />
+          <span data-cancel>
+            <SmallButton
+              disabled={busy}
+              onClick={() => {
+                setArmed(false);
+                setError('');
+                onClose?.();
+              }}
+              label="Cancel"
+            />
+          </span>
         </>
+      ) : menu ? (
+        <ContextMenuItem
+          label="Terminate"
+          danger
+          disabled={!!reason}
+          onClick={() => setArmed(true)}
+        />
       ) : (
         <SmallButton
           danger

@@ -45,6 +45,29 @@ describe('retained session chat state', () => {
     const ended = renderHook(() => useData('retained-one'));
     expect(ended.result.current.draft[0]).toBe('');
   });
+  it('delivers a late send result to the remounted card without overwriting a newer draft', () => {
+    const useCard = () => ({
+      draft: useSessionChatState('late-send', 'draft', ''),
+      sending: useSessionChatState('late-send', 'sending', false),
+    });
+    const first = renderHook(useCard);
+    const original = first.result.current;
+    act(() => {
+      original.draft[1]('submitted');
+      original.sending[1](true);
+    });
+    first.unmount();
+    const current = renderHook(useCard);
+    act(() => current.result.current.draft[1]('newer draft'));
+    act(() => {
+      original.draft[1]((text) => (text === 'submitted' ? '' : text));
+      original.sending[1](false);
+    });
+    expect(current.result.current.draft[0]).toBe('newer draft');
+    expect(current.result.current.sending[0]).toBe(false);
+    act(() => original.draft[1]('failure restored this draft'));
+    expect(current.result.current.draft[0]).toBe('failure restored this draft');
+  });
   it('bounds retained sessions and fences late writes after cleanup', () => {
     const old = renderHook(() => useSessionChatState('ended-state', 'draft', ''));
     clearSessionChatUiState('ended-state');

@@ -46,6 +46,9 @@ const initialAgents = [
   makeAgent('manager-two', true),
   makeAgent('offline', false, 'offline-peer'),
 ];
+if (new URLSearchParams(location.search).get('missingChat') === 'worker') {
+  initialAgents[0].tabs = [];
+}
 let snapshots: Record<string, any> = Object.fromEntries(
   initialAgents.map((a) => [
     a.sessionId!,
@@ -96,6 +99,8 @@ snapshots['s-manager'].conversation.push({
 const sessionListeners = new Set<(id: string, snapshot: any) => void>();
 const calls: { method: string; args: unknown[] }[] = [];
 let failTerminate = false;
+let sendMode: 'accept' | 'defer' | 'reject' | 'throw' = 'accept';
+let settleSend: (() => void) | undefined;
 let connected = true;
 const hubListeners = new Set<(status: { connected: boolean }) => void>();
 const record = async (method: string, ...args: unknown[]) => {
@@ -124,6 +129,12 @@ const record = async (method: string, ...args: unknown[]) => {
     },
     claudeMessage: async (id: string, text: string) => {
       calls.push({ method: 'message', args: [id, text] });
+      if (sendMode === 'throw') throw new Error('Fixture message transport unavailable');
+      if (sendMode === 'reject') return { ok: false, mode: 'stopped' };
+      if (sendMode === 'defer')
+        await new Promise<void>((resolve) => {
+          settleSend = resolve;
+        });
       return { ok: true };
     },
     claudeApprove: async (id: string, answer: string) => {
@@ -168,6 +179,26 @@ function Harness() {
   useEffect(() => {
     (window as any).fleetHarness = {
       calls,
+      sendMode: (mode: typeof sendMode) => {
+        sendMode = mode;
+      },
+      settleSend: () => settleSend?.(),
+      echo: (id: string, text: string) => {
+        const snapshot = {
+          ...snapshots[id],
+          conversation: [
+            ...snapshots[id].conversation,
+            { role: 'user', content: text, timestamp: Date.now() },
+          ],
+        };
+        snapshots = { ...snapshots, [id]: snapshot };
+        setSnapshots(snapshots);
+        sessionListeners.forEach((fn) => fn(id, snapshot));
+      },
+      repeatSnapshot: (id: string) =>
+        sessionListeners.forEach((fn) =>
+          fn(id, { ...snapshots[id], conversation: [...snapshots[id].conversation] }),
+        ),
       connection: (value: boolean) => {
         connected = value;
         hubListeners.forEach((fn) => fn({ connected }));
@@ -202,25 +233,30 @@ function Harness() {
       <div className="app-root" style={{ height: '100vh', fontFamily: 'var(--wks-font-sans)' }}>
         {manager.agents
           .filter((a) => !a.global)
-          .map((a) => (
-            <div
-              key={a.id}
-              style={{
-                display: view === 'piloting' && a.id === 'manager' ? 'block' : 'none',
-                height: '100%',
-              }}
-            >
-              <ClaudePane
-                paneId={`p-${a.id}`}
-                title={a.name}
-                cwd={a.cwd}
-                provider="codex"
-                transport="stream"
-                attachSessionId={a.sessionId}
-                isActive={view === 'piloting' && a.id === 'manager'}
-              />
-            </div>
-          ))}
+          .flatMap((a) =>
+            a.tabs
+              .flatMap((t) => t.panes)
+              .filter((p) => p.type === 'claude')
+              .map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: view === 'piloting' && a.id === 'manager' ? 'block' : 'none',
+                    height: '100%',
+                  }}
+                >
+                  <ClaudePane
+                    paneId={p.id}
+                    title={a.name}
+                    cwd={a.cwd}
+                    provider="codex"
+                    transport="stream"
+                    attachSessionId={a.sessionId}
+                    isActive={view === 'piloting' && a.id === 'manager'}
+                  />
+                </div>
+              )),
+          )}
         {view === 'fleet' ? (
           <FleetDeck
             top={0}

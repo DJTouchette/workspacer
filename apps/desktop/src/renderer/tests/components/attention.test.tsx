@@ -452,7 +452,7 @@ describe('manager-first Fleet navigation', () => {
     view.unmount();
     localStorage.removeItem('wks-fleet-view');
   });
-  it('list, switcher and Back keep Fleet active, with managers fixed first', () => {
+  it('list opens full-width chat with only Back beside the title, keeping managers first', () => {
     localStorage.setItem('wks-fleet-view', 'list');
     const open = vi.fn();
     render(
@@ -465,12 +465,9 @@ describe('manager-first Fleet navigation', () => {
     );
     fireEvent.click(document.querySelector('[data-fleet-agent="a2"]')!);
     expect(document.querySelector('[data-fleet-chat="sess-2"]')).toBeInTheDocument();
-    const switcher = screen.getByRole('navigation', { name: 'Fleet agents' });
-    expect(
-      [...switcher.querySelectorAll('[data-manager]')].map((e) => e.getAttribute('data-manager')),
-    ).toEqual(['manager-one', 'manager-two']);
-    fireEvent.click(switcher.querySelector('[data-manager="manager-one"]')!);
-    expect(document.querySelector('[data-fleet-chat="m1"]')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Fleet agents' })).not.toBeInTheDocument();
+    const back = screen.getByRole('button', { name: 'Back to fleet' });
+    expect(back.parentElement?.querySelectorAll('button')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Back to fleet' }));
     expect(screen.queryByRole('navigation', { name: 'Fleet agents' })).not.toBeInTheDocument();
     expect(order().slice(0, 2)).toEqual(['manager-one', 'manager-two']);

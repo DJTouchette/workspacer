@@ -1,6 +1,7 @@
 import { findAgentChatPane } from '../hooks/useAgentManager';
 import { FleetChatDestination } from './claude/RetainedSessionChat';
-import { TerminateAgentButton } from './TerminateAgentButton';
+import { waitForSessionChatController } from '../hooks/useSessionChatController';
+import { useFleetAgentMenu } from './FleetAgentMenu';
 import { SmallButton } from './settings/primitives';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -262,9 +263,28 @@ const FleetDeck: React.FC<Props> = ({
     openAgent,
   } = useAttention();
 
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  const prepareChat = (agent: AgentWorkspace) => {
+    if (!agent.sessionId) return Promise.resolve(undefined);
+    onEnsureAgentChat?.(agent.id);
+    return waitForSessionChatController(agent.sessionId, () => {
+      const current = agentsRef.current.find(
+        (a) => a.id === agent.id && a.sessionId === agent.sessionId,
+      );
+      return current ? findAgentChatPane(current)?.id : undefined;
+    });
+  };
+
   const [controlUnavailable, setControlUnavailable] = useState<string | undefined>(
     'Checking agent control connection…',
   );
+  const agentMenu = useFleetAgentMenu({
+    agents,
+    snapshotBySession,
+    onTerminate: onTerminateAgent,
+    disabledReason: controlUnavailable,
+  });
   useEffect(() => {
     let disposed = false;
     let eventSeen = false;
@@ -777,23 +797,15 @@ const FleetDeck: React.FC<Props> = ({
         flexDirection: 'column',
       }}
     >
+      {agentMenu.menu}
       <style>{`
         .fleet-toolbar { flex-wrap: wrap; }
         .fleet-recent { min-height: 36px; padding: 8px 16px; white-space: nowrap; }
         .fleet-chat-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
-        .fleet-switcher { width: 210px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px; overflow: hidden; }
-        .fleet-managers { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
-        .fleet-switcher button { text-align: left; white-space: normal; overflow-wrap: anywhere; min-height: 36px; }
-        .fleet-workers { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
         @media (max-width: 650px) {
           .fleet-toolbar { padding: 10px 12px !important; gap: 8px !important; }
           .fleet-recent { flex-basis: 100%; text-align: left; }
           .fleet-chat-layout { flex-direction: column; }
-          .fleet-switcher { width: auto; max-height: 190px; padding: 6px 12px; }
-          .fleet-managers { flex-direction: row; overflow-x: auto; }
-          .fleet-managers button { flex: 1; min-width: 100px; }
-          .fleet-workers { flex-direction: row; overflow: auto; flex-shrink: 0; min-height: 36px; }
-          .fleet-workers button { flex-shrink: 0; max-width: 180px; }
           .fleet-table thead { display: none; }
           .fleet-table tbody, .fleet-table tr { display: block; }
           .fleet-table tr { display: grid; grid-template-columns: minmax(0, 1fr) 130px; }
@@ -980,42 +992,6 @@ const FleetDeck: React.FC<Props> = ({
 
       {chatAgent && (
         <div className="fleet-chat-layout">
-          <nav className="fleet-switcher" aria-label="Fleet agents">
-            <SmallButton label="Back to fleet" onClick={backToFleet} />
-            <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-secondary)' }}>
-              Managers
-            </span>
-            <div className="fleet-managers">
-              {displayOrder
-                .filter((a) => a.manager)
-                .map((a) => (
-                  <button
-                    key={a.id}
-                    data-manager={a.id}
-                    aria-current={chatId === a.id ? 'true' : undefined}
-                    style={{ ...expandBtn, width: 'auto', height: 'auto' }}
-                    onClick={() => openChat(a.id)}
-                  >
-                    {a.name}
-                  </button>
-                ))}
-            </div>
-            <div className="fleet-workers">
-              {displayOrder
-                .filter((a) => !a.manager)
-                .map((a) => (
-                  <button
-                    key={a.id}
-                    aria-current={chatId === a.id ? 'true' : undefined}
-                    style={{ ...expandBtn, width: 'auto', height: 'auto' }}
-                    onClick={() => openChat(a.id)}
-                  >
-                    {a.name}
-                    {topByAgent.has(a.id) ? ' · needs you' : ''}
-                  </button>
-                ))}
-            </div>
-          </nav>
           <main
             style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}
           >
@@ -1028,20 +1004,10 @@ const FleetDeck: React.FC<Props> = ({
                 padding: '8px 12px',
               }}
             >
+              <SmallButton label="Back to fleet" onClick={backToFleet} />
               <strong style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
                 {chatAgent.name}
               </strong>
-              <SmallButton
-                label="Inspect"
-                onClick={() => setExpandedId(expandedId ? null : chatAgent.id)}
-              />
-              <TerminateAgentButton
-                key={chatAgent.id}
-                agent={chatAgent}
-                snapshot={chatAgent.sessionId ? snapshotBySession[chatAgent.sessionId] : undefined}
-                onTerminate={onTerminateAgent}
-                disabledReason={controlUnavailable}
-              />
             </div>
             {expandedId === chatAgent.id && (
               <div style={{ height: 240, overflow: 'auto' }}>
@@ -1195,7 +1161,11 @@ const FleetDeck: React.FC<Props> = ({
                       onFocus={(e) => {
                         if (e.target === e.currentTarget) setSelectedId(agent.id);
                       }}
-                      onMouseDown={() => setSelectedId(agent.id)}
+                      onMouseDown={(e) => {
+                        if (e.button === 0) setSelectedId(agent.id);
+                        else e.preventDefault();
+                      }}
+                      {...agentMenu.handlers(agent.id)}
                       onClick={() => openChat(agent.id)}
                       title={`${agent.name} — ${vis.label}\n${agent.cwd ?? ''}`}
                       style={{
@@ -1339,12 +1309,7 @@ const FleetDeck: React.FC<Props> = ({
                       </td>
                       <td style={ltd}>
                         <SmallButton label="Inspect" onClick={() => setExpandedId(agent.id)} />
-                        <TerminateAgentButton
-                          agent={agent}
-                          snapshot={snap}
-                          onTerminate={onTerminateAgent}
-                          disabledReason={controlUnavailable}
-                        />
+                        {agentMenu.overflow(agent)}
                       </td>
                       {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
                         <td
@@ -1403,7 +1368,11 @@ const FleetDeck: React.FC<Props> = ({
                           onFocus={(e) => {
                             if (e.target === e.currentTarget) setSelectedId(agent.id);
                           }}
-                          onMouseDown={() => setSelectedId(agent.id)}
+                          onMouseDown={(e) => {
+                            if (e.button === 0) setSelectedId(agent.id);
+                            else e.preventDefault();
+                          }}
+                          {...agentMenu.handlers(agent.id)}
                           style={{
                             // Grid cell → grid container, so the card stretches to
                             // the full cell in both axes with no `height: 100%`
@@ -1445,8 +1414,8 @@ const FleetDeck: React.FC<Props> = ({
                                 agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
                               }
                               onOpen={() => openChat(agent.id)}
-                              onTerminate={onTerminateAgent}
-                              terminationDisabledReason={controlUnavailable}
+                              actions={agentMenu.overflow(agent)}
+                              prepareChat={() => prepareChat(agent)}
                               onInspect={() => setExpandedId(agent.id)}
                             />
                           )}

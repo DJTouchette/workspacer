@@ -16,6 +16,10 @@ import { providerLabel } from '../hooks/useAgentManager';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useConfig } from '../hooks/useConfig';
+import {
+  usePublishSessionChatController,
+  type ChatSendResult,
+} from '../hooks/useSessionChatController';
 import { useSessionChatRef, useSessionChatState } from '../hooks/useSessionChatUiState';
 import { useTheme } from '../hooks/useTheme';
 import { anchorWork } from '../lib/anchorWork';
@@ -1272,116 +1276,123 @@ export const useClaudePaneModel = ({
   }, []);
 
   // Handle send — detect issue keys, resolve context, then write to Claude's TUI
-  const handleSend = useCallback(async () => {
-    const hasFiles = attachedFiles.length > 0;
-    const hasText = inputValue.trim().length > 0;
-    if (!hasFiles && !hasText) return;
+  const handleSend = useCallback(
+    async (cardText?: string): Promise<ChatSendResult> => {
+      const fromCard = cardText !== undefined;
+      const hasFiles = !fromCard && attachedFiles.length > 0;
+      const hasText = (cardText ?? inputValue).trim().length > 0;
+      if (!hasFiles && !hasText) return { ok: false, error: 'Message is empty' };
 
-    // What's in the box (markers and all) — this is what goes back if the send
-    // is rejected, so the draft is restored exactly as the user left it.
-    const draftText = inputValue.trim();
-    // What the agent receives: every `[Pasted text #N]` marker swapped back for
-    // the text it stands for.
-    const userText = expandPastedText(draftText, pastedBlocksRef.current);
-    // Held text is released only once the message is actually delivered — a
-    // rejected send restores the draft, and its markers have to expand again.
-    const deliveredBlockIds = referencedBlockIds(draftText);
-    const releaseDelivered = () => releaseBlocks(pastedBlocksRef.current, deliveredBlockIds);
-    setInputValue('');
-    setAttachedFiles([]);
+      // What's in the box (markers and all) — this is what goes back if the send
+      // is rejected, so the draft is restored exactly as the user left it.
+      const draftText = (cardText ?? inputValue).trim();
+      // What the agent receives: every `[Pasted text #N]` marker swapped back for
+      // the text it stands for.
+      const userText = fromCard ? draftText : expandPastedText(draftText, pastedBlocksRef.current);
+      // Held text is released only once the message is actually delivered — a
+      // rejected send restores the draft, and its markers have to expand again.
+      const deliveredBlockIds = fromCard ? new Set<number>() : referencedBlockIds(draftText);
+      const releaseDelivered = () => releaseBlocks(pastedBlocksRef.current, deliveredBlockIds);
+      if (!fromCard) {
+        setInputValue('');
+        setAttachedFiles([]);
+      }
 
-    // Build file prefix
-    const filePrefix = hasFiles ? buildPromptPrefix(attachedFiles) : '';
+      // Build file prefix
+      const filePrefix = hasFiles ? buildPromptPrefix(attachedFiles) : '';
 
-    const fullMessage = filePrefix + userText;
+      const fullMessage = filePrefix + userText;
 
-    // Show message immediately and set loading state
-    // Is this message going to sit behind something? Either the agent is
-    // mid-turn (a turn parked on an approval counts — it hasn't ended), or an
-    // earlier send of ours is still unacknowledged. Captured at send time
-    // because that's when the distinction is true; the badge outlives it.
-    const optimisticTurn: PendingUserTurn = {
-      role: 'user',
-      content: fullMessage,
-      timestamp: Date.now(),
-      queued: !ambientIdleRef.current || pendingCountRef.current > 0,
-    };
-    setOptimisticMessages((prev) => [...prev, optimisticTurn]);
-    setOptimisticLoading(true);
-    // Re-arm the idle-clear guard: it may only fire once we've observed the
-    // session leave idle for THIS send (see the optimistic-dequeue effect).
-    sawServerActivitySinceSendRef.current = false;
-    // Sending re-sticks the view: your own message (and the reply) should be
-    // in sight even if you'd scrolled up — the ResizeObserver does the rest.
-    stickToBottomRef.current = true;
-    // …and from here on the message you just sent rides the top of the viewport
-    // with the reply growing below it (tail spacer, see measureTailPad).
-    pinArmedRef.current = true;
+      // Show message immediately and set loading state
+      // Is this message going to sit behind something? Either the agent is
+      // mid-turn (a turn parked on an approval counts — it hasn't ended), or an
+      // earlier send of ours is still unacknowledged. Captured at send time
+      // because that's when the distinction is true; the badge outlives it.
+      const optimisticTurn: PendingUserTurn = {
+        role: 'user',
+        content: fullMessage,
+        timestamp: Date.now(),
+        queued: !ambientIdleRef.current || pendingCountRef.current > 0,
+      };
+      setOptimisticMessages((prev) => [...prev, optimisticTurn]);
+      setOptimisticLoading(true);
+      // Re-arm the idle-clear guard: it may only fire once we've observed the
+      // session leave idle for THIS send (see the optimistic-dequeue effect).
+      sawServerActivitySinceSendRef.current = false;
+      // Sending re-sticks the view: your own message (and the reply) should be
+      // in sight even if you'd scrolled up — the ResizeObserver does the rest.
+      stickToBottomRef.current = true;
+      // …and from here on the message you just sent rides the top of the viewport
+      // with the reply growing below it (tail spacer, see measureTailPad).
+      pinArmedRef.current = true;
 
-    // Restore the composer (text + attachments) verbatim when a send is
-    // rejected, so a failed send loses nothing and can be retried as-is. The
-    // guards avoid clobbering anything the user re-entered during the await;
-    // the prefix is regenerated from the restored chips on the next send.
-    const restoreComposer = () => {
-      // The draft, not the expansion — the blocks it points at are still held
-      // (nothing is released until a send lands), so the retry expands again.
-      setInputValue((prev) => (prev.trim().length > 0 ? prev : draftText));
-      if (hasFiles) setAttachedFiles((prev) => (prev.length > 0 ? prev : attachedFiles));
-    };
+      // Restore the composer (text + attachments) verbatim when a send is
+      // rejected, so a failed send loses nothing and can be retried as-is. The
+      // guards avoid clobbering anything the user re-entered during the await;
+      // the prefix is regenerated from the restored chips on the next send.
+      const restoreComposer = () => {
+        if (fromCard) return;
+        // The draft, not the expansion — the blocks it points at are still held
+        // (nothing is released until a send lands), so the retry expands again.
+        setInputValue((prev) => (prev.trim().length > 0 ? prev : draftText));
+        if (hasFiles) setAttachedFiles((prev) => (prev.length > 0 ? prev : attachedFiles));
+      };
 
-    const rawFallback = () => {
-      // Keystrokes need a PTY. No-PTY (stream) sessions can't fall back — the
-      // POST /message path is their only transport, so a failure there means
-      // the send visibly didn't take rather than silently going nowhere.
-      if (!hasTerminal) {
+      const rawFallback = (error = 'Message could not be sent'): ChatSendResult => {
+        // Keystrokes need a PTY. No-PTY (stream) sessions can't fall back — the
+        // POST /message path is their only transport, so a failure there means
+        // the send visibly didn't take rather than silently going nowhere.
+        if (!hasTerminal) {
+          setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
+          setOptimisticLoading(false);
+          restoreComposer();
+          return { ok: false, error };
+        }
+        // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
+        // makes the TUI fold the CR into the "paste" (a newline in the composer)
+        // instead of submitting; the CR after the ESC[201~ end marker is a real
+        // Enter that submits. Mirrors the daemon's send_message_now. The helper
+        // neutralizes any ESC in the body so it cannot forge its own end marker.
+        write(bracketedPasteSubmit(fullMessage));
+        releaseDelivered();
+        return { ok: true };
+      };
+
+      if (!sessionId) {
+        return rawFallback();
+      }
+
+      // Prefer claudemon's /message endpoint — it owns the whole delivery
+      // policy: buffers a message sent before the session is ready (cold-start
+      // `unknown`, mid-turn `responding`, or an open approval/question dialog),
+      // injects once the prompt has settled, and verifies the submit took
+      // (re-pressing Enter if the TUI swallowed it). A single call suffices —
+      // no client-side retry race. The only rejection left is a stopped session,
+      // where the wrapper is gone and raw keystrokes can't help either — so the
+      // raw PTY write stays reserved for transport failure (daemon unreachable).
+      try {
+        const res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
+        if (res.ok) {
+          releaseDelivered(); // the paste is on its way; stop holding it
+          return { ok: true }; // sent or queued by the daemon
+        }
+        // The session has ended — nothing was delivered. Retract the optimistic
+        // bubble and put the text back in the composer so the send visibly
+        // didn't take (instead of a phantom message above a dead session).
+        console.warn(
+          `[ClaudePane] /message rejected (mode=${res.mode}); session is not accepting input`,
+        );
         setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
         setOptimisticLoading(false);
         restoreComposer();
-        return;
+        return { ok: false, error: `Session is not accepting input (${res.mode ?? 'rejected'})` };
+      } catch (err) {
+        console.warn('[ClaudePane] /message failed:', err);
+        return rawFallback(err instanceof Error ? err.message : String(err));
       }
-      // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
-      // makes the TUI fold the CR into the "paste" (a newline in the composer)
-      // instead of submitting; the CR after the ESC[201~ end marker is a real
-      // Enter that submits. Mirrors the daemon's send_message_now. The helper
-      // neutralizes any ESC in the body so it cannot forge its own end marker.
-      write(bracketedPasteSubmit(fullMessage));
-      releaseDelivered();
-    };
-
-    if (!sessionId) {
-      rawFallback();
-      return;
-    }
-
-    // Prefer claudemon's /message endpoint — it owns the whole delivery
-    // policy: buffers a message sent before the session is ready (cold-start
-    // `unknown`, mid-turn `responding`, or an open approval/question dialog),
-    // injects once the prompt has settled, and verifies the submit took
-    // (re-pressing Enter if the TUI swallowed it). A single call suffices —
-    // no client-side retry race. The only rejection left is a stopped session,
-    // where the wrapper is gone and raw keystrokes can't help either — so the
-    // raw PTY write stays reserved for transport failure (daemon unreachable).
-    try {
-      const res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
-      if (res.ok) {
-        releaseDelivered(); // the paste is on its way; stop holding it
-        return; // sent or queued by the daemon
-      }
-      // The session has ended — nothing was delivered. Retract the optimistic
-      // bubble and put the text back in the composer so the send visibly
-      // didn't take (instead of a phantom message above a dead session).
-      console.warn(
-        `[ClaudePane] /message rejected (mode=${res.mode}); session is not accepting input`,
-      );
-      setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
-      setOptimisticLoading(false);
-      restoreComposer();
-      return;
-    } catch (err) {
-      console.warn('[ClaudePane] /message failed:', err);
-    }
-    rawFallback();
-  }, [inputValue, write, attachedFiles, sessionId, hasTerminal]);
+    },
+    [inputValue, write, attachedFiles, sessionId, hasTerminal],
+  );
 
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
@@ -1457,6 +1468,19 @@ export const useClaudePaneModel = ({
     if (optimisticMessages.length === 0) return base;
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
+  const chatController = useMemo(
+    () => ({
+      send: handleSend,
+      conversation,
+      pending: optimisticMessages,
+    }),
+    [handleSend, conversation, optimisticMessages],
+  );
+  usePublishSessionChatController(
+    session?.sessionId === sessionId ? sessionId : null,
+    paneId,
+    chatController,
+  );
   // Turns dropped from the front by background compaction. Global turn index =
   // convOffset + array index; every key/anchor below uses the global form so a
   // pane flipping compact↔full (agent switch) keeps identical keys and React
