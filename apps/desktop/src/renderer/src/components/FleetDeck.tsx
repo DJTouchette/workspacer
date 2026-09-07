@@ -1,3 +1,6 @@
+import { FleetChatDestination } from './claude/RetainedSessionChat';
+import { TerminateAgentButton } from './TerminateAgentButton';
+import { SmallButton } from './settings/primitives';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X,
@@ -108,6 +111,7 @@ function relTime(ts: number | undefined): string {
 
 interface Props {
   onOpenRecentAgents?: () => void;
+  onTerminateAgent?: (id: string) => Promise<void>;
   /** Inset so the deck sits inside the content area (right of sidebar, below navbar). */
   top: number;
   left: number;
@@ -233,10 +237,10 @@ const expandBtn: React.CSSProperties = {
  * telemetry-face card, arranged by the Attention Router so the ones that need
  * you float to the front and pulse. Rendered as an overlay OVER the still-
  * mounted per-agent workspaces, so entering/leaving the deck never remounts a
- * pane: the agents keep running underneath, and clicking a card simply reveals
- * the one you picked (setActiveAgentId + viewLevel='piloting').
+ * pane. Card activation selects the same retained GUI inside the Fleet shell;
+ * Inspector is a separate action and does not replace chat navigation.
  */
-const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
+const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents, onTerminateAgent }) => {
   ensureFleetKeyframes();
   const {
     agents,
@@ -249,6 +253,36 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
     answer,
     openAgent,
   } = useAttention();
+
+  const [controlUnavailable, setControlUnavailable] = useState<string | undefined>(
+    'Checking agent control connection…',
+  );
+  useEffect(() => {
+    let disposed = false;
+    let eventSeen = false;
+    const apply = (connected: boolean) => {
+      if (!disposed)
+        setControlUnavailable(
+          connected ? undefined : 'Hub connection is offline — reconnect to terminate agents',
+        );
+    };
+    const off = window.electronAPI.onHubStatus?.((status) => {
+      eventSeen = true;
+      apply(status.connected);
+    });
+    const request = window.electronAPI.getHubStatus?.();
+    if (request)
+      void request
+        .then((status) => {
+          if (!eventSeen) apply(!!status?.connected);
+        })
+        .catch(() => apply(false));
+    else setControlUnavailable('Agent control is unavailable');
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, []);
 
   const realAgents = useMemo(() => agents.filter((a) => !a.global), [agents]);
 
@@ -311,17 +345,25 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
     const q = query.trim().toLowerCase();
     const matches = (a: (typeof realAgents)[number]) =>
       !q || a.name.toLowerCase().includes(q) || (a.provider ?? 'claude').toLowerCase().includes(q);
-    return realAgents.filter(matches).sort((a, b) => {
-      const sa = agentAttentionScore(
-        a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined,
-        topByAgent.get(a.id)?.priority ?? 0,
-      );
-      const sb = agentAttentionScore(
-        b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined,
-        topByAgent.get(b.id)?.priority ?? 0,
-      );
-      return sb - sa;
-    });
+    return realAgents
+      .filter((a) => a.manager || matches(a))
+      .sort((a, b) => {
+        if (a.manager || b.manager)
+          return a.manager && b.manager
+            ? realAgents.indexOf(a) - realAgents.indexOf(b)
+            : a.manager
+              ? -1
+              : 1;
+        const sa = agentAttentionScore(
+          a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined,
+          topByAgent.get(a.id)?.priority ?? 0,
+        );
+        const sb = agentAttentionScore(
+          b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined,
+          topByAgent.get(b.id)?.priority ?? 0,
+        );
+        return sb - sa;
+      });
   }, [realAgents, snapshotBySession, topByAgent, query]);
 
   // List-view column sort. 'attn' keeps the needy-first order (the default); the
@@ -356,6 +398,8 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
       }
     };
     return [...sorted].sort((a, b) => {
+      if (a.manager || b.manager)
+        return a.manager && b.manager ? sorted.indexOf(a) - sorted.indexOf(b) : a.manager ? -1 : 1;
       const ka = keyOf(a);
       const kb = keyOf(b);
       const c =
@@ -412,12 +456,14 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const measure = () => setAvail(Math.max(0, el.clientWidth - GRID_PAD_X * 2));
+    const measure = () => {
+      if (el.clientWidth > 0) setAvail(Math.max(0, el.clientWidth - GRID_PAD_X * 2));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [fleetView, realAgents.length]);
   const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (CARD_MIN + GRID_GAP)));
 
   // Card selection (needy-first order == `displayOrder`), with approve/answer
@@ -426,6 +472,22 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // The card flipped in place into its live InspectorCard (null = none).
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const chatAgent = realAgents.find((a) => a.id === chatId);
+  const openChat = (id: string) => {
+    setSelectedId(id);
+    setChatId(id);
+    setExpandedId(null);
+  };
+  const backToFleet = () => {
+    setChatId(null);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(`[data-fleet-agent="${chatId}"]`)?.focus(),
+    );
+  };
+  useEffect(() => {
+    if (chatId && !realAgents.some((a) => a.id === chatId)) setChatId(null);
+  }, [realAgents, chatId]);
   // Keep selection valid as the fleet re-sorts / agents come and go.
   useEffect(() => {
     if (displayOrder.length === 0) {
@@ -458,7 +520,12 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
         continue;
       }
       const chunk: number[] = [];
-      while (i < displayOrder.length && chunk.length < cols && displayOrder[i].id !== expandedId) {
+      while (
+        i < displayOrder.length &&
+        chunk.length < cols &&
+        displayOrder[i].id !== expandedId &&
+        (chunk.length === 0 || !!displayOrder[i].manager === !!displayOrder[chunk[0]].manager)
+      ) {
         posOf[i] = { row: rows.length, col: chunk.length };
         chunk.push(i);
         i++;
@@ -492,6 +559,7 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
       if (isLayerArmed()) return;
       if (eventMatchesCombo(e, kbPrefix)) return;
       const t = e.target as HTMLElement | null;
+      if (t instanceof Element && t.closest('[data-fleet-action], [data-fleet-chat]')) return;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (displayOrder.length === 0) return;
       const stop = () => {
@@ -503,6 +571,11 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
       // Escape collapses an in-place expansion before the deck's own Esc (exit
       // fleet) can fire — this handler runs in the capture phase, so stopping
       // propagation keeps the App-level Esc from also unwinding the deck.
+      if (e.key === 'Escape' && chatId && !expandedId) {
+        stop();
+        backToFleet();
+        return;
+      }
       if (e.key === 'Escape' && expandedId) {
         stop();
         setExpandedId(null);
@@ -514,6 +587,8 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
         setExpandedId((cur) => (cur === displayOrder[idx].id ? null : displayOrder[idx].id));
         return;
       }
+
+      if (t instanceof Element && t.closest('button')) return;
 
       // Movement adapts to the active fleet view: the Cards grid navigates
       // spatially (down = the card BELOW, per the row plan), the List linearly.
@@ -586,13 +661,13 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
       if (!top) {
         if (eventMatchesCombo(e, sc['fleet-open'])) {
           stop();
-          openAgent(displayOrder[idx].id);
+          openChat(displayOrder[idx].id);
         }
         return;
       }
       if (eventMatchesCombo(e, sc['fleet-open'])) {
         stop();
-        openAgent(top.agentId);
+        openChat(top.agentId);
         return;
       }
       if (top.payload.type === 'approval') {
@@ -622,6 +697,7 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
     displayOrder,
     selectedId,
     expandedId,
+    chatId,
     topByAgent,
     approve,
     answer,
@@ -692,8 +768,35 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
         flexDirection: 'column',
       }}
     >
+      <style>{`
+        .fleet-toolbar { flex-wrap: wrap; }
+        .fleet-recent { min-height: 36px; padding: 8px 16px; white-space: nowrap; }
+        .fleet-chat-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+        .fleet-switcher { width: 210px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px; overflow: hidden; }
+        .fleet-managers { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+        .fleet-switcher button { text-align: left; white-space: normal; overflow-wrap: anywhere; min-height: 36px; }
+        .fleet-workers { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+        @media (max-width: 650px) {
+          .fleet-toolbar { padding: 10px 12px !important; gap: 8px !important; }
+          .fleet-recent { flex-basis: 100%; text-align: left; }
+          .fleet-chat-layout { flex-direction: column; }
+          .fleet-switcher { width: auto; max-height: 190px; padding: 6px 12px; }
+          .fleet-managers { flex-direction: row; overflow-x: auto; }
+          .fleet-managers button { flex: 1; min-width: 100px; }
+          .fleet-workers { flex-direction: row; overflow: auto; flex-shrink: 0; min-height: 36px; }
+          .fleet-workers button { flex-shrink: 0; max-width: 180px; }
+          .fleet-table thead { display: none; }
+          .fleet-table tbody, .fleet-table tr { display: block; }
+          .fleet-table tr { display: grid; grid-template-columns: minmax(0, 1fr) 130px; }
+          .fleet-table td { display: none; min-width: 0; max-width: none !important; }
+          .fleet-table td:nth-child(1), .fleet-table td:nth-child(2) { display: block; grid-column: 1; }
+          .fleet-table td:nth-child(7) { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; grid-column: 2; grid-row: 1 / span 2; white-space: normal !important; }
+
+        }
+      `}</style>
       {/* Deck header */}
       <div
+        className="fleet-toolbar"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -819,7 +922,18 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
         >
           <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Dispatch agent
         </button>
-        <button onClick={onOpenRecentAgents} style={expandBtn}>
+        <button
+          className="fleet-recent"
+          onClick={onOpenRecentAgents}
+          style={{
+            ...expandBtn,
+            width: 'auto',
+            height: 'auto',
+            minWidth: 144,
+            padding: '8px 16px',
+            flexShrink: 0,
+          }}
+        >
           Recent agents
         </button>
         <button
@@ -855,342 +969,488 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
         </button>
       </div>
 
-      {/* Content: empty state · dense list · windowed card grid */}
-      {realAgents.length === 0 ? (
-        <div style={CONTENT_SCROLL}>
-          <div
-            style={{
-              marginTop: 80,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              textAlign: 'center',
-              color: 'var(--wks-text-faint)',
-            }}
+      {chatAgent && (
+        <div className="fleet-chat-layout">
+          <nav className="fleet-switcher" aria-label="Fleet agents">
+            <SmallButton label="Back to fleet" onClick={backToFleet} />
+            <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-secondary)' }}>
+              Managers
+            </span>
+            <div className="fleet-managers">
+              {displayOrder
+                .filter((a) => a.manager)
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    data-manager={a.id}
+                    aria-current={chatId === a.id ? 'true' : undefined}
+                    style={{ ...expandBtn, width: 'auto', height: 'auto' }}
+                    onClick={() => openChat(a.id)}
+                  >
+                    {a.name}
+                  </button>
+                ))}
+            </div>
+            <div className="fleet-workers">
+              {displayOrder
+                .filter((a) => !a.manager)
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    aria-current={chatId === a.id ? 'true' : undefined}
+                    style={{ ...expandBtn, width: 'auto', height: 'auto' }}
+                    onClick={() => openChat(a.id)}
+                  >
+                    {a.name}
+                    {topByAgent.has(a.id) ? ' · needs you' : ''}
+                  </button>
+                ))}
+            </div>
+          </nav>
+          <main
+            style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}
           >
             <div
               style={{
                 display: 'flex',
+                flexWrap: 'wrap',
                 alignItems: 'center',
-                justifyContent: 'center',
-                width: 56,
-                height: 56,
-                borderRadius: '50%',
-                marginBottom: 20,
-                // Border only (see the Surface rule) — a ring around the glyph.
-                border: '1px solid var(--wks-border-subtle)',
-                color: 'var(--wks-text-tertiary)',
+                gap: 8,
+                padding: '8px 12px',
               }}
             >
-              <Radar size={26} strokeWidth={1.8} />
+              <strong style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
+                {chatAgent.name}
+              </strong>
+              <SmallButton
+                label="Inspect"
+                onClick={() => setExpandedId(expandedId ? null : chatAgent.id)}
+              />
+              <TerminateAgentButton
+                key={chatAgent.id}
+                agent={chatAgent}
+                snapshot={chatAgent.sessionId ? snapshotBySession[chatAgent.sessionId] : undefined}
+                onTerminate={onTerminateAgent}
+                disabledReason={controlUnavailable}
+              />
             </div>
-            <div
-              style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}
-            >
-              No agents in the fleet
-            </div>
-            <div style={{ fontSize: '0.8rem', marginTop: 6, maxWidth: 300 }}>
-              Dispatch an agent and it'll appear here as a live card.
-            </div>
-            <button
-              onClick={spawnAgent}
-              style={{
-                marginTop: 20,
-                fontSize: '0.8rem',
-                fontFamily: 'inherit',
-                fontWeight: 700,
-                cursor: 'pointer',
-                background: 'var(--wks-accent)',
-                color: 'var(--wks-text-on-accent)',
-                border: 'none',
-                borderRadius: 'var(--wks-radius-md)',
-                padding: '8px 16px',
-                boxShadow: '0 1px 3px var(--wks-shadow)',
-              }}
-            >
-              + Dispatch agent
-            </button>
-          </div>
+            {expandedId === chatAgent.id && (
+              <div style={{ height: 240, overflow: 'auto' }}>
+                <ExpandedAgentCard
+                  agent={chatAgent}
+                  snapshot={
+                    chatAgent.sessionId ? snapshotBySession[chatAgent.sessionId] : undefined
+                  }
+                  onCollapse={() => setExpandedId(null)}
+                  onOpenAsPane={() => openInspectorPane(chatAgent)}
+                />
+              </div>
+            )}
+            <FleetChatDestination
+              sessionId={chatAgent.sessionId ?? chatAgent.lastSessionId ?? null}
+              paneId={chatAgent.tabs?.flatMap((t) => t.panes).find((p) => p.type === 'claude')?.id}
+            />
+            {!chatAgent.sessionId && (
+              <p style={{ padding: 12 }}>Session stopped. Open its inspector to resume.</p>
+            )}
+          </main>
         </div>
-      ) : fleetView === 'list' ? (
-        <div ref={listScrollRef} style={CONTENT_SCROLL}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
-            <thead>
-              <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
-                <th style={lth}>
-                  <SortBtn k="name" label="Agent" />
-                </th>
-                <th style={lth}>Status</th>
-                <th style={lth}>Model</th>
-                <th style={lthNum}>
-                  <SortBtn k="ctx" label="Context" />
-                </th>
-                <th style={lthNum}>
-                  <SortBtn k="cost" label="Cost" />
-                </th>
-                <th style={lthNum}>Plan</th>
-                <th style={lthNum}>
-                  <SortBtn k="act" label="Active" />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayOrder.map((agent) => {
-                const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
-                const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
-                const stats = withRecordedUsage(
-                  deriveSessionStats(snap),
-                  agent.sessionId ? recordedUsage[agent.sessionId] : undefined,
-                );
-                const plan = planProgress(snap?.plan);
-                const sel = selectedId === agent.id;
-                return (
-                  <tr
-                    key={agent.id}
-                    data-fleet-row={agent.id}
-                    onMouseDown={() => setSelectedId(agent.id)}
-                    onClick={() => openAgent(agent.id)}
-                    title={`${agent.name} — ${vis.label}\n${agent.cwd ?? ''}`}
-                    style={{
-                      cursor: 'pointer',
-                      borderTop: '1px solid var(--wks-border-subtle)',
-                      background: sel ? 'var(--wks-bg-selected)' : 'transparent',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!sel)
-                        (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!sel) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                    }}
-                  >
-                    <td
-                      style={sel ? { ...ltd, boxShadow: `inset 3px 0 0 var(--wks-accent)` } : ltd}
+      )}
+      {!chatAgent && (
+        <div style={{ display: 'none' }}>
+          <FleetChatDestination sessionId={null} />
+        </div>
+      )}
+      <div
+        style={{
+          display: chatAgent ? 'none' : 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        {!chatAgent &&
+          fleetView === 'list' &&
+          expandedId &&
+          realAgents.find((a) => a.id === expandedId) && (
+            <div style={{ height: 280, flexShrink: 0 }}>
+              <ExpandedAgentCard
+                agent={realAgents.find((a) => a.id === expandedId)!}
+                snapshot={
+                  snapshotBySession[realAgents.find((a) => a.id === expandedId)!.sessionId ?? '']
+                }
+                onCollapse={() => setExpandedId(null)}
+                onOpenAsPane={() => openInspectorPane(realAgents.find((a) => a.id === expandedId)!)}
+              />
+            </div>
+          )}
+        {/* Content: empty state · dense list · windowed card grid */}
+        {realAgents.length === 0 ? (
+          <div style={CONTENT_SCROLL}>
+            <div
+              style={{
+                marginTop: 80,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                textAlign: 'center',
+                color: 'var(--wks-text-faint)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 56,
+                  height: 56,
+                  borderRadius: '50%',
+                  marginBottom: 20,
+                  // Border only (see the Surface rule) — a ring around the glyph.
+                  border: '1px solid var(--wks-border-subtle)',
+                  color: 'var(--wks-text-tertiary)',
+                }}
+              >
+                <Radar size={26} strokeWidth={1.8} />
+              </div>
+              <div
+                style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}
+              >
+                No agents in the fleet
+              </div>
+              <div style={{ fontSize: '0.8rem', marginTop: 6, maxWidth: 300 }}>
+                Dispatch an agent and it'll appear here as a live card.
+              </div>
+              <button
+                onClick={spawnAgent}
+                style={{
+                  marginTop: 20,
+                  fontSize: '0.8rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  background: 'var(--wks-accent)',
+                  color: 'var(--wks-text-on-accent)',
+                  border: 'none',
+                  borderRadius: 'var(--wks-radius-md)',
+                  padding: '8px 16px',
+                  boxShadow: '0 1px 3px var(--wks-shadow)',
+                }}
+              >
+                + Dispatch agent
+              </button>
+            </div>
+          </div>
+        ) : fleetView === 'list' ? (
+          <div ref={listScrollRef} style={CONTENT_SCROLL}>
+            <table
+              className="fleet-table"
+              style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}
+            >
+              <thead>
+                <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
+                  <th style={lth}>
+                    <SortBtn k="name" label="Agent" />
+                  </th>
+                  <th style={lth}>Status</th>
+                  <th style={lth}>Model</th>
+                  <th style={lthNum}>
+                    <SortBtn k="ctx" label="Context" />
+                  </th>
+                  <th style={lthNum}>
+                    <SortBtn k="cost" label="Cost" />
+                  </th>
+                  <th style={lthNum}>Plan</th>
+                  <th style={lth}>Actions</th>
+                  <th style={lthNum}>
+                    <SortBtn k="act" label="Active" />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayOrder.map((agent) => {
+                  const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+                  const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
+                  const stats = withRecordedUsage(
+                    deriveSessionStats(snap),
+                    agent.sessionId ? recordedUsage[agent.sessionId] : undefined,
+                  );
+                  const plan = planProgress(snap?.plan);
+                  const sel = selectedId === agent.id;
+                  return (
+                    <tr
+                      key={agent.id}
+                      data-fleet-row={agent.id}
+                      data-fleet-agent={agent.id}
+                      tabIndex={0}
+                      onFocus={(e) => {
+                        if (e.target === e.currentTarget) setSelectedId(agent.id);
+                      }}
+                      onMouseDown={() => setSelectedId(agent.id)}
+                      onClick={() => openChat(agent.id)}
+                      title={`${agent.name} — ${vis.label}\n${agent.cwd ?? ''}`}
+                      style={{
+                        cursor: 'pointer',
+                        borderTop: '1px solid var(--wks-border-subtle)',
+                        background: sel ? 'var(--wks-bg-selected)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!sel)
+                          (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!sel) (e.currentTarget as HTMLElement).style.background = 'transparent';
+                      }}
                     >
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          minWidth: 0,
-                        }}
+                      <td
+                        style={sel ? { ...ltd, boxShadow: `inset 3px 0 0 var(--wks-accent)` } : ltd}
                       >
                         <span
                           style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            flexShrink: 0,
-                            background: vis.color,
-                            boxShadow: vis.glow ? `0 0 8px ${vis.color}` : 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            minWidth: 0,
                           }}
-                        />
-                        {/* The deck is the CROSS-AGENT view, so which repo a row
+                        >
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              flexShrink: 0,
+                              background: vis.color,
+                              boxShadow: vis.glow ? `0 0 8px ${vis.color}` : 'none',
+                            }}
+                          />
+                          {/* The deck is the CROSS-AGENT view, so which repo a row
                             belongs to is the fact it most needs and least had —
                             every row was the same shape with the cwd in a
                             tooltip. Status dot first: state is why you are
                             looking, project is which one. */}
-                        <ProjectMark cwd={agent.cwd} projects={config.projects} size={13} />
+                          <ProjectMark cwd={agent.cwd} projects={config.projects} size={13} />
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              color: 'var(--wks-text-primary)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {agent.manager && (
+                              <Compass
+                                size={11}
+                                strokeWidth={2}
+                                style={{ flexShrink: 0, marginRight: 4, verticalAlign: '-1px' }}
+                              />
+                            )}
+                            {agent.name}
+                          </span>
+                        </span>
+                      </td>
+                      <td style={ltd}>
                         <span
                           style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: '0.66rem',
                             fontWeight: 600,
-                            color: 'var(--wks-text-primary)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
+                            color: vis.color,
+                            border: `1px solid ${vis.color}`,
+                            borderRadius: 'var(--wks-radius-pill)',
+                            padding: '1px 9px',
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {agent.manager && (
-                            <Compass
-                              size={11}
-                              strokeWidth={2}
-                              style={{ flexShrink: 0, marginRight: 4, verticalAlign: '-1px' }}
-                            />
-                          )}
-                          {agent.name}
-                        </span>
-                      </span>
-                    </td>
-                    <td style={ltd}>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          fontSize: '0.66rem',
-                          fontWeight: 600,
-                          color: vis.color,
-                          border: `1px solid ${vis.color}`,
-                          borderRadius: 'var(--wks-radius-pill)',
-                          padding: '1px 9px',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        <StatusGlyph
-                          state={agent.sessionId ? snap?.ambientState : undefined}
-                          size={12}
-                          strokeWidth={2.2}
-                          accent="currentColor"
-                        />
-                        {vis.label}
-                      </span>
-                    </td>
-                    <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        {stats.model ? shortModelLabel(stats.model) : '—'}
-                        {/* Federation: which machine this row's agent runs on. */}
-                        {(snap?.hub ?? agent.hub) && (
-                          <HubChip name={(snap?.hub ?? agent.hub)!} offline={!!snap?.hubOffline} />
-                        )}
-                      </span>
-                    </td>
-                    <td style={ltdNum}>
-                      {stats.ctxPct !== undefined ? (
-                        <span style={{ color: ctxColor(stats.ctxPct), fontWeight: 600 }}>
-                          {Math.round(stats.ctxPct)}%
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td
-                      style={{ ...ltdNum, color: 'var(--wks-accent)' }}
-                      // Dash = no figure at all, not $0.00. A recorded figure
-                      // says it is the last one written, not a live reading.
-                      title={
-                        stats.costUSD === undefined
-                          ? absentUsageTitle(usageUnavailable)
-                          : stats.recorded
-                            ? 'Last recorded for this session — not a live reading'
-                            : undefined
-                      }
-                    >
-                      {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}
-                    </td>
-                    <td style={ltdNum}>
-                      {plan ? (
-                        <span
-                          title={plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'}
-                          style={{
-                            color:
-                              plan.done >= plan.total
-                                ? 'var(--wks-success)'
-                                : 'var(--wks-text-secondary)',
-                            fontWeight: 600,
-                          }}
-                        >
-                          {plan.done}/{plan.total}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
-                      <td
-                        style={{ ...ltdNum, color: 'var(--wks-warning)', fontWeight: 700 }}
-                        title="Says it's working but nothing has arrived — the stream may have stalled."
-                      >
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                          <AlertTriangle size={10} strokeWidth={2.25} />
-                          {relTime(snap?.lastActivity)}
+                          <StatusGlyph
+                            state={agent.sessionId ? snap?.ambientState : undefined}
+                            size={12}
+                            strokeWidth={2.2}
+                            accent="currentColor"
+                          />
+                          {vis.label}
                         </span>
                       </td>
-                    ) : (
-                      <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
-                    )}
-                  </tr>
+                      <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          {stats.model ? shortModelLabel(stats.model) : '—'}
+                          {/* Federation: which machine this row's agent runs on. */}
+                          {(snap?.hub ?? agent.hub) && (
+                            <HubChip
+                              name={(snap?.hub ?? agent.hub)!}
+                              offline={!!snap?.hubOffline}
+                            />
+                          )}
+                        </span>
+                      </td>
+                      <td style={ltdNum}>
+                        {stats.ctxPct !== undefined ? (
+                          <span style={{ color: ctxColor(stats.ctxPct), fontWeight: 600 }}>
+                            {Math.round(stats.ctxPct)}%
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td
+                        style={{ ...ltdNum, color: 'var(--wks-accent)' }}
+                        // Dash = no figure at all, not $0.00. A recorded figure
+                        // says it is the last one written, not a live reading.
+                        title={
+                          stats.costUSD === undefined
+                            ? absentUsageTitle(usageUnavailable)
+                            : stats.recorded
+                              ? 'Last recorded for this session — not a live reading'
+                              : undefined
+                        }
+                      >
+                        {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}
+                      </td>
+                      <td style={ltdNum}>
+                        {plan ? (
+                          <span
+                            title={
+                              plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'
+                            }
+                            style={{
+                              color:
+                                plan.done >= plan.total
+                                  ? 'var(--wks-success)'
+                                  : 'var(--wks-text-secondary)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {plan.done}/{plan.total}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td style={ltd}>
+                        <SmallButton label="Inspect" onClick={() => setExpandedId(agent.id)} />
+                        <TerminateAgentButton
+                          agent={agent}
+                          snapshot={snap}
+                          onTerminate={onTerminateAgent}
+                          disabledReason={controlUnavailable}
+                        />
+                      </td>
+                      {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
+                        <td
+                          style={{ ...ltdNum, color: 'var(--wks-warning)', fontWeight: 700 }}
+                          title="Says it's working but nothing has arrived — the stream may have stalled."
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                            <AlertTriangle size={10} strokeWidth={2.25} />
+                            {relTime(snap?.lastActivity)}
+                          </span>
+                        </td>
+                      ) : (
+                        <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div ref={scrollRef} style={CONTENT_SCROLL}>
+            <div
+              style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}
+            >
+              {rowVirtualizer.getVirtualItems().map((vr) => {
+                const row = rows[vr.index] ?? [];
+                const expandedRow = isExpandedRow(row);
+                return (
+                  <div
+                    key={vr.key}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${vr.start}px)`,
+                      // A row's height is its own, not the tallest card's. The gap
+                      // lives in the virtual row size, below this box.
+                      height: expandedRow ? EXPANDED_H : CARD_H,
+                      display: 'grid',
+                      gridTemplateColumns: expandedRow ? '1fr' : `repeat(${cols}, minmax(0, 1fr))`,
+                      gap: GRID_GAP,
+                      // `stretch` (was `start`) is what closes the dead quadrant:
+                      // every cell fills its share of the row.
+                      alignItems: 'stretch',
+                    }}
+                  >
+                    {row.map((i) => {
+                      const agent = displayOrder[i];
+                      return (
+                        <div
+                          key={agent.id}
+                          data-fleet-agent={agent.id}
+                          tabIndex={0}
+                          onFocus={(e) => {
+                            if (e.target === e.currentTarget) setSelectedId(agent.id);
+                          }}
+                          onMouseDown={() => setSelectedId(agent.id)}
+                          style={{
+                            // Grid cell → grid container, so the card stretches to
+                            // the full cell in both axes with no `height: 100%`
+                            // needed on AgentCard itself.
+                            display: 'grid',
+                            minHeight: 0,
+                            // Safety valve: a card that still wants more than
+                            // CARD_H is cut off here instead of stretching the row
+                            // (and its siblings) with it. `clip` rather than
+                            // `auto` — the clip margin keeps the card's hover
+                            // shadow and pulse ring whole, and no cell of the deck
+                            // becomes its own scroll box.
+                            overflow: 'clip',
+                            overflowClipMargin: CELL_CLIP_MARGIN,
+                            borderRadius: 'var(--wks-radius-lg)',
+                            outline:
+                              selectedId === agent.id
+                                ? '2px solid var(--wks-accent)'
+                                : '2px solid transparent',
+                            // The cell now sits exactly on the card, so the ring
+                            // lands 2px outside the card itself.
+                            outlineOffset: 2,
+                            transition: 'outline-color 0.12s',
+                          }}
+                        >
+                          {expandedId === agent.id && !chatAgent ? (
+                            <ExpandedAgentCard
+                              agent={agent}
+                              snapshot={
+                                agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                              }
+                              onCollapse={() => setExpandedId(null)}
+                              onOpenAsPane={() => openInspectorPane(agent)}
+                            />
+                          ) : (
+                            <AgentCard
+                              agent={agent}
+                              snapshot={
+                                agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                              }
+                              onOpen={() => openChat(agent.id)}
+                              onTerminate={onTerminateAgent}
+                              terminationDisabledReason={controlUnavailable}
+                              onInspect={() => setExpandedId(agent.id)}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div ref={scrollRef} style={CONTENT_SCROLL}>
-          <div
-            style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}
-          >
-            {rowVirtualizer.getVirtualItems().map((vr) => {
-              const row = rows[vr.index] ?? [];
-              const expandedRow = isExpandedRow(row);
-              return (
-                <div
-                  key={vr.key}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${vr.start}px)`,
-                    // A row's height is its own, not the tallest card's. The gap
-                    // lives in the virtual row size, below this box.
-                    height: expandedRow ? EXPANDED_H : CARD_H,
-                    display: 'grid',
-                    gridTemplateColumns: expandedRow ? '1fr' : `repeat(${cols}, minmax(0, 1fr))`,
-                    gap: GRID_GAP,
-                    // `stretch` (was `start`) is what closes the dead quadrant:
-                    // every cell fills its share of the row.
-                    alignItems: 'stretch',
-                  }}
-                >
-                  {row.map((i) => {
-                    const agent = displayOrder[i];
-                    return (
-                      <div
-                        key={agent.id}
-                        onMouseDown={() => setSelectedId(agent.id)}
-                        style={{
-                          // Grid cell → grid container, so the card stretches to
-                          // the full cell in both axes with no `height: 100%`
-                          // needed on AgentCard itself.
-                          display: 'grid',
-                          minHeight: 0,
-                          // Safety valve: a card that still wants more than
-                          // CARD_H is cut off here instead of stretching the row
-                          // (and its siblings) with it. `clip` rather than
-                          // `auto` — the clip margin keeps the card's hover
-                          // shadow and pulse ring whole, and no cell of the deck
-                          // becomes its own scroll box.
-                          overflow: 'clip',
-                          overflowClipMargin: CELL_CLIP_MARGIN,
-                          borderRadius: 'var(--wks-radius-lg)',
-                          outline:
-                            selectedId === agent.id
-                              ? '2px solid var(--wks-accent)'
-                              : '2px solid transparent',
-                          // The cell now sits exactly on the card, so the ring
-                          // lands 2px outside the card itself.
-                          outlineOffset: 2,
-                          transition: 'outline-color 0.12s',
-                        }}
-                      >
-                        {expandedId === agent.id ? (
-                          <ExpandedAgentCard
-                            agent={agent}
-                            snapshot={
-                              agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                            }
-                            onCollapse={() => setExpandedId(null)}
-                            onOpenAsPane={() => openInspectorPane(agent)}
-                          />
-                        ) : (
-                          <AgentCard
-                            agent={agent}
-                            snapshot={
-                              agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
-                            }
-                            onInspect={() => setExpandedId(agent.id)}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+            </div>
           </div>
-        </div>
-      )}
-
+        )}
+      </div>
       {/* Footer console — persistent, contextual keyboard affordances + the
           currently-selected agent. Moved out of the cramped header so hints stay
           visible without stealing header width. */}
@@ -1261,7 +1521,7 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents }) => {
               {selectedAgent.name}
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <CornerDownLeft size={11} strokeWidth={2.2} /> open
+              <CornerDownLeft size={11} strokeWidth={2.2} /> chat
             </span>
           </span>
         )}

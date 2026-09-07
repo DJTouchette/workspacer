@@ -1,3 +1,4 @@
+import { useInlineChatState } from './ChatUiScope';
 /**
  * A worker's structured result, rendered as a card instead of a JSON dump.
  *
@@ -200,7 +201,7 @@ const ClampedText: React.FC<{ text: string; limit: number; color?: string }> = (
   limit,
   color,
 }) => {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useInlineChatState('text', text, false);
   const long = text.length > limit;
   const shown = !long || open ? text : `${text.slice(0, limit).trimEnd()}…`;
   return (
@@ -258,7 +259,7 @@ const isRowObject = (v: unknown): v is Record<string, unknown> =>
  *  themselves objects get the key/value treatment rather than their JSON —
  *  an array of records is a shape a per-dispatch schema reaches for often. */
 const StringList: React.FC<{ items: unknown[] }> = ({ items }) => {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useInlineChatState('list', items, false);
   const collapsible = items.length >= ARRAY_COLLAPSE_MIN;
   const shown = collapsible && !open ? items.slice(0, ARRAY_PREVIEW) : items;
   // Record items are multi-line, so they need air between them to read as
@@ -304,7 +305,7 @@ const StringList: React.FC<{ items: unknown[] }> = ({ items }) => {
 /** File paths: the count is the headline, the list is on demand — and each
  *  path is a FileLink, the app's one path affordance. */
 const PathList: React.FC<{ field: ResultField; cwd?: string }> = ({ field, cwd }) => {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useInlineChatState('paths', field, false);
   const paths = field.value as string[];
   // A tooltip is a peek, not the list: a worker that touched 200 files would
   // otherwise hand the pointer a 200-line hover.

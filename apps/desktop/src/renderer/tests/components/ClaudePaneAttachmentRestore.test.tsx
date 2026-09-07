@@ -139,7 +139,7 @@ describe('ClaudePane rejected-send attachment restore', () => {
       files: { length: 1, 0: { path: '/tmp/foo.txt', name: 'foo.txt' } },
     };
     act(() => {
-      (container.firstChild as Element).dispatchEvent(dropEvent);
+      (container.querySelector('[data-session-chat-view]') as Element).dispatchEvent(dropEvent);
     });
 
     // The file chip is shown.

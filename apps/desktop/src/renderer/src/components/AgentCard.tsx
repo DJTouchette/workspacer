@@ -1,3 +1,4 @@
+import { TerminateAgentButton } from './TerminateAgentButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Compass, Diamond, Maximize2, Settings } from 'lucide-react';
 import type { AgentWorkspace } from '../types/pane';
@@ -99,6 +100,8 @@ interface Props {
   /** When set, a small expand button appears in the header — the Fleet Deck
    *  wires it to flip the card in place into the live InspectorCard. */
   onInspect?: () => void;
+  onTerminate?: (id: string) => Promise<void>;
+  terminationDisabledReason?: string;
 }
 
 /**
@@ -115,7 +118,14 @@ interface Props {
  * fill-only input. Depth stops at two. Don't re-add a border to anything here
  * that already has a fill.
  */
-export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect }) => {
+export const AgentCard: React.FC<Props> = ({
+  agent,
+  snapshot,
+  onOpen,
+  onInspect,
+  onTerminate,
+  terminationDisabledReason,
+}) => {
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
@@ -323,6 +333,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         )}
       </div>
 
+      {onTerminate && (
+        <div style={{ padding: '0 12px 8px' }}>
+          <TerminateAgentButton
+            agent={agent}
+            snapshot={snapshot}
+            onTerminate={onTerminate}
+            disabledReason={terminationDisabledReason}
+          />
+        </div>
+      )}
       {/* Meta line: model · turns · last activity · folder */}
       <div
         style={{
@@ -560,7 +580,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   Deny
                 </button>
                 <button
-                  onClick={() => openAgent(agent.id)}
+                  onClick={onOpen ?? (() => openAgent(agent.id))}
                   style={{ ...qa('var(--wks-text-secondary)'), marginLeft: 'auto' }}
                 >
                   Open

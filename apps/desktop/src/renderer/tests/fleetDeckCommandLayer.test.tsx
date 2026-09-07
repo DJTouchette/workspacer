@@ -10,7 +10,7 @@
  * dispatcher second) and that unarmed keys keep today's deck behavior.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, renderHook, cleanup } from '@testing-library/react';
+import { render, renderHook, cleanup, fireEvent, screen } from '@testing-library/react';
 import FleetDeck from '../src/components/FleetDeck';
 import { useKeyboardNav } from '../src/hooks/useKeyboardNav';
 import { setLayerArmed } from '../src/lib/layerArmed';
@@ -136,4 +136,19 @@ describe('FleetDeck yields to the command layer', () => {
     const e = press({ key: ' ', code: 'Space', ctrlKey: true });
     expect(e.defaultPrevented).toBe(false);
   });
+});
+
+it('Enter expands chat, i remains secondary inspection, and Escape returns to Fleet', () => {
+  render(<FleetDeck top={0} left={0} />);
+  fireEvent.keyDown(window, { key: 'Enter' });
+  expect(document.querySelector('[data-fleet-chat="s1"]')).toBeInTheDocument();
+  expect(h.attention.openAgent).not.toHaveBeenCalled();
+  fireEvent.keyDown(window, { key: 'i' });
+  expect(screen.getByTitle('Collapse (Esc)')).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByTitle('Collapse (Esc)')).not.toBeInTheDocument();
+  expect(document.querySelector('[data-fleet-chat="s1"]')).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('button', { name: 'Back to fleet' })).not.toBeInTheDocument();
+  expect(h.attention.setViewLevel).not.toHaveBeenCalled();
 });

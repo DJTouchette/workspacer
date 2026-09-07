@@ -1,3 +1,4 @@
+import { useInlineChatState } from './ChatUiScope';
 /**
  * Inline "Changed files" card at the end of a completed agent turn: a header
  * with total +/− counts and Collapse all / View diff actions over a collapsible
@@ -111,7 +112,11 @@ export const ChangedFilesCard: React.FC<{
   }, [snapshot]);
 
   const allDirs = useMemo(() => collectDirPaths(entries), [entries]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = useInlineChatState<ReadonlySet<string>>(
+    'changed-files',
+    cwd,
+    new Set(),
+  );
   const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
   const toggleDir = (path: string) =>
     setCollapsed((prev) => {

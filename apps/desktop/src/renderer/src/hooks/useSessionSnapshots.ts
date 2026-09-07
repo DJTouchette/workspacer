@@ -1,3 +1,4 @@
+import { clearSessionChatUiState } from './useSessionChatUiState';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { compactClaudeSnapshotForBackground } from '../lib/compactClaudeSnapshot';
@@ -78,6 +79,7 @@ export function useSessionSnapshots(
     refreshSessionSnapshots();
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       if (shouldEvictSession(sessionId, snapshot.status)) {
+        clearSessionChatUiState(sessionId);
         setStatusBySession((prev) => omitSession(prev, sessionId));
         setSnapshotBySession((prev) => omitSession(prev, sessionId));
         // No-op after an explicit terminate — the agent is already gone by the
@@ -101,6 +103,7 @@ export function useSessionSnapshots(
   // session's full transcript for the rest of the app's lifetime.
   const pruneSession = useCallback((sessionId: string | undefined) => {
     if (!sessionId) return;
+    clearSessionChatUiState(sessionId);
     setStatusBySession((prev) => omitSession(prev, sessionId));
     setSnapshotBySession((prev) => omitSession(prev, sessionId));
   }, []);

@@ -1,102 +1,88 @@
-import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
+import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
-import { useClaudeSession } from '../hooks/useClaudeSession';
-import { providerLabel } from '../hooks/useAgentManager';
-import { useConfig } from '../hooks/useConfig';
-import { useTheme } from '../hooks/useTheme';
-import type { ConversationTurn, ToolCall, PendingQuestion } from '../types/claudeSession';
-import { anchorWork } from '../lib/anchorWork';
-import { tailPadForAnchor, distanceFromContentEnd } from '../lib/chatScroll';
-import type { AgentProvider } from '../types/pane';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ensureKeyframes, sendApproval } from '../components/claude-shared';
+import { ChatUiScope } from '../components/claude/ChatUiScope';
+import { type HandoffSettings } from '../components/claude/HandoffDialog';
 import {
-  claudeColors as colors,
-  ensureKeyframes,
-  StatusBadge,
-  sendApproval,
-} from '../components/claude-shared';
-import { buildXtermAppKeyPredicate, resolveLeader } from '../lib/shortcuts';
+  RetainedSessionChat,
+  useFleetChatDestination,
+} from '../components/claude/RetainedSessionChat';
+import { clearMdCache } from '../components/markdown';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
-import { onChatScroll } from '../lib/chatScrollBus';
-import { BrandSpinner } from '../components/Brand';
-import { RefreshCw } from '../components/icons';
-import { PanelRight, ArrowRightLeft, Clock, KeyRound } from 'lucide-react';
-import { HandoffDialog, type HandoffSettings } from '../components/claude/HandoffDialog';
-import { requestHandoff } from '../lib/watchBus';
+import { providerLabel } from '../hooks/useAgentManager';
+import { useClaudeSession } from '../hooks/useClaudeSession';
+import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
+import { useConfig } from '../hooks/useConfig';
+import { useSessionChatRef, useSessionChatState } from '../hooks/useSessionChatUiState';
+import { useTheme } from '../hooks/useTheme';
+import { anchorWork } from '../lib/anchorWork';
+import { reportAttachmentFailures, uploadAttachments } from '../lib/attachmentUpload';
 import { bracketedPasteSubmit } from '../lib/bracketedPaste';
-import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
-import { createRemoteConversationSync } from '../lib/federation';
-import { uploadAttachments, reportAttachmentFailures } from '../lib/attachmentUpload';
-import ErrorBoundary from '../components/ErrorBoundary';
-import { clearMdCache, MarkdownFileCwdProvider } from '../components/markdown';
+import { distanceFromContentEnd, tailPadForAnchor } from '../lib/chatScroll';
+import { onChatScroll } from '../lib/chatScrollBus';
 import { clearTokenCache } from '../lib/diff/highlight';
+import { createRemoteConversationSync } from '../lib/federation';
+import { buildXtermAppKeyPredicate, resolveLeader } from '../lib/shortcuts';
+import { isTermVisible, quoteFontFamily, refitAndRepaint } from '../lib/terminalUtils';
+import { requestHandoff } from '../lib/watchBus';
+import type { ConversationTurn, PendingQuestion, ToolCall } from '../types/claudeSession';
+import type { AgentProvider } from '../types/pane';
+import { SessionChatView } from './SessionChatView';
 
 // ── Sub-components ──
-import { InlineWorkLog } from '../components/claude/InlineWorkLog';
-import { TasksCard, planSignature } from '../components/claude/TasksCard';
-import { ConversationMessage } from '../components/claude/ConversationMessage';
-import { HtmlCardHostProvider } from '../components/claude/HtmlResponseCard';
-import { WorkingTimer } from '../components/claude/WorkingTimer';
-import { CommandCard } from '../components/claude/CommandCard';
-import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
-import { permissionModeLabel } from '../lib/providerCaps';
-import { TurnDivider } from '../components/claude/TurnDivider';
-import { NeedsYouDock } from '../components/claude/NeedsYouDock';
-import {
-  AnsweredQuestionCard,
-  type ResolvedQuestionRecord,
-} from '../components/claude/AnsweredQuestionCard';
-import { Composer } from '../components/claude/Composer';
-import { WorkCard } from '../components/claude/WorkCard';
-import { ToolTraceCard } from '../components/claude/ToolTraceCard';
-import { SkillInventoryProvider } from '../contexts/SkillInventoryContext';
-import { ChangedFilesCard } from '../components/claude/ChangedFilesCard';
-import {
-  collectEditedFiles,
-  ensureTurnSnapshot,
-  getTurnSnapshot,
-  estimateSnapshot,
-} from '../lib/turnChanges';
-import { InspectorRail } from '../components/claude/InspectorRail';
-import { DropOverlay } from '../components/claude/DropOverlay';
-import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
-import { SessionStatusBar } from '../components/claude/SessionStatusBar';
-import { ComposerControls, type RestartOverrides } from '../components/claude/ComposerControls';
-import {
-  pickFailoverProfile,
-  profileFailoverPossible,
-  windowExhausted,
-} from '../lib/profileFailover';
-import type { ClaudeProfile } from '../../../main/shared/ipcTypes';
+import { countUserSends } from '../../../main/shared/conversationCount';
 import {
   buildReplyPrefix,
   REPLY_PREFIX_RE,
   type FleetMessageEntry,
 } from '../../../main/shared/fleetMessages';
+import type { ClaudeProfile } from '../../../main/shared/ipcTypes';
 import {
-  classifyFile,
+  AnsweredQuestionCard,
+  type ResolvedQuestionRecord,
+} from '../components/claude/AnsweredQuestionCard';
+import { ChangedFilesCard } from '../components/claude/ChangedFilesCard';
+import { CommandCard } from '../components/claude/CommandCard';
+import { type RestartOverrides } from '../components/claude/ComposerControls';
+import { ConversationMessage } from '../components/claude/ConversationMessage';
+import type { AttachedFile } from '../components/claude/fileAttachment';
+import {
   buildPromptPrefix,
+  classifyFile,
   extractFilePaths,
   mergeAttachments,
 } from '../components/claude/fileAttachment';
-import type { AttachedFile } from '../components/claude/fileAttachment';
 import {
-  shouldCollapsePaste,
-  pastePlaceholder,
   expandPastedText,
   holdBlock,
-  releaseBlocks,
+  pastePlaceholder,
   referencedBlockIds,
+  releaseBlocks,
+  shouldCollapsePaste,
   spliceAtSelection,
 } from '../components/claude/pastedText';
+import { planSignature } from '../components/claude/TasksCard';
+import { ToolTraceCard } from '../components/claude/ToolTraceCard';
+import { TurnDivider } from '../components/claude/TurnDivider';
+import { WorkCard } from '../components/claude/WorkCard';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
+import {
+  pickFailoverProfile,
+  profileFailoverPossible,
+  windowExhausted,
+} from '../lib/profileFailover';
 import type { SlashItem } from '../lib/slashItems';
+import {
+  collectEditedFiles,
+  ensureTurnSnapshot,
+  estimateSnapshot,
+  getTurnSnapshot,
+} from '../lib/turnChanges';
 import type { LibraryItem } from '../types/library';
-import { countUserSends } from '../../../main/shared/conversationCount';
 
 /**
  * Map a submitted answer payload back to human-readable display strings (one per
@@ -153,7 +139,7 @@ interface ClaudePaneProps {
 type ViewMode = 'gui' | 'terminal';
 
 /** Number of conversation turns rendered per page (oldest load on scroll-up) */
-const CONVERSATION_PAGE_SIZE = 60;
+export const CONVERSATION_PAGE_SIZE = 60;
 
 // ── Main component ──
 
@@ -165,10 +151,10 @@ const CONVERSATION_PAGE_SIZE = 60;
  */
 type PendingUserTurn = ConversationTurn & { queued?: boolean };
 
-const ClaudePane: React.FC<ClaudePaneProps> = ({
+export const useClaudePaneModel = ({
   paneId,
   title,
-  isActive,
+  isActive: paneActive,
   cwd,
   profileId,
   resumeSessionId,
@@ -178,7 +164,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   provider,
   transport: transportProp,
   onPtyReady,
-}) => {
+}: ClaudePaneProps) => {
+  const fleetDestination = useFleetChatDestination();
   const { config, save } = useConfig();
   // "Does the APP own this key?" for the terminal view's xterm handler —
   // config-derived; see buildXtermAppKeyPredicate (twin usage in TerminalPane).
@@ -228,54 +215,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const noopSetView = useCallback((_v: React.SetStateAction<ViewMode>) => {}, []);
   // hasTerminal / viewMode are derived after the session snapshot is available
   // (the snapshot is the authority on the Claude transport) — see below.
-  const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
-  const [inputValue, setInputValue] = useState(initialPrompt ?? '');
-  const [showScrollBtn, setShowScrollBtn] = useState(false);
-  const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
-  const [cancelledAt, setCancelledAt] = useState(0);
-  const [visibleCount, setVisibleCount] = useState(CONVERSATION_PAGE_SIZE);
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounterRef = useRef(0);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const termInitRef = useRef(false);
-  // Guards the one-shot session spawn so the visible-fit retry loop below can't
-  // start it twice (sessionId only lands async, after the spawn resolves).
   const sessionStartedRef = useRef(false);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  // Marker sitting immediately above the newest user message — the element the
-  // tail spacer pins to the top of the viewport after a send (see chatScroll).
-  const pinAnchorRef = useRef<HTMLDivElement>(null);
-  const contentAreaRef = useRef<HTMLDivElement>(null);
-  // The pane's outermost element — the drop target (see the drag & drop effect).
-  const paneRootRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const { terminalTheme } = useTheme();
-  const termCfg = config.terminal;
-
-  // Mirror viewMode into a ref so the run-once xterm-init effect can read the
-  // current view without re-running (and re-spawning) on every toggle.
-  // (Assigned below, once viewMode is derived from the session snapshot.)
-  const viewModeRef = useRef<ViewMode>('gui');
-
-  // Inject keyframes
-  useEffect(() => {
-    ensureKeyframes();
-  }, []);
-
-  // Set CSS variable for mono font
-  useEffect(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty(
-        '--claude-mono-font',
-        termCfg.fontFamily || 'var(--wks-font-mono)',
-      );
-    }
-  }, [termCfg.fontFamily]);
-
   // The session behind this pane is dead: terminal:exit fires both for live
   // exits and for a restored pane whose attach target is a stopped daemon row
   // (verifyAttachTarget). Surfaced in the GUI view as a "Session stopped"
@@ -310,6 +254,76 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     onExit: handleExit,
     defer: true,
   });
+
+  const isActive = fleetDestination
+    ? !!sessionId &&
+      fleetDestination.sessionId === sessionId &&
+      (!fleetDestination.paneId || fleetDestination.paneId === paneId)
+    : paneActive;
+  const inFleet =
+    !!sessionId &&
+    fleetDestination?.sessionId === sessionId &&
+    (!fleetDestination.paneId || fleetDestination.paneId === paneId);
+
+  const uiSessionKey = sessionId ?? attachSessionId ?? resumeSessionId ?? `pane:${paneId}`;
+  const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
+  const [inputValue, setInputValue] = useSessionChatState(
+    uiSessionKey,
+    'inputValue',
+    initialPrompt ?? '',
+  );
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [approvalDismissedAt, setApprovalDismissedAt] = useSessionChatState(
+    uiSessionKey,
+    'approvalDismissedAt',
+    0,
+  );
+  const [cancelledAt, setCancelledAt] = useSessionChatState(uiSessionKey, 'cancelledAt', 0);
+  const [visibleCount, setVisibleCount] = useSessionChatState(
+    uiSessionKey,
+    'visibleCount',
+    CONVERSATION_PAGE_SIZE,
+  );
+  const [attachedFiles, setAttachedFiles] = useSessionChatState<AttachedFile[]>(
+    uiSessionKey,
+    'attachedFiles',
+    [],
+  );
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+  // Guards the one-shot session spawn so the visible-fit retry loop below can't
+  // start it twice (sessionId only lands async, after the spawn resolves).
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Marker sitting immediately above the newest user message — the element the
+  // tail spacer pins to the top of the viewport after a send (see chatScroll).
+  const pinAnchorRef = useRef<HTMLDivElement>(null);
+  const contentAreaRef = useRef<HTMLDivElement>(null);
+  // The pane's outermost element — the drop target (see the drag & drop effect).
+  const paneRootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const { terminalTheme } = useTheme();
+  const termCfg = config.terminal;
+
+  // Mirror viewMode into a ref so the run-once xterm-init effect can read the
+  // current view without re-running (and re-spawning) on every toggle.
+  // (Assigned below, once viewMode is derived from the session snapshot.)
+  const viewModeRef = useRef<ViewMode>('gui');
+
+  // Inject keyframes
+  useEffect(() => {
+    ensureKeyframes();
+  }, []);
+
+  // Set CSS variable for mono font
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty(
+        '--claude-mono-font',
+        termCfg.fontFamily || 'var(--wks-font-mono)',
+      );
+    }
+  }, [termCfg.fontFamily]);
 
   // Command-layer chat motions (prefix Shift+K/J half-page, g g top, Shift+G
   // bottom) — only the ACTIVE pane answers. GUI view scrolls the chat
@@ -440,7 +454,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // while any real change to the tasks brings the card back.
   const plan = session?.plan;
   const planSig = planSignature(plan);
-  const [dismissedPlanSig, setDismissedPlanSig] = useState<string | null>(null);
+  const [dismissedPlanSig, setDismissedPlanSig] = useSessionChatState<string | null>(
+    uiSessionKey,
+    'dismissedPlanSig',
+    null,
+  );
   const showTasksCard = planSig !== '' && dismissedPlanSig !== planSig;
 
   // Where the agent is actually working right now. `cwd` (the spawn dir)
@@ -555,10 +573,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // lives on the peer machine — the local attach is a stream-less adoption
   // (see CLAUDE_ATTACH in main's ipc.ts), so a terminal here would stay dark.
   const hasTerminal = !session?.hub && ((isClaude && !isStream) || (isHybrid && !managedStream));
-  const showViewToggle = hasGui && hasTerminal; // both surfaces → show the toggle
+  const showViewToggle = !inFleet && hasGui && hasTerminal; // both surfaces → show the toggle
   // Lock to the sole available surface when the provider doesn't offer both;
   // any auto-switch below then becomes a no-op.
-  const viewMode: ViewMode = !hasGui ? 'terminal' : !hasTerminal ? 'gui' : viewModeState;
+  const viewMode: ViewMode = inFleet
+    ? 'gui'
+    : !hasGui
+      ? 'terminal'
+      : !hasTerminal
+        ? 'gui'
+        : viewModeState;
   const setViewMode = showViewToggle ? setViewModeState : noopSetView;
   viewModeRef.current = viewMode;
 
@@ -867,7 +891,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // bottom; the moment they scroll up (same threshold that reveals the
   // scroll-to-bottom button) the view stops following, and it resumes when
   // they return. A ref, not state — read from the ResizeObserver below.
-  const stickToBottomRef = useRef(true);
+  const stickToBottomRef = useSessionChatRef(uiSessionKey, 'stickToBottomRef', true);
   /** True while a scroll WE issued is in flight, so its scroll event isn't
    *  mistaken for the user scrolling away. See followTail / handleScroll. */
   const programmaticScrollRef = useRef(false);
@@ -877,9 +901,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // room below it instead of both being crushed against the composer. Armed by
   // the first send in this pane (a freshly-restored transcript still opens at
   // its natural bottom), then re-derived on every content/viewport resize.
-  const [tailPad, setTailPad] = useState(0);
-  const tailPadRef = useRef(0);
-  const pinArmedRef = useRef(false);
+  const [tailPad, setTailPad] = useSessionChatState(uiSessionKey, 'tailPad', 0);
+  const tailPadRef = useSessionChatRef(uiSessionKey, 'tailPadRef', 0);
+  const pinArmedRef = useSessionChatRef(uiSessionKey, 'pinArmedRef', false);
+  const scrollTopRef = useSessionChatRef(uiSessionKey, 'scrollTopRef', 0);
 
   // Track scroll position for "scroll to bottom" button + lazy load older messages
   const handleScroll = useCallback(() => {
@@ -916,6 +941,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       programmaticScrollRef.current = false;
       return;
     }
+    scrollTopRef.current = container.scrollTop;
     stickToBottomRef.current = rawDist <= 150;
   }, []);
 
@@ -1083,8 +1109,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Text held aside for the composer's `[Pasted text #N]` markers, and the
   // counter that numbers them. A ref, not state: nothing renders from it, and
   // handleSend must read the blocks pasted moments earlier, not a stale copy.
-  const pastedBlocksRef = useRef(new Map<number, string>());
-  const pasteCounterRef = useRef(0);
+  const pastedBlocksRef = useSessionChatRef(
+    uiSessionKey,
+    'pastedBlocksRef',
+    new Map<number, string>(),
+  );
+  const pasteCounterRef = useSessionChatRef(uiSessionKey, 'pasteCounterRef', 0);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     // 1. Files with a real path on disk (from a file manager) → attachments.
@@ -1203,20 +1233,32 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // regardless of content — content-based matching was unreliable because
   // claude's JSONL records the post-input-processing text which can differ
   // from what we sent (whitespace, paste prefixes, autocomplete munging).
-  const [optimisticMessages, setOptimisticMessages] = useState<PendingUserTurn[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useSessionChatState<PendingUserTurn[]>(
+    uiSessionKey,
+    'optimisticMessages',
+    [],
+  );
   // Mirrors of state the send handler needs at CALL time. Both are declared
   // further down the body (ambientIdle) or would churn the callback's deps
   // (the pending count), and handleSend only ever runs from an event, long
   // after this render's body finished.
-  const pendingCountRef = useRef(0);
+  const pendingCountRef = useSessionChatRef(uiSessionKey, 'pendingCountRef', 0);
   pendingCountRef.current = optimisticMessages.length;
-  const [optimisticLoading, setOptimisticLoading] = useState(false);
+  const [optimisticLoading, setOptimisticLoading] = useSessionChatState(
+    uiSessionKey,
+    'optimisticLoading',
+    false,
+  );
   // Count of user-messages we've seen consumed by session.conversation.
-  const consumedUserCountRef = useRef(0);
+  const consumedUserCountRef = useSessionChatRef(uiSessionKey, 'consumedUserCountRef', 0);
   // Whether the session has actually left idle (→ thinking/streaming) since the
   // last optimistic send. Guards the idle-clear below so the *pre-send* idle
   // snapshot can't cancel the optimistic bridge before the turn even starts.
-  const sawServerActivitySinceSendRef = useRef(false);
+  const sawServerActivitySinceSendRef = useSessionChatRef(
+    uiSessionKey,
+    'sawServerActivitySinceSendRef',
+    false,
+  );
 
   // Reply to a fleet wake entry: prefix the composer with `Re: session:<id>
   // (label) — ` so the reference travels as ordinary prompt text (the only
@@ -1450,7 +1492,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // so the picker kept re-prompting until PostToolUse cleared the snapshot.
   // A signature only re-opens the picker when a *different* question set
   // arrives.
-  const [dismissedQuestionSig, setDismissedQuestionSig] = useState<string | null>(null);
+  const [dismissedQuestionSig, setDismissedQuestionSig] = useSessionChatState<string | null>(
+    uiSessionKey,
+    'dismissedQuestionSig',
+    null,
+  );
   // When the snapshot's questions clear (PostToolUse), the answered request is
   // over — reset the dismissal so a textually identical LATER question set
   // still re-opens the picker.
@@ -1466,7 +1512,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // the daemon snapshot) and anchored by conversation index, so it survives the
   // snapshot rebuilds that happen on every resync. Cleared when the session or
   // its conversation is reset (see the optimistic-reset effect + sessionId one).
-  const [resolvedQuestions, setResolvedQuestions] = useState<ResolvedQuestionRecord[]>([]);
+  const [resolvedQuestions, setResolvedQuestions] = useSessionChatState<ResolvedQuestionRecord[]>(
+    uiSessionKey,
+    'resolvedQuestions',
+    [],
+  );
   useEffect(() => {
     setResolvedQuestions([]);
   }, [sessionId]);
@@ -1553,7 +1603,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [conversation]);
   // Read through a ref so a follow-up message queued MID-run (which moves
   // lastUserTs) can't restart the clock on a turn that never stopped.
-  const lastUserTsRef = useRef(lastUserTs);
+  const lastUserTsRef = useSessionChatRef(uiSessionKey, 'lastUserTsRef', lastUserTs);
   lastUserTsRef.current = lastUserTs;
   // When we last watched this session go idle — the end of the previous turn.
   // A user turn stamped BEFORE that instant belongs to a turn that is over, so
@@ -1562,11 +1612,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // turn routinely begins before its own user message has been folded in. Left
   // at 0 until we actually observe an idle, so an attach mid-turn (we never saw
   // the boundary) still trusts the transcript and reports the real wait.
-  const lastIdleAtRef = useRef(0);
+  const lastIdleAtRef = useSessionChatRef(uiSessionKey, 'lastIdleAtRef', 0);
   useEffect(() => {
     if (ambientIdle) lastIdleAtRef.current = Date.now();
   }, [ambientIdle]);
-  const [workStartedAt, setWorkStartedAt] = useState<number | null>(null);
+  const [workStartedAt, setWorkStartedAt] = useSessionChatState<number | null>(
+    uiSessionKey,
+    'workStartedAt',
+    null,
+  );
   useEffect(() => {
     // Streaming wins over idle: the optimistic bridge right after a send is
     // "streaming" while ambientState is STILL idle (the daemon hasn't flipped
@@ -2177,7 +2231,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       );
     }
 
-    return items;
+    return items.map((item) =>
+      React.isValidElement(item) && sessionId ? (
+        <ChatUiScope.Provider key={item.key} value={{ sessionId, turn: String(item.key) }}>
+          {item}
+        </ChatUiScope.Provider>
+      ) : (
+        item
+      ),
+    );
     // changesVersion re-renders cards once a frozen git snapshot lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -2199,726 +2261,113 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     handleReply,
   ]);
 
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !isActive || stickToBottomRef.current) return;
+    programmaticScrollRef.current = true;
+    container.scrollTop = scrollTopRef.current;
+    const timer = setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isActive, sessionId, conversation, visibleCount]);
+
+  return {
+    inFleet,
+    agentName,
+    approvalDismissedAt,
+    attachSessionId,
+    attachedFiles,
+    canSwitchProfile,
+    cancelTask,
+    cardHost,
+    claudeTransport,
+    config,
+    contentAreaRef,
+    conversation,
+    cwd,
+    dockApproval,
+    dockQuestions,
+    effectiveCwd,
+    forceRepaint,
+    handleAnswer,
+    handleApprovalRespond,
+    handleDecline,
+    handleHandoff,
+    handlePaste,
+    handleRestartWith,
+    handleScroll,
+    handleSend,
+    handleSlashPick,
+    handoffBusy,
+    handoffOpen,
+    hasOlderMessages,
+    hasTerminal,
+    historyPending,
+    initialPrompt,
+    inputRef,
+    inputValue,
+    isClaude,
+    isDragOver,
+    isStreaming,
+    liveProfileId,
+    liveSubagents,
+    liveToolCalls,
+    liveWorkflows,
+    loadOlderMessages,
+    needsSignIn,
+    openFilePicker,
+    paneRootRef,
+    pendingApproval,
+    plan,
+    planSig,
+    profileId,
+    provider,
+    railOpen,
+    removeAttachedFile,
+    renderedConversation,
+    retry,
+    save,
+    scrollContainerRef,
+    scrollToBottom,
+    session,
+    sessionExited,
+    sessionId,
+    setDismissedPlanSig,
+    setHandoffOpen,
+    setInputValue,
+    setViewMode,
+    showHookHint,
+    showScrollBtn,
+    showTasksCard,
+    showTimestamps,
+    showViewToggle,
+    slashItems,
+    spawnError,
+    subagents,
+    tailPad,
+    termContainerRef,
+    title,
+    toggleRail,
+    viewMode,
+    visibleCount,
+    workStartedAt,
+    workflows,
+  };
+};
+
+const ClaudePaneContent: React.FC<ClaudePaneProps> = (props) => {
+  const model = useClaudePaneModel(props);
   return (
-    // The session's skill inventory, provided once for the whole pane: a Skill
-    // tool call carries only a name, and every card that renders one looks the
-    // rest up here (description, origin, file) instead of re-deriving it.
-    <SkillInventoryProvider skills={session?.statusLine?.capabilities?.inventory?.skills}>
-      <div
-        ref={paneRootRef}
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: colors.bg,
-          color: colors.text,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        }}
-      >
-        {/* Content + inspector rail row — the rail is a sibling of the content
-          area (not nested in the GUI view) so it stays put across GUI/Term. */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
-          <div
-            ref={contentAreaRef}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: 'hidden',
-              position: 'relative',
-              // A real column: the term/GUI viewport fills the top, the status
-              // bar takes its own row below. As a plain block (with the GUI view
-              // at height:100%) the bar rendered past the clipped edge and was
-              // invisible.
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {isDragOver && <DropOverlay />}
-
-            {/* One-time account sign-in (fresh "Add Claude Account" profile):
-              shown in BOTH views until the profile's credentials appear. */}
-            {needsSignIn && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '6px 12px',
-                  flexShrink: 0,
-                  fontSize: '0.72rem',
-                  color: 'var(--wks-text-secondary)',
-                  background: 'color-mix(in srgb, var(--wks-warning) 10%, transparent)',
-                  borderBottom: '1px solid var(--wks-border-subtle)',
-                }}
-              >
-                <KeyRound size={13} style={{ color: 'var(--wks-warning)', flexShrink: 0 }} />
-                {hasTerminal ? (
-                  <span>
-                    One-time sign-in: this profile's account isn't logged in yet — run{' '}
-                    <code style={{ fontFamily: 'var(--wks-font-mono)' }}>/login</code> in this
-                    terminal. The chat view takes over automatically once you're in.
-                  </span>
-                ) : (
-                  <span>
-                    This profile's account isn't logged in yet. Dispatch it once on the Terminal
-                    transport (or run{' '}
-                    <code style={{ fontFamily: 'var(--wks-font-mono)' }}>claude</code> with this
-                    profile in any terminal) to sign in.
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Term/GUI viewport — both views fill this box; the status bar is
-              its in-flow sibling below, inside the same content column. */}
-            <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-              {/* Terminal view (always mounted, visibility toggled) */}
-              <div
-                ref={termContainerRef}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: viewMode === 'terminal' ? 'block' : 'none',
-                }}
-              />
-
-              {/* GUI view — always mounted; visibility toggled via CSS so scroll
-            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
-              <div
-                style={
-                  {
-                    height: '100%',
-                    display: viewMode === 'gui' ? 'flex' : 'none',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                    // Drives the conversation/markdown font scaling (see ConversationMessage
-                    // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
-                    // renderer (Library, etc.) is unaffected.
-                    ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
-                  } as React.CSSProperties
-                }
-              >
-                {/* Conversation scroll area */}
-                <div
-                  ref={scrollContainerRef}
-                  onScroll={handleScroll}
-                  style={{
-                    flex: 1,
-                    overflowY: 'auto',
-                    padding: '12px 16px',
-                    position: 'relative',
-                    // Promote to its own compositor layer so streaming/markdown
-                    // repaints don't corrupt the backdrop-filter snapshots of the
-                    // surrounding glass (transient garble that cleared on repaint).
-                    transform: 'translateZ(0)',
-                    contain: 'paint',
-                  }}
-                >
-                  {/* Centered content container — the shared chat measure
-                    (--wks-chat-width), same as the composer and the docks. */}
-                  <div
-                    style={{
-                      maxWidth: 'var(--wks-chat-width)',
-                      margin: '0 auto',
-                    }}
-                  >
-                    {/* Empty states */}
-                    {conversation.length === 0 && !session && spawnError && (
-                      <div
-                        style={{
-                          position: 'relative',
-                          textAlign: 'center',
-                          marginTop: 48,
-                          color: colors.mutedDim,
-                          animation: 'claudeFadeIn 0.2s ease-out',
-                        }}
-                      >
-                        <AgentHero
-                          provider={provider ?? 'claude'}
-                          dimLogo
-                          title={`Couldn’t start ${agentName}`}
-                          titleColor={colors.error}
-                        />
-                        <div
-                          style={{
-                            position: 'relative',
-                            fontSize: '0.72rem',
-                            margin: '8px auto 0',
-                            maxWidth: 420,
-                            lineHeight: 1.5,
-                            color: colors.mutedDim,
-                          }}
-                        >
-                          {spawnError.message || `The ${agentName} session failed to start.`}
-                        </div>
-                        <button
-                          onClick={retry}
-                          style={{
-                            position: 'relative',
-                            marginTop: 16,
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            padding: '4px 16px',
-                            borderRadius: 6,
-                            border: `1px solid ${colors.accent}`,
-                            backgroundColor: 'transparent',
-                            color: colors.accent,
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
-                          }}
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    )}
-
-                    {/* The attach target is a dead session (stopped daemon row —
-                    typically after a machine reboot) and no snapshot will ever
-                    arrive. Boot reconciliation usually auto-resumes it within
-                    moments; this state covers the gap, and the button covers
-                    the cases auto-resume can't (respawn failed, row gone). */}
-                    {conversation.length === 0 && !session && !spawnError && sessionExited && (
-                      <div
-                        style={{
-                          position: 'relative',
-                          textAlign: 'center',
-                          marginTop: 48,
-                          color: colors.mutedDim,
-                          animation: 'claudeFadeIn 0.2s ease-out',
-                        }}
-                      >
-                        <AgentHero
-                          provider={provider ?? 'claude'}
-                          title={<>Session stopped</>}
-                          dimLogo
-                        />
-                        <div
-                          style={{
-                            position: 'relative',
-                            fontSize: '0.72rem',
-                            margin: '14px auto 0',
-                            maxWidth: 420,
-                            lineHeight: 1.5,
-                            color: colors.mutedDim,
-                          }}
-                        >
-                          This {agentName} session isn’t running — it was likely stopped by a reboot
-                          or shutdown. Resuming brings the conversation back where it left off.
-                        </div>
-                        <button
-                          onClick={() => handleRestartWith({})}
-                          style={{
-                            position: 'relative',
-                            marginTop: 16,
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            padding: '4px 16px',
-                            borderRadius: 6,
-                            border: `1px solid ${colors.accent}`,
-                            backgroundColor: 'transparent',
-                            color: colors.accent,
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
-                          }}
-                        >
-                          Resume session
-                        </button>
-                      </div>
-                    )}
-
-                    {conversation.length === 0 && !session && !spawnError && !sessionExited && (
-                      <div
-                        style={{
-                          position: 'relative',
-                          textAlign: 'center',
-                          marginTop: 48,
-                          color: colors.mutedDim,
-                          animation: 'claudeFadeIn 0.2s ease-out',
-                        }}
-                      >
-                        <AgentHero
-                          provider={provider ?? 'claude'}
-                          title={<>Connecting to {agentName}…</>}
-                        />
-                        <div
-                          style={{
-                            position: 'relative',
-                            display: 'flex',
-                            justifyContent: 'center',
-                            marginTop: 18,
-                          }}
-                        >
-                          <BrandSpinner size={20} />
-                        </div>
-                        {showHookHint && isClaude && (
-                          <div
-                            style={{
-                              position: 'relative',
-                              fontSize: '0.7rem',
-                              marginTop: 14,
-                              color: colors.mutedDim,
-                            }}
-                          >
-                            Still connecting — make sure hooks are configured in
-                            ~/.claude/settings.json
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Session restore in flight — the transcript replay is coming.
-                    Same hero treatment as the "Connecting…" state above, so a
-                    restore reads as one continuous sequence (connecting →
-                    fetching → transcript) instead of the new-agent screen
-                    flashing and the history popping into existence. */}
-                    {conversation.length === 0 && session && historyPending && (
-                      <div
-                        style={{
-                          position: 'relative',
-                          textAlign: 'center',
-                          marginTop: 48,
-                          color: colors.mutedDim,
-                          animation: 'claudeFadeIn 0.2s ease-out',
-                        }}
-                      >
-                        <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
-                        <div
-                          style={{
-                            position: 'relative',
-                            display: 'flex',
-                            justifyContent: 'center',
-                            marginTop: 18,
-                          }}
-                        >
-                          <BrandSpinner size={20} />
-                        </div>
-                        <div
-                          style={{
-                            position: 'relative',
-                            fontSize: '0.7rem',
-                            marginTop: 14,
-                            color: colors.mutedDim,
-                          }}
-                        >
-                          Restoring your conversation history
-                        </div>
-                      </div>
-                    )}
-
-                    {conversation.length === 0 && session && !historyPending && (
-                      <ConversationEmptyState
-                        agentName={agentName}
-                        provider={provider ?? 'claude'}
-                        model={session.statusLine?.modelDisplay ?? session.settings?.model}
-                        permissionMode={permissionModeLabel(
-                          provider,
-                          session.livePermissionMode ?? session.settings?.permissionMode,
-                        )}
-                        transport={claudeTransport}
-                        cwd={session.liveCwd || session.cwd || cwd}
-                        hub={session.hub}
-                        initialPrompt={initialPrompt}
-                        onPick={(prompt) => {
-                          setInputValue(prompt);
-                          requestAnimationFrame(() => inputRef.current?.focus());
-                        }}
-                      />
-                    )}
-
-                    {/* Load older messages */}
-                    {hasOlderMessages && (
-                      <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
-                        <button
-                          onClick={loadOlderMessages}
-                          style={{
-                            fontSize: '0.68rem',
-                            fontWeight: 500,
-                            padding: '4px 16px',
-                            borderRadius: 'var(--wks-radius-lg)',
-                            border: `1px solid ${colors.border}`,
-                            backgroundColor: 'rgba(255,255,255,0.03)',
-                            color: colors.muted,
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
-                          }}
-                        >
-                          Load{' '}
-                          {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
-                          earlier messages ({conversation.length - visibleCount} hidden)
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Rendered conversation messages with dividers. The cwd
-                      provider lets file paths mentioned in assistant prose /
-                      command output resolve + open like tool-call FileLinks. */}
-                    <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
-                      <MarkdownFileCwdProvider value={effectiveCwd}>
-                        {/* Response-card actions act through THIS pane's own
-                          live session/pane/cwd, bound here at render time. A
-                          card three turns up, or one replayed out of history,
-                          gets the same binding — it can name a target but never
-                          the authority it is acted on with. */}
-                        <HtmlCardHostProvider value={cardHost}>
-                          {renderedConversation}
-                        </HtmlCardHostProvider>
-                      </MarkdownFileCwdProvider>
-                    </ErrorBoundary>
-
-                    {/* Live work not yet absorbed into the timeline: in-flight tool
-                    calls plus agents/workflows that hooks reported before the
-                    transcript caught up. Anchored agents render in WorkCards. */}
-                    {(liveToolCalls.length > 0 ||
-                      liveSubagents.length > 0 ||
-                      liveWorkflows.length > 0) && (
-                      <InlineWorkLog
-                        toolCalls={liveToolCalls}
-                        subagents={liveSubagents}
-                        workflows={liveWorkflows}
-                      />
-                    )}
-
-                    {/* Streaming indicator with cancel */}
-                    {isStreaming && (
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '8px 0 4px 0',
-                        }}
-                      >
-                        <BrandSpinner size={15} />
-                        {/* Elapsed run time. Stopping lives in the composer now —
-                          one place for actions, and reachable without leaving
-                          the box you're typing in. */}
-                        {workStartedAt !== null && <WorkingTimer since={workStartedAt} />}
-                      </div>
-                    )}
-
-                    {/* Tail spacer — the room the newest user message is pinned
-                      above, filled in by the reply as it streams. */}
-                    {tailPad > 0 && <div data-tail-pad aria-hidden style={{ height: tailPad }} />}
-                  </div>
-                </div>
-
-                {/* Scroll to bottom button */}
-                {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
-
-                {/* Task list — the agent's plan/tasks pinned above the composer,
-                view-only and dismissible (reappears when the tasks change). */}
-                {showTasksCard && plan && (
-                  <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
-                )}
-
-                {/* Needs-you dock — approvals and questions pinned above the composer */}
-                <NeedsYouDock
-                  approval={dockApproval}
-                  questions={dockQuestions}
-                  onApprove={handleApprovalRespond}
-                  onAnswer={handleAnswer}
-                  onDecline={handleDecline}
-                />
-
-                {/* Composer / Input area — session pills live inside its bottom row */}
-                <Composer
-                  value={inputValue}
-                  onChange={setInputValue}
-                  onSend={handleSend}
-                  onPaste={handlePaste}
-                  onPickFiles={openFilePicker}
-                  attachedFiles={attachedFiles}
-                  onRemoveFile={removeAttachedFile}
-                  dimmed={!!(dockApproval || dockQuestions)}
-                  inputRef={inputRef}
-                  showSendButton={config.ui.showComposerSend !== false}
-                  working={isStreaming}
-                  onStop={cancelTask}
-                  agentName={agentName}
-                  slashItems={slashItems}
-                  onSlashPick={handleSlashPick}
-                  controls={
-                    <ComposerControls
-                      provider={provider ?? 'claude'}
-                      sessionId={sessionId}
-                      snapshot={session}
-                      cwd={cwd}
-                      profileId={liveProfileId}
-                      canSwitchProfile={canSwitchProfile}
-                      onRestartWith={handleRestartWith}
-                    />
-                  }
-                />
-              </div>
-            </div>
-            {/* Status / control bar — bottom of the CONTENT column (not the pane),
-            so it shares the composer's width and stays centered under it even
-            when the inspector rail is open; the rail runs full-height beside
-            it. IDE/CLI status-line style: chromeless in GUI mode (a quiet
-            footer under the floating composer); terminal mode keeps the solid
-            toolbar treatment so it reads as an edge against the xterm surface. */}
-            <div
-              style={{
-                padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
-                backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
-                borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
-                minHeight: 28,
-                flexShrink: 0,
-              }}
-            >
-              {/* In GUI mode the row aligns to the composer's centered chat column
-            so the footer line sits flush under it; terminal mode stays
-            edge-to-edge like a toolbar. */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  minWidth: 0,
-                  minHeight: 24,
-                  ...(viewMode === 'gui'
-                    ? { maxWidth: 'var(--wks-chat-width)', margin: '0 auto' }
-                    : {}),
-                }}
-              >
-                <StatusBadge
-                  session={session}
-                  approvalDismissed={
-                    !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
-                  }
-                />
-
-                {/* Session controls — model / effort / permission-mode pills. In GUI
-            mode these live inside the composer's bottom row (T3-style); keep
-            them here for terminal mode, which has no composer. */}
-                {viewMode === 'terminal' && (
-                  <ComposerControls
-                    provider={provider ?? 'claude'}
-                    sessionId={sessionId}
-                    snapshot={session}
-                    cwd={cwd}
-                    profileId={liveProfileId}
-                    canSwitchProfile={canSwitchProfile}
-                    onRestartWith={handleRestartWith}
-                  />
-                )}
-
-                {/* In-app status line — telemetry only (dir/branch · plan · ctx ·
-            tok/cost · quota meters). Controls (model/effort/permissions) live
-            in the ComposerControls pills, never here. */}
-                <SessionStatusBar snapshot={session} sessionId={sessionId ?? undefined} cwd={cwd} />
-
-                {(() => {
-                  const liveAgents =
-                    subagents.filter((s) => s?.status === 'running').length +
-                    // `w.agents` is typed as a required array, but a snapshot arriving
-                    // over the hub bus (web/remote) can omit it — flatMap would then
-                    // fold in `undefined` and the `.filter` below would throw, blanking
-                    // the whole pane. Default to [] so a lean bus payload can't crash it.
-                    workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running')
-                      .length;
-                  return liveAgents > 0 ? (
-                    <span
-                      style={{
-                        fontSize: '0.66rem',
-                        fontWeight: 700,
-                        fontFamily: 'var(--wks-font-mono)',
-                        padding: '1px 7px',
-                        borderRadius: 'var(--wks-radius-pill)',
-                        letterSpacing: '0.03em',
-                        color: 'var(--wks-purple)',
-                        border: '1px solid color-mix(in srgb, var(--wks-purple) 40%, transparent)',
-                        background: 'color-mix(in srgb, var(--wks-purple) 10%, transparent)',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
-                    </span>
-                  ) : null;
-                })()}
-
-                {/* Attached-files readout — terminal mode only; in GUI the composer
-            already shows the attachments as chips, so this would duplicate. */}
-                {viewMode === 'terminal' && attachedFiles.length > 0 && (
-                  <span
-                    style={{
-                      fontSize: '0.7rem',
-                      fontFamily: 'var(--wks-font-mono)',
-                      color: colors.accent,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
-                  </span>
-                )}
-
-                <div style={{ flex: 1 }} />
-
-                {/* Redraw — clears the rare backdrop-filter compositing garble */}
-                <button
-                  onClick={forceRepaint}
-                  title="Redraw pane (fixes occasional rendering glitches)"
-                  className="wks-composer-icon-btn"
-                  style={{
-                    ...toggleBtnStyle,
-                    display: 'flex',
-                    alignItems: 'center',
-                    backgroundColor: 'transparent',
-                    color: 'var(--wks-text-muted)',
-                  }}
-                >
-                  <RefreshCw size={13} strokeWidth={1.9} />
-                </button>
-
-                {/* Attach files — terminal mode only; the composer has its own + in GUI */}
-                {viewMode === 'terminal' && (
-                  <button
-                    onClick={openFilePicker}
-                    title="Attach files"
-                    className="wks-composer-icon-btn"
-                    style={{
-                      ...toggleBtnStyle,
-                      backgroundColor: 'transparent',
-                      color: 'var(--wks-text-muted)',
-                      fontSize: '0.8rem',
-                    }}
-                  >
-                    +
-                  </button>
-                )}
-
-                {/* Hand off to any provider (including the same one — fresh context,
-            same harness) — brief goes to ~/.workspacer/handoffs */}
-                <button
-                  onClick={() => setHandoffOpen(true)}
-                  title={
-                    handoffBusy === 'agent'
-                      ? 'Waiting for the agent to write its handoff brief…'
-                      : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
-                  }
-                  className="wks-composer-icon-btn"
-                  disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
-                  style={{
-                    ...toggleBtnStyle,
-                    display: 'flex',
-                    alignItems: 'center',
-                    backgroundColor: 'transparent',
-                    color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
-                  }}
-                >
-                  <ArrowRightLeft size={13} strokeWidth={1.9} />
-                </button>
-                {handoffOpen && (
-                  <HandoffDialog
-                    provider={provider ?? 'claude'}
-                    snapshot={session}
-                    cwd={cwd}
-                    busy={handoffBusy}
-                    onCancel={() => setHandoffOpen(false)}
-                    onConfirm={(settings) => void handleHandoff(settings)}
-                  />
-                )}
-
-                {/* Timestamps toggle — GUI conversation only. Saved to config so it
-            persists and applies to every chat pane at once. */}
-                {viewMode === 'gui' && (
-                  <button
-                    onClick={() =>
-                      save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
-                    }
-                    title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
-                    className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
-                    style={{
-                      ...toggleBtnStyle,
-                      display: 'flex',
-                      alignItems: 'center',
-                      backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
-                      color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
-                    }}
-                  >
-                    <Clock size={13} strokeWidth={1.9} />
-                  </button>
-                )}
-
-                {/* Inspector rail toggle — available in both GUI and Terminal mode,
-            and in both UI modes: per-agent depth is if anything MORE wanted when
-            you're focused on one agent, so this is never mode-gated. */}
-                <button
-                  onClick={toggleRail}
-                  title={
-                    railOpen
-                      ? 'Hide inspector'
-                      : 'Show inspector (files / workflows / agents / usage)'
-                  }
-                  className={railOpen ? undefined : 'wks-composer-icon-btn'}
-                  style={{
-                    ...toggleBtnStyle,
-                    display: 'flex',
-                    alignItems: 'center',
-                    backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: railOpen ? colors.accent : 'var(--wks-text-muted)',
-                  }}
-                >
-                  <PanelRight size={13} strokeWidth={1.9} />
-                </button>
-
-                {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
-                <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
-                  <button
-                    onClick={() => setViewMode('gui')}
-                    className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
-                    style={{
-                      ...toggleBtnStyle,
-                      backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
-                      color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
-                    }}
-                  >
-                    GUI
-                  </button>
-                  <button
-                    onClick={() => setViewMode('terminal')}
-                    className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
-                    style={{
-                      ...toggleBtnStyle,
-                      backgroundColor:
-                        viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
-                      color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
-                    }}
-                  >
-                    Term
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Inspector rail — the session inspector (files / workflows / agents /
-          usage) plus this project's widget board. Sibling of the content area,
-          so it persists in both GUI and Terminal mode. effectiveCwd is what the
-          board is keyed by, so it works before a session attaches. */}
-          {railOpen && (
-            <InspectorRail
-              session={session}
-              sessionId={sessionId ?? undefined}
-              cwd={effectiveCwd}
-              onClose={toggleRail}
-            />
-          )}
-        </div>
-      </div>
-    </SkillInventoryProvider>
+    <RetainedSessionChat sessionId={model.sessionId} paneId={props.paneId}>
+      <SessionChatView {...model} />
+    </RetainedSessionChat>
   );
 };
-
-const toggleBtnStyle: React.CSSProperties = {
-  fontSize: '0.66rem',
-  fontWeight: 600,
-  padding: '3px 9px',
-  borderRadius: 6,
-  border: 'none',
-  cursor: 'pointer',
-};
-
+const ClaudePane: React.FC<ClaudePaneProps> = (props) => (
+  <ClaudePaneContent
+    key={props.attachSessionId ?? props.resumeSessionId ?? props.paneId}
+    {...props}
+  />
+);
 export default ClaudePane;

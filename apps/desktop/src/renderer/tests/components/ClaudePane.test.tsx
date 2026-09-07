@@ -587,7 +587,9 @@ describe('ClaudePane file drop', () => {
 
   it('attaches a file dropped on the pane', async () => {
     const { container } = render(<ClaudePane paneId="d1" title="Claude" isActive cwd="/repo" />);
-    fireEvent.drop(container.firstChild as Element, { dataTransfer: dropData() });
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
+      dataTransfer: dropData(),
+    });
     expect(await screen.findByText('shot.png')).toBeInTheDocument();
   });
 
@@ -689,8 +691,12 @@ describe('ClaudePane paste regressions', () => {
       types: ['Files'],
       getData: () => '',
     });
-    fireEvent.drop(container.firstChild as Element, { dataTransfer: data() });
-    fireEvent.drop(container.firstChild as Element, { dataTransfer: data() });
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
+      dataTransfer: data(),
+    });
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
+      dataTransfer: data(),
+    });
 
     expect(await screen.findAllByText('shot.png')).toHaveLength(1);
   });
@@ -736,7 +742,7 @@ describe('ClaudePane attachments with no host path (web / remote-client)', () =>
 
   it('uploads a dropped file and attaches the path the hub wrote it to', async () => {
     const { container } = render(<ClaudePane paneId="w1" title="Claude" isActive cwd="/repo" />);
-    fireEvent.drop(container.firstChild as Element, {
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
       dataTransfer: {
         files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
         items: [],
@@ -767,7 +773,7 @@ describe('ClaudePane attachments with no host path (web / remote-client)', () =>
   it('sends the uploaded path as the attachment prefix, exactly like the desktop', async () => {
     (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
     const { container } = render(<ClaudePane paneId="w3" title="Claude" isActive cwd="/repo" />);
-    fireEvent.drop(container.firstChild as Element, {
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
       dataTransfer: {
         files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
         items: [],
@@ -789,7 +795,7 @@ describe('ClaudePane attachments with no host path (web / remote-client)', () =>
   it('says so when the upload fails, instead of attaching nothing in silence', async () => {
     uploadAttachment.mockRejectedValue(new Error('no provider for files.upload'));
     const { container } = render(<ClaudePane paneId="w4" title="Claude" isActive cwd="/repo" />);
-    fireEvent.drop(container.firstChild as Element, {
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
       dataTransfer: {
         files: [new File(['abc'], 'diagram.png', { type: 'image/png' })],
         items: [],
@@ -806,7 +812,7 @@ describe('ClaudePane attachments with no host path (web / remote-client)', () =>
   it('leaves the desktop host-path flow alone when a path IS available', async () => {
     (window.electronAPI.getPathForFile as any) = vi.fn().mockReturnValue('/repo/local.png');
     const { container } = render(<ClaudePane paneId="w5" title="Claude" isActive cwd="/repo" />);
-    fireEvent.drop(container.firstChild as Element, {
+    fireEvent.drop(container.querySelector('[data-session-chat-view]') as Element, {
       dataTransfer: {
         files: [new File(['abc'], 'local.png', { type: 'image/png' })],
         items: [],
@@ -816,5 +822,78 @@ describe('ClaudePane attachments with no host path (web / remote-client)', () =>
     });
     expect(await screen.findByText('local.png')).toBeInTheDocument();
     expect(uploadAttachment).not.toHaveBeenCalled();
+  });
+});
+
+describe('shared chat inside Fleet', () => {
+  it('retains the actual composer, HTML frame, pending turn and live updates across collapse and switch', async () => {
+    const { FleetChatDestination } =
+      await import('../../src/components/claude/RetainedSessionChat');
+    const card = {
+      v: 1,
+      title: 'Fleet findings',
+      bodyHtml: '<p>Retained HTML content</p>',
+      fallback: 'Retained findings',
+      actions: [{ kind: 'fill_composer', label: 'Draft follow-up', text: 'Check the findings' }],
+    };
+    mockSession = makeSnapshot({
+      conversation: [
+        {
+          role: 'assistant',
+          content: '```wks-html-card\n' + JSON.stringify(card) + '\n```',
+          timestamp: 1,
+        },
+      ],
+    });
+    window.electronAPI.claudeMessage = vi.fn().mockResolvedValue({ ok: true });
+    function Fixture({ selected }: { selected: string | null }) {
+      return (
+        <>
+          <div data-ordinary-pane>
+            <ClaudePane
+              paneId="shared-pane"
+              title="Agent"
+              attachSessionId="sess-1"
+              isActive
+              cwd="/repo"
+            />
+          </div>
+          <FleetChatDestination sessionId={selected} paneId="shared-pane" />
+        </>
+      );
+    }
+    const view = render(<Fixture selected="sess-1" />);
+    const input = composer();
+    const frame = screen.getByTestId('wks-html-card-frame');
+    window.electronAPI.getClaudeSession = vi.fn().mockResolvedValue(mockSession);
+    fireEvent.click(screen.getByRole('button', { name: 'Prefill: Draft follow-up' }));
+    await waitFor(() => expect(input).toHaveValue('Check the findings'));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith('sess-1', 'Check the findings'),
+    );
+    fireEvent.change(input, { target: { value: 'Keep this draft' } });
+    view.rerender(<Fixture selected="another-session" />);
+    expect(document.querySelector('[data-fleet-chat="another-session"]')?.contains(input)).toBe(
+      false,
+    );
+    view.rerender(<Fixture selected={null} />);
+    expect(document.querySelector('[data-ordinary-pane]')?.contains(input)).toBe(true);
+    view.rerender(<Fixture selected="sess-1" />);
+    expect(composer()).toBe(input);
+    expect(input).toHaveValue('Keep this draft');
+    expect(screen.getByTestId('wks-html-card-frame')).toBe(frame);
+    expect(document.querySelector('[data-fleet-chat="sess-1"]')?.contains(frame)).toBe(true);
+    expect(screen.getByText('Check the findings')).toBeInTheDocument();
+    mockSession = makeSnapshot({
+      conversation: [
+        ...mockSession!.conversation,
+        { role: 'assistant', content: 'A streamed update arrived', timestamp: 2 },
+      ],
+      ambientState: 'streaming',
+    });
+    view.rerender(<Fixture selected="sess-1" />);
+    expect(screen.getByText('A streamed update arrived')).toBeInTheDocument();
+    expect(input).toHaveValue('Keep this draft');
   });
 });

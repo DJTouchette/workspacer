@@ -1,3 +1,4 @@
+import { useInlineChatState } from './ChatUiScope';
 /**
  * The inline response card: a `wks-html-card` fence rendered as a bounded,
  * sandboxed frame with its declared actions in TRUSTED chrome beside it.
@@ -92,7 +93,11 @@ const CardActionButton: React.FC<{ action: HtmlCardAction; host: HtmlCardHost }>
   host,
 }) => {
   const [busy, setBusy] = useState(false);
-  const [diff, setDiff] = useState<Extract<HtmlCardDiffResult, { ok: true }> | null>(null);
+  const [diff, setDiff] = useInlineChatState<Extract<HtmlCardDiffResult, { ok: true }> | null>(
+    'html-diff',
+    action,
+    null,
+  );
   const Icon = ACTION_ICON[action.kind];
   const run = useCallback(() => {
     setBusy(true);

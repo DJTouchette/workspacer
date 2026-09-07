@@ -693,12 +693,15 @@ function App() {
     useSessionSnapshots(stopAgentForSession);
 
   const handleTerminateAgent = useCallback(
-    (agentId: string) => {
+    async (agentId: string) => {
       const sid = agents.find((a) => a.id === agentId)?.sessionId;
-      void terminateAgent(agentId);
+      if (sid && snapshotBySession[sid]?.hubOffline) throw new Error('Hub is offline');
+      const connection = await window.electronAPI.getHubStatus?.();
+      if (connection && !connection.connected) throw new Error('Hub connection is offline');
+      await terminateAgent(agentId);
       pruneSession(sid);
     },
-    [agents, terminateAgent, pruneSession],
+    [agents, terminateAgent, pruneSession, snapshotBySession],
   );
 
   // Auto-adopt any live daemon session that has no AgentWorkspace yet (e.g. one
@@ -2743,7 +2746,15 @@ function App() {
                       if (sidebarOverlay) setSidebarCollapsed(true);
                     }}
                     onSpawnAgent={openSpawnDialog}
-                    onTerminateAgent={handleTerminateAgent}
+                    onTerminateAgent={(id) => {
+                      void handleTerminateAgent(id).catch((error) =>
+                        postNotification({
+                          title: 'Could not terminate agent',
+                          body: String(error),
+                          source: 'workspacer',
+                        }),
+                      );
+                    }}
                     onRenameAgent={renameAgent}
                     onOpenInbox={openInbox}
                     onToggleFleet={toggleFleet}
@@ -3112,6 +3123,7 @@ function App() {
                   top={navHeight}
                   left={contentLeft}
                   onOpenRecentAgents={openRecentAgentsPane}
+                  onTerminateAgent={handleTerminateAgent}
                 />
               )}
 

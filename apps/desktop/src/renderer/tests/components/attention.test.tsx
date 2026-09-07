@@ -159,10 +159,12 @@ describe('Mission Control surfaces', () => {
     expect(screen.getByText(/Edit\(App\.tsx\)/)).toBeInTheDocument();
   });
 
-  it('opens an agent (drops to piloting) when a card is clicked', () => {
+  it('expands real chat in Fleet when a card is clicked', () => {
     const { onOpenAgent } = renderSurfaces();
     fireEvent.click(screen.getByText('Builder agent'));
-    expect(onOpenAgent).toHaveBeenCalledWith('a2');
+    expect(onOpenAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Back to fleet' })).toBeInTheDocument();
+    expect(document.querySelector('[data-fleet-chat="sess-2"]')).toBeInTheDocument();
   });
 
   it("clears an agent's inbox items when you open it", () => {
@@ -405,5 +407,74 @@ describe('Piloting auto-dismiss ignores the inbox filter', () => {
     // effect must auto-dismiss it even though 'needs' filters it out of `feed`.
     rerender(<PilotBugHarness snaps={{ 'sess-1': bigdiffSnap }} />);
     expect(screen.getByTestId('top-a1').textContent).toBe('none');
+  });
+});
+
+describe('manager-first Fleet navigation', () => {
+  const managers: AgentWorkspace[] = [
+    agents[1],
+    { ...agents[0], id: 'manager-one', sessionId: 'm1', name: 'Coordinator', manager: true },
+    { ...agents[1], id: 'fake-manager', sessionId: 'fake', name: 'Fleet Manager', manager: false },
+    { ...agents[0], id: 'manager-two', sessionId: 'm2', name: 'Release lead', manager: true },
+  ];
+  const order = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-fleet-agent]')].map(
+      (e) => e.dataset.fleetAgent,
+    );
+  it('pins authoritative managers across status changes, additions, filtering and list sorting', () => {
+    localStorage.setItem('wks-fleet-view', 'cards');
+    const snaps = {
+      ...snapshotBySession,
+      m1: { ...snapshotBySession['sess-2'], ambientState: 'idle' },
+      m2: { ...snapshotBySession['sess-2'], ambientState: 'idle' },
+    };
+    const view = render(
+      <Harness viewLevel="fleet" onOpenAgent={vi.fn()} agentList={managers} snapshots={snaps} />,
+    );
+    expect(order().slice(0, 2)).toEqual(['manager-one', 'manager-two']);
+    view.rerender(
+      <Harness
+        viewLevel="fleet"
+        onOpenAgent={vi.fn()}
+        agentList={[{ ...agents[1], id: 'new' }, ...managers]}
+        snapshots={{ ...snaps, m2: { ...snaps.m2, ambientState: 'waiting_approval' } }}
+      />,
+    );
+    expect(order().slice(0, 2)).toEqual(['manager-one', 'manager-two']);
+    fireEvent.change(screen.getByPlaceholderText('Filter agents…'), {
+      target: { value: 'no workers match' },
+    });
+    expect(order()).toEqual(['manager-one', 'manager-two']);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(order()).toEqual(['manager-one', 'manager-two']);
+    fireEvent.click(screen.getByRole('button', { name: /Active/ }));
+    expect(order()).toEqual(['manager-one', 'manager-two']);
+    view.unmount();
+    localStorage.removeItem('wks-fleet-view');
+  });
+  it('list, switcher and Back keep Fleet active, with managers fixed first', () => {
+    localStorage.setItem('wks-fleet-view', 'list');
+    const open = vi.fn();
+    render(
+      <Harness
+        viewLevel="fleet"
+        onOpenAgent={open}
+        agentList={managers}
+        snapshots={snapshotBySession}
+      />,
+    );
+    fireEvent.click(document.querySelector('[data-fleet-agent="a2"]')!);
+    expect(document.querySelector('[data-fleet-chat="sess-2"]')).toBeInTheDocument();
+    const switcher = screen.getByRole('navigation', { name: 'Fleet agents' });
+    expect(
+      [...switcher.querySelectorAll('[data-manager]')].map((e) => e.getAttribute('data-manager')),
+    ).toEqual(['manager-one', 'manager-two']);
+    fireEvent.click(switcher.querySelector('[data-manager="manager-one"]')!);
+    expect(document.querySelector('[data-fleet-chat="m1"]')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to fleet' }));
+    expect(screen.queryByRole('navigation', { name: 'Fleet agents' })).not.toBeInTheDocument();
+    expect(order().slice(0, 2)).toEqual(['manager-one', 'manager-two']);
+    expect(open).not.toHaveBeenCalled();
+    localStorage.removeItem('wks-fleet-view');
   });
 });

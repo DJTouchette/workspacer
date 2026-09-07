@@ -1,3 +1,5 @@
+import { postNotification } from '../lib/notificationBus';
+import { clearSessionChatUiState } from './useSessionChatUiState';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   PaneConfig,
@@ -889,52 +891,61 @@ export function useAgentManager() {
   );
 
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
-  const terminateAgent = useCallback(async (agentId: string) => {
-    const agent = agentsRef.current.find((a) => a.id === agentId);
-    if (agent?.global) return; // the Overview workspace is permanent
-    // Tombstone first: the dying session keeps ticking until the daemon marks
-    // it ended, and an un-tombstoned tick would let App's auto-adopt resurrect
-    // the card the user just closed (see lib/terminatedSessions.ts).
-    markSessionTerminated(agent?.sessionId);
-    // Compute the post-removal list synchronously from `prev` so we never
-    // read the stale agentsRef (which is updated asynchronously in an effect).
-    let fallbackId: string | undefined;
-    setAgents((prev) => {
-      const next = prev.filter((a) => a.id !== agentId);
-      fallbackId = next[0]?.id ?? '';
-      return next;
-    });
-    setActiveAgentId((cur) => {
-      if (cur !== agentId) return cur;
-      return fallbackId ?? '';
-    });
-    // A CLOSED agent releases its harpoon pin. Pins are SESSION-keyed, so
-    // this is exact — report both ids the card may have been pinned under
-    // (live and resumable are the same id after a respawn, but a card can
-    // hold either at close time). App owns the store and does the unpin.
-    {
-      const sessionIds = [agent?.sessionId, agent?.lastSessionId].filter(
-        (sid): sid is string => !!sid,
-      );
-      if (sessionIds.length) {
-        window.dispatchEvent(new CustomEvent('agent:closed', { detail: { sessionIds } }));
+  const terminatingAgents = useRef(new Map<string, Promise<void>>());
+  const terminateAgent = useCallback((agentId: string): Promise<void> => {
+    const existing = terminatingAgents.current.get(agentId);
+    if (existing) return existing;
+    const run = async () => {
+      const agent = agentsRef.current.find((a) => a.id === agentId);
+      if (!agent || agent.global) return; // the Overview workspace is permanent
+      if (agent.sessionId) {
+        // Keep the card and snapshots intact until the authority accepts the request.
+        if (agent.hub) await window.electronAPI.claudeSignal(agent.sessionId, 'SIGTERM');
+        else await window.electronAPI.claudeClose(agent.sessionId);
       }
-    }
-    if (agent?.sessionId) {
-      try {
-        await window.electronAPI.claudeClose(agent.sessionId);
-      } catch {
-        /* already gone */
+      // Tombstone first: the dying session keeps ticking until the daemon marks
+      // it ended, and an un-tombstoned tick would let App's auto-adopt resurrect
+      // the card the user just closed (see lib/terminatedSessions.ts).
+      markSessionTerminated(agent?.sessionId);
+      clearSessionChatUiState(agent?.sessionId);
+      // Compute the post-removal list synchronously from `prev` so we never
+      // read the stale agentsRef (which is updated asynchronously in an effect).
+      let fallbackId: string | undefined;
+      setAgents((prev) => {
+        const next = prev.filter((a) => a.id !== agentId);
+        fallbackId = next[0]?.id ?? '';
+        return next;
+      });
+      setActiveAgentId((cur) => {
+        if (cur !== agentId) return cur;
+        return fallbackId ?? '';
+      });
+      // A CLOSED agent releases its harpoon pin. Pins are SESSION-keyed, so
+      // this is exact — report both ids the card may have been pinned under
+      // (live and resumable are the same id after a respawn, but a card can
+      // hold either at close time). App owns the store and does the unpin.
+      {
+        const sessionIds = [agent?.sessionId, agent?.lastSessionId].filter(
+          (sid): sid is string => !!sid,
+        );
+        if (sessionIds.length) {
+          window.dispatchEvent(new CustomEvent('agent:closed', { detail: { sessionIds } }));
+        }
       }
-    }
-    // Tear down a dispatched worker's disposable worktree on explicit close too
-    // (the same guarded, fail-closed removal the auto-drop does). No-op for a
-    // top-level agent in a real checkout.
-    if (agent?.cwd) void window.electronAPI.worktreeRemove?.(agent.cwd);
-    // Nudge the sidebar's RECENT list: the daemon keeps the closed session as
-    // a resumable Stopped row, but the 60s poll wouldn't surface it for up to
-    // a minute after the mode flips.
-    requestRecentSessionsRefresh();
+      // Tear down a dispatched worker's disposable worktree on explicit close too
+      // (the same guarded, fail-closed removal the auto-drop does). No-op for a
+      // top-level agent in a real checkout.
+      if (agent?.cwd) void window.electronAPI.worktreeRemove?.(agent.cwd);
+      // Nudge the sidebar's RECENT list: the daemon keeps the closed session as
+      // a resumable Stopped row, but the 60s poll wouldn't surface it for up to
+      // a minute after the mode flips.
+      requestRecentSessionsRefresh();
+    };
+    const task = run().finally(() => {
+      terminatingAgents.current.delete(agentId);
+    });
+    terminatingAgents.current.set(agentId, task);
+    return task;
   }, []);
 
   const renameAgent = useCallback(
@@ -1602,7 +1613,13 @@ export function useAgentManager() {
         agent.tabs.length <= 1 &&
         agent.tabs.some((t) => t.id === tabId)
       ) {
-        terminateAgent(agent.id);
+        void terminateAgent(agent.id).catch((error) =>
+          postNotification({
+            title: 'Could not terminate agent',
+            body: String(error),
+            source: 'workspacer',
+          }),
+        );
         return;
       }
       mutateActiveAgent((a) => {
@@ -1629,7 +1646,13 @@ export function useAgentManager() {
       // Closing the last pane of the last tab terminates the (non-global) agent.
       const closingTab = agent.tabs.find((t) => t.id === tabId);
       if (!agent.global && closingTab && closingTab.panes.length <= 1 && agent.tabs.length <= 1) {
-        terminateAgent(agent.id);
+        void terminateAgent(agent.id).catch((error) =>
+          postNotification({
+            title: 'Could not terminate agent',
+            body: String(error),
+            source: 'workspacer',
+          }),
+        );
         return;
       }
       mutateAgent(agent.id, (a) => {

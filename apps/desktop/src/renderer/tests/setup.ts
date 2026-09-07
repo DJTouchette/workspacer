@@ -1,3 +1,5 @@
+import { resetSessionChatUiState } from '../src/hooks/useSessionChatUiState';
+beforeEach(() => resetSessionChatUiState());
 import '@testing-library/jest-dom/vitest';
 
 // jsdom has no layout, so virtualized lists (@tanstack/react-virtual) would see
