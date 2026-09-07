@@ -299,6 +299,13 @@ describe('agents.list — statusLine fallback for managed providers', () => {
       },
       {
         sessionId: 'known-selection',
+        executionEngine: {
+          id: 'claudemon-v1',
+          api_version: 1,
+          implementation_version: '1',
+          generation: 4,
+          readiness: 'unavailable',
+        },
         cwd: '/proj',
         ambientState: 'idle',
         requestedSelection: { model: 'opus', contextWindow: 1_000_000 },
@@ -308,6 +315,14 @@ describe('agents.list — statusLine fallback for managed providers', () => {
 
     const [unknown, known] = call('agents.list') as Record<string, unknown>[];
     expect('requestedSelection' in unknown).toBe(false);
+    expect('executionEngine' in unknown).toBe(false);
+    expect(known.executionEngine).toEqual({
+      id: 'claudemon-v1',
+      api_version: 1,
+      implementation_version: '1',
+      generation: 4,
+      readiness: 'unavailable',
+    });
     expect('resolvedContextWindow' in unknown).toBe(false);
     expect(known.requestedSelection).toEqual({ model: 'opus', contextWindow: 1_000_000 });
     expect(known.resolvedContextWindow).toBe(1_000_000);

@@ -13,7 +13,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    daemon::spawn::SpawnManagedPayload,
+    daemon::spawn::{SpawnManagedPayload, SpawnPayload},
     session::{
         store::MessageOutcome, windows::PersistedModelSelection, ConversationStore, SessionStore,
     },
@@ -65,6 +65,48 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
     fn decide(&self, store: &SessionStore, id: &str, approve: bool) -> bool;
     fn cancel(&self, store: &SessionStore, id: &str) -> bool;
     fn stop(&self, store: &SessionStore, id: &str) -> bool;
+    fn start_pty(
+        &self,
+        _store: &SessionStore,
+        _conv: &ConversationStore,
+        _db: &Db,
+        _id: &str,
+        _request: SpawnPayload,
+        _selection: Option<PersistedModelSelection>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "execution engine does not support PTY starts",
+        )
+            .into_response()
+    }
+    fn snapshot(
+        &self,
+        store: &SessionStore,
+        id: &str,
+    ) -> Option<crate::session::state::SessionState> {
+        store.native_get(id)
+    }
+    fn answer(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        answer: crate::session::store::ManagedAnswer,
+    ) -> bool {
+        store.native_submit_managed_answer(id, answer)
+    }
+    fn resolve(&self, store: &SessionStore, id: &str, decision: serde_json::Value) -> bool {
+        store.native_resolve_decision(id, decision)
+    }
+    fn signal(&self, store: &SessionStore, id: &str, signal: crate::protocol::Signal) -> bool {
+        store.wrapper(id).is_some_and(|handle| {
+            handle
+                .tx
+                .send(crate::protocol::WrapperMessage::Signal { signal })
+                .is_ok()
+        })
+    }
     fn dispose(&self, _id: &str) {}
 }
 struct ClaudemonEngine;
@@ -98,10 +140,9 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         } else if path.components().count() > 1 {
             executable(&std::path::Path::new(&request.cwd).join(path))
         } else {
-            let search = request
-                .env
-                .get("PATH")
-                .cloned()
+            let search = matches!(request.provider.as_str(), "claude" | "codex" | "copilot")
+                .then(|| request.env.get("PATH").cloned())
+                .flatten()
                 .or_else(|| std::env::var("PATH").ok())
                 .unwrap_or_default();
             std::env::split_paths(&search).any(|dir| {
@@ -134,6 +175,17 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         selection: Option<PersistedModelSelection>,
     ) -> bool {
         crate::daemon::spawn::start_native_managed(store, conv, db, id, request, bin, selection)
+    }
+    fn start_pty(
+        &self,
+        store: &SessionStore,
+        conv: &ConversationStore,
+        db: &Db,
+        id: &str,
+        request: SpawnPayload,
+        selection: Option<PersistedModelSelection>,
+    ) -> axum::response::Response {
+        crate::daemon::spawn::start_native_pty(store, conv, db, id, request, selection)
     }
     fn send(&self, store: &SessionStore, id: &str, text: String) -> MessageOutcome {
         store.native_submit_message(id, text)
@@ -177,6 +229,40 @@ impl BoundEngine {
     }
 }
 impl ExecutionEngineV1 for BoundEngine {
+    fn snapshot(
+        &self,
+        store: &SessionStore,
+        id: &str,
+    ) -> Option<crate::session::state::SessionState> {
+        // A stopped current lease remains observable and resumable.
+        let _commands = self.0.commands.lock().unwrap();
+        if self.0.fence.lock().unwrap().retired {
+            return None;
+        }
+        self.0.engine.snapshot(store, id)
+    }
+    fn answer(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        answer: crate::session::store::ManagedAnswer,
+    ) -> bool {
+        self.call(false, |engine| engine.answer(store, id, answer))
+    }
+    fn resolve(&self, store: &SessionStore, id: &str, decision: serde_json::Value) -> bool {
+        self.call(false, |engine| engine.resolve(store, id, decision))
+    }
+    fn signal(&self, store: &SessionStore, id: &str, signal: crate::protocol::Signal) -> bool {
+        self.call(false, |engine| {
+            if matches!(
+                signal,
+                crate::protocol::Signal::Sigterm | crate::protocol::Signal::Sigkill
+            ) {
+                self.0.fence.lock().unwrap().draining = true;
+            }
+            engine.signal(store, id, signal)
+        })
+    }
     fn describe(&self) -> EngineRef {
         self.0.lease.engine.clone()
     }
@@ -207,7 +293,10 @@ impl ExecutionEngineV1 for BoundEngine {
         self.call(false, |engine| engine.cancel(store, id))
     }
     fn stop(&self, store: &SessionStore, id: &str) -> bool {
-        self.call(false, |engine| engine.stop(store, id))
+        self.call(false, |engine| {
+            self.0.fence.lock().unwrap().draining = true;
+            engine.stop(store, id)
+        })
     }
 }
 #[derive(Default)]
@@ -282,7 +371,11 @@ impl EngineRegistry {
         let descriptor = engine.describe();
         if descriptor.api_version != 1
             || descriptor.id.is_empty()
-            || descriptor.implementation_version.is_empty()
+            || !descriptor
+                .id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            || descriptor.implementation_version.trim().is_empty()
         {
             bail!("invalid execution engine descriptor");
         }
@@ -299,13 +392,32 @@ impl EngineRegistry {
         );
         Ok(())
     }
-    pub(crate) fn prepare(
+    #[cfg(test)]
+    fn prepare(
         &self,
         previous: Option<&EngineLease>,
         request: &SpawnManagedPayload,
         bin: &str,
     ) -> Result<Prepared> {
         let reference = previous.map(|p| p.engine.clone()).unwrap_or_default();
+        self.prepare_selected(&reference, previous, request, bin)
+    }
+    pub(crate) fn prepare_resume(
+        &self,
+        previous: Option<&EngineLease>,
+        source: Option<&EngineLease>,
+        request: &SpawnManagedPayload,
+        bin: &str,
+    ) -> Result<Prepared> {
+        if let (Some(previous), Some(source)) = (previous, source) {
+            if previous.engine != source.engine {
+                bail!("execution resume identity conflicts with target pin");
+            }
+        }
+        let reference = source
+            .or(previous)
+            .map(|lease| lease.engine.clone())
+            .unwrap_or_default();
         self.prepare_selected(&reference, previous, request, bin)
     }
     fn prepare_selected(
@@ -345,6 +457,63 @@ impl EngineRegistry {
         bin: String,
         selection: Option<PersistedModelSelection>,
     ) -> Result<bool> {
+        self.admit(prepared, store, db, id, |engine, scoped| {
+            engine.start(scoped, conv, db, id, request, bin, selection)
+        })
+    }
+    pub(crate) fn start_pty(
+        &self,
+        store: &SessionStore,
+        conv: &ConversationStore,
+        db: &Db,
+        id: &str,
+        request: SpawnPayload,
+        selection: Option<PersistedModelSelection>,
+    ) -> Result<axum::response::Response> {
+        let previous = db.execution_lease(id)?;
+        // PTY launch has its own native argv contract. This temporary request
+        // is only an executable/cwd preflight, never the launch payload.
+        let probe: SpawnManagedPayload = serde_json::from_value(serde_json::json!({
+            "provider": "claude", "cwd": request.cwd, "env": request.env
+        }))?;
+        let resume_id = request
+            .argv
+            .windows(2)
+            .find(|pair| pair[0] == "--resume")
+            .map(|pair| pair[1].as_str())
+            .or_else(|| {
+                request
+                    .argv
+                    .iter()
+                    .find_map(|arg| arg.strip_prefix("--resume="))
+            });
+        let source = resume_id
+            .map(|id| db.execution_lease(id))
+            .transpose()?
+            .flatten();
+        let prepared =
+            self.prepare_resume(previous.as_ref(), source.as_ref(), &probe, &request.argv[0])?;
+        if prepared.engine.describe() != EngineRef::default() {
+            bail!("execution engine unavailable for PTY resume");
+        }
+        self.admit(prepared, store, db, id, |engine, scoped| {
+            let response = engine.start_pty(scoped, conv, db, id, request, selection);
+            if !response.status().is_success() {
+                if let Some(scope) = &scoped.execution_scope {
+                    scope.finish();
+                }
+            }
+            response
+        })
+    }
+    fn admit<T>(
+        &self,
+        prepared: Prepared,
+        store: &SessionStore,
+        db: &Db,
+        id: &str,
+        start: impl FnOnce(&dyn ExecutionEngineV1, &SessionStore) -> T,
+    ) -> Result<T> {
         let _start = self.starts.lock().unwrap();
         // Recheck availability at lease admission; later disable cannot retarget
         // this captured Arc. Publication happens only after durable pinning.
@@ -386,9 +555,7 @@ impl EngineRegistry {
             id: id.into(),
             binding,
         });
-        Ok(prepared
-            .engine
-            .start(&scoped, conv, db, id, request, bin, selection))
+        Ok(start(prepared.engine.as_ref(), &scoped))
     }
 
     pub(crate) fn bound(&self, id: &str) -> Option<Arc<dyn ExecutionEngineV1>> {
@@ -405,12 +572,6 @@ impl EngineRegistry {
             .get(id)
             .map(|b| b.lease.clone())
     }
-    pub(crate) fn draining(&self, id: &str) {
-        let binding = self.bindings.lock().unwrap().get(id).cloned();
-        if let Some(binding) = binding {
-            binding.fence.lock().unwrap().draining = true;
-        }
-    }
     pub(crate) fn readiness(&self, lease: &mut EngineLease) {
         let registrations = self.registrations.lock().unwrap();
         lease.readiness = if registrations
@@ -422,6 +583,37 @@ impl EngineRegistry {
             "unavailable"
         }
         .into();
+    }
+    /// Internal bounded drain. Timeout is explicit and retains the pinned
+    /// handle: a timeout does not prove a provider process died. Native adapters
+    /// remain responsible for child/group termination before their finalizer.
+    #[allow(dead_code)]
+    pub(crate) async fn drain(
+        &self,
+        store: &SessionStore,
+        id: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        let binding = self
+            .bindings
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("execution lease not found"))?;
+        BoundEngine(binding.clone()).stop(store, id);
+        loop {
+            if binding.fence.lock().unwrap().disposed {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!("execution cancel deadline exceeded; pinned handle retained until native cleanup");
+            }
+            tokio::time::sleep_until(
+                deadline.min(tokio::time::Instant::now() + std::time::Duration::from_millis(10)),
+            )
+            .await;
+        }
     }
     #[cfg(test)]
     fn disable(&self, id: &str) {
@@ -441,16 +633,17 @@ mod tests {
 
     #[derive(Default)]
     struct Replay {
+        descriptor: Option<EngineRef>,
         lives: Mutex<HashMap<String, (SessionStore, ConversationStore, u64)>>,
         disposals: AtomicUsize,
         decisions: Mutex<Vec<bool>>,
     }
     impl ExecutionEngineV1 for Replay {
         fn describe(&self) -> EngineRef {
-            EngineRef {
+            self.descriptor.clone().unwrap_or_else(|| EngineRef {
                 id: "replay-test-v1".into(),
                 ..Default::default()
-            }
+            })
         }
         fn preflight(&self, request: &SpawnManagedPayload, _: &str) -> Result<()> {
             // This test implementation has no credentials, process or facade.
@@ -696,5 +889,101 @@ mod tests {
         assert_eq!(interrupts.try_recv(), Ok(()));
         assert!(engine.stop(&store, "native"));
         assert!(messages.try_recv().is_err());
+    }
+    #[test]
+    fn invalid_descriptors_are_rejected_atomically() {
+        let registry = EngineRegistry::default();
+        for descriptor in [
+            EngineRef {
+                id: " ".into(),
+                ..Default::default()
+            },
+            EngineRef {
+                id: "candidate".into(),
+                api_version: 2,
+                ..Default::default()
+            },
+            EngineRef {
+                id: "candidate".into(),
+                implementation_version: "".into(),
+                ..Default::default()
+            },
+        ] {
+            assert!(registry
+                .register(Arc::new(Replay {
+                    descriptor: Some(descriptor),
+                    ..Default::default()
+                }))
+                .is_err());
+        }
+        assert_eq!(registry.registrations.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn legacy_hydration_and_durable_resume_keep_known_lineage() {
+        let path = crate::testtmp::db_path("execution-reopen");
+        let db = Db::open(&path).unwrap();
+        let hook = serde_json::from_value(serde_json::json!({"session_id":"legacy", "event":"SessionStart", "payload":{"cwd":"/isolated"}})).unwrap();
+        db.record_event(&hook).unwrap();
+        let store = SessionStore::new();
+        store.hydrate(db.load_recent_sessions(10).unwrap());
+        store.hydrate_execution(&db);
+        let legacy = store.get("legacy").unwrap().execution_engine.unwrap();
+        assert_eq!(legacy.engine, EngineRef::default());
+        assert_eq!(legacy.generation, 0);
+        let lease = db
+            .claim_execution_lease("legacy", None, &legacy.engine)
+            .unwrap();
+        drop(db);
+        let db = Db::open(path).unwrap();
+        assert_eq!(db.execution_lease("legacy").unwrap(), Some(lease));
+        let unknown = EngineRef {
+            implementation_version: "future".into(),
+            ..Default::default()
+        };
+        let previous = db.execution_lease("legacy").unwrap();
+        db.claim_execution_lease("legacy", previous.as_ref(), &unknown)
+            .unwrap();
+        store.hydrate_execution(&db);
+        assert_eq!(
+            store
+                .get("legacy")
+                .unwrap()
+                .execution_engine
+                .unwrap()
+                .readiness,
+            "unavailable"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancel_deadline_is_explicit_and_does_not_claim_process_death() {
+        let store = SessionStore::new();
+        let binding = Binding {
+            engine: Arc::new(ClaudemonEngine),
+            lease: EngineLease {
+                engine: Default::default(),
+                generation: 1,
+                readiness: "ready".into(),
+            },
+            fence: Arc::default(),
+            commands: Arc::default(),
+        };
+        store
+            .engines
+            .bindings
+            .lock()
+            .unwrap()
+            .insert("hung".into(), binding.clone());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(20);
+        assert!(store
+            .engines
+            .drain(&store, "hung", deadline)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("deadline"));
+        assert!(!binding.fence.lock().unwrap().disposed);
+        assert!(store.engines.bound("hung").is_some());
     }
 }

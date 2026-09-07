@@ -315,6 +315,28 @@ pub async fn handle(
     let effective_context_window =
         context_window_for_spawn(payload.context_window, prior_context_window);
     set_context_window_in_argv(&mut payload.argv, input_provider, effective_context_window);
+    match store.engines.start_pty(
+        &store,
+        &conv,
+        &db,
+        &session_id,
+        payload,
+        persisted_selection,
+    ) {
+        Ok(response) => response,
+        Err(err) => (StatusCode::SERVICE_UNAVAILABLE, err.to_string()).into_response(),
+    }
+}
+
+pub(crate) fn start_native_pty(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    db: &crate::store::Db,
+    session_id: &str,
+    payload: SpawnPayload,
+    persisted_selection: Option<crate::session::windows::PersistedModelSelection>,
+) -> axum::response::Response {
+    let session_id = session_id.to_string();
     let cwd = payload.cwd.clone();
     let cols = payload.cols.unwrap_or(80);
     let rows = payload.rows.unwrap_or(24);
@@ -422,6 +444,9 @@ pub async fn handle(
         } else {
             // Never bound to a real agent — nothing to resume, so drop it whole.
             store_for_reader.drop_pending_spawn(&session_for_reader, &cwd_for_reader, generation);
+        }
+        if let Some(scope) = &store_for_reader.execution_scope {
+            scope.finish();
         }
         tracing::info!(session = %session_for_reader, generation, "in-daemon PTY reader ended");
     });
@@ -649,10 +674,18 @@ pub async fn handle_managed(
         Ok(pinned) => pinned,
         Err(err) => return (StatusCode::CONFLICT, err.to_string()).into_response(),
     };
-    let prepared = match registry.prepare(pinned.as_ref(), &payload, &bin) {
-        Ok(prepared) => prepared,
-        Err(err) => return (StatusCode::SERVICE_UNAVAILABLE, err.to_string()).into_response(),
+    let source_pin = match payload.resume.as_deref() {
+        Some(source) => match db.execution_lease(source) {
+            Ok(pin) => pin,
+            Err(err) => return (StatusCode::CONFLICT, err.to_string()).into_response(),
+        },
+        None => None,
     };
+    let prepared =
+        match registry.prepare_resume(pinned.as_ref(), source_pin.as_ref(), &payload, &bin) {
+            Ok(prepared) => prepared,
+            Err(err) => return (StatusCode::SERVICE_UNAVAILABLE, err.to_string()).into_response(),
+        };
     let first_message_queued = match registry.start(
         prepared,
         &store,

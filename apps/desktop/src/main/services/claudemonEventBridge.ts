@@ -36,6 +36,7 @@ export async function startClaudemonEventBridge(): Promise<void> {
           provider?: string;
           transport?: string;
           pending?: ManagedPendingWire | null;
+          execution_engine?: import('../shared/executionEngine').ExecutionEngineMetadata;
           background_tasks?: number;
           subagents?: unknown[];
           /** claudemon's canonical selection slice, in its own spelling. Both
@@ -50,6 +51,15 @@ export async function startClaudemonEventBridge(): Promise<void> {
       } catch (err) {
         console.warn('[claudemon-events] malformed JSON frame, skipping:', err);
         return;
+      }
+      if (update.session_id && update.state?.execution_engine) {
+        if (
+          claudeSessionStore.applyExecutionEngine(
+            update.session_id,
+            update.state.execution_engine,
+          ) === false
+        )
+          return;
       }
       // A managed session's process exiting comes through as a SessionEnd frame
       // (claudemon's `deregister_managed` sets mode=Stopped and broadcasts event
@@ -90,6 +100,9 @@ export async function startClaudemonEventBridge(): Promise<void> {
           // and merged presence-aware in the store, so a frame that omits
           // either field cannot erase what the row already knows.
           selection: readSelectionSlice(update.state),
+          ...(update.state?.execution_engine
+            ? { executionEngine: update.state.execution_engine }
+            : {}),
         });
       }
     },

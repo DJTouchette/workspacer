@@ -1257,3 +1257,27 @@ it('persists exact session lifecycle across close and same-ID restart without ad
     dispatchHistoryStore.list().find((t) => t.attempts[0].sessionId === sid)?.attempts[0].live,
   ).toBe(false);
 });
+
+it('retains the newer execution generation when a stale managed mode arrives', () => {
+  const sid = 'engine-generation-fence';
+  claudeSessionStore.handleHookEvent({
+    hook_event_name: 'SessionStart',
+    session_id: sid,
+    cwd: '/test',
+  });
+  const executionEngine = {
+    id: 'claudemon-v1',
+    api_version: 1,
+    implementation_version: '1',
+    generation: 4,
+    readiness: 'ready',
+  };
+  claudeSessionStore.applyExecutionEngine(sid, executionEngine);
+  const before = claudeSessionStore.getSnapshot(sid)?.ambientState;
+  claudeSessionStore.applyManagedMode(sid, 'responding', {
+    provider: 'codex',
+    executionEngine: { ...executionEngine, generation: 3 },
+  });
+  expect(claudeSessionStore.getSnapshot(sid)?.executionEngine).toEqual(executionEngine);
+  expect(claudeSessionStore.getSnapshot(sid)?.ambientState).toEqual(before);
+});

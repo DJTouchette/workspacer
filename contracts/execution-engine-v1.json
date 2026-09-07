@@ -1,0 +1,10 @@
+{
+  "metadata": {"id":"claudemon-v1","api_version":1,"implementation_version":"1","generation":4,"readiness":"unavailable"},
+  "nativeLaunches": [
+    {"provider":"claude","model":"fixture-model","instructions":"fixture","argvIncludes":["--print","--input-format","stream-json","--output-format","--model","fixture-model"]},
+    {"provider":"codex","model":"fixture-model","instructions":"fixture","argvIncludes":["app-server","--listen"]},
+    {"provider":"copilot","model":"fixture-model","instructions":"fixture","argvIncludes":["--model","fixture-model","--session-id"]},
+    {"provider":"opencode","model":"fixture-model","instructions":"fixture","argvIncludes":["serve","--hostname","127.0.0.1","--port"]},
+    {"provider":"pi","model":"fixture-model","instructions":"fixture","argvIncludes":["--mode","rpc","--model","fixture-model"]}
+  ]
+}

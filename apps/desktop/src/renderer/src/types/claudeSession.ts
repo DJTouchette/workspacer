@@ -1,3 +1,4 @@
+import type { ExecutionEngineMetadata } from '../../../main/shared/executionEngine';
 import type { ModelSelection } from '../../../main/shared/modelContextWindows';
 
 export type SessionAmbientState =
@@ -255,6 +256,7 @@ export interface ContextInventoryInfo {
 }
 
 export interface ClaudeSessionSnapshot {
+  executionEngine?: ExecutionEngineMetadata;
   sessionId: string;
   cwd: string;
   /** Where the agent currently works when that differs from `cwd` — e.g.

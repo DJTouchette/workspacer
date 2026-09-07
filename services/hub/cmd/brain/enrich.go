@@ -272,6 +272,9 @@ func compatSnapshot(snap json.RawMessage) json.RawMessage {
 	}
 	mode, _ := m["mode"].(string)
 	m["sessionId"] = id
+	if engine, ok := m["execution_engine"]; ok {
+		m["executionEngine"] = engine
+	}
 	m["sparse"] = true
 	if mode == "stopped" {
 		m["status"] = "ended"

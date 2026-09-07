@@ -1019,6 +1019,12 @@ impl SessionStore {
     }
 
     pub fn resolve_decision(&self, session_id: &str, decision: Value) -> bool {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.resolve(self, session_id, decision);
+        }
+        self.native_resolve_decision(session_id, decision)
+    }
+    pub(crate) fn native_resolve_decision(&self, session_id: &str, decision: Value) -> bool {
         match self.decisions.remove(session_id) {
             Some((_, tx)) => tx.send(decision).is_ok(),
             None => false,
@@ -1341,6 +1347,12 @@ impl SessionStore {
     }
 
     pub fn get(&self, session_id: &str) -> Option<SessionState> {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.snapshot(self, session_id);
+        }
+        self.native_get(session_id)
+    }
+    pub(crate) fn native_get(&self, session_id: &str) -> Option<SessionState> {
         self.states.get(session_id).map(|e| e.clone())
     }
 
@@ -1455,6 +1467,7 @@ impl SessionStore {
             }
             // A spawn onto an existing id is a new telemetry life (resume or
             // restart). The prior process' context evidence cannot cross it.
+            entry.execution_engine = self.engines.metadata(session_id);
             entry.context_telemetry_epoch = fresh_epoch;
             entry.status_line = None;
             entry.clone()
@@ -1810,6 +1823,16 @@ impl SessionStore {
     /// Returns false (so `/answer` falls through to the PTY keystroke path)
     /// when this session has no structural answer channel.
     pub fn submit_managed_answer(&self, session_id: &str, answer: ManagedAnswer) -> bool {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.answer(self, session_id, answer);
+        }
+        self.native_submit_managed_answer(session_id, answer)
+    }
+    pub(crate) fn native_submit_managed_answer(
+        &self,
+        session_id: &str,
+        answer: ManagedAnswer,
+    ) -> bool {
         match self.managed_answers.get(session_id) {
             Some(tx) => tx.send(answer).is_ok(),
             None => false,
@@ -1932,7 +1955,6 @@ impl SessionStore {
     /// sessions — without it, closing a pane leaves the `codex app-server` /
     /// `opencode serve` process and its driver task running forever.
     pub fn terminate_managed(&self, session_id: &str) -> bool {
-        self.engines.draining(session_id);
         if let Some(engine) = self.engines.bound(session_id) {
             return engine.stop(self, session_id);
         }

@@ -195,3 +195,19 @@ describe('createSnapshotFold — sparse rows still overlay', () => {
     expect(out.conversationOffset).toBe(9);
   });
 });
+
+it('preserves engine pins through rich and sparse web/remote snapshot folding', () => {
+  const f = fold();
+  const executionEngine = {
+    id: 'claudemon-v1',
+    api_version: 1,
+    implementation_version: '1',
+    generation: 4,
+    readiness: 'unavailable',
+  };
+  f.seedFull(snap(['a'], 0, { executionEngine }) as never);
+  const sparse = f.foldSparse({ sessionId: 's1', sparse: true, status: 'ended' } as never) as Snap;
+  expect(sparse.executionEngine).toEqual(executionEngine);
+  const old = fold().foldSparse({ sessionId: 'old', sparse: true } as never) as Snap;
+  expect(old.executionEngine).toBeUndefined();
+});

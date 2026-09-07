@@ -263,6 +263,7 @@ export interface SessionUsage {
 
 /** Serialisable snapshot sent over IPC (claude-session:get / getAll / update). */
 export interface ClaudeSessionSnapshot {
+  executionEngine?: import('./executionEngine').ExecutionEngineMetadata;
   /** Live spawn lineage used to scope explicit response-card worker actions. */
   parentSessionId?: string;
   label?: string;

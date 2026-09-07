@@ -874,6 +874,13 @@ async fn post_signal(
     if matches!(payload.signal, crate::protocol::Signal::Sigint) && store.interrupt_managed(&id) {
         return Json(json!({ "ok": true, "signal": payload.signal })).into_response();
     }
+    if let Some(engine) = store.engines.bound(&id) {
+        return if engine.signal(&store, &id, payload.signal) {
+            Json(json!({ "ok": true, "signal": payload.signal })).into_response()
+        } else {
+            (StatusCode::GONE, "execution handle disconnected").into_response()
+        };
+    }
     let Some(handle) = store.wrapper(&id) else {
         return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
     };
@@ -1853,6 +1860,113 @@ mod tests {
             rec.lines().next().unwrap().contains("--banner"),
             "the profile's extra argv never reached the argv:\n{rec}",
         );
+    }
+
+    #[tokio::test]
+    async fn execution_engine_unavailable_and_incompatible_refuse_before_publication() {
+        for uri in ["/sessions/spawn", "/sessions/spawn-managed"] {
+            let state = test_state();
+            let reference = crate::execution::EngineRef {
+                implementation_version: "incompatible".into(),
+                ..Default::default()
+            };
+            state
+                .db
+                .claim_execution_lease("pinned", None, &reference)
+                .unwrap();
+            let payload = if uri.ends_with("spawn-managed") {
+                json!({"provider":"claude", "cwd":std::env::temp_dir(), "session_id":"pinned"})
+            } else {
+                json!({"argv":["never-execute"], "cwd":std::env::temp_dir(), "session_id":"pinned"})
+            };
+            let (status, body) = request(state.clone(), post_json(uri, payload)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert!(String::from_utf8_lossy(&body).contains("incompatible"));
+            assert!(state.store.list().is_empty());
+        }
+        let state = test_state();
+        let reference = crate::execution::EngineRef {
+            id: "unknown".into(),
+            ..Default::default()
+        };
+        state
+            .db
+            .claim_execution_lease("source", None, &reference)
+            .unwrap();
+        let (status, _) = request(state.clone(), post_json("/sessions/spawn-managed", json!({
+            "provider":"claude", "cwd":std::env::temp_dir(), "resume":"source", "session_id":"new-target"
+        }))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(state.store.list().is_empty());
+        assert!(state.db.execution_lease("new-target").unwrap().is_none());
+        let (status, body) = request(state.clone(), post_json("/sessions/spawn", json!({
+            "argv":["never-execute", "--resume", "source"], "cwd":std::env::temp_dir(), "session_id":"new-pty-target"
+        }))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(String::from_utf8_lossy(&body).contains("unknown identity"));
+        assert!(state.store.list().is_empty());
+
+        let (status, _) = request(state.clone(), post_json("/sessions/spawn-managed", json!({
+            "provider":"claude", "cwd":std::env::temp_dir(), "bin":"/missing-engine-binary", "session_id":"missing"
+        }))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(state.store.list().is_empty());
+        assert!(state.db.execution_lease("missing").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn execution_engine_native_launch_golden_cases() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/execution-engine-v1.json"
+        ))
+        .unwrap();
+        for case in fixture["nativeLaunches"].as_array().unwrap() {
+            let provider = case["provider"].as_str().unwrap();
+            let dir = crate::testtmp::dir().join(format!("engine-native-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let script = dir.join("provider.sh");
+            let out = dir.join("argv.txt");
+            // Only argv is captured: no inherited environment or credentials.
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 1\n",
+                    out.display()
+                ),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let state = test_state();
+            let id = format!("fixture-{provider}");
+            let mut payload = case.clone();
+            payload.as_object_mut().unwrap().remove("argvIncludes");
+            payload["bin"] = json!(script);
+            payload["cwd"] = json!(dir);
+            payload["session_id"] = json!(id);
+            payload["transport"] = json!("stream");
+            payload["first_message"] = json!("fixture prompt");
+            let (status, body) =
+                request(state.clone(), post_json("/sessions/spawn-managed", payload)).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{provider}: {}",
+                String::from_utf8_lossy(&body)
+            );
+            let pin = state.db.execution_lease(&id).unwrap().unwrap();
+            assert_eq!(pin.engine, crate::execution::EngineRef::default());
+            assert_eq!(pin.generation, 1);
+            let argv = await_recording(&out).await;
+            for arg in case["argvIncludes"].as_array().unwrap() {
+                assert!(
+                    argv.lines().any(|line| line == arg.as_str().unwrap()),
+                    "{provider} missing {arg}: {argv}"
+                );
+            }
+            state.store.terminate_managed(&id);
+        }
     }
 
     #[tokio::test]

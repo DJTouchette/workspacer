@@ -524,6 +524,7 @@ export interface ClaudeSessionState {
    * is, and for a federated one the peer is — both arrive on the wire and are
    * stored verbatim. Additive: absent when nobody has said.
    */
+  executionEngine?: import('../shared/executionEngine').ExecutionEngineMetadata;
   requestedSelection?: import('../shared/modelContextWindows').ModelSelection;
   /**
    * The window this session's owner resolved for it, in tokens.
@@ -1382,6 +1383,18 @@ class ClaudeSessionStore {
    * waiting signal — without it their status is stuck on the `'idle'` default.
    * No-op for unknown sessions or modes we don't surface.
    */
+  applyExecutionEngine(
+    sessionId: string,
+    engine: import('../shared/executionEngine').ExecutionEngineMetadata,
+  ): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return true;
+    if (session.executionEngine && engine.generation < session.executionEngine.generation)
+      return false;
+    session.executionEngine = engine;
+    return true;
+  }
+
   applyManagedMode(
     sessionId: string,
     mode: string,
@@ -1395,10 +1408,19 @@ class ClaudeSessionStore {
        *  (claudemonEventBridge). The daemon owns both fields; this process
        *  stores them and never re-derives them. */
       selection?: CanonicalSelectionSlice;
+      executionEngine?: import('../shared/executionEngine').ExecutionEngineMetadata;
     },
   ): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    if (meta?.executionEngine) {
+      if (
+        session.executionEngine &&
+        meta.executionEngine.generation < session.executionEngine.generation
+      )
+        return;
+      session.executionEngine = meta.executionEngine;
+    }
     // Presence-aware: the daemon wins each field it actually carries, and a
     // frame that omits one leaves the row's existing value alone. A plain
     // assignment here would erase the owner's fact on every mode transition
@@ -1747,6 +1769,12 @@ class ClaudeSessionStore {
     const sessionId = snap?.sessionId;
     if (!sessionId || typeof sessionId !== 'string') return;
     const existing = this.sessions.get(sessionId);
+    if (
+      existing?.executionEngine &&
+      snap.executionEngine &&
+      snap.executionEngine.generation < existing.executionEngine.generation
+    )
+      return;
     if (existing && (existing.hub ?? '') !== hub) {
       // A peer must never overwrite a LOCAL session (or another peer's) that
       // happens to share the id — refusing beats silently rebinding actions
@@ -1814,6 +1842,7 @@ class ClaudeSessionStore {
     // `status_line` and `tool_calls` ride along), so map both spellings — and
     // presence-merge, so a window push that omits the slice keeps what the
     // previous one told us.
+    session.executionEngine = snap.executionEngine ?? existing?.executionEngine;
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
     // Federation is a mirror, never a second owner. The peer already applied
     // its own stale-frame fence before publishing this status/provenance, so
@@ -1912,6 +1941,7 @@ class ClaudeSessionStore {
     // Same rule as the rich path: the peer owns the slice, both spellings are
     // accepted, and a sparse row that omits it cannot erase the richer fact a
     // previous update supplied.
+    session.executionEngine = snap.executionEngine ?? existing?.executionEngine;
     applySelectionSlice(session, mergeSelectionSlice(existing, readSelectionSlice(snap)));
     // Same ownership rule as the rich path: a federated update is already
     // sanitized owner truth and must not arm or extend a local fence.

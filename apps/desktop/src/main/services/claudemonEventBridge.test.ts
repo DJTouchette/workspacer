@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 /**
  * Tests for claudemonEventBridge — folds a MANAGED session's mode from the
  * daemon's /events SSE feed into claudeSessionStore.applyManagedMode.
@@ -18,11 +19,13 @@ vi.mock('../lib/sseConsumer', () => ({
   consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])),
 }));
 
+const applyExecutionEngine = vi.fn();
 const applyManagedMode = vi.fn();
 const handleHookEvent = vi.fn();
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {
     applyManagedMode: (...a: unknown[]) => applyManagedMode(...a),
+    applyExecutionEngine: (...a: unknown[]) => applyExecutionEngine(...a),
     handleHookEvent: (...a: unknown[]) => handleHookEvent(...a),
   },
 }));
@@ -225,4 +228,48 @@ describe('claudemonEventBridge', () => {
     await startClaudemonEventBridge();
     expect(consumeSseStream).toHaveBeenCalledTimes(2);
   });
+});
+
+it('projects the read-only execution pin without deriving readiness from provider', async () => {
+  await startClaudemonEventBridge();
+  const executionEngine = JSON.parse(
+    readFileSync(
+      new URL('../../../../../contracts/execution-engine-v1.json', import.meta.url),
+      'utf8',
+    ),
+  ).metadata;
+  capturedOpts.onFrame(
+    JSON.stringify({
+      event: 'Managed',
+      session_id: 'engine',
+      state: { mode: 'stopped', provider: 'claude', execution_engine: executionEngine },
+    }),
+  );
+  expect(applyManagedMode).toHaveBeenCalledWith(
+    'engine',
+    'stopped',
+    expect.objectContaining({ executionEngine }),
+  );
+});
+
+it('drops a stale engine terminal before it can wake or end the successor', async () => {
+  await startClaudemonEventBridge();
+  applyExecutionEngine.mockReturnValueOnce(false);
+  capturedOpts.onFrame(
+    JSON.stringify({
+      event: 'SessionEnd',
+      session_id: 's1',
+      state: {
+        mode: 'stopped',
+        execution_engine: {
+          id: 'claudemon-v1',
+          api_version: 1,
+          implementation_version: '1',
+          generation: 1,
+          readiness: 'ready',
+        },
+      },
+    }),
+  );
+  expect(handleHookEvent).not.toHaveBeenCalled();
 });

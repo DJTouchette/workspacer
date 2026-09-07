@@ -328,9 +328,21 @@ fn default_transport() -> String {
     "pty".to_string()
 }
 
+/// Read-only host projection. Missing metadata means an old peer, not readiness.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExecutionEngineMetadata {
+    pub id: String,
+    pub api_version: u32,
+    pub implementation_version: String,
+    pub generation: u64,
+    pub readiness: String,
+}
+
 /// One live session, as returned by claudemon's `GET /sessions`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
+    #[serde(default, alias = "executionEngine")]
+    pub execution_engine: Option<ExecutionEngineMetadata>,
     pub session_id: String,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -2691,5 +2703,28 @@ mod tests {
             "items": [{ "kind": "user_message", "text": "go" }]
         }));
         assert_eq!(fold.seq, 1);
+    }
+}
+
+#[cfg(test)]
+mod execution_engine_tests {
+    use super::*;
+    #[test]
+    fn daemon_and_hub_metadata_are_additive_and_preserve_unavailable() {
+        for field in ["execution_engine", "executionEngine"] {
+            let fixture: serde_json::Value =
+                serde_json::from_str(include_str!("../../../contracts/execution-engine-v1.json"))
+                    .unwrap();
+            let row = serde_json::json!({"session_id":"engine", field: fixture["metadata"]});
+            let agent: Agent = serde_json::from_value(row).unwrap();
+            let engine = agent.execution_engine.unwrap();
+            assert_eq!(engine.id, "claudemon-v1");
+            assert_eq!(engine.api_version, 1);
+            assert_eq!(engine.implementation_version, "1");
+            assert_eq!(engine.generation, 4);
+            assert_eq!(engine.readiness, "unavailable");
+        }
+        let old: Agent = serde_json::from_str(r#"{"session_id":"old"}"#).unwrap();
+        assert!(old.execution_engine.is_none());
     }
 }

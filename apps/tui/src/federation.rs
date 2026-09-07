@@ -156,6 +156,9 @@ fn fold_row(prev: &Agent, mut next: Agent) -> Agent {
     if next.cwd.is_none() {
         next.cwd = prev.cwd.clone();
     }
+    next.execution_engine = next
+        .execution_engine
+        .or_else(|| prev.execution_engine.clone());
     next.provider = prev.provider.clone();
     next.label = next.label.or_else(|| prev.label.clone());
     next.usage = next.usage.or_else(|| prev.usage.clone());
@@ -269,6 +272,8 @@ pub fn agent_from_snapshot(hub: &str, row: &Value) -> Option<Agent> {
         .filter(|w| *w > 0);
 
     Some(Agent {
+        execution_engine: field("executionEngine", "execution_engine")
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
         session_id,
         cwd: str_of("cwd"),
         provider: str_of("provider").unwrap_or_else(|| "claude".to_string()),
