@@ -512,7 +512,7 @@ describe('spawnFleetManager', () => {
     hook.unmount();
   });
 
-  it('reuses a LIVE manager by name — the ask goes as a plain message, no second spawn', async () => {
+  it('reuses a LIVE manager by name and discovers current workflow policy without a second spawn', async () => {
     const hook = renderHook(() => useAgentManager());
     act(() =>
       hook.result.current.loadAgentsFromSession(
@@ -540,7 +540,12 @@ describe('spawnFleetManager', () => {
       await hook.result.current.spawnFleetManager('and now?', '/home/u/Work');
     });
     expect(spawnClaude).not.toHaveBeenCalled();
-    await waitFor(() => expect(claudeMessage).toHaveBeenCalledWith('mgr-live', 'and now?'));
+    await waitFor(() =>
+      expect(claudeMessage).toHaveBeenCalledWith(
+        'mgr-live',
+        expect.stringContaining('and now?\n\nFor each NEW project task, call start_workflow'),
+      ),
+    );
     hook.unmount();
   });
 });

@@ -752,7 +752,10 @@ export function useAgentManager() {
         } catch (err) {
           console.warn('[fleet-manager] token grant reconcile failed:', err);
         }
-        const result = await window.electronAPI.claudeMessage(live.sessionId, buildManagerWorkflowAsk(ask));
+        const result = await window.electronAPI.claudeMessage(
+          live.sessionId,
+          buildManagerWorkflowAsk(ask),
+        );
         if (result?.ok === false) throw new Error(spawnFailureMessage(provider));
         return live.sessionId;
       }
@@ -777,7 +780,11 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(record, stopped.lastSessionId, buildManagerWorkflowAsk(ask));
+        const sessionId = await respawnFromRecord(
+          record,
+          stopped.lastSessionId,
+          buildManagerWorkflowAsk(ask),
+        );
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
         if (!stopped.manager) {
           mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));

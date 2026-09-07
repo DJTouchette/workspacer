@@ -1,4 +1,9 @@
-import { workflowBusy, ownerTask, workflowInstructions } from './fleetWorkflowRuntime';
+import {
+  workflowBusy,
+  ownerTask,
+  workflowInstructions,
+  configuredWorkflowProjectKey,
+} from './fleetWorkflowRuntime';
 import path from 'path';
 import fs from 'fs';
 import { configService, getConfigDir } from './configService';
@@ -42,20 +47,6 @@ export const fleetWorkflowStore = new FleetWorkflowStore(
     return [s.defaultId, ...Object.values(s.projects)];
   },
 );
-function configuredProjectKey(cwd: string): string {
-  const canonical = (value: string) => {
-    try {
-      return fs.realpathSync(value);
-    } catch {
-      return path.resolve(value);
-    }
-  };
-  return (
-    Object.keys(configService.getConfig().projects ?? {}).find(
-      (key) => canonical(key) === canonical(cwd),
-    ) ?? cwd
-  );
-}
 export function fleetWorkflowRequest(
   request: WorkflowRequest,
   callerSessionId?: string,
@@ -67,7 +58,7 @@ export function fleetWorkflowRequest(
       throw new Error('Workflow project cwd must be absolute');
     const { op, id, expectedRevision } = request;
     if (op === 'select' && request.cwd)
-      request = { ...request, cwd: configuredProjectKey(request.cwd) };
+      request = { ...request, cwd: configuredWorkflowProjectKey(request.cwd) };
     if (op === 'list')
       return {
         ok: true,
@@ -151,7 +142,7 @@ export function fleetWorkflowRequest(
         throw new Error('New workflow requires a live local manager, project cwd and title');
       const selections = workflowSelections(configService.getConfig());
       return fleetWorkflowStore.withDefinition(
-        selections.projects[configuredProjectKey(request.cwd)] ?? selections.defaultId,
+        selections.projects[configuredWorkflowProjectKey(request.cwd)] ?? selections.defaultId,
         (d) => {
           const task = dispatchHistoryStore.startWorkflow(
             owner,

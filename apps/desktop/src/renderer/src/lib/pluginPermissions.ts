@@ -196,6 +196,10 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // Sensitive for agents.sendMessage's reason — the note lands in a running
   // agent's conversation, where it is read as instruction — even though the
   // recipient is the host's choice, not the caller's.
+  'fleetWorkflows.request': {
+    label: 'Configure Fleet workflows and inspect pinned tasks (local desktop host only)',
+    sensitive: true,
+  },
   'agents.reportProgress': {
     label: 'Send a progress note to the agent that dispatched this one',
     sensitive: true,

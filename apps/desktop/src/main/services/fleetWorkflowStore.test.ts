@@ -67,6 +67,10 @@ describe('Fleet definition store and pinned history', () => {
     const { store } = setup();
     const d = custom();
     d.steps = [{ ...d.steps[0], when: 'always' }];
+    for (const id of [true, false, 1, null]) {
+      expect(() => validateWorkflow({ ...d, id })).toThrow();
+      expect(() => validateWorkflow({ ...d, steps: [{ ...d.steps[0], id }] })).toThrow();
+    }
     expect(store.validate(d).steps).toHaveLength(1);
     for (const key of [
       'toolScope',
@@ -170,4 +174,47 @@ it('refuses locked/stale writes and selected disable through update; capacity ca
     'capacity',
   );
   expect(history.list().map((t) => t.taskId)).toEqual([first.taskId]);
+});
+
+it('does not make unrelated optional metadata a standalone launch gate', () => {
+  const { dir } = setup();
+  const store = new DispatchHistoryStore(() => path.join(dir, 'legacy.json'));
+  expect(
+    store.accept({
+      projectCwd: dir,
+      executionCwd: dir,
+      sessionId: 'ordinary',
+      stage: 'unknown-label',
+    } as never),
+  ).toBeUndefined();
+  const result = store.accept({
+    projectCwd: dir,
+    executionCwd: dir,
+    sessionId: 'attributed',
+    stage: 'unknown-label',
+    owner: { sessionId: 'manager', isWakeTarget: true, status: 'active' },
+  } as never)!;
+  expect(store.task(result.taskId)?.attempts[0].stage).toBeUndefined();
+});
+
+it('pins unusual library ids as data across JSON persistence', () => {
+  const { store, templates } = setup();
+  templates.push({
+    ...templates[0],
+    id: '__proto__',
+    body: 'Pinned special-name template {{task}}',
+  });
+  const definition = custom();
+  const noTask = { ...templates[0], id: 'no-task', body: 'Static research', params: [] };
+  templates.push(noTask);
+  expect(() =>
+    store.validate({
+      ...definition,
+      steps: [{ ...definition.steps[0], template: 'no-task', instructions: 'Apply this' }],
+    }),
+  ).toThrow('task input');
+  definition.steps = [{ ...definition.steps[0], template: '__proto__' }];
+  const persisted = JSON.parse(JSON.stringify(store.pin(definition)));
+  expect(Object.hasOwn(persisted.templates, '__proto__')).toBe(true);
+  expect(persisted.templates.__proto__.body).toBe('Pinned special-name template {{task}}');
 });

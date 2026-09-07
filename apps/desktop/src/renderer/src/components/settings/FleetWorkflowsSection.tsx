@@ -414,7 +414,7 @@ export default function FleetWorkflowsSection() {
                         value={s.when}
                         onChange={(e) => change(i, { when: e.target.value as typeof s.when })}
                       >
-                        <option value="always">Always (required)</option>
+                        <option value="always">Always</option>
                         <option value="material_risk">Material risk decision</option>
                       </select>
                     </label>
@@ -440,6 +440,31 @@ export default function FleetWorkflowsSection() {
                         .join(', ') || 'none'}
                       . The manager supplies these for each dispatch.
                     </p>
+                    <details>
+                      <summary>Preview template and result contract</summary>
+                      <pre
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          overflowWrap: 'anywhere',
+                          fontSize: '0.72rem',
+                        }}
+                      >
+                        {catalog.templates.find((t) => t.id === s.template)?.body}
+                      </pre>
+                      <pre
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          overflowWrap: 'anywhere',
+                          fontSize: '0.72rem',
+                        }}
+                      >
+                        {JSON.stringify(
+                          catalog.templates.find((t) => t.id === s.template)?.resultSchema,
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
                     <label>
                       Instructions
                       <textarea

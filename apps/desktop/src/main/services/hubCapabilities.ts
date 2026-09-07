@@ -627,6 +627,7 @@ export function registerHubCapabilities(): void {
       request.cwd = assertPathAllowed('fleetWorkflows.request', request.cwd, browseRoots());
     return fleetWorkflowRequest(request, callerSessionId);
   });
+  // ADOPTED-DEGRADED: fleetWorkflows.request — an adopted full headless brain may own this name and explicitly returns unavailable; catalog-only brain does not register it.
   // Keep the spawn handler at its existing indentation for shared seam changes.
   // prettier-ignore
   registerCapability('agents.spawn', workflowSpawn(async (params: unknown) => {

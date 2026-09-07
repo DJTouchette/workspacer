@@ -90,7 +90,11 @@ export class DispatchHistoryStore {
   }
   validate(input: Admission): void {
     const { owner, taskId, stage, afterDispatchId } = input;
-    if (stage !== undefined && !TASK_STAGES.includes(stage))
+    if (
+      stage !== undefined &&
+      !TASK_STAGES.includes(stage) &&
+      (input.taskId || input.workflowStepId || input.afterDispatchId)
+    )
       throw new Error('Unknown dispatch stage');
     if (!owner?.isWakeTarget || owner.status === 'ended' || owner.hub) {
       // Stage describes a launch; host retry provenance is automatic. Neither
@@ -158,7 +162,7 @@ export class DispatchHistoryStore {
       sessionId: input.sessionId,
       kind: source ? 'retry' : 'fresh',
       ...(source ? { retryOfDispatchId: source.attempt.dispatchId } : {}),
-      stage: input.stage ?? source?.attempt.stage,
+      stage: input.stage && TASK_STAGES.includes(input.stage) ? input.stage : source?.attempt.stage,
       afterDispatchId: source?.attempt.dispatchId ?? input.afterDispatchId,
       acceptedAt: now,
       observedAt: now,

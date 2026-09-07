@@ -148,6 +148,9 @@ beforeAll(async () => {
   expect(daemon.getHubToken() === 'dispatch-chain-synthetic-host').toBe(true);
   const config = await import('../../src/main/services/configService');
   expect(config.getConfigDir()).toBe(configDir);
+  const alias = path.join(scratch, 'project-alias');
+  fs.symlinkSync(project, alias, 'dir');
+  config.configService.saveConfig({ projects: { [alias]: { delivery: 'local' } } });
   ({ claudeSessionStore: sessions } = await import('../../src/main/services/claudeSessionStore'));
   ({ dispatchHistoryStore: history } =
     await import('../../src/main/services/dispatchHistoryStore'));
@@ -583,6 +586,7 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
     expect(implementation.isError, implementation.text).toBe(false);
     const opts = launch.mock.lastCall![0];
     expect(opts.firstMessage).toContain('SHIP TASK');
+    expect(opts.firstMessage).toContain('approved local merge');
     expect(opts.firstMessage).not.toContain('ALTERED TEMPLATE');
     expect(opts.toolScope).toBe('view');
     expect(opts.skipPermissions).toBe(false);
@@ -764,6 +768,13 @@ it('runs a custom research-only template, refuses missing inputs, and records in
         decisionId: d.decisionId,
       };
       const before = launch.mock.calls.length;
+      const managerOverride = await mcpSpawn(manager, {
+        ...params,
+        manager: true,
+        templateParams: { task: 'Read source', subject: 'parser' },
+      });
+      expect(managerOverride.isError).toBe(true);
+      expect(launch.mock.calls).toHaveLength(before);
       const missing = await mcpSpawn(manager, {
         ...params,
         templateParams: { task: 'Read the source' },

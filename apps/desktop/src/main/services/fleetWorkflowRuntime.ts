@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 /** Pinned-task interpretation and spawn admission. No Library initialization on lifecycle imports. */
 import { configService } from './configService';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
@@ -69,6 +71,7 @@ export function workflowSpawn<T>(
       .find((s) => s.dispatchId);
     if (
       !['view', 'triage', 'operator'].includes(p.toolScope as string) ||
+      p.manager ||
       p.resumeSessionId ||
       p.retrySourceSessionId ||
       p.parentSessionId !== task.ownerSessionId ||
@@ -92,7 +95,8 @@ export function workflowSpawn<T>(
         throw new Error('Step instructions require a template task input');
       params.task = `${params.task}\n\n${step.instructions}`;
     }
-    const project = configService.getConfig().projects?.[task.projectCwd];
+    const project =
+      configService.getConfig().projects?.[configuredWorkflowProjectKey(task.projectCwd)];
     if (t.params.some((p) => p.name === 'delivery'))
       params.delivery =
         project?.delivery === 'local'
@@ -135,4 +139,19 @@ export function workflowResultSchema(sessionId: string): Record<string, unknown>
   const run = task?.workflow?.steps.find((s) => s.sessionId === sessionId);
   const step = task?.workflow?.definition.steps.find((s) => s.id === run?.id);
   return step ? task!.workflow!.templates[step.template].resultSchema : undefined;
+}
+
+export function configuredWorkflowProjectKey(cwd: string): string {
+  const canonical = (value: string) => {
+    try {
+      return fs.realpathSync(value);
+    } catch {
+      return path.resolve(value);
+    }
+  };
+  return (
+    Object.keys(configService.getConfig().projects ?? {}).find(
+      (key) => canonical(key) === canonical(cwd),
+    ) ?? cwd
+  );
 }

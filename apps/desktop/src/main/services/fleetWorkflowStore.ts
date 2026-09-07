@@ -50,6 +50,8 @@ export class FleetWorkflowStore {
         if (!doc.definitions.some((x) => x.id === d.id)) doc.definitions.push(structuredClone(d));
         doc.seeded.push(d.id);
       }
+    if (doc.definitions.length > 100 || Buffer.byteLength(JSON.stringify(doc)) > 2 * 1024 * 1024)
+      throw new Error('Workflow store is full');
     return doc;
   }
   private transaction<T>(fn: (d: Document) => T): T {
@@ -72,6 +74,8 @@ export class FleetWorkflowStore {
     for (const s of d.steps) {
       const t = templates.find((t) => t.id === s.template);
       if (!t) throw new Error(`Dispatch template unavailable: ${s.template}`);
+      if (s.instructions && !t.params.some((p) => p.name === 'task'))
+        throw new Error(`Template ${t.id} needs a task input to carry step instructions`);
       if (checkResultSchema(t.resultSchema))
         throw new Error(`Template ${t.id} needs a result contract`);
     }
@@ -138,7 +142,7 @@ export class FleetWorkflowStore {
   pin(d: WorkflowDefinition): WorkflowPin {
     this.validate(d);
     const available = this.templates();
-    const templates: Record<string, WorkflowTemplate> = {};
+    const templates: Record<string, WorkflowTemplate> = Object.create(null);
     for (const s of d.steps) {
       const t = available.find((t) => t.id === s.template)!;
       templates[t.id] =

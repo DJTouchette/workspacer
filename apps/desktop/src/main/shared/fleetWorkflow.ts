@@ -130,7 +130,12 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
     'enabled',
     'steps',
   ]);
-  if (!slug.test(d.id) || !Number.isSafeInteger(d.revision) || d.revision < 1)
+  if (
+    typeof d.id !== 'string' ||
+    !slug.test(d.id) ||
+    !Number.isSafeInteger(d.revision) ||
+    d.revision < 1
+  )
     throw new Error('Invalid workflow id/revision');
   text(d.name, 120);
   text(d.description, 1000, true);
@@ -156,7 +161,8 @@ export function validateWorkflow(value: unknown): WorkflowDefinition {
       'independentOf',
       'repairOf',
     ]);
-    if (!slug.test(s.id) || seen.has(s.id)) throw new Error('Step ids must be unique slugs');
+    if (typeof s.id !== 'string' || !slug.test(s.id) || seen.has(s.id))
+      throw new Error('Step ids must be unique slugs');
     text(s.label, 120);
     text(s.instructions, 8000, true);
     text(s.template, 128);
