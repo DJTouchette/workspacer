@@ -62,7 +62,57 @@ cancel other waiters; the last waiter cancels the completion transport. Claude's
 daemon independently kills its child at its own deadline even if the HTTP caller
 disconnects. No model tools, project working directory or worker session is used.
 
-### Codex completion blocker (verified 2026-09-06)
+### Codex completion blockers (verified 2026-09-06)
+
+The manager has since accepted a Codex-specific utility-only contract: clock
+and user-input utilities may remain, with client requests denied or completed
+unavailable without UI. Environment access, MCPs, plugins, extensions, web
+search and delegation remain forbidden. This resolves the literal empty-registry
+decision below, but **does not yet make the adapter safe to enable**. The
+app-server configuration issue described next is a separate blocker.
+
+#### Remaining app-server configuration isolation gap
+
+The installed 0.153.4 binary rejects
+`codex app-server --ignore-user-config --help` with exit 2 and
+`unexpected argument '--ignore-user-config'`. This flag belongs to `exec`.
+The matching CLI source passes `LoaderOverrides::default()` to app-server;
+the server's internal `ignore_user_config` support is not exposed by that CLI
+route. Its test-only user-config-path environment variable is debug-only and
+is not a supported production substitute.
+
+`-c 'mcp_servers={}'` is also insufficient. CLI overrides form a layer, and
+the config merger recursively merges tables: an empty table does not delete
+inherited server entries. This is source evidence, not an inspection of the
+user's configuration or credentials.
+
+Crucially, `environments: []` does not independently remove those servers.
+`McpManager::runtime_config_with_context` builds the catalog from config and
+returns `McpEnvironmentAuthority::Unrestricted` for the default MCP environment
+when no corresponding selection exists. The session runtime then retains a
+default-environment cwd fallback and passes `effective_mcp_servers` to an eager
+MCP runtime. Thus a configured default-environment MCP is not excluded by the
+empty environment selection. Rejecting app-server client requests cannot
+disable this server-owned MCP path.
+
+Version-pinned evidence:
+
+- [CLI app-server launch](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/cli/src/main.rs#L1245)
+- [CLI override layer](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/config/src/overrides.rs#L9)
+  and [recursive table merge](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/config/src/merge.rs#L95)
+- [MCP catalog environment authority](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/mcp.rs#L279)
+- [Effective MCP startup input](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/session/mcp_runtime.rs#L342)
+
+Next prerequisite: a supported app-server configuration-isolation control that
+retains CLI-owned auth and excludes inherited MCPs/instructions before thread
+initialization. One concrete upstream option is exposing the existing
+`ignore_user_config` loader option on app-server, followed by verification of
+remaining managed-config and startup sources. That upstream change is outside
+this Workspacer-only task. Do not substitute an invented flag, empty merged
+table, copied credentials, or guardian identity. Codex remains fail-closed;
+no bounded adapter or utility-denial transcript tests have been implemented.
+
+#### Original empty-registry finding (decision now resolved)
 
 The requested Codex support is **not complete**. The installed `codex-cli
 0.153.4` cannot be enabled under this feature's empty-tool-registry contract
@@ -105,12 +155,12 @@ launcher may update itself; choose an output directory in an isolated checkout):
 "$SUMMARY_CODEX_BIN" app-server generate-json-schema --experimental --out "$SUMMARY_SCHEMA_DIR"
 ```
 
-The design decision is whether to retain the strict contract and require an
+The original design decision was whether to retain the strict contract and require an
 upstream Codex control that both empties the registry and denies dispatch, or
 explicitly revise the contract to permit enumerated utility tools while
 forbidding environment access, MCPs, extensions, and writes. The latter still
-needs an adapter implementation and effective-request/denial tests; it is not
-authorized or implemented here. Replacing model metadata, impersonating an
+needs an adapter implementation and effective-request/denial tests; it is now
+authorized but remains unimplemented due to the isolation gap above. Replacing model metadata, impersonating an
 internal guardian session, or intercepting authenticated provider requests is
 not an established supported no-tools route.
 
