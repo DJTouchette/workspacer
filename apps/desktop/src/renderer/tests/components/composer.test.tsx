@@ -52,6 +52,7 @@ describe('Composer', () => {
     const { onSend } = renderComposer({ value: 'ship it' });
     fireEvent.keyDown(textarea(), { key: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith();
   });
 
   it('Shift+Enter inserts a newline instead of sending', () => {
@@ -88,6 +89,8 @@ describe('Composer', () => {
     const { onSend } = renderComposer({ value: 'hello' });
     fireEvent.click(screen.getByLabelText('Send message'));
     expect(onSend).toHaveBeenCalledTimes(1);
+    // The shared handler also accepts optional card text. Never pass the mouse event as text.
+    expect(onSend).toHaveBeenCalledWith();
   });
 
   it('send button enables on attachments alone (no text), and the placeholder flips to the files prompt', () => {

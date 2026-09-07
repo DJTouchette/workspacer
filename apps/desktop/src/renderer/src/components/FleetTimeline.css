@@ -1,0 +1,199 @@
+.fleet-toolbar {
+  flex-wrap: wrap;
+}
+.fleet-chat-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.fleet-timeline-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+}
+.fleet-timeline-content {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.fleet-timeline-intro {
+  margin-bottom: 20px;
+}
+.fleet-timeline-intro h1 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+.fleet-timeline-intro p,
+.fleet-timeline-empty {
+  font-size: 0.8rem;
+  color: var(--wks-text-tertiary);
+}
+.fleet-timeline-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  cursor: pointer;
+}
+.fleet-timeline-row:focus-visible {
+  outline: 2px solid var(--wks-accent);
+  outline-offset: 2px;
+}
+.fleet-timeline-row:hover {
+  background: var(--wks-bg-hover);
+}
+.fleet-timeline-time {
+  padding: 16px 16px 16px 0;
+  font: 0.66rem var(--wks-font-mono);
+  color: var(--wks-text-tertiary);
+}
+.fleet-timeline-time time {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fleet-manager-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--wks-accent);
+  margin-bottom: 12px;
+}
+.fleet-manager-anchor {
+  margin-bottom: 12px;
+  background: var(--wks-bg-surface);
+  border-radius: var(--wks-radius-md);
+}
+.fleet-manager-anchor .fleet-timeline-time {
+  padding-left: 12px;
+}
+.fleet-manager-anchor .fleet-timeline-entry {
+  border-left-color: var(--wks-accent);
+  border-bottom: none;
+}
+.fleet-worker-timeline {
+  border-top: 1px solid var(--wks-border-subtle);
+}
+.fleet-timeline-entry {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--wks-border-subtle);
+  border-bottom: 1px solid var(--wks-border-subtle);
+  padding-left: 12px;
+}
+.fleet-timeline-card::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 20px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fleet-status);
+}
+.fleet-manager-anchor .fleet-timeline-card::before {
+  background: var(--wks-accent);
+}
+.fleet-timeline-identity {
+  flex-wrap: wrap;
+}
+.fleet-timeline-identity > span:first-child {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.fleet-timeline-excerpt,
+.fleet-current-work {
+  padding: 0 14px;
+  font-size: 0.8rem;
+  color: var(--wks-text-secondary);
+}
+.fleet-timeline-excerpt p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fleet-current-work {
+  margin: 0 0 6px;
+}
+.fleet-current-tool {
+  color: var(--wks-busy);
+  font: 0.66rem var(--wks-font-mono);
+  margin-bottom: 6px;
+}
+.fleet-row-chat {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--wks-radius-sm);
+  background: var(--wks-accent-bg);
+  color: var(--wks-accent-text);
+  padding: 6px 12px;
+  font: 600 0.72rem var(--wks-font-sans);
+}
+.fleet-recent {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 88px;
+  margin-top: 20px;
+  padding: 16px 20px;
+  text-align: left;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--wks-radius-md);
+  background: var(--wks-bg-surface);
+  color: var(--wks-text-secondary);
+}
+.fleet-recent > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+.fleet-recent strong {
+  font-size: 0.9rem;
+  color: var(--wks-text-primary);
+}
+.fleet-recent:hover {
+  background: var(--wks-bg-hover);
+}
+@media (max-width: 650px) {
+  .fleet-toolbar {
+    padding: 10px 12px !important;
+    gap: 8px !important;
+  }
+  .fleet-timeline-scroll {
+    padding: 12px;
+  }
+  .fleet-timeline-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .fleet-timeline-time {
+    padding-right: 8px;
+    font-size: 0.6rem;
+    overflow-wrap: anywhere;
+  }
+  .fleet-manager-label {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .fleet-manager-anchor .fleet-timeline-time {
+    padding-left: 6px;
+  }
+  .fleet-timeline-entry {
+    padding-left: 4px;
+  }
+  .fleet-timeline-card::before {
+    left: -8px;
+  }
+  .fleet-timeline-identity > span:first-child {
+    flex-basis: 100%;
+  }
+  .fleet-timeline-identity > span:nth-child(2) {
+    margin-left: 0 !important;
+  }
+}

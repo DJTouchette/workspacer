@@ -402,7 +402,7 @@ export const Composer: React.FC<ComposerProps> = ({
             )}
             {showSendButton && (
               <button
-                onClick={onSend}
+                onClick={() => onSend()}
                 disabled={!canSend}
                 style={{
                   width: 30,
