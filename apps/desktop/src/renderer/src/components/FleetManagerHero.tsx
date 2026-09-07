@@ -1,3 +1,4 @@
+import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
 import { SmallButton } from './settings/primitives';
 import { useConfig } from '../hooks/useConfig';
 import { useProviderDetection } from '../hooks/useProviderDetection';
@@ -25,10 +26,11 @@ const FleetManagerHero: React.FC = () => {
   const { config } = useConfig();
   const { detection, refresh } = useProviderDetection();
   const provider = config.agents?.managerProvider ?? 'claude';
+  const runtimeStatus = useAgentRuntimeStatus(true);
   const missing = providerAvailability(detection, provider) === 'missing';
   const submit = (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || pending.current || missing) return;
+    if (!trimmed || pending.current || missing || runtimeStatus.blocked) return;
     setAsk(trimmed);
     setError('');
     setBusy(true);
@@ -95,6 +97,14 @@ const FleetManagerHero: React.FC = () => {
             : `${provider} availability is unknown; you can try starting it.`}
         <SmallButton onClick={refresh} label="Check again" />
       </div>
+      <div
+        id="fleet-runtime-status"
+        aria-live="polite"
+        style={{ fontSize: '0.72rem', marginTop: 8 }}
+      >
+        {runtimeStatus.detail}
+        <SmallButton onClick={() => void runtimeStatus.refresh()} label="Check runtime again" />
+      </div>
       {error && (
         <div role="alert" style={{ color: 'var(--wks-error)', marginTop: 8 }}>
           {error}
@@ -110,12 +120,12 @@ const FleetManagerHero: React.FC = () => {
           color: 'var(--wks-accent-text)',
           fontFamily: 'inherit',
           fontSize: '0.8rem',
-          cursor: busy || missing || !ask.trim() ? 'default' : 'pointer',
-          opacity: busy || missing || !ask.trim() ? 0.5 : 1,
+          cursor: busy || missing || runtimeStatus.blocked || !ask.trim() ? 'default' : 'pointer',
+          opacity: busy || missing || runtimeStatus.blocked || !ask.trim() ? 0.5 : 1,
         }}
         onClick={() => submit(ask)}
-        disabled={busy || missing || !ask.trim()}
-        aria-describedby="fleet-provider-status"
+        disabled={busy || missing || runtimeStatus.blocked || !ask.trim()}
+        aria-describedby="fleet-provider-status fleet-runtime-status"
       >
         {busy ? 'Starting…' : error ? 'Retry Fleet Manager' : 'Ask Fleet Manager'}
       </button>
@@ -123,7 +133,7 @@ const FleetManagerHero: React.FC = () => {
         {MANAGER_PRESETS.map((p) => (
           <button
             key={p.id}
-            disabled={busy || missing}
+            disabled={busy || missing || runtimeStatus.blocked}
             onClick={() => submit(p.prompt)}
             style={{
               fontSize: '0.7rem',

@@ -1,3 +1,4 @@
+import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
 /**
  * Spawns and supervises the `hub` daemon — workspacer's control-plane / event
  * bus (Go, in `services/hub/`). It runs independently of the UI so plugins (and,
@@ -493,8 +494,8 @@ export function startHub(): Promise<void> {
   // launch() re-assigns readyPromise to its health promise (needed by the
   // crash-restart path); until then this placeholder keeps repeat callers off
   // a second probe/spawn.
-  readyPromise = starting;
-  return starting;
+  readyPromise = observeRuntimeStart('hub', starting, `http://127.0.0.1:${PORT}/health`);
+  return readyPromise;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
@@ -574,17 +575,19 @@ function launch(bin: string): Promise<void> {
   child.on('exit', (code, signal) => {
     console.log(`[hub] exited code=${code} signal=${signal}`);
     child = null;
+    noteRuntimePhase('hub', 'failed');
     readyPromise = null;
     healthAbort.abort(); // cancel any in-progress health poll
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = awaitHealthPatiently(
+  readyPromise = observeRuntimeStart(
+    'hub',
+    awaitHealthPatiently(`http://${dialAuthority(addr)}/health`, healthAbort.signal).then(() => {
+      backoff.reset();
+    }),
     `http://${dialAuthority(addr)}/health`,
-    healthAbort.signal,
-  ).then(() => {
-    backoff.reset();
-  });
+  );
   return readyPromise;
 }
 

@@ -1,3 +1,4 @@
+import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
 /**
  * Spawns and supervises the bundled `claudemon` daemon, which replaces the
  * old in-process hook server. The daemon ingests Claude Code hook events on
@@ -161,8 +162,8 @@ export function startClaudemon(): Promise<void> {
   // launch() re-assigns readyPromise to its health promise (needed by the
   // crash-restart path); until then this placeholder keeps repeat callers off
   // a second probe/spawn.
-  readyPromise = starting;
-  return starting;
+  readyPromise = observeRuntimeStart('claudemon', starting);
+  return readyPromise;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
@@ -193,19 +194,23 @@ function launch(bin: string): Promise<void> {
   child.on('exit', (code, signal) => {
     console.log(`[claudemon] exited code=${code} signal=${signal}`);
     child = null;
+    noteRuntimePhase('claudemon', 'failed');
     readyPromise = null;
     healthAbort.abort(); // cancel any in-progress health poll
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(
-    `http://127.0.0.1:${API_PORT}/health`,
-    HEALTH_TIMEOUT_MS,
+  readyPromise = observeRuntimeStart(
     'claudemon',
-    healthAbort.signal,
-  ).then(() => {
-    backoff.reset();
-  });
+    waitForHealthShared(
+      `http://127.0.0.1:${API_PORT}/health`,
+      HEALTH_TIMEOUT_MS,
+      'claudemon',
+      healthAbort.signal,
+    ).then(() => {
+      backoff.reset();
+    }),
+  );
   return readyPromise;
 }
 

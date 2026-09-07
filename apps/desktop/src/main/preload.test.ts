@@ -160,3 +160,10 @@ it('bridges captured Fleet review selectors without adding filesystem or revisio
   await api.fleetReviewForget(request);
   expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.FLEET_REVIEW_FORGET, request);
 });
+
+it('exposes a read-only runtime status request through the declared IPC channel', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  await api.agentRuntimeStatus();
+  expect(ipcRenderer.invoke).toHaveBeenCalledWith(IPC.AGENT_RUNTIME_STATUS);
+});
