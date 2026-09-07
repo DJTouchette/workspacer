@@ -507,6 +507,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       'toggle-help',
     );
     add(
+      'cmd-first-task-help',
+      'Help: First task',
+      'Provider setup, direct agents, Fleet, results and resume',
+      <Brain size={16} strokeWidth={1.75} />,
+      () =>
+        window.electronAPI.openExternalUrl?.(
+          'https://github.com/DJTouchette/workspacer/blob/master/apps/desktop/README.md#first-task',
+        ),
+    );
+    add(
       'cmd-welcome',
       'Show Welcome',
       'Replay the first-run welcome & orientation card',

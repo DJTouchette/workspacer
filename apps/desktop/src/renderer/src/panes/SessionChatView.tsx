@@ -1,3 +1,4 @@
+import { FirstTaskGuidance } from '../components/FirstTaskGuidance';
 import '@xterm/xterm/css/xterm.css';
 import { ArrowRightLeft, Clock, KeyRound, PanelRight } from 'lucide-react';
 import React from 'react';
@@ -192,6 +193,10 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                   </span>
                 )}
               </div>
+            )}
+
+            {sessionId && conversation.some((turn) => turn.role === 'user') && (
+              <FirstTaskGuidance inFleet={inFleet} />
             )}
 
             {/* Term/GUI viewport — both views fill this box; the status bar is

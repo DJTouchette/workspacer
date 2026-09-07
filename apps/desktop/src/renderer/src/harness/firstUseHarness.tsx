@@ -1,3 +1,8 @@
+import {
+  buildFleetMessage,
+  type FleetMessageKind,
+  type FleetMessageEntry,
+} from '../../../main/shared/fleetMessages';
 /** Fresh-profile production App. All host/provider boundaries are in-memory;
  * never installs a backend, opens a provider, or reads a user's profile. */
 import React from 'react';
@@ -11,8 +16,14 @@ const calls: { method: string; args: any[] }[] = [];
 let mode = params.get('spawn') ?? 'reject';
 let detectionMode = params.get('providers') ?? 'installed';
 let runtime = true;
-const snapshots: Record<string, any> = {};
+let readiness = params.get('runtime') ?? 'unknown';
+const folderPending = new Map<string, (info: any) => void>();
+const restored = sessionStorage.getItem('first-use-restart');
+const restart = restored ? JSON.parse(restored) : null;
+if (restart) config = restart.config;
+const snapshots: Record<string, any> = restart?.snapshots ?? {};
 const listeners = new Set<(id: string, snapshot: any) => void>();
+const noticeListeners = new Set<(notice: any) => void>();
 const configListeners = new Set<(config: any) => void>();
 let layout: any = null;
 let sequence = 0;
@@ -33,6 +44,11 @@ function emit(id: string) {
 }
 const api = {
   platform: 'linux',
+  onSystemNotice: (fn: (notice: any) => void) => {
+    noticeListeners.add(fn);
+    return () => noticeListeners.delete(fn);
+  },
+  openExternalUrl: async (url: string) => record('openExternalUrl', url),
   getConfig: async () => structuredClone(config),
   reloadConfig: async () => structuredClone(config),
   onConfigChanged: (fn: (cfg: any) => void) => {
@@ -49,7 +65,20 @@ const api = {
   getAppCwd: async () => '/fixture/project',
   getSupervisorHome: async () => '/fixture/.workspacer',
   getHubStatus: async () => ({ connected: runtime }),
-  layoutGet: async () => ({ version: 0, data: null }),
+  agentRuntimeStatus: async () => {
+    record('agentRuntimeStatus');
+    if (readiness === 'unknown') return undefined;
+    return {
+      claudemon: readiness === 'down' ? 'failed' : readiness === 'starting' ? 'starting' : 'ready',
+      hub: readiness === 'degraded' ? 'failed' : 'ready',
+      facade: readiness === 'degraded' ? 'failed' : 'ready',
+    };
+  },
+  federationPeers: async () =>
+    params.has('remote')
+      ? [{ hubId: 'remote-fixture', name: 'Remote fixture', connected: true }]
+      : [],
+  layoutGet: async () => ({ version: restart ? 1 : 0, data: restart?.layout ?? null }),
   layoutSet: async (data: any) => {
     record('layoutSet', data);
     layout = data;
@@ -63,7 +92,8 @@ const api = {
     return 'fixture';
   },
   setActiveSession: async (id: string) => record('setActiveSession', id),
-  listLiveClaudeSessionIds: async () => Object.keys(snapshots),
+  listLiveClaudeSessionIds: async () =>
+    Object.keys(snapshots).filter((id) => snapshots[id].status !== 'stopped'),
   getAllClaudeSessions: async () => Object.values(snapshots),
   getClaudeSession: async (id: string) => structuredClone(snapshots[id] ?? null),
   onClaudeSessionUpdate: (fn: (id: string, snapshot: any) => void) => {
@@ -91,7 +121,15 @@ const api = {
   claudeProfilesList: async () => [],
   claudeListSessionsForDir: async () => [],
   pickFolder: async () => '/fixture/project',
-  worktreeInfo: async () => ({ isRepo: false }),
+  worktreeInfo: async (cwd: string) => {
+    record('worktreeInfo', cwd);
+    if (cwd.includes('deferred')) return new Promise((resolve) => folderPending.set(cwd, resolve));
+    if (cwd.includes('invalid') || cwd.startsWith('~'))
+      return { isRepo: false, directory: 'invalid' };
+    if (cwd.includes('git-folder'))
+      return { isRepo: true, directory: 'accessible', gitStatus: 'repo', branch: 'main' };
+    return { isRepo: false, directory: 'accessible', gitStatus: 'non-git' };
+  },
   listHubPlugins: async () => [],
   libraryList: async () => [],
   spawnClaude: async (opts: any) => {
@@ -99,6 +137,13 @@ const api = {
     if (!runtime || mode === 'reject')
       throw new Error('fixture runtime unavailable secret=DO-NOT-DISPLAY');
     if (mode === 'malformed') return ' ';
+    if (opts.resumeSessionId && snapshots[opts.resumeSessionId]) {
+      const id = opts.resumeSessionId;
+      snapshots[id].status = 'active';
+      snapshots[id].ambientState = 'idle';
+      emit(id);
+      return id;
+    }
     const id = `fixture-session-${++sequence}`;
     const provider = opts.provider ?? 'claude';
     const transport =
@@ -143,6 +188,9 @@ const api = {
 });
 (window as any).firstUse = {
   calls,
+  notice: (notice: any) => {
+    for (const fn of noticeListeners) fn(notice);
+  },
   config: () => config,
   snapshots: () => snapshots,
   layout: () => layout,
@@ -151,6 +199,36 @@ const api = {
   },
   providers: (value: string) => {
     detectionMode = value;
+  },
+  readiness: (value: string) => {
+    readiness = value;
+  },
+  folderReply: (cwd: string, info: any) => {
+    folderPending.get(cwd)?.(info);
+  },
+  update: (id: string, patch: any) => {
+    Object.assign(snapshots[id], patch);
+    emit(id);
+  },
+  wake: (id: string, kind: FleetMessageKind, entry: FleetMessageEntry) => {
+    snapshots[id].conversation.push({
+      role: 'user',
+      content: buildFleetMessage(kind, [entry]),
+      timestamp: Date.now(),
+    });
+    emit(id);
+  },
+  reply: (id: string, content: string) => {
+    snapshots[id].conversation.push({ role: 'assistant', content, timestamp: Date.now() });
+    snapshots[id].ambientState = 'idle';
+    emit(id);
+  },
+  restart: () => {
+    for (const snapshot of Object.values(snapshots)) {
+      snapshot.status = 'stopped';
+      snapshot.ambientState = 'idle';
+    }
+    sessionStorage.setItem('first-use-restart', JSON.stringify({ config, snapshots, layout }));
   },
   runtime: (value: boolean) => {
     runtime = value;

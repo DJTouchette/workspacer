@@ -27,7 +27,9 @@ function Icon({ level }: { level: Notice['level'] }) {
  * `onSystemNotice`. Without these, those failures only hit the console and the
  * app looks silently broken. Same-`key` notices replace rather than stack.
  */
-export const SystemNotices: React.FC = () => {
+export const SystemNotices: React.FC<{ onOpenCliSettings?: () => void }> = ({
+  onOpenCliSettings,
+}) => {
   const [notices, setNotices] = useState<Notice[]>([]);
 
   useEffect(() => {
@@ -98,6 +100,21 @@ export const SystemNotices: React.FC = () => {
               >
                 {n.detail}
               </div>
+            )}
+            {n.key === 'cli-install' && onOpenCliSettings && (
+              <button
+                onClick={onOpenCliSettings}
+                style={{
+                  cursor: 'pointer',
+                  marginTop: 6,
+                  color: 'var(--wks-accent-text)',
+                  background: 'transparent',
+                  border: 'none',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Settings → Command Line
+              </button>
             )}
             {n.level !== 'info' && (
               <button

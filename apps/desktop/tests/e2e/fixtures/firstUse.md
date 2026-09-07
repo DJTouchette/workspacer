@@ -27,3 +27,22 @@ The browser captures the production renderer's spawn payload. The companion
 helpers through mocked daemon launch boundaries, including rejected launch then retry
 with one firstMessage per launch and no permission bypass. These are deterministic
 boundary checks, not packaged Electron or real provider/authentication verification.
+
+
+P1/P2 coverage adds read-only host lifecycle (slow startup, claudemon down,
+hub-only degradation, ready/unknown hosts), exact cwd/owner checks, stale git
+reply rejection, remote paths with no local probe, and a dismissible chat note.
+Main daemon-adoption tests exercise the real startup owner using mocked health
+and child-process boundaries. Facade readiness checks its existing `hubConnected`
+health field, not just HTTP liveness. Web/remote/old hosts explicitly remain
+unknown until they provide an owner-side contract; they do not borrow IPC facts.
+
+Production App tests step through working, a question, and result/prose/malformed
+replies. A separate first managed chat renders the shared fleet wake format for
+validated escalation/results and missing/malformed result diagnoses. Fixtures
+supply those boundary messages, not a fake UI completion rule. The restart fixture
+stores only its fake host config/layout/conversation in sessionStorage and reloads
+the actual App. Boot reconciliation resumes the stopped id exactly once and keeps
+the conversation and guidance dismissal. It makes no manager graph persistence
+claim. Existing Fleet C tests continue to cover Back, selection, drafts, and live
+iframe retention.
