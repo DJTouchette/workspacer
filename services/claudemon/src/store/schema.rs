@@ -94,6 +94,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         unversioned_step(conn, add_session_requested_selection)
             .context("adding rollback-compatible requested model selection columns")?;
     }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS execution_leases (
+        session_id TEXT PRIMARY KEY, metadata TEXT NOT NULL
+    )",
+    )?;
     Ok(())
 }
 

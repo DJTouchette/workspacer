@@ -244,6 +244,8 @@ pub struct AccountUsageFailure {
 
 #[derive(Clone)]
 pub struct SessionStore {
+    pub(crate) execution_scope: Option<crate::execution::ExecutionScope>,
+    pub(crate) engines: crate::execution::EngineRegistry,
     states: Arc<DashMap<String, SessionState>>,
     wrappers: Arc<DashMap<String, WrapperHandle>>,
     buffers: Arc<DashMap<String, Arc<Mutex<OutputBuffer>>>>,
@@ -634,6 +636,8 @@ impl SessionStore {
         let (hook_tx, _) = broadcast::channel(HOOK_BROADCAST_CAPACITY);
         let (status_tx, _) = broadcast::channel(STATUS_BROADCAST_CAPACITY);
         Self {
+            execution_scope: None,
+            engines: crate::execution::EngineRegistry::default(),
             states: Arc::new(DashMap::new()),
             wrappers: Arc::new(DashMap::new()),
             buffers: Arc::new(DashMap::new()),
@@ -808,6 +812,30 @@ impl SessionStore {
     /// `claude --resume <id>`, and because we pin `--session-id` at spawn the row
     /// id doubles as claude's transcript uuid, so the conversation reopens rather
     /// than starting blank. A live entry (none exist at boot) always wins.
+    pub fn hydrate_execution(&self, db: &crate::store::Db) {
+        for mut state in self.states.iter_mut() {
+            let mut lease = match db.execution_lease(&state.session_id) {
+                Ok(Some(lease)) => lease,
+                Ok(None) => crate::execution::EngineLease {
+                    engine: Default::default(),
+                    generation: 0,
+                    readiness: "ready".into(),
+                },
+                Err(_) => crate::execution::EngineLease {
+                    engine: crate::execution::EngineRef {
+                        id: "invalid".into(),
+                        api_version: 0,
+                        implementation_version: "unknown".into(),
+                    },
+                    generation: 0,
+                    readiness: "unavailable".into(),
+                },
+            };
+            self.engines.readiness(&mut lease);
+            state.execution_engine = Some(lease);
+        }
+    }
+
     pub fn hydrate(&self, sessions: Vec<crate::store::RestoredSession>) {
         for s in sessions {
             self.states.entry(s.id.clone()).or_insert_with(|| {
@@ -1477,6 +1505,7 @@ impl SessionStore {
                 });
             entry.mode = SessionMode::Input;
             entry.provider = provider.to_string();
+            entry.execution_engine = self.engines.metadata(session_id);
             entry.context_telemetry_epoch = fresh_epoch;
             entry.status_line = None;
             entry.clone()
@@ -1827,6 +1856,13 @@ impl SessionStore {
     /// session has no structural interrupt (caller falls back to the PTY /
     /// terminate paths).
     pub fn interrupt_managed(&self, session_id: &str) -> bool {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.cancel(self, session_id);
+        }
+        self.native_interrupt_managed(session_id)
+    }
+
+    pub(crate) fn native_interrupt_managed(&self, session_id: &str) -> bool {
         match self.managed_interrupts.get(session_id) {
             Some(tx) => tx.send(()).is_ok(),
             None => false,
@@ -1870,6 +1906,13 @@ impl SessionStore {
     /// false (so the caller falls through to the Claude hook path) when this
     /// isn't a managed session.
     pub fn submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.decide(self, session_id, approve);
+        }
+        self.native_submit_managed_decision(session_id, approve)
+    }
+
+    pub(crate) fn native_submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
         match self.managed_decisions.get(session_id) {
             Some(tx) => tx.send(approve).is_ok(),
             None => false,
@@ -1889,6 +1932,14 @@ impl SessionStore {
     /// sessions — without it, closing a pane leaves the `codex app-server` /
     /// `opencode serve` process and its driver task running forever.
     pub fn terminate_managed(&self, session_id: &str) -> bool {
+        self.engines.draining(session_id);
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.stop(self, session_id);
+        }
+        self.native_terminate_managed(session_id)
+    }
+
+    pub(crate) fn native_terminate_managed(&self, session_id: &str) -> bool {
         // Removing the sender drops it (submit_message only holds transient
         // clones), so the driver's `rx.recv()` resolves to None and the loop exits.
         let existed = self.managed_inputs.remove(session_id).is_some();
@@ -1927,6 +1978,9 @@ impl SessionStore {
         generation: u64,
         after: impl FnOnce(),
     ) -> bool {
+        if let Some(scope) = &self.execution_scope {
+            scope.finish();
+        }
         self.with_generation(session_id, generation, || {
             let ended = self.deregister_managed_current(session_id);
             if ended {
@@ -2492,6 +2546,13 @@ impl SessionStore {
     /// callers into exactly that raw-PTY fallback. Only a `Stopped` session
     /// rejects. See [`MessageOutcome`].
     pub fn submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.send(self, session_id, text);
+        }
+        self.native_submit_message(session_id, text)
+    }
+
+    pub(crate) fn native_submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {

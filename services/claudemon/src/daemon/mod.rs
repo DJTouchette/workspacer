@@ -76,6 +76,7 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         Ok(sessions) if !sessions.is_empty() => {
             let count = sessions.len();
             store.hydrate(sessions);
+            store.hydrate_execution(&db);
             tracing::info!(count, "hydrated prior sessions from db");
         }
         Ok(_) => {}

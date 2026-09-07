@@ -7,6 +7,7 @@
 
 pub mod cli;
 pub mod daemon;
+pub mod execution;
 pub mod protocol;
 pub mod providers;
 pub mod session;

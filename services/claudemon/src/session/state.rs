@@ -782,6 +782,9 @@ pub const ARCHIVE_AFTER_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
+    /// Host-owned, read-only execution identity; absent on old peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_engine: Option<crate::execution::EngineLease>,
     pub session_id: String,
     pub cwd: Option<String>,
     pub mode: SessionMode,
@@ -962,6 +965,7 @@ impl SessionState {
     pub fn new(session_id: String, cwd: Option<String>) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
+            execution_engine: None,
             session_id,
             cwd,
             mode: SessionMode::Unknown,

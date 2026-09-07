@@ -303,6 +303,7 @@ pub async fn handle(
     // back to a fresh one for callers that don't pin (e.g. plain shells).
     let session_id = payload
         .session_id
+        .clone()
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -625,6 +626,7 @@ pub async fn handle_managed(
     // stream row never sees its transcript_path.
     let session_id = payload
         .session_id
+        .clone()
         .or_else(|| payload.resume.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     // A caller-pinned id (or a resume id) becomes a filesystem sink downstream:
@@ -635,10 +637,60 @@ pub async fn handle_managed(
     if !crate::daemon::api::valid_session_id(&session_id) {
         return (StatusCode::BAD_REQUEST, "invalid session_id").into_response();
     }
-    let bin = payload.bin.unwrap_or_else(|| payload.provider.clone());
+    let bin = payload
+        .bin
+        .clone()
+        .unwrap_or_else(|| payload.provider.clone());
     // Same as the PTY path: a profile config dir relocates the transcript root.
     crate::session::transcript::allow_spawn_env(&payload.env);
 
+    let registry = store.engines.clone();
+    let pinned = match db.execution_lease(&session_id) {
+        Ok(pinned) => pinned,
+        Err(err) => return (StatusCode::CONFLICT, err.to_string()).into_response(),
+    };
+    let prepared = match registry.prepare(pinned.as_ref(), &payload, &bin) {
+        Ok(prepared) => prepared,
+        Err(err) => return (StatusCode::SERVICE_UNAVAILABLE, err.to_string()).into_response(),
+    };
+    let first_message_queued = match registry.start(
+        prepared,
+        &store,
+        &conv,
+        &db,
+        &session_id,
+        payload,
+        bin,
+        persisted_selection,
+    ) {
+        Ok(queued) => queued,
+        Err(err) => return (StatusCode::CONFLICT, err.to_string()).into_response(),
+    };
+
+    tracing::info!(%session_id, first_message_queued, "spawned managed session");
+
+    // The caller's CONFIRMATION that the first prompt was accepted for
+    // delivery — see the PTY route for why it is reported rather than assumed.
+    Json(json!({
+        "session_id": session_id,
+        "cwd": store.get(&session_id).and_then(|state| state.cwd),
+        "first_message_queued": first_message_queued,
+    }))
+    .into_response()
+}
+
+/// Existing native delegation, owned by ClaudemonEngine. Admission and engine
+/// resolution have completed before this function may publish a session.
+pub(crate) fn start_native_managed(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    db: &crate::store::Db,
+    session_id: &str,
+    payload: SpawnManagedPayload,
+    bin: String,
+    persisted_selection: Option<crate::session::windows::PersistedModelSelection>,
+) -> bool {
+    let session_id = session_id.to_string();
     // Codex row publication and driver ownership are one transaction. Other
     // providers retain their existing claim points and lifecycle behavior.
     let is_codex = payload.provider == "codex";
@@ -815,16 +867,7 @@ pub async fn handle_managed(
     } else {
         register_and_spawn(None)
     };
-    tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, first_message_queued, "spawned managed session");
-
-    // The caller's CONFIRMATION that the first prompt was accepted for
-    // delivery — see the PTY route for why it is reported rather than assumed.
-    Json(json!({
-        "session_id": session_id,
-        "cwd": payload.cwd,
-        "first_message_queued": first_message_queued,
-    }))
-    .into_response()
+    first_message_queued
 }
 
 /// Query params for `GET /providers/:provider/models`.

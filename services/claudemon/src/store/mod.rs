@@ -51,6 +51,60 @@ pub struct HeartbeatRow {
 }
 
 impl Db {
+    /// Same SQLite owner as session history. Kept separate because native
+    /// managed sessions can be admitted before their first hook creates a row.
+    pub fn execution_lease(&self, id: &str) -> Result<Option<crate::execution::EngineLease>> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn.lock().unwrap();
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT metadata FROM execution_leases WHERE session_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        raw.map(|raw| serde_json::from_str(&raw).context("invalid persisted execution identity"))
+            .transpose()
+    }
+
+    pub(crate) fn claim_execution_lease(
+        &self,
+        id: &str,
+        expected: Option<&crate::execution::EngineLease>,
+        engine: &crate::execution::EngineRef,
+    ) -> Result<crate::execution::EngineLease> {
+        use rusqlite::OptionalExtension;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT metadata FROM execution_leases WHERE session_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let previous: Option<crate::execution::EngineLease> =
+            raw.map(|raw| serde_json::from_str(&raw)).transpose()?;
+        if previous.as_ref() != expected {
+            anyhow::bail!("execution lease changed during preflight");
+        }
+        let generation = previous
+            .map_or(Some(1), |p| p.generation.checked_add(1))
+            .context("execution generation exhausted")?;
+        let lease = crate::execution::EngineLease {
+            engine: engine.clone(),
+            generation,
+            readiness: "ready".into(),
+        };
+        tx.execute(
+            "INSERT INTO execution_leases (session_id, metadata) VALUES (?1, ?2)
+            ON CONFLICT(session_id) DO UPDATE SET metadata = excluded.metadata",
+            params![id, serde_json::to_string(&lease)?],
+        )?;
+        tx.commit()?;
+        Ok(lease)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {

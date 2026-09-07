@@ -890,6 +890,23 @@ pub fn apply_updates(
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
 ) {
+    if let Some(scope) = &store.execution_scope {
+        scope.collect(session_id, None, || {
+            apply_updates_current(store, conv, session_id, updates, cur_mode, acc)
+        });
+    } else {
+        apply_updates_current(store, conv, session_id, updates, cur_mode, acc);
+    }
+}
+
+fn apply_updates_current(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    updates: Vec<AgentUpdate>,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+) {
     let mut items = Vec::new();
     // The mode this batch resolves to, paired with what it means to do to the
     // session's single pending slot. Carrying the intent (rather than a bare
