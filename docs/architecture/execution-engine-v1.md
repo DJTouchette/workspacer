@@ -83,9 +83,8 @@ Those are remaining seams, not claims of this implementation.
 
 ## Baseline validation finding
 
-The renderer `CAP_LABELS` hub-native drift test fails at baseline `93c75191`:
+The renderer `CAP_LABELS` hub-native drift test failed at baseline `93c75191`:
 `routing.preferences.get`, `.validate`, `.save`, `.reset`, and `routing.preview`
-have no consent labels. Both `services/hub/cmd/hub/main.go` and the renderer
-`pluginPermissions.ts` are unchanged by this slice. Engine snapshot/folding tests
-pass; this unrelated baseline failure is reported rather than folded into an
-execution-engine change.
+had no consent labels. The separate, localized renderer consent-label repair now
+labels those existing routing methods; it does not change the engine or routing
+authority boundaries. Engine snapshot/folding tests pass.

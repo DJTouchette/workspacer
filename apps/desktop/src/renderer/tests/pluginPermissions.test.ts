@@ -38,6 +38,27 @@ describe('pluginPermissions', () => {
     expect(call.lines.map((l) => l.label)).toEqual(['See your agents', 'Show notifications']);
   });
 
+  it('distinguishes safe routing reads and previews from preference changes', () => {
+    const [call] = pluginPermissions(
+      mf({
+        capabilities: [
+          'routing.preferences.get',
+          'routing.preferences.validate',
+          'routing.preferences.save',
+          'routing.preferences.reset',
+          'routing.preview',
+        ],
+      }),
+    );
+    expect(call.lines).toEqual([
+      { label: 'Read routing preferences', severity: 'normal' },
+      { label: 'Check proposed routing preference changes', severity: 'normal' },
+      { label: 'Change routing preferences', severity: 'sensitive' },
+      { label: 'Reset routing preferences', severity: 'sensitive' },
+      { label: 'Preview which model would be used for a piece of work', severity: 'normal' },
+    ]);
+  });
+
   it('flags write/spawn/steer capabilities as sensitive, reads as normal', () => {
     const [call] = pluginPermissions(
       mf({

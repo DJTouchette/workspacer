@@ -155,6 +155,11 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // grant — only which curve the Overview's weekly tick is drawn against.
   'usage.setPacingSchedule': { label: 'Change the weekly usage pacing schedule' },
   'routing.select': { label: 'Ask which model to use for a piece of work' },
+  'routing.preferences.get': { label: 'Read routing preferences' },
+  'routing.preferences.validate': { label: 'Check proposed routing preference changes' },
+  'routing.preferences.save': { label: 'Change routing preferences', sensitive: true },
+  'routing.preferences.reset': { label: 'Reset routing preferences', sensitive: true },
+  'routing.preview': { label: 'Preview which model would be used for a piece of work' },
   'nodes.list': { label: 'See your remote worker nodes and whether each is awake' },
   // sensitive: waking starts a billable cloud machine, and this hub has no way
   // to stop one. It is trusted-only at call time (nodesTrusted in cmd/hub), so
