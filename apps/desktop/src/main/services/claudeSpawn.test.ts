@@ -754,3 +754,25 @@ it('delivers the product skill fallback pointer through the Claude instruction c
     'Read /project/product-skill/SKILL.md for cards.',
   );
 });
+
+describe('spawnClaudeAgent — clean-profile retry boundary', () => {
+  it('queues one first message after a failed provider launch, retaining safe permissions', async () => {
+    const options = {
+      cwd: '/proj',
+      firstMessage: 'First clean-profile task',
+      permissionMode: 'default',
+      skipPermissions: false,
+    };
+    spawnMock.mockRejectedValueOnce(new Error('fixture provider unavailable'));
+    await expect(spawnClaudeAgent(options)).rejects.toThrow('fixture provider unavailable');
+    await spawnClaudeAgent(options);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const launches = spawnMock.mock.calls as unknown as Array<[Record<string, any>]>;
+    expect(launches.map(([payload]) => payload.firstMessage)).toEqual([
+      'First clean-profile task',
+      'First clean-profile task',
+    ]);
+    expect(launches[1][0].argv).not.toContain('--dangerously-skip-permissions');
+    expect(launches[1][0].argv.join(' ')).not.toContain('First clean-profile task');
+  });
+});

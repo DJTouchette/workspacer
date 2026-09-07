@@ -1,4 +1,8 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { SmallButton } from '../components/settings/primitives';
+import { useProviderDetection } from '../hooks/useProviderDetection';
+import { providerAvailability } from '../lib/providerAvailability';
+import { spawnFailureMessage } from '../lib/spawnFailure';
+import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { AgentWorkspace } from '../types/pane';
 import { BrandMark } from '../components/Brand';
 import { ArrowUp } from 'lucide-react';
@@ -89,8 +93,14 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
   const [bubbles, setBubbles] = useState<Bubble[]>(OPENING_BUBBLES);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const { detection, refresh } = useProviderDetection();
+  const missing = providerAvailability(detection, 'claude') === 'missing';
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (error) inputRef.current?.focus();
+  }, [error]);
 
   // An already-running guide: repeat questions go straight to it.
   const runningGuide = useMemo(
@@ -101,7 +111,9 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
   const submit = useCallback(
     async (q: string) => {
       const trimmed = q.trim();
-      if (!trimmed || busy) return;
+      if (!trimmed || pending.current || (missing && !runningGuide)) return;
+      pending.current = true;
+      setQuestion(trimmed);
       setBusy(true);
       setError('');
       setBubbles((prev) => [
@@ -114,7 +126,8 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
       ]);
       try {
         if (runningGuide?.sessionId) {
-          await window.electronAPI.claudeMessage(runningGuide.sessionId, trimmed);
+          const result = await window.electronAPI.claudeMessage(runningGuide.sessionId, trimmed);
+          if (result?.ok === false) throw new Error(spawnFailureMessage('claude'));
           onJumpToAgent(runningGuide.id);
         } else {
           const newId = await spawnGuide(trimmed);
@@ -125,15 +138,16 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
         setBubbles((prev) => prev.filter((b) => b.role !== 'status'));
       } catch (err) {
         setBubbles((prev) => prev.filter((b) => b.role !== 'status'));
-        setError(err instanceof Error ? err.message : String(err));
+        setError(spawnFailureMessage('claude', err));
       } finally {
+        pending.current = false;
         setBusy(false);
       }
     },
-    [busy, runningGuide, spawnGuide, onJumpToAgent],
+    [missing, runningGuide, spawnGuide, onJumpToAgent],
   );
 
-  const canSend = question.trim().length > 0 && !busy;
+  const canSend = question.trim().length > 0 && !busy && (!missing || !!runningGuide);
 
   return (
     <div
@@ -181,7 +195,7 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
             <button
               key={preset.id}
               onClick={() => void submit(preset.prompt)}
-              disabled={busy}
+              disabled={busy || (missing && !runningGuide)}
               title={preset.prompt}
               style={{
                 padding: '4px 11px',
@@ -215,12 +229,23 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
 
         {/* Usage note — the honest fine print. */}
         <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
-          The guide is a real Claude agent on your account — answers consume usage like any other
-          session. Nothing runs until you ask.
+          The live Guide requires Claude Code and a signed-in account. Authentication has not been
+          checked. Questions start a session and consume provider usage.
+          {missing && (
+            <div role="status">
+              Claude Code was not found. Use another provider for a direct task, or install Claude
+              Code for the live Guide.
+            </div>
+          )}
+          <SmallButton onClick={refresh} label="Check again" />
+          <a href="https://www.workspacer.app/docs.html" target="_blank" rel="noreferrer">
+            Read the Workspacer docs
+          </a>
         </div>
 
         {error && (
           <div
+            role="alert"
             style={{
               fontSize: '0.72rem',
               color: 'var(--wks-error)',
@@ -247,7 +272,7 @@ const GuidePane: React.FC<GuidePaneProps> = ({ agents, spawnGuide, onJumpToAgent
               }
             }}
             placeholder="Ask anything about Workspacer…"
-            disabled={busy}
+            disabled={busy || (missing && !runningGuide)}
             style={{
               flex: 1,
               padding: '9px 12px',
