@@ -1309,3 +1309,28 @@ it('delivers the product skill pointer through managed and hybrid instruction ch
   const argv = (spawnMock.mock.calls.at(-1)![0] as Payload).argv as string[];
   expect(argv.find((arg) => arg.startsWith('developer_instructions='))).toContain(note);
 });
+
+describe('spawnManagedAgent — clean-profile retry boundary', () => {
+  it('queues one first message after a failed provider launch, retaining safe permissions', async () => {
+    const options = {
+      provider: 'codex' as const,
+      cwd: '/proj',
+      transport: 'stream' as const,
+      firstMessage: 'First clean-profile task',
+      permissionMode: 'ask',
+      skipPermissions: false,
+    };
+    spawnManagedMock.mockRejectedValueOnce(new Error('fixture provider unavailable'));
+    await expect(spawnManagedAgent(options)).rejects.toThrow('fixture provider unavailable');
+    await spawnManagedAgent(options);
+    expect(spawnManagedMock).toHaveBeenCalledTimes(2);
+    const launches = spawnManagedMock.mock.calls as unknown as Array<[Record<string, any>]>;
+    expect(launches.map(([payload]) => payload.firstMessage)).toEqual([
+      'First clean-profile task',
+      'First clean-profile task',
+    ]);
+    expect(launches[1][0].yolo).toBe(false);
+    expect(launches[1][0].transport).toBe('stream');
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+});

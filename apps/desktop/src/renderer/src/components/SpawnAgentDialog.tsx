@@ -1,8 +1,10 @@
+import { containDialogTab } from '../lib/dialogKeyboard';
+import { spawnFailureMessage } from '../lib/spawnFailure';
 import { ProjectMark } from './ProjectMark';
 import { resolveProject } from '../lib/projectIdentity';
 import { projectKey } from '../lib/projectKey';
 import type { ProjectIdentity } from '../hooks/useConfig';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
@@ -11,7 +13,11 @@ import type { AgentProvider } from '../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
 import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
 import { useProviderDetection } from '../hooks/useProviderDetection';
-import { visibleProviderOptions, type ProviderDetection } from '../lib/providerAvailability';
+import {
+  providerAvailability,
+  visibleProviderOptions,
+  type ProviderDetection,
+} from '../lib/providerAvailability';
 import { profilesForProvider } from '../lib/profileFields';
 import { PROFILE_CAPS, type ProfileProvider } from '../../../main/shared/agentProfiles';
 import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../lib/modelOptions';
@@ -77,10 +83,9 @@ interface SpawnAgentDialogProps {
   defaultCodexTransport?: 'pty' | 'stream';
   /** Pre-check the git-worktree toggle (config.agents.spawnInWorktree). */
   defaultWorktree?: boolean;
-  /** First message handed over by the caller (the command palette). Shown as an
-   *  editable field so it's never carried invisibly, and pre-fills the new
-   *  agent's composer rather than being sent. Absent = the field isn't shown. */
+  /** User-authored task handed over by the caller, editable before dispatch. */
   defaultPrompt?: string;
+  requireTask?: boolean;
   onSpawn: (opts: {
     cwd: string;
     name?: string;
@@ -102,11 +107,11 @@ interface SpawnAgentDialogProps {
     resumeSessionId?: string;
     /** Spawn into a fresh git worktree of `cwd` instead of `cwd` itself. */
     worktree?: boolean;
-    /** Pre-fills the new agent's composer (not sent). */
-    initialPrompt?: string;
+    /** Auto-sent atomically with spawn; never sent by a follow-up call. */
+    kickoffMessage?: string;
     /** Federation: spawn on this peer hub instead of this machine. */
     targetHub?: string;
-  }) => void;
+  }) => Promise<unknown> | void;
   onCancel: () => void;
 }
 
@@ -166,12 +171,21 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCodexTransport,
   defaultWorktree,
   defaultPrompt,
+  requireTask = false,
   onSpawn,
   onCancel,
 }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState(defaultPrompt ?? '');
+  const [blankSession, setBlankSession] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const [error, setError] = useState('');
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
   // The two harnesses that HAVE a transport choice default differently (claude
   // 'pty' historically, codex 'stream'), so the picker's default is a function
@@ -325,7 +339,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel();
+        if (!submitting.current) onCancel();
       }
     };
     window.addEventListener('keydown', handler, true);
@@ -578,7 +592,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     window.electronAPI
       .saveConfig?.({ agents: { binaries } } as any)
       .then(() => refreshDetection())
-      .catch(() => {});
+      .catch(() =>
+        setError(
+          'The binary override could not be saved. Retry saving the path or check the provider again.',
+        ),
+      );
   };
 
   const browseCustomBin = async () => {
@@ -589,7 +607,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     }
   };
 
-  const currentDetection = providerDetection.find((d) => d.provider === provider);
   // Only harnesses whose CLI is actually on this machine — plus whatever this
   // dialog is already pointed at (the picked provider, the configured default),
   // which stays listed and flagged rather than vanishing under the selection.
@@ -598,75 +615,94 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     defaultProvider,
   ]);
 
-  const submit = () => {
-    if (!cwd.trim()) return;
-    // '' means the provider's own default mode; the legacy boolean tracks the
-    // bypass-family modes for back-compat consumers (saved defaults, respawn).
-    const resolvedMode = permissionMode || defaultModeFor(provider);
-    const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
-    const initialPrompt = prompt.trim() || undefined;
-    // Claude-only options are dropped for other providers (they run their own
-    // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
-    onSpawn(
-      isClaude
-        ? {
-            cwd: cwd.trim(),
-            name: name.trim() || undefined,
-            transport,
-            profileId: profileId || undefined,
-            model: resolvedModel || undefined,
-            modelIdentity: claudeSelection?.model,
-            contextWindow: claudeSelection?.contextWindow,
-            effort: effort || undefined,
-            permissionMode: resolvedMode,
-            skipPermissions,
-            // Facade sessions take the workspacer MCP config instead of the
-            // Library selection (backend rule) — don't send a selection that
-            // would be silently ignored.
-            mcpItemIds: !toolScope && mcpSel.length ? mcpSel : undefined,
-            toolScope: toolScope || undefined,
-            pluginTools: toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
-            resumeSessionId: resumeSessionId || undefined,
-            // Worktree is local-machine isolation — moot on a peer hub.
-            worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
-            initialPrompt,
-            targetHub: targetHub || undefined,
-          }
-        : {
-            cwd: cwd.trim(),
-            name: name.trim() || undefined,
-            model: resolvedProviderModel || undefined,
-            modelIdentity: resolvedProviderModel || undefined,
-            contextWindow:
-              provider === 'codex'
-                ? resumeSessionId && !codexContextTouched
-                  ? undefined
-                  : codexContextWindow
-                : undefined,
-            provider,
-            // The harness's own profile — its config root (CODEX_HOME /
-            // COPILOT_HOME), extra argv, `-p` preset and, for Copilot, the
-            // referenced token. Empty for a harness with no config root,
-            // because eligibleProfiles is empty there.
-            profileId: profileId || undefined,
-            // Codex only, and ALWAYS stated: both shapes are real choices now
-            // (headless is the default, hybrid the opt-in), so sending only the
-            // non-default would leave "hybrid" indistinguishable from "the user
-            // said nothing" — which main resolves to the configured default.
-            transport: provider === 'codex' ? transport : undefined,
-            effort: effort || undefined,
-            permissionMode: resolvedMode,
-            skipPermissions,
-            // Pi ships no MCP client — a tier grant would only mint a dangling
-            // token, so it isn't sent.
-            toolScope: provider !== 'pi' ? toolScope || undefined : undefined,
-            pluginTools:
-              provider !== 'pi' && toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
-            worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
-            initialPrompt,
-            targetHub: targetHub || undefined,
-          },
-    );
+  const currentDetection = providerDetection.find((d) => d.provider === provider);
+  const missingProvider = !targetHub && providerAvailability(detection, provider) === 'missing';
+  const canSubmit =
+    !!cwd.trim() &&
+    !missingProvider &&
+    (!!prompt.trim() || (!requireTask && blankSession)) &&
+    !busy;
+  const submit = async () => {
+    if (!canSubmit || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      // '' means the provider's own default mode; the legacy boolean tracks the
+      // bypass-family modes for back-compat consumers (saved defaults, respawn).
+      const resolvedMode = permissionMode || defaultModeFor(provider);
+      const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
+      const kickoffMessage = prompt.trim() || undefined;
+      // Claude-only options are dropped for other providers (they run their own
+      // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
+      await onSpawn(
+        isClaude
+          ? {
+              cwd: cwd.trim(),
+              name: name.trim() || undefined,
+              transport,
+              profileId: profileId || undefined,
+              model: resolvedModel || undefined,
+              modelIdentity: claudeSelection?.model,
+              contextWindow: claudeSelection?.contextWindow,
+              effort: effort || undefined,
+              permissionMode: resolvedMode,
+              skipPermissions,
+              // Facade sessions take the workspacer MCP config instead of the
+              // Library selection (backend rule) — don't send a selection that
+              // would be silently ignored.
+              mcpItemIds: !toolScope && mcpSel.length ? mcpSel : undefined,
+              toolScope: toolScope || undefined,
+              pluginTools: toolScope && pluginToolsSel.length ? pluginToolsSel : undefined,
+              resumeSessionId: resumeSessionId || undefined,
+              // Worktree is local-machine isolation — moot on a peer hub.
+              worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
+              kickoffMessage,
+              targetHub: targetHub || undefined,
+            }
+          : {
+              cwd: cwd.trim(),
+              name: name.trim() || undefined,
+              model: resolvedProviderModel || undefined,
+              modelIdentity: resolvedProviderModel || undefined,
+              contextWindow:
+                provider === 'codex'
+                  ? resumeSessionId && !codexContextTouched
+                    ? undefined
+                    : codexContextWindow
+                  : undefined,
+              provider,
+              // The harness's own profile — its config root (CODEX_HOME /
+              // COPILOT_HOME), extra argv, `-p` preset and, for Copilot, the
+              // referenced token. Empty for a harness with no config root,
+              // because eligibleProfiles is empty there.
+              profileId: profileId || undefined,
+              // Codex only, and ALWAYS stated: both shapes are real choices now
+              // (headless is the default, hybrid the opt-in), so sending only the
+              // non-default would leave "hybrid" indistinguishable from "the user
+              // said nothing" — which main resolves to the configured default.
+              transport: provider === 'codex' ? transport : undefined,
+              effort: effort || undefined,
+              permissionMode: resolvedMode,
+              skipPermissions,
+              // Pi ships no MCP client — a tier grant would only mint a dangling
+              // token, so it isn't sent.
+              toolScope: provider !== 'pi' ? toolScope || undefined : undefined,
+              pluginTools:
+                provider !== 'pi' && toolScope && pluginToolsSel.length
+                  ? pluginToolsSel
+                  : undefined,
+              worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
+              kickoffMessage,
+              targetHub: targetHub || undefined,
+            },
+      );
+    } catch (err) {
+      setError(spawnFailureMessage(provider, err));
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
   };
 
   // A project you have NAMED should name its agents. deriveAgentName falls back
@@ -802,7 +838,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               onKeyDown={keySubmit}
               placeholder="claude-opus-4-8  or  opus"
               spellCheck={false}
-              style={{ ...inlineInput, display: 'block', marginTop: 8, width: 260 }}
+              style={{
+                ...inlineInput,
+                display: 'block',
+                marginTop: 8,
+                width: '100%',
+                maxWidth: 260,
+              }}
             />
           )}
         </>
@@ -837,7 +879,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               onKeyDown={keySubmit}
               placeholder={modelPlaceholder(provider)}
               spellCheck={false}
-              style={{ ...inlineInput, display: 'block', marginTop: 8, width: 300 }}
+              style={{
+                ...inlineInput,
+                display: 'block',
+                marginTop: 8,
+                width: '100%',
+                maxWidth: 300,
+              }}
             />
           )}
         </>
@@ -965,6 +1013,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     label: 'permissions',
     control: (
       <select
+        aria-label="Permissions"
         value={permissionMode}
         onChange={(e) => setPermissionMode(e.target.value)}
         style={{
@@ -1196,16 +1245,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     control: (
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input
+          aria-label="Provider binary override"
           value={customBinPath}
           onChange={(e) => setCustomBinPath(e.target.value)}
           onBlur={(e) => saveCustomBin(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') saveCustomBin(customBinPath);
-            if (e.key === 'Escape') onCancel();
+            if (e.key === 'Escape' && !submitting.current) onCancel();
           }}
           placeholder={currentDetection?.resolvedPath ?? `/usr/local/bin/${provider}`}
           spellCheck={false}
-          style={{ ...inlineInput, flex: 1, maxWidth: 300 }}
+          style={{ ...inlineInput, flex: 1, minWidth: 0, maxWidth: 300 }}
         />
         <button onClick={browseCustomBin} className="wks-composer-ctl" style={ghostBtnSmall}>
           Browse…
@@ -1225,6 +1275,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       // The chord leader never arms from inside this dialog: mid-typing a
       // kickoff prompt, an armed layer would steal the following keystrokes
       // (useKeyboardNav's leaderSuppressed check).
+      role="dialog"
+      aria-modal="true"
+      aria-label="Dispatch agent"
+      onKeyDown={containDialogTab}
       data-leader-suppress="true"
       style={{
         position: 'fixed',
@@ -1243,7 +1297,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           top: '-18%',
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 720,
+          width: 'min(720px, 100%)',
           height: 720,
           borderRadius: '50%',
           background:
@@ -1253,8 +1307,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       />
 
       <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
-        <div
+        <fieldset
+          disabled={busy}
           style={{
+            border: 0,
+            minWidth: 0,
+            width: '100%',
             minHeight: '100%',
             maxWidth: 660,
             margin: '0 auto',
@@ -1293,8 +1351,62 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             Dispatch agent
           </div>
           <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
-            Give it a home directory and set it loose.
+            Describe a task, choose its directory, and dispatch.
           </div>
+
+          <div style={{ marginTop: 24, width: '100%', maxWidth: 560 }}>
+            <label htmlFor="first-task" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+              What should this agent do?
+            </label>
+            <textarea
+              id="first-task"
+              aria-required={requireTask || !blankSession}
+              aria-describedby="spawn-task-help"
+              autoFocus
+              disabled={busy}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
+                // the deliberate dispatch action.
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+              }}
+              rows={3}
+              placeholder="What should this agent do first?"
+              style={{
+                marginTop: 6,
+                width: '100%',
+                boxSizing: 'border-box',
+                resize: 'vertical',
+                background: 'var(--wks-bg-input)',
+                border: '1px solid var(--wks-border-input)',
+                borderRadius: 'var(--wks-radius-md)',
+                outline: 'none',
+                padding: '8px 10px',
+                fontFamily: 'inherit',
+                fontSize: '0.76rem',
+                lineHeight: 1.5,
+                color: 'var(--wks-text-primary)',
+              }}
+            />
+            <div
+              id="spawn-task-help"
+              style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}
+            >
+              {requireTask && 'A task is required. '}Sent once when you dispatch. Your provider’s
+              permission choices apply.
+            </div>
+          </div>
+          {!requireTask && (
+            <label style={{ fontSize: '0.72rem', marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={blankSession}
+                onChange={(e) => setBlankSession(e.target.checked)}
+              />{' '}
+              Allow an empty session — I’ll give it a task later
+            </label>
+          )}
 
           {/* ── Hero: working directory ─────────────────────────────────── */}
           <div style={{ width: '100%', maxWidth: 560, marginTop: 40 }}>
@@ -1325,7 +1437,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 ❯
               </span>
               <input
-                autoFocus
+                aria-label="Working directory"
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
                 onKeyDown={keySubmit}
@@ -1412,7 +1524,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               style={{
                 display: 'flex',
                 gap: 8,
-                marginTop: 34,
+                flexWrap: 'wrap',
+                marginTop: 24,
                 width: '100%',
                 maxWidth: 560,
                 justifyContent: 'center',
@@ -1421,28 +1534,30 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               {visibleProviders.map((p) => {
                 const active = provider === p.value;
                 const det = providerDetection.find((d) => d.provider === p.value);
+                const availability = providerAvailability(detection, p.value);
                 const dotColor =
-                  det === undefined
+                  availability === 'unknown'
                     ? 'var(--wks-text-disabled)'
-                    : det.found
+                    : availability === 'installed'
                       ? 'var(--wks-success)'
                       : 'var(--wks-error)';
                 return (
                   <button
                     key={p.value}
+                    aria-pressed={active}
                     onClick={() => setProvider(p.value)}
                     title={
-                      (det
-                        ? det.found
-                          ? `Found: ${det.resolvedPath}`
-                          : 'Not found on PATH'
-                        : 'Checking…') +
+                      (availability === 'installed'
+                        ? `Found: ${det?.resolvedPath}`
+                        : availability === 'missing'
+                          ? 'Not found on PATH'
+                          : 'Availability unknown') +
                       (p.value !== 'claude'
                         ? ` — runs via claudemon's ${p.label} adapter; conversation and usage stream into the agent view.`
                         : '')
                     }
                     style={{
-                      flex: 1,
+                      flex: '1 1 100px',
                       maxWidth: 136,
                       position: 'relative',
                       display: 'flex',
@@ -1537,7 +1652,23 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           {/* Diagnostics are failure-only: a healthy provider says nothing here
               (the card's green dot + tooltip carry the resolved path, and the
               advanced "binary" row holds the healthy-path override). */}
-          {currentDetection && !currentDetection.found && (
+          <div
+            id="spawn-availability"
+            role="status"
+            style={{ marginTop: 12, fontSize: '0.72rem', maxWidth: 560 }}
+          >
+            {targetHub
+              ? 'Provider availability on the selected machine is unknown.'
+              : missingProvider
+                ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
+                : providerAvailability(detection, provider) === 'installed'
+                  ? `${providerLabel} CLI found; sign in through its CLI if needed. Authentication has not been checked.`
+                  : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
+            <button onClick={refreshDetection} style={ghostBtnSmall}>
+              Check again
+            </button>
+          </div>
+          {missingProvider && (
             <div style={{ width: '100%', maxWidth: 560, marginTop: 10, textAlign: 'center' }}>
               <div
                 style={{
@@ -1557,16 +1688,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 }}
               >
                 <input
+                  aria-label="Provider binary override"
                   value={customBinPath}
                   onChange={(e) => setCustomBinPath(e.target.value)}
                   onBlur={(e) => saveCustomBin(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') saveCustomBin(customBinPath);
-                    if (e.key === 'Escape') onCancel();
+                    if (e.key === 'Escape' && !submitting.current) onCancel();
                   }}
                   placeholder={`/usr/local/bin/${provider}`}
                   spellCheck={false}
-                  style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
+                  style={{ ...inlineInput, flex: 1, minWidth: 0, maxWidth: 380 }}
                 />
                 <button
                   onClick={browseCustomBin}
@@ -1759,49 +1891,26 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
-          {/* ── First message ───────────────────────────────────────────────
-              Only when a caller handed one over (the command palette's
-              ⌘/Ctrl+↵). Editable, so the text you typed into the bar is visible
-              and fixable here rather than travelling invisibly. */}
-          {defaultPrompt !== undefined && (
-            <div style={{ marginTop: 30, width: '100%', maxWidth: 560 }}>
-              <div style={quietLabel}>first message</div>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
-                  // the deliberate "go", matching the composer it pre-fills.
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
-                }}
-                rows={3}
-                placeholder="What should this agent do first?"
-                style={{
-                  marginTop: 6,
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  resize: 'vertical',
-                  background: 'var(--wks-bg-input)',
-                  border: '1px solid var(--wks-border-input)',
-                  borderRadius: 'var(--wks-radius-md)',
-                  outline: 'none',
-                  padding: '8px 10px',
-                  fontFamily: 'inherit',
-                  fontSize: '0.76rem',
-                  lineHeight: 1.5,
-                  color: 'var(--wks-text-primary)',
-                }}
-              />
-              <div style={{ marginTop: 5, fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
-                Waits in the composer — it isn&rsquo;t sent until you press enter there.
-              </div>
+          {error && (
+            <div
+              role="alert"
+              ref={errorRef}
+              tabIndex={-1}
+              style={{
+                marginTop: 16,
+                color: 'var(--wks-error)',
+                fontSize: '0.8rem',
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {error}
             </div>
           )}
-
           {/* ── Launch ──────────────────────────────────────────────────── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 38 }}>
             <button
               onClick={onCancel}
+              disabled={busy}
               className="wks-composer-ctl"
               style={{
                 fontSize: '0.78rem',
@@ -1819,20 +1928,21 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </button>
             <button
               onClick={submit}
-              disabled={!cwd.trim()}
+              disabled={!canSubmit}
+              aria-describedby="spawn-task-help spawn-availability"
               style={{
                 fontSize: '0.82rem',
                 fontFamily: 'inherit',
                 fontWeight: 600,
-                cursor: !cwd.trim() ? 'default' : 'pointer',
-                background: !cwd.trim() ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-                color: !cwd.trim() ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
+                cursor: !canSubmit ? 'default' : 'pointer',
+                background: !canSubmit ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
+                color: !canSubmit ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
                 border: 'none',
                 borderRadius: 'var(--wks-radius-md)',
                 padding: '9px 26px',
               }}
             >
-              Dispatch agent
+              {busy ? 'Starting…' : error ? 'Retry dispatch' : 'Dispatch agent'}
             </button>
           </div>
           <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
@@ -1840,7 +1950,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               ? '⌘/ctrl+enter to dispatch · esc to cancel'
               : 'enter to dispatch · esc to cancel'}
           </div>
-        </div>
+        </fieldset>
       </div>
     </div>
   );

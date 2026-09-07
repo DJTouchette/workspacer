@@ -35,7 +35,7 @@ describe('GuidePane', () => {
       expect(screen.getByRole('button', { name: preset.label })).toBeInTheDocument();
     }
     // The honest fine print is always visible before anything runs.
-    expect(screen.getByText(/consume usage/)).toBeInTheDocument();
+    expect(screen.getByText(/consume provider usage/)).toBeInTheDocument();
   });
 
   it('spawns the guide with the preset prompt and jumps to it', async () => {
@@ -101,7 +101,7 @@ describe('GuidePane', () => {
 
     fireEvent.click(screen.getByRole('button', { name: GUIDE_PRESETS[0].label }));
 
-    expect(await screen.findByText('daemon offline')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
 });
 

@@ -1,21 +1,51 @@
+import { SmallButton } from './settings/primitives';
+import { useConfig } from '../hooks/useConfig';
+import { useProviderDetection } from '../hooks/useProviderDetection';
+import { providerAvailability } from '../lib/providerAvailability';
 /**
  * FleetManagerHero — the Overview's front-and-center entry to the Fleet
  * Manager (FLEET_MANAGER_SPIKE.md direction a): one ask box + preset chips.
  * Dispatches `fleet-manager:ask`; App resolves the fleet root and
- * spawns-or-reuses the manager (useAgentManager.spawnFleetManager). Kept
- * dumb on purpose — no config, no agent state — so it renders anywhere.
+ * spawns-or-reuses the manager (useAgentManager.spawnFleetManager). The ask
+ * stays here until App settles the launch; binary discovery is not sign-in.
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Brain } from './icons';
 import { MANAGER_PRESETS } from '../lib/fleetManager';
 
 const FleetManagerHero: React.FC = () => {
   const [ask, setAsk] = useState('');
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (error) inputRef.current?.focus();
+  }, [error]);
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const { config } = useConfig();
+  const { detection, refresh } = useProviderDetection();
+  const provider = config.agents?.managerProvider ?? 'claude';
+  const missing = providerAvailability(detection, provider) === 'missing';
   const submit = (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    window.dispatchEvent(new CustomEvent('fleet-manager:ask', { detail: { ask: trimmed } }));
-    setAsk('');
+    if (!trimmed || pending.current || missing) return;
+    setAsk(trimmed);
+    setError('');
+    setBusy(true);
+    pending.current = true;
+    window.dispatchEvent(
+      new CustomEvent('fleet-manager:ask', {
+        detail: {
+          ask: trimmed,
+          onSettled: (failure?: string) => {
+            pending.current = false;
+            setBusy(false);
+            if (failure) setError(failure);
+            else setAsk('');
+          },
+        },
+      }),
+    );
   };
   return (
     <div
@@ -35,6 +65,9 @@ const FleetManagerHero: React.FC = () => {
         </span>
       </div>
       <input
+        ref={inputRef}
+        aria-label="Ask the Fleet Manager"
+        disabled={busy}
         value={ask}
         onChange={(e) => setAsk(e.target.value)}
         onKeyDown={(e) => {
@@ -54,10 +87,43 @@ const FleetManagerHero: React.FC = () => {
           outline: 'none',
         }}
       />
+      <div id="fleet-provider-status" role="status" style={{ fontSize: '0.72rem', marginTop: 8 }}>
+        {missing
+          ? `${provider} is not installed. Choose an installed Fleet Manager provider or set its binary override in Settings.`
+          : providerAvailability(detection, provider) === 'installed'
+            ? `${provider} CLI found; authentication has not been checked.`
+            : `${provider} availability is unknown; you can try starting it.`}
+        <SmallButton onClick={refresh} label="Check again" />
+      </div>
+      {error && (
+        <div role="alert" style={{ color: 'var(--wks-error)', marginTop: 8 }}>
+          {error}
+        </div>
+      )}
+      <button
+        style={{
+          marginTop: 8,
+          padding: '6px 12px',
+          borderRadius: 'var(--wks-radius-sm)',
+          border: '1px solid var(--wks-border-input)',
+          background: 'var(--wks-accent-bg)',
+          color: 'var(--wks-accent-text)',
+          fontFamily: 'inherit',
+          fontSize: '0.8rem',
+          cursor: busy || missing || !ask.trim() ? 'default' : 'pointer',
+          opacity: busy || missing || !ask.trim() ? 0.5 : 1,
+        }}
+        onClick={() => submit(ask)}
+        disabled={busy || missing || !ask.trim()}
+        aria-describedby="fleet-provider-status"
+      >
+        {busy ? 'Starting…' : error ? 'Retry Fleet Manager' : 'Ask Fleet Manager'}
+      </button>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
         {MANAGER_PRESETS.map((p) => (
           <button
             key={p.id}
+            disabled={busy || missing}
             onClick={() => submit(p.prompt)}
             style={{
               fontSize: '0.7rem',

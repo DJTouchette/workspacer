@@ -1,3 +1,5 @@
+import { postNotification } from '../lib/notificationBus';
+import { spawnFailureMessage } from '../lib/spawnFailure';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { LibraryItem, LibraryAction } from '../types/library';
@@ -19,7 +21,11 @@ interface Props {
    * auto-send field) and must not grow one — see the spawn branch below for
    * why. Widening it here is how the safety property would be lost quietly.
    */
-  spawnAgent: (opts: { cwd: string; name?: string; initialPrompt?: string }) => void;
+  spawnAgent: (opts: {
+    cwd: string;
+    name?: string;
+    initialPrompt?: string;
+  }) => Promise<unknown> | void;
   recordRecentDir: (cwd?: string) => void;
 }
 
@@ -60,7 +66,6 @@ const LibraryHost: React.FC<Props> = ({ activeAgent, appCwd, spawnAgent, recordR
       if (action === 'spawn') {
         const target = cwd || appCwd;
         if (!target) return;
-        recordRecentDir(target);
         // `initialPrompt` PRE-FILLS the composer. The user reads the text and
         // presses Enter. Do NOT change this to `kickoffMessage` (auto-send).
         //
@@ -78,7 +83,16 @@ const LibraryHost: React.FC<Props> = ({ activeAgent, appCwd, spawnAgent, recordR
         // in this path is app-owned — `text` came off disk.
         //
         // Pinned by tests/libraryHostAutoSend.test.tsx.
-        spawnAgent({ cwd: target, initialPrompt: text });
+        try {
+          await spawnAgent({ cwd: target, initialPrompt: text });
+          recordRecentDir(target);
+        } catch {
+          postNotification({
+            title: 'Agent could not start',
+            body: spawnFailureMessage('Claude Code'),
+            source: 'workspacer',
+          });
+        }
         return;
       }
       // insert (default): deliver into the focused agent's pane
