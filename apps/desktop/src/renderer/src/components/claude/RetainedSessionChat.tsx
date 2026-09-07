@@ -8,6 +8,9 @@ import { createPortal } from 'react-dom';
 type Destination = { sessionId: string | null; paneId?: string; element: HTMLElement | null };
 let destination: Destination | null = null;
 const listeners = new Set<() => void>();
+// Restore before React removes a Fleet destination from the document. Waiting
+// for the subscriber render would disconnect frames and reload their documents.
+const homes = new Set<{ container: HTMLElement; home: HTMLElement }>();
 const subscribe = (fn: () => void) => {
   listeners.add(fn);
   return () => {
@@ -35,6 +38,9 @@ export function FleetChatDestination({
     const value = { sessionId, paneId, element: ref.current };
     publish(value);
     return () => {
+      for (const owner of homes) {
+        if (owner.container.parentElement === value.element) move(owner.container, owner.home);
+      }
       if (destination === value) publish(null);
     };
   }, [sessionId, paneId]);
@@ -73,6 +79,14 @@ export function RetainedSessionChat({
     el.style.cssText = 'height:100%;width:100%;min-height:0;min-width:0';
     return el;
   });
+  useLayoutEffect(() => {
+    if (!home.current) return;
+    const owner = { container, home: home.current };
+    homes.add(owner);
+    return () => {
+      homes.delete(owner);
+    };
+  }, [container]);
   useLayoutEffect(() => {
     container.dataset.chatSession = sessionId ?? paneId;
     const target =

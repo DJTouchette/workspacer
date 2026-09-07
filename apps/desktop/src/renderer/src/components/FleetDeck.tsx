@@ -1,3 +1,4 @@
+import { findAgentChatPane } from '../hooks/useAgentManager';
 import { FleetChatDestination } from './claude/RetainedSessionChat';
 import { TerminateAgentButton } from './TerminateAgentButton';
 import { SmallButton } from './settings/primitives';
@@ -112,6 +113,7 @@ function relTime(ts: number | undefined): string {
 interface Props {
   onOpenRecentAgents?: () => void;
   onTerminateAgent?: (id: string) => Promise<void>;
+  onEnsureAgentChat?: (id: string) => void;
   /** Inset so the deck sits inside the content area (right of sidebar, below navbar). */
   top: number;
   left: number;
@@ -240,7 +242,13 @@ const expandBtn: React.CSSProperties = {
  * pane. Card activation selects the same retained GUI inside the Fleet shell;
  * Inspector is a separate action and does not replace chat navigation.
  */
-const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents, onTerminateAgent }) => {
+const FleetDeck: React.FC<Props> = ({
+  top,
+  left,
+  onOpenRecentAgents,
+  onTerminateAgent,
+  onEnsureAgentChat,
+}) => {
   ensureFleetKeyframes();
   const {
     agents,
@@ -475,6 +483,7 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents, onTerminate
   const [chatId, setChatId] = useState<string | null>(null);
   const chatAgent = realAgents.find((a) => a.id === chatId);
   const openChat = (id: string) => {
+    onEnsureAgentChat?.(id);
     setSelectedId(id);
     setChatId(id);
     setExpandedId(null);
@@ -1048,7 +1057,7 @@ const FleetDeck: React.FC<Props> = ({ top, left, onOpenRecentAgents, onTerminate
             )}
             <FleetChatDestination
               sessionId={chatAgent.sessionId ?? chatAgent.lastSessionId ?? null}
-              paneId={chatAgent.tabs?.flatMap((t) => t.panes).find((p) => p.type === 'claude')?.id}
+              paneId={findAgentChatPane(chatAgent)?.id}
             />
             {!chatAgent.sessionId && (
               <p style={{ padding: 12 }}>Session stopped. Open its inspector to resume.</p>

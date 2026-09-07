@@ -10,6 +10,20 @@ import {
   resolveProvider,
 } from '../types/pane';
 
+/** The owning chat, excluding viewers of another session in the same workspace. */
+export function findAgentChatPane(agent: AgentWorkspace): PaneConfig | undefined {
+  const sid = agent.sessionId ?? agent.lastSessionId;
+  return (agent.tabs ?? [])
+    .flatMap((t) => t.panes)
+    .find(
+      (p) =>
+        p.type === 'claude' &&
+        (p.attachSessionId === sid ||
+          p.resumeSessionId === sid ||
+          (!p.attachSessionId && !p.resumeSessionId)),
+    );
+}
+
 /** Human label for an agent provider (tab/pane titles). */
 export function providerLabel(provider: AgentProvider | undefined): string {
   switch (resolveProvider(provider)) {
@@ -890,6 +904,35 @@ export function useAgentManager() {
     [],
   );
 
+  /** Restore a missing ordinary viewer without piloting or spawning a process. */
+  const ensureAgentChat = useCallback((agentId: string) => {
+    setAgents((prev) =>
+      prev.map((agent) => {
+        const sid = agent.sessionId ?? agent.lastSessionId;
+        if (agent.id !== agentId || agent.global || !sid || findAgentChatPane(agent)) return agent;
+        const paneId = generateId('pane');
+        const tabId = generateId('tab');
+        const pane: PaneConfig = {
+          id: paneId,
+          type: 'claude',
+          title: agent.name,
+          cwd: agent.cwd,
+          provider: agent.provider,
+          attachSessionId: sid,
+          expectHistory: true,
+        };
+        return {
+          ...agent,
+          tabs: [
+            ...agent.tabs,
+            { id: tabId, title: agent.name, panes: [pane], activePaneId: paneId },
+          ],
+          activeTabId: tabId,
+        };
+      }),
+    );
+  }, []);
+
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
   const terminatingAgents = useRef(new Map<string, Promise<void>>());
   const terminateAgent = useCallback((agentId: string): Promise<void> => {
@@ -908,6 +951,7 @@ export function useAgentManager() {
       // the card the user just closed (see lib/terminatedSessions.ts).
       markSessionTerminated(agent?.sessionId);
       clearSessionChatUiState(agent?.sessionId);
+      clearSessionChatUiState(agent?.lastSessionId);
       // Compute the post-removal list synchronously from `prev` so we never
       // read the stale agentsRef (which is updated asynchronously in an effect).
       let fallbackId: string | undefined;
@@ -1855,6 +1899,7 @@ export function useAgentManager() {
     respawnAgent,
     respawnAgentWithSettings,
     terminateAgent,
+    ensureAgentChat,
     renameAgent,
     applyAutoTitle,
     reconcileAgents,

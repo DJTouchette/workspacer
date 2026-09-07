@@ -361,6 +361,7 @@ function App() {
     respawnAgent,
     respawnAgentWithSettings,
     terminateAgent,
+    ensureAgentChat,
     renameAgent,
     applyAutoTitle,
     reconcileAgents,
@@ -3124,6 +3125,7 @@ function App() {
                   left={contentLeft}
                   onOpenRecentAgents={openRecentAgentsPane}
                   onTerminateAgent={handleTerminateAgent}
+                  onEnsureAgentChat={ensureAgentChat}
                 />
               )}
 

@@ -1,8 +1,9 @@
+import { useSessionChatState } from '../src/hooks/useSessionChatUiState';
 import React from 'react';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TerminateAgentButton } from '../src/components/TerminateAgentButton';
-import { useAgentManager } from '../src/hooks/useAgentManager';
+import { findAgentChatPane, useAgentManager } from '../src/hooks/useAgentManager';
 import { resetTerminatedSessions, wasSessionTerminated } from '../src/lib/terminatedSessions';
 import { promoteSessionSnapshots } from '../src/lib/promoteSessionSnapshots';
 const agent = (hub?: string) =>
@@ -134,4 +135,62 @@ describe('canonical local and remote termination', () => {
     expect(closed).not.toHaveBeenCalled();
     window.removeEventListener('agent:closed', closed);
   });
+});
+
+it('dismisses a stopped card without a process request and releases retained session state', async () => {
+  window.electronAPI.claudeClose = vi.fn();
+  window.electronAPI.claudeSignal = vi.fn();
+  const retained = renderHook(() => useSessionChatState('stopped-session', 'draft', 'old draft'));
+  const hook = renderHook(() => useAgentManager());
+  act(() =>
+    hook.result.current.loadAgentsFromSession(
+      [{ ...agent(), sessionId: undefined, lastSessionId: 'stopped-session' }],
+      'a',
+    ),
+  );
+  await act(async () => hook.result.current.terminateAgent('a'));
+  expect(hook.result.current.agents.some((a) => a.id === 'a')).toBe(false);
+  expect(window.electronAPI.claudeClose).not.toHaveBeenCalled();
+  expect(window.electronAPI.claudeSignal).not.toHaveBeenCalled();
+  retained.unmount();
+  const fresh = renderHook(() => useSessionChatState('stopped-session', 'draft', ''));
+  expect(fresh.result.current[0]).toBe('');
+});
+
+it('restores only a missing owning chat and keeps the current workspace selection', () => {
+  const hook = renderHook(() => useAgentManager());
+  const worker = {
+    ...agent(),
+    tabs: [
+      {
+        id: 't',
+        title: 'Tools',
+        activePaneId: 'watch',
+        panes: [
+          {
+            id: 'watch',
+            title: 'Another session',
+            type: 'claude',
+            attachSessionId: 'different-session',
+          },
+        ],
+      },
+    ],
+  };
+  act(() =>
+    hook.result.current.loadAgentsFromSession(
+      [worker, { ...agent(), id: 'manager', sessionId: 'manager-session' }],
+      'manager',
+    ),
+  );
+  act(() => {
+    hook.result.current.ensureAgentChat('a');
+    hook.result.current.ensureAgentChat('a');
+  });
+  const restored = hook.result.current.agents.find((a) => a.id === 'a')!;
+  expect(
+    restored.tabs.flatMap((t) => t.panes).filter((p) => p.attachSessionId === 's-a'),
+  ).toHaveLength(1);
+  expect(findAgentChatPane(restored)?.attachSessionId).toBe('s-a');
+  expect(hook.result.current.activeAgentId).toBe('manager');
 });
