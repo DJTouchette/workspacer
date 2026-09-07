@@ -98,6 +98,7 @@ export const HOST_ONLY = [
   'onBeforeQuit', // Electron app lifecycle
   'setActiveSession', // OS notification / ambient awareness
   'onFocusAgent',
+  'agentRuntimeStatus', // local lifecycle, same owner as spawnClaude
   'onSystemNotice', // main-process daemon/startup notices; IPC-only push
   'openLogsFolder', // opens the host's logs dir in its file manager
   'installCli', // installs the host's bundled workspacer CLI onto the host PATH

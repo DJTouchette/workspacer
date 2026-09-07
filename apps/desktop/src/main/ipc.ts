@@ -1,4 +1,5 @@
 import { fleetWorkflowRequest } from './services/fleetWorkflowService';
+import { readAgentRuntimeStatus } from './services/agentRuntimeStatus';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
 import { fleetReviewStore } from './services/fleetReviewStore';
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
@@ -582,6 +583,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     app.quit();
   });
   // Git worktrees: repo detection for the spawn dialog + agent-worktree create.
+  ipcMain.handle(IPC.AGENT_RUNTIME_STATUS, () => readAgentRuntimeStatus());
   ipcMain.handle(IPC.WORKTREE_INFO, (_event, cwd: string) => worktreeInfo(cwd));
   ipcMain.handle(
     IPC.WORKTREE_CREATE,

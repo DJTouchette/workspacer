@@ -3095,7 +3095,12 @@ function App() {
               <WebFolderPicker />
 
               {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
-              <SystemNotices />
+              <SystemNotices
+                onOpenCliSettings={() => {
+                  openSettings();
+                  requestSettingsSection('cli');
+                }}
+              />
 
               {/* Notification-center transient toasts (bottom-right). */}
               <NotificationToasts />

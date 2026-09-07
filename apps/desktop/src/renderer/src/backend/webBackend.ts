@@ -733,6 +733,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
 
     // Worktree creation shells out on the HOST; the web mirror can't. The
     // spawn dialog hides the toggle when these report not-a-repo/unavailable.
+    // No owner lifecycle/worktree capability on the bus, including old/headless hosts.
+    agentRuntimeStatus: async () => ({ claudemon: 'unknown', hub: 'unknown', facade: 'unknown' }),
     worktreeInfo: () => Promise.resolve({ isRepo: false }),
     worktreeCreate: () =>
       Promise.resolve({ ok: false, error: 'not available over the hub bridge' }),

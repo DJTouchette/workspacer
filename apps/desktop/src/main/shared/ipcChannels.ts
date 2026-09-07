@@ -7,6 +7,7 @@
  * runtime wire format is unchanged.
  */
 export const IPC = {
+  AGENT_RUNTIME_STATUS: 'agents:runtimeStatus', // read-only host lifecycle/health
   // ── Library ──
   PROJECT_DOWNLOAD_ICON: 'project:downloadIcon',
   LIBRARY_LIST: 'library:list',

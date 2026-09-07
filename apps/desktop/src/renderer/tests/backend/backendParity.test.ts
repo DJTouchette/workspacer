@@ -540,3 +540,24 @@ describe('Recent agents stays on the local host path', () => {
     );
   });
 });
+
+// Lifecycle and cwd facts always belong to the execution host.
+it('keeps old, web and remote runtime facts unknown; bridged uses local lifecycle', async () => {
+  const ipc = {
+    agentRuntimeStatus: vi.fn(async () => ({ claudemon: 'failed', hub: 'ready', facade: 'ready' })),
+  } as unknown as ElectronAPI;
+  expect(
+    (await createBridgedBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
+  ).toBe('failed');
+  expect((await createWebBackend('token').agentRuntimeStatus!()).claudemon).toBe('unknown');
+  expect(
+    (await createRemoteBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
+  ).toBe('unknown');
+  expect(
+    (
+      await createBridgedBackend({} as ElectronAPI, 'token', 'ws://fixture/bus')
+        .agentRuntimeStatus!()
+    ).claudemon,
+  ).toBe('unknown');
+  expect(ipc.agentRuntimeStatus).toHaveBeenCalledTimes(1);
+});
