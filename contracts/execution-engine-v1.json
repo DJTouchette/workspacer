@@ -1,4 +1,20 @@
 {
+  "vocabulary": {
+    "blocks": {
+      "nativeLaunches": {
+        "why": "The provider-native launch arguments that the daemon must preserve.",
+        "required": [
+          "provider",
+          "model",
+          "instructions",
+          "argvIncludes"
+        ],
+        "loaders": [
+          "services/claudemon/src/daemon/api.rs::execution_engine_native_launch_golden_cases"
+        ]
+      }
+    }
+  },
   "metadata": {"id":"claudemon-v1","api_version":1,"implementation_version":"1","generation":4,"readiness":"unavailable"},
   "nativeLaunches": [
     {"provider":"claude","model":"fixture-model","instructions":"fixture","argvIncludes":["--print","--input-format","stream-json","--output-format","--model","fixture-model"]},
