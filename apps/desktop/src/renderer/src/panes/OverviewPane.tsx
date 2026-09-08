@@ -9,6 +9,7 @@ import { favouriteProjects, recentProjects, setFavourite } from '../lib/projectR
 import { claudeAccountOf } from '../lib/claudeAccount';
 import { usageWindows, fmtWindowLength } from '../lib/sessionStats';
 import { useUsageReport } from '../hooks/useUsageReport';
+import { usagePacingRows } from '../lib/usagePacing';
 import { UsageReportCard } from '../components/UsageReportCard';
 import { reportWindowsFor, type UsageReportWire } from '../../../main/shared/usageReport';
 import { useSessionAnalytics } from '../hooks/useSessionAnalytics';
@@ -444,6 +445,7 @@ export function OverviewUsageCards({
   usageReport: UsageReportWire | null;
   snaps: Snap[];
 }) {
+  const nowMs = Date.now();
   return (
     <>
       {RATE_LIMIT_PROVIDERS.map((p) => {
@@ -451,14 +453,22 @@ export function OverviewUsageCards({
         // A successful report owns the entire provider observation, even
         // when a plan removes all windows. Never resurrect live caches.
         if (usageReport)
-          return (reported?.accounts ?? []).map((account, index) => (
-            <UsageReportCard
-              key={JSON.stringify([p.id, account.account, index])}
-              report={usageReport}
-              account={account}
-              provider={p.id}
-            />
-          ));
+          return (reported?.accounts ?? []).map((account, index) => {
+            // Configured roots and unattributed buckets may have no readings.
+            // Discover cards from measured usage, not profile or pace presence.
+            // Zero is a reading; stale history remains labelled by the card.
+            const { rows } = usagePacingRows(usageReport, account, nowMs);
+            if (!rows.some((row) => row.usedPct !== undefined)) return null;
+            return (
+              <UsageReportCard
+                key={JSON.stringify([p.id, account.account, index])}
+                report={usageReport}
+                account={account}
+                provider={p.id}
+                nowMs={nowMs}
+              />
+            );
+          });
         if (p.id !== 'claude') {
           return <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />;
         }

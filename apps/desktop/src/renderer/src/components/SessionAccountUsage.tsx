@@ -100,7 +100,8 @@ export const SessionAccountUsage: React.FC<{ session: SessionAccountIdentity | n
       ) : attribution.state === 'ambiguous' ? (
         <Note>
           Not shown: {attribution.count} {provider} accounts are reported here and this
-          session&rsquo;s account could not be identified. Overview lists them all.
+          session&rsquo;s account could not be identified. Overview shows accounts with usage
+          readings.
         </Note>
       ) : (
         <Note>No {provider} account allowance was reported for this session.</Note>

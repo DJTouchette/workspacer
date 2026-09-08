@@ -252,7 +252,7 @@ export function usagePaceFallbackLabel(
  * Which report row — if any — describes the allowance THIS session spends
  * from.
  *
- * The Overview draws every account the report knows, so it never has to decide
+ * The Overview draws accounts with usable readings, so it never has to decide
  * whose card is whose. A session surface does, and the wrong answer is worse
  * than no answer: showing one login's 91% weekly figure on a session that runs
  * under a different login is a lie a reader cannot detect. So the only

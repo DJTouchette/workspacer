@@ -293,3 +293,90 @@ it('the Overview uses whole canonical accounts despite conflicting and federated
   expect(screen.queryAllByTestId('usage-consumed')).toHaveLength(0);
   expect(screen.queryAllByRole('button')).toHaveLength(0);
 });
+
+it('Overview hides unknown-only profiles and keeps measured accounts even when pace is unknown', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now * 1000);
+  const measured = fixture().providers![0].accounts![0];
+  const unknown = {
+    used_percent: { state: 'unknown' as const, reason: 'no observation' },
+    resets_at: null,
+  };
+  const report: UsageReportWire = {
+    providers: [
+      {
+        provider: 'claude',
+        accounts: [
+          { ...measured, label: 'default' },
+          ...['C:\\Users\\user\\.claude\\accounts\\personal', '/accounts/personal-2', null].map(
+            (account) => ({
+              account,
+              windows: { five_hour: unknown, seven_day: unknown, monthly: unknown },
+            }),
+          ),
+        ],
+      },
+      {
+        provider: 'codex',
+        accounts: [
+          {
+            account: '/home/user/.codex',
+            windows: {
+              seven_day: {
+                used_percent: { state: 'ok', value: 0 },
+                resets_at: now + 86400,
+                pace: { known: false, state: 'unknown' },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const view = render(<OverviewUsageCards usageReport={report} snaps={[]} />);
+  expect(screen.getAllByRole('button', { name: /Show usage detail:/ })).toHaveLength(2);
+  expect(
+    screen.getByRole('button', { name: 'Show usage detail: claude · Default account' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Show usage detail: codex · /home/user/.codex' }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByText('0% used')).toHaveLength(2);
+  expect(screen.queryByText('Usage unknown')).not.toBeInTheDocument();
+
+  // A hidden profile appears as soon as the report has a valid reading.
+  report.providers![0].accounts![1].windows!.seven_day = {
+    used_percent: { state: 'ok', value: 8 },
+    resets_at: now + 3600,
+  };
+  view.rerender(<OverviewUsageCards usageReport={report} snaps={[]} />);
+  expect(screen.getAllByRole('button', { name: /Show usage detail:/ })).toHaveLength(3);
+  expect(screen.getByText('8% used')).toBeInTheDocument();
+});
+
+it.each([
+  { used_percent: { state: 'unknown' as const }, resets_at: now + 3600 },
+  { used_percent: { state: 'unavailable' as const }, resets_at: now + 3600 },
+  { used_percent: { state: 'ok' as const, value: 15 }, resets_at: null },
+  { used_percent: { state: 'ok' as const, value: 15 }, resets_at: now },
+  { used_percent: { state: 'ok' as const, value: Number.NaN }, resets_at: now + 3600 },
+  { used_percent: { state: 'ok' as const, value: 101 }, resets_at: now + 3600 },
+])('Overview does not discover an account from an unreadable window: %j', (window) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(now * 1000);
+  const report: UsageReportWire = {
+    providers: [
+      {
+        provider: 'claude',
+        accounts: [
+          {
+            account: '',
+            windows: { five_hour: window },
+          },
+        ],
+      },
+    ],
+  };
+  render(<OverviewUsageCards usageReport={report} snaps={[]} />);
+  expect(screen.queryAllByRole('button', { name: /Show usage detail:/ })).toHaveLength(0);
+});
