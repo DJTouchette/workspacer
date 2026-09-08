@@ -104,6 +104,9 @@
 </style>
   <!-- PostHog web analytics (shared across every landing page) -->
   <script src="analytics.js"></script>
+<link rel="stylesheet" href="contact.css" />
+<script src="contact.js" defer></script>
+<script src="https://unpkg.com/@formspree/ajax@1.1.5/dist/global.js" defer></script>
 </head>
 <body>
 
@@ -114,6 +117,7 @@
     <span style="font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 6px;">alpha</span>
   </a>
   <div class="links">
+    <a href="enterprise.html#pilot" data-contact-open>contact</a>
     <a href="index.html">home</a>
     <a href="docs.html">docs</a>
     <a href="build-plugin.html">build a plugin</a>
@@ -523,7 +527,7 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 </ul>
     </section>
 
-    <div class="foot">work{spacer} :: build &amp; internals :: <a href="docs.html">operational docs →</a></div>
+    <div class="foot">work{spacer} :: build &amp; internals :: <a href="docs.html">operational docs →</a> :: <a href="enterprise.html#pilot" data-contact-open>contact</a></div>
   </main>
 </div>
 

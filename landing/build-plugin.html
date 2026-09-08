@@ -104,6 +104,9 @@
 </style>
   <!-- PostHog web analytics (shared across every landing page) -->
   <script src="analytics.js"></script>
+<link rel="stylesheet" href="contact.css" />
+<script src="contact.js" defer></script>
+<script src="https://unpkg.com/@formspree/ajax@1.1.5/dist/global.js" defer></script>
 </head>
 <body>
 
@@ -114,6 +117,7 @@
     <span style="font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 6px;">alpha</span>
   </a>
   <div class="links">
+    <a href="enterprise.html#pilot" data-contact-open>contact</a>
     <a href="index.html">home</a>
     <a href="docs.html">docs</a>
     <a href="build.html">build</a>
@@ -565,7 +569,7 @@ window.addEventListener('wks-settings', (e) =&gt; { settings = e.detail; render(
 <p>There's a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">github.com/DJTouchette/workspacer-plugins</a>: dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste <code>DJTouchette/workspacer-plugin-&lt;name&gt;</code>), and together they double as reference implementations for every plugin shape on this page. To list yours there, open a PR against the catalog repo's index.</p>
     </section>
 
-    <div class="foot">work{spacer} :: build a plugin :: <a href="build.html#plugins">build &amp; internals →</a></div>
+    <div class="foot">work{spacer} :: build a plugin :: <a href="build.html#plugins">build &amp; internals →</a> :: <a href="enterprise.html#pilot" data-contact-open>contact</a></div>
   </main>
 </div>
 

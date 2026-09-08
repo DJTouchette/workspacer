@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workspacer for enterprise · Guided workflow pilots</title>
+<meta name="description" content="Bring Workspacer into your everyday development workflow. Explore configurable Fleet Manager workflows and a scoped, paid setup pilot with the builder." />
+<link rel="canonical" href="https://www.workspacer.app/enterprise.html" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://www.workspacer.app/enterprise.html" />
+<meta property="og:title" content="Workspacer · Put your agents to work on your everyday backlog" />
+<meta property="og:description" content="Configurable workflows, cross-provider delegation and project briefs. Start with a guided pilot on one repository." />
+<meta property="og:image" content="https://www.workspacer.app/shots/fleet-manager.webp" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Workspacer for enterprise · Guided workflow pilots" />
+<meta name="twitter:description" content="Put your agents to work on your everyday backlog. Discuss a scoped adoption pilot with the builder." />
+<meta name="twitter:image" content="https://www.workspacer.app/shots/fleet-manager.webp" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Everforest ground, but the text ramp runs to near-white so the page has
+       contrast headroom. Green is an ACCENT now. If it shows up on every
+       heading, link and bullet it stops meaning anything. */
+    --bg: #1b2023;
+    --bg-elev: #20262a;
+    --bg-card: #232a2e;
+
+    --line: rgba(255,255,255,0.08);
+    --line-strong: rgba(255,255,255,0.16);
+
+    --fg: #f1f4f0;
+    --fg-muted: #a7b1ab;
+    --fg-dim: #7d8884;
+    --fg-faint: #5f6b68;
+
+    --accent: #a7c080;          /* sapling, the one loud colour */
+    --accent-soft: #c2d7a2;
+    --accent-dim: rgba(167,192,128,0.14);
+    --amber: #dbbc7f;           /* alpha badge only */
+    --cyan: #7fbbb3;            /* inline code only */
+
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --r: 12px;
+    --r-sm: 8px;
+    --r-lg: 16px;
+    --maxw: 1180px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--fg-muted);
+    font-family: var(--font-sans);
+    font-size: 16px; line-height: 1.65; letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
+  a { color: inherit; }
+  ::selection { background: var(--accent); color: #1b2023; }
+  img { display: block; }
+
+  /* ---- shared type ------------------------------------------------------ */
+  /* Big + light + tight. Bold-and-small is what made this read like a README. */
+  .display { font-weight: 500; line-height: 1.05; letter-spacing: -0.035em; color: var(--fg); }
+  .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+             text-transform: uppercase; color: var(--fg-dim); }
+  .mono { font-family: var(--font-mono); }
+  code, .c { font-family: var(--font-mono); font-size: 0.9em; color: var(--cyan); }
+  .hash { font-family: var(--font-mono); color: var(--fg-faint); font-weight: 400;
+          margin-right: 0.18em; letter-spacing: 0; }
+  .g { color: var(--accent); }
+
+  /* ---- brand ------------------------------------------------------------ */
+  .wordmark { font-family: var(--font-mono); font-weight: 500; letter-spacing: -0.045em;
+              color: var(--fg); white-space: nowrap; }
+  .wordmark .sp { color: var(--accent); }
+  .mark { display: inline-flex; align-items: center; justify-content: center;
+          font-family: var(--font-mono); font-weight: 500; color: var(--accent);
+          line-height: 1; user-select: none; }
+  .mark .bar { display: inline-block; width: 0.22em; height: 0.72em; margin: 0 0.06em;
+               border-radius: 1px; background: var(--accent); }
+  .mark .bar.blink { animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .alpha { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.09em;
+           text-transform: uppercase; color: var(--amber);
+           border: 1px solid rgba(219,188,127,0.4); border-radius: 999px;
+           padding: 2px 8px; align-self: center; }
+
+  /* ---- nav -------------------------------------------------------------- */
+  /* Product docs and the enterprise pilot page share this compact nav. */
+  nav { position: sticky; top: 0; z-index: 50;
+        background: rgba(27,32,35,0.72); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+        border-bottom: 1px solid transparent; transition: border-color 0.3s; }
+  nav.is-scrolled { border-bottom-color: var(--line); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; gap: 20px; height: 62px; }
+  nav .brand { display: flex; align-items: center; gap: 9px; }
+  .nav-right { display: flex; align-items: center; gap: 8px; }
+  .navlinks { display: flex; align-items: center; gap: 4px; }
+  .navlinks a { color: var(--fg-muted); text-decoration: none; font-size: 14px; font-weight: 500;
+                padding: 8px 12px; border-radius: var(--r-sm); transition: color 0.18s, background 0.18s; }
+  .navlinks a:hover { color: var(--fg); background: rgba(255,255,255,0.04); }
+  .nav-stars { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px;
+               border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,0.03);
+               font-size: 13px; font-weight: 500; color: var(--fg-muted); text-decoration: none;
+               white-space: nowrap; transition: color 0.18s, border-color 0.18s, background 0.18s; }
+  .nav-stars:hover { color: var(--fg); border-color: var(--line-strong); background: rgba(255,255,255,0.06); }
+  .nav-stars svg { flex-shrink: 0; }
+  .nav-stars strong { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .nav-toggle { display: none; background: none; border: 1px solid var(--line); border-radius: var(--r-sm);
+                color: var(--fg); font-size: 17px; line-height: 1; padding: 7px 11px;
+                font-family: var(--font-mono); cursor: pointer; }
+  .mobile-menu { display: none; border-top: 1px solid var(--line); background: var(--bg-elev); }
+  .mobile-menu .wrap { display: block; height: auto; padding-top: 4px; padding-bottom: 10px; }
+  .mobile-menu a { display: block; padding: 14px 0; color: var(--fg-muted); text-decoration: none;
+                   font-size: 15px; font-weight: 500; border-bottom: 1px solid var(--line); }
+  .mobile-menu a:last-child { border-bottom: none; }
+  nav.open .mobile-menu { display: block; }
+
+  /* ---- buttons ---------------------------------------------------------- */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+         padding: 11px 20px; font-size: 14.5px; font-weight: 600; font-family: inherit;
+         text-decoration: none; white-space: nowrap; border-radius: var(--r-sm);
+         border: 1px solid transparent; cursor: pointer;
+         transition: transform 0.18s, background 0.18s, border-color 0.18s, color 0.18s; }
+  .btn-fill { background: var(--accent); color: #1b2023; }
+  .btn-fill:hover { background: var(--accent-soft); transform: translateY(-1px); }
+  .btn-fill:active { transform: translateY(0); }
+  .btn-line { color: var(--fg-muted); border-color: var(--line); }
+  .btn-line:hover { color: var(--fg); border-color: var(--line-strong); background: rgba(255,255,255,0.04); }
+  .btn-lg { padding: 14px 24px; font-size: 15px; border-radius: 10px; }
+  .btn-sm { padding: 0 14px; height: 34px; font-size: 13px; font-weight: 500; }
+
+  /* ---- everyday workflow, product tour, then a distinct pilot destination */
+  [hidden] { display: none !important; }
+  #pilot, #workflow { scroll-margin-top: 82px; }
+  .enterprise-hero { padding: 86px 0 64px; }
+  .hero-layout, .pilot-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
+                               gap: 64px; align-items: start; }
+  .hero-layout { align-items: center; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 24px;
+               font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); }
+  .workflow-sketch { border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+                     padding: 28px; background: var(--bg-elev); box-shadow: 0 28px 64px -44px #000; }
+  .workflow-ask { color: var(--fg); font-size: 19px; line-height: 1.5; margin: 20px 0 28px;
+                  padding-left: 16px; border-left: 2px solid var(--accent); }
+  .workflow-path { list-style: none; display: grid; gap: 0; }
+  .workflow-path li { position: relative; display: grid; grid-template-columns: 28px 1fr;
+                      gap: 16px; padding-bottom: 22px; }
+  .workflow-path li:not(:last-child)::before { content: ""; position: absolute; left: 13px;
+    top: 28px; bottom: 0; width: 1px; background: var(--line-strong); }
+  .workflow-path .step-number { display: grid; place-items: center; width: 28px; height: 28px;
+    font: 11px var(--font-mono); color: var(--accent); background: var(--bg-card);
+    border: 1px solid var(--line-strong); border-radius: 50%; }
+  .workflow-path b { display: block; color: var(--fg); font-size: 15px; font-weight: 500; }
+  .workflow-path p { font-size: 13px; line-height: 1.6; margin-top: 4px; }
+  .workflow-note { border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; }
+  .workflow-note b { color: var(--accent); font-weight: 500; }
+  .product-tour { padding: 72px 0; background: var(--bg-elev); border-block: 1px solid var(--line); }
+  .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between;
+                     align-items: end; gap: 20px; margin-bottom: 32px; }
+  .section-heading h2, .pilot-copy h2 { font-size: clamp(28px, 3.4vw, 42px); margin-top: 14px; }
+  .section-heading > p { max-width: 340px; font-size: 15px; }
+  .tour-shell { border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden;
+                 background: var(--bg); box-shadow: 0 28px 70px -50px #000; }
+  .tour-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+  .tour-tab { border: 0; border-bottom: 2px solid transparent; padding: 18px 12px;
+              color: var(--fg-muted); font: 500 14px var(--font-sans); cursor: pointer; background: transparent; }
+  .tour-tab:hover { background: var(--bg-card); color: var(--fg); }
+  .tour-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-dim); }
+  .tour-tab:focus-visible { outline-offset: -5px; }
+  .tour-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .tour-caption { padding: 22px 26px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px 26px; }
+  .tour-caption h3 { color: var(--fg); font-weight: 500; font-size: 17px; margin-bottom: 5px; }
+  .tour-caption p { font-size: 14px; max-width: 680px; }
+  .tour-caption a { align-self: center; color: var(--accent); font-size: 13px; text-underline-offset: 4px; }
+  .tour-image { display: block; border-top: 1px solid var(--line); }
+  .tour-image img { width: 100%; height: auto; aspect-ratio: 1600 / 862; }
+  .tour-label { margin-top: 14px; font-size: 12px; color: var(--fg-muted); }
+  .enterprise-benefits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px; margin-top: 44px; }
+  .enterprise-benefits > div { border-top: 1px solid var(--line-strong); padding-top: 20px; }
+  .enterprise-benefits dt { color: var(--fg); font-weight: 500; font-size: 16px; }
+  .enterprise-benefits dd { margin-top: 8px; font-size: 14px; line-height: 1.65; }
+  .pilot-section { padding: 88px 0 72px; }
+  .pilot-copy > p { margin-top: 20px; max-width: 500px; }
+  .pilot-fit { list-style: none; display: grid; gap: 16px; margin-top: 30px; }
+  .pilot-fit li { padding-left: 22px; position: relative; font-size: 15px; }
+  .pilot-fit li::before { content: "+"; color: var(--accent); position: absolute; left: 0; }
+  .pilot-copy .pilot-founder { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--line); font-size: 14px; }
+  .pilot-founder b { color: var(--fg); font-weight: 500; }
+  .enterprise-pilot { padding: 32px; background: var(--bg-elev); }
+  .enterprise-pilot h2 { color: var(--fg); font-size: 25px; font-weight: 500;
+                         line-height: 1.15; letter-spacing: -0.025em; margin: 14px 0; }
+  .enterprise-pilot p { font-size: 14.5px; line-height: 1.6; }
+  .enterprise-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+  .enterprise-actions .btn { white-space: normal; text-align: center; }
+  .enterprise-actions a:focus-visible, .enterprise-scope a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 4px; }
+  .enterprise-pilot .pilot-terms { color: var(--fg-muted); font-size: 13px; }
+  .enterprise-pilot .pilot-contact { color: var(--fg-muted); font-size: 12.5px; margin-top: 14px; }
+  .enterprise-scope { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--line);
+                      font-size: 13.5px; line-height: 1.65; max-width: 900px; }
+  .enterprise-scope b { color: var(--fg); font-weight: 500; }
+  .enterprise-scope a { color: var(--accent); text-underline-offset: 3px; }
+
+  /* ---- footer ----------------------------------------------------------- */
+  footer { border-top: 1px solid var(--line); padding: 34px 0; font-size: 13.5px; color: var(--fg-dim); }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 22px; }
+  .foot-links a { color: var(--fg-dim); text-decoration: none; }
+  .foot-links a:hover { color: var(--fg); }
+
+
+  main { padding: 0; }
+  .enterprise-copy h1 { font-size: clamp(36px, 4.4vw, 58px); margin-top: 18px; text-wrap: balance; }
+  .sec-sub { color: var(--fg-muted); margin-top: 22px; max-width: 620px; font-size: 18px; line-height: 1.6; }
+  .tile { border: 1px solid var(--line); border-radius: var(--r); }
+  .navlinks a[aria-current="page"], .mobile-menu a[aria-current="page"] { color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .skip-link { position: absolute; top: -80px; left: 16px; z-index: 100;
+               padding: 10px 16px; background: var(--accent); color: var(--bg); }
+  .skip-link:focus { top: 10px; }
+  @media (max-width: 980px) {
+    .hero-layout, .pilot-layout { grid-template-columns: 1fr; gap: 36px; }
+    .enterprise-copy h1 { max-width: 22ch; }
+    .workflow-sketch { max-width: 620px; }
+    .enterprise-benefits { gap: 22px; }
+  }
+  @media (max-width: 940px) {
+    .navlinks, .nav-stars { display: none; }
+    .nav-toggle { display: inline-flex; }
+  }
+  @media (max-width: 560px) {
+    .enterprise-hero, .product-tour, .pilot-section { padding: 48px 0; }
+    .wrap { padding: 0 20px; }
+    nav .alpha { display: none; }
+    nav .wrap { gap: 10px; }
+    .enterprise-pilot { padding: 24px; }
+    .enterprise-benefits { grid-template-columns: 1fr; gap: 22px; margin-top: 30px; }
+    .workflow-sketch { padding: 24px; }
+    .tour-tab { font-size: 12px; padding: 16px 6px; }
+    .tour-caption { padding: 18px; }
+  }
+  @media (max-width: 380px) {
+    nav .brand > .mark { display: none; }
+    nav .btn-sm { padding: 0 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+<script src="analytics.js"></script>
+<noscript><style>html { scroll-behavior: auto; } nav { position: static; } @media (max-width: 940px) { .mobile-menu { display: block; } .nav-toggle { display: none; } }</style></noscript>
+<link rel="stylesheet" href="contact.css" />
+<script src="contact.js" defer></script>
+<script src="https://unpkg.com/@formspree/ajax@1.1.5/dist/global.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav id="nav"><div class="wrap">
+  <a class="brand" href="index.html" style="text-decoration:none;">
+    <span class="mark" style="font-size:18px;">{<span class="bar"></span>}</span>
+    <span class="wordmark" style="font-size:16px;">work<span class="sp">{spacer}</span></span>
+    <span class="alpha">alpha</span>
+  </a>
+  <div class="nav-right">
+    <div class="navlinks">
+      <a href="enterprise.html" aria-current="page">enterprise</a>
+      <a href="docs.html">docs</a>
+      <a href="build-plugin.html">plugins</a>
+      <a href="build-client.html">api</a>
+      <a href="build.html">internals</a>
+    </div>
+    <a class="nav-stars" id="gh-stars" href="https://github.com/DJTouchette/workspacer">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      <span id="gh-stars-label">GitHub</span>
+    </a>
+    <a class="btn btn-fill btn-sm" id="dl-btn-nav" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
+    <button class="nav-toggle" id="nav-toggle" aria-label="menu" aria-expanded="false">≡</button>
+  </div>
+</div>
+<!-- Same destinations as .navlinks. Keep the two lists in sync. -->
+<div class="mobile-menu" id="mobile-menu"><div class="wrap">
+  <a href="enterprise.html" aria-current="page">enterprise</a>
+  <a href="docs.html">docs</a>
+  <a href="build-plugin.html">plugins</a>
+  <a href="build-client.html">api</a>
+  <a href="build.html">internals</a>
+  <a href="https://github.com/DJTouchette/workspacer">github</a>
+  <a href="index.html#get">download</a>
+</div></div>
+</nav>
+
+<main id="main-content">
+<section class="enterprise-hero" aria-labelledby="enterprise-title"><div class="wrap hero-layout">
+  <div class="enterprise-copy">
+    <div class="eyebrow">enterprise · guided pilots</div>
+    <h1 class="display" id="enterprise-title">Put your agents to work on your <span class="g">everyday backlog</span>.</h1>
+    <p class="sec-sub">For developers and technical leads working in existing codebases. Give Fleet Manager the task. It coordinates the workers, brings back their results, and keeps the project brief current.</p>
+    <div class="enterprise-actions">
+      <a class="btn btn-fill" href="#pilot">Explore a guided pilot &rarr;</a>
+      <a class="btn btn-line" href="#workflow">See the workflow</a>
+    </div>
+    <div class="hero-meta"><span>Windows · macOS · Linux</span><span>Your coding tools &amp; subscriptions</span></div>
+  </div>
+  <div class="workflow-sketch" aria-label="Example of the default Fleet Manager workflow">
+    <div class="eyebrow">one task · a coordinated workflow</div>
+    <p class="workflow-ask">“Fix the retry bug and have a fresh agent review the change.”</p>
+    <ol class="workflow-path">
+      <li><span class="step-number" aria-hidden="true">01</span><div><b>Investigate when needed</b><p>A scout checks the unknowns and gives the implementer a focused handoff.</p></div></li>
+      <li><span class="step-number" aria-hidden="true">02</span><div><b>Implement the change</b><p>A worker takes the task on its own branch. Provider and model choices follow your routing preferences.</p></div></li>
+      <li><span class="step-number" aria-hidden="true">03</span><div><b>Get an independent review</b><p>A fresh worker reviews the change. You can open the sessions and inspect the results.</p></div></li>
+    </ol>
+    <p class="workflow-note"><b>Ready for the next session.</b> The manager records the outcome and next steps in the project brief.</p>
+  </div>
+</div></section>
+
+<section id="workflow" class="product-tour" aria-labelledby="workflow-title"><div class="wrap">
+  <div class="section-heading">
+    <div><div class="eyebrow">inside workspacer</div><h2 class="display" id="workflow-title">See the work.<br>Keep the <span class="g">context</span>.</h2></div>
+    <p>Every worker is a session you can open. Every result has somewhere to land. Take a look around an example workspace.</p>
+  </div>
+  <div class="tour-shell">
+    <div class="tour-tabs" role="tablist" aria-label="Workspacer product tour" hidden>
+      <button class="tour-tab" type="button" role="tab" id="tour-tab-delegate" aria-controls="tour-delegate" aria-selected="true" tabindex="0">01 · Delegate</button>
+      <button class="tour-tab" type="button" role="tab" id="tour-tab-review" aria-controls="tour-review" aria-selected="false" tabindex="-1">02 · Review</button>
+      <button class="tour-tab" type="button" role="tab" id="tour-tab-resume" aria-controls="tour-resume" aria-selected="false" tabindex="-1">03 · Resume</button>
+    </div>
+    <div class="tour-panel" id="tour-delegate">
+      <div class="tour-caption"><div><h3>One conversation. Visible workers.</h3><p>Dispatch through the manager, open any worker, and read the results as they come back.</p></div><a href="shots/fleet-manager.webp" target="_blank" rel="noopener">Open delegation screenshot ↗</a></div>
+      <a class="tour-image" href="shots/fleet-manager.webp" target="_blank" rel="noopener" aria-label="Open full-size Fleet Manager screenshot"><img src="shots/fleet-manager.webp" alt="Example Fleet Manager workspace with nested worker sessions and a structured result in the conversation" width="1600" height="862" loading="lazy" /></a>
+    </div>
+    <div class="tour-panel" id="tour-review">
+      <div class="tour-caption"><div><h3>Inspect the code that came back.</h3><p>Use the review pane to read the diff, stage changes, and commit when you are ready.</p></div><a href="shots/review-pane.webp" target="_blank" rel="noopener">Open review screenshot ↗</a></div>
+      <a class="tour-image" href="shots/review-pane.webp" target="_blank" rel="noopener" aria-label="Open full-size review pane screenshot"><img src="shots/review-pane.webp" alt="Workspacer review pane showing changed files and a diff beside the agent sidebar" width="1600" height="862" loading="lazy" /></a>
+    </div>
+    <div class="tour-panel" id="tour-resume">
+      <div class="tour-caption"><div><h3>Come back with the decisions in view.</h3><p>The brief board puts current work, direction and recent outcomes together. The underlying briefs are Markdown in your projects.</p></div><a href="shots/brief-board.webp" target="_blank" rel="noopener">Open project briefs screenshot ↗</a></div>
+      <a class="tour-image" href="shots/brief-board.webp" target="_blank" rel="noopener" aria-label="Open full-size project briefs screenshot"><img src="shots/brief-board.webp" alt="Example brief board with current tasks, project direction, recent decisions and an archive column" width="1600" height="862" loading="lazy" /></a>
+    </div>
+  </div>
+  <p class="tour-label">Product screenshots from an example workspace. Select a view, or open an image at full size.</p>
+  <dl class="enterprise-benefits">
+    <div><dt>A workflow that fits the project</dt><dd>Clone the default to change the steps, instructions and dispatch templates. Choose a global workflow or override it for a particular project.</dd></div>
+    <div><dt>Delegate across providers</dt><dd>A manager on Codex can dispatch a Claude Code worker. Set provider and model preferences by role, using the coding tools you already have.</dd></div>
+    <div><dt>Work that carries forward</dt><dd>Project briefs record outcomes, decisions and next steps. The next session has a starting point you can read and edit yourself.</dd></div>
+  </dl>
+</div></section>
+
+<section id="pilot" class="pilot-section" aria-labelledby="pilot-title"><div class="wrap">
+  <div class="pilot-layout">
+    <div class="pilot-copy">
+      <div class="eyebrow">a focused first step</div>
+      <h2 class="display" id="pilot-title">Try it on the work<br>you <span class="g">already have</span>.</h2>
+      <p>A guided pilot gives you a chance to evaluate Workspacer on your own backlog, with help from the person building it.</p>
+      <ul class="pilot-fit">
+        <li>One repository and one or two developers.</li>
+        <li>A workflow matched to a real task.</li>
+        <li>A follow-up on results, friction and what to do next.</li>
+      </ul>
+      <p class="pilot-founder"><b>You'll work directly with Damien.</b> I build Workspacer and use it daily, on Windows at work and Linux at home. The pilot is a chance to see whether the same approach fits your developers.</p>
+    </div>
+    <aside class="tile enterprise-pilot" aria-labelledby="pilot-offer-title">
+      <div class="eyebrow">setup &amp; onboarding</div>
+      <h2 id="pilot-offer-title">Tell me what you're working on.</h2>
+      <p>Share a little context. I'll reply by email to discuss how a pilot could fit.</p>
+      <form id="pilot-form" class="pilot-form wks-contact ph-no-capture" action="https://formspree.io/f/xbgjzbna" method="POST" aria-labelledby="pilot-offer-title">
+        <input type="hidden" name="subject" value="Workspacer pilot enquiry" />
+        <input type="hidden" name="source" value="Workspacer enterprise page" />
+        <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" aria-hidden="true" hidden />
+        <div class="form-notice" id="pilot-success" data-fs-success role="status" tabindex="-1">Thanks! Your enquiry has been submitted. I'll reply by email.</div>
+        <div class="form-notice" id="pilot-error" data-fs-error role="alert" tabindex="-1"></div>
+        <div class="form-row">
+          <div class="form-field">
+            <label for="pilot-name">Name</label>
+            <input id="pilot-name" name="name" type="text" autocomplete="name" maxlength="100" required data-fs-field aria-describedby="pilot-name-error" />
+            <span id="pilot-name-error" data-fs-error="name"></span>
+          </div>
+          <div class="form-field">
+            <label for="pilot-email">Email</label>
+            <input id="pilot-email" name="email" type="email" autocomplete="email" maxlength="254" required data-fs-field aria-describedby="pilot-email-error" />
+            <span id="pilot-email-error" data-fs-error="email"></span>
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="pilot-company">Company <span>(optional)</span></label>
+          <input id="pilot-company" name="company" type="text" autocomplete="organization" maxlength="160" data-fs-field aria-describedby="pilot-company-error" />
+          <span id="pilot-company-error" data-fs-error="company"></span>
+        </div>
+        <div class="form-field">
+          <label for="pilot-message">What would you like help with?</label>
+          <textarea id="pilot-message" name="message" rows="5" maxlength="5000" required data-fs-field aria-describedby="pilot-message-error" placeholder="Your codebase, the coding tools you use, and a task you'd like to try."></textarea>
+          <span id="pilot-message-error" data-fs-error="message"></span>
+        </div>
+        <p class="pilot-terms">Scope, price and support for a paid pilot are agreed before we start. The software remains free and open source.</p>
+        <button class="btn btn-fill" id="enterprise-contact" type="submit" data-fs-submit-btn>Send pilot enquiry</button>
+        <p class="form-note">Your enquiry is sent through Formspree so I can reply.</p>
+      </form>
+      <p class="pilot-contact">Prefer email? <a href="mailto:thetouchstonedev@gmail.com?subject=Workspacer%20pilot%20enquiry">thetouchstonedev@gmail.com</a></p>
+    </aside>
+  </div>
+  <p class="enterprise-scope"><b>Deployment today.</b> Workspacer is a single-user desktop app for Windows, macOS and Linux; configured Fleet workflows run through the desktop host. Each developer uses their own installation and provider access. Coordination runs locally; your coding tools send prompts and context to their configured model providers. Builds are currently unsigned and in alpha. <a href="docs.html#fleet-workflows">Read the workflow docs</a> · <a href="index.html#status">Current limitations</a></p>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <div class="brand" style="display:flex;align-items:center;gap:8px;">
+    <span class="mark" style="font-size:15px;">{<span class="bar"></span>}</span>
+    <span class="wordmark" style="font-size:14px;">work<span class="sp">{spacer}</span></span>
+    <span style="color:var(--fg-faint);">· alpha · MIT</span>
+  </div>
+  <div class="foot-links">
+    <a href="enterprise.html#pilot" data-contact-open>contact</a>
+    <a href="enterprise.html" aria-current="page">enterprise</a>
+    <a href="docs.html">docs</a>
+    <a href="build.html">internals</a>
+    <a href="build-plugin.html">build a plugin</a>
+    <a href="build-client.html">build a client</a>
+    <a href="https://github.com/DJTouchette/workspacer">github</a>
+    <a href="https://github.com/DJTouchette/workspacer/releases">releases</a>
+  </div>
+</div></footer>
+
+<script>
+// Progressive enhancement: without JS, all three screenshot views remain readable.
+(function () {
+  var tablist = document.querySelector('.tour-tabs');
+  if (!tablist) return;
+  var tabs = Array.from(tablist.querySelectorAll('.tour-tab'));
+  var select = function (index, moveFocus) {
+    tabs.forEach(function (tab, i) {
+      var selected = i === index;
+      var panel = document.getElementById(tab.getAttribute('aria-controls'));
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      panel.hidden = !selected;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', tab.id);
+      panel.tabIndex = 0;
+    });
+    if (moveFocus) tabs[index].focus();
+  };
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener('click', function () { select(i, false); });
+    tab.addEventListener('keydown', function (event) {
+      var next;
+      if (event.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      select(next, true);
+    });
+  });
+  select(0, false);
+  tablist.hidden = false;
+})();
+
+// Sticky nav gets its hairline only once you've scrolled off the hero.
+(function () {
+  var nav = document.getElementById('nav');
+  if (!nav) return;
+  var onScroll = function () { nav.classList.toggle('is-scrolled', window.scrollY > 8); };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// Mobile nav: hamburger toggles the dropdown; any link tap closes it.
+(function () {
+  var nav = document.getElementById('nav');
+  var toggle = document.getElementById('nav-toggle');
+  if (!nav || !toggle) return;
+  var set = function (open) {
+    nav.classList.toggle('open', open);
+    toggle.textContent = open ? '✕' : '≡';
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+  toggle.addEventListener('click', function () {
+    set(!nav.classList.contains('open'));
+  });
+  document.querySelectorAll('.mobile-menu a').forEach(function (a) {
+    a.addEventListener('click', function () { set(false); });
+  });
+})();
+
+</script>
+</body>
+</html>

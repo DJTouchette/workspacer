@@ -4,6 +4,8 @@
 
 ## Docs
 
+- [Enterprise pilots](enterprise.html): professional-use workflows and a scoped, paid setup and onboarding offer. Individual desktop installations; configured workflows require the desktop host.
+- [Configurable Fleet workflows](docs.html#fleet-workflows): default and per-project workflows, role-based routing, pinned task definitions, and runtime scope.
 - [Operational docs](docs.html): overview, getting started, running agents, the agent pane, pane types, layout and navigation, attention and notifications, remote and multi-client, extending, and configuration.
 - [Overview](docs.html#overview): the problem, the mental model (one agent = one session = one workspace), and what runs on your machine.
 - [Running agents](docs.html#agents-and-providers): the five providers, the spawn dialog, terminal-style vs managed agents.

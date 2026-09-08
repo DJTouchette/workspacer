@@ -101,6 +101,9 @@
 </style>
   <!-- PostHog web analytics (shared across every landing page) -->
   <script src="analytics.js"></script>
+<link rel="stylesheet" href="contact.css" />
+<script src="contact.js" defer></script>
+<script src="https://unpkg.com/@formspree/ajax@1.1.5/dist/global.js" defer></script>
 </head>
 <body>
 
@@ -111,6 +114,7 @@
     <span style="font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 6px;">alpha</span>
   </a>
   <div class="links">
+    <a href="enterprise.html#pilot" data-contact-open>contact</a>
     <a href="index.html">home</a>
     <a href="build.html">build</a>
     <a href="build-plugin.html">build a plugin</a>
@@ -245,6 +249,15 @@
 <li><strong>How it renders.</strong> Chat-first, on the headless stream transport, so it is a conversation with no terminal view.</li>
 </ul>
 <p>This is a different thing from <a href="#agents-and-providers">ask the fleet</a>, which watches the fleet and reports. The manager hands work out.</p>
+<h3 id="fleet-workflows">configurable workflows</h3>
+<p>In <strong>Settings ▸ Fleet Manager ▸ Workflows</strong>, choose the sequence the manager follows for new tasks. The default investigates when material risk warrants it, implements the change, and uses a fresh worker for independent review. Clone a starter to change its steps, instructions and dispatch templates. Set a global default or choose a different workflow in <strong>Settings ▸ Projects</strong>.</p>
+<ul>
+<li><strong>Separate workflow from model choice.</strong> Steps define the work and its role. Settings ▸ Routing controls provider and model preferences; a workflow does not grant additional permissions.</li>
+<li><strong>Keep active tasks consistent.</strong> Each task keeps the workflow and templates it started with. Later edits apply to new tasks.</li>
+<li><strong>Inspect the outcome.</strong> Recent agents → task details shows the steps, skipped reasons and reported results. A completed step means its result was received and validated; read the result to see whether the review passed.</li>
+<li><strong>Desktop host required.</strong> Configured workflows currently run through the local desktop app. The headless server and federated peers do not execute them.</li>
+</ul>
+<p>For the full behavior and API contract, see <a href="https://github.com/DJTouchette/workspacer/blob/master/docs/features/fleet-workflows.md">Fleet workflow documentation</a>.</p>
 <h3>how a task gets dispatched</h3>
 <p>Every dispatch is a real session, not a subagent: its own card nested under the manager in the sidebar, its own panes, its own transcript, drivable by you at any point and visible from the phone. The manager picks the shape:</p>
 <ul>
@@ -1166,7 +1179,7 @@ claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
 <li><strong>Workspace</strong> layouts are saved as <code>.yaml</code> files under <code>sessions/</code>; the most recent one is restored on launch.</li>
 </ul>
 </section>
-    <div class="foot">work{spacer} :: local-first control plane for coding agents :: open source (MIT)</div>
+    <div class="foot">work{spacer} :: local-first control plane for coding agents :: open source (MIT) :: <a href="enterprise.html#pilot" data-contact-open>contact</a></div>
   </main>
 </div>
 

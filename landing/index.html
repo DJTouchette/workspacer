@@ -97,7 +97,7 @@
            padding: 2px 8px; align-self: center; }
 
   /* ---- nav -------------------------------------------------------------- */
-  /* Nine links was a sitemap. Four is a nav. */
+  /* Product docs and the enterprise pilot page share this compact nav. */
   nav { position: sticky; top: 0; z-index: 50;
         background: rgba(27,32,35,0.72); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
         border-bottom: 1px solid transparent; transition: border-color 0.3s; }
@@ -560,10 +560,12 @@
     .hero-sub { max-width: 62ch; }
     .pane-demo { max-width: 560px; }
   }
-  @media (max-width: 860px) {
+  @media (max-width: 940px) {
     .navlinks { display: none; }
     .nav-stars { display: none; }
     .nav-toggle { display: inline-flex; }
+  }
+  @media (max-width: 860px) {
     header { padding-top: 48px; }
     section { padding: 72px 0; }
     .cta { padding: 88px 0; }
@@ -584,6 +586,8 @@
     .proof-item { flex-basis: 50%; min-width: 0; }
   }
   @media (max-width: 560px) {
+    nav .wrap { padding: 0 20px; gap: 10px; }
+    nav .alpha { display: none; }
     /* The eyebrow is three facts joined by dots. At this width it wraps to two
        lines and stops reading as one line of metadata. Drop to the two that
        aren't already a badge in the nav. */
@@ -600,6 +604,10 @@
        line three times. Shrink rather than truncate: the wording is the point. */
     .doc-body { font-size: 11px; padding: 14px 14px 16px; }
   }
+  @media (max-width: 380px) {
+    nav .brand > .mark { display: none; }
+    nav .btn-sm { padding: 0 10px; }
+  }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
@@ -610,6 +618,9 @@
 </style>
   <!-- PostHog web analytics (shared across every landing page) -->
   <script src="analytics.js"></script>
+<link rel="stylesheet" href="contact.css" />
+<script src="contact.js" defer></script>
+<script src="https://unpkg.com/@formspree/ajax@1.1.5/dist/global.js" defer></script>
 </head>
 <body>
 
@@ -621,6 +632,7 @@
   </a>
   <div class="nav-right">
     <div class="navlinks">
+      <a href="enterprise.html">enterprise</a>
       <a href="docs.html">docs</a>
       <a href="build-plugin.html">plugins</a>
       <a href="build-client.html">api</a>
@@ -636,6 +648,7 @@
 </div>
 <!-- Same destinations as .navlinks. Keep the two lists in sync. -->
 <div class="mobile-menu" id="mobile-menu"><div class="wrap">
+  <a href="enterprise.html">enterprise</a>
   <a href="docs.html">docs</a>
   <a href="build-plugin.html">plugins</a>
   <a href="build-client.html">api</a>
@@ -1155,7 +1168,7 @@
     <div class="fact"><b>The builds are unsigned.</b> There is no code-signing certificate yet. Windows warns you and lets you click through; macOS is stricter, and you have to clear the quarantine flag by hand before the app will open. The <a href="#get">download section</a> has the command.</div>
     <div class="fact"><b>It's for one person on their own machine.</b> No accounts, no multi-user model, no client separation. The tokens are capabilities, not logins. Federation joins <em>your</em> desktop and <em>your</em> laptop, not a team.</div>
     <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, GitHub Copilot, OpenCode and Pi. It doesn't replace them, resell them, or proxy them.</div>
-    <div class="fact"><b>Nothing runs while your machine is off.</b> <code>workspacer serve</code> is headless, but something still has to be powered on. Your code never leaves it either.</div>
+    <div class="fact"><b>Nothing runs while your machine is off.</b> <code>workspacer serve</code> is headless, but something still has to be powered on. Your coding tools still communicate with the model providers you configure.</div>
     <div class="fact"><b>Worktrees isolate branches, not environments.</b> Agents share your machine, dependencies, ports and network. If you need a sandbox, this isn't one.</div>
     <div class="fact"><b>The harnesses aren't at parity.</b> Codex and GitHub Copilot cost figures are estimates, Pi gets no work{spacer} tools, and Claude Code is where the deepest integration lives.</div>
     <div class="fact"><b>The manager→worker graph doesn't survive a restart.</b> Sessions do, and the briefs do; the parentage is re-established by hand or by a successor adopting.</div>
@@ -1200,11 +1213,11 @@
     </div>
   </div>
 </div></section>
-
 <section id="get" class="cta"><div class="wrap">
   <h2 class="display">Point it at your projects and let the manager dispatch.</h2>
   <p>work{spacer} is in alpha and the builds are unsigned, so expect sharp edges and an objection from your OS the first time you open it. Installers for Linux, macOS, and Windows, plus a standalone server bundle for a box with no desktop.</p>
   <div class="cta-actions">
+    <a class="btn btn-line btn-lg" href="enterprise.html#pilot" data-contact-open>Discuss a pilot</a>
     <a class="btn btn-fill btn-lg" id="dl-btn" href="https://github.com/DJTouchette/workspacer/releases/latest">Download</a>
     <a class="btn btn-line btn-lg" href="docs.html">Read the docs</a>
     <a class="btn btn-line btn-lg" href="https://github.com/DJTouchette/workspacer">View on GitHub</a>
@@ -1225,6 +1238,8 @@
     <span style="color:var(--fg-faint);">· alpha · MIT</span>
   </div>
   <div class="foot-links">
+    <a href="enterprise.html#pilot" data-contact-open>contact</a>
+    <a href="enterprise.html">enterprise</a>
     <a href="docs.html">docs</a>
     <a href="build.html">internals</a>
     <a href="build-plugin.html">build a plugin</a>

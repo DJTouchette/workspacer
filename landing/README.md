@@ -1,18 +1,19 @@
 # work{spacer} landing page
 
-Four self-contained pages with all styles inline, so you can open any one
-straight in a browser with no build step.
+Static pages with no build step. Page-specific styles are inline; shared
+enquiry styling and behavior live in `contact.css` and `contact.js`.
 
 - `index.html` is the marketing page.
+- `enterprise.html` is the professional-use page with a guided pilot offer.
 - `docs.html` is the detailed user docs (sidebar nav, one section per topic).
 - `build.html` is the build & internals page (architecture, providers, plugins, MCP).
 - `build-plugin.html` is the "build a plugin" page (linked from the nav).
 
 ## Analytics
 
-`analytics.js` is the PostHog snippet, loaded from the `<head>` of all four
-pages. It is the one exception to "everything inline" — the project key and
-config live in a single file rather than four copies that drift. A new page
+`analytics.js` is the PostHog snippet, loaded from the `<head>` of the landing
+pages. The project key and
+config live in a single file rather than copies that drift. A new page
 MUST add `<script src="analytics.js"></script>` before `</head>` or it will be
 invisible in PostHog. The key in there is a PostHog *project* API key, public
 by design.
@@ -126,6 +127,45 @@ The proof band under the hero (harnesses / themes / plugins / licence) and the
 version strings in the footer and the open-source tile are **hand-written** and
 go stale. Check them against `apps/desktop/package.json`, `themes.ts`, and the
 plugin catalog when you touch the page.
+
+## Enterprise enquiries
+
+`enterprise.html` offers a scoped, paid setup and onboarding pilot with an
+inline form (`#pilot-form`). The other pages offer an enquiry dialog through
+`data-contact-open` links; their ordinary href points to `enterprise.html#pilot`
+if JavaScript or the dialog API is unavailable. The enterprise footer also
+offers the general enquiry dialog.
+
+All forms POST to `https://formspree.io/f/xbgjzbna`. `contact.js` initializes
+the pinned `@formspree/ajax` 1.1.5 CDN library for inline feedback, a disabled
+submit button while sending, and draft preservation on errors. A basic HTML
+POST remains available if the SDK cannot load. No backend or API key is needed.
+The shared dialog markup lives in `contact.js`; keep its fields in sync with
+the enterprise HTML form. Styles are scoped by `.wks-contact`.
+
+Name, email and message are required; company is optional. The hidden
+`subject`, `source` and `_gotcha` fields supply context and the honeypot.
+Formspree's dashboard controls the notification recipient; it should be
+`thetouchstonedev@gmail.com`. The direct email link remains a fallback.
+Test browser responses with intercepted requests rather than creating live
+enquiries. Frontend checks do not confirm inbox delivery or dashboard settings.
+
+Every HTML page includes `contact.css`, then deferred `contact.js` and the
+pinned SDK in that order. Keep these assets alongside the pages when deploying.
+Reference: [Formspree's vanilla JS guide](https://help.formspree.io/articles/building-your-form/submit-forms-with-javascript-ajax/).
+
+The hero's pilot link goes to the separate lower `#pilot` section. Keep that
+destination below the product tour: placing it beside the hero made the link
+produce no visible movement on tall desktop windows. The screenshot tour uses
+the existing example-workspace captures, with keyboard-accessible tabs and
+full-size image links. Without JavaScript, all three views remain visible.
+
+Claims are grounded in `docs/features/fleet-workflows.md`,
+`apps/desktop/src/renderer/src/lib/fleetManager.ts`, and the workflow runtime/settings under
+`apps/desktop/src/`. Configured workflows require the desktop host. Each
+developer has their own installation; this page does not promise shared
+team administration. Local coordination does not mean model requests stay on
+the machine. The public workflow guide is `docs.html#fleet-workflows`.
 
 ## Download buttons and the star pill
 
