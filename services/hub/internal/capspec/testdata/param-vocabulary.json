@@ -97,6 +97,7 @@
     "permissionMode": "permission",
     "port": "port",
     "profileId": "id",
+    "launchIntegrationId": "id",
     "program": "executable",
     "query": "regex",
     "ref": "argv",

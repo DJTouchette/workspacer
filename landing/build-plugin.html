@@ -134,6 +134,7 @@
       <a href="#first">your first plugin</a>
       <a href="#widgets">widgets</a>
       <a href="#manifest">the manifest</a>
+      <a href="#launch-integrations">launch integrations</a>
       <a href="#bus">the bus protocol</a>
       <a href="#capabilities">capabilities &amp; permissions</a>
       <a href="#events">events you can consume</a>
@@ -447,6 +448,13 @@ const wks = connect();
 </ul>
     </section>
 
+    <section id="launch-integrations" class="doc">
+<h2>optional launch integrations</h2>
+<p>A sidecar may contribute <code>launchIntegration: { version: 1, agents: ["claude", "codex"], prepareMethod: "your.plugin.prepareLaunch" }</code>. Declare that exact method in <code>provides</code> and register it on the existing scoped bus. The loader requires a sidecar, version 1, and a method within the plugin's namespace.</p>
+<p>When a user selects the integration in Spawn agent, the desktop calls it before launch with <code>{ version: 1, agent, cwd, model?, resume, provider? }</code>. Codex's <code>provider</code> contains only the resolved ID and optional upstream base URL. The request omits raw config, credentials and inherited environment.</p>
+<p>Return optional <code>env</code> (string map) and <code>args</code> (string array): the host overlays the child environment and appends arguments after profile/host arguments. It rejects extra fields, nulls, NUL characters and oversized patches. Executable and cwd overrides are not allowed. Errors stop the launch; None bypasses the hook entirely.</p>
+<p>The selected plugin ID persists with the workspace and runs again on resume. Current entry points are local desktop Claude PTY/stream and Codex managed/hybrid sessions. This is a trusted-sidecar contribution. The <a href="https://github.com/DJTouchette/workspacer/blob/master/services/hub/examples/headroom/README.md">Headroom example</a> uses supervisor-issued <code>HUB_TOKEN</code> and <code>WKS_SETTINGS</code>, with no runtime npm dependencies. See the <a href="https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md">full contract</a> for limits and <a href="docs.html#launch-integrations">setup instructions</a>.</p>
+</section>
     <section id="bus" class="doc">
 <h2>the bus protocol</h2>
 <p>Webviews should reach for the injected <code>window.workspacer</code> SDK (see <a href="#first">your first plugin</a>) rather than these raw frames, but this is the protocol it speaks under the hood, and the one a sidecar (or the <code>wks.js</code> twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to <code>ws://127.0.0.1:7895/bus?token=&lt;busToken&gt;</code> (webviews get the token in the pane URL as <code>?busToken=</code>; sidecars get theirs in the <code>HUB_TOKEN</code> environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:</p>

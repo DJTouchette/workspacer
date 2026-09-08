@@ -116,6 +116,7 @@ export interface PluginToolDef {
 }
 
 export interface PluginManifest {
+  launchIntegration?: { version: number; agents: string[]; prepareMethod: string };
   id: string;
   name: string;
   apiVersion: string;

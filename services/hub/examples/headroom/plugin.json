@@ -1,0 +1,44 @@
+{
+  "id": "workspacer.headroom",
+  "name": "Headroom",
+  "description": "Optional launch routing through your local Headroom proxy for Claude Code and Codex.",
+  "apiVersion": "1",
+  "version": "0.1.0",
+  "server": {
+    "command": "node",
+    "args": ["server.mjs"],
+    "port": 9130,
+    "health": "/health"
+  },
+  "panes": [
+    {
+      "type": "workspacer.headroom",
+      "title": "Headroom",
+      "icon": "🗜️",
+      "scope": "global",
+      "path": "/"
+    }
+  ],
+  "provides": ["workspacer.headroom.prepareLaunch"],
+  "launchIntegration": {
+    "version": 1,
+    "agents": ["claude", "codex"],
+    "prepareMethod": "workspacer.headroom.prepareLaunch"
+  },
+  "settings": [
+    {
+      "key": "proxyUrl",
+      "label": "Headroom proxy URL",
+      "type": "string",
+      "default": "http://127.0.0.1:8787",
+      "help": "Loopback HTTP origin of your independently managed Headroom proxy."
+    },
+    {
+      "key": "hubUrl",
+      "label": "Workspacer hub URL",
+      "type": "string",
+      "default": "ws://127.0.0.1:7895/bus",
+      "help": "Change only if your local hub uses a different port."
+    }
+  ]
+}

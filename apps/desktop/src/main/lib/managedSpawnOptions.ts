@@ -47,6 +47,7 @@ export interface AgentSpawnRequest {
    *  preset. Carried by claude, codex and copilot; OpenCode and Pi have no
    *  config-root override, so it is announced and dropped for them. */
   profileId?: string;
+  launchIntegrationId?: string | null;
   /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
   manager?: boolean;
   /** Manager only: full-access dispatch grant (config agents.fleetFullAccess) —
@@ -87,6 +88,7 @@ export interface AgentSpawnRequest {
  */
 export const SPAWN_REQUEST_FIELDS = {
   cwd: { kind: 'forward' },
+  launchIntegrationId: { kind: 'forward' },
   provider: { kind: 'forward' },
   transport: { kind: 'forward' },
   // WAS 'unsupported: Claude accounts have no equivalent on this provider',
@@ -190,6 +192,7 @@ export function managedOptionsFromRequest(
     // mcpItemIds stays Claude-only and is carried so the spawn can SAY it is
     // ignoring it rather than dropping it behind a guard.
     profileId: req.profileId,
+    launchIntegrationId: req.launchIntegrationId,
     mcpItemIds: req.mcpItemIds,
     // The request calls it `message` (the vocabulary a dispatcher uses); the
     // spawn helper calls it `firstMessage` (what it is to the session). One

@@ -1,3 +1,4 @@
+import { prepareLaunchIntegration } from './launchIntegrations';
 /**
  * Shared Claude (Tier-1, PTY) spawn dispatch.
  *
@@ -52,6 +53,7 @@ export interface ClaudeSpawnOptions {
   cwd?: string;
   /** Claude profile (CLAUDE_CONFIG_DIR + extraArgs). */
   profileId?: string;
+  launchIntegrationId?: string | null;
   model?: string;
   /** Additive canonical pair; `model` stays the executable legacy companion. */
   modelIdentity?: string;
@@ -157,6 +159,8 @@ export interface ClaudeSpawnOptions {
  * Library MCP servers when `mcpItemIds` is present.
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
+  if (opts.scrubProfileBypass && opts.launchIntegrationId)
+    throw new Error('Launch integrations currently require a local desktop session');
   // A Claude PTY spawn takes CLAUDE profiles only. The picker filters on it,
   // but this path is also reachable from the bus, and a Codex profile applied
   // here would put a Codex config root in CLAUDE_CONFIG_DIR — a session that
@@ -235,31 +239,6 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
       );
   const model = modelSelection?.model;
   const serializedModel = modelSelection ? claudeArgvModel(modelSelection) : undefined;
-
-  // Record name/parent before the session registers so adopted cards are
-  // enriched from the very first hook event.
-  claudeSessionStore.setSpawnMeta(sessionId, {
-    label: opts.label,
-    parentSessionId: opts.parentSessionId,
-    isWakeTarget: opts.manager,
-    provider: 'claude',
-    ...(resultSchema && { resultSchema }),
-    ...(opts.routing && { routing: opts.routing }),
-    settings: {
-      model: serializedModel,
-      // Requested/provisional. Provider telemetry later owns
-      // resolvedContextWindow and may correct this without rewriting history.
-      contextWindow: modelSelection?.contextWindow,
-      effort,
-      permissionMode,
-      bypassAvailable,
-      // What an absent `--effort` resolves to, so the pill can name the level
-      // instead of the word "Default". The CLI reports it nowhere.
-      ...(!effort?.trim() && {
-        defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
-      }),
-    },
-  });
 
   // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
   // chosen item ids to their configs, write a session-scoped --mcp-config, and
@@ -382,12 +361,42 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // A profile spawn inherits the primary login's trust for this folder, or a
   // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
   if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
+  const prepared = await prepareLaunchIntegration(
+    opts.launchIntegrationId,
+    { agent: 'claude', cwd, model, resume: !!opts.resumeSessionId },
+    { env, args: argv.slice(1) },
+  );
+  // Record name/parent before the session registers so adopted cards are
+  // enriched from the very first hook event.
+  claudeSessionStore.setSpawnMeta(sessionId, {
+    label: opts.label,
+    parentSessionId: opts.parentSessionId,
+    isWakeTarget: opts.manager,
+    provider: 'claude',
+    ...(resultSchema && { resultSchema }),
+    ...(opts.routing && { routing: opts.routing }),
+    settings: {
+      model: serializedModel,
+      // Requested/provisional. Provider telemetry later owns
+      // resolvedContextWindow and may correct this without rewriting history.
+      contextWindow: modelSelection?.contextWindow,
+      effort,
+      permissionMode,
+      bypassAvailable,
+      // What an absent `--effort` resolves to, so the pill can name the level
+      // instead of the word "Default". The CLI reports it nowhere.
+      ...(!effort?.trim() && {
+        defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
+      }),
+    },
+  });
+
   return claudemonSessionClient.spawn({
-    argv,
+    argv: [argv[0], ...prepared.args],
     cwd,
     cols: opts.cols,
     rows: opts.rows,
-    env,
+    env: prepared.env,
     sessionId,
     // Explicitly, not only via `--model` on the argv: a resume re-uses the
     // prior life's model without re-stating it, and the daemon's argv sniffing

@@ -61,6 +61,7 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       record({
         provider: 'claude',
         profileId: 'work',
+        launchIntegrationId: 'workspacer.headroom',
         model: 'opus[1m]',
         modelIdentity: 'opus',
         contextWindow: 1_000_000,
@@ -78,6 +79,7 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       cwd: '/home/u/Work',
       provider: 'claude',
       profileId: 'work',
+      launchIntegrationId: 'workspacer.headroom',
       model: 'opus[1m]',
       modelIdentity: 'opus',
       contextWindow: 1_000_000,

@@ -96,3 +96,16 @@ func TestTransportDefaultResolutionOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestLaunchIntegrationRequiresDesktop(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newSpawnTestRegistry(t, srv.URL)
+	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"codex","cwd":"/tmp","launchIntegrationId":"workspacer.headroom"}`)); err == nil {
+		t.Fatal("headless spawn silently dropped the requested integration")
+	}
+	if len(rec.calls("/sessions/spawn-managed")) != 0 {
+		t.Fatal("spawned without the integration")
+	}
+}

@@ -68,6 +68,7 @@ var spawnParamKeys = []string{
 	"workflowStepId", "taskId", "stage", "afterDispatchId", "dispatchOwnerSessionId", "retrySourceSessionId",
 	// ── identity / grant fields the router itself strips or stamps ──────────
 	"profileId",
+	"launchIntegrationId",
 	"profileGranted",
 	"yoloGranted",
 	"escalationScrubbed",

@@ -1179,6 +1179,7 @@ function App() {
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
       transport?: 'pty' | 'stream';
       profileId?: string;
+      launchIntegrationId?: string | null;
       model?: string;
       effort?: string;
       permissionMode?: string;
@@ -2333,6 +2334,7 @@ function App() {
               effort?: string;
               permissionMode?: string;
               profileId?: string;
+              launchIntegrationId?: string | null;
               continuePrompt?: string;
             };
           }

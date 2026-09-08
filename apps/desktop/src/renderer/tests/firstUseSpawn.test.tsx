@@ -170,3 +170,26 @@ it('forces a recheck even when an earlier cached host scan is still pending', as
   expect(api.providerCheckAll).toHaveBeenCalledTimes(2);
   expect(api.providerCheckAll).toHaveBeenLastCalledWith(true);
 });
+
+it('retains the selected integration in the workspace and sends it again on Codex resume', async () => {
+  api.spawnClaude.mockResolvedValue('integration-session');
+  const { result } = renderHook(() => useAgentManager());
+  await act(async () => {
+    await result.current.spawnAgent({
+      cwd: '/repo',
+      provider: 'codex',
+      launchIntegrationId: 'workspacer.headroom',
+    });
+  });
+  const agent = result.current.agents.find((a) => !a.global)!;
+  expect(agent.launchIntegrationId).toBe('workspacer.headroom');
+  act(() => result.current.stopAgentForSession('integration-session'));
+  await act(async () => {
+    await result.current.respawnAgent(agent.id);
+  });
+  expect(api.spawnClaude.mock.calls.at(-1)[0]).toMatchObject({
+    provider: 'codex',
+    launchIntegrationId: 'workspacer.headroom',
+    resumeSessionId: 'integration-session',
+  });
+});

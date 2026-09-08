@@ -203,6 +203,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      *  Omitted = the config default (claude.transport). */
     transport?: 'pty' | 'stream';
     profileId?: string;
+    launchIntegrationId?: string | null;
     /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
     manager?: boolean;
     /** Manager only: full-access dispatch grant (config agents.fleetFullAccess). */

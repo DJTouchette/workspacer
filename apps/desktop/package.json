@@ -31,7 +31,7 @@
     "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
     "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
     "typecheck:renderer": "cd src/renderer && tsc -p tsconfig.json --noEmit",
-    "test": "npm run test:main && npm run test:renderer",
+    "test": "npm run test:main && npm run test:renderer && npm run test:headroom",
     "test:main": "vitest run",
     "test:dispatch-chain": "tsc -p tsconfig.dispatch-chain.json && vitest run --config vitest.dispatch-chain.config.ts",
     "test:renderer": "cd src/renderer && npx vitest run",
@@ -47,7 +47,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\"",
     "gen:changelog": "node scripts/gen-changelog.mjs",
     "check:response-card-assets": "node scripts/check-response-card-assets.mjs",
-    "check:response-card-discovery": "python3 scripts/check-response-card-discovery.py"
+    "check:response-card-discovery": "python3 scripts/check-response-card-discovery.py",
+    "test:headroom": "node --test ../../services/hub/examples/headroom/adapter.test.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

@@ -14,6 +14,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const prepareLaunchMock = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _id: unknown,
+      _context: unknown,
+      base: { env: Record<string, string>; args: string[] },
+    ) => ({ env: base.env, args: base.args }),
+  ),
+);
+vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunchMock }));
 
 const cardSkill = vi.hoisted(() => vi.fn(() => ''));
 vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
@@ -774,5 +784,26 @@ describe('spawnClaudeAgent — clean-profile retry boundary', () => {
     ]);
     expect(launches[1][0].argv).not.toContain('--dangerously-skip-permissions');
     expect(launches[1][0].argv.join(' ')).not.toContain('First clean-profile task');
+  });
+});
+
+it('applies the selected launch integration to Claude PTY resumes', async () => {
+  prepareLaunchMock.mockResolvedValueOnce({
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' },
+    args: ['--resume', 'prior-life'],
+  });
+  await spawnClaudeAgent({
+    cwd: '/proj',
+    resumeSessionId: 'prior-life',
+    launchIntegrationId: 'test.route',
+  });
+  expect(prepareLaunchMock).toHaveBeenCalledWith(
+    'test.route',
+    expect.objectContaining({ agent: 'claude', resume: true }),
+    expect.anything(),
+  );
+  expect(spawnMock.mock.calls.at(-1)?.[0]).toMatchObject({
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' },
+    sessionId: 'prior-life',
   });
 });
