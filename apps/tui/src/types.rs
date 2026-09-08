@@ -329,6 +329,8 @@ fn default_transport() -> String {
 }
 
 /// Read-only host projection. Missing metadata means an old peer, not readiness.
+// Preserve the complete wire projection; the TUI currently checks its presence.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExecutionEngineMetadata {
     pub id: String,

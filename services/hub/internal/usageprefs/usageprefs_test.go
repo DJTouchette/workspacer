@@ -3,6 +3,7 @@ package usageprefs
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -78,7 +79,9 @@ func TestARoundTripSurvivesAReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
+	// Windows does not report POSIX permission bits; retain the round-trip and
+	// atomic-write assertions there while checking mode on platforms that do.
+	if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("preference file mode is %o, want 600 — it lives with the hub's host-trusted state", perm)
 	}
 	// No temp file left behind by the atomic write.
