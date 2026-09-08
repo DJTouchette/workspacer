@@ -51,6 +51,8 @@ pub struct EngineLease {
 pub(crate) trait ExecutionEngineV1: Send + Sync {
     fn describe(&self) -> EngineRef;
     fn preflight(&self, request: &SpawnManagedPayload, bin: &str) -> Result<()>;
+    // Keep the admitted launch context explicit at the engine boundary.
+    #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
         store: &SessionStore,
@@ -446,6 +448,8 @@ impl EngineRegistry {
             previous: previous.cloned(),
         })
     }
+    // Mirrors ExecutionEngineV1::start plus the validated engine selection.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         &self,
         prepared: Prepared,

@@ -251,9 +251,8 @@ test.describe('driving an agent', () => {
     await openApp(page);
 
     await page.keyboard.press('Control+Shift+N');
-    // The dialog's own submit button, not the NavBar's icon button of the same
-    // accessible name — hence filtering on the visible label.
-    const submit = page.locator('button').filter({ hasText: /^Dispatch agent$/ });
+    // Ctrl+Shift+N opens ordinary creation; task dispatch is a separate flow.
+    const submit = page.getByRole('button', { name: 'Create agent', exact: true });
     await expect(submit).toBeVisible({ timeout: 10_000 });
     await submit.click();
 
