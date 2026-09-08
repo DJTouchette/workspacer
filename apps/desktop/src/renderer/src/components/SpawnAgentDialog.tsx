@@ -181,7 +181,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState(defaultPrompt ?? '');
-  const [blankSession, setBlankSession] = useState(false);
+  // Only explicit task handoffs (onboarding / command palette) collect a message.
+  // Ordinary New Agent starts an empty chat.
+  const hasTaskHandoff = requireTask || defaultPrompt !== undefined;
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const [error, setError] = useState('');
@@ -641,7 +643,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     !missingProvider &&
     !runtimeStatus.blocked &&
     repoInfo?.directory !== 'invalid' &&
-    (!!prompt.trim() || (!requireTask && blankSession)) &&
+    (!hasTaskHandoff || !!prompt.trim()) &&
     !busy;
   const submit = async () => {
     if (!canSubmit || submitting.current) return;
@@ -653,7 +655,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       // bypass-family modes for back-compat consumers (saved defaults, respawn).
       const resolvedMode = permissionMode || defaultModeFor(provider);
       const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
-      const kickoffMessage = prompt.trim() || undefined;
+      const kickoff = hasTaskHandoff ? { kickoffMessage: prompt.trim() } : {};
       // Claude-only options are dropped for other providers (they run their own
       // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
       await onSpawn(
@@ -678,7 +680,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               resumeSessionId: resumeSessionId || undefined,
               // Worktree is local-machine isolation — moot on a peer hub.
               worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
-              kickoffMessage,
+              ...kickoff,
               targetHub: targetHub || undefined,
             }
           : {
@@ -714,7 +716,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   ? pluginToolsSel
                   : undefined,
               worktree: useWorktree && worktreeEligible && !targetHub ? true : undefined,
-              kickoffMessage,
+              ...kickoff,
               targetHub: targetHub || undefined,
             },
       );
@@ -1298,7 +1300,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       // (useKeyboardNav's leaderSuppressed check).
       role="dialog"
       aria-modal="true"
-      aria-label="Dispatch agent"
+      aria-label={hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
       onKeyDown={containDialogTab}
       data-leader-suppress="true"
       style={{
@@ -1369,64 +1371,58 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               color: 'var(--wks-text-primary)',
             }}
           >
-            Dispatch agent
+            {hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
           </div>
           <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
-            Describe a task, choose its directory, and dispatch.
+            {hasTaskHandoff
+              ? 'Describe a task, choose its directory, and dispatch.'
+              : 'Choose an agent and directory, then start chatting.'}
           </div>
 
-          <div style={{ marginTop: 24, width: '100%', maxWidth: 560 }}>
-            <label htmlFor="first-task" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-              What should this agent do?
-            </label>
-            <textarea
-              id="first-task"
-              aria-required={requireTask || !blankSession}
-              aria-describedby="spawn-task-help"
-              autoFocus
-              disabled={busy}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
-                // the deliberate dispatch action.
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
-              }}
-              rows={3}
-              placeholder="What should this agent do first?"
-              style={{
-                marginTop: 6,
-                width: '100%',
-                boxSizing: 'border-box',
-                resize: 'vertical',
-                background: 'var(--wks-bg-input)',
-                border: '1px solid var(--wks-border-input)',
-                borderRadius: 'var(--wks-radius-md)',
-                outline: 'none',
-                padding: '8px 10px',
-                fontFamily: 'inherit',
-                fontSize: '0.76rem',
-                lineHeight: 1.5,
-                color: 'var(--wks-text-primary)',
-              }}
-            />
-            <div
-              id="spawn-task-help"
-              style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}
-            >
-              {requireTask && 'A task is required. '}Sent once when you dispatch. Your provider’s
-              permission choices apply.
+          {hasTaskHandoff && (
+            <div style={{ marginTop: 24, width: '100%', maxWidth: 560 }}>
+              <label htmlFor="first-task" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+                What should this agent do?
+              </label>
+              <textarea
+                id="first-task"
+                aria-required="true"
+                aria-describedby="spawn-task-help"
+                autoFocus
+                disabled={busy}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
+                  // the deliberate dispatch action.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+                }}
+                rows={3}
+                placeholder="What should this agent do first?"
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                  background: 'var(--wks-bg-input)',
+                  border: '1px solid var(--wks-border-input)',
+                  borderRadius: 'var(--wks-radius-md)',
+                  outline: 'none',
+                  padding: '8px 10px',
+                  fontFamily: 'inherit',
+                  fontSize: '0.76rem',
+                  lineHeight: 1.5,
+                  color: 'var(--wks-text-primary)',
+                }}
+              />
+              <div
+                id="spawn-task-help"
+                style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}
+              >
+                A task is required. Sent once when you dispatch. Your provider’s permission choices
+                apply.
+              </div>
             </div>
-          </div>
-          {!requireTask && (
-            <label style={{ fontSize: '0.72rem', marginTop: 8 }}>
-              <input
-                type="checkbox"
-                checked={blankSession}
-                onChange={(e) => setBlankSession(e.target.checked)}
-              />{' '}
-              Allow an empty session — I’ll give it a task later
-            </label>
           )}
 
           {/* ── Hero: working directory ─────────────────────────────────── */}
@@ -1459,6 +1455,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               </span>
               <input
                 aria-label="Working directory"
+                autoFocus={!hasTaskHandoff}
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
                 onKeyDown={keySubmit}
@@ -1978,7 +1975,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             <button
               onClick={submit}
               disabled={!canSubmit}
-              aria-describedby="spawn-task-help spawn-availability spawn-runtime-status spawn-folder-status"
+              aria-describedby={`${hasTaskHandoff ? 'spawn-task-help ' : ''}spawn-availability spawn-runtime-status spawn-folder-status`}
               style={{
                 fontSize: '0.82rem',
                 fontFamily: 'inherit',
@@ -1991,13 +1988,21 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 padding: '9px 26px',
               }}
             >
-              {busy ? 'Starting…' : error ? 'Retry dispatch' : 'Dispatch agent'}
+              {busy
+                ? 'Starting…'
+                : error
+                  ? hasTaskHandoff
+                    ? 'Retry dispatch'
+                    : 'Retry launch'
+                  : hasTaskHandoff
+                    ? 'Dispatch agent'
+                    : 'Create agent'}
             </button>
           </div>
           <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
-            {defaultPrompt !== undefined
+            {hasTaskHandoff
               ? '⌘/ctrl+enter to dispatch · esc to cancel'
-              : 'enter to dispatch · esc to cancel'}
+              : 'enter to create · esc to cancel'}
           </div>
         </fieldset>
       </div>

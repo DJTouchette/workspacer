@@ -121,6 +121,9 @@ const api = {
   claudeProfilesList: async () => [],
   claudeListSessionsForDir: async () => [],
   pickFolder: async () => '/fixture/project',
+  // Empty chats query git metadata before the user sends their first message.
+  gitStatus: async () => ({ branch: null, files: [] }),
+  gitLog: async () => [],
   worktreeInfo: async (cwd: string) => {
     record('worktreeInfo', cwd);
     if (cwd.includes('deferred')) return new Promise((resolve) => folderPending.set(cwd, resolve));

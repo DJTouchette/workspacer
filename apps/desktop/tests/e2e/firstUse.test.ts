@@ -206,21 +206,61 @@ for (const detection of ['unknown', 'failed', 'malformed']) {
   });
 }
 
-test('malformed success leaves the direct front door retryable', async ({ page }) => {
-  await page.goto(`${base}?spawn=malformed`);
-  await page.getByRole('button', { name: "Got it — don't show again" }).click();
-  await page.keyboard.press('Control+Shift+N');
-  await page.getByLabel('What should this agent do?').fill('Direct task');
-  await launch(page).click();
-  await expect(page.getByRole('alert')).toContainText('could not start');
-  await assertNoAgentWrites(page);
-  await page.evaluate(() => (window as any).firstUse.spawnMode('success'));
-  await page.getByRole('button', { name: 'Retry dispatch' }).click();
-  await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate(() => Object.keys((window as any).firstUse.snapshots()))).toHaveLength(
-    1,
-  );
-});
+for (const provider of ['claude', 'codex']) {
+  test(`ordinary New Agent ${provider} creates a blank chat and recovers from failure`, async ({
+    page,
+  }) => {
+    await page.goto(`${base}?spawn=malformed`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    await page.keyboard.press('Control+Shift+N');
+    const newAgent = page.getByRole('dialog', { name: 'New Agent', exact: true });
+    await expect(newAgent).toBeVisible();
+    await expect(page.getByLabel('What should this agent do?')).toHaveCount(0);
+    await expect(page.getByLabel(/Allow an empty session/)).toHaveCount(0);
+    await expect(page.getByLabel('Working directory')).toBeFocused();
+    if (provider === 'codex')
+      await newAgent.getByRole('button', { name: 'Codex', exact: true }).click();
+    await page.getByLabel('Working directory').fill('/fixture/project');
+    await page.screenshot({
+      animations: 'disabled',
+      path: test.info().outputPath('new-agent.png'),
+    });
+    await page.getByLabel('Working directory').press('Enter');
+    await expect(page.getByRole('alert')).toContainText('could not start');
+    await expect(page.getByRole('alert')).toBeFocused();
+    await expect(page.getByLabel('Working directory')).toHaveValue('/fixture/project');
+    await assertNoAgentWrites(page);
+    await page.evaluate(() => (window as any).firstUse.spawnMode('success'));
+    await newAgent.getByRole('button', { name: 'Retry launch' }).click();
+    await expect(newAgent).toHaveCount(0);
+    const all = await calls(page);
+    const spawns = all.filter((c: any) => c.method === 'spawnClaude');
+    expect(spawns).toHaveLength(2);
+    for (const spawn of spawns) {
+      expect(spawn.args[0].cwd).toBe('/fixture/project');
+      expect(spawn.args[0].provider ?? 'claude').toBe(provider);
+      expect(spawn.args[0].message).toBeUndefined();
+    }
+    expect(all.filter((c: any) => c.method === 'claudeMessage')).toEqual([]);
+    const sessions = (await page.evaluate(() =>
+      Object.values((window as any).firstUse.snapshots()),
+    )) as any[];
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].conversation.filter((m: any) => m.role === 'user')).toEqual([]);
+    const composer = page.getByPlaceholder(/^Give .+ something to do/);
+    await expect(composer).toHaveValue('');
+    await composer.fill('My first message after creation');
+    await composer.press('Enter');
+    await expect
+      .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage'))
+      .toEqual([
+        {
+          method: 'claudeMessage',
+          args: [sessions[0].sessionId, 'My first message after creation'],
+        },
+      ]);
+  });
+}
 
 test('Guide welcome launch retains its question and retries without dismissing welcome', async ({
   page,

@@ -119,13 +119,16 @@ it('retains the task and provider after rejection and guards concurrent submits'
   expect(onSpawn.mock.calls[1][0]).not.toHaveProperty('initialPrompt');
 });
 
-it('allows ordinary blank sessions only through the explicit affordance', () => {
+it('creates ordinary agents without a task input or initial message', () => {
   const onSpawn = vi.fn();
   render(<SpawnAgentDialog defaultCwd="/repo" onSpawn={onSpawn} onCancel={vi.fn()} />);
-  expect(screen.getByRole('button', { name: 'Dispatch agent' })).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/Allow an empty session/));
-  fireEvent.click(screen.getByRole('button', { name: 'Dispatch agent' }));
-  expect(onSpawn.mock.calls[0][0].kickoffMessage).toBeUndefined();
+  expect(screen.queryByLabelText('What should this agent do?')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Allow an empty session/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Working directory')).toHaveFocus();
+  fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+  expect(onSpawn).toHaveBeenCalledTimes(1);
+  expect(onSpawn.mock.calls[0][0]).not.toHaveProperty('kickoffMessage');
+  expect(onSpawn.mock.calls[0][0]).not.toHaveProperty('initialPrompt');
 });
 
 it('a failed recheck clears a stale missing verdict and a malformed row stays unknown', async () => {

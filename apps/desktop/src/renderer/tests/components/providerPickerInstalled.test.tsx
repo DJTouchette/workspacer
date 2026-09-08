@@ -124,6 +124,7 @@ describe('Spawn dialog provider cards', () => {
     // a reset rather than as the diagnosis it is.
     await waitFor(() => expect(screen.getByText('NOT INSTALLED')).toBeTruthy());
     expect(providerCard(/OpenCode/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
   });
 
   it('shows every harness while detection has not answered yet', () => {
