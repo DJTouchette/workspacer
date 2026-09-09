@@ -645,3 +645,35 @@ describe('routing preferences IPC', () => {
     ).rejects.toThrow('source conflict');
   });
 });
+
+it('task IPC edits recheck host sessions and open only store-resolved targets', async () => {
+  const { dispatchHistoryStore } = await import('./services/dispatchHistoryStore');
+  const { shell } = await import('electron');
+  const edit = vi
+    .spyOn(dispatchHistoryStore, 'editByHostUser')
+    .mockReturnValue({ ok: false, code: 'ineligible', error: 'Worker is live' });
+  const resolve = vi
+    .spyOn(dispatchHistoryStore, 'openTarget')
+    .mockReturnValue({ kind: 'url', target: 'https://example.test/recorded' });
+  Object.assign(shell, { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => '') });
+  try {
+    const request = { taskId: 't', expectedTaskRevision: 1, action: 'waive', stepId: 'review' };
+    expect(await handlers.get('task-inspector:edit')!(null, request)).toMatchObject({
+      ok: false,
+      error: 'Worker is live',
+    });
+    expect(edit).toHaveBeenCalledWith(request, expect.any(Function), expect.any(Function));
+    const target = { taskId: 't', kind: 'url', reference: 'pullRequest' };
+    expect(await handlers.get('task-inspector:open')!(null, target)).toEqual({ ok: true });
+    expect(resolve).toHaveBeenCalledWith(target);
+    expect(shell.openExternal).toHaveBeenCalledWith('https://example.test/recorded');
+    resolve.mockImplementation(() => {
+      throw new Error('Target unavailable');
+    });
+    expect(await handlers.get('task-inspector:open')!(null, target)).toMatchObject({ ok: false });
+    expect(shell.openExternal).toHaveBeenCalledTimes(1);
+  } finally {
+    edit.mockRestore();
+    resolve.mockRestore();
+  }
+});

@@ -167,3 +167,19 @@ it('exposes a read-only runtime status request through the declared IPC channel'
   await api.agentRuntimeStatus();
   expect(ipcRenderer.invoke).toHaveBeenCalledWith(IPC.AGENT_RUNTIME_STATUS);
 });
+
+it('bridges only task-owned edit and open selectors', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  const edit = {
+    taskId: 'task',
+    expectedTaskRevision: 2,
+    action: 'waive' as const,
+    stepId: 'review',
+  };
+  await api.taskInspectorEdit(edit);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.TASK_INSPECTOR_EDIT, edit);
+  const open = { taskId: 'task', kind: 'worktree' as const, dispatchId: 'dispatch' };
+  await api.taskInspectorOpen(open);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.TASK_INSPECTOR_OPEN, open);
+});

@@ -416,6 +416,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
           <InspectorPane
             title={pane.title}
             isActive={isActive}
+            inspectorTaskId={pane.inspectorTaskId}
             inspectorSessionId={pane.inspectorSessionId}
             inspectorAgentName={pane.inspectorAgentName}
           />

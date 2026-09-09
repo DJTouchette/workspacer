@@ -69,6 +69,8 @@ export const HOST_ONLY = [
   // remote fallback.
   'fleetWorkflowRequest',
   'dispatchHistoryRead',
+  'taskInspectorEdit',
+  'taskInspectorOpen',
   'fleetReviewRead',
   'fleetReviewForget',
   'htmlCardReadDiff', // owner-validated, descriptor-pinned local snapshot; no unchecked bus fallback

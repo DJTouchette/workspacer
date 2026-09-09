@@ -1,3 +1,4 @@
+import TaskInspector from '../TaskInspector';
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
@@ -40,7 +41,7 @@ export const InspectorRail: React.FC<{
    */
   cwd?: string;
 }> = ({ session, sessionId, onClose, cwd: cwdProp }) => {
-  const [view, setView] = useState<'session' | 'project'>('session');
+  const [view, setView] = useState<'session' | 'project' | 'tasks'>('session');
   const { widgets } = usePluginsContext();
   const cwd = cwdProp || session?.liveCwd || session?.cwd || '';
 
@@ -86,7 +87,7 @@ export const InspectorRail: React.FC<{
           flexShrink: 0,
         }}
       >
-        {(['session', 'project'] as const).map((v) => (
+        {(['session', 'tasks', 'project'] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
@@ -112,6 +113,12 @@ export const InspectorRail: React.FC<{
           hibernation sweep never sees them (it only walks panes inside tabs). */}
       {view === 'session' ? (
         <InspectorCard snapshot={session} sessionId={sessionId} />
+      ) : view === 'tasks' ? (
+        <TaskInspector
+          projectCwd={cwd}
+          sessionId={sessionId ?? session?.sessionId}
+          remote={!!session?.hub}
+        />
       ) : (
         <WidgetBoard cwd={cwd} snapshot={session} available={widgets} />
       )}

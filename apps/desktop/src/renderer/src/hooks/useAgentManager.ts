@@ -1350,13 +1350,18 @@ export function useAgentManager() {
   // snapshot — mirrors openAgentWatch, deduping by the target session so a
   // repeat request focuses the existing pane.
   const openInspector = useCallback(
-    (opts: { sessionId: string; agentName?: string }): string => {
+    (opts: { sessionId?: string; taskId?: string; agentName?: string }): string => {
       const aid = activeAgentIdRef.current;
       if (!aid) return '';
       const agent = agentsRef.current.find((a) => a.id === aid);
       if (!agent) return '';
       const existing = agent.tabs.find((t) =>
-        t.panes.some((p) => p.type === 'inspector' && p.inspectorSessionId === opts.sessionId),
+        t.panes.some(
+          (p) =>
+            p.type === 'inspector' &&
+            p.inspectorSessionId === opts.sessionId &&
+            p.inspectorTaskId === opts.taskId,
+        ),
       );
       if (existing) {
         mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
@@ -1369,6 +1374,7 @@ export function useAgentManager() {
         id: paneId,
         type: 'inspector',
         title,
+        inspectorTaskId: opts.taskId,
         inspectorSessionId: opts.sessionId,
         inspectorAgentName: opts.agentName,
       };

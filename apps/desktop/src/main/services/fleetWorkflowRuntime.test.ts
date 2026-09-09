@@ -106,3 +106,10 @@ describe('workflow waiver ordering and evidence', () => {
     expect(missingWorkflowEvidence(t, 2)).toBeTruthy();
   });
 });
+
+it('reports a reserved dispatch without advertising another launch', () => {
+  const t = task();
+  t.dispatchReservation = { stepId: 'implement', token: 'reservation', createdAt: '2026-01-01' };
+  expect(workflowInstructions(t)).toContain('Its host must finish or recover');
+  expect(workflowInstructions(t)).not.toContain('Next:');
+});

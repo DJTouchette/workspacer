@@ -35,6 +35,8 @@ export function workflowInstructions(task: DispatchTask): string {
   const step = pin.definition.steps[i];
   const waivers = task.audit?.filter((a) => a.action === 'waive') ?? [];
   const header = `Host-user skips: ${JSON.stringify(waivers)}. These are waivers, never passing results. Fleet workflow ${pin.definition.name} (${pin.definition.id}@${pin.definition.revision}, snapshot ${pin.hash}). ${reviewPolicy(pin.definition)}. Task ${task.taskId}, project ${task.projectCwd}.`;
+  if (task.dispatchReservation)
+    return `${header}\nStep ${task.dispatchReservation.stepId} is being dispatched. Its host must finish or recover that dispatch before launching another worker.`;
   if (!run)
     return `${header}\nAll configured steps have returned valid result contracts or explicit skips. This is NOT a passing verdict: inspect each reported outcome: ${JSON.stringify(pin.steps.map((s) => ({ id: s.id, state: s.state, outcome: s.outcome, reason: s.reason })))}.`;
   if (run.state !== 'planned')

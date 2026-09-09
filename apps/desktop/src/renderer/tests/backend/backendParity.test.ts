@@ -628,3 +628,37 @@ it('keeps old, web and remote runtime facts unknown; bridged uses local lifecycl
   ).toBe('unknown');
   expect(ipc.agentRuntimeStatus).toHaveBeenCalledTimes(1);
 });
+
+it('task edits are local host-only and unavailable on old, web and remote backends', async () => {
+  const edit = vi.fn(async () => ({ ok: true, task: { taskId: 'task' } }));
+  const open = vi.fn(async () => ({ ok: true }));
+  const ipc = {
+    platform: 'linux',
+    taskInspectorEdit: edit,
+    taskInspectorOpen: open,
+  } as unknown as ElectronAPI;
+  const request = {
+    taskId: 'task',
+    expectedTaskRevision: 1,
+    action: 'waive' as const,
+    stepId: 'review',
+  };
+  expect(
+    await createBridgedBackend(ipc, 'fixture', 'ws://fixture').taskInspectorEdit?.(request),
+  ).toMatchObject({ ok: true });
+  expect(edit).toHaveBeenCalledWith(request);
+  for (const api of [
+    createBridgedBackend({ platform: 'linux' } as ElectronAPI, 'fixture', 'ws://fixture'),
+    createWebBackend('fixture', 'ws://fixture'),
+    createRemoteBackend(ipc, 'fixture', 'ws://fixture'),
+  ]) {
+    expect(await api.taskInspectorEdit?.(request)).toMatchObject({
+      ok: false,
+      code: 'unavailable',
+    });
+    expect(
+      await api.taskInspectorOpen?.({ taskId: 'task', kind: 'worktree', dispatchId: 'd' }),
+    ).toMatchObject({ ok: false });
+  }
+  expect(open).not.toHaveBeenCalled();
+});

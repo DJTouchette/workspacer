@@ -2264,8 +2264,8 @@ function App() {
   useEffect(() => {
     const handler = (e: Event) => {
       const t = (e as CustomEvent).detail as InspectorTarget | undefined;
-      if (!t?.sessionId) return;
-      const tabId = openInspector({ sessionId: t.sessionId, agentName: t.agentName });
+      if (!t?.sessionId && !t?.taskId) return;
+      const tabId = openInspector(t);
       // Same as agent-watch: surface the pane from under the Fleet Deck.
       if (viewLevel === 'fleet') setViewLevel('piloting');
       if (tabId) requestAnimationFrame(() => scrollToTab(tabId));

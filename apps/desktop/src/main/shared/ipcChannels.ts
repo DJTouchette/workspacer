@@ -228,6 +228,8 @@ export const IPC = {
   // May a card's view_diff action open this path? Only main can read symlinks,
   // and containment is decided there — see services/htmlCardPaths.
   FLEET_WORKFLOW_REQUEST: 'fleet-workflows:request',
+  TASK_INSPECTOR_EDIT: 'task-inspector:edit',
+  TASK_INSPECTOR_OPEN: 'task-inspector:open',
   DISPATCH_HISTORY_READ: 'dispatch-history:read',
   FLEET_REVIEW_READ: 'fleet-review:read',
   FLEET_REVIEW_FORGET: 'fleet-review:forget',

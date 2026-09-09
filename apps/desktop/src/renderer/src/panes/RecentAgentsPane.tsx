@@ -11,7 +11,7 @@ import { Surface } from '../components/Surface';
 import { SmallButton } from '../components/settings/primitives';
 import { FleetReview } from '../components/claude/FleetReview';
 import { HtmlCardHostContext } from '../components/claude/HtmlResponseCard';
-import { requestSessionWatch } from '../lib/watchBus';
+import { requestInspector, requestSessionWatch } from '../lib/watchBus';
 import './RecentAgentsPane.css';
 
 const unknown = 'Not reported';
@@ -204,6 +204,10 @@ function Task({
         <p className="recent-note">
           Task {task.taskId} · Ordered by accepted dispatch. Only declared stages appear.
         </p>
+        <SmallButton
+          label="Inspect task"
+          onClick={() => requestInspector({ taskId: task.taskId, agentName: task.title })}
+        />
         <FleetWorkflowTask task={task} />
         <ol>
           {task.attempts.map((a) => (

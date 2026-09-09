@@ -1,4 +1,8 @@
-import { openPolicySettings } from '../../lib/settingsBus';
+import {
+  openPolicySettings,
+  consumeTaskWorkflowProject,
+  TASK_WORKFLOW_SETTINGS_EVENT,
+} from '../../lib/settingsBus';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { inputStyle, SmallButton } from './primitives';
@@ -108,6 +112,12 @@ export function ProjectWorkflowSelector({ cwd }: { cwd: string }) {
   );
 }
 export default function FleetWorkflowsSection() {
+  const [taskProject, setTaskProject] = useState(consumeTaskWorkflowProject);
+  useEffect(() => {
+    const listener = () => setTaskProject(consumeTaskWorkflowProject());
+    window.addEventListener(TASK_WORKFLOW_SETTINGS_EVENT, listener);
+    return () => window.removeEventListener(TASK_WORKFLOW_SETTINGS_EVENT, listener);
+  }, []);
   const { catalog, error, busy, request, reload } = useWorkflows();
   const [draft, setDraft] = useState<WorkflowDefinition>();
   const [editing, setEditing] = useState(false);
@@ -141,6 +151,15 @@ export default function FleetWorkflowsSection() {
       aria-label="Fleet workflows"
       style={{ marginTop: 20, fontSize: '0.8rem', minWidth: 0 }}
     >
+      {taskProject && (
+        <div>
+          <h3>New tasks in {taskProject}</h3>
+          <p>
+            This selection applies to new tasks only. Existing tasks keep their recorded workflow.
+          </p>
+          <ProjectWorkflowSelector cwd={taskProject} />
+        </div>
+      )}
       <h3 style={{ fontSize: '0.9rem' }}>Workflows</h3>
       <p>
         Choose the ordered policy for new Fleet tasks. Active tasks retain their definition,

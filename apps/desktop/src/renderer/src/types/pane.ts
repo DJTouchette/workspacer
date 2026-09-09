@@ -85,6 +85,7 @@ export interface PaneConfig {
   /** Inspector panes only: the claudemon session whose live snapshot the pane
    *  renders (plan / flows / agents / files / usage). One pane per session. */
   inspectorSessionId?: string;
+  inspectorTaskId?: string;
   /** Inspector panes only: the target agent's display name, shown as the card
    *  header (the session id alone isn't friendly). */
   inspectorAgentName?: string;

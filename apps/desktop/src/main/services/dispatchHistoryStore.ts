@@ -534,7 +534,10 @@ export class DispatchHistoryStore {
         if (request.action === 'links') {
           task.links = validateTaskLinks(request.links);
         } else if (request.action === 'waive') {
-          if (busy(task.taskId) || task.dispatchReservation?.stepId === request.stepId)
+          if (
+            (!task.dispatchReservation && busy(task.taskId)) ||
+            task.dispatchReservation?.stepId === request.stepId
+          )
             throw new Error('A step is being dispatched. Try again after it starts.');
           const disabled = taskSkipDisabledReason(this.hostUserView(task, session), request.stepId);
           if (disabled) throw new Error(disabled);
