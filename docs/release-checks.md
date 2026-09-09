@@ -120,6 +120,10 @@ Setting `TMPDIR` beneath the checkout changes Git discovery and home-based file
 guard expectations. Private dependency/build caches can live in `.workspacer/`,
 which contract-loader discovery excludes so cached source copies cannot count
 as shipping loaders or inflate the guard's memory use.
+Likewise, select an E2E scratch root outside live state, such as a unique directory
+under `/tmp` via `--env WKS_E2E_SCRATCH=...`. The fixture deliberately refuses
+every descendant of the real `~/.workspacer`, including allocated worktrees
+beneath it. Do not weaken that guard to permit a checkout-local scratch home.
 
 Tests that boot services must supply their own scratch state and ephemeral ports.
 Preserve the desktop E2E fixture contracts in `tests/e2e/fixtures/scratchState.ts`

@@ -30,11 +30,18 @@ let vite: ChildProcess;
 test.beforeAll(async () => {
   // --strictPort so a collision fails loudly instead of silently serving the
   // harness from a port this test isn't looking at.
-  vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], {
-    cwd: rendererDir,
-    stdio: 'ignore',
-    detached: false,
-  });
+  // Own Vite directly: npx adds a Node process/thread pool and killing that
+  // wrapper can leave the actual server alive between fixture files.
+  vite = spawn(
+    process.execPath,
+    [
+      path.join(rendererDir, 'node_modules/vite/bin/vite.js'),
+      '--port',
+      String(PORT),
+      '--strictPort',
+    ],
+    { cwd: rendererDir, stdio: 'inherit', detached: false },
+  );
   const deadline = Date.now() + 60_000;
   for (;;) {
     try {

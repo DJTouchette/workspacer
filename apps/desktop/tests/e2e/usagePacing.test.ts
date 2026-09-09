@@ -7,10 +7,20 @@ let url: string;
 test.beforeAll(async () => {
   const port = await freePort();
   url = `http://127.0.0.1:${port}/usage-pacing-harness.html`;
-  vite = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-    cwd: path.resolve(__dirname, '../../src/renderer'),
-    stdio: 'ignore',
-  });
+  const rendererDir = path.resolve(__dirname, '../../src/renderer');
+  // Keep teardown attached to Vite itself, without an extra npx thread pool.
+  vite = spawn(
+    process.execPath,
+    [
+      path.join(rendererDir, 'node_modules/vite/bin/vite.js'),
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--strictPort',
+    ],
+    { cwd: rendererDir, stdio: 'inherit' },
+  );
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     try {
