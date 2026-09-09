@@ -155,7 +155,7 @@ export function fleetWorkflowRequest(
       );
     }
     if (op === 'next' || op === 'decide') {
-      const task = ownerTask(request.taskId, callerSessionId, request.cwd);
+      let task = ownerTask(request.taskId, callerSessionId, request.cwd);
       if (op === 'decide') {
         if (workflowBusy.has(task.taskId)) throw new Error('Step dispatch in progress');
         if (
@@ -170,6 +170,9 @@ export function fleetWorkflowRequest(
           request.run,
           request.reason,
         );
+        // Store reads are snapshots; the transaction commits a different row.
+        // Return that committed revision and derive instructions from it.
+        task = ownerTask(task.taskId, callerSessionId, request.cwd);
       }
       return { ok: true, task: structuredClone(task), instructions: workflowInstructions(task) };
     }

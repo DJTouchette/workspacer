@@ -518,6 +518,8 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
     expect(delivery).toHaveBeenLastCalledWith(
       'manager-current',
       expect.stringContaining('Fleet workflow'),
+      // Handoff keeps each accepted finish's dedup identity with the send.
+      [[sessionId, `${reply} 0  `]],
     );
   };
   try {
