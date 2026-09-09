@@ -1,3 +1,4 @@
+import { workflowBusy } from './services/fleetWorkflowRuntime';
 import { fleetWorkflowRequest } from './services/fleetWorkflowService';
 import { readAgentRuntimeStatus } from './services/agentRuntimeStatus';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
@@ -84,7 +85,8 @@ import {
 } from './services/remoteTokens';
 import { desiredSessionGrants } from './services/fullAccessGrants';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
-import { setRemoteServer } from './services/remoteServer';
+import { TASK_INSPECTOR_UNAVAILABLE } from './shared/dispatchHistory';
+import { isRemoteClientMode, setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import type { UsagePacingScheduleWire } from './shared/usageReport';
 import { listFederationPeers } from './services/federationBridge';
@@ -1402,7 +1404,36 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     (_event, request: import('./shared/fleetWorkflow').WorkflowRequest) =>
       fleetWorkflowRequest(request),
   );
+  ipcMain.handle(
+    IPC.TASK_INSPECTOR_EDIT,
+    (_event, request: import('./shared/dispatchHistory').TaskEditRequest) =>
+      isRemoteClientMode()
+        ? { ok: false, code: 'unavailable', error: TASK_INSPECTOR_UNAVAILABLE }
+        : dispatchHistoryStore.editByHostUser(
+            request,
+            (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+            (id) => workflowBusy.has(id),
+          ),
+  );
+  ipcMain.handle(
+    IPC.TASK_INSPECTOR_OPEN,
+    async (_event, request: import('./shared/dispatchHistory').TaskOpenRequest) => {
+      try {
+        if (isRemoteClientMode()) throw new Error(TASK_INSPECTOR_UNAVAILABLE);
+        const target = dispatchHistoryStore.openTarget(request);
+        if (target.kind === 'url') await shell.openExternal(target.target);
+        else {
+          const error = await shell.openPath(target.target);
+          if (error) throw new Error(error);
+        }
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    },
+  );
   ipcMain.handle(IPC.DISPATCH_HISTORY_READ, () => {
+    if (isRemoteClientMode()) return { available: false, reason: TASK_INSPECTOR_UNAVAILABLE };
     const currentOwner = claudeSessionStore
       .getAllSnapshots()
       .filter((s) => s.isWakeTarget && s.status !== 'ended' && !s.hub)
@@ -1410,7 +1441,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return {
       available: true,
       currentOwnerSessionId: currentOwner?.sessionId,
-      tasks: dispatchHistoryStore.list(),
+      tasks: dispatchHistoryStore.listForHostUser(
+        (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+      ),
     };
   });
   ipcMain.handle(IPC.FLEET_REVIEW_READ, (_event, request: unknown) =>

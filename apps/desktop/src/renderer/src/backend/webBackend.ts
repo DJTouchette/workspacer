@@ -1,3 +1,4 @@
+import { TASK_INSPECTOR_UNAVAILABLE } from '../../../main/shared/dispatchHistory';
 import { routingAPI } from '../../../main/shared/routingPreferences';
 import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/shared/usageReport';
 /**
@@ -1497,6 +1498,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // The host's clipboard is not the one the browser user pasted from, so
     // there is nothing to spill. null sends the paste handler down the upload
     // path with the bytes the browser itself gave it.
+    taskInspectorEdit: async () => ({
+      ok: false,
+      code: 'unavailable',
+      error: TASK_INSPECTOR_UNAVAILABLE,
+    }),
+    taskInspectorOpen: async () => ({ ok: false, error: TASK_INSPECTOR_UNAVAILABLE }),
     dispatchHistoryRead: async () => ({
       available: false,
       reason:

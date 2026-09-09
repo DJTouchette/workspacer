@@ -21,8 +21,16 @@ export default function FleetWorkflowTask({ task }: { task: DispatchTask }) {
         <ol>
           {pin.steps.map((run, i) => (
             <li key={run.id} style={{ marginBottom: 8 }}>
-              <strong>{pin.definition.steps[i].label}</strong> · {run.state} ·{' '}
+              <strong>{pin.definition.steps[i].label}</strong> ·{' '}
+              {run.state === 'waived' ? 'Skipped by you' : run.state} ·{' '}
               {pin.definition.steps[i].stage} / {pin.definition.steps[i].role}
+              {task.audit
+                ?.filter((a) => a.id === run.waiverId)
+                .map((a) => (
+                  <p key={a.id}>
+                    Skipped by you · {new Date(a.createdAt).toLocaleString()} · {a.reason}
+                  </p>
+                ))}
               {run.reason && <p>{run.reason}</p>}
               {run.sessionId && <p>Worker {run.sessionId}</p>}
               {run.outcome !== undefined && (

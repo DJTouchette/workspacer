@@ -30,3 +30,16 @@ export const POLICY_SETTINGS_EVENT = 'settings:open-policy';
 export function openPolicySettings(key: 'routing' | 'supervisor'): void {
   window.dispatchEvent(new CustomEvent(POLICY_SETTINGS_EVENT, { detail: { key } }));
 }
+
+export const TASK_WORKFLOW_SETTINGS_EVENT = 'settings:task-workflow';
+let pendingWorkflowProject: string | null = null;
+export function openTaskWorkflowSettings(cwd: string): void {
+  pendingWorkflowProject = cwd;
+  window.dispatchEvent(new CustomEvent(TASK_WORKFLOW_SETTINGS_EVENT, { detail: { cwd } }));
+  openPolicySettings('supervisor');
+}
+export function consumeTaskWorkflowProject(): string | null {
+  const cwd = pendingWorkflowProject;
+  pendingWorkflowProject = null;
+  return cwd;
+}

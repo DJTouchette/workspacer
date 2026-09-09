@@ -49,8 +49,9 @@ export const INSPECTOR_OPEN_EVENT = 'inspector:open';
 
 /** Open a standalone Inspector pane bound to one session's live snapshot. */
 export interface InspectorTarget {
+  taskId?: string;
   /** The claudemon session whose snapshot the pane renders. */
-  sessionId: string;
+  sessionId?: string;
   /** Target agent's display name (card header + pane title). */
   agentName?: string;
 }

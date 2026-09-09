@@ -333,7 +333,18 @@ it('durably reserves asynchronous dispatch across processes while allowing a fut
     other.reserveWorkflowDispatch(f.task.taskId, other.task(f.task.taskId)!.revision!, 'implement'),
   ).toThrow('reserved');
   expect(f.edit('implement').ok).toBe(false);
-  expect(f.edit('review').ok).toBe(true);
+  expect(
+    f.store.editByHostUser(
+      {
+        taskId: f.task.taskId,
+        expectedTaskRevision: f.store.task(f.task.taskId)!.revision!,
+        action: 'waive',
+        stepId: 'review',
+      },
+      stopped,
+      () => true,
+    ).ok,
+  ).toBe(true);
   other.releaseWorkflowDispatch(f.task.taskId, 'wrong-token');
   expect(f.store.task(f.task.taskId)!.dispatchReservation?.token).toBe(token);
   f.store.releaseWorkflowDispatch(f.task.taskId, token);

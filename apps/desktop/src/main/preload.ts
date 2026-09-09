@@ -828,6 +828,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     request: import('./shared/fleetWorkflow').WorkflowRequest,
   ): Promise<import('./shared/fleetWorkflow').WorkflowResponse> =>
     ipcRenderer.invoke(IPC.FLEET_WORKFLOW_REQUEST, request),
+  taskInspectorEdit: (
+    request: import('./shared/dispatchHistory').TaskEditRequest,
+  ): Promise<import('./shared/dispatchHistory').TaskEditResponse> =>
+    ipcRenderer.invoke(IPC.TASK_INSPECTOR_EDIT, request),
+  taskInspectorOpen: (
+    request: import('./shared/dispatchHistory').TaskOpenRequest,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.TASK_INSPECTOR_OPEN, request),
   dispatchHistoryRead: (): Promise<import('./shared/dispatchHistory').DispatchHistoryResponse> =>
     ipcRenderer.invoke(IPC.DISPATCH_HISTORY_READ),
   fleetReviewRead: (

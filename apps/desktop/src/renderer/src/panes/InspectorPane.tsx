@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
+import TaskInspector from '../components/TaskInspector';
+import { SmallButton } from '../components/settings/primitives';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { claudeColors as colors } from '../components/claude-shared';
 import { InspectorCard } from '../components/claude/InspectorCard';
@@ -8,6 +10,7 @@ interface InspectorPaneProps {
   isActive: boolean;
   /** The claudemon session whose live snapshot this pane renders. */
   inspectorSessionId?: string;
+  inspectorTaskId?: string;
   /** The target agent's display name (shown as the card header). */
   inspectorAgentName?: string;
 }
@@ -22,13 +25,15 @@ const InspectorPane: React.FC<InspectorPaneProps> = ({
   isActive,
   inspectorSessionId,
   inspectorAgentName,
+  inspectorTaskId,
 }) => {
+  const [tasks, setTasks] = useState(!!inspectorTaskId);
   const { session } = useClaudeSession({
     ptySessionId: inspectorSessionId ?? null,
     active: isActive,
   });
 
-  if (!inspectorSessionId) {
+  if (!inspectorSessionId && !inspectorTaskId) {
     return (
       <div
         style={{
@@ -49,12 +54,38 @@ const InspectorPane: React.FC<InspectorPaneProps> = ({
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', background: 'var(--wks-bg-base)' }}>
-      <InspectorCard
-        snapshot={session}
-        sessionId={inspectorSessionId}
-        agentName={inspectorAgentName}
-      />
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        background: 'var(--wks-bg-base)',
+      }}
+    >
+      <div style={{ padding: 8 }}>
+        <SmallButton
+          label="Session"
+          disabled={!inspectorSessionId}
+          onClick={() => setTasks(false)}
+        />{' '}
+        <SmallButton label="Tasks" onClick={() => setTasks(true)} />
+      </div>
+      {tasks ? (
+        <TaskInspector
+          projectCwd={session?.cwd}
+          taskId={inspectorTaskId}
+          sessionId={inspectorSessionId}
+          remote={!!session?.hub}
+        />
+      ) : (
+        <InspectorCard
+          snapshot={session}
+          sessionId={inspectorSessionId}
+          agentName={inspectorAgentName}
+        />
+      )}
     </div>
   );
 };

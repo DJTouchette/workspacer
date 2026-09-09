@@ -652,6 +652,12 @@ export interface ElectronAPI extends RoutingAPI {
   fleetWorkflowRequest?: (
     request: import('../../../main/shared/fleetWorkflow').WorkflowRequest,
   ) => Promise<import('../../../main/shared/fleetWorkflow').WorkflowResponse>;
+  taskInspectorEdit?: (
+    request: import('../../../main/shared/dispatchHistory').TaskEditRequest,
+  ) => Promise<import('../../../main/shared/dispatchHistory').TaskEditResponse>;
+  taskInspectorOpen?: (
+    request: import('../../../main/shared/dispatchHistory').TaskOpenRequest,
+  ) => Promise<{ ok: boolean; error?: string }>;
   dispatchHistoryRead?: () => Promise<
     import('../../../main/shared/dispatchHistory').DispatchHistoryResponse
   >;
