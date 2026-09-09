@@ -820,7 +820,7 @@ function App() {
     [config.panes, saveConfig],
   );
   const toggleFleet = useCallback(() => {
-    // In focus mode the overview never mounts — instead of a dead key, the
+    // In focus mode the Fleet Deck never mounts — instead of a dead key, the
     // toggle is an escape hatch: switch the UI mode to 'fleet' and open it.
     if (!uiManifest.fleetDeck) {
       saveConfig({
@@ -1326,6 +1326,14 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
+  /** Home means the dashboard, not the global workspace's last selected tab. */
+  const openOverview = useCallback(() => {
+    setShowCommandPalette(false);
+    setViewLevel('piloting');
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'overview', 'Overview');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab, setViewLevel]);
+
   /** Open the Agent Monitor pane in the global workspace. */
   const openAgentsPane = useCallback(() => {
     setShowCommandPalette(false);
@@ -1341,15 +1349,16 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
-  /** Open the brief Board — the kanban over every project's
-   *  `.workspacer/brief.md`, one swimlane per project plus the fleet brief.
-   *  Global rather than per-agent: it is the Fleet Manager's cross-project view. */
+  /** Open recent dispatch history in the global workspace. */
   const openRecentAgentsPane = useCallback(() => {
     setShowCommandPalette(false);
     setViewLevel('piloting');
     const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab, setViewLevel]);
+  /** Open the brief Board — the kanban over every project's
+   *  `.workspacer/brief.md`, one swimlane per project plus the fleet brief.
+   *  Global rather than per-agent: it is the Fleet Manager's cross-project view. */
   const openBoardPane = useCallback(() => {
     setShowCommandPalette(false);
     const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'board', 'Board');
@@ -2039,7 +2048,7 @@ function App() {
     onDenyAttention: useCallback(() => handleAttentionDecision('no'), [handleAttentionDecision]),
     onPaneHints: handlePaneHints,
     onCmdline: handleCmdline,
-    onGoOverview: useCallback(() => handleSelectAgent(GLOBAL_WORKSPACE_ID), [handleSelectAgent]),
+    onGoOverview: openOverview,
     onJumpBack: handleJumpBack,
     onJumpForward: handleJumpForward,
     shortcuts: resolvedShortcuts,
@@ -2799,7 +2808,8 @@ function App() {
                     statusBySession={statusBySession}
                     snapshotBySession={snapshotBySession}
                     onSelectAgent={(id) => {
-                      handleSelectAgent(id);
+                      if (id === GLOBAL_WORKSPACE_ID) openOverview();
+                      else handleSelectAgent(id);
                       if (sidebarOverlay) setSidebarCollapsed(true);
                     }}
                     onSpawnAgent={openSpawnDialog}
@@ -2997,6 +3007,7 @@ function App() {
                 onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
                 onOpenSessions={openSessionsPane}
                 onOpenBoard={openBoardPane}
+                onOpenOverview={openOverview}
                 onOpenRecentAgents={openRecentAgentsPane}
                 onOpenInspector={openInspectorForActive}
                 onOpenContext={openContextForActive}
@@ -3188,6 +3199,7 @@ function App() {
                 <FleetDeck
                   top={navHeight}
                   left={contentLeft}
+                  onOpenOverview={openOverview}
                   onOpenRecentAgents={openRecentAgentsPane}
                   onTerminateAgent={handleTerminateAgent}
                   onEnsureAgentChat={ensureAgentChat}

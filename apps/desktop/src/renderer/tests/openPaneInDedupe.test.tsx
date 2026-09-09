@@ -61,29 +61,64 @@ describe('openPaneIn — editor plugin dedupe by full url, not basename', () => 
   });
 });
 
-it('restores and focuses the one global Recent agents pane even in a split tab', () => {
+it.each(['recentagents', 'overview'] as const)(
+  'restores and focuses the global %s pane even renamed in a split tab',
+  (type) => {
+    const { result } = renderHook(() => useAgentManager());
+    let first = '';
+    act(() => {
+      first = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, type, type);
+    });
+    const saved = JSON.parse(JSON.stringify(result.current.agents));
+    const ws = saved.find((a: { id: string }) => a.id === GLOBAL_WORKSPACE_ID);
+    const tab = ws.tabs.find((t: { id: string }) => t.id === first);
+    const recentId = tab.panes[0].id;
+    tab.panes[0].title = 'My dashboard';
+    tab.panes.push({ id: 'other', type: 'board', title: 'Board' });
+    tab.activePaneId = 'other';
+    act(() => {
+      result.current.loadAgentsFromSession(saved, GLOBAL_WORKSPACE_ID);
+    });
+    let again = '';
+    act(() => {
+      again = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, type, type);
+    });
+    expect(again).toBe(first);
+    const restored = result.current.agents.find((a) => a.id === GLOBAL_WORKSPACE_ID)!;
+    expect(restored.tabs.flatMap((t) => t.panes).filter((p) => p.type === type)).toHaveLength(1);
+    expect(restored.tabs.find((t) => t.id === first)?.activePaneId).toBe(recentId);
+  },
+);
+
+it('reopens a closed Overview without replacing Recent agents', () => {
   const { result } = renderHook(() => useAgentManager());
-  let first = '';
   act(() => {
-    first = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
+    result.current.loadAgentsFromSession(
+      [
+        {
+          id: GLOBAL_WORKSPACE_ID,
+          name: 'Overview',
+          global: true,
+          cwd: '',
+          activeTabId: 'recent',
+          tabs: [
+            {
+              id: 'recent',
+              title: 'Recent agents',
+              activePaneId: 'history',
+              panes: [{ id: 'history', type: 'recentagents', title: 'Recent agents' }],
+            },
+          ],
+        },
+      ],
+      GLOBAL_WORKSPACE_ID,
+    );
   });
-  const saved = JSON.parse(JSON.stringify(result.current.agents));
-  const ws = saved.find((a: { id: string }) => a.id === GLOBAL_WORKSPACE_ID);
-  const tab = ws.tabs.find((t: { id: string }) => t.id === first);
-  const recentId = tab.panes[0].id;
-  tab.panes.push({ id: 'other', type: 'board', title: 'Board' });
-  tab.activePaneId = 'other';
+  let opened = '';
   act(() => {
-    result.current.loadAgentsFromSession(saved, GLOBAL_WORKSPACE_ID);
+    opened = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, 'overview', 'Overview');
   });
-  let again = '';
-  act(() => {
-    again = result.current.openPaneIn(GLOBAL_WORKSPACE_ID, 'recentagents', 'Recent agents');
-  });
-  expect(again).toBe(first);
-  const restored = result.current.agents.find((a) => a.id === GLOBAL_WORKSPACE_ID)!;
-  expect(
-    restored.tabs.flatMap((t) => t.panes).filter((p) => p.type === 'recentagents'),
-  ).toHaveLength(1);
-  expect(restored.tabs.find((t) => t.id === first)?.activePaneId).toBe(recentId);
+  const ws = result.current.agents[0];
+  expect(ws.activeTabId).toBe(opened);
+  expect(ws.tabs.flatMap((t) => t.panes).map((p) => p.type)).toEqual(['recentagents', 'overview']);
 });

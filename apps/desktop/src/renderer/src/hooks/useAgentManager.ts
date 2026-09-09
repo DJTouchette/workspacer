@@ -191,8 +191,9 @@ function makeGlobalWorkspace(): AgentWorkspace {
   };
 }
 
-/** Ensure exactly one global workspace exists (pinned first) and that it always
- *  has at least the Overview pane — backfills it into an empty/legacy global. */
+/** Seed Overview when creating or restoring an empty global workspace.
+ *  Nonempty saved tabs retain their selection; the Overview action can reopen
+ *  a dashboard that was closed while other global tabs remained. */
 function withGlobalWorkspace(list: AgentWorkspace[]): AgentWorkspace[] {
   const existing = list.find((a) => a.global);
   if (!existing) return [makeGlobalWorkspace(), ...list];
@@ -1208,8 +1209,9 @@ export function useAgentManager() {
 
   /** Open a pane in a specific workspace (agent or the global Overview) and
    *  switch to it. Used to place plugin/library panes by their declared scope.
-   *  If the workspace already has a tab with the same pane type + title, it is
-   *  focused instead of opening a duplicate. Returns the (existing or new) tab
+   *  Overview and Recent agents reuse any pane of their type, including renamed
+   *  or split panes. Other types match a single-pane tab by type, title and URL.
+   *  Returns the (existing or new) tab
    *  id so callers can scroll the view to it — activating a tab alone only
    *  highlights the strip; it never scrolls the workspace viewport. */
   const openPaneIn = useCallback(
@@ -1222,8 +1224,9 @@ export function useAgentManager() {
       pluginId?: string,
     ): string => {
       const ws = agentsRef.current.find((a) => a.id === workspaceId);
+      const singleton = type === 'recentagents' || type === 'overview';
       const existing = ws?.tabs.find((t) =>
-        type === 'recentagents'
+        singleton
           ? t.panes.some((p) => p.type === type)
           : t.panes.length === 1 &&
             t.panes[0].type === type &&
@@ -1239,14 +1242,13 @@ export function useAgentManager() {
             return {
               ...a,
               activeTabId: existing.id,
-              tabs:
-                type === 'recentagents'
-                  ? a.tabs.map((t) =>
-                      t.id === existing.id
-                        ? { ...t, activePaneId: t.panes.find((p) => p.type === type)!.id }
-                        : t,
-                    )
-                  : a.tabs,
+              tabs: singleton
+                ? a.tabs.map((t) =>
+                    t.id === existing.id
+                      ? { ...t, activePaneId: t.panes.find((p) => p.type === type)!.id }
+                      : t,
+                  )
+                : a.tabs,
             };
           const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true, pluginId };
           return {
