@@ -1,3 +1,4 @@
+import { startProviderReadiness } from './services/providerReadinessRuntime';
 import { noteRuntimePending, noteRuntimePhase } from './services/agentRuntimeStatus';
 import { app, BrowserWindow, Menu, protocol, net, session, ipcMain } from 'electron';
 import * as path from 'path';
@@ -342,6 +343,7 @@ function createWindow(): void {
   });
 
   registerIpcHandlers(mainWindow);
+  startProviderReadiness();
   startFederationPeersConfig();
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);

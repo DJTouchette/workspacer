@@ -743,3 +743,20 @@ func TestStatusSummaryDefaultsAndNullRoundTrip(t *testing.T) {
 		t.Fatal("lost sibling config")
 	}
 }
+
+func TestProviderStartupCheckOptOutRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := newConfigService()
+	if c.get()["agents"].(map[string]any)["checkProviderOnStartup"] != true {
+		t.Fatal("startup check must default enabled")
+	}
+	mustSave(t, c, map[string]any{"agents": map[string]any{"checkProviderOnStartup": false}})
+	fresh := newConfigService()
+	if fresh.get()["agents"].(map[string]any)["checkProviderOnStartup"] != false {
+		t.Fatal("opt-out lost on reload")
+	}
+	mustSave(t, fresh, map[string]any{"agents": map[string]any{"managerProvider": "codex"}})
+	if newConfigService().get()["agents"].(map[string]any)["checkProviderOnStartup"] != false {
+		t.Fatal("unrelated save lost opt-out")
+	}
+}

@@ -153,8 +153,19 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       <div style={{ ...hintStyle, marginBottom: 14 }}>
         An optional agent that works across your whole fleet rather than in one repo, started from
         the <strong>Fleet Manager</strong> card on the Overview dashboard. It dispatches worker
-        agents into your projects, watches them finish or block, and reports back to you. Nothing
-        here runs until you start one.
+        agents into your projects, watches them finish or block, and reports back to you. The
+        manager starts when you ask it to.
+      </div>
+
+      <CheckRow
+        label="Check provider at startup"
+        checked={agents.checkProviderOnStartup !== false}
+        onChange={(v) => patchAgents({ checkProviderOnStartup: v })}
+      />
+      <div style={hintStyle}>
+        Sends one small test request to the selected manager provider on desktop startup and may
+        consume provider allowance. Only providers with an isolated check are supported. Turn off to
+        prevent automatic requests; Check again still requests a manual check.
       </div>
 
       <Row label="Manager runs on">

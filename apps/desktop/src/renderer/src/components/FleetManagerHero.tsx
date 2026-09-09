@@ -1,3 +1,4 @@
+import { useProviderReadiness } from '../hooks/useProviderReadiness';
 import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
 import { SmallButton } from './settings/primitives';
 import { useConfig } from '../hooks/useConfig';
@@ -26,6 +27,7 @@ const FleetManagerHero: React.FC = () => {
   const { config } = useConfig();
   const { detection, refresh } = useProviderDetection();
   const provider = config.agents?.managerProvider ?? 'claude';
+  const readiness = useProviderReadiness(provider);
   const runtimeStatus = useAgentRuntimeStatus(true);
   const missing = providerAvailability(detection, provider) === 'missing';
   const submit = (text: string) => {
@@ -93,9 +95,16 @@ const FleetManagerHero: React.FC = () => {
         {missing
           ? `${provider} is not installed. Choose an installed Fleet Manager provider or set its binary override in Settings.`
           : providerAvailability(detection, provider) === 'installed'
-            ? `${provider} CLI found; authentication has not been checked.`
+            ? `${provider} CLI found.`
             : `${provider} availability is unknown; you can try starting it.`}
-        <SmallButton onClick={refresh} label="Check again" />
+        <span> {readiness.detail}</span>
+        <SmallButton
+          onClick={() => {
+            refresh();
+            void readiness.refresh();
+          }}
+          label="Check again"
+        />
       </div>
       <div
         id="fleet-runtime-status"

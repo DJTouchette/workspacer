@@ -300,6 +300,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   > => ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   /** Detection status per provider. Cached for a few seconds in main; pass
    *  `force` (Settings' "re-check") to rescan PATH immediately. */
+  providerReadiness: (
+    provider: string,
+    check = false,
+  ): Promise<import('./shared/providerReadiness').ProviderReadiness> =>
+    ipcRenderer.invoke(IPC.PROVIDER_READINESS, provider, check),
   providerCheckAll: (
     force?: boolean,
   ): Promise<

@@ -53,8 +53,6 @@ export function runtimeLaunchState(
     };
   return {
     blocked: false,
-    detail: managed
-      ? 'Fleet Manager runtime is ready. Provider sign-in may still be required.'
-      : 'Local agent runtime is ready. Provider sign-in may still be required.',
+    detail: managed ? 'Fleet Manager runtime is ready.' : 'Local agent runtime is ready.',
   };
 }

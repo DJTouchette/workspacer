@@ -212,7 +212,9 @@ for (const theme of ['light', 'dracula']) {
           await dialog(page).getByRole('button', { name: 'terminal', exact: true }).click();
         }
         await page.getByLabel('Working directory').fill('/fixture/project');
-        await expect(dialog(page)).toContainText('Authentication has not been checked');
+        await expect(dialog(page)).toContainText(
+          'Provider has not been checked. Authentication is unknown.',
+        );
         await launch(page).focus();
         await page.keyboard.press('Enter');
         await expect(page.getByRole('alert')).toContainText('could not start');

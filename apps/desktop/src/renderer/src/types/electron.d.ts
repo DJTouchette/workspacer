@@ -243,6 +243,10 @@ export interface ElectronAPI extends RoutingAPI {
       effectiveContextWindowPercent?: number;
     }>
   >;
+  providerReadiness?: (
+    provider: string,
+    check?: boolean,
+  ) => Promise<import('../../../main/shared/providerReadiness').ProviderReadiness>;
   providerCheckAll: (
     force?: boolean,
   ) => Promise<

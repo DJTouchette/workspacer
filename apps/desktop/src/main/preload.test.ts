@@ -167,3 +167,12 @@ it('exposes a read-only runtime status request through the declared IPC channel'
   await api.agentRuntimeStatus();
   expect(ipcRenderer.invoke).toHaveBeenCalledWith(IPC.AGENT_RUNTIME_STATUS);
 });
+
+it('provider readiness defaults to a free read; only explicit true requests a ping', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  await api.providerReadiness('codex');
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.PROVIDER_READINESS, 'codex', false);
+  await api.providerReadiness('claude', true);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.PROVIDER_READINESS, 'claude', true);
+});

@@ -641,6 +641,8 @@ export interface AppConfig {
     };
     /** Name new agents after their first exchange, like a chat service names a
      *  conversation. A rename you type always wins and is never overwritten. */
+    /** Send a small isolated manager-provider request once at desktop startup. */
+    checkProviderOnStartup?: boolean;
     statusSummary?: {
       enabled?: boolean;
       provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';

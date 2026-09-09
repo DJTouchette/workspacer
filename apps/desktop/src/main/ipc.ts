@@ -1,3 +1,4 @@
+import { providerReadinessService } from './services/providerReadinessRuntime';
 import { fleetWorkflowRequest } from './services/fleetWorkflowService';
 import { readAgentRuntimeStatus } from './services/agentRuntimeStatus';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
@@ -587,6 +588,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     app.quit();
   });
   // Git worktrees: repo detection for the spawn dialog + agent-worktree create.
+  ipcMain.handle(IPC.PROVIDER_READINESS, (_event, provider: string, check?: boolean) =>
+    check === true
+      ? providerReadinessService.check(provider)
+      : providerReadinessService.read(provider),
+  );
   ipcMain.handle(IPC.AGENT_RUNTIME_STATUS, () => readAgentRuntimeStatus());
   ipcMain.handle(IPC.WORKTREE_INFO, (_event, cwd: string) => worktreeInfo(cwd));
   ipcMain.handle(

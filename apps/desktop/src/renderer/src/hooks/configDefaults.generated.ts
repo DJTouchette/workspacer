@@ -202,6 +202,7 @@ export const CONFIG_DEFAULTS = {
     fleetRoot: '',
     fleetFullAccess: false,
     managerProvider: 'claude',
+    checkProviderOnStartup: true,
     binaries: {
       claude: '',
       codex: '',
