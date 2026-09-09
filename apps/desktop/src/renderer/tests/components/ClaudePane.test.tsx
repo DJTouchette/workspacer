@@ -57,10 +57,11 @@ vi.mock('@xterm/addon-web-fonts', () => ({
 // path and the restart-preserves-transport contract.
 const mockWrite = vi.fn();
 const mockRestartSession = vi.fn().mockResolvedValue(undefined);
+let mockSessionId: string | null = 'sess-1';
 vi.mock('../../src/hooks/useClaudeSpawn', () => ({
-  useClaudeSpawn: vi.fn().mockReturnValue({
-    sessionId: 'sess-1',
-    isReady: true,
+  useClaudeSpawn: vi.fn().mockImplementation(() => ({
+    sessionId: mockSessionId,
+    isReady: mockSessionId !== null,
     spawnError: null,
     write: mockWrite,
     resize: vi.fn(),
@@ -68,7 +69,7 @@ vi.mock('../../src/hooks/useClaudeSpawn', () => ({
     startSession: vi.fn(),
     retry: vi.fn(),
     restartSession: mockRestartSession,
-  }),
+  })),
 }));
 
 // The session snapshot the pane renders from — swapped per test.
@@ -127,6 +128,7 @@ const composer = () => screen.getByRole('textbox') as HTMLTextAreaElement;
 
 describe('ClaudePane send pipeline', () => {
   beforeEach(() => {
+    mockSessionId = 'sess-1';
     mockSession = makeSnapshot();
     mockWrite.mockClear();
     (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
@@ -164,6 +166,35 @@ describe('ClaudePane send pipeline', () => {
       ),
     );
   });
+
+  it.each([null, 'attached-current'])(
+    'sends to the known session while attachment is %s',
+    async (id) => {
+      mockSessionId = id;
+      mockSession = null;
+      render(
+        <ClaudePane
+          paneId="attaching-pane"
+          title="Codex"
+          provider="codex"
+          attachSessionId="attached-original"
+          isActive
+          cwd="/repo"
+        />,
+      );
+      fireEvent.change(composer(), {
+        target: { value: 'first message before terminal attachment' },
+      });
+      fireEvent.keyDown(composer(), { key: 'Enter' });
+      await waitFor(() =>
+        expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith(
+          id ?? 'attached-original',
+          'first message before terminal attachment',
+        ),
+      );
+      expect(mockWrite).not.toHaveBeenCalled();
+    },
+  );
 
   it('shows the submitted text optimistically and clears the composer', async () => {
     render(<ClaudePane paneId="p2" title="Claude" isActive cwd="/repo" />);

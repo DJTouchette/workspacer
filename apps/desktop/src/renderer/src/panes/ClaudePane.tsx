@@ -1358,7 +1358,11 @@ export const useClaudePaneModel = ({
         return { ok: true };
       };
 
-      if (!sessionId) {
+      // An already-spawned session can show its composer before the terminal
+      // viewer finishes attaching (including loading its fonts). Its canonical
+      // attach target can receive messages now; raw PTY writes cannot yet.
+      const messageSessionId = sessionId ?? attachSessionId;
+      if (!messageSessionId) {
         return rawFallback();
       }
 
@@ -1371,7 +1375,7 @@ export const useClaudePaneModel = ({
       // where the wrapper is gone and raw keystrokes can't help either — so the
       // raw PTY write stays reserved for transport failure (daemon unreachable).
       try {
-        const res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
+        const res = await window.electronAPI.claudeMessage(messageSessionId, fullMessage);
         if (res.ok) {
           releaseDelivered(); // the paste is on its way; stop holding it
           return { ok: true }; // sent or queued by the daemon
@@ -1391,7 +1395,7 @@ export const useClaudePaneModel = ({
         return rawFallback(err instanceof Error ? err.message : String(err));
       }
     },
-    [inputValue, write, attachedFiles, sessionId, hasTerminal],
+    [inputValue, write, attachedFiles, sessionId, attachSessionId, hasTerminal],
   );
 
   // Drop optimistic entries FIFO as session.conversation grows past the
