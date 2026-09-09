@@ -7,20 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
-
-### Changed
-- **Spending faster than your allowance refills now looks like a problem, not
-  an achievement.** A usage window over its expected curve was labelled *ahead*
-  in the amber needs-you colour, so a 7-day window at 89% with two days left
-  read as encouraging news. Ahead of schedule is good; ahead of your allowance
-  is the opposite. That state is now labelled **above pace** and drawn in the
-  error colour, on the word and on the consumed bar together — they come from
-  one presentation mapper, so they cannot disagree. On pace, under, and a
-  window with no readable pace stay neutral, because a meter that colours every
-  reading is a meter nobody reads. The comparison itself is untouched: the same
-  inclusive ±2 percentage-point band, compared before rounding, and no routing
-  threshold moved.
+## [0.165.0] - 2026-09-08
 
 ### Added
 - **Optional Headroom routing for local Claude Code and Codex sessions.** Install
@@ -30,6 +17,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   contribution supplies child-local environment and arguments through existing
   Claude and Codex drivers, including Windows. Setup and supported routing
   configurations are documented; selecting None keeps ordinary launches.
+- **Fleet brings the manager, workers and their conversations into one view.**
+  A worker timeline shows current activity and needs-attention states. Open a
+  worker's chat from its card, then return to Fleet without losing the chat or
+  draft. Manager-first chat, retained viewers, send feedback and guarded
+  termination actions make it easier to follow a coordinated task.
+- **Recent agents keeps local dispatch history and explicit task stages.**
+  Reopen a previous agent, inspect its reported outcome, or start an explicitly
+  linked implementation, review or retry. Task relationships come from recorded
+  dispatch provenance; unrelated launches are not guessed into the same task.
+- **Review a local Fleet worker's changed files inside its result.** Retained
+  diff snapshots remain available after the worker stops. The diff reader is
+  restricted to the local desktop host; remote and headless clients report the
+  unsupported operation rather than reading a different machine's files.
+- **Agents can present sandboxed HTML response cards in chat.** Cards support
+  interactive views with guarded host actions, alongside the existing structured
+  cards. The bundled response-card guidance and discovery checks cover this
+  format; rendering a card does not grant it unrestricted host access.
+- **Agent status summaries are configurable and requested on demand.** Choose
+  the summary provider and model in Settings, or disable summaries. Claude,
+  Pi and Copilot have adapters that disable model tools; Codex and OpenCode
+  summaries remain unavailable. A request uses a bounded excerpt of visible
+  conversation and progress, with no fallback to a different provider. Summaries
+  are interpretations of that excerpt, not verified completion or canonical
+  worker status. Headless hosts without the desktop summary service report
+  unavailable.
+- **Define Fleet task workflows in desktop Settings.** Clone a starter, arrange
+  bounded steps, choose dispatch templates and set a default or project override.
+  New tasks pin the selected revision and template contracts, so later edits do
+  not change a task already underway. Required reviews and explicit no-review
+  policies remain visible, and failed or blocked steps return control to the
+  manager or user. This is a desktop-owned workflow runtime; headless and peer
+  execution of configured workflows is unavailable.
+- **Edit model routing preferences with a preview before saving.** Settings and
+  the host-authorized MCP tools expose validated preferences, conflict recovery
+  and reset. Saved preferences reach routing decisions while preserving host
+  model classifications and permission ceilings. Scoped and peer credentials
+  cannot use the editor's host authority. First-task help links the workflow
+  and routing settings.
+- **The website has an enterprise pilot page and shared enquiry forms.** The
+  page describes desktop workflow coordination and provider access, with shared
+  Formspree submission feedback and an ordinary form fallback.
+
 - **The Inspector's Usage tab now shows the account allowance a session spends
   from.** The paced provider windows that Overview draws per account are now on
   the session surface too — the same 5-hour, 7-day and monthly readings, the
@@ -69,6 +98,46 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   see which schedule is in force but not switch it. A server whose hub predates
   the setting shows the control dimmed with the reason, rather than a default
   nobody chose.
+
+### Fixed
+- **Overview hides profiles without usable allowance readings.** Real 0%
+  readings remain visible even when pace is unknown.
+- **Concurrent brief and configuration writes retry transient Windows lock
+  contention** without bypassing the exclusive lock.
+- **First-task launch preserves the task and folder when setup fails.** Runtime
+  readiness, accessible-folder validation, retry guidance and startup notices
+  explain the next step. Direct local tasks can remain available when only
+  Fleet services are degraded. Readiness checks do not restart services and do
+  not claim that a detected provider is authenticated or that a task succeeded.
+- **Dispatch templates now use the allocated worktree's folder.** Rendering
+  happens after allocation, and optional history provenance no longer prevents
+  an otherwise valid launch.
+- **Codex session ownership and cleanup follow the active generation.**
+  Transactional ownership and bounded lifecycle evidence reduce stale-driver
+  races and keep process-group cleanup tied to the owned generation. The
+  inspector also uses authoritative subagent model metadata when available.
+
+### Changed
+- **Ordinary New Agent creation no longer includes a first-message field.**
+  Create the agent and write in its chat; explicit task and history dispatch
+  flows retain their task input.
+- **The session daemon now dispatches through an internal execution-engine
+  registry.** Production still uses only `claudemon-v1`; the replay engine is
+  compiled only for tests. Versioned leases and additive snapshot metadata
+  preserve the native execution lineage across compatible restarts. This first
+  slice adds no user-selectable engine, third-party plugin execution, durable
+  event replay or live migration.
+- **Spending faster than your allowance refills now looks like a problem, not
+  an achievement.** A usage window over its expected curve was labelled *ahead*
+  in the amber needs-you colour, so a 7-day window at 89% with two days left
+  read as encouraging news. Ahead of schedule is good; ahead of your allowance
+  is the opposite. That state is now labelled **above pace** and drawn in the
+  error colour, on the word and on the consumed bar together — they come from
+  one presentation mapper, so they cannot disagree. On pace, under, and a
+  window with no readable pace stay neutral, because a meter that colours every
+  reading is a meter nobody reads. The comparison itself is untouched: the same
+  inclusive ±2 percentage-point band, compared before rounding, and no routing
+  threshold moved.
 
 ## [0.164.0] - 2026-09-03
 
