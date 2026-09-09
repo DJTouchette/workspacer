@@ -38,6 +38,7 @@ export interface DispatchAttempt extends DispatchLink {
     allocated: boolean;
     fallback: boolean;
     branch?: string;
+    directoryIdentity?: { dev: number; ino: number };
     error?: string;
   };
   requestedProvider?: string;
@@ -55,6 +56,8 @@ export interface DispatchAttempt extends DispatchLink {
 export interface DispatchTask {
   /** Legacy rows read as revision zero. Every persisted mutation advances it. */
   revision?: number;
+  /** Durable admission fence across asynchronous worktree allocation. */
+  dispatchReservation?: { stepId: string; token: string; createdAt: string };
   links?: TaskLinks;
   audit?: TaskAudit[];
   workflow?: import('./fleetWorkflow').WorkflowPin;
@@ -111,6 +114,8 @@ export function taskIsActive(task: DispatchTask): boolean {
 export function taskSkipDisabledReason(task: DispatchTask, stepId: string): string | undefined {
   const run = task.workflow?.steps.find((s) => s.id === stepId);
   if (!run) return 'Step unavailable';
+  if (task.dispatchReservation?.stepId === stepId)
+    return 'A worker is being dispatched for this step';
   if (terminalWorkflowStep(run.state)) return 'This step has already finished';
   if (run.state === 'dispatched') return 'A worker has been dispatched for this step';
   if (!['planned', 'failed', 'blocked'].includes(run.state)) return 'Step state is unknown';
