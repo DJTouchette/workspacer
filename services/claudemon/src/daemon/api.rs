@@ -1758,7 +1758,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\n{{ echo \"ARGV: $*\"; env; }} > '{}'\nexit 1\n",
+                "#!/bin/sh\n{{ echo \"ARGV: $*\"; env; }} > '{0}.part'\nmv '{0}.part' '{0}'\nexit 1\n",
                 out.display()
             ),
         )
@@ -1770,6 +1770,8 @@ mod tests {
 
     /// Poll for the recording, since the spawn is fire-and-forget: the handler
     /// returns 200 before the provider's driver task has started its child.
+    /// Writers rename a completed recording into place so a nonempty file
+    /// cannot expose only the first arguments or part of the environment.
     #[cfg(unix)]
     async fn await_recording(out: &std::path::Path) -> String {
         for _ in 0..100 {
@@ -1931,7 +1933,7 @@ mod tests {
             std::fs::write(
                 &script,
                 format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 1\n",
+                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{0}.part'\nmv '{0}.part' '{0}'\nexit 1\n",
                     out.display()
                 ),
             )

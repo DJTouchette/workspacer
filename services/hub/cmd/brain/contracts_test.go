@@ -65,7 +65,18 @@ var contractSkipDirs = map[string]bool{
 }
 
 func TestContractSourceWalkExcludesRuntimeCaches(t *testing.T) {
-	root := t.TempDir()
+	// extinput must address the fixture relative to the module root. Windows
+	// runners put the checkout on D: and t.TempDir on C:, where filepath.Rel
+	// cannot represent that relationship. Keep this owned fixture on our volume.
+	root, err := os.MkdirTemp(".", ".contract-source-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err = filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := []string{
 		"apps/desktop/contract.test.ts",
 		"services/hub/contract_test.go",
