@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+import { ManagerDeliveryRejected } from '../shared/managerReplacement';
 import { managerReplacementState } from './managerReplacementState';
 /**
  * Main-process proxy between the renderer and the claudemon daemon.
@@ -56,6 +58,15 @@ interface SessionStream {
 
 class ClaudemonSessionClient {
   private mainWindow: BrowserWindow | null = null;
+  private pendingMessages = new Map<
+    string,
+    Set<{
+      id: string;
+      text: string;
+      signatures?: Array<[string, string]>;
+      promise: Promise<{ ok: boolean; mode?: string }>;
+    }>
+  >();
   /** Keyed by viewerKey — see SessionStream.viewerKey. */
   private streams = new Map<string, SessionStream>();
   /** Initial cwd per session — used for session save/restore. claudemon's
@@ -539,9 +550,66 @@ class ClaudemonSessionClient {
   }
 
   /** Send a chat message — only succeeds when claudemon reports mode=input. */
-  async message(sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> {
-    if (managerReplacementState.holdMessage(sessionId, text)) return { ok: true };
-    return this.messageDirect(sessionId, text);
+  async message(
+    sessionId: string,
+    text: string,
+    signatures?: Array<[string, string]>,
+  ): Promise<{ ok: boolean; mode?: string }> {
+    if (managerReplacementState.holdMessage(sessionId, text, signatures)) return { ok: true };
+    const pending = this.pendingMessages.get(sessionId) ?? new Set();
+    const frame = {
+      id: randomUUID(),
+      text,
+      signatures,
+      promise: undefined as unknown as Promise<{ ok: boolean; mode?: string }>,
+    };
+    frame.promise = this.messageDirect(sessionId, text)
+      .then(
+        (result) => {
+          managerReplacementState.noteInFlightMessage(
+            sessionId,
+            frame.id,
+            result.ok,
+            result.ok ? undefined : 'Daemon rejected the message',
+            !result.ok,
+          );
+          return result;
+        },
+        (error) => {
+          managerReplacementState.noteInFlightMessage(
+            sessionId,
+            frame.id,
+            false,
+            String(error),
+            error instanceof ManagerDeliveryRejected,
+          );
+          throw error;
+        },
+      )
+      .finally(() => {
+        pending.delete(frame);
+        if (!pending.size) this.pendingMessages.delete(sessionId);
+      });
+    pending.add(frame);
+    this.pendingMessages.set(sessionId, pending);
+    return frame.promise;
+  }
+
+  inFlightMessages(
+    sessionId: string,
+  ): Array<{ id: string; text: string; signatures?: Array<[string, string]> }> {
+    return [...(this.pendingMessages.get(sessionId) ?? [])]
+      .filter((f) => !managerReplacementState.acknowledged(f.id))
+      .map(({ id, text, signatures }) => ({ id, text, signatures }));
+  }
+  async waitForMessages(sessionIds: string[]): Promise<void> {
+    await Promise.allSettled(
+      sessionIds.flatMap((id) =>
+        [...(this.pendingMessages.get(id) ?? [])]
+          .filter((f) => !managerReplacementState.acknowledged(f.id))
+          .map((f) => f.promise),
+      ),
+    );
   }
 
   /** Host transaction only. Bypasses the durable handoff outbox, never IPC. */
@@ -555,6 +623,8 @@ class ClaudemonSessionClient {
       const body = (await res.json().catch(() => ({}) as any)) as { mode?: string };
       return { ok: false, mode: body.mode };
     }
+    if ([400, 401, 403, 404, 410, 413, 422, 429].includes(res.status))
+      throw new ManagerDeliveryRejected(res.status);
     if (!res.ok) throw new Error(`message HTTP ${res.status}`);
     return { ok: true };
   }

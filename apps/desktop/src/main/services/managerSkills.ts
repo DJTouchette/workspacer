@@ -350,8 +350,9 @@ function writeIfChanged(file: string, content: string): void {
  * logged and skipped: a manager there still has its doctrine (it rides the
  * kickoff message) and its facade tools, just no slash commands.
  */
-export function installManagerSkills(provider: AgentProvider = 'claude'): void {
+export function installManagerSkills(provider: AgentProvider = 'claude', strict = false): void {
   if (!agentSkillDir(provider, STANDUP_NAME)) {
+    if (strict) throw new Error('Manager skills cannot be installed for this provider');
     console.warn(
       `[managerSkills] ${provider} has no known personal-skills directory — ` +
         'skipping /standup, /checkpoint and /handoff for this manager',
@@ -376,7 +377,8 @@ export function installManagerSkills(provider: AgentProvider = 'claude'): void {
       const dir = skillDir(provider, old);
       if (dir) fs.rmSync(dir, { recursive: true, force: true });
     }
-  } catch {
-    /* installing the skills is best-effort */
+  } catch (error) {
+    if (strict) throw error;
+    /* installing the skills is best-effort for ordinary manager creation */
   }
 }

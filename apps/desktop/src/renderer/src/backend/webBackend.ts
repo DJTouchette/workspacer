@@ -1,3 +1,4 @@
+import { MANAGER_REPLACEMENT_UNAVAILABLE } from '../../../main/shared/managerReplacement';
 import { routingAPI } from '../../../main/shared/routingPreferences';
 import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/shared/usageReport';
 /**
@@ -881,6 +882,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         modelIdentity,
         contextWindow,
       }),
+    managerReplacement: async () => ({
+      available: false,
+      operations: [],
+      error: MANAGER_REPLACEMENT_UNAVAILABLE,
+    }),
     claudeHandoffBrief: (sessionId) =>
       client.call<{ ok: boolean; markdown?: string; path?: string; error?: string }>(
         'claude.handoffBrief',

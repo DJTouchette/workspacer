@@ -63,7 +63,14 @@ type FinishedWorker = Pick<ClaudeSessionState, 'sessionId'> &
   Partial<
     Pick<
       ClaudeSessionState,
-      'cwd' | 'label' | 'ambientState' | 'status' | 'conversation' | 'resultSchema' | 'statusLine'
+      | 'cwd'
+      | 'label'
+      | 'ambientState'
+      | 'status'
+      | 'conversation'
+      | 'resultSchema'
+      | 'statusLine'
+      | 'parentSessionId'
     >
   >;
 
@@ -100,9 +107,17 @@ function attachWorkerEscalation(entry: FleetMessageEntry, reply: string): void {
   else if (outcome?.error) entry.escalationError = outcome.error;
 }
 
+function finishSignature(entry: FleetMessageEntry, reply: string): string {
+  return (
+    `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''} ` +
+    `${entry.escalation ? 'escalated' : entry.escalationError ? 'invalid-escalation' : ''}`
+  );
+}
+
 class SupervisorNudge {
   private pending = new Map<string, PendingNudge>();
   private pendingFinished = new Map<string, PendingFinish>();
+  private inFlightFinished = new Map<string, Set<Promise<void>>>();
   /** Debounce timers for a block that has not yet survived BLOCK_DEBOUNCE_MS,
    *  keyed by the BLOCKED session's id (not the supervisor — a worker can only
    *  be blocked once at a time, so one timer per worker is enough to cover
@@ -180,7 +195,11 @@ class SupervisorNudge {
       sessionId: session.sessionId,
       blockedOn: kind,
     };
-    for (const supId of supervisors) {
+    for (const supId of new Set(
+      [...supervisors, ...(session.parentSessionId ? [session.parentSessionId] : [])]
+        .filter((id) => !managerReplacementState.parkedSuccessor(id))
+        .map((id) => managerReplacementState.automaticWakeTarget(id)),
+    )) {
       const entry = this.pending.get(supId);
       if (entry) {
         entry.entries.set(session.sessionId, blockedEntry);
@@ -256,6 +275,21 @@ class SupervisorNudge {
    */
   reassignPendingFinish(oldParentId: string, newParentId: string): void {
     if (oldParentId === newParentId) return;
+    const block = this.pending.get(oldParentId);
+    if (block) {
+      clearTimeout(block.timer);
+      this.pending.delete(oldParentId);
+      const existing = this.pending.get(newParentId);
+      if (existing) for (const [id, entry] of block.entries) existing.entries.set(id, entry);
+      else {
+        const timer = setTimeout(() => {
+          this.pending.delete(newParentId);
+          void this.send(newParentId, block.entries);
+        }, COALESCE_MS);
+        timer.unref?.();
+        this.pending.set(newParentId, { timer, entries: block.entries });
+      }
+    }
     const pending = this.pendingFinished.get(oldParentId);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -314,6 +348,7 @@ class SupervisorNudge {
           // Same no-task gate as onFinished: a child idling with no user turn
           // was never given its task — nothing finished, nothing to catch up.
           hasReceivedTask(c) &&
+          !this.alreadyReportedFinish(c) &&
           // The manager has not acted since this child finished…
           c.lastActivity > manager.lastActivity &&
           // …and the finish is old enough that a normal wake would have landed.
@@ -338,6 +373,23 @@ class SupervisorNudge {
       });
       void this.sendCatchUp(manager.sessionId, entries);
     }
+  }
+
+  private alreadyReportedFinish(session: FinishedWorker): boolean {
+    const reported =
+      this.lastReportedReply.get(session.sessionId) ??
+      managerReplacementState.signature(session.sessionId);
+    if (!reported) return false;
+    const reply = lastAssistantReply(session);
+    const entry: FleetMessageEntry = {
+      sessionId: session.sessionId,
+      label: session.label ?? '',
+      cwd: session.cwd ?? '',
+      stopped: session.status === 'ended',
+      failed: workerFailureReason(session, reply) ?? undefined,
+    };
+    attachWorkerEscalation(entry, reply);
+    return reported === finishSignature(entry, reply);
   }
 
   private async sendCatchUp(parentId: string, entries: FleetMessageEntry[]): Promise<void> {
@@ -372,7 +424,35 @@ class SupervisorNudge {
    * final message (capped, truncation announced) so the manager never fetches
    * a whole conversation just to read a report.
    */
-  private async sendFinished(
+  private sendFinished(
+    parentId: string,
+    workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
+  ): Promise<void> {
+    const pending = this.inFlightFinished.get(parentId) ?? new Set<Promise<void>>();
+    const sending = this.deliverFinished(parentId, workers).finally(() => {
+      pending.delete(sending);
+      if (!pending.size) this.inFlightFinished.delete(parentId);
+    });
+    pending.add(sending);
+    this.inFlightFinished.set(parentId, pending);
+    return sending;
+  }
+
+  /** Drain coalesced and already-capturing completions into the host outbox
+   * before retirement. The same live verification and signatures still apply. */
+  async flushReplacementFinishes(parentIds: string[]): Promise<void> {
+    for (const id of parentIds) {
+      const pending = this.pendingFinished.get(id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingFinished.delete(id);
+        await this.sendFinished(id, pending.workers);
+      }
+      await Promise.all([...(this.inFlightFinished.get(id) ?? [])]);
+    }
+  }
+
+  private async deliverFinished(
     parentId: string,
     workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
   ): Promise<void> {
@@ -384,8 +464,10 @@ class SupervisorNudge {
         session.status === 'ended' ||
         session.ambientState === undefined ||
         session.ambientState === 'idle';
-      if (!genuinelyIdle) continue; // resumed working — not a finish after all
-      if (!hasReceivedTask(session)) continue; // still no task turn — boot idle
+      if (!genuinelyIdle || !hasReceivedTask(session)) {
+        managerReplacementState.clearFinish(session.sessionId);
+        continue; // resumed work / boot idle is not a finish
+      }
       if (session.status === 'ended') entry.stopped = true;
       // Fall back to the schedule-time excerpt when the live conversation has
       // no assistant turn to re-read (untracked or already-evicted session).
@@ -428,17 +510,29 @@ class SupervisorNudge {
       // Stop with no fresh output (PER_TURN_WAKE_FINDING.md 1b). A genuinely
       // different reply, a fresh stop, or a newly-surfaced failure always
       // changes the signature and still wakes the parent (1a).
-      const signature =
-        `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''} ` +
-        `${entry.escalation ? 'escalated' : entry.escalationError ? 'invalid-escalation' : ''}`;
+      const signature = finishSignature(entry, reply);
       if (
         (this.lastReportedReply.get(session.sessionId) ??
           managerReplacementState.signature(session.sessionId)) === signature
-      )
+      ) {
+        managerReplacementState.clearFinish(session.sessionId, reply);
         continue;
+      }
+      const captureOwner = managerReplacementState.workerWakeTarget(
+        session.parentSessionId ?? parentId,
+        session.sessionId,
+      );
       entry.reviewEvidenceId = await fleetReviewStore
-        .capture(parentId, session.sessionId, entry.stopped ? 'session-ended' : 'turn-ended')
+        .capture(captureOwner, session.sessionId, entry.stopped ? 'session-ended' : 'turn-ended')
         .catch(() => undefined);
+      const currentOwner = managerReplacementState.workerWakeTarget(
+        session.parentSessionId ?? parentId,
+        session.sessionId,
+      );
+      if (!entry.reviewEvidenceId && currentOwner !== captureOwner)
+        entry.reviewEvidenceId = await fleetReviewStore
+          .capture(currentOwner, session.sessionId, entry.stopped ? 'session-ended' : 'turn-ended')
+          .catch(() => undefined);
       // Capture can take time: preserve the finish gate across that await.
       if (
         session.status !== 'ended' &&
@@ -447,7 +541,10 @@ class SupervisorNudge {
       )
         continue;
       const currentReply = lastAssistantReply(session);
-      if (currentReply && currentReply !== reply) continue;
+      if (currentReply && currentReply !== reply) {
+        managerReplacementState.clearFinish(session.sessionId, reply);
+        continue;
+      }
       try {
         dispatchHistoryStore.validated(
           session.sessionId,
@@ -471,34 +568,48 @@ class SupervisorNudge {
     const signatureById = new Map(delivered);
     const escalated = entries.filter((entry) => entry.escalation);
     const completed = entries.filter((entry) => !entry.escalation);
-    for (const [kind, group] of [
+    const batches: Array<{
+      kind: 'worker-escalated' | 'worker-finished';
+      group: FleetMessageEntry[];
+      target: string;
+    }> = [];
+    for (const [kind, entries] of [
       ['worker-escalated', escalated],
       ['worker-finished', completed],
     ] as const) {
+      const targets = new Map<string, FleetMessageEntry[]>();
+      for (const entry of entries) {
+        const parent = workers.get(entry.sessionId)?.session.parentSessionId ?? parentId;
+        const target = managerReplacementState.workerWakeTarget(parent, entry.sessionId);
+        const group = targets.get(target) ?? [];
+        group.push(entry);
+        targets.set(target, group);
+      }
+      for (const [target, group] of targets) batches.push({ kind, group, target });
+    }
+    for (const { kind, group, target } of batches) {
       if (group.length === 0) continue;
+      const text =
+        buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId));
+      const pairs = group.map(
+        (e) => [e.sessionId, signatureById.get(e.sessionId)!] as [string, string],
+      );
       try {
-        const target = managerReplacementState.wakeTarget(parentId);
-        const text =
-          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId));
-        const pairs = group.map(
-          (e) => [e.sessionId, signatureById.get(e.sessionId)!] as [string, string],
-        );
         const response = managerReplacementState.holdMessage(target, text, pairs)
           ? { ok: true }
-          : await claudemonSessionClient.message(target, text);
+          : await claudemonSessionClient.message(target, text, pairs);
         if (response?.ok === false) continue;
       } catch {
-        /* the parent may have just ended — best-effort */
-        continue; // NOT delivered: leave this group's signatures unrecorded
-      }
+        continue;
+      } // the client journals any transition-time ambiguity
       // Book only entries whose distinct wake actually landed. A mixed batch
       // emits one escalation wake and one completion wake; failure of either
       // must not silence the next identical edge for that group.
       for (const entry of group) {
         const signature = signatureById.get(entry.sessionId);
         if (signature) {
-          managerReplacementState.recordSignature(entry.sessionId, signature);
           this.lastReportedReply.set(entry.sessionId, signature);
+          managerReplacementState.recordSignature(entry.sessionId, signature);
         }
       }
     }
@@ -539,7 +650,10 @@ class SupervisorNudge {
       // is up) and delivers once its prompt settles — no raw-PTY fallback
       // needed (typing into an open dialog could answer it by accident). A
       // rejection means the supervisor session has ended; nothing to do.
-      await claudemonSessionClient.message(supervisorId, text);
+      await claudemonSessionClient.message(
+        managerReplacementState.automaticWakeTarget(supervisorId),
+        text,
+      );
     } catch {
       /* the supervisor may have just ended — best-effort */
     }

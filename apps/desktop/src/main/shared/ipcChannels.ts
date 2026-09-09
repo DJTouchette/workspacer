@@ -80,6 +80,7 @@ export const IPC = {
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
   CLAUDE_SET_EFFORT: 'claude:setEffort',
   CLAUDE_SET_MODEL: 'claude:setModel',
+  MANAGER_REPLACEMENT: 'manager:replacement', // owned local desktop only
   CLAUDE_HANDOFF_BRIEF: 'claude:handoffBrief',
   CLAUDE_HANDOFF_AGENT_BRIEF: 'claude:handoffAgentBrief',
   CLAUDE_APPROVE: 'claude:approve',

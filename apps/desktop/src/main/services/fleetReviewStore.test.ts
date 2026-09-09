@@ -55,6 +55,26 @@ const req = (id: string, file?: string) => ({
   ...(file === undefined ? {} : { file }),
 });
 
+it('manager adoption preserves immutable captures, transfers read access and future allocation capture', async () => {
+  const wt = await allocate();
+  write(wt.path!, 'first.txt', 'manager handoff change\n');
+  commit(wt.path!);
+  const id = (await fleetReviewStore.capture('manager', 'worker', 'turn-ended'))!;
+  const before = fleetReviewStore.read(req(id, 'first.txt'));
+  fleetReviewStore.adoptOwner('manager', 'successor');
+  expect(fleetReviewStore.read({ ...req(id, 'first.txt'), ownerSessionId: 'successor' })).toEqual(
+    before,
+  );
+  expect(fleetReviewStore.read(req(id, 'first.txt'))).toEqual(before);
+  expect(fleetReviewStore.read({ ...req(id), ownerSessionId: 'unrelated' }).ok).toBe(false);
+  expect(await fleetReviewStore.capture('manager', 'worker', 'turn-ended')).toBeUndefined();
+  expect(await fleetReviewStore.capture('successor', 'worker', 'turn-ended')).toBeTruthy();
+  fleetReviewStore.adoptOwner('successor', 'next');
+  expect(fleetReviewStore.read({ ...req(id, 'first.txt'), ownerSessionId: 'next' })).toEqual(
+    before,
+  );
+});
+
 it('production allocation, finish wake, and teardown retain a full multi-commit range across restart and manager HEAD changes', async () => {
   const wt = await allocate();
   write(wt.path!, 'first.txt', 'first commit\n');

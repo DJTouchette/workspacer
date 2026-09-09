@@ -451,7 +451,8 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   // The install is routed to the directory THIS harness reads
   // (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format).
   if (opts.manager) {
-    installManagerSkills(provider);
+    if (opts.replacementSessionId) installManagerSkills(provider, true);
+    else installManagerSkills(provider);
   }
   // Response cards are a capability of the app, not of one role, so every
   // managed session gets the skill — discovered natively where the harness has
@@ -489,6 +490,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     { env, args: extraArgs, bin },
   );
   claudeSessionStore.setSpawnMeta(managedId, {
+    cwd,
     label: opts.label,
     parentSessionId: opts.parentSessionId,
     // The nudge router (supervisorSessionIds) is keyed on this flag: the
@@ -726,6 +728,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     },
   );
   claudeSessionStore.setSpawnMeta(sessionId, {
+    cwd,
     label: opts.label,
     parentSessionId: opts.parentSessionId,
     // The manager is the wake target — same flag, same reason as the managed

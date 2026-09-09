@@ -37,6 +37,7 @@ interface Allocation extends ReviewAllocation {
 interface State {
   allocations: Allocation[];
   records: FleetReviewEvidence[];
+  readers?: Record<string, string[]>;
 }
 function credentialPath(file: string): boolean {
   return file
@@ -107,8 +108,40 @@ export class FleetReviewStore {
       state.records.length
     )
       state.records.shift();
+    if (state.readers) {
+      const retained = new Set(state.records.map((e) => e.id));
+      state.readers = Object.fromEntries(
+        Object.entries(state.readers).filter(([id]) => retained.has(id)),
+      );
+    }
     atomicWriteFileSync(this.filename(), JSON.stringify(state), { mode: 0o600 });
   }
+  /** Transfer current allocation access without rewriting immutable captures.
+   * Earlier managers retain their historical view; unrelated callers gain none. */
+  adoptOwner(oldId: string, newId: string): void {
+    if (!fs.existsSync(this.filename())) return;
+    if (fs.statSync(this.filename()).size > REVIEW_LIMITS.totalBytes)
+      throw new Error('Review history is oversized; ownership was not changed');
+    const state = JSON.parse(fs.readFileSync(this.filename(), 'utf8')) as State;
+    if (!Array.isArray(state.allocations) || !Array.isArray(state.records))
+      throw new Error('Review history is invalid; ownership was not changed');
+    let changed = false;
+    for (const a of state.allocations)
+      if (a.ownerSessionId === oldId) {
+        a.ownerSessionId = newId;
+        changed = true;
+      }
+    for (const e of state.records) {
+      const readers = state.readers?.[e.id] ?? [];
+      if ((e.ownerSessionId === oldId || readers.includes(oldId)) && !readers.includes(newId)) {
+        state.readers ??= {};
+        state.readers[e.id] = [...readers, newId];
+        changed = true;
+      }
+    }
+    if (changed) this.save(state);
+  }
+
   register(ownerSessionId: string, workerSessionId: string, allocation: ReviewAllocation): void {
     const state = this.load();
     state.allocations = state.allocations.filter((a) => a.workerSessionId !== workerSessionId);
@@ -259,15 +292,10 @@ export class FleetReviewStore {
     }
     // Reload after async Git: do not undo a concurrent revocation or another capture.
     const current = this.load();
-    if (
-      !current.allocations.some(
-        (x) =>
-          x.ownerSessionId === owner &&
-          x.workerSessionId === worker &&
-          x.generation === a.generation,
-      )
-    )
-      return undefined;
+    const currentAllocation = current.allocations.find(
+      (x) => x.workerSessionId === worker && x.generation === a.generation,
+    );
+    if (!currentAllocation) return undefined; // revoked or replaced generation
     const previous = [...current.records]
       .reverse()
       .find((x) => x.ownerSessionId === owner && x.workerSessionId === worker);
@@ -279,6 +307,10 @@ export class FleetReviewStore {
       previous.allocationId === a.generation
     )
       return previous.id;
+    if (currentAllocation.ownerSessionId !== owner) {
+      current.readers ??= {};
+      current.readers[e.id] = [currentAllocation.ownerSessionId];
+    }
     current.records.push(e);
     this.save(current);
     return e.id;
@@ -287,10 +319,12 @@ export class FleetReviewStore {
   read(request: unknown): FleetReviewResponse {
     const r = this.validate(request);
     if (!r) return { ok: false, error: 'Invalid review request' };
-    const e = this.load().records.find(
+    const state = this.load();
+    const e = state.records.find(
       (e) =>
         e.id === r.evidenceId &&
-        e.ownerSessionId === r.ownerSessionId &&
+        (e.ownerSessionId === r.ownerSessionId ||
+          state.readers?.[e.id]?.includes(r.ownerSessionId)) &&
         e.workerSessionId === r.workerSessionId,
     );
     if (!e)

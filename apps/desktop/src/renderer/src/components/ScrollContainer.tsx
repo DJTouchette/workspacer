@@ -199,6 +199,8 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <ClaudePane
+            workspaceId={callbacks.ownerAgentId}
+            manager={callbacks.allAgents?.find((a) => a.id === callbacks.ownerAgentId)?.manager}
             paneId={pane.id}
             title={pane.title}
             isActive={isActive}

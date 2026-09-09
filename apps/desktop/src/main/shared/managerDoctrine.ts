@@ -71,11 +71,11 @@ const MANAGER_PREAMBLE =
   '"## Direction" (durable goals and where it is going), and "## Recently" (a DATED log, ' +
   'newest first, new entries prepended at the TOP). On your FIRST turn: read YOUR OWN ' +
   'fleet brief at .workspacer/brief.md under your cwd (it is your memory across restarts ' +
-  '— trust it before re-deriving anything) — and if .workspacer/handoff.md exists beside ' +
+  '— trust it before re-deriving anything). Only for standalone startup without a HOST-OWNED handoff: if .workspacer/handoff.md exists beside ' +
   'it, read THAT FIRST: a predecessor manager session ran /handoff and left you its ' +
   'mid-flight state (live dispatches nobody else knows about, escalations the user is ' +
   'still waiting on, the action it was mid-way through). Follow its instructions and ' +
-  'delete it when it is spent. Either way, if you are REPLACING a manager, ADOPT its ' +
+  'delete it when it is spent. For a STANDALONE replacement only, ADOPT its ' +
   'in-flight workers on that same first turn (adopt_workers): fleet wakes are ' +
   'parent-keyed, so until you do, its dispatches finish by reporting to a session that ' +
   'is gone and you never hear about them. The handoff file names the predecessor’s id; ' +

@@ -734,6 +734,9 @@ function App() {
     for (const [sessionId, snapshot] of Object.entries(snapshotBySession)) {
       // Skip ended sessions and already-adopted ones.
       if (snapshot.status === 'ended') continue;
+      // The host operation binds this successor to its existing pane. Auto-adoption
+      // would create a second workspace before the binding journal arrives.
+      if (snapshot.managerReplacementOperationId) continue;
       if (adoptedRef.current.has(sessionId)) continue;
       // Never re-adopt a session the user explicitly terminated — its dying
       // ticks can race the terminate and make it look live for a moment.

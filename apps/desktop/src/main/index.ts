@@ -1,3 +1,4 @@
+import { enableManagerReplacementHost } from './services/managerReplacement';
 import { noteRuntimePending, noteRuntimePhase } from './services/agentRuntimeStatus';
 import { app, BrowserWindow, Menu, protocol, net, session, ipcMain } from 'electron';
 import * as path from 'path';
@@ -23,7 +24,7 @@ import {
   startClaudemonEventBridge,
   stopClaudemonEventBridge,
 } from './services/claudemonEventBridge';
-import { startHub, stopHub } from './services/hubDaemon';
+import { startHub, stopHub, isHubAdopted } from './services/hubDaemon';
 import { getRemoteServer } from './services/remoteServer';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { listLiveSessionIds } from './services/recentSessions';
@@ -404,19 +405,26 @@ function createWindow(): void {
             // The MCP facade bridges hub capabilities to MCP tools for supervisor
             // sessions. Started after the hub so its bus connection has a target.
             // Optional: a failure only costs the supervisor its action tools.
-            startMcpFacade().catch((err) => {
-              notifySystem({
-                level: 'warn',
-                key: 'facade-start',
-                title: 'Fleet Manager action tools are unavailable',
-                detail:
-                  'The MCP facade failed to start. Direct local agents may still work. Open logs for details.',
+            startMcpFacade()
+              .then(() => {
+                if (!isHubAdopted())
+                  void enableManagerReplacementHost().catch((error) =>
+                    console.warn('[manager-handoff] recovery needs attention', error),
+                  );
+              })
+              .catch((err) => {
+                notifySystem({
+                  level: 'warn',
+                  key: 'facade-start',
+                  title: 'Fleet Manager action tools are unavailable',
+                  detail:
+                    'The MCP facade failed to start. Direct local agents may still work. Open logs for details.',
+                });
+                console.error(
+                  '[main] failed to start mcp facade — supervisors will lack action tools:',
+                  err,
+                );
               });
-              console.error(
-                '[main] failed to start mcp facade — supervisors will lack action tools:',
-                err,
-              );
-            });
             // Reap per-session facade tokens whose session ended while the
             // desktop wasn't running (eviction-time revocation only fires while
             // we're alive). Sessions survive desktop restarts, so this must be

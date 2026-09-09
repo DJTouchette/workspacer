@@ -256,6 +256,9 @@ export interface ContextInventoryInfo {
 }
 
 export interface ClaudeSessionSnapshot {
+  isWakeTarget?: boolean;
+  isFleetManager?: boolean;
+  managerReplacementOperationId?: string;
   executionEngine?: ExecutionEngineMetadata;
   sessionId: string;
   cwd: string;

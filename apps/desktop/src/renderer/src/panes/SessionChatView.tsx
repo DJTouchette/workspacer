@@ -1,3 +1,4 @@
+import { ManagerHandoffStatus } from '../components/claude/ManagerHandoffStatus';
 import { FirstTaskGuidance } from '../components/FirstTaskGuidance';
 import '@xterm/xterm/css/xterm.css';
 import { ArrowRightLeft, Clock, KeyRound, PanelRight } from 'lucide-react';
@@ -28,6 +29,11 @@ import { CONVERSATION_PAGE_SIZE, type useClaudePaneModel } from './ClaudePane';
 /** The single chat/compose/inspection renderer. Lifecycle and transport remain in ClaudePane. */
 export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
   const {
+    isManager,
+    managerHandoffBusy,
+    handleManagerHandoff,
+    replacementOperation,
+    replacementError,
     inFleet,
     agentName,
     approvalDismissedAt,
@@ -550,6 +556,15 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                   onDecline={handleDecline}
                 />
 
+                {isManager && (
+                  <ManagerHandoffStatus
+                    operation={replacementOperation}
+                    error={replacementError}
+                    provider={provider}
+                    cwd={cwd}
+                  />
+                )}
+
                 {/* Composer / Input area — session pills live inside its bottom row */}
                 {sendError && (
                   <div
@@ -737,14 +752,16 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                 {/* Hand off to any provider (including the same one — fresh context,
             same harness) — brief goes to ~/.workspacer/handoffs */}
                 <button
-                  onClick={() => setHandoffOpen(true)}
+                  onClick={() => (isManager ? void handleManagerHandoff() : setHandoffOpen(true))}
                   title={
-                    handoffBusy === 'agent'
-                      ? 'Waiting for the agent to write its handoff brief…'
-                      : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
+                    isManager
+                      ? 'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only'
+                      : handoffBusy === 'agent'
+                        ? 'Waiting for the agent to write its handoff brief…'
+                        : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'
                   }
                   className="wks-composer-icon-btn"
-                  disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
+                  disabled={!!handoffBusy || managerHandoffBusy || !(sessionId ?? attachSessionId)}
                   style={{
                     ...toggleBtnStyle,
                     display: 'flex',
@@ -755,7 +772,7 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                 >
                   <ArrowRightLeft size={13} strokeWidth={1.9} />
                 </button>
-                {handoffOpen && (
+                {!isManager && handoffOpen && (
                   <HandoffDialog
                     provider={provider ?? 'claude'}
                     snapshot={session}

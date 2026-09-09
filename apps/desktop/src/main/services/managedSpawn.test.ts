@@ -91,7 +91,10 @@ vi.mock('./agentProviders', () => ({
 // Mutable per-test config — reset in beforeEach, mutated by the role
 // full-access tests (the flag is config-resolved inside spawnManagedAgent).
 let mockConfig: Record<string, unknown>;
-vi.mock('./configService', () => ({ configService: { getConfig: () => mockConfig } }));
+vi.mock('./configService', () => ({
+  getConfigDir: () => process.env.TMPDIR!,
+  configService: { getConfig: () => mockConfig },
+}));
 
 const managedFacadeInstructions = vi.fn(() => 'FACADE');
 const facadeSessionMcpConfig = vi.fn(() => '/cfg/session-facade.json');
@@ -109,6 +112,7 @@ const mintSessionFacadeToken = vi.fn(() => ({
   created: '2026-01-01T00:00:00.000Z',
 }));
 vi.mock('./remoteTokens', () => ({
+  sessionFacadeGrantFingerprint: () => undefined,
   mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
   // Imported by the REAL fullAccessGrants module (the config-resolved grant
   // formula under test); never called by a spawn.

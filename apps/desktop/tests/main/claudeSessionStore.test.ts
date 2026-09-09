@@ -28,6 +28,7 @@ vi.mock('electron', () => ({
 
 // configService — used by agentNotifier.cfg() and claudeSessionStore.rememberModel()
 vi.mock('../../src/main/services/configService', () => ({
+  getConfigDir: () => process.env.TMPDIR!,
   configService: {
     getConfig: vi.fn(() => ({
       notifications: { enabled: false },

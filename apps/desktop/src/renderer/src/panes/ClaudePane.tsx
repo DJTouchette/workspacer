@@ -1,3 +1,4 @@
+import { managerReplacementRequest, useManagerReplacementStatus } from '../lib/managerReplacement';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import { Terminal } from '@xterm/xterm';
@@ -118,6 +119,8 @@ function describeAnswers(
 interface ClaudePaneProps {
   paneId: string;
   title: string;
+  workspaceId?: string;
+  manager?: boolean;
   isActive: boolean;
   cwd?: string;
   profileId?: string;
@@ -158,6 +161,8 @@ type PendingUserTurn = ConversationTurn & { queued?: boolean };
 export const useClaudePaneModel = ({
   paneId,
   title,
+  workspaceId,
+  manager,
   isActive: paneActive,
   cwd,
   profileId,
@@ -1902,6 +1907,32 @@ export const useClaudePaneModel = ({
   // ~/.workspacer/handoffs/ and App spawns the successor — through the normal
   // workspacer spawn path — with its composer pre-filled to read it. Any
   // harness → any harness.
+  const replacementStatus = useManagerReplacementStatus();
+  const isManager = !!(manager || session?.isWakeTarget || session?.isFleetManager);
+  const replacementOperation = [...replacementStatus.operations]
+    .reverse()
+    .find(
+      (o) =>
+        o.paneId === paneId &&
+        [o.sourceSessionId, o.successorSessionId].includes(sessionId ?? attachSessionId ?? ''),
+    );
+  const [managerHandoffError, setManagerHandoffError] = useState<string>();
+  const managerHandoffBusy =
+    !!replacementOperation &&
+    !['complete', 'failed', 'cancelled', 'recovery-required'].includes(replacementOperation.phase);
+  const handleManagerHandoff = useCallback(async () => {
+    setManagerHandoffError(undefined);
+    const sid = sessionId ?? attachSessionId;
+    if (sid) {
+      const result = await managerReplacementRequest({
+        action: 'start',
+        sourceSessionId: sid,
+        paneId,
+        workspaceId: workspaceId ?? '',
+      });
+      setManagerHandoffError(result.error);
+    }
+  }, [sessionId, attachSessionId, paneId, workspaceId]);
   const [handoffOpen, setHandoffOpen] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState<'agent' | 'mechanical' | null>(null);
   const handleHandoff = useCallback(
@@ -2301,6 +2332,11 @@ export const useClaudePaneModel = ({
   }, [isActive, sessionId, conversation, visibleCount]);
 
   return {
+    isManager,
+    managerHandoffBusy,
+    handleManagerHandoff,
+    replacementOperation,
+    replacementError: managerHandoffError,
     inFleet,
     agentName,
     approvalDismissedAt,

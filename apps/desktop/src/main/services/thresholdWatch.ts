@@ -418,6 +418,13 @@ export class ThresholdWatcher {
     return snapshotWatch(watch);
   }
 
+  /** In-process ownership follows a local manager transfer. Never re-arms a
+   * fired watch or creates a second subscription. */
+  reassignWatcher(oldId: string, newId: string): void {
+    for (const watch of this.watches.values())
+      if (watch.watcherSessionId === oldId) watch.watcherSessionId = newId;
+  }
+
   /** Armed watches, for tests and for the arm() response's own accounting. */
   list(): ThresholdWatch[] {
     return [...this.watches.values()].map(snapshotWatch);

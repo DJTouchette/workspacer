@@ -63,6 +63,7 @@ export const LOCAL_TERMINAL = [
  * they reach native/OS/main-process facilities the bus doesn't expose.
  */
 export const HOST_ONLY = [
+  'managerReplacement', // host-owned local transaction; remote/web explicitly unavailable
   // Captured Fleet review evidence is local main-process state.  It remains
   // owner/selector-validated by the IPC store and deliberately has no bus or
   // remote fallback.

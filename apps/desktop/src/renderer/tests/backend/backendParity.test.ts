@@ -229,6 +229,22 @@ function repoFile(...segments: string[]): string {
 }
 
 describe('backend parity — every ElectronAPI method is triaged into one bucket', () => {
+  it('manager replacement reaches local preload in bridged mode and is explicitly unavailable remotely', async () => {
+    const replace = vi.fn().mockResolvedValue({ available: true, operations: [] });
+    const ipc = { platform: 'linux', managerReplacement: replace } as unknown as ElectronAPI;
+    const local = createBridgedBackend(ipc, 'token', 'ws://fixture/bus');
+    expect(await local.managerReplacement?.({ action: 'list' })).toEqual({
+      available: true,
+      operations: [],
+    });
+    expect(replace).toHaveBeenCalledExactlyOnceWith({ action: 'list' });
+    const remote = createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus');
+    expect(await remote.managerReplacement?.({ action: 'list' })).toMatchObject({
+      available: false,
+      error: expect.stringContaining('local desktop'),
+    });
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
   it('the buckets partition the web backend surface exactly (no untriaged method)', () => {
     const runtime = webBackendMethodKeys();
     const buckets: Record<string, readonly string[]> = {

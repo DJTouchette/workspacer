@@ -80,6 +80,10 @@ let mainWindow: BrowserWindow | null = null;
 let stopped = false;
 let backoff = 200;
 let connected = false;
+let ownedMethods = new Set<string>();
+export function ownsHubCapability(method: string): boolean {
+  return !stopped && connected && ownedMethods.has(method);
+}
 
 // Outbound calls: main as a *caller* (the inverse of the provider role above).
 // Lets the renderer reach hub-owned capabilities — e.g. the shared layout
@@ -281,6 +285,7 @@ function connect(): void {
         // the degraded set.
         const requested = Array.from(handlers.keys());
         const accepted = new Set(frame.methods ?? []);
+        ownedMethods = accepted;
         const withheld = requested.filter((m) => !accepted.has(m));
         if (withheld.length > 0) {
           console.warn(
@@ -309,6 +314,7 @@ function connect(): void {
 
   ws.on('close', () => {
     connected = false;
+    ownedMethods.clear();
     // Fail any in-flight outbound calls — their socket is gone.
     for (const [id, c] of pending) {
       clearTimeout(c.timer);
@@ -350,6 +356,8 @@ export function startHubClient(): void {
 
 export function stopHubClient(): void {
   stopped = true;
+  connected = false;
+  ownedMethods.clear();
   try {
     ws?.close();
   } catch {

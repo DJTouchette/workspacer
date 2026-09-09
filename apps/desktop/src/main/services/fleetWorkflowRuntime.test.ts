@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DispatchTask } from '../shared/dispatchHistory';
 import { WORKFLOW_STARTERS } from '../shared/fleetWorkflow';
 const fixture = vi.hoisted(() => ({ task: undefined as DispatchTask | undefined }));
-vi.mock('./configService', () => ({ configService: { getConfig: () => ({}) } }));
+vi.mock('./configService', () => ({
+  getConfigDir: () => process.env.TMPDIR!,
+  configService: { getConfig: () => ({}) },
+}));
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: { getSnapshot: () => ({ isWakeTarget: true, status: 'active' }) },
 }));

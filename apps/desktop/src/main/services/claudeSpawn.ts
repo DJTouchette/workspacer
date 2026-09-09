@@ -374,6 +374,7 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   // Record name/parent before the session registers so adopted cards are
   // enriched from the very first hook event.
   claudeSessionStore.setSpawnMeta(sessionId, {
+    cwd,
     label: opts.label,
     parentSessionId: opts.parentSessionId,
     isWakeTarget: opts.manager,

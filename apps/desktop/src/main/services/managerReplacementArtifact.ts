@@ -17,6 +17,8 @@ export interface ManagerHandoffArtifact {
   nextAction: string;
 }
 export function createArtifactPath(cwd: string, operationId: string): string {
+  if (!/^[0-9a-f-]{36}$/.test(operationId))
+    throw new Error('Invalid manager handoff operation identity');
   const root = fs.realpathSync(cwd);
   let dir = root;
   for (const part of ['.workspacer', 'manager-handoffs', operationId]) {
@@ -86,7 +88,11 @@ export function validateManagerArtifact(
     throw new Error(
       'Handoff checkpoint, identity, worker instructions, tasks or pending-decision protocol is invalid',
     );
-  const roots = new Set([op.launch.options.cwd!, ...op.metadata.map((m) => m.cwd)]);
+  const roots = new Set([
+    op.launch.options.cwd!,
+    ...op.metadata.map((m) => m.cwd),
+    ...(op.projectCwds ?? []),
+  ]);
   const fleetBrief = path.join(op.launch.options.cwd!, '.workspacer', 'brief.md');
   if (!a.checkpoint.files.some((f) => f.path === fleetBrief))
     throw new Error('Checkpoint must include the fleet brief');
@@ -96,7 +102,9 @@ export function validateManagerArtifact(
       !roots.has(path.dirname(path.dirname(f.path))) ||
       path.basename(path.dirname(f.path)) !== '.workspacer' ||
       !['brief.md', 'brief.archive.md'].includes(path.basename(f.path)) ||
+      fs.realpathSync(f.path) !== f.path ||
       fs.lstatSync(f.path).isSymbolicLink() ||
+      !fs.lstatSync(f.path).isFile() ||
       fs.statSync(f.path).size > 2 * 1024 * 1024 ||
       artifactHash(fs.readFileSync(f.path, 'utf8')) !== f.sha256
     )
@@ -118,7 +126,7 @@ export function validateManagerArtifact(
 export function preparationPrompt(op: ReplacementRecord): string {
   return (
     `HOST-OWNED MANAGER HANDOFF ${op.operationId}. Run /checkpoint first. This is preparation only: do not dispatch, adopt, terminate, ask the user to reopen, or continue task actions. Preserve pending user decisions and exact worker instructions. The host owns replacement and adoption. Standalone /handoff instructions to terminate/reopen do not apply.\n` +
-    `Write exactly ${op.artifactPath} as JSON matching this example (all listed workers and tasks are required; fill the text from your context):\n` +
+    `Checkpoint project roots: ${JSON.stringify(op.projectCwds ?? [])}. If you know of any owned worker missing from the listed IDs, especially a remote or still-allocating dispatch, do not emit a receipt: explain the missing ownership instead. Never drop a known worker to fit this protocol.\nWrite exactly ${op.artifactPath} as JSON matching this example (all listed workers and tasks are required; fill the text from your context):\n` +
     JSON.stringify(
       {
         version: 1,

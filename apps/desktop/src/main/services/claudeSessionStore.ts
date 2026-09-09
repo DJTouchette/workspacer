@@ -1,3 +1,8 @@
+import { fleetReviewStore } from './fleetReviewStore';
+import {
+  ManagerReplacementUnavailable,
+  ManagerOwnershipUnchanged,
+} from '../shared/managerReplacement';
 import { managerReplacementState, type ReplacementMetadata } from './managerReplacementState';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import * as path from 'path';
@@ -444,6 +449,9 @@ export interface ClaudeSessionState {
    *  worker finishes (see supervisorNudge). Its only input is `opts.manager`
    *  at spawn. */
   isWakeTarget?: boolean;
+  /** Display-only remote manager identity; never a local wake target. */
+  isFleetManager?: boolean;
+  managerReplacementOperationId?: string;
   /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
   provider?: string;
   /** Claude sessions only: 'stream' when the session runs on the headless
@@ -695,6 +703,7 @@ class ClaudeSessionStore {
     string,
     {
       label?: string;
+      cwd?: string;
       parentSessionId?: string;
       isWakeTarget?: boolean;
       provider?: string;
@@ -740,6 +749,7 @@ class ClaudeSessionStore {
     sessionId: string,
     meta: {
       label?: string;
+      cwd?: string;
       parentSessionId?: string;
       isWakeTarget?: boolean;
       provider?: string;
@@ -757,6 +767,8 @@ class ClaudeSessionStore {
     // A spawn onto this id supersedes whatever life scheduled an eviction for
     // it; this is the earliest point in a restart, before any hook has landed.
     this.cancelEviction(sessionId);
+    if (meta.cwd && (meta.parentSessionId || meta.isWakeTarget))
+      managerReplacementState.rememberChild({ sessionId, ...meta, cwd: meta.cwd });
     this.spawnMeta.set(sessionId, meta);
     // A restart-with-settings re-spawns onto an id that may still have a live
     // entry — refresh its settings in place so the pills track the request.
@@ -887,6 +899,12 @@ class ClaudeSessionStore {
     if (!session) return;
     this.advanceModelSelectionEpoch(sessionId, selection, true);
     session.requestedSelection = selection;
+    if (session.isWakeTarget && !session.hub)
+      managerReplacementState.updateLaunch(sessionId, {
+        model: legacyModel ?? selection.model,
+        modelIdentity: selection.model,
+        contextWindow: selection.contextWindow,
+      });
     session.settings = { ...session.settings, model: legacyModel ?? selection.model };
     if (session.statusLine)
       session.statusLine = this.reconcileModelTelemetry(sessionId, session.statusLine);
@@ -913,7 +931,7 @@ class ClaudeSessionStore {
     for (const s of this.sessions.values()) {
       if (s.sessionId !== managerId && s.parentSessionId !== managerId) continue;
       if (s.hub)
-        throw new Error(
+        throw new ManagerReplacementUnavailable(
           'Automatic manager replacement cannot transfer remote children; no partial adoption was performed',
         );
       const {
@@ -1054,7 +1072,30 @@ class ClaudeSessionStore {
 
     // Persist task ownership before mutating in-memory parentage. Inspector's
     // transaction restores task rows if this write fails.
-    dispatchHistoryStore.adoptWorkflowTasks(oldManagerId, newManagerId);
+    try {
+      dispatchHistoryStore.adoptWorkflowTasks(oldManagerId, newManagerId);
+    } catch (error) {
+      throw new ManagerOwnershipUnchanged(error instanceof Error ? error.message : String(error));
+    }
+    fleetReviewStore.adoptOwner(oldManagerId, newManagerId);
+    if (!replacementOperationId) {
+      const workers = [...this.sessions.values()]
+        .filter((s) => !s.hub && s.parentSessionId === oldManagerId && s.sessionId !== newManagerId)
+        .map((s) => s.sessionId);
+      for (const [id, meta] of this.spawnMeta)
+        if (meta.parentSessionId === oldManagerId && id !== newManagerId && !workers.includes(id))
+          workers.push(id);
+      const meta = successor ?? successorMeta!;
+      managerReplacementState.noteManualReparent(oldManagerId, newManagerId, workers, {
+        sessionId: newManagerId,
+        cwd: successor?.cwd ?? successorMeta?.cwd ?? '',
+        label: meta.label,
+        isWakeTarget: true,
+        provider: meta.provider,
+        transport: meta.transport,
+        settings: meta.settings,
+      });
+    }
     const moved: string[] = [];
     for (const session of this.sessions.values()) {
       if (session.parentSessionId !== oldManagerId) continue;
@@ -1252,10 +1293,17 @@ class ClaudeSessionStore {
     if (!wasWorking || session.ambientState !== 'idle') return;
     const parentId = session.parentSessionId;
     if (!parentId) return;
-    const parent = this.sessions.get(parentId);
-    if (!parent?.isWakeTarget || parent.status === 'ended') return;
     const lastReply =
       [...session.conversation].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+    if (session.conversation.some((t) => t.role === 'user'))
+      managerReplacementState.recordFinish(
+        parentId,
+        session.sessionId,
+        lastReply,
+        session.status === 'ended',
+      );
+    const parent = this.sessions.get(parentId);
+    if (!parent?.isWakeTarget || parent.status === 'ended') return;
     supervisorNudge.onFinished(session, parentId, lastReply);
   }
 
@@ -1376,6 +1424,7 @@ class ClaudeSessionStore {
       applySessionEndEvent(session);
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
+      managerReplacementState.forgetUnclaimedMetadata(sessionId);
       supervisorNudge.forgetWorker(sessionId);
       // Always finalize to 'ended'. A Stop event earlier in this turn may have
       // already fired its delayed 'active' snapshot (setting historyWritten),
@@ -1975,6 +2024,7 @@ class ClaudeSessionStore {
       parentSessionId: snap.parentSessionId ?? existing?.parentSessionId,
       provider: snap.provider ?? existing?.provider,
       transport: snap.transport ?? existing?.transport,
+      isFleetManager: snap.isWakeTarget ?? snap.isFleetManager ?? existing?.isFleetManager,
       // isWakeTarget deliberately NOT mapped: supervisorSessionIds() feeds the
       // LOCAL supervisorNudge, which can only message local claudemon sessions.
       hub,
@@ -2344,6 +2394,10 @@ class ClaudeSessionStore {
       session.routing = meta.routing;
       this.spawnMeta.delete(sessionId);
     }
+    const replacement = managerReplacementState
+      .records()
+      .find((o) => o.successorSessionId === sessionId);
+    if (replacement) session.managerReplacementOperationId = replacement.operationId;
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -2361,6 +2415,8 @@ class ClaudeSessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.liveEffort = effort;
+    if (session.isWakeTarget && !session.hub)
+      managerReplacementState.updateLaunch(sessionId, { effort });
     this.pushUpdate(session);
   }
 
@@ -2373,6 +2429,8 @@ class ClaudeSessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.livePermissionMode = mode;
+    if (session.isWakeTarget && !session.hub)
+      managerReplacementState.updateLaunch(sessionId, { permissionMode: mode });
     this.pushUpdate(session);
   }
 

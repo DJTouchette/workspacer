@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../src/main/services/configService', () => ({
+  getConfigDir: () => process.env.TMPDIR!,
   configService: {
     getConfig: vi.fn(() => ({ notifications: { enabled: false }, claude: { seenModels: [] } })),
     saveConfig: vi.fn(),

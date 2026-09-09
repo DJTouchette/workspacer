@@ -366,6 +366,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       modelIdentity,
       contextWindow,
     ),
+  managerReplacement: (
+    request: import('./shared/managerReplacement').ManagerReplacementRequest,
+  ): Promise<import('./shared/managerReplacement').ManagerReplacementResponse> =>
+    ipcRenderer.invoke(IPC.MANAGER_REPLACEMENT, request),
   claudeHandoffBrief: (
     sessionId: string,
   ): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> =>

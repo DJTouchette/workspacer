@@ -1,3 +1,7 @@
+import type {
+  ManagerReplacementRequest,
+  ManagerReplacementView,
+} from '../../../main/shared/managerReplacement';
 /** Isolated workflow fixture: every backend action is mocked; no live agents or ports. */
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -137,6 +141,94 @@ if (params.get('longChat') === '1')
   });
 const sessionListeners = new Set<(id: string, snapshot: any) => void>();
 const calls: { method: string; args: unknown[] }[] = [];
+const handoffMode = params.get('handoff');
+let replacements: ManagerReplacementView[] = handoffMode
+  ? JSON.parse(sessionStorage.getItem('handoff-fixture') ?? '[]')
+  : [];
+const saveReplacements = () =>
+  sessionStorage.setItem('handoff-fixture', JSON.stringify(replacements));
+const successorSnapshot = (op: ManagerReplacementView) => {
+  snapshots[op.successorSessionId] = {
+    ...snapshots[op.sourceSessionId],
+    sessionId: op.successorSessionId,
+    managerReplacementOperationId: op.operationId,
+    isWakeTarget: true,
+    conversation: [
+      {
+        role: 'assistant',
+        content: 'Fresh manager context; pending decisions retained.',
+        timestamp: Date.now(),
+      },
+    ],
+  };
+};
+for (const op of replacements) if (op.committed) successorSnapshot(op);
+async function replacementRequest(request: ManagerReplacementRequest) {
+  if (!handoffMode || handoffMode === 'unavailable')
+    return {
+      available: false,
+      operations: [],
+      error:
+        'Automatic manager replacement requires an owned local desktop manager and only local workers.',
+    };
+  if (request.action !== 'list') calls.push({ method: 'replacement', args: [request] });
+  if (request.action === 'start' && !replacements.length) {
+    const op: ManagerReplacementView = {
+      operationId: 'fixture-operation',
+      sourceSessionId: request.sourceSessionId,
+      successorSessionId: 'fixture-successor',
+      paneId: request.paneId,
+      workspaceId: request.workspaceId,
+      phase: 'preparing',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      committed: false,
+      bound: false,
+      artifactPath: '/fixture/project/.workspacer/manager-handoffs/operation/handoff.json',
+      workerIds: ['s-worker'],
+      taskIds: ['ordinary-task', 'workflow-task'],
+      deliveries: [],
+    };
+    replacements = [op];
+    saveReplacements();
+    setTimeout(() => {
+      if (handoffMode === 'fail') {
+        op.phase = 'failed';
+        op.error = 'Invalid checkpoint receipt; old manager retained.';
+      } else {
+        op.phase = 'binding';
+        op.committed = true;
+        successorSnapshot(op);
+      }
+      op.updatedAt = Date.now();
+      saveReplacements();
+    }, 300);
+  } else if (request.action === 'bind') {
+    const op = replacements[0];
+    if (op.phase === 'binding') {
+      op.bound = true;
+      op.phase = handoffMode === 'ambiguous' ? 'recovery-required' : 'complete';
+      if (handoffMode === 'ambiguous') {
+        op.error = 'Kickoff acknowledgement is uncertain. No automatic replay.';
+        op.deliveries = [
+          {
+            id: 'kickoff',
+            kind: 'kickoff',
+            text: 'Preserved kickoff with pending decisions',
+            status: 'uncertain',
+          },
+        ];
+      }
+      saveReplacements();
+    }
+  } else if (request.action === 'resolve-delivery') {
+    replacements[0].deliveries[0].status = 'accepted';
+    replacements[0].phase = 'complete';
+    replacements[0].error = undefined;
+    saveReplacements();
+  }
+  return { available: true, operations: structuredClone(replacements) };
+}
 let failTerminate = false;
 let sendMode: 'accept' | 'defer' | 'reject' | 'throw' = 'accept';
 let settleSend: (() => void) | undefined;
@@ -149,6 +241,7 @@ const record = async (method: string, ...args: unknown[]) => {
 (window as any).electronAPI = new Proxy(
   {
     platform: 'linux',
+    managerReplacement: replacementRequest,
     getConfig: async () => config,
     reloadConfig: async () => config,
     saveConfig: async () => config,
@@ -278,6 +371,8 @@ function Harness() {
       addWorker: () =>
         manager.loadAgentsFromSession([...manager.agents, makeAgent('new-worker')], 'manager'),
       agents: () => manager.agents.map((a) => a.id),
+      agentRecords: () => manager.agents,
+      pilot: () => setView('piloting'),
     };
   }, [manager.agents]);
   const attention = useAttentionFeed(currentSnapshots, manager.agents);
@@ -310,6 +405,8 @@ function Harness() {
                   }}
                 >
                   <ClaudePane
+                    manager={a.manager}
+                    workspaceId={a.id}
                     paneId={p.id}
                     title={a.name}
                     cwd={a.cwd}

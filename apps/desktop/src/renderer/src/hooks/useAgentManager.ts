@@ -1,3 +1,8 @@
+import {
+  bindManagerReplacements,
+  managerReplacementRequest,
+  useManagerReplacementStatus,
+} from '../lib/managerReplacement';
 import { spawnFailureMessage } from '../lib/spawnFailure';
 import { postNotification } from '../lib/notificationBus';
 import { clearSessionChatUiState } from './useSessionChatUiState';
@@ -239,6 +244,27 @@ export function useAgentManager() {
     },
     [mutateAgent],
   );
+
+  const replacementStatus = useManagerReplacementStatus();
+  useEffect(() => {
+    const next = bindManagerReplacements(agents, replacementStatus.operations);
+    if (next !== agents) {
+      setAgents(next);
+      const oldActive = agents.find((a) => a.id === activeAgentId);
+      const paneIds = new Set(oldActive?.tabs.flatMap((t) => t.panes.map((p) => p.id)) ?? []);
+      const nextActive = next.find((a) =>
+        a.tabs.some((t) => t.panes.some((p) => paneIds.has(p.id))),
+      );
+      if (nextActive && nextActive.id !== activeAgentId) setActiveAgentId(nextActive.id);
+    }
+    for (const op of replacementStatus.operations) {
+      if (!op.committed || (op.bound && op.phase !== 'binding')) continue;
+      const owner = next.find(
+        (a) => a.id === op.workspaceId && a.sessionId === op.successorSessionId,
+      );
+      if (owner) void managerReplacementRequest({ action: 'bind', operationId: op.operationId });
+    }
+  }, [agents, activeAgentId, replacementStatus.operations]);
 
   // ── Agent lifecycle ────────────────────────────────────────────────────
 

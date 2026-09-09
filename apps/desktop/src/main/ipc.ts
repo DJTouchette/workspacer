@@ -1,3 +1,4 @@
+import { requestManagerReplacement } from './services/managerReplacement';
 import { fleetWorkflowRequest } from './services/fleetWorkflowService';
 import { readAgentRuntimeStatus } from './services/agentRuntimeStatus';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
@@ -1150,6 +1151,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Cross-provider handoff: daemon distills the session's conversation into a
   // brief under ~/.workspacer/handoffs/; the renderer spawns the successor and
   // points its first message at the file.
+  ipcMain.handle(
+    IPC.MANAGER_REPLACEMENT,
+    (event, request: import('./shared/managerReplacement').ManagerReplacementRequest) => {
+      if (event.sender !== mainWindow.webContents)
+        throw new Error('Manager replacement is only available to the owning desktop window');
+      return requestManagerReplacement(request);
+    },
+  );
   ipcMain.handle(IPC.CLAUDE_HANDOFF_BRIEF, (_event, sessionId: string) => {
     assertLocalSession(sessionId, 'Handoff');
     return claudemonSessionClient.handoffBrief(sessionId);

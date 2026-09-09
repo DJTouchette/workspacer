@@ -1,6 +1,6 @@
 /** Local desktop only. The web backend deliberately returns unavailable. */
 export const MANAGER_REPLACEMENT_UNAVAILABLE =
-  'Automatic manager replacement requires an owned local desktop manager with recorded launch settings and only local workers. Remote, headless and older hosts are unavailable.';
+  'Automatic manager replacement requires an owned local desktop manager using stream transport with recorded launch settings and only local workers. Remote, headless and older hosts are unavailable.';
 
 export type ReplacementPhase =
   | 'preparing'
@@ -25,12 +25,14 @@ export interface ManagerReplacementView {
   sourceSessionId: string;
   successorSessionId: string;
   paneId: string;
+  workspaceId: string;
   phase: ReplacementPhase;
   createdAt: number;
   updatedAt: number;
   committed: boolean;
   bound: boolean;
   artifactPath: string;
+  sealedArtifactPath?: string;
   error?: string;
   workerIds: string[];
   taskIds: string[];
@@ -38,7 +40,7 @@ export interface ManagerReplacementView {
 }
 export type ManagerReplacementRequest =
   | { action: 'list' }
-  | { action: 'start'; sourceSessionId: string; paneId: string }
+  | { action: 'start'; sourceSessionId: string; paneId: string; workspaceId: string }
   | { action: 'cancel' | 'bind' | 'reconcile'; operationId: string }
   | {
       action: 'resolve-delivery';
@@ -52,3 +54,15 @@ export interface ManagerReplacementResponse {
   operations: ManagerReplacementView[];
   error?: string;
 }
+
+/** An explicit daemon rejection is distinct from a missing acknowledgement. */
+export class ManagerDeliveryRejected extends Error {
+  constructor(readonly status: number) {
+    super(`Daemon rejected message (HTTP ${status}); it was not accepted`);
+  }
+}
+
+export class ManagerReplacementUnavailable extends Error {}
+
+/** The task transaction refused before any ownership side effect. */
+export class ManagerOwnershipUnchanged extends Error {}

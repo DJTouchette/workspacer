@@ -9,6 +9,7 @@ import {
 } from './managerReplacementState';
 import { ManagerReplacementService, type ReplacementHost } from './managerReplacementService';
 import { artifactHash, validateManagerArtifact } from './managerReplacementArtifact';
+import { ManagerDeliveryRejected } from '../shared/managerReplacement';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -56,6 +57,7 @@ function fixture() {
     source: vi.fn(() => structuredClone(launch)),
     inventory: vi.fn(() => structuredClone(metadata)),
     tasks: vi.fn((id) => (id === owner ? ['ordinary-task', 'workflow-task'] : [])),
+    readyForTransfer: () => true,
     signatures: () => ({ previouslyReported: 'unchanged' }),
     finishes: () => ({}),
     receipt: () => receipt,
@@ -120,6 +122,7 @@ function fixture() {
       action: 'start',
       sourceSessionId: 'old',
       paneId: 'same-pane',
+      workspaceId: 'same-workspace',
     });
     const id = response.operations[0].operationId;
     await service.idle(id);
@@ -147,6 +150,153 @@ function fixture() {
 }
 
 describe('host-owned manager replacement transaction', () => {
+  it('captures a completion already awaiting acknowledgement and does not checkpoint or spawn after that acknowledgement is lost', async () => {
+    const f = fixture();
+    f.host.inFlightMessages = () => [{ id: 'early-message', text: 'Completion sent before click' }];
+    f.host.flushFinishes = async () =>
+      f.state.noteInFlightMessage('old', 'early-message', false, 'Acknowledgement lost');
+    const id = await f.start();
+    expect(f.state.get(id)).toMatchObject({ phase: 'recovery-required', committed: false });
+    expect(f.state.get(id).deliveries[0]).toMatchObject({
+      text: 'Completion sent before click',
+      status: 'uncertain',
+    });
+    expect(f.host.spawn).not.toHaveBeenCalled();
+    expect(f.sent).toEqual([]);
+    expect(f.host.pause).toHaveBeenCalledWith('old');
+  });
+  it('replays no sending receipt after a desktop restart and retains the queued bytes', async () => {
+    const f = fixture();
+    f.host.inFlightMessages = () => [{ id: 'prior-message', text: 'Prior completion' }];
+    let settle!: () => void;
+    f.host.flushFinishes = () =>
+      new Promise<void>((r) => {
+        settle = r;
+      });
+    const response = await f.service.request({
+      action: 'start',
+      sourceSessionId: 'old',
+      paneId: 'same-pane',
+      workspaceId: 'same-workspace',
+    });
+    const id = response.operations[0].operationId;
+    const disk = new ManagerReplacementState(() => f.filename);
+    expect(disk.get(id).deliveries[0].status).toBe('sending');
+    // Let the original fixture settle as a known ambiguity, without leaving a timer behind.
+    f.state.noteInFlightMessage('old', 'prior-message', false, 'Lost acknowledgement');
+    settle();
+    await f.service.idle(id);
+    const restored = new ManagerReplacementService(disk, f.host);
+    await restored.initialize();
+    expect(disk.get(id).deliveries[0]).toMatchObject({
+      text: 'Prior completion',
+      status: 'uncertain',
+    });
+    expect(f.host.spawn).not.toHaveBeenCalled();
+    expect(f.sent).toEqual([]);
+  });
+  it('drains an admitted asynchronous spawn before snapshotting workers and tasks', async () => {
+    const f = fixture();
+    let release!: () => void;
+    let allocated = false;
+    const inventory = f.host.inventory;
+    const tasks = f.host.tasks;
+    f.host.inventory = (id) => [
+      ...inventory(id),
+      ...(allocated ? [{ sessionId: 'late-worker', cwd: f.cwd, parentSessionId: 'old' }] : []),
+    ];
+    f.host.tasks = (id) => [...tasks(id), ...(allocated ? ['late-task'] : [])];
+    const admitted = f.state.admitted(['old'], async () => {
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      allocated = true;
+    });
+    const response = await f.service.request({
+      action: 'start',
+      sourceSessionId: 'old',
+      paneId: 'same-pane',
+      workspaceId: 'same-workspace',
+    });
+    expect(f.host.spawn).not.toHaveBeenCalled();
+    release();
+    await admitted;
+    await f.service.idle(response.operations[0].operationId);
+    expect(f.state.get(response.operations[0].operationId).workerIds).toContain('late-worker');
+    expect(f.state.get(response.operations[0].operationId).taskIds).toContain('late-task');
+  });
+  it('cancellation while successor validation is awaiting cannot cross the transfer boundary', async () => {
+    const f = fixture();
+    let finish!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((r) => {
+      reached = r;
+    });
+    f.host.validateSuccessor = async () => {
+      reached();
+      await new Promise<void>((r) => {
+        finish = r;
+      });
+    };
+    const response = await f.service.request({
+      action: 'start',
+      sourceSessionId: 'old',
+      paneId: 'same-pane',
+      workspaceId: 'same-workspace',
+    });
+    const id = response.operations[0].operationId;
+    await entered;
+    await f.service.request({ action: 'cancel', operationId: id });
+    finish();
+    await f.service.idle(id);
+    expect(f.state.get(id).phase).toBe('cancelled');
+    expect(f.host.transfer).not.toHaveBeenCalled();
+    expect(f.host.close).not.toHaveBeenCalledWith('old');
+  });
+  it('times out a stalled spawn while retaining the old owner', async () => {
+    const f = fixture();
+    f.host.spawn = () => new Promise(() => {});
+    const id = await f.start();
+    expect(f.state.get(id)).toMatchObject({ phase: 'failed', committed: false });
+    expect(f.state.get(id).error).toContain('spawn timed out');
+    expect(f.owner()).toBe('old');
+  });
+  it('retries explicit not-ready rejections, but never an unknown acknowledgement', async () => {
+    const f = fixture();
+    const send = f.host.send;
+    let refusals = 0;
+    f.host.send = (id, text) => {
+      if (text === 'Successor kickoff' && refusals++ < 2) throw new ManagerDeliveryRejected(404);
+      return send(id, text);
+    };
+    const id = await f.start();
+    await f.bind(id);
+    expect(f.state.get(id).phase).toBe('complete');
+    expect(f.host.pause).not.toHaveBeenCalled();
+    expect(f.sent.filter((s) => s.text === 'Successor kickoff')).toHaveLength(1);
+  });
+  it('keeps an ambiguous queued wake durable without replaying an accepted kickoff', async () => {
+    const f = fixture();
+    const send = f.host.send;
+    f.host.spawn = async () => {
+      f.state.holdMessage('old', 'Queued worker result');
+    };
+    f.host.send = (id, text) => {
+      if (text.startsWith('Queued worker result')) throw new Error('Lost wake acknowledgement');
+      return send(id, text);
+    };
+    const id = await f.start();
+    await f.bind(id);
+    const saved = new ManagerReplacementState(() => f.filename).get(id);
+    expect(saved.phase).toBe('recovery-required');
+    expect(saved.deliveries.find((d) => d.kind === 'message')).toMatchObject({
+      text: expect.stringContaining('Queued worker result'),
+      status: 'uncertain',
+    });
+    await f.service.request({ action: 'reconcile', operationId: id });
+    expect(f.sent.filter((s) => s.text === 'Successor kickoff')).toHaveLength(1);
+    expect(f.host.close).not.toHaveBeenCalledWith('old');
+  });
   it('checkpoints, validates, spawns one parked manager, transfers all ownership, binds same pane, then activates and retires', async () => {
     const f = fixture();
     const id = await f.start();
@@ -165,6 +315,7 @@ describe('host-owned manager replacement transaction', () => {
       bound: true,
       retired: true,
       paneId: 'same-pane',
+      workspaceId: 'same-workspace',
     });
     expect(f.sent.at(-1)).toEqual({ id: op.successorSessionId, text: 'Successor kickoff' });
     expect(f.host.close).toHaveBeenCalledExactlyOnceWith('old');
@@ -174,14 +325,29 @@ describe('host-owned manager replacement transaction', () => {
   it('duplicate clicks and renderer retries converge without spawning a second successor', async () => {
     const f = fixture();
     const [a, b] = await Promise.all([
-      f.service.request({ action: 'start', sourceSessionId: 'old', paneId: 'same-pane' }),
-      f.service.request({ action: 'start', sourceSessionId: 'old', paneId: 'same-pane' }),
+      f.service.request({
+        action: 'start',
+        sourceSessionId: 'old',
+        paneId: 'same-pane',
+        workspaceId: 'same-workspace',
+      }),
+      f.service.request({
+        action: 'start',
+        sourceSessionId: 'old',
+        paneId: 'same-pane',
+        workspaceId: 'same-workspace',
+      }),
     ]);
     const id = a.operations[0].operationId;
     expect(b.operations[0].operationId).toBe(id);
     await f.service.idle(id);
     await f.bind(id);
-    await f.service.request({ action: 'start', sourceSessionId: 'old', paneId: 'same-pane' });
+    await f.service.request({
+      action: 'start',
+      sourceSessionId: 'old',
+      paneId: 'same-pane',
+      workspaceId: 'same-workspace',
+    });
     expect(f.host.spawn).toHaveBeenCalledTimes(1);
   });
   it.each(['preparation', 'spawn', 'identity'])(
@@ -239,7 +405,13 @@ describe('host-owned manager replacement transaction', () => {
     expect(f.state.signature('worker')).toBe('reply-signature');
     expect(f.state.get(id).finishes).toEqual({});
     await f.bind(id);
-    expect(f.sent.slice(1).map((s) => s.text)).toEqual(['Successor kickoff', 'Worker finished']);
+    expect(f.sent.slice(1).map((s) => s.text)).toEqual([
+      'Successor kickoff',
+      expect.stringContaining('Worker finished'),
+    ]);
+    expect(f.sent.at(-1)?.text).toContain(
+      `Current manager/parentSessionId is ${f.state.get(id).successorSessionId}`,
+    );
   });
   it('records ambiguous kickoff acknowledgement, pauses, never replays automatically, and permits only explicit retry', async () => {
     const f = fixture();
@@ -303,6 +475,7 @@ describe('host-owned manager replacement transaction', () => {
       action: 'start',
       sourceSessionId: 'remote',
       paneId: 'viewer',
+      workspaceId: 'remote-workspace',
     });
     expect(result.error).toContain('unavailable');
     expect(f.state.records()).toEqual([]);

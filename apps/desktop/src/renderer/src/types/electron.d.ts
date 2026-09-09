@@ -302,6 +302,9 @@ export interface ElectronAPI extends RoutingAPI {
     queued?: boolean;
     disposition?: 'queued' | 'accepted';
   }>;
+  managerReplacement?: (
+    request: import('../../../main/shared/managerReplacement').ManagerReplacementRequest,
+  ) => Promise<import('../../../main/shared/managerReplacement').ManagerReplacementResponse>;
   claudeHandoffBrief: (
     sessionId: string,
   ) => Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }>;
