@@ -1369,7 +1369,7 @@ func TestBriefAppendIsSerializedAgainstItself(t *testing.T) {
 	}
 	for i := 0; i < n; i++ {
 		if err := <-done; err != nil {
-			t.Fatalf("append %d failed: %v", i, err)
+			t.Errorf("append %d failed: %v", i, err)
 		}
 	}
 	body, err := os.ReadFile(briefPathFor(dir))

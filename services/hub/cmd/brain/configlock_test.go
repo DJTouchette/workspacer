@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -155,4 +157,61 @@ func themeOf(cfg map[string]any) string {
 	ui, _ := cfg["ui"].(map[string]any)
 	s, _ := ui["theme"].(string)
 	return s
+}
+
+func TestLockContentionClassifiesWindowsDeletePending(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{os.ErrExist, true},
+		{os.ErrPermission, runtime.GOOS == "windows"},
+		{syscall.Errno(32), runtime.GOOS == "windows"},
+		{os.ErrNotExist, false},
+		{os.ErrInvalid, false},
+	} {
+		err := &os.PathError{Op: "open", Path: "brief.md.lock", Err: tc.err}
+		if got := isLockContention(err); got != tc.want {
+			t.Errorf("isLockContention(%v) = %v, want %v", err, got, tc.want)
+		}
+	}
+}
+
+// A stale lock can become unremovable (for example, a nonempty directory at
+// the lock path). Failed cleanup must still obey the wait budget and must never
+// enter the protected write. The old unconditional retry spun forever here.
+func TestFileLocksBoundFailedStaleRemoval(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lock func(string, func() error) error
+	}{
+		{"config", withConfigLock},
+		{"brief", func(path string, fn func() error) error {
+			return withFileLock(path, 50*time.Millisecond, time.Second, fn)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "document")
+			lockPath := path + lockFileSuffix
+			if err := os.Mkdir(lockPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(lockPath, "child"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stale := time.Now().Add(-time.Minute)
+			if err := os.Chtimes(lockPath, stale, stale); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			started := time.Now()
+			err := tc.lock(path, func() error { called = true; return nil })
+			if err == nil || called {
+				t.Fatalf("unremovable lock admitted write: err=%v called=%v", err, called)
+			}
+			if elapsed := time.Since(started); elapsed > 5*time.Second {
+				t.Fatalf("lock exceeded bounded wait: %s", elapsed)
+			}
+		})
+	}
 }

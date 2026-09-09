@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -64,15 +67,16 @@ func withConfigLock(path string, fn func() error) error {
 			_ = f.Close()
 			break
 		}
-		if !os.IsExist(err) {
+		if !isLockContention(err) {
 			return err
 		}
 		// Held. Steal it if the holder died mid-write, or wait a moment.
 		if lockIsStale(lockPath) {
 			// A failed remove means another waiter got there first; the retry
 			// below re-races fairly.
-			_ = os.Remove(lockPath)
-			continue
+			if os.Remove(lockPath) == nil {
+				continue
+			}
 		}
 		if time.Now().After(deadline) {
 			return errConfigLocked
@@ -100,4 +104,14 @@ func lockIsStale(lockPath string) bool {
 		return false
 	}
 	return time.Since(st.ModTime()) > lockStaleMs*time.Millisecond
+}
+
+// Windows can report ACCESS_DENIED or SHARING_VIOLATION while a just-released
+// lock is pending deletion. Retry only within the existing wait budget; the
+// protected callback still requires a successful exclusive create. A permanent
+// ACL denial therefore fails closed rather than bypassing the lock.
+// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
+func isLockContention(err error) bool {
+	return os.IsExist(err) || (runtime.GOOS == "windows" &&
+		(os.IsPermission(err) || errors.Is(err, syscall.Errno(32))))
 }

@@ -527,12 +527,13 @@ func withFileLock(path string, maxWait, staleAfter time.Duration, fn func() erro
 			_ = f.Close()
 			break
 		}
-		if !os.IsExist(err) {
+		if !isLockContention(err) {
 			return err
 		}
 		if st, statErr := os.Stat(lockPath); statErr == nil && time.Since(st.ModTime()) > staleAfter {
-			_ = os.Remove(lockPath) // holder died mid-write; a lost race re-races below
-			continue
+			if os.Remove(lockPath) == nil { // holder died mid-write
+				continue
+			}
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("brief.md is locked by another writer (waited %dms): %s", maxWait.Milliseconds(), lockPath)
