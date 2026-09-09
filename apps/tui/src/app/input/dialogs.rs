@@ -221,15 +221,11 @@ impl App {
             // ←/→ cycle the provider; ↑/↓ cycle the (claude) profile.
             KeyCode::Right => form.provider_idx = (form.provider_idx + 1) % np,
             KeyCode::Left => form.provider_idx = (form.provider_idx + np - 1) % np,
-            KeyCode::Down => {
-                if n > 0 {
-                    form.profile_idx = (form.profile_idx + 1) % n;
-                }
+            KeyCode::Down if n > 0 => {
+                form.profile_idx = (form.profile_idx + 1) % n;
             }
-            KeyCode::Up => {
-                if n > 0 {
-                    form.profile_idx = (form.profile_idx + n - 1) % n;
-                }
+            KeyCode::Up if n > 0 => {
+                form.profile_idx = (form.profile_idx + n - 1) % n;
             }
             KeyCode::Backspace => {
                 form.cwd.pop();

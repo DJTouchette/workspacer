@@ -281,10 +281,8 @@ impl App {
                     self.run_palette_action(action);
                 }
             }
-            KeyCode::Down => {
-                if !p.filtered.is_empty() {
-                    p.selected = (p.selected + 1).min(p.filtered.len() - 1);
-                }
+            KeyCode::Down if !p.filtered.is_empty() => {
+                p.selected = (p.selected + 1).min(p.filtered.len() - 1);
             }
             KeyCode::Up => p.selected = p.selected.saturating_sub(1),
             KeyCode::Backspace => {
