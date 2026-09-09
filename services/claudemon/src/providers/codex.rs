@@ -79,11 +79,9 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
         // (`{ error: TurnError, threadId, turnId, willRetry }`) — a retryable
         // one is noise, so only a terminal one is surfaced. It does NOT end
         // the turn (the `turn/completed` above does), hence no `Idle` here.
-        "error" => {
-            if params.get("willRetry").and_then(Value::as_bool) != Some(true) {
-                if let Some(msg) = error_message(params.get("error")) {
-                    out.push(AgentUpdate::Error(msg));
-                }
+        "error" if params.get("willRetry").and_then(Value::as_bool) != Some(true) => {
+            if let Some(msg) = error_message(params.get("error")) {
+                out.push(AgentUpdate::Error(msg));
             }
         }
         // Kept for older app-servers that may still send it. Harmless where

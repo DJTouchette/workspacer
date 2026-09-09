@@ -1452,11 +1452,9 @@ fn handle_event(
         // [`translate`]), so the todos themselves are read out of the session's
         // own db. Skipped when translation already produced a Plan, so a future
         // CLI that starts carrying the list on the wire wins over the file.
-        "session.todos_changed" => {
-            if !updates.iter().any(|u| matches!(u, AgentUpdate::Plan(_))) {
-                if let Some(plan) = session_todos(session_id) {
-                    updates.push(AgentUpdate::Plan(plan));
-                }
+        "session.todos_changed" if !updates.iter().any(|u| matches!(u, AgentUpdate::Plan(_))) => {
+            if let Some(plan) = session_todos(session_id) {
+                updates.push(AgentUpdate::Plan(plan));
             }
         }
         // The terminal event: the only place an exit code for the TURN appears.
