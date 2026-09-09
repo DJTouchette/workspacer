@@ -55,7 +55,8 @@ export type WorkflowPin = {
 };
 export type WorkflowStepRun = {
   id: string;
-  state: 'planned' | 'dispatched' | 'skipped' | 'blocked' | 'failed' | 'completed';
+  state: 'planned' | 'dispatched' | 'skipped' | 'blocked' | 'failed' | 'completed' | 'waived';
+  waiverId?: string;
   dispatchId?: string;
   sessionId?: string;
   reason?: string;
