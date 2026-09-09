@@ -106,6 +106,21 @@ python3 scripts/release-check.py --cwd services/claudemon -- \
 python3 scripts/release-check.py --cwd apps/desktop -- npm run typecheck
 ```
 
+On a memory-constrained host, full Rust debug symbols can make the linker spend
+minutes reclaiming memory at `MemoryHigh`. Keep the cap and use per-command
+`--env CARGO_PROFILE_DEV_DEBUG=0 --env CARGO_PROFILE_TEST_DEBUG=0` for local
+`cargo test -j 1 -- --test-threads=1` and Clippy checks if that happens. Cargo
+rebuilds the affected artifacts and reports an unoptimized profile without debug
+symbols; assertions and test selection are unchanged. Record the override and
+retain the logs. Hosted CI still validates its default profile and platform
+builds. Cancel only the unique check launcher before starting a replacement.
+
+Keep unit-test temporary directories on their normal temporary filesystem.
+Setting `TMPDIR` beneath the checkout changes Git discovery and home-based file
+guard expectations. Private dependency/build caches can live in `.workspacer/`,
+which contract-loader discovery excludes so cached source copies cannot count
+as shipping loaders or inflate the guard's memory use.
+
 Tests that boot services must supply their own scratch state and ephemeral ports.
 Preserve the desktop E2E fixture contracts in `tests/e2e/fixtures/scratchState.ts`
 and `appHub.ts`: scratch HOME/XDG, live-port refusal and no live-state descriptors.
