@@ -15,8 +15,8 @@ Normal completion requires no final confirmation.
   headless hub, withheld capabilities, and remote children are unavailable.
 - The successor uses the real manager spawn path with an internal
   `replacementSessionId`, **no resume ID and no first message**. It must report
-  zero user prompts before ownership transfer. Startup-ping integration must
-  preserve this parked launch invariant.
+  zero user prompts before ownership transfer. Provider readiness uses its separate disposable CLI adapter; it never
+  submits a manager prompt or bypasses this parked launch invariant.
 
 ## Transaction and recovery
 
@@ -91,9 +91,38 @@ exercise a second JSON-store instance while dispatch acceptance is outstanding.
 `tests/e2e/managerHandoff.test.ts` uses its own ephemeral Vite server and Chromium;
 it exercises normal replacement, reload, failed preparation and explicit recovery
 actions. No live manager, worker, app or daemon is replaced/restarted by these
-tests. On Node 26, run the renderer suite with
-`NODE_OPTIONS=--no-experimental-webstorage` so jsdom owns browser storage.
+tests. Use the repository-pinned Node 22 for both desktop suites.
 
-Inspector core commits `7c32ed0f` and `6992a93b` are incorporated. Its final UI
-commit `6e8411cc` is intentionally left for manager integration and independent
-combined review.
+## Combined integration for review
+
+Handoff base: `a8bc902e71066dd5ccc78e1cd429c3e7c10df17f`.
+Reviewed Inspector source: `6e8411cc06b73150ce3519e37f9f1b1753da6fb4`.
+Pinned readiness source: `115f88b0dac5e4b5dc78fc6fd333ea73ebd2c8fe`.
+Both exact sources are merge ancestors on the isolated handoff branch. Inspector's
+original core ancestry is retained alongside the earlier core cherry-picks
+`5453df56` / `b34a7f92`; its final refinements are present once in the source.
+No primary merge or independent combined review has been performed.
+
+Inspector conflict resolutions: `playwright.config.ts`, `src/main/ipc.ts`,
+`src/main/services/dispatchHistoryStore.ts`, `fleetWorkflowRuntime.ts`,
+`fleetWorkflowRuntime.test.ts`, `taskInspector.test.ts`, and
+`src/renderer/src/backend/webBackend.ts`. Readiness conflicts: `src/main/index.ts`,
+`ipc.ts`, `ipc.test.ts`, `preload.test.ts`, and
+`src/renderer/tests/backend/backendParity.test.ts`.
+
+The combined fixture verifies manual refusal and automatic waiting while a real
+source task reservation is held, a host-user waiver for a different future step,
+references, delayed acceptance, and transfer without losing attempt identity or
+audit. Lifecycle writes continue advancing revisions while a manager waits.
+The startup scheduler runs while the successor is parked at pane binding; only
+the separate provider inference boundary is stubbed there. Readiness config and
+native fixtures independently exercise the real CLI adapter. Browser fixtures
+use private caches and ephemeral ports for Inspector, handoff and readiness.
+
+Additional reviewer entry points: `docs/features/task-inspector.md`,
+`docs/fleet-provider-readiness.md`, `src/main/services/providerReadinessRuntime.ts`,
+`src/main/services/managerReplacement.integration.test.ts`, and
+`src/main/services/managerTaskOwnership.test.ts`. Acceptance requires all three
+local feature entry points, task-first all-task transfer with reservation/CAS
+protection, parked successors, and truthful recovery-required delivery status.
+The crash/acknowledgement limitation above remains accepted and unchanged.

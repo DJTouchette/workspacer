@@ -3,22 +3,25 @@
 import { test, expect } from '@playwright/test';
 import { spawn, type ChildProcess } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import { once } from 'events';
 import { freePort } from './fixtures/scratchState';
 let vite: ChildProcess;
 let base: string;
+let cache: string;
 test.beforeAll(async ({ browser }) => {
   console.info('Task Inspector Chromium:', browser.version());
   const port = await freePort();
   base = `http://127.0.0.1:${port}/task-inspector-harness.html`;
+  cache = fs.mkdtempSync(path.join(os.tmpdir(), 'isolated-renderer-cache-'));
+  const options = { cacheDir: cache, server: { host: '127.0.0.1', port, strictPort: true } };
   vite = spawn(
     process.execPath,
     [
-      path.resolve(__dirname, '../../src/renderer/node_modules/vite/bin/vite.js'),
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(port),
-      '--strictPort',
+      '--input-type=module',
+      '-e',
+      `import { createServer } from 'vite'; const server = await createServer(${JSON.stringify(options)}); await server.listen();`,
     ],
     { cwd: path.resolve(__dirname, '../../src/renderer'), stdio: 'ignore' },
   );
@@ -33,7 +36,14 @@ test.beforeAll(async ({ browser }) => {
   }
   throw new Error('Task Inspector harness failed to start');
 });
-test.afterAll(() => vite?.kill());
+test.afterAll(async () => {
+  if (vite && vite.exitCode === null && vite.signalCode === null) {
+    const ended = once(vite, 'exit');
+    vite.kill();
+    await ended;
+  }
+  if (cache) fs.rmSync(cache, { recursive: true, force: true });
+});
 
 test.beforeEach(async ({ page }) => {
   await page.routeWebSocket('**/fixture-bus*', (socket) => {

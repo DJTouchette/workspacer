@@ -21,17 +21,29 @@ vi.mock('./agentRuntimeStatus', () => ({
   readAgentRuntimeStatus: async () => ({ claudemon: 'ready', hub: 'ready', facade: 'ready' }),
 }));
 vi.mock('./hubDaemon', () => ({ isHubAdopted: () => false }));
-vi.mock('./remoteServer', () => ({ getRemoteServer: () => null }));
+vi.mock('./remoteServer', () => ({
+  getRemoteServer: () => null,
+  isRemoteClientMode: () => false,
+}));
+vi.mock('./directCompletion', () => ({
+  completeReadinessPing: vi.fn(async () => ({ ok: true, text: 'OK' })),
+}));
 vi.mock('./configService', () => ({
   getConfigDir: () => rig.root,
   configService: {
-    getConfig: () => ({ agents: {}, claude: {}, codex: { transport: 'stream' } }),
+    getConfig: () => ({
+      agents: {},
+      claude: { transport: 'stream' },
+      codex: { transport: 'stream' },
+    }),
     saveConfig: vi.fn(),
+    onChange: vi.fn(),
   },
 }));
 vi.mock('./agentProviders', () => ({
   resolveAgentBinary: () => '/fixture/provider',
   isAgentBinaryInstalled: () => true,
+  checkAllProviders: () => [{ provider: 'claude', resolvedPath: '/fixture/provider' }],
 }));
 vi.mock('./claudeProfiles', () => ({
   claudeProfiles: { getProfile: () => undefined, getProfiles: () => [] },
@@ -58,6 +70,7 @@ vi.mock('./claudemonDaemon', () => ({
   CLAUDEMON_API_URL: 'http://127.0.0.1:0',
   claudemonOverlayPath: () => '',
   claudeSettingsOverlayEnabled: () => false,
+  getClaudemonReadinessOwner: () => 'fixture-owned-daemon',
 }));
 vi.mock('./agentNotifier', () => ({ agentNotifier: { notifyOnTransition: vi.fn() } }));
 vi.mock('./workflowWatcher', () => ({
@@ -122,6 +135,8 @@ import { supervisorNudge } from './supervisorNudge';
 import { ownerTask } from './fleetWorkflowRuntime';
 import { sessionFacadeGrantFingerprint } from './remoteTokens';
 import { installManagerSkills } from './managerSkills';
+import { startProviderReadiness, providerReadinessService } from './providerReadinessRuntime';
+import { completeReadinessPing } from './directCompletion';
 
 const sequences = new Map<string, number>();
 function say(id: string, role: 'user' | 'assistant', text: string) {
@@ -179,6 +194,7 @@ async function send(id: string, text: string) {
   return { ok: true };
 }
 afterAll(() => {
+  providerReadinessService.dispose();
   if (rig.root) fs.rmSync(rig.root, { recursive: true, force: true });
 });
 
@@ -219,6 +235,81 @@ it('runs the real local transaction without resuming, transferring both task kin
     templates: {},
     steps: definition.steps.map((s) => ({ id: s.id, state: 'planned' })),
   });
+  // Hold real cross-process admission while Inspector edits a future step.
+  dispatchHistoryStore.workflowDecision(task.taskId, 'scout', false, 'Scope verified');
+  const reservation = dispatchHistoryStore.reserveWorkflowDispatch(
+    task.taskId,
+    dispatchHistoryStore.task(task.taskId)!.revision!,
+    'implement',
+  );
+  expect(
+    dispatchHistoryStore.editByHostUser(
+      {
+        taskId: task.taskId,
+        expectedTaskRevision: dispatchHistoryStore.task(task.taskId)!.revision!,
+        action: 'waive',
+        stepId: 'review',
+        reason: 'User-approved review exception',
+      },
+      () => undefined,
+      () => true,
+    ).ok,
+  ).toBe(true);
+  expect(
+    dispatchHistoryStore.editByHostUser(
+      {
+        taskId: task.taskId,
+        expectedTaskRevision: dispatchHistoryStore.task(task.taskId)!.revision!,
+        action: 'links',
+        links: { pullRequest: { number: '42', url: 'https://example.test/pull/42' } },
+      },
+      () => undefined,
+      () => true,
+    ).ok,
+  ).toBe(true);
+  const manualCandidate = await spawnManagedAgent({
+    provider: 'codex',
+    cwd: rig.root,
+    manager: true,
+    toolScope: 'operator',
+    transport: 'stream',
+  });
+  const historyPath = path.join(rig.root, 'dispatch-history.json');
+  const reservedTasks = fs.readFileSync(historyPath, 'utf8');
+  expect(() => claudeSessionStore.reparentChildren(source, manualCandidate)).toThrow('reservation');
+  expect(fs.readFileSync(historyPath, 'utf8')).toBe(reservedTasks);
+  const workflowWorker = await spawnManagedAgent({
+    provider: 'codex',
+    cwd: rig.root,
+    parentSessionId: source,
+  });
+  const spawnsBeforeWait = rig.spawns.length;
+  const response = await managerReplacementService.request({
+    action: 'start',
+    sourceSessionId: source,
+    paneId: 'same-pane',
+    workspaceId: 'same-workspace',
+  });
+  const waitingOperation = response.operations.at(-1)!;
+  await new Promise((r) => setTimeout(r, 30));
+  expect(managerReplacementState.get(waitingOperation.operationId)).toMatchObject({
+    phase: 'preparing',
+    committed: false,
+  });
+  expect(rig.spawns).toHaveLength(spawnsBeforeWait);
+  for (const task of dispatchHistoryStore.list()) expect(task.ownerSessionId).toBe(source);
+  expect(claudeSessionStore.getSnapshot(worker)?.parentSessionId).toBe(source);
+  expect(managerReplacementState.metadata(pending)?.parentSessionId).toBe(source);
+  dispatchHistoryStore.accept({
+    owner,
+    projectCwd: rig.root,
+    executionCwd: rig.root,
+    sessionId: workflowWorker,
+    taskId: task.taskId,
+    workflowStepId: 'implement',
+    stage: 'implement',
+  });
+  dispatchHistoryStore.releaseWorkflowDispatch(task.taskId, reservation);
   const before = dispatchHistoryStore.task(task.taskId)!;
   const grants = sessionFacadeGrantFingerprint(source);
   // A finish already inside the coalesce window when the user clicks.
@@ -226,14 +317,8 @@ it('runs the real local transaction without resuming, transferring both task kin
   say(worker, 'assistant', 'First result');
   claudeSessionStore.applyManagedMode(worker, 'input', { provider: 'codex', transport: 'stream' });
   supervisorNudge.onFinished(claudeSessionStore.getSnapshot(worker)!, source, 'First result');
-  const response = await managerReplacementService.request({
-    action: 'start',
-    sourceSessionId: source,
-    paneId: 'same-pane',
-    workspaceId: 'same-workspace',
-  });
   expect(response.error).toBeUndefined();
-  const id = response.operations[0].operationId;
+  const id = response.operations.at(-1)!.operationId;
   await managerReplacementService.idle(id);
   const op = managerReplacementState.get(id);
   expect(op).toMatchObject({ phase: 'binding', committed: true });
@@ -254,11 +339,31 @@ it('runs the real local transaction without resuming, transferring both task kin
   expect(dispatchHistoryStore.task(task.taskId)).toMatchObject({
     ownerSessionId: op.successorSessionId,
     workflow: before.workflow,
-    revision: before.revision! + 1,
+    attempts: before.attempts.map(({ dispatchId, sessionId, acceptedAt, workflowStepId }) => ({
+      dispatchId,
+      sessionId,
+      acceptedAt,
+      workflowStepId,
+    })),
+    links: before.links,
+    audit: before.audit,
+    revision: expect.any(Number),
   });
+  expect(dispatchHistoryStore.task(task.taskId)!.revision).toBeGreaterThan(before.revision!);
   expect(() => ownerTask(task.taskId, source, rig.root)).toThrow();
   expect(() => ownerTask(task.taskId, op.successorSessionId, rig.root)).toThrow('fenced');
-  await new Promise((r) => setTimeout(r, 1700));
+  // Run the actual desktop startup scheduler while successor ownership is
+  // committed but pane activation is pending. Its isolated inference adapter
+  // must not submit any manager message or bypass the successor fence.
+  startProviderReadiness();
+  await new Promise((r) => setTimeout(r, 2100));
+  expect(completeReadinessPing).toHaveBeenCalledTimes(1);
+  expect(completeReadinessPing).toHaveBeenCalledWith(
+    'claude',
+    '/fixture/provider',
+    expect.any(AbortSignal),
+  );
+  expect(rig.messages.filter(([target]) => target === op.successorSessionId)).toHaveLength(0);
   expect(
     managerReplacementState.get(id).deliveries.find((d) => d.kind === 'message'),
   ).toMatchObject({ status: 'pending' });
