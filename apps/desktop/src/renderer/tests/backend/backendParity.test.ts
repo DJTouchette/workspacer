@@ -662,3 +662,18 @@ it('task edits are local host-only and unavailable on old, web and remote backen
   }
   expect(open).not.toHaveBeenCalled();
 });
+
+it('provider ping is local-only, including the default bridge and old preload', async () => {
+  const read = vi.fn(async () => ({ state: 'responding' as const, checkedAt: 1 }));
+  const ipc = { providerReadiness: read } as unknown as ElectronAPI;
+  expect(
+    await createBridgedBackend(ipc, 'token', 'ws://local').providerReadiness!('claude', true),
+  ).toEqual({ state: 'responding', checkedAt: 1 });
+  for (const api of [
+    createWebBackend('token'),
+    createRemoteBackend(ipc, 'token', 'ws://remote'),
+    createBridgedBackend({} as ElectronAPI, 'token', 'ws://old'),
+  ])
+    expect(await api.providerReadiness!('claude', true)).toEqual({ state: 'unsupported' });
+  expect(read).toHaveBeenCalledTimes(1);
+});

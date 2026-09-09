@@ -11,6 +11,7 @@ import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
  */
 
 import * as fs from 'fs';
+import { createHash } from 'crypto';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
@@ -88,6 +89,21 @@ export function usagePollEnv(): NodeJS.ProcessEnv {
 }
 
 let child: ChildProcess | null = null;
+let ownedEnvironmentFingerprint = '';
+function environmentFingerprint(): string {
+  return createHash('sha256')
+    .update(JSON.stringify(Object.entries(process.env).sort(([a], [b]) => a.localeCompare(b))))
+    .digest('hex');
+}
+/** Private ownership identity for account-sensitive local checks. An adopted
+ * daemon did not inherit our environment; a changed environment is also unknown.
+ * Never expose this pid or environment fingerprint over the renderer IPC.
+ */
+export function getClaudemonReadinessOwner(): number | null {
+  return child?.pid && !adopted && ownedEnvironmentFingerprint === environmentFingerprint()
+    ? child.pid
+    : null;
+}
 let readyPromise: Promise<void> | null = null;
 /** Set by stopClaudemon() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
@@ -175,6 +191,7 @@ function launch(bin: string): Promise<void> {
 
   console.log(`[claudemon] spawning ${bin}`);
   backoff.markStarted();
+  ownedEnvironmentFingerprint = environmentFingerprint();
   child = spawn(
     bin,
     ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)],

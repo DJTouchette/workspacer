@@ -7,6 +7,7 @@
  * runtime wire format is unchanged.
  */
 export const IPC = {
+  PROVIDER_READINESS: 'provider:readiness', // local-only; check=true explicitly spends allowance
   AGENT_RUNTIME_STATUS: 'agents:runtimeStatus', // read-only host lifecycle/health
   // ── Library ──
   PROJECT_DOWNLOAD_ICON: 'project:downloadIcon',

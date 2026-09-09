@@ -1,3 +1,10 @@
+const readinessMocks = vi.hoisted(() => ({
+  read: vi.fn(() => ({ state: 'unchecked' })),
+  check: vi.fn(async () => ({ state: 'responding', checkedAt: 1 })),
+}));
+vi.mock('./services/providerReadinessRuntime', () => ({
+  providerReadinessService: readinessMocks,
+}));
 /**
  * The `claude:spawn` IPC gate: `transport` may ride the spawn-managed payload
  * ONLY for codex (the daemon's other managed adapters reject/ignore it), and
@@ -676,4 +683,15 @@ it('task IPC edits recheck host sessions and open only store-resolved targets', 
     edit.mockRestore();
     resolve.mockRestore();
   }
+});
+
+it('routes provider readiness reads separately from explicit paid checks', async () => {
+  expect(await handlers.get('provider:readiness')!(null, 'claude')).toEqual({ state: 'unchecked' });
+  expect(readinessMocks.read).toHaveBeenCalledWith('claude');
+  expect(readinessMocks.check).not.toHaveBeenCalled();
+  expect(await handlers.get('provider:readiness')!(null, 'claude', true)).toEqual({
+    state: 'responding',
+    checkedAt: 1,
+  });
+  expect(readinessMocks.check).toHaveBeenCalledWith('claude');
 });

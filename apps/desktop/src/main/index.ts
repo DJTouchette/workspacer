@@ -1,4 +1,5 @@
 import { enableManagerReplacementHost } from './services/managerReplacement';
+import { startProviderReadiness } from './services/providerReadinessRuntime';
 import { noteRuntimePending, noteRuntimePhase } from './services/agentRuntimeStatus';
 import { app, BrowserWindow, Menu, protocol, net, session, ipcMain } from 'electron';
 import * as path from 'path';
@@ -372,6 +373,7 @@ function createWindow(): void {
     noteRuntimePending('facade');
     startClaudemon()
       .then(async () => {
+        startProviderReadiness();
         try {
           await runClaudemonInit();
         } catch (err) {

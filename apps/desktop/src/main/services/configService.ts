@@ -256,6 +256,8 @@ interface Config {
       pi: string;
     };
     /** Name new agents after their first exchange (see services/agentTitler). */
+    /** Send a small isolated manager-provider request once at desktop startup. */
+    checkProviderOnStartup?: boolean;
     statusSummary?: {
       enabled?: boolean;
       provider?: 'claude' | 'codex' | 'copilot' | 'opencode' | 'pi';

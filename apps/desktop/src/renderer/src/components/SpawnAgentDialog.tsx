@@ -1,3 +1,4 @@
+import { useProviderReadiness } from '../hooks/useProviderReadiness';
 import { SmallButton } from './settings/primitives';
 import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
 import type { WorktreeInfo } from '../types/electron';
@@ -311,6 +312,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   >([]);
   const [resumeSessionId, setResumeSessionId] = useState('');
   // Facts belong to the selected owner and exact path, never the last reply.
+  const readiness = useProviderReadiness(
+    provider,
+    targetHub,
+    profileId ||
+      launchIntegrationId ||
+      (provider === 'claude' && transport === 'pty' ? 'claude-pty' : ''),
+  );
   const runtimeStatus = useAgentRuntimeStatus(!!toolScope, !!targetHub);
   const [useWorktree, setUseWorktree] = useState(!!defaultWorktree);
   const [folderResult, setFolderResult] = useState<{ key: string; info: WorktreeInfo } | null>(
@@ -1714,9 +1722,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
-          {/* Diagnostics are failure-only: a healthy provider says nothing here
-              (the card's green dot + tooltip carry the resolved path, and the
-              advanced "binary" row holds the healthy-path override). */}
+          {/* Installation and provider response are separate facts. Neither
+              successful inference nor unknown auth replaces the launch result. */}
           <div
             id="spawn-availability"
             role="status"
@@ -1727,9 +1734,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               : missingProvider
                 ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
                 : providerAvailability(detection, provider) === 'installed'
-                  ? `${providerLabel} CLI found; sign in through its CLI if needed. Authentication has not been checked.`
+                  ? `${providerLabel} CLI found.`
                   : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
-            <button onClick={refreshDetection} style={ghostBtnSmall}>
+            <span> {readiness.detail}</span>
+            <button
+              onClick={() => {
+                refreshDetection();
+                void readiness.refresh();
+              }}
+              style={ghostBtnSmall}
+            >
               Check again
             </button>
           </div>

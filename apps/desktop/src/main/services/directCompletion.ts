@@ -40,6 +40,7 @@
  */
 import { spawn } from 'child_process';
 import * as os from 'os';
+import * as fs from 'fs';
 
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { servesModel as vocabularyServesModel } from '../shared/modelVocabulary';
@@ -159,7 +160,7 @@ interface RunContext {
 }
 
 /** Thrown by adapters to name a specific failure reason. */
-class CompletionFailure extends Error {
+export class CompletionFailure extends Error {
   constructor(
     readonly reason: CompletionFailureReason,
     message: string,
@@ -283,6 +284,8 @@ export function extractOpencodeText(stdout: string): string {
 // ---------------------------------------------------------------------------
 
 interface CliRun {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   bin: string;
   args: string[];
@@ -308,7 +311,7 @@ interface CliRun {
  *  - **cwd is the home directory.** A one-shot has no project to pick up, and
  *    running inside a repo makes some harnesses load project config and skills.
  */
-function runCli(run: CliRun): Promise<string> {
+export function runCli(run: CliRun): Promise<string> {
   return new Promise((resolve, reject) => {
     if (run.signal?.aborted) {
       reject(new CompletionFailure('cancelled', 'cancelled'));
@@ -317,7 +320,8 @@ function runCli(run: CliRun): Promise<string> {
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(run.bin, run.args, {
-        cwd: os.homedir(),
+        cwd: run.cwd ?? os.homedir(),
+        env: run.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         // Never a shell: the prompt and the model id are untrusted-ish text and
@@ -790,5 +794,129 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
       return fail(err.reason, err.message, provider, model, startedAt);
     }
     return fail('failed', (err as Error)?.message ?? String(err), provider, model, startedAt);
+  }
+}
+
+/** Startup readiness has a stricter contract than derived text completions.
+ * Safe mode preserves CLI auth while disabling all customization loading.
+ * Capability-check the exact native launcher; never execute package-fetching
+ * shims, infer support from a version number, or fall back to another provider.
+ * No daemon dependency: safe mode disables hooks before they can register a
+ * session, and --no-session-persistence prevents a CLI history entry.
+ * Verified against Claude 2.1.258 --help; see docs/fleet-provider-readiness.md.
+ */
+export async function completeReadinessPing(
+  provider: CompletionProvider,
+  bin: string,
+  signal: AbortSignal,
+): Promise<CompletionResult> {
+  const startedAt = Date.now();
+  const unsupported = () =>
+    fail('no-tools-unsupported', 'isolated ping unavailable', provider, null, startedAt);
+  if (provider === 'codex') {
+    const { completeCodexReadinessPing } = await import('./codexReadinessPing');
+    return completeCodexReadinessPing(bin, signal);
+  }
+  if (provider !== 'claude' || process.platform === 'win32') return unsupported();
+  try {
+    // Reject script launchers before even --help. Reading executable metadata
+    // is separate from auth; no credential/config files are inspected here.
+    const file = fs.openSync(bin, 'r');
+    const magic = Buffer.alloc(4);
+    try {
+      fs.readSync(file, magic, 0, 4, 0);
+    } finally {
+      fs.closeSync(file);
+    }
+    if (!['7f454c46', 'cffaedfe', 'feedfacf', 'cafebabe'].includes(magic.toString('hex')))
+      return unsupported();
+    const env = {
+      ...process.env,
+      CLAUDE_CODE_SAFE_MODE: '1',
+      CLAUDE_CODE_MAX_RETRIES: '0',
+      CLAUDE_CODE_RETRY_WATCHDOG: '0',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64',
+      MAX_THINKING_TOKENS: '0',
+      DISABLE_AUTOUPDATER: '1',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    };
+    const help = await runCli({
+      bin,
+      args: ['--help'],
+      stdin: '',
+      timeoutMs: 3000,
+      maxOutputChars: 32000,
+      signal,
+      env,
+      cwd: os.tmpdir(),
+    });
+    if (
+      ![
+        '--safe-mode',
+        '--tools',
+        '--strict-mcp-config',
+        '--no-session-persistence',
+        '--system-prompt',
+        '--disable-slash-commands',
+        '--output-format',
+      ].every((flag) => help.includes(flag))
+    )
+      return unsupported();
+    if (signal.aborted) return fail('cancelled', 'cancelled', provider, null, startedAt);
+    const model = defaultModelFor(provider);
+    const raw = await runCli({
+      bin,
+      args: [
+        '--safe-mode',
+        '--print',
+        '--tools',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        '{"mcpServers":{}}',
+        '--disable-slash-commands',
+        '--no-session-persistence',
+        '--system-prompt',
+        'Reply OK.',
+        '--output-format',
+        'json',
+        ...(model ? ['--model', model] : []),
+      ],
+      stdin: 'Reply OK.',
+      timeoutMs: 15000,
+      maxOutputChars: 8000,
+      signal,
+      env,
+      cwd: os.tmpdir(),
+    });
+    const response = JSON.parse(raw) as { type?: unknown; is_error?: unknown; result?: unknown };
+    if (
+      response.type !== 'result' ||
+      response.is_error !== false ||
+      typeof response.result !== 'string'
+    ) {
+      const reason =
+        response.is_error === true && typeof response.result === 'string'
+          ? classifyCliFailure(response.result)
+          : 'failed';
+      return fail(
+        reason,
+        typeof response.result === 'string' ? response.result : 'invalid result',
+        provider,
+        model,
+        startedAt,
+      );
+    }
+    if (response.result.trim() !== 'OK')
+      return fail('empty', 'unexpected ping response', provider, model, startedAt);
+    return { ok: true, text: 'OK', provider, model, elapsedMs: Date.now() - startedAt };
+  } catch (err) {
+    return fail(
+      err instanceof CompletionFailure ? err.reason : 'failed',
+      err instanceof CompletionFailure ? err.message : 'ping failed',
+      provider,
+      null,
+      startedAt,
+    );
   }
 }

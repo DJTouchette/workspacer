@@ -183,3 +183,12 @@ it('bridges only task-owned edit and open selectors', async () => {
   await api.taskInspectorOpen(open);
   expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.TASK_INSPECTOR_OPEN, open);
 });
+
+it('provider readiness defaults to a free read; only explicit true requests a ping', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  await api.providerReadiness('codex');
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.PROVIDER_READINESS, 'codex', false);
+  await api.providerReadiness('claude', true);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.PROVIDER_READINESS, 'claude', true);
+});

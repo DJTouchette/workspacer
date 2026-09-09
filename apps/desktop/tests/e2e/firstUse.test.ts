@@ -212,7 +212,11 @@ for (const theme of ['light', 'dracula']) {
           await dialog(page).getByRole('button', { name: 'terminal', exact: true }).click();
         }
         await page.getByLabel('Working directory').fill('/fixture/project');
-        await expect(dialog(page)).toContainText('Authentication has not been checked');
+        await expect(dialog(page)).toContainText(
+          provider === 'claude'
+            ? 'An isolated provider check is unavailable'
+            : 'Provider has not been checked. Authentication is unknown.',
+        );
         await launch(page).focus();
         await page.keyboard.press('Enter');
         await expect(page.getByRole('alert')).toContainText('could not start');
@@ -862,4 +866,58 @@ test('first-task help reaches the actual routing and workflow settings without d
   expect(await page.evaluate(() => Object.keys((window as any).firstUse.snapshots()).length)).toBe(
     1,
   );
+});
+
+for (const state of ['responding', 'unauthenticated', 'unsupported', 'error']) {
+  test(`provider readiness ${state} is advisory and runtime stays health-only`, async ({
+    page,
+  }) => {
+    await page.goto(`${base}?runtime=ready&providerReadiness=${state}`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    const expected = {
+      responding: 'Provider responded to a small test request.',
+      unauthenticated: 'Provider reported an authentication failure.',
+      unsupported: 'An isolated provider check is unavailable',
+      error: 'Provider check failed; authentication is unknown.',
+    }[state]!;
+    await expect(page.locator('#fleet-provider-status')).toContainText(expected);
+    await expect(page.locator('#fleet-runtime-status')).toContainText(
+      'Fleet Manager runtime is ready.',
+    );
+    await expect(page.locator('#fleet-runtime-status')).not.toContainText('sign-in');
+    await page.getByLabel('Ask the Fleet Manager').fill('Fixture request');
+    await expect(
+      page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }),
+    ).toBeEnabled();
+    const before = await calls(page);
+    expect(
+      before.filter((c: any) => c.method === 'providerReadiness' && c.args[1] === true),
+    ).toEqual([]);
+    await page
+      .locator('#fleet-provider-status')
+      .getByRole('button', { name: 'Check again' })
+      .click();
+    expect(
+      (await calls(page)).filter(
+        (c: any) => c.method === 'providerReadiness' && c.args[1] === true,
+      ),
+    ).toHaveLength(1);
+  });
+}
+
+test('Codex readiness success stays on Codex and never adds a launch gate', async ({ page }) => {
+  await page.goto(`${base}?managerProvider=codex&runtime=ready&providerReadiness=responding`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await expect(page.locator('#fleet-provider-status')).toContainText('codex CLI found.');
+  await expect(page.locator('#fleet-provider-status')).toContainText(
+    'Provider responded to a small test request.',
+  );
+  await page.getByLabel('Ask the Fleet Manager').fill('Fixture task');
+  await expect(page.getByRole('button', { name: 'Ask Fleet Manager', exact: true })).toBeEnabled();
+  await page.locator('#fleet-provider-status').getByRole('button', { name: 'Check again' }).click();
+  expect(
+    (await calls(page))
+      .filter((c: any) => c.method === 'providerReadiness' && c.args[1] === true)
+      .map((c: any) => c.args[0]),
+  ).toEqual(['codex']);
 });
