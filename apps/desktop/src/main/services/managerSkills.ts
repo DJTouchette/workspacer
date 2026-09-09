@@ -158,6 +158,13 @@ description: End this Fleet Manager session and write everything a FRESH manager
 
 # /handoff — end this session so the next one loses nothing
 
+When the host sends a HOST-OWNED MANAGER HANDOFF request with an operation ID
+and an exact JSON output path, follow that request's checkpoint and receipt
+protocol. Do not execute the standalone termination/reopen/adoption steps below.
+The host creates and binds the successor and transfers workers and tasks.
+Do not fall back to a mechanical digest or the shared handoff.md.
+The remaining instructions are the standalone /handoff fallback only.
+
 Your context is nearly spent and the user wants to continue in a fresh session.
 You are writing to a SUCCESSOR: a Fleet Manager that boots with your briefs,
 your fleet, your projects — and none of your conversation. Everything it cannot

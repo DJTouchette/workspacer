@@ -282,3 +282,21 @@ export function revokeRemoteToken(token: string): RemoteTokenRecord {
   writeTokens(records);
   return removed;
 }
+
+/** Non-secret launch invariant. Never return or journal the bearer token. */
+export function sessionFacadeGrantFingerprint(sessionId: string): string | undefined {
+  const r = readTokens().find((r) => r.label === SESSION_LABEL_PREFIX + sessionId);
+  if (!r || r.scope !== 'operator' || r.role !== 'manager') return undefined;
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        scope: r.scope,
+        role: r.role,
+        plugins: [...(r.plugins ?? [])].sort(),
+        profilesAllowed: [...(r.profilesAllowed ?? [])].sort(),
+        yoloAllowed: !!r.yoloAllowed,
+      }),
+    )
+    .digest('hex');
+}

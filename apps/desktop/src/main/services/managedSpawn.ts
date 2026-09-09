@@ -1,3 +1,6 @@
+import { managerReplacementState } from './managerReplacementState';
+import { managerLaunchConfiguration } from './managerLaunchConfiguration';
+import { sessionFacadeGrantFingerprint } from './remoteTokens';
 import { prepareLaunchIntegration } from './launchIntegrations';
 /**
  * Shared managed-provider (Tier-2) spawn dispatch.
@@ -205,6 +208,8 @@ export interface ManagedSpawnOptions {
    * the spawn handler instead, and drained by that same registration.
    */
   firstMessage?: string;
+  /** Host-only pinned FRESH id: unlike resumeSessionId, never resumes a transcript. */
+  replacementSessionId?: string;
 }
 
 /**
@@ -214,6 +219,10 @@ export interface ManagedSpawnOptions {
  * card and its analytics row are tagged with the right backend from the start.
  */
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
+  managerReplacementState.assertResume(opts.resumeSessionId);
+  return managerReplacementState.admitted([opts.parentSessionId], () => spawnManaged(opts));
+}
+async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   const { provider } = opts;
   if (opts.scrubProfileBypass && opts.launchIntegrationId)
     throw new Error('Launch integrations currently require a local desktop session');
@@ -340,7 +349,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // A facade session takes its requested tier, defaulting to operator (the
   // legacy mcpFacade meaning).
   const facadeScope: RemoteTokenScope = opts.toolScope ?? 'operator';
-  const managedId = opts.resumeSessionId || randomUUID();
+  const managedId = opts.replacementSessionId || opts.resumeSessionId || randomUUID();
   // Refused out loud rather than dropped — see claudeSpawn's twin.
   const resultSchema = opts.resultSchema;
   if (resultSchema !== undefined) {
@@ -588,6 +597,36 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // enrich this entry as the agent runs. (Stream-transport Claude *does* fire
   // hooks, but only after the first turn starts — same gap, same fix.)
   claudeSessionStore.ensureManagedSession(sessionId, cwd);
+  if (opts.manager && facadeScope === 'operator' && provider !== 'pi') {
+    const grants = sessionFacadeGrantFingerprint(sessionId);
+    if (grants) {
+      const {
+        firstMessage: _message,
+        resumeSessionId: _resume,
+        replacementSessionId: _replacement,
+        ...record
+      } = opts;
+      try {
+        managerReplacementState.rememberLaunch(sessionId, {
+          options: {
+            ...record,
+            cwd,
+            transport,
+            model: serializedModel,
+            modelIdentity: modelSelection?.model,
+            contextWindow: effectiveContextWindow,
+            effort: spawnEffort,
+            permissionMode,
+            skipPermissions: yolo,
+          },
+          grants,
+          configuration: managerLaunchConfiguration(opts),
+        });
+      } catch (error) {
+        console.warn('[manager-handoff] launch provenance unavailable', error);
+      }
+    }
+  }
   return sessionId;
 }
 

@@ -1,3 +1,4 @@
+import { managerReplacementState } from './managerReplacementState';
 import { workflowWakeInstructions, workflowResultSchema } from './fleetWorkflowRuntime';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
@@ -214,6 +215,12 @@ class SupervisorNudge {
     // Misfire guard: a freshly spawned worker idles once BEFORE the parent's
     // task message is delivered — that boot idle is not a finish.
     if (!hasReceivedTask(session)) return;
+    managerReplacementState.recordFinish(
+      parentId,
+      session.sessionId,
+      lastReply,
+      session.status === 'ended',
+    );
     const finishedEntry: FleetMessageEntry = {
       label: session.label || agentLabel(session.cwd),
       sessionId: session.sessionId,
@@ -298,6 +305,7 @@ class SupervisorNudge {
     );
     if (managers.length === 0) return;
     for (const manager of managers) {
+      if (managerReplacementState.held(manager.sessionId)) continue;
       const missed = sessions.filter(
         (c) =>
           c.parentSessionId === manager.sessionId &&
@@ -423,7 +431,11 @@ class SupervisorNudge {
       const signature =
         `${reply} ${entry.stopped ? 1 : 0} ${entry.failed ?? ''} ` +
         `${entry.escalation ? 'escalated' : entry.escalationError ? 'invalid-escalation' : ''}`;
-      if (this.lastReportedReply.get(session.sessionId) === signature) continue;
+      if (
+        (this.lastReportedReply.get(session.sessionId) ??
+          managerReplacementState.signature(session.sessionId)) === signature
+      )
+        continue;
       entry.reviewEvidenceId = await fleetReviewStore
         .capture(parentId, session.sessionId, entry.stopped ? 'session-ended' : 'turn-ended')
         .catch(() => undefined);
@@ -465,10 +477,16 @@ class SupervisorNudge {
     ] as const) {
       if (group.length === 0) continue;
       try {
-        await claudemonSessionClient.message(
-          parentId,
-          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId)),
+        const target = managerReplacementState.wakeTarget(parentId);
+        const text =
+          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId));
+        const pairs = group.map(
+          (e) => [e.sessionId, signatureById.get(e.sessionId)!] as [string, string],
         );
+        const response = managerReplacementState.holdMessage(target, text, pairs)
+          ? { ok: true }
+          : await claudemonSessionClient.message(target, text);
+        if (response?.ok === false) continue;
       } catch {
         /* the parent may have just ended — best-effort */
         continue; // NOT delivered: leave this group's signatures unrecorded
@@ -478,7 +496,10 @@ class SupervisorNudge {
       // must not silence the next identical edge for that group.
       for (const entry of group) {
         const signature = signatureById.get(entry.sessionId);
-        if (signature) this.lastReportedReply.set(entry.sessionId, signature);
+        if (signature) {
+          managerReplacementState.recordSignature(entry.sessionId, signature);
+          this.lastReportedReply.set(entry.sessionId, signature);
+        }
       }
     }
   }
@@ -487,6 +508,26 @@ class SupervisorNudge {
    *  `lastReportedReply` doesn't retain one entry per session for the whole
    *  process lifetime (same concern as claudeSessionStore's per-session
    *  Maps — see its evictNow). A respawn onto a reused id starts fresh. */
+  replacementFinishes(parent: string): Record<string, { reply: string; stopped: boolean }> {
+    return Object.fromEntries(
+      [...(this.pendingFinished.get(parent)?.workers ?? [])].map(([id, { session, entry }]) => [
+        id,
+        {
+          reply: lastAssistantReply(session) || entry.lastReply || '',
+          stopped: session.status === 'ended',
+        },
+      ]),
+    );
+  }
+  replacementSignatures(ids: string[]): Record<string, string> {
+    return Object.fromEntries(
+      ids.flatMap((id) => {
+        const value = this.lastReportedReply.get(id) ?? managerReplacementState.signature(id);
+        return value ? [[id, value]] : [];
+      }),
+    );
+  }
+
   forgetWorker(sessionId: string): void {
     this.lastReportedReply.delete(sessionId);
   }

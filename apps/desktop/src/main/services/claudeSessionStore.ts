@@ -1,3 +1,4 @@
+import { managerReplacementState, type ReplacementMetadata } from './managerReplacementState';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
@@ -906,6 +907,60 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
+  /** Exact desktop-owned metadata, including dispatches awaiting registration. */
+  replacementInventory(managerId: string): ReplacementMetadata[] {
+    const rows = new Map<string, ReplacementMetadata>();
+    for (const s of this.sessions.values()) {
+      if (s.sessionId !== managerId && s.parentSessionId !== managerId) continue;
+      if (s.hub)
+        throw new Error(
+          'Automatic manager replacement cannot transfer remote children; no partial adoption was performed',
+        );
+      const {
+        sessionId,
+        cwd,
+        label,
+        parentSessionId,
+        isWakeTarget,
+        provider,
+        transport,
+        settings,
+        resultSchema,
+        routing,
+      } = s;
+      rows.set(sessionId, {
+        sessionId,
+        cwd,
+        label,
+        parentSessionId,
+        isWakeTarget,
+        provider,
+        transport,
+        settings,
+        resultSchema,
+        routing,
+      });
+    }
+    for (const [sessionId, meta] of this.spawnMeta) {
+      if (meta.parentSessionId === managerId && !rows.has(sessionId))
+        rows.set(sessionId, { sessionId, cwd: this.sessions.get(managerId)?.cwd ?? '', ...meta });
+    }
+    return structuredClone([...rows.values()]);
+  }
+
+  /** Journal overlay restores attribution only. Existing daemon liveness wins. */
+  restoreReplacementMetadata(meta: ReplacementMetadata): void {
+    const session = this.sessions.get(meta.sessionId);
+    if (session?.hub) throw new Error('Cannot restore replacement metadata onto a remote session');
+    if (session) {
+      const { sessionId: _id, cwd: _cwd, ...fields } = meta;
+      Object.assign(session, fields);
+      this.pushUpdate(session);
+    } else {
+      this.spawnMeta.set(meta.sessionId, meta);
+    }
+  }
+
   /** Session ids currently marked as supervisors (live sessions only). */
   supervisorSessionIds(): string[] {
     const ids: string[] = [];
@@ -953,7 +1008,15 @@ class ClaudeSessionStore {
   reparentChildren(
     oldManagerId: string,
     newManagerId: string,
+    replacementOperationId?: string,
   ): { moved: string[]; pending: string[] } {
+    if (
+      !replacementOperationId ||
+      managerReplacementState.held(oldManagerId)?.operationId !== replacementOperationId
+    ) {
+      managerReplacementState.assertAvailable(oldManagerId);
+      managerReplacementState.assertAvailable(newManagerId);
+    }
     if (!oldManagerId || !newManagerId) {
       throw new Error('reparent_children: both the outgoing and the new manager id are required');
     }
@@ -989,6 +1052,9 @@ class ClaudeSessionStore {
       );
     }
 
+    // Persist task ownership before mutating in-memory parentage. Inspector's
+    // transaction restores task rows if this write fails.
+    dispatchHistoryStore.adoptWorkflowTasks(oldManagerId, newManagerId);
     const moved: string[] = [];
     for (const session of this.sessions.values()) {
       if (session.parentSessionId !== oldManagerId) continue;
@@ -1014,7 +1080,6 @@ class ClaudeSessionStore {
     // A wake for these workers may already be sitting in the coalesce window
     // addressed to the old manager. Re-address it rather than let it land on a
     // manager that is being retired.
-    dispatchHistoryStore.adoptWorkflowTasks(oldManagerId, newManagerId);
     supervisorNudge.reassignPendingFinish(oldManagerId, newManagerId);
 
     // The per-worker "nothing new to report" signature (supervisorNudge's
@@ -2267,7 +2332,7 @@ class ClaudeSessionStore {
     const session = bornWithEmptyPending(draft);
     // Apply any pre-registered spawn metadata (label, parentSessionId) so the
     // snapshot is enriched before the first push to the renderer.
-    const meta = this.spawnMeta.get(sessionId);
+    const meta = this.spawnMeta.get(sessionId) ?? managerReplacementState.metadata(sessionId);
     if (meta) {
       session.label = meta.label;
       session.parentSessionId = meta.parentSessionId;

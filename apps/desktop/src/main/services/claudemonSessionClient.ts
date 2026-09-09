@@ -1,3 +1,4 @@
+import { managerReplacementState } from './managerReplacementState';
 /**
  * Main-process proxy between the renderer and the claudemon daemon.
  *
@@ -528,12 +529,23 @@ class ClaudemonSessionClient {
   }
 
   /** Send raw bytes (or a base64-encoded payload) to the session's PTY input. */
+  attachedSession(paneId: string): string | undefined {
+    return this.streams.get(paneId)?.sessionId;
+  }
+
   async input(sessionId: string, text: string): Promise<void> {
+    managerReplacementState.assertAvailable(sessionId);
     await this.postJSON(`/sessions/${sessionId}/input`, { text, newline: false });
   }
 
   /** Send a chat message — only succeeds when claudemon reports mode=input. */
   async message(sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> {
+    if (managerReplacementState.holdMessage(sessionId, text)) return { ok: true };
+    return this.messageDirect(sessionId, text);
+  }
+
+  /** Host transaction only. Bypasses the durable handoff outbox, never IPC. */
+  async messageDirect(sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/message`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

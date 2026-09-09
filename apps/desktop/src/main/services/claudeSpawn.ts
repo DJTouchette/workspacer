@@ -1,3 +1,4 @@
+import { managerReplacementState } from './managerReplacementState';
 import { prepareLaunchIntegration } from './launchIntegrations';
 /**
  * Shared Claude (Tier-1, PTY) spawn dispatch.
@@ -159,6 +160,10 @@ export interface ClaudeSpawnOptions {
  * Library MCP servers when `mcpItemIds` is present.
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
+  managerReplacementState.assertResume(opts.resumeSessionId);
+  return managerReplacementState.admitted([opts.parentSessionId], () => spawnClaude(opts));
+}
+async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   if (opts.scrubProfileBypass && opts.launchIntegrationId)
     throw new Error('Launch integrations currently require a local desktop session');
   // A Claude PTY spawn takes CLAUDE profiles only. The picker filters on it,

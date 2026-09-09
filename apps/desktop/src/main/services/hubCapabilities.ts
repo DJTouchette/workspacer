@@ -1,3 +1,4 @@
+import { managerDispatch, managerReplacementState } from './managerReplacementState';
 import { fleetWorkflowRequest } from './fleetWorkflowService';
 import { workflowSpawn, pinnedWorkflowTemplate } from './fleetWorkflowRuntime';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
@@ -626,12 +627,13 @@ export function registerHubCapabilities(): void {
       {}) as import('../shared/fleetWorkflow').WorkflowRequest & { callerSessionId?: string };
     if (request.cwd)
       request.cwd = assertPathAllowed('fleetWorkflows.request', request.cwd, browseRoots());
+    managerReplacementState.assertAvailable(callerSessionId);
     return fleetWorkflowRequest(request, callerSessionId);
   });
   // ADOPTED-DEGRADED: fleetWorkflows.request — an adopted full headless brain may own this name and explicitly returns unavailable; catalog-only brain does not register it.
   // Keep the spawn handler at its existing indentation for shared seam changes.
   // prettier-ignore
-  registerCapability('agents.spawn', workflowSpawn(async (params: unknown) => {
+  registerCapability('agents.spawn', managerDispatch(workflowSpawn(async (params: unknown) => {
     if ((params as { launchIntegrationId?: unknown } | null)?.launchIntegrationId != null) {
       throw new Error('Launch integrations currently require a local desktop session');
     }
@@ -1275,7 +1277,7 @@ export function registerHubCapabilities(): void {
         worktreeResult,
       ),
     };
-  }));
+  })));
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the
   // `terminal:create` IPC handler. Returns the new PTY's session id.

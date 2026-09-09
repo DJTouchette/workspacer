@@ -1,3 +1,4 @@
+import { managerReplacementState } from './managerReplacementState';
 import fs from 'fs';
 import path from 'path';
 /** Pinned-task interpretation and spawn admission. No Library initialization on lifecycle imports. */
@@ -13,6 +14,7 @@ export function ownerTask(
   caller: string | undefined,
   cwd: string | undefined,
 ): DispatchTask {
+  managerReplacementState.assertAvailable(caller);
   const owner = caller ? claudeSessionStore.getSnapshot(caller) : undefined;
   const task = taskId ? dispatchHistoryStore.task(taskId) : undefined;
   if (
