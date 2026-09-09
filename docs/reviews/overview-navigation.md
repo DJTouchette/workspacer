@@ -41,7 +41,7 @@ Environment: Linux, Node 22.22.2, private desktop and renderer dependencies from
 the existing lockfiles (`npm ci --ignore-scripts`); every heavy check runs
 sequentially through `scripts/release-check.py` with its default 2 GiB cap.
 Browser tests use synthetic IPC and an ephemeral Vite server. They do not verify
-Windows Electron or contact live app/provider state. No push, merge or release.
+Windows Electron or contact live app/provider state. No new release or live restart.
 
 Validation (all passed): desktop `npm run typecheck` (main + renderer); focused
 renderer Vitest selection (9 files, 99 tests); Playwright renderer
