@@ -126,3 +126,23 @@ Additional reviewer entry points: `docs/features/task-inspector.md`,
 local feature entry points, task-first all-task transfer with reservation/CAS
 protection, parked successors, and truthful recovery-required delivery status.
 The crash/acknowledgement limitation above remains accepted and unchanged.
+
+
+Combined verification on Linux, Node 22.22.2, Go 1.25.4 and Chromium
+148.0.7778.96:
+
+- Main and renderer typechecks passed.
+- Main: 175 files passed, 3,439 tests passed, seven opt-in native tests skipped.
+- Renderer: 199 files and 1,890 tests passed.
+- Chromium: 14 Task Inspector, five manager handoff and eight readiness/detection
+  cases passed, with one worker and private fixture servers.
+- Installed Codex loopback/wrapper fixtures: six passed; live-account test skipped.
+- Go brain config/default/startup opt-out checks passed with `-count=1`.
+- Changed TypeScript/TSX formatting and `git diff --check` passed.
+
+Primary readiness-to-integration review range: `115f88b0..HEAD` (77 files).
+Full three-feature range: `551e1731..HEAD` (113 files). Integration continuation
+from the accepted handoff: `a8bc902e..HEAD` (72 files). Exact source ancestry and
+conflict paths are listed above. No live config/fleet mutation, daemon/app restart,
+live provider inference, primary merge, push or release build was performed.
+Independent combined review and manager-controlled landing remain pending.
