@@ -70,6 +70,42 @@ function fixture() {
 }
 
 describe('manager task ownership transfer', () => {
+  it('refuses adoption under the same file lock while allocation is reserved, then preserves the accepted attempt and revisions', () => {
+    const { history, filename, admission, workflow, standalone } = fixture();
+    const reserved = history.reserveWorkflowDispatch(
+      workflow.taskId,
+      history.task(workflow.taskId)!.revision!,
+      'review',
+    );
+    const before = fs.readFileSync(filename, 'utf8');
+    // A second store models the manager adoption racing the allocation host.
+    const adopter = new DispatchHistoryStore(() => filename);
+    expect(() => adopter.adoptWorkflowTasks('source', 'successor')).toThrow('reservation');
+    expect(fs.readFileSync(filename, 'utf8')).toBe(before);
+    expect(adopter.task(standalone.taskId)?.ownerSessionId).toBe('source');
+    const accepted = history.accept({
+      ...admission,
+      sessionId: 'late-review',
+      taskId: workflow.taskId,
+      workflowStepId: 'review',
+      stage: 'review',
+    })!;
+    // Acceptance alone is insufficient: the async host must release its token.
+    expect(() => adopter.adoptWorkflowTasks('source', 'successor')).toThrow('reservation');
+    history.releaseWorkflowDispatch(workflow.taskId, reserved);
+    const settled = history.task(workflow.taskId)!;
+    adopter.adoptWorkflowTasks('source', 'successor');
+    const transferred = history.task(workflow.taskId)!;
+    expect(transferred.ownerSessionId).toBe('successor');
+    expect(transferred.revision).toBe(settled.revision! + 1);
+    expect(transferred.attempts).toEqual(settled.attempts);
+    expect(transferred.workflow).toEqual(settled.workflow);
+    expect(transferred.attempts.at(-1)?.dispatchId).toBe(accepted.dispatchId);
+    expect(transferred.workflow?.steps.find((s) => s.id === 'review')).toMatchObject({
+      state: 'dispatched',
+      sessionId: 'late-review',
+    });
+  });
   it('transfers ordinary and workflow records without rebuilding attempts, pinned policy or history', () => {
     const { history, standalone, workflow, unrelated } = fixture();
     const before = [standalone, workflow].map(({ taskId }) => history.task(taskId)!);

@@ -31,6 +31,7 @@ vi.mock('./sessionStore/analyticsWriter', () => ({ writeHistory: vi.fn() }));
 
 import { claudeSessionStore } from './claudeSessionStore';
 import { supervisorNudge } from './supervisorNudge';
+import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { parseFleetMessage } from '../shared/fleetMessages';
 
 let seq = 0;
@@ -206,6 +207,31 @@ describe('reparentChildren re-points fleet wakes at the successor', () => {
 });
 
 describe('reparentChildren refuses a successor no wake could reach', () => {
+  it('moves no live or pending child when atomic task adoption refuses a reservation', async () => {
+    const outgoing = manager(uid('mgr-out'));
+    const successor = manager(uid('mgr-in'));
+    const live = worker(uid('live'), outgoing);
+    const pending = uid('pending');
+    claudeSessionStore.setSpawnMeta(pending, { parentSessionId: outgoing });
+    const guard = vi
+      .spyOn(dispatchHistoryStore, 'adoptWorkflowTasks')
+      .mockImplementationOnce(() => {
+        throw new Error('Source task dispatch reservation is active');
+      });
+    try {
+      expect(() => claudeSessionStore.reparentChildren(outgoing, successor)).toThrow('reservation');
+      expect(claudeSessionStore.getSnapshot(live)?.parentSessionId).toBe(outgoing);
+      hook(pending, 'SessionStart');
+      expect(claudeSessionStore.getSnapshot(pending)?.parentSessionId).toBe(outgoing);
+      turn(live, 'Finish allocation', 'Accepted under original owner');
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(wakeTargets()).toEqual([outgoing]);
+      claudeSessionStore.reparentChildren(outgoing, successor);
+      expect(claudeSessionStore.getSnapshot(live)?.parentSessionId).toBe(successor);
+    } finally {
+      guard.mockRestore();
+    }
+  });
   it('refuses an unknown session, leaving routing untouched', async () => {
     const outgoing = manager(uid('mgr-out'));
     const child = worker(uid('child'), outgoing);

@@ -639,6 +639,12 @@ export class DispatchHistoryStore {
     // Historical API name: succession transfers ALL owned tasks. Mutate only
     // attribution so attempts, pinned policy and user metadata remain intact.
     if (!this.writing) return this.transaction(() => this.adoptWorkflowTasks(oldOwner, newOwner));
+    // Check under the SAME file lock as ownership mutation. A reserved spawn
+    // has allocated work but still owes accept() under its original owner.
+    if (this.load().some((task) => task.ownerSessionId === oldOwner && task.dispatchReservation))
+      throw new Error(
+        'Manager adoption must wait for the source task dispatch reservation to settle',
+      );
     for (const task of this.load())
       if (task.ownerSessionId === oldOwner) {
         task.ownerSessionId = newOwner;
