@@ -3,13 +3,13 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  LayoutGrid,
   Compass,
   History,
   Settings,
   Smartphone,
 } from 'lucide-react';
 import { BrandMark, Wordmark } from './Brand';
+import { PaneIcon } from './icons';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -460,11 +460,7 @@ const SideBar: React.FC<SideBarProps> = ({
           }}
         >
           {isGlobal ? (
-            <LayoutGrid
-              size={16}
-              strokeWidth={1.75}
-              style={{ color: 'var(--wks-text-tertiary)' }}
-            />
+            <PaneIcon type="overview" size={16} />
           ) : isManager ? (
             <Compass size={16} strokeWidth={1.75} style={{ color: 'var(--wks-text-primary)' }} />
           ) : (
@@ -671,9 +667,7 @@ const SideBar: React.FC<SideBarProps> = ({
         boxSizing: 'border-box',
       }}
     >
-      {/* Brand header — the { ▮ } mark + work{spacer} wordmark IS the way home:
-          clicking it opens the Overview workspace (dashboards & plugin panes),
-          which no longer has its own row in the feed. Collapse toggle top-right. */}
+      {/* The brand and labeled Overview entry share the dashboard route. */}
       <div
         style={{
           display: 'flex',
@@ -761,6 +755,30 @@ const SideBar: React.FC<SideBarProps> = ({
           </button>
         )}
       </div>
+
+      {overviewAgent && (
+        <button
+          onClick={() => onSelectAgent(overviewAgent.id)}
+          title="Overview — usage, fleet status, projects and plugins"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            margin: '0 10px 6px',
+            padding: '8px 10px',
+            border: 'none',
+            borderRadius: 'var(--wks-radius-md)',
+            background: 'var(--wks-bg-surface)',
+            color: 'var(--wks-text-secondary)',
+            fontFamily: 'inherit',
+            fontSize: '0.72rem',
+            cursor: 'pointer',
+          }}
+        >
+          <PaneIcon type="overview" size={16} />
+          Overview
+        </button>
+      )}
 
       {/* Remote worker nodes. Renders NOTHING unless this hub has a node
           registry AND something in it is worth saying — asleep, starting,

@@ -48,6 +48,116 @@ const dialog = (page: any) => page.getByRole('dialog', { name: 'Dispatch agent' 
 const launch = (page: any) =>
   dialog(page).getByRole('button', { name: 'Dispatch agent', exact: true });
 const calls = (page: any) => page.evaluate(() => (window as any).firstUse.calls);
+
+for (const uiMode of ['focus', 'fleet']) {
+  for (const viewLevel of ['piloting', 'fleet']) {
+    test(`Overview navigation after restoring ${uiMode}/${viewLevel}`, async ({ page }) => {
+      test.setTimeout(60000);
+      await page.setViewportSize({ width: 1280, height: 900 });
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.goto(`${base}?spawn=success&runtime=ready`);
+      await page.getByRole('button', { name: "Got it — don't show again" }).click();
+      const palette = async (query: string) => {
+        await page.keyboard.press('Control+k');
+        const input = page.getByPlaceholder('Search actions and apps…');
+        await input.fill(query);
+        await page
+          .locator('[data-palette-row]')
+          .filter({
+            has: page.getByText(query, { exact: true }),
+          })
+          .click();
+        await expect(input).toHaveCount(0);
+      };
+      // A real (fixture-backed) manager ensures the restored Fleet overlay mounts.
+      await page.getByLabel('Ask the Fleet Manager').fill('Navigation fixture');
+      await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
+      await expect
+        .poll(() => page.evaluate(() => Object.keys((window as any).firstUse.snapshots()).length))
+        .toBe(1);
+      await palette('Recent agents');
+      await expect(page.getByRole('region', { name: 'Recent agents' })).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const layout = (window as any).firstUse.layout();
+            const ws = layout?.agents.find((a: any) => a.global);
+            return ws?.tabs.find((t: any) => t.id === ws.activeTabId)?.panes[0].type;
+          }),
+        )
+        .toBe('recentagents');
+      await page.evaluate(
+        ({ uiMode, viewLevel }) => {
+          const fixture = (window as any).firstUse;
+          fixture.config().ui.mode = uiMode;
+          fixture.config().panes.viewLevel = viewLevel;
+          fixture.restart();
+        },
+        { uiMode, viewLevel },
+      );
+      await page.reload();
+      const deck = page.locator('.fleet-root');
+      if (uiMode === 'fleet' && viewLevel === 'fleet') {
+        await expect(deck.getByRole('heading', { name: 'Runbook timeline' })).toBeVisible();
+        await deck
+          .getByRole('button', { name: 'Overview Usage, fleet status, projects and plugins' })
+          .click();
+      } else {
+        await expect(deck).toHaveCount(0);
+        await page.getByRole('button', { name: 'Overview', exact: true }).click();
+      }
+      const dashboard = page.getByText('Workspace', { exact: true });
+      await expect(dashboard).toBeInViewport();
+      await expect(page.getByText('All time', { exact: true })).toBeVisible();
+      await expect(deck).toHaveCount(0);
+      expect(await page.evaluate(() => (window as any).firstUse.config().ui.mode)).toBe(uiMode);
+      expect(await page.evaluate(() => (window as any).firstUse.config().panes.viewLevel)).toBe(
+        'piloting',
+      );
+
+      // Ordinary palette works with the command layer disabled by default.
+      await palette('Recent agents');
+      await palette('Open Overview');
+      await expect(dashboard).toBeInViewport();
+      // Brand/home and collapsed rail share the same route after history was selected.
+      await palette('Recent agents');
+      await page.getByTitle('Overview — cross-agent dashboards & plugin panes').click();
+      await expect(dashboard).toBeInViewport();
+      await palette('Recent agents');
+      await page.keyboard.press('Control+b');
+      await page.getByRole('button', { name: 'Overview', exact: true }).click();
+      await expect(dashboard).toBeInViewport();
+      // Existing command-layer key uses the same action (prefix 0).
+      await palette('Enable Command Layer (tmux-style)');
+      await palette('Recent agents');
+      // resolveLeader substitutes an Alt tap for ctrl+space on this Linux fixture.
+      await page.keyboard.press('Alt');
+      await page.keyboard.press('0');
+      await expect(dashboard).toBeInViewport();
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const layout = (window as any).firstUse.layout();
+            const ws = layout?.agents.find((a: any) => a.global);
+            return ws?.tabs.find((t: any) => t.id === ws.activeTabId)?.panes[0].type;
+          }),
+        )
+        .toBe('overview');
+      const types = await page.evaluate(() =>
+        (window as any).firstUse
+          .layout()
+          .agents.find((a: any) => a.global)
+          .tabs.flatMap((t: any) => t.panes.map((p: any) => p.type)),
+      );
+      expect(types.filter((type: string) => type === 'overview')).toHaveLength(1);
+      expect(types.filter((type: string) => type === 'recentagents')).toHaveLength(1);
+      await page.screenshot({ path: test.info().outputPath('overview-restored.png') });
+      expect(errors).toEqual([]);
+    });
+  }
+}
+
 async function openFirstTask(page: any) {
   const welcome = page.getByRole('dialog', { name: 'Welcome' });
   await expect(welcome).toBeVisible();

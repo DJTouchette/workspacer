@@ -20,6 +20,7 @@ import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
 import { Surface } from './Surface';
+import { PaneIcon } from './icons';
 import { InspectorCard } from './claude/InspectorCard';
 import { AgentLogo } from './agentLogos';
 import { requestInspector } from '../lib/watchBus';
@@ -64,6 +65,7 @@ function ensureFleetKeyframes() {
 }
 
 interface Props {
+  onOpenOverview?: () => void;
   onOpenRecentAgents?: () => void;
   onTerminateAgent?: (id: string) => Promise<void>;
   onEnsureAgentChat?: (id: string) => void;
@@ -196,6 +198,7 @@ const expandBtn: React.CSSProperties = {
 const FleetDeck: React.FC<Props> = ({
   top,
   left,
+  onOpenOverview,
   onOpenRecentAgents,
   onTerminateAgent,
   onEnsureAgentChat,
@@ -762,6 +765,16 @@ const FleetDeck: React.FC<Props> = ({
                 </p>
               )}
             </section>
+            {onOpenOverview && (
+              <button className="fleet-recent" onClick={onOpenOverview}>
+                <PaneIcon type="overview" size={20} />
+                <span>
+                  <strong>Overview</strong>
+                  <span>Usage, fleet status, projects and plugins</span>
+                </span>
+                <ChevronRight size={16} />
+              </button>
+            )}
             {onOpenRecentAgents && (
               <button className="fleet-recent" onClick={onOpenRecentAgents}>
                 <History size={20} />

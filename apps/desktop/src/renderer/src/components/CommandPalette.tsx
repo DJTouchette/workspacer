@@ -171,8 +171,10 @@ interface CommandPaletteProps {
   onOpenAgents?: () => void;
   /** Open the Sessions pane (browse + resume past daemon sessions). */
   onOpenSessions?: () => void;
-  /** Open the brief Board (kanban over every project's .workspacer/brief.md). */
+  /** Open the full Overview dashboard, regardless of the selected global tab. */
+  onOpenOverview?: () => void;
   onOpenRecentAgents?: () => void;
+  /** Open the brief Board (kanban over every project's .workspacer/brief.md). */
   onOpenBoard?: () => void;
   /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
   onOpenInspector?: () => void;
@@ -248,6 +250,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenAnalytics,
   onOpenAgents,
   onOpenSessions,
+  onOpenOverview,
   onOpenRecentAgents,
   onOpenBoard,
   onOpenInspector,
@@ -408,6 +411,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       'Watch active subagents and workflow runs in a pane',
       <LayoutGrid size={16} strokeWidth={1.75} />,
       onOpenAgents,
+    );
+    add(
+      'cmd-overview',
+      'Open Overview',
+      'Dashboard with usage, fleet status, projects and plugins',
+      <PaneIcon type="overview" size={16} />,
+      onOpenOverview,
+      'go-overview',
     );
     add(
       'cmd-recentagents',
@@ -575,6 +586,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenAnalytics,
     onOpenAgents,
     onOpenSessions,
+    onOpenOverview,
     onOpenRecentAgents,
     onOpenBoard,
     onOpenInspector,
