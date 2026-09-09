@@ -110,13 +110,6 @@ export class DispatchHistoryStore {
         this.tasks!.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
       )
         this.pruneOne(this.tasks!);
-      for (const t of this.tasks!)
-        for (const a of t.attempts) {
-          if (this.fresh.get(a.sessionId) !== a.observedAt) {
-            a.stale = true;
-            a.live = false;
-          }
-        }
     } catch (error) {
       this.tasks = [];
       this.index();
@@ -127,6 +120,15 @@ export class DispatchHistoryStore {
     }
     this.index();
     return this.tasks!;
+  }
+  private viewTask(task: DispatchTask): DispatchTask {
+    const copy = structuredClone(task);
+    for (const a of copy.attempts)
+      if (this.fresh.get(a.sessionId) !== a.observedAt) {
+        a.stale = true;
+        a.live = false;
+      }
+    return copy;
   }
   private sameProject(task: DispatchTask, cwd: string): boolean {
     return (
@@ -162,6 +164,12 @@ export class DispatchHistoryStore {
       (!input.workflowStepId || !task.workflow.steps.some((s) => s.id === input.workflowStepId))
     )
       throw new Error('Workflow-bound task requires an explicit workflowStepId');
+    if (
+      task?.workflow &&
+      task.workflow.steps.find((s) => !['completed', 'skipped', 'waived'].includes(s.state))?.id !==
+        input.workflowStepId
+    )
+      throw new Error('Workflow step is not next; earlier unfinished steps must finish first');
     if (input.workflowStepId && !task?.workflow)
       throw new Error('Workflow step requires a pinned task');
     if (afterDispatchId && !task?.attempts.some((a) => a.dispatchId === afterDispatchId))
@@ -225,6 +233,17 @@ export class DispatchHistoryStore {
       resultContract: 'absent',
       metrics: {},
     };
+    // Capture directory identity at acceptance, never from a renderer request.
+    if (attempt.worktree?.allocated && !attempt.worktree.fallback) {
+      try {
+        const canonical = fs.realpathSync(attempt.executionCwd);
+        const stat = fs.statSync(canonical);
+        if (canonical === path.resolve(attempt.executionCwd) && stat.isDirectory())
+          attempt.worktree.directoryIdentity = { dev: stat.dev, ino: stat.ino };
+      } catch {
+        /* Historical path facts remain visible; opening is unavailable. */
+      }
+    }
     this.fresh.set(attempt.sessionId, attempt.observedAt);
     task.attempts.push(attempt);
     const step = task.workflow?.steps.find((s) => s.id === input.workflowStepId);
@@ -246,7 +265,7 @@ export class DispatchHistoryStore {
     if (!this.writing) this.tasks = undefined;
     this.load();
     const task = this.tasksByID.get(taskId);
-    return this.writing ? task : structuredClone(task);
+    return this.writing ? task : task ? this.viewTask(task) : undefined;
   }
   private retrySource(
     input: Admission,
@@ -371,9 +390,10 @@ export class DispatchHistoryStore {
       return this.transaction(() => this.validated(sessionId, resultContract, evidenceId, outcome));
     const a = this.find(sessionId)?.attempt;
     if (!a) return;
-    a.resultContract = resultContract;
     const step = this.find(sessionId)?.task.workflow?.steps.find((s) => s.sessionId === sessionId);
-    if (step && step.state !== 'waived') {
+    if (step?.state === 'waived') return;
+    a.resultContract = resultContract;
+    if (step) {
       step.state =
         resultContract === 'valid'
           ? 'completed'
@@ -448,6 +468,51 @@ export class DispatchHistoryStore {
     if (!run) step.state = 'skipped';
     this.flush();
   }
+  reserveWorkflowDispatch(taskId: string, revision: number, stepId: string): string {
+    return this.transaction(() => {
+      const task = this.task(taskId);
+      if (!task || (task.revision ?? 0) !== revision)
+        throw new Error('Task changed before dispatch; reload next step');
+      if (task.dispatchReservation)
+        throw new Error(
+          'A workflow dispatch is already reserved; its host must finish or recover it',
+        );
+      const run = task.workflow?.steps.find(
+        (s) => !['completed', 'skipped', 'waived'].includes(s.state),
+      );
+      if (run?.id !== stepId || run.state !== 'planned')
+        throw new Error('Workflow step is no longer eligible');
+      const token = randomUUID();
+      task.dispatchReservation = { stepId, token, createdAt: new Date().toISOString() };
+      return token;
+    });
+  }
+  releaseWorkflowDispatch(taskId: string, token: string): void {
+    this.transaction(() => {
+      const task = this.task(taskId);
+      if (task?.dispatchReservation?.token === token) delete task.dispatchReservation;
+    });
+  }
+  private hostUserView(
+    task: DispatchTask,
+    session: (id: string) => { sessionId: string; status: string; hub?: string } | undefined,
+  ): DispatchTask {
+    const copy = this.viewTask(task);
+    for (const a of copy.attempts) {
+      const actual = session(a.sessionId);
+      if (actual?.sessionId === a.sessionId && !actual.hub && actual.status === 'ended') {
+        a.stale = false;
+        a.live = false;
+        a.lifecycle = 'ended';
+      } else if (actual?.sessionId === a.sessionId && !actual.hub) a.live = true;
+    }
+    return copy;
+  }
+  listForHostUser(
+    session: (id: string) => { sessionId: string; status: string; hub?: string } | undefined,
+  ): DispatchTask[] {
+    return this.list().map((t) => this.hostUserView(t, session));
+  }
   /** Desktop-host user entry point. Deliberately absent from manager capabilities. */
   editByHostUser(
     request: TaskEditRequest,
@@ -469,9 +534,9 @@ export class DispatchHistoryStore {
         if (request.action === 'links') {
           task.links = validateTaskLinks(request.links);
         } else if (request.action === 'waive') {
-          if (busy(task.taskId))
+          if (busy(task.taskId) || task.dispatchReservation?.stepId === request.stepId)
             throw new Error('A step is being dispatched. Try again after it starts.');
-          const disabled = taskSkipDisabledReason(task, request.stepId);
+          const disabled = taskSkipDisabledReason(this.hostUserView(task, session), request.stepId);
           if (disabled) throw new Error(disabled);
           const run = task.workflow!.steps.find((s) => s.id === request.stepId)!;
           if (run.sessionId) {
@@ -540,8 +605,18 @@ export class DispatchHistoryStore {
         !path.isAbsolute(attempt.executionCwd)
       )
         throw new Error('No recorded allocated worktree for this attempt');
+      if (!attempt.worktree.directoryIdentity)
+        throw new Error(
+          'Recorded worktree identity is unavailable; this older record cannot open a folder',
+        );
       const target = fs.realpathSync(attempt.executionCwd);
-      if (target !== path.resolve(attempt.executionCwd) || !fs.statSync(target).isDirectory())
+      const stat = fs.statSync(target);
+      if (
+        target !== path.resolve(attempt.executionCwd) ||
+        !stat.isDirectory() ||
+        stat.dev !== attempt.worktree.directoryIdentity.dev ||
+        stat.ino !== attempt.worktree.directoryIdentity.ino
+      )
         throw new Error('Recorded worktree has moved or is unavailable');
       return { kind: 'worktree', target };
     }
@@ -571,7 +646,9 @@ export class DispatchHistoryStore {
   }
   list(): DispatchTask[] {
     if (!this.writing) this.tasks = undefined;
-    const tasks = structuredClone(this.load()).reverse();
+    const tasks = this.load()
+      .map((t) => this.viewTask(t))
+      .reverse();
     for (const task of tasks)
       for (const a of task.attempts) {
         if (a.live && !a.stale)

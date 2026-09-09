@@ -99,7 +99,9 @@ describe('host-user task edits', () => {
       const f = fixture();
       implement(f);
       f.store.validated('worker', contract, 'evidence', { failure: 'original' });
-      expect(f.edit('implement').ok).toBe(false);
+      expect(f.edit('implement', undefined, (id) => ({ sessionId: id, status: 'active' })).ok).toBe(
+        false,
+      );
       observe(f.store, 'worker');
       expect(f.edit('implement', undefined, () => undefined).ok).toBe(false);
       expect(
@@ -123,7 +125,7 @@ describe('host-user task edits', () => {
       ).toBe(false);
       expect(f.edit('implement').ok).toBe(true);
       observe(f.store, 'worker');
-      f.store.validated('worker', contract, 'evidence', { failure: 'late' });
+      f.store.validated('worker', 'valid', 'late-evidence', { failure: 'late' });
       const task = f.store.task(f.task.taskId)!;
       expect(task.workflow!.steps[1]).toMatchObject({
         state: 'waived',
@@ -316,4 +318,78 @@ it('validates user references and opens only exact recorded task targets', () =>
   expect(() =>
     f.store.openTarget({ taskId: f.task.taskId, kind: 'url', reference: 'pullRequest' }),
   ).toThrow();
+});
+
+it('durably reserves asynchronous dispatch across processes while allowing a future planned waiver', () => {
+  const f = fixture();
+  f.store.workflowDecision(f.task.taskId, 'scout', false, 'No risk');
+  const token = f.store.reserveWorkflowDispatch(
+    f.task.taskId,
+    f.store.task(f.task.taskId)!.revision!,
+    'implement',
+  );
+  const other = new DispatchHistoryStore(() => f.file);
+  expect(() =>
+    other.reserveWorkflowDispatch(f.task.taskId, other.task(f.task.taskId)!.revision!, 'implement'),
+  ).toThrow('reserved');
+  expect(f.edit('implement').ok).toBe(false);
+  expect(f.edit('review').ok).toBe(true);
+  other.releaseWorkflowDispatch(f.task.taskId, 'wrong-token');
+  expect(f.store.task(f.task.taskId)!.dispatchReservation?.token).toBe(token);
+  f.store.releaseWorkflowDispatch(f.task.taskId, token);
+  expect(other.task(f.task.taskId)!.dispatchReservation).toBeUndefined();
+});
+it('does not write process-local stale projections back over recorded lifecycle facts', () => {
+  const f = fixture();
+  implement(f);
+  const other = new DispatchHistoryStore(() => f.file);
+  expect(other.task(f.task.taskId)!.attempts[0].stale).toBe(true);
+  other.editByHostUser(
+    {
+      taskId: f.task.taskId,
+      expectedTaskRevision: other.task(f.task.taskId)!.revision!,
+      action: 'links',
+      links: {},
+    },
+    stopped,
+    () => false,
+  );
+  expect(f.store.task(f.task.taskId)!.attempts[0]).toMatchObject({ stale: false, live: true });
+  expect(JSON.parse(fs.readFileSync(f.file, 'utf8')).tasks[0].attempts[0]).toMatchObject({
+    stale: false,
+    live: true,
+  });
+});
+it('allows a reloaded finished failed step only after exact attached stopped verification', () => {
+  const f = fixture();
+  implement(f);
+  f.store.validated('worker', 'invalid');
+  observe(f.store, 'worker');
+  const other = new DispatchHistoryStore(() => f.file);
+  expect(other.listForHostUser(stopped)[0].attempts[0]).toMatchObject({
+    stale: false,
+    live: false,
+    lifecycle: 'ended',
+  });
+  expect(
+    other.editByHostUser(
+      {
+        taskId: f.task.taskId,
+        expectedTaskRevision: other.task(f.task.taskId)!.revision!,
+        action: 'waive',
+        stepId: 'implement',
+      },
+      stopped,
+      () => false,
+    ).ok,
+  ).toBe(true);
+});
+it('reports corrupt history without inventing empty success or overwriting it', () => {
+  const f = fixture();
+  fs.writeFileSync(f.file, '{corrupt');
+  expect(() => f.store.list()).toThrow();
+  expect(() =>
+    f.store.accept({ owner, projectCwd: f.dir, executionCwd: f.dir, sessionId: 's' }),
+  ).toThrow();
+  expect(fs.readFileSync(f.file, 'utf8')).toBe('{corrupt');
 });

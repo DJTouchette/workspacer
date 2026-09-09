@@ -28,16 +28,19 @@ export function ownerTask(
 }
 export function workflowInstructions(task: DispatchTask): string {
   const pin = task.workflow!;
-  const i = pin.steps.findIndex((s) => !['completed', 'skipped'].includes(s.state));
+  const i = pin.steps.findIndex((s) => !['completed', 'skipped', 'waived'].includes(s.state));
   const run = pin.steps[i];
   const step = pin.definition.steps[i];
-  const header = `Fleet workflow ${pin.definition.name} (${pin.definition.id}@${pin.definition.revision}, snapshot ${pin.hash}). ${reviewPolicy(pin.definition)}. Task ${task.taskId}, project ${task.projectCwd}.`;
+  const waivers = task.audit?.filter((a) => a.action === 'waive') ?? [];
+  const header = `Host-user skips: ${JSON.stringify(waivers)}. These are waivers, never passing results. Fleet workflow ${pin.definition.name} (${pin.definition.id}@${pin.definition.revision}, snapshot ${pin.hash}). ${reviewPolicy(pin.definition)}. Task ${task.taskId}, project ${task.projectCwd}.`;
   if (!run)
     return `${header}\nAll configured steps have returned valid result contracts or explicit skips. This is NOT a passing verdict: inspect each reported outcome: ${JSON.stringify(pin.steps.map((s) => ({ id: s.id, state: s.state, outcome: s.outcome, reason: s.reason })))}.`;
   if (run.state !== 'planned')
     return `${header}\nStep ${step.id} is ${run.state}. Do not launch another step or infer completion from idle/ended. ${run.reason ?? 'Wait for the host result wake.'} Reported outcome: ${JSON.stringify(run.outcome ?? null)}. Escalate failed/blocked steps; v1 does not auto-retry.`;
   if ((step.when === 'material_risk' || step.repairOf) && run.decision === undefined)
     return `${header}\nCall decide_workflow_step with taskId, cwd, stepId=${step.id}, run=true/false and a concrete reason. ${step.repairOf ? 'This is the sole bounded repair linked to review ' + step.repairOf + '. Inspect that reported outcome first.' : 'Decide whether material architecture, security or compatibility risk warrants this step.'}`;
+  const missing = missingWorkflowEvidence(task, i);
+  if (missing) return `${header}\n${missing}. Do not dispatch this step or invent artifacts.`;
   const t = pin.templates[step.template];
   const previous = pin.steps
     .slice(0, i)
@@ -55,7 +58,9 @@ export function workflowSpawn<T>(
     const task = ownerTask(p.taskId as string, p.dispatchOwnerSessionId as string, p.cwd as string);
     if (workflowBusy.has(task.taskId))
       throw new Error('Workflow step dispatch already in progress');
-    const i = task.workflow!.steps.findIndex((s) => !['completed', 'skipped'].includes(s.state));
+    const i = task.workflow!.steps.findIndex(
+      (s) => !['completed', 'skipped', 'waived'].includes(s.state),
+    );
     const run = task.workflow!.steps[i];
     const step = task.workflow!.definition.steps[i];
     if (
@@ -65,6 +70,8 @@ export function workflowSpawn<T>(
       ((step.when === 'material_risk' || step.repairOf) && run.decision !== true)
     )
       throw new Error('Workflow step is not eligible; call next_workflow_step');
+    const missing = missingWorkflowEvidence(task, i);
+    if (missing) throw new Error(missing);
     const previous = task
       .workflow!.steps.slice(0, i)
       .reverse()
@@ -111,11 +118,17 @@ export function workflowSpawn<T>(
           ? 'triage'
           : 'operator';
     p.worktree = !['research', 'review', 'validate'].includes(step.kind);
+    const reservation = dispatchHistoryStore.reserveWorkflowDispatch(
+      task.taskId,
+      task.revision ?? 0,
+      step.id,
+    );
     workflowBusy.add(task.taskId);
     try {
       return await spawn(p);
     } finally {
       workflowBusy.delete(task.taskId);
+      dispatchHistoryStore.releaseWorkflowDispatch(task.taskId, reservation);
     }
   };
 }
@@ -154,4 +167,21 @@ export function configuredWorkflowProjectKey(cwd: string): string {
       (key) => canonical(key) === canonical(cwd),
     ) ?? cwd
   );
+}
+
+/** Waivers remove obligations, never produce predecessor artifacts. */
+export function missingWorkflowEvidence(task: DispatchTask, index: number): string | undefined {
+  const pin = task.workflow!;
+  const step = pin.definition.steps[index];
+  for (const id of [step.independentOf, step.repairOf].filter((s): s is string => !!s)) {
+    const run = pin.steps.find((s) => s.id === id);
+    const attempt = task.attempts.find(
+      (a) =>
+        a.dispatchId === run?.dispatchId &&
+        a.sessionId === run?.sessionId &&
+        a.workflowStepId === id,
+    );
+    if (!run || !attempt || attempt.resultContract !== 'valid' || run.outcome === undefined)
+      return `Required evidence from step ${id} is unavailable for ${step.label}`;
+  }
 }
