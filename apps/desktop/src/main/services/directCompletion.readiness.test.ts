@@ -131,3 +131,29 @@ it('aborted preflight makes zero process calls', async () => {
   });
   expect(spawn).not.toHaveBeenCalled();
 });
+
+it('kills a stalled help process before it can reach inference', async () => {
+  vi.useFakeTimers();
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: new PassThrough(),
+    kill: vi.fn(),
+  });
+  vi.mocked(spawn).mockImplementation(() => child as never);
+  const pending = completeReadinessPing('claude', '/fixture/bin', new AbortController().signal);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(await pending).toMatchObject({ ok: false, reason: 'timeout' });
+  expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+it('caps runaway output and never exposes it as a valid response', async () => {
+  responses[1] = { out: 'X'.repeat(100000) };
+  const result = await completeReadinessPing(
+    'claude',
+    '/fixture/bin',
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({ ok: false, reason: 'failed' });
+  expect(JSON.stringify(result).length).toBeLessThan(300);
+});

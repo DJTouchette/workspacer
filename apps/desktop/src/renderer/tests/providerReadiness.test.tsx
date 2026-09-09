@@ -167,6 +167,7 @@ describe('shared advisory presentation', () => {
       <SpawnAgentDialog
         defaultCwd="/fixture"
         defaultProvider="claude"
+        defaultTransport="stream"
         defaultPrompt="fixture task"
         onSpawn={vi.fn()}
         onCancel={vi.fn()}

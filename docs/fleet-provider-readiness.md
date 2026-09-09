@@ -3,7 +3,7 @@
 `agents.checkProviderOnStartup` defaults to true. Settings → Fleet Manager →
 Check provider at startup persists the opt-out through both config writers.
 The desktop process schedules one small request for its selected manager provider
-(two-second delay). Disabling the setting cancels in-flight work and prevents
+(two-second delay after local daemon startup completes). Disabling the setting cancels in-flight work and prevents
 remaining automatic startup work. Enabling it after startup does not launch a
 new automatic request. Check again is an explicit manual request regardless of
 the setting; concurrent requests and immediate repeated clicks are coalesced.
@@ -18,7 +18,8 @@ a launch gate. CLI discovery and runtime/facade health retain their own contract
 ## Supported isolation
 
 Initial inference support is **desktop-local native Claude with the required
-safe-mode capabilities**. Windows and script/package-manager launchers are
+safe-mode capabilities and stream launch mode**. Claude PTY uses a separate legacy
+launcher resolver and cannot reuse a stream executable result. Windows and script/package-manager launchers are
 unsupported. The installed Linux Claude 2.1.258 help documents `--safe-mode` as
 disabling CLAUDE.md, skills, plugins, hooks, MCP and other customizations while
 preserving authentication. The exact configured executable is checked with
@@ -33,8 +34,9 @@ and the completion registry's cheap Claude default (`haiku`). No project prompt,
 history, repo instructions, plugin or worker/session is attached. CLI API retries
 are disabled, output generation is capped at 64 tokens, each pipe is capped at
 8,000 characters, help has a 3-second deadline, inference 15 seconds, and the
-scheduler has an outer 20-second bound. No daemon restart or newer-daemon
-assumption is needed: safe mode disables hooks before a session can be ingested.
+scheduler has an outer 20-second bound. Only a daemon owned by this desktop with an unchanged inherited environment can
+use the local account check. Adopted owners remain unavailable. No daemon restart
+or newer-daemon assumption is needed: safe mode disables hooks before a session can be ingested.
 Unknown or unsuccessful JSON output never means successful inference.
 
 The CLI environment controls for retry/output bounds are documented in the
@@ -44,12 +46,12 @@ Safe-mode semantics were established from the installed executable's help;
 
 | Provider/context | Readiness ping |
 | --- | --- |
-| Native Claude with required safe-mode flags, local default CLI account | Supported |
+| Native Claude with required safe-mode flags, stream launch, local default CLI account | Supported |
 | Codex | Unsupported: existing no-tools guard remains intact; installed exec help offers no blanket tool disable |
 | OpenCode | Unsupported: `--pure` is not a no-tools boundary |
 | Copilot | Unsupported: existing tool filters do not establish isolation from all loaded plugins/hooks; it also persists CLI session state |
 | Pi | Unsupported: not installed for verifying the stricter instruction/isolation contract |
-| Remote/web, older hosts without local IPC, selected profiles/integrations | Unsupported or unchecked; no local account inference |
+| Adopted daemons, remote/web, older hosts without local IPC, selected profiles/integrations | Unsupported or unchecked; no local account inference |
 
 Codex's local PATH wrapper also runs `npx --prefer-online`; it was not invoked
 for auth status. No login-status fallback is shipped. Codex readiness is **not
@@ -81,3 +83,17 @@ No live inference or authentication-status command was run during implementation
 
 Task attribution: d451dd25-12c2-4bf7-845d-4bf7129d96ce;
 implementation dispatch: 103ba6e0-3b90-4ff4-8281-2eaa373ed1df.
+
+## Implementation checks
+
+- Node 22.22.2 (the repo's `mise.toml` pins Node 22): desktop main, then
+  renderer suites passed, 3,368 tests in 166 files and 1,876 tests in 197 files.
+- Desktop main/renderer typechecks and Prettier on changed TypeScript passed.
+- Isolated Chromium 148.0.7778.96 first-use suite: 45 passed. After tightening
+  PTY ownership, all 12 affected recovery/readiness browser cases passed again.
+- Go brain provider/config checks passed, including persisted startup opt-out.
+- The initial Node 26 renderer run failed on unavailable global `localStorage`;
+  the unchanged failing test reproduced in isolation and passed on pinned Node
+  22. No timeout threshold or test expectation was weakened for that failure.
+- No live inference/status request, credential inspection, app/daemon restart,
+  push, merge, or nightly build was performed. Independent review was waived.

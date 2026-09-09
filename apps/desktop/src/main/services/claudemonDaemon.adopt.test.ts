@@ -88,6 +88,7 @@ describe('claudemonDaemon adopt-vs-spawn', () => {
     expect(spawnMock).not.toHaveBeenCalled();
     expect(killStaleListener).not.toHaveBeenCalled();
     expect(mod.isClaudemonAdopted()).toBe(true);
+    expect(mod.getClaudemonReadinessOwner()).toBeNull();
   });
 
   it('kills stale + spawns when the probe finds nothing healthy', async () => {
@@ -109,6 +110,7 @@ describe('claudemonDaemon adopt-vs-spawn', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(waitForHealth).toHaveBeenCalled();
     expect(mod.isClaudemonAdopted()).toBe(false);
+    expect(mod.getClaudemonReadinessOwner()).toBe(spawnMock.mock.results[0]?.value?.pid ?? null);
   });
 
   it('stopClaudemon never signals an adopted daemon', async () => {
@@ -128,6 +130,7 @@ describe('claudemonDaemon adopt-vs-spawn', () => {
     const child = spawnMock.mock.results[0]!.value;
     await mod.stopClaudemon();
     expect(gracefulStop).toHaveBeenCalledWith(child, 'claudemon');
+    expect(mod.getClaudemonReadinessOwner()).toBeNull();
   });
 
   it('startClaudemon is idempotent while adopted (no second probe/spawn)', async () => {
@@ -138,4 +141,19 @@ describe('claudemonDaemon adopt-vs-spawn', () => {
     expect(probeHealth).toHaveBeenCalledTimes(1);
     expect(spawnMock).not.toHaveBeenCalled();
   });
+});
+
+it('account environment changes cannot reuse the desktop-owned daemon identity', async () => {
+  probeHealth.mockResolvedValue(false);
+  const mod = await loadModule();
+  expect(mod.getClaudemonReadinessOwner()).toBeNull();
+  await mod.startClaudemon();
+  expect(mod.getClaudemonReadinessOwner()).toBe(4242);
+  vi.stubEnv('CLAUDE_CONFIG_DIR', 'fixture-different-account');
+  try {
+    expect(mod.getClaudemonReadinessOwner()).toBeNull();
+  } finally {
+    vi.unstubAllEnvs();
+    await mod.stopClaudemon();
+  }
 });

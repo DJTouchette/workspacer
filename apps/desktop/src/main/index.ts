@@ -343,7 +343,6 @@ function createWindow(): void {
   });
 
   registerIpcHandlers(mainWindow);
-  startProviderReadiness();
   startFederationPeersConfig();
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);
@@ -373,6 +372,7 @@ function createWindow(): void {
     noteRuntimePending('facade');
     startClaudemon()
       .then(async () => {
+        startProviderReadiness();
         try {
           await runClaudemonInit();
         } catch (err) {

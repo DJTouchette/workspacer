@@ -4,7 +4,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { expect, it, vi } from 'vitest';
 vi.mock('./remoteServer', () => ({ isRemoteClientMode: () => false }));
-vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://unused' }));
+vi.mock('./claudemonDaemon', () => ({
+  CLAUDEMON_API_URL: 'http://unused',
+  getClaudemonReadinessOwner: () => 4242,
+}));
 vi.mock('./claudeResolver', () => ({ claudeBaseArgv: () => ['unused'] }));
 vi.mock('child_process', () => ({ spawn: vi.fn() }));
 import { spawn } from 'child_process';
@@ -78,6 +81,10 @@ it('persisted opt-out reaches startup; manual check uses saved binary and tiny p
     await vi.advanceTimersByTimeAsync(2000);
     expect(spawn).toHaveBeenCalledTimes(4);
     expect(fresh.providerReadinessService.read('claude').state).toBe('responding');
+    const { configService: freshConfig } = await import('./configService');
+    freshConfig.saveConfig({ claude: { transport: 'pty' } } as never);
+    expect(await fresh.providerReadinessService.check('claude')).toEqual({ state: 'unsupported' });
+    expect(spawn).toHaveBeenCalledTimes(4);
   } finally {
     service?.dispose();
     vi.useRealTimers();

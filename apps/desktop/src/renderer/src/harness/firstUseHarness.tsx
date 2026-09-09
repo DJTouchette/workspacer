@@ -65,6 +65,10 @@ const api = {
   getAppCwd: async () => '/fixture/project',
   getSupervisorHome: async () => '/fixture/.workspacer',
   getHubStatus: async () => ({ connected: runtime }),
+  providerReadiness: async (provider: string, check = false) => {
+    record('providerReadiness', provider, check);
+    return { state: params.get('providerReadiness') ?? 'unchecked' };
+  },
   agentRuntimeStatus: async () => {
     record('agentRuntimeStatus');
     if (readiness === 'unknown') return undefined;

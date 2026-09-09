@@ -312,7 +312,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   >([]);
   const [resumeSessionId, setResumeSessionId] = useState('');
   // Facts belong to the selected owner and exact path, never the last reply.
-  const readiness = useProviderReadiness(provider, targetHub, profileId || launchIntegrationId);
+  const readiness = useProviderReadiness(
+    provider,
+    targetHub,
+    profileId ||
+      launchIntegrationId ||
+      (provider === 'claude' && transport === 'pty' ? 'claude-pty' : ''),
+  );
   const runtimeStatus = useAgentRuntimeStatus(!!toolScope, !!targetHub);
   const [useWorktree, setUseWorktree] = useState(!!defaultWorktree);
   const [folderResult, setFolderResult] = useState<{ key: string; info: WorktreeInfo } | null>(
@@ -1716,9 +1722,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
-          {/* Diagnostics are failure-only: a healthy provider says nothing here
-              (the card's green dot + tooltip carry the resolved path, and the
-              advanced "binary" row holds the healthy-path override). */}
+          {/* Installation and provider response are separate facts. Neither
+              successful inference nor unknown auth replaces the launch result. */}
           <div
             id="spawn-availability"
             role="status"
