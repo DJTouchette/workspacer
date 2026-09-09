@@ -3,7 +3,19 @@ import path from 'path';
 import { createHash } from 'crypto';
 import type { ReplacementRecord } from './managerReplacementState';
 
-export const artifactHash = (text: string) => createHash('sha256').update(text).digest('hex');
+export const artifactHash = (bytes: string | Buffer) =>
+  createHash('sha256').update(bytes).digest('hex');
+
+/** Compare spellings without resolving dot segments, links or component case.
+ * Windows drive letters and separators are interchangeable; directory names
+ * can still be case-sensitive. POSIX paths retain byte-exact comparison. */
+function samePath(a: string, b: string): boolean {
+  const spelling = (p: string) =>
+    path.sep === '\\'
+      ? p.replaceAll('/', '\\').replace(/^[a-z]:/, (drive) => drive.toUpperCase())
+      : p;
+  return spelling(a) === spelling(b);
+}
 export interface ManagerHandoffArtifact {
   version: 1;
   operationId: string;
@@ -52,12 +64,15 @@ export function validateManagerArtifact(
     op.operationId,
     'handoff.json',
   );
-  if (op.artifactPath !== expected || fs.realpathSync(expected) !== expected)
+  if (!samePath(op.artifactPath, expected) || !samePath(fs.realpathSync(expected), expected))
     throw new Error('Handoff artifact path changed or is a symbolic link');
   const stat = fs.lstatSync(expected);
   if (!stat.isFile() || stat.size === 0 || stat.size > 256 * 1024)
     throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
-  const raw = fs.readFileSync(expected, 'utf8');
+  const bytes = fs.readFileSync(expected);
+  const raw = bytes.toString('utf8');
+  if (!Buffer.from(raw).equals(bytes))
+    throw new Error('Handoff artifact must contain valid UTF-8 bytes');
   const a = JSON.parse(raw) as ManagerHandoffArtifact;
   if (
     a.version !== 1 ||
@@ -88,29 +103,49 @@ export function validateManagerArtifact(
     throw new Error(
       'Handoff checkpoint, identity, worker instructions, tasks or pending-decision protocol is invalid',
     );
-  const roots = new Set([
+  const roots = [
     op.launch.options.cwd!,
     ...op.metadata.map((m) => m.cwd),
     ...(op.projectCwds ?? []),
-  ]);
+  ];
   const fleetBrief = path.join(op.launch.options.cwd!, '.workspacer', 'brief.md');
-  if (!a.checkpoint.files.some((f) => f.path === fleetBrief))
+  if (!a.checkpoint.files.some((f) => f && text(f.path) && samePath(f.path, fleetBrief)))
     throw new Error('Checkpoint must include the fleet brief');
-  for (const f of a.checkpoint.files) {
+  for (const [index, f] of a.checkpoint.files.entries()) {
+    const invalid = (category: string): never => {
+      throw new Error(`Checkpoint files[${index}] ${category}`);
+    };
     if (
+      !f ||
       !text(f.path) ||
-      !roots.has(path.dirname(path.dirname(f.path))) ||
+      !path.isAbsolute(f.path) ||
+      !roots.some((root) => samePath(root, path.dirname(path.dirname(f.path)))) ||
       path.basename(path.dirname(f.path)) !== '.workspacer' ||
-      !['brief.md', 'brief.archive.md'].includes(path.basename(f.path)) ||
-      fs.realpathSync(f.path) !== f.path ||
-      fs.lstatSync(f.path).isSymbolicLink() ||
-      !fs.lstatSync(f.path).isFile() ||
-      fs.statSync(f.path).size > 2 * 1024 * 1024 ||
-      artifactHash(fs.readFileSync(f.path, 'utf8')) !== f.sha256
+      !['brief.md', 'brief.archive.md'].includes(path.basename(f.path))
     )
-      throw new Error('Checkpoint brief pointer or content hash is invalid');
+      invalid('path is not an allowed brief pointer');
+    if (typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256))
+      invalid('sha256 must be 64 lowercase hexadecimal characters');
+    let briefBytes: Buffer;
+    try {
+      const briefStat = fs.lstatSync(f.path);
+      if (
+        !samePath(fs.realpathSync(f.path), f.path) ||
+        briefStat.isSymbolicLink() ||
+        !briefStat.isFile()
+      )
+        invalid('path changed or is not a regular file without links');
+      if (briefStat.size > 2 * 1024 * 1024) invalid('file exceeds 2 MiB');
+      briefBytes = fs.readFileSync(f.path);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(`Checkpoint files[${index}]`))
+        throw error;
+      invalid('file could not be inspected or read');
+    }
+    if (artifactHash(briefBytes!) !== f.sha256)
+      invalid('sha256 does not match current file bytes; checkpoint may have changed');
   }
-  const hash = artifactHash(raw);
+  const hash = artifactHash(bytes);
   const blocks = [...receiptText.matchAll(/```wks-manager-handoff\s*\n([\s\S]*?)\n```/g)];
   if (blocks.length !== 1)
     throw new Error('Expected one operation-correlated wks-manager-handoff receipt');

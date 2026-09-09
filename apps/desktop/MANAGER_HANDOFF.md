@@ -93,6 +93,41 @@ it exercises normal replacement, reload, failed preparation and explicit recover
 actions. No live manager, worker, app or daemon is replaced/restarted by these
 tests. Use the repository-pinned Node 22 for both desktop suites.
 
+### Windows checkpoint validation regression
+
+`managerReplacementArtifact.windows.test.ts` runs the production validator with
+Node's Win32 path implementation and fixture filesystem responses. Before the
+fix, both a lower-case drive changed by `realpath` and a forward-slash launch
+root reproduced `Checkpoint brief pointer or content hash is invalid` with
+correct SHA-256 values. Comparison now tolerates Windows drive-letter case and
+slash spelling only. Component case, dot segments, root containment, allowed
+basenames, link rejection, file limits and exact operation identity remain
+restricted. POSIX comparisons remain byte-exact.
+
+`managerReplacementArtifact.test.ts` uses native temporary files and includes a
+Windows-only drive/separator case. Both suites run in the existing
+`containment-windows` CI job. Linux execution of the Win32 fixture is source
+coverage, not evidence of an executed Windows handoff.
+
+The preparation prompt still requires SHA-256 values from final file bytes:
+there is no evidence that the reported manager invented a hash, so this fix
+does not change that protocol or accept missing/synthesized hashes. Hashing
+reads buffers, preserving CRLF and non-ASCII bytes; proposal JSON must be valid
+UTF-8 so the sealed string reproduces its exact bytes. Checkpoint errors name
+the array index and category (pointer, file inspection/size, hash format, hash
+mismatch), never the path or brief contents. A mismatch can mean a stale file
+or an incorrect hash; it does not establish which.
+
+The reported error is emitted by `validateManagerArtifact` during preparation,
+before receipt-hash checking, sealing or spawn. `validateSuccessor` later checks
+the parked session identity, settings, grants and readiness; it does not parse
+checkpoint pointers again. An allocated successor ID alone proves no spawn or
+ownership transfer. To classify a remaining remote failure, collect only the
+offending checkpoint index/category, whether root/pointer/realpath differ in
+drive, slash or component case, whether the hash is 64 lowercase hex characters,
+and whether a locally computed digest matches it. Brief contents and full
+private paths are unnecessary.
+
 ## Combined integration for review
 
 Handoff base: `a8bc902e71066dd5ccc78e1cd429c3e7c10df17f`.
