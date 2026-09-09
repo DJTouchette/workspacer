@@ -47,6 +47,8 @@ var contractSourceExt = map[string]string{
 // contractSkipDirs are directories the repo walk never descends into.
 //   - node_modules / target / dist / release / build: dependency and build output,
 //     which can hold stale duplicates of both fixtures and loaders.
+//   - .workspacer: local runtime state, reports and private release-check caches;
+//     cached dependencies and worktrees are not shipping contract loaders.
 //   - .git: object store; huge, and pack files can contain anything.
 //   - .claude: holds worktrees/ (e.g. .claude/worktrees/electron-43-upgrade), a
 //     stale checkout with an OLDER copy of these very files. Counting it would let
@@ -58,7 +60,41 @@ var contractSkipDirs = map[string]bool{
 	"release":      true,
 	"build":        true,
 	".git":         true,
+	".workspacer":  true,
 	".claude":      true,
+}
+
+func TestContractSourceWalkExcludesRuntimeCaches(t *testing.T) {
+	root := t.TempDir()
+	files := []string{
+		"apps/desktop/contract.test.ts",
+		"services/hub/contract_test.go",
+		"apps/tui/src/contract.rs",
+		".workspacer/cache/go-mod/stale_test.go",
+		".workspacer/cache/cargo/registry/stale.rs",
+		".workspacer/worktrees/old/apps/desktop/stale.test.ts",
+	}
+	for _, rel := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("// fixture loader"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]bool{}
+	for _, source := range contractSourceFiles(t, root) {
+		got[source.rel] = true
+	}
+	if len(got) != 3 {
+		t.Fatalf("source walk counted cached loaders or lost real sources: %v", got)
+	}
+	for _, rel := range files[:3] {
+		if !got[rel] {
+			t.Errorf("source walk lost real loader %s", rel)
+		}
+	}
 }
 
 func TestEveryContractFixtureHasAtLeastTwoLoaders(t *testing.T) {
