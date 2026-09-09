@@ -160,7 +160,7 @@ interface RunContext {
 }
 
 /** Thrown by adapters to name a specific failure reason. */
-class CompletionFailure extends Error {
+export class CompletionFailure extends Error {
   constructor(
     readonly reason: CompletionFailureReason,
     message: string,
@@ -311,7 +311,7 @@ interface CliRun {
  *  - **cwd is the home directory.** A one-shot has no project to pick up, and
  *    running inside a repo makes some harnesses load project config and skills.
  */
-function runCli(run: CliRun): Promise<string> {
+export function runCli(run: CliRun): Promise<string> {
   return new Promise((resolve, reject) => {
     if (run.signal?.aborted) {
       reject(new CompletionFailure('cancelled', 'cancelled'));
@@ -813,6 +813,10 @@ export async function completeReadinessPing(
   const startedAt = Date.now();
   const unsupported = () =>
     fail('no-tools-unsupported', 'isolated ping unavailable', provider, null, startedAt);
+  if (provider === 'codex') {
+    const { completeCodexReadinessPing } = await import('./codexReadinessPing');
+    return completeCodexReadinessPing(bin, signal);
+  }
   if (provider !== 'claude' || process.platform === 'win32') return unsupported();
   try {
     // Reject script launchers before even --help. Reading executable metadata

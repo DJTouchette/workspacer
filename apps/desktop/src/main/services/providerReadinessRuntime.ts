@@ -1,3 +1,4 @@
+import { resolveCodexReadinessBinary } from './codexReadinessBinary';
 import { resolveTransport } from '../lib/spawnTransport';
 import { configService } from './configService';
 import { checkAllProviders } from './agentProviders';
@@ -17,10 +18,14 @@ export const providerReadinessService = new ProviderReadinessService({
       !isRemoteClientMode() &&
       owner !== null &&
       (provider !== 'claude' || resolveTransport('claude', undefined, cfg) === 'stream');
-    const bin = local
+    const configuredBin = local
       ? (checkAllProviders(cfg.agents?.binaries).find((row) => row.provider === provider)
           ?.resolvedPath ?? null)
       : null;
+    const bin =
+      provider === 'codex' && configuredBin
+        ? (resolveCodexReadinessBinary(configuredBin) ?? configuredBin)
+        : configuredBin;
     return {
       provider,
       bin,

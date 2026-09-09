@@ -190,3 +190,16 @@ describe('shared advisory presentation', () => {
     });
   });
 });
+
+it('Codex success reads and refreshes only the selected Codex provider', async () => {
+  config.agents.managerProvider = 'codex';
+  api.providerReadiness.mockResolvedValue({ state: 'responding' });
+  render(<FleetManagerHero />);
+  await screen.findByText(providerReadinessDetail({ state: 'responding' }));
+  expect(api.providerReadiness).toHaveBeenCalledWith('codex', false);
+  fireEvent.click(screen.getByRole('button', { name: 'Check again', exact: true }));
+  await waitFor(() => expect(api.providerReadiness).toHaveBeenCalledWith('codex', true));
+  expect(api.providerReadiness.mock.calls.every(([provider]: any[]) => provider === 'codex')).toBe(
+    true,
+  );
+});

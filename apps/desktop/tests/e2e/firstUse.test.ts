@@ -904,3 +904,20 @@ for (const state of ['responding', 'unauthenticated', 'unsupported', 'error']) {
     ).toHaveLength(1);
   });
 }
+
+test('Codex readiness success stays on Codex and never adds a launch gate', async ({ page }) => {
+  await page.goto(`${base}?managerProvider=codex&runtime=ready&providerReadiness=responding`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await expect(page.locator('#fleet-provider-status')).toContainText('codex CLI found.');
+  await expect(page.locator('#fleet-provider-status')).toContainText(
+    'Provider responded to a small test request.',
+  );
+  await page.getByLabel('Ask the Fleet Manager').fill('Fixture task');
+  await expect(page.getByRole('button', { name: 'Ask Fleet Manager', exact: true })).toBeEnabled();
+  await page.locator('#fleet-provider-status').getByRole('button', { name: 'Check again' }).click();
+  expect(
+    (await calls(page))
+      .filter((c: any) => c.method === 'providerReadiness' && c.args[1] === true)
+      .map((c: any) => c.args[0]),
+  ).toEqual(['codex']);
+});

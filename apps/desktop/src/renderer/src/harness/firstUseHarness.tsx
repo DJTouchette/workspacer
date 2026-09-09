@@ -11,6 +11,7 @@ import '../App.css';
 import { CONFIG_DEFAULTS } from '../hooks/configDefaults.generated';
 const params = new URLSearchParams(location.search);
 let config: any = structuredClone(CONFIG_DEFAULTS);
+if (params.get('managerProvider') === 'codex') config.agents.managerProvider = 'codex';
 config.ui = { ...config.ui, onboardingDismissed: false, theme: params.get('theme') ?? 'light' };
 const calls: { method: string; args: any[] }[] = [];
 let mode = params.get('spawn') ?? 'reject';

@@ -84,7 +84,7 @@ it('capability-checks the exact configured native executable, preserving auth an
   expect(opts?.cwd).not.toBe(process.cwd());
   expect(JSON.stringify(result)).not.toContain('secret');
 });
-it.each(['codex', 'opencode', 'copilot', 'pi'] as const)(
+it.each(['opencode', 'copilot', 'pi'] as const)(
   'does not execute unsupported %s or substitute providers',
   async (provider) => {
     expect(
