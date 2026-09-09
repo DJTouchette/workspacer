@@ -16,6 +16,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  release-check-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Release runner regressions (fake systemd, no services or builds)
+        run: python3 -B -m unittest discover -s scripts -p 'test_release_check.py' -v
+
   # ---------------------------------------------------------------------------
   # Repo-root guard: unresolved git conflict markers. Every other job in this
   # file is directory-scoped (working-directory: apps/desktop, services/*) —
