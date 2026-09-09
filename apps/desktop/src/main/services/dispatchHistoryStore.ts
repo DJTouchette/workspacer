@@ -385,8 +385,10 @@ export class DispatchHistoryStore {
     this.flush();
   }
   adoptWorkflowTasks(oldOwner: string, newOwner: string): void {
+    // Historical API name: succession transfers ALL owned tasks. Mutate only
+    // attribution so attempts, pinned policy and user metadata remain intact.
     for (const task of this.load())
-      if (task.workflow && task.ownerSessionId === oldOwner) {
+      if (task.ownerSessionId === oldOwner) {
         task.ownerSessionId = newOwner;
         task.ownerLabel = newOwner;
       }
