@@ -172,7 +172,7 @@ func (s *Service) Get(_ json.RawMessage) (any, error) {
 // This is the same belt-and-braces posture redactBusTokens already takes on this
 // document, and for the same reason: "a stale document on disk or a third-party
 // writer can't reintroduce the leak".
-var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
+var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds", "launchIntegrationId"}
 
 // paneEscalationKeys are the per-PANE fields that become host command execution
 // or a credential leak on the desktop's next launch — one level below

@@ -48,11 +48,12 @@ type Manifest struct {
 	// to compare), which is deliberately how we avoid a permanent false "update".
 	Version string `json:"version,omitempty"`
 
-	Server   *ServerSpec          `json:"server,omitempty"`
-	Panes    []PaneContribution   `json:"panes,omitempty"`
-	Widgets  []WidgetContribution `json:"widgets,omitempty"`
-	Hotkeys  []HotkeyContribution `json:"hotkeys,omitempty"`
-	Settings []SettingDef         `json:"settings,omitempty"`
+	Server            *ServerSpec          `json:"server,omitempty"`
+	Panes             []PaneContribution   `json:"panes,omitempty"`
+	Widgets           []WidgetContribution `json:"widgets,omitempty"`
+	Hotkeys           []HotkeyContribution `json:"hotkeys,omitempty"`
+	Settings          []SettingDef         `json:"settings,omitempty"`
+	LaunchIntegration *LaunchIntegration   `json:"launchIntegration,omitempty"`
 
 	// UI: a subdirectory (relative to the plugin dir) of static assets the hub
 	// serves for this plugin's panes, at /plugins/ui/<id>/. Set it instead of
@@ -95,6 +96,13 @@ type Manifest struct {
 	// but its sidecar isn't started and its panes/hotkeys are withheld. Populated
 	// by the loader.
 	Disabled bool `json:"disabled,omitempty"`
+}
+
+// LaunchIntegration prepares child-local configuration before an opted-in launch.
+type LaunchIntegration struct {
+	Version       int      `json:"version"`
+	Agents        []string `json:"agents"`
+	PrepareMethod string   `json:"prepareMethod"`
 }
 
 // Capability is one entry of a manifest's "capabilities": a bus method the
@@ -325,6 +333,31 @@ type HotkeyContribution struct {
 
 // Validate reports the first problem with a manifest, or nil if it's usable.
 func (m *Manifest) Validate() error {
+	if li := m.LaunchIntegration; li != nil {
+		if m.Server == nil || li.Version != 1 || len(li.Agents) == 0 {
+			return fmt.Errorf("launchIntegration requires a sidecar, version 1, and supported agents")
+		}
+		if !strings.HasPrefix(li.PrepareMethod, m.ID+".") || len(li.PrepareMethod) <= len(m.ID)+1 || strings.ContainsAny(li.PrepareMethod, "* ") {
+			return fmt.Errorf("invalid launchIntegration prepareMethod")
+		}
+		declared := false
+		for _, method := range m.Provides {
+			if method == li.PrepareMethod {
+				declared = true
+			}
+		}
+		if !declared {
+			return fmt.Errorf("launchIntegration prepareMethod must appear in provides")
+		}
+		seen := make(map[string]bool)
+		for _, agent := range li.Agents {
+			if strings.TrimSpace(agent) != agent || agent == "" || seen[agent] {
+				return fmt.Errorf("invalid launchIntegration agents")
+			}
+			seen[agent] = true
+		}
+	}
+
 	if m.ID == "" {
 		return fmt.Errorf("missing id")
 	}

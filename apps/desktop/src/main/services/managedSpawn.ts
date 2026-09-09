@@ -1,3 +1,4 @@
+import { prepareLaunchIntegration } from './launchIntegrations';
 /**
  * Shared managed-provider (Tier-2) spawn dispatch.
  *
@@ -133,6 +134,7 @@ export interface ManagedSpawnOptions {
    *  a different harness is ignored and logged: it would point the wrong root
    *  at the wrong CLI. */
   profileId?: string;
+  launchIntegrationId?: string | null;
   /** Claude (stream) only: Library item ids (kind 'mcp') selected for this
    *  spawn, resolved to a session-scoped `--mcp-config` with
    *  `--strict-mcp-config` + pre-allowed tools — same as the PTY path. */
@@ -213,6 +215,8 @@ export interface ManagedSpawnOptions {
  */
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
   const { provider } = opts;
+  if (opts.scrubProfileBypass && opts.launchIntegrationId)
+    throw new Error('Launch integrations currently require a local desktop session');
   // Managed Claude exists only as the stream-json transport; a PTY Claude spawn
   // must never land here (the callers dispatch it to spawnClaudeAgent).
   if (provider === 'claude' && opts.transport !== 'stream') {
@@ -470,6 +474,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
       }
     }
   }
+  const prepared = await prepareLaunchIntegration(
+    opts.launchIntegrationId,
+    { agent: provider, cwd, model: serializedModel, resume: !!opts.resumeSessionId },
+    { env, args: extraArgs, bin },
+  );
   claudeSessionStore.setSpawnMeta(managedId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
@@ -548,19 +557,8 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
     // the same argv channel. Both keys stay off the payload when empty, so a
     // profile-less spawn is byte-identical to what it sent before.
-    //
-    // THE DAEMON HALF IS NOT DONE YET. Read at 2026-08-28 on this branch:
-    // `daemon/spawn.rs` `/sessions/spawn-managed` forwards `env`/`extra_args`
-    // into the `"claude"` (claude_stream) arm ONLY — `codex::spawn_session` and
-    // `copilot::SpawnConfig` take neither, so for those two harnesses these
-    // keys reach the daemon and stop there. Everything above (the store, the
-    // scrub, the harness re-check, the token resolution) is correct and pinned
-    // by managedSpawn.test.ts, but a Codex/Copilot profile does not change the
-    // spawned process until the Rust side threads these two fields through.
-    // Do not "fix" this by dropping the keys — the wire contract is the half
-    // that is right.
-    ...(extraArgs.length && { extraArgs }),
-    ...(Object.keys(env).length && { env }),
+    ...(prepared.args.length && { extraArgs: prepared.args }),
+    ...(Object.keys(prepared.env).length && { env: prepared.env }),
     ...(wantsFacade && {
       // Claude stream carries the facade via the --mcp-config file above, so
       // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
@@ -650,6 +648,44 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
         'this session gets no workspacer tools (wake routing still applies)',
     );
   }
+  // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
+  // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
+  // approval/sandbox prompts so the TUI doesn't block on them.
+  const model = spawnModel;
+  const effort = spawnEffort;
+  const argv = [
+    bin,
+    ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
+    ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
+    // Codex has a real hidden instruction channel even on this PTY-only
+    // rollout path. Keep the task as the user turn (so transcript
+    // reconstruction never displays host contract text), while the contract
+    // remains present before and without a firstMessage.
+    ...(isFleetDispatchedWorker(opts) || cardInstruction
+      ? [
+          '-c',
+          `developer_instructions=${JSON.stringify([isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '', cardInstruction].filter(Boolean).join('\n'))}`,
+        ]
+      : []),
+    ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
+  ];
+  const picked = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+  const rawProfile = profileAppliesTo(picked, 'codex') ? picked : undefined;
+  const profile = opts.scrubProfileBypass
+    ? opts.profileGranted
+      ? scrubRemoteGrantedProfile(rawProfile)
+      : scrubBypassProfile(rawProfile)
+    : rawProfile;
+  const prepared = await prepareLaunchIntegration(
+    opts.launchIntegrationId,
+    { agent: 'codex', cwd, model: spawnModel, resume: !!opts.resumeSessionId },
+    {
+      bin,
+      env: profileConfigEnv(profile, os.homedir()),
+      args: [...argv.slice(1), ...profileSpawnArgs(profile)],
+    },
+  );
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,
     parentSessionId: opts.parentSessionId,
@@ -675,30 +711,9 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   });
   // Show the card immediately; the rollout tailer + conversation stream enrich it.
   claudeSessionStore.ensureManagedSession(sessionId, cwd);
-  // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
-  // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
-  // approval/sandbox prompts so the TUI doesn't block on them.
-  const model = spawnModel;
-  const effort = spawnEffort;
-  const argv = [
-    bin,
-    ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
-    ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
-    ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
-    // Codex has a real hidden instruction channel even on this PTY-only
-    // rollout path. Keep the task as the user turn (so transcript
-    // reconstruction never displays host contract text), while the contract
-    // remains present before and without a firstMessage.
-    ...(isFleetDispatchedWorker(opts) || cardInstruction
-      ? [
-          '-c',
-          `developer_instructions=${JSON.stringify([isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '', cardInstruction].filter(Boolean).join('\n'))}`,
-        ]
-      : []),
-    ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
-  ];
   await claudemonSessionClient.spawn({
-    argv,
+    argv: [bin, ...prepared.args],
+    env: prepared.env,
     cwd,
     // Explicit, not sniffed off the argv: the daemon records the requested
     // model from this field, and a Codex resume puts nothing on the argv.

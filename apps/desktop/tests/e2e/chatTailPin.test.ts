@@ -76,7 +76,7 @@ async function openPane(page: Page) {
   await page.goto(URL, { waitUntil: 'load' });
   // The pane opens in Term view; the GUI subtree is display:none until switched,
   // so there is literally nothing to measure before this.
-  await page.locator('text=GUI').click();
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
   await expect(page.locator('textarea:visible').first()).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(1000); // let the transcript settle at its natural bottom
 }

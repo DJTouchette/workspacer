@@ -781,29 +781,31 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // unchanged and every other consumer reads it off the snapshot, where the
     // pills already look.
     spawnClaude: (opts) =>
-      client
-        .call<{
-          sessionId: string;
-          fullAccess?: boolean;
-          escalationScrubbed?: string[];
-        }>('agents.spawn', opts)
-        .then((r) => {
-          // A hub that predates the stamp sends no `fullAccess`. Absent is NOT
-          // false — inventing "ask mode" there is the very bug this fixes — so
-          // record nothing and let the pill say Unknown.
-          if (typeof r.fullAccess === 'boolean') {
-            noteLaunch(r.sessionId, {
-              permissionMode: launchPermissionMode(
-                opts.provider,
-                r.fullAccess,
-                opts.permissionMode,
-              ),
-              fullAccess: r.fullAccess,
-              escalationScrubbed: r.escalationScrubbed,
-            });
-          }
-          return r.sessionId;
-        }),
+      opts.launchIntegrationId != null
+        ? Promise.reject(new Error('Launch integrations currently require a local desktop session'))
+        : client
+            .call<{
+              sessionId: string;
+              fullAccess?: boolean;
+              escalationScrubbed?: string[];
+            }>('agents.spawn', opts)
+            .then((r) => {
+              // A hub that predates the stamp sends no `fullAccess`. Absent is NOT
+              // false — inventing "ask mode" there is the very bug this fixes — so
+              // record nothing and let the pill say Unknown.
+              if (typeof r.fullAccess === 'boolean') {
+                noteLaunch(r.sessionId, {
+                  permissionMode: launchPermissionMode(
+                    opts.provider,
+                    r.fullAccess,
+                    opts.permissionMode,
+                  ),
+                  fullAccess: r.fullAccess,
+                  escalationScrubbed: r.escalationScrubbed,
+                });
+              }
+              return r.sessionId;
+            }),
     // The bus has no config-changed event yet, so the web mirror keeps the
     // old behaviour: its snapshot refreshes on its own saves and on reload.
     onConfigChanged: () => () => {},

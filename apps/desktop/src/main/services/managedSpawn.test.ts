@@ -27,6 +27,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const prepareLaunchMock = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _id: unknown,
+      _context: unknown,
+      base: { env: Record<string, string>; args: string[] },
+    ) => ({ env: base.env, args: base.args }),
+  ),
+);
+vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunchMock }));
 
 // The spawn cwd pre-flight is real fs (lib/spawnCwd.ts) and these are wire-shape
 // tests against paths like '/proj' that do not exist on disk. Keep the
@@ -1332,5 +1342,77 @@ describe('spawnManagedAgent — clean-profile retry boundary', () => {
     expect(launches[1][0].yolo).toBe(false);
     expect(launches[1][0].transport).toBe('stream');
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('launch integration transport', () => {
+  it.each(['codex', 'claude'] as const)(
+    'passes prepared env and args through %s stream and retains resume identity',
+    async (provider) => {
+      prepareLaunchMock.mockResolvedValueOnce({
+        env: { ROUTED: 'yes' },
+        args: ['--config', 'route="local"'],
+      });
+      await spawnManagedAgent({
+        provider,
+        transport: 'stream',
+        cwd: '/proj',
+        resumeSessionId: 'prior-life',
+        launchIntegrationId: 'test.route',
+      });
+      expect(prepareLaunchMock).toHaveBeenCalledWith(
+        'test.route',
+        expect.objectContaining({ agent: provider, resume: true }),
+        expect.anything(),
+      );
+      expect(lastManaged()).toMatchObject({
+        env: { ROUTED: 'yes' },
+        extraArgs: ['--config', 'route="local"'],
+        resumeSessionId: 'prior-life',
+        sessionId: 'prior-life',
+      });
+    },
+  );
+  it('passes prepared configuration to Windows hybrid PTY', async () => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      prepareLaunchMock.mockResolvedValueOnce({
+        env: { OPENAI_BASE_URL: 'http://127.0.0.1:8787/v1' },
+        args: ['-c', 'openai_base_url="http://127.0.0.1:8787/v1"'],
+      });
+      await spawnManagedAgent({
+        provider: 'codex',
+        transport: 'pty',
+        cwd: '/proj',
+        launchIntegrationId: 'test.route',
+      });
+      expect(spawnMock.mock.calls.at(-1)?.[0]).toMatchObject({
+        env: { OPENAI_BASE_URL: 'http://127.0.0.1:8787/v1' },
+        argv: ['/bin/codex', '-c', 'openai_base_url="http://127.0.0.1:8787/v1"'],
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+    }
+  });
+  it('refuses remote integration requests before preparing or spawning', async () => {
+    await expect(
+      spawnManagedAgent({
+        provider: 'codex',
+        cwd: '/proj',
+        scrubProfileBypass: true,
+        launchIntegrationId: 'test.route',
+      }),
+    ).rejects.toThrow('local desktop');
+    expect(prepareLaunchMock).not.toHaveBeenCalled();
+    expect(spawnManagedMock).not.toHaveBeenCalled();
+  });
+  it('leaves no session card when preparation fails', async () => {
+    prepareLaunchMock.mockRejectedValueOnce(new Error('Proxy unavailable'));
+    await expect(
+      spawnManagedAgent({ provider: 'codex', cwd: '/proj', launchIntegrationId: 'test.route' }),
+    ).rejects.toThrow('Proxy unavailable');
+    expect(spawnManagedMock).not.toHaveBeenCalled();
+    expect(setSpawnMeta).not.toHaveBeenCalled();
   });
 });

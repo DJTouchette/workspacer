@@ -330,3 +330,40 @@ func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
 		t.Fatalf("disabled plugin must contribute no tools, got %+v", got3)
 	}
 }
+
+func TestLaunchIntegration(t *testing.T) {
+	valid := func() Manifest {
+		return Manifest{ID: "example.route", APIVersion: "1", Server: &ServerSpec{Command: "node"}, Provides: []string{"example.route.prepare"}, LaunchIntegration: &LaunchIntegration{Version: 1, Agents: []string{"claude", "codex"}, PrepareMethod: "example.route.prepare"}}
+	}
+	m := valid()
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*Manifest){
+		"no sidecar":        func(m *Manifest) { m.Server = nil },
+		"unknown version":   func(m *Manifest) { m.LaunchIntegration.Version = 2 },
+		"missing agents":    func(m *Manifest) { m.LaunchIntegration.Agents = nil },
+		"duplicate agents":  func(m *Manifest) { m.LaunchIntegration.Agents = []string{"codex", "codex"} },
+		"outside namespace": func(m *Manifest) { m.LaunchIntegration.PrepareMethod = "agents.spawn" },
+		"undeclared method": func(m *Manifest) { m.Provides = nil },
+		"wildcard method": func(m *Manifest) {
+			m.LaunchIntegration.PrepareMethod = "example.route.*"
+			m.Provides = []string{"example.route.*"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := valid()
+			mutate(&m)
+			if m.Validate() == nil {
+				t.Fatal("accepted invalid launch contribution")
+			}
+		})
+	}
+	m, err := Load("../../examples/headroom/plugin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.LaunchIntegration == nil || m.LaunchIntegration.PrepareMethod != "workspacer.headroom.prepareLaunch" {
+		t.Fatal("example lost launch contribution")
+	}
+}

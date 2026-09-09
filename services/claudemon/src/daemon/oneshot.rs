@@ -232,13 +232,14 @@ pub async fn handle(State(state): State<ApiState>, Json(req): Json<OneshotReques
 #[cfg(all(test, unix))]
 mod summary_tests {
     use super::*;
-    // The executable is a fake CLI that only echoes argv. No auth/model/session.
+    // Consume stdin like the real CLI before echoing argv, so the fixture cannot
+    // exit while run_claude_print is still writing the prompt. No auth/model/session.
     #[tokio::test]
     async fn summary_no_tools_reaches_the_process_and_null_omits_model() {
         let argv = vec![
             "/bin/sh".into(),
             "-c".into(),
-            r#"printf '%s\n' "$@""#.into(),
+            r#"cat >/dev/null; printf '%s\n' "$@""#.into(),
             "fake-cli".into(),
         ];
         let out = run_claude_print(&argv, None, "data", "fake-session", true)

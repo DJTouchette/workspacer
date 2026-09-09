@@ -51,6 +51,7 @@ function advancedButton(): HTMLButtonElement {
 
 beforeEach(() => {
   localStore = {};
+  api.listHubPlugins = vi.fn().mockResolvedValue([]);
   Object.defineProperty(window, 'localStorage', {
     configurable: true,
     value: {
@@ -251,5 +252,50 @@ describe('SpawnAgentDialog profiles', () => {
     fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'work-uuid' }));
+  });
+});
+
+describe('optional launch integration picker', () => {
+  const headroom = {
+    id: 'workspacer.headroom',
+    name: 'Headroom',
+    provides: ['workspacer.headroom.prepareLaunch'],
+    launchIntegration: {
+      version: 1,
+      agents: ['claude', 'codex'],
+      prepareMethod: 'workspacer.headroom.prepareLaunch',
+    },
+  };
+  it('defaults to None, filters disabled plugins, resets on provider switch and submits the Codex choice', async () => {
+    api.listHubPlugins.mockResolvedValue([
+      headroom,
+      { ...headroom, id: 'disabled', name: 'Disabled', disabled: true },
+    ]);
+    const { onSpawn } = renderDialog();
+    const selector = await screen.findByLabelText('Launch integration');
+    expect(selector).toHaveValue('');
+    expect(screen.queryByRole('option', { name: 'Disabled' })).not.toBeInTheDocument();
+    fireEvent.change(selector, { target: { value: headroom.id } });
+    fireEvent.click(screen.getByText('Codex').closest('button')!);
+    expect(screen.getByLabelText('Launch integration')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Launch integration'), {
+      target: { value: headroom.id },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'codex', launchIntegrationId: headroom.id }),
+    );
+  });
+  it('keeps local launch integrations out of the web client', async () => {
+    const saved = window.electronAPI.platform;
+    Object.defineProperty(window.electronAPI, 'platform', { configurable: true, value: 'web' });
+    try {
+      api.listHubPlugins.mockResolvedValue([headroom]);
+      renderDialog();
+      await screen.findByText('Work');
+      expect(screen.queryByLabelText('Launch integration')).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window.electronAPI, 'platform', { configurable: true, value: saved });
+    }
   });
 });

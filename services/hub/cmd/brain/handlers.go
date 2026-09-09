@@ -725,6 +725,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err == nil {
 		_, p.contextWindowSet = present["contextWindow"]
+		if v, ok := present["launchIntegrationId"]; ok && string(v) != "null" {
+			return nil, fmt.Errorf("Launch integrations currently require a local desktop session")
+		}
 		if v, ok := present["workflowStepId"]; ok && string(v) != "null" && string(v) != `""` {
 			return nil, fmt.Errorf("Fleet workflow execution requires the local desktop runtime")
 		}

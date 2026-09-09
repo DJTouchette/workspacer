@@ -13,6 +13,7 @@ export interface RespawnSpawnOptions {
   provider?: AgentWorkspace['provider'];
   transport?: 'pty' | 'stream';
   profileId?: string;
+  launchIntegrationId?: string | null;
   model?: string;
   modelIdentity?: string;
   contextWindow?: number | null;
@@ -49,6 +50,7 @@ export function buildRespawnSpawnOptions(
     provider: agent.provider,
     transport,
     profileId: agent.profileId,
+    launchIntegrationId: agent.launchIntegrationId,
     model: agent.model,
     modelIdentity: agent.modelIdentity,
     contextWindow: agent.contextWindow,

@@ -251,6 +251,7 @@ export function useAgentManager() {
       /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
       transport?: 'pty' | 'stream';
       profileId?: string;
+      launchIntegrationId?: string | null;
       model?: string;
       /** Canonical selection pair. `model` stays the old-main companion. */
       modelIdentity?: string;
@@ -335,6 +336,7 @@ export function useAgentManager() {
           provider: opts.provider,
           transport: opts.transport,
           profileId: opts.profileId,
+          launchIntegrationId: opts.launchIntegrationId,
           model: opts.model,
           modelIdentity: opts.modelIdentity,
           contextWindow: opts.contextWindow,
@@ -381,6 +383,7 @@ export function useAgentManager() {
         provider: opts.provider,
         transport: opts.transport,
         profileId: opts.profileId,
+        launchIntegrationId: opts.launchIntegrationId,
         model: opts.model,
         modelIdentity: opts.modelIdentity,
         contextWindow: opts.contextWindow,
@@ -578,6 +581,7 @@ export function useAgentManager() {
           provider: agent.provider,
           transport: agent.transport,
           profileId,
+          launchIntegrationId: agent.launchIntegrationId,
           model,
           modelIdentity,
           contextWindow,

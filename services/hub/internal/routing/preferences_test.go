@@ -242,7 +242,9 @@ func TestPreferencesWireFixture(t *testing.T) {
 		}
 	}
 	want, err := os.ReadFile(path)
-	if err != nil || string(raw) != string(want) {
+	// Git may check the JSON fixture out with CRLF on Windows; the wire encoder
+	// always emits LF. Compare the same serialized content on either platform.
+	if err != nil || string(raw) != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Fatal("routing wire fixture drift: regenerate with UPDATE_ROUTING_FIXTURE=1", err)
 	}
 }

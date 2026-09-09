@@ -35,6 +35,7 @@ interface SessionAgentData {
   global?: boolean;
   cwd: string;
   profileId?: string;
+  launchIntegrationId?: string | null;
   model?: string;
   skipPermissions?: boolean;
   sessionId?: string;

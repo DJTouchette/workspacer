@@ -12,6 +12,7 @@ import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
+import type { PluginManifest } from '../types/plugin';
 import type { AgentProvider } from '../types/pane';
 import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
 import { fetchFederationPeers, type FederationPeer } from '../lib/federation';
@@ -96,6 +97,7 @@ interface SpawnAgentDialogProps {
     /** Claude only: 'pty' | 'stream'. */
     transport?: 'pty' | 'stream';
     profileId?: string;
+    launchIntegrationId?: string | null;
     model?: string;
     modelIdentity?: string;
     contextWindow?: number | null;
@@ -227,6 +229,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [providerCustom, setProviderCustom] = useState('');
   const [profiles, setProfiles] = useState<SpawnProfile[]>([]);
   const [profileId, setProfileId] = useState<string>('');
+  const [launchPlugins, setLaunchPlugins] = useState<PluginManifest[]>([]);
+  const [launchIntegrationId, setLaunchIntegrationId] = useState('');
 
   // MCP servers available in the Library, and the per-spawn selection. Pre-filled
   // from the chosen profile's default loadout; overridable here.
@@ -278,6 +282,18 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // appears when at least one peer is connected; '' = this machine.
   const [peers, setPeers] = useState<FederationPeer[]>([]);
   const [targetHub, setTargetHub] = useState('');
+  const eligibleLaunchPlugins = launchPlugins.filter(
+    (pl) =>
+      ['claude', 'codex'].includes(provider) &&
+      !targetHub &&
+      String(window.electronAPI.platform) !== 'web' &&
+      !pl.disabled &&
+      pl.launchIntegration?.version === 1 &&
+      pl.launchIntegration.agents.includes(provider),
+  );
+  useEffect(() => {
+    setLaunchIntegrationId('');
+  }, [provider, targetHub]);
   useEffect(() => {
     let live = true;
     fetchFederationPeers().then((p) => {
@@ -513,6 +529,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       .listHubPlugins?.()
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return;
+        setLaunchPlugins(list);
         setToolPlugins(
           list
             .filter((pl) => !pl.disabled && (pl.tools?.length ?? 0) > 0)
@@ -665,6 +682,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               name: name.trim() || undefined,
               transport,
               profileId: profileId || undefined,
+              launchIntegrationId: launchIntegrationId || undefined,
               model: resolvedModel || undefined,
               modelIdentity: claudeSelection?.model,
               contextWindow: claudeSelection?.contextWindow,
@@ -700,6 +718,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               // referenced token. Empty for a harness with no config root,
               // because eligibleProfiles is empty there.
               profileId: profileId || undefined,
+              launchIntegrationId: launchIntegrationId || undefined,
               // Codex only, and ALWAYS stated: both shapes are real choices now
               // (headless is the default, hybrid the opt-in), so sending only the
               // non-default would leave "hybrid" indistinguishable from "the user
@@ -1800,6 +1819,31 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {eligibleLaunchPlugins.length > 0 && (
+            <div style={{ marginTop: 20, width: '100%', maxWidth: 560 }}>
+              <label htmlFor="launch-integration" style={quietLabel}>
+                Launch integration
+              </label>
+              <select
+                id="launch-integration"
+                value={launchIntegrationId}
+                onChange={(e) => setLaunchIntegrationId(e.target.value)}
+                style={{ ...rowSelect, width: '100%', marginTop: 8 }}
+              >
+                <option value="">None</option>
+                {eligibleLaunchPlugins.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name || pl.id}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)', marginTop: 6 }}>
+                Applies to this session and its resumes. The selected plugin must be ready before
+                launch.
               </div>
             </div>
           )}

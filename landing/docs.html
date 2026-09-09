@@ -139,6 +139,7 @@
       <a href="#remote">remote and multi-client</a>
       <a href="#jobs">jobs</a>
       <a href="#routing">limit-aware routing</a>
+      <a href="#launch-integrations">optional Headroom routing</a>
       <a href="#extending">plugins, mcp, and the tui</a>
       <a href="#configuration">configuration</a>
     </nav>
@@ -1034,6 +1035,20 @@ workspacer jobs remove &lt;id&gt;</code></pre>
 <p><strong>Run the harness</strong>, from a checkout: <code>make test-routing-harness</code>. It starts a real hub against a fake usage daemon serving states you cannot reproduce on demand (a stale window, a window resetting exactly now, a provider answering 403, providers absent from the report) and asserts that stale readings come back unknown instead of choosing a mode, that a capped directory caps the advice and the spawn identically, and that a symlink walks around neither.</p>
 
 <blockquote><strong>There is deliberately no UI for the routing matrix.</strong> Routing exposes no write capability over the bus, and the hub's state directory is refused to agent file writes, which is exactly what makes <code>ceilings</code> a ceiling: an operator-tier Fleet Manager can read a routing decision and cannot raise its own cap. Editing the matrix is a person with a text editor, and that is the property being kept.</blockquote>
+</section>
+<section id="launch-integrations" class="doc">
+<h2>optional Headroom routing</h2>
+<p>Launch integrations let a trusted plugin prepare a selected local desktop session. The default is <strong>None</strong>. The bundled Headroom example supports <strong>Claude Code and Codex</strong> through their existing GUI/managed and terminal/hybrid drivers, including Windows. You install, run, configure, and update the external <a href="https://github.com/headroomlabs-ai/headroom">Headroom proxy</a>; work{spacer} maintains the launch interface and adapter.</p>
+<ol>
+<li>Install Headroom using its upstream instructions and start <code>headroom proxy --port 8787</code>. Configure upstream authentication and compression in Headroom.</li>
+<li>Open <strong>Plugins → Browse examples</strong> in work{spacer} and install <strong>Headroom</strong>. The adapter uses the app's bundled Node runtime.</li>
+<li>In the plugin settings, change <strong>Headroom proxy URL</strong> if needed (default <code>http://127.0.0.1:8787</code>; loopback HTTP only).</li>
+<li>Open <strong>Spawn agent</strong>, choose <strong>Claude Code</strong> or <strong>Codex</strong>, and select <strong>Launch integration → Headroom</strong>.</li>
+<li>Check the Headroom pane for readiness, then run a small task and confirm traffic in its dashboard. Readiness alone does not verify authenticated routing or token savings.</li>
+</ol>
+<p>The selection stays with the workspace on restart and resume. If the plugin is missing, disabled, or its proxy is unavailable, launch stops with an error. Restore the service, or start a new session with <strong>None</strong>. Running sessions keep their original launch settings.</p>
+<p><strong>Codex:</strong> work{spacer} resolves routing with the installed CLI under the selected account profile, preserves provider identity and login, and applies child-local URL overrides. Custom providers need an explicit HTTP(S) upstream URL without credentials, query, or fragment. Native named presets (<code>-p</code>/<code>--profile</code>, including a default legacy profile) are currently unsupported with this integration; put routing in the account's base config. A configuration already pointing at the same proxy is rejected to prevent a loop.</p>
+<p>This initial integration is for <strong>local desktop launches</strong>. Web, headless, federated launches, automatic Fleet integration defaults, and other harnesses are outside its current scope. See the <a href="https://github.com/DJTouchette/workspacer/blob/master/services/hub/examples/headroom/README.md">adapter README</a> and <a href="build-plugin.html#launch-integrations">plugin launch contract</a> for details.</p>
 </section>
 <section id="extending" class="doc">
 <h2>plugins, mcp, and the tui</h2>

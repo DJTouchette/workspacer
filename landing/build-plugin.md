@@ -352,6 +352,27 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 - `emits` / `consumes`, event types it publishes / subscribes to.
 - `install`, a one-time setup argv run in the plugin dir after a GitHub install (e.g. `["go","build","-o","server","."]`). Requires the user's consent, which names the exact argv. A `node` command here is pinned to the bundled runtime like a sidecar's; `npm`/`npx`/`yarn`/`pnpm` cannot be, and fail if the user has no Node toolchain. Prefer no `install` step at all (see "which Node your sidecar runs on").
 
+## Optional launch integrations
+
+A trusted sidecar can declare `launchIntegration: { version: 1, agents:
+["claude", "codex"], prepareMethod: "your.plugin.prepareLaunch" }`. List the
+exact method in `provides` and register it over the existing scoped bus.
+
+An opted-in local desktop launch calls it with `{ version: 1, agent, cwd,
+model?, resume, provider? }`. Codex provider metadata contains only its ID and
+optional base URL; raw config, credentials and inherited env are omitted.
+Return optional `env` (string map) and `args` (string array). These overlay the
+child environment and append arguments after profile/host arguments. Extra
+fields, nulls, NULs and oversized patches are rejected; executable/cwd overrides
+are unsupported. Errors stop launch. None skips discovery and preparation.
+The workspace retains the choice on restart/resume.
+
+Current host paths are local Claude PTY/stream and Codex managed/hybrid sessions.
+The optional Headroom example is installed from Plugins → Browse examples and uses the
+bundled Node runtime, `HUB_TOKEN`, and `WKS_SETTINGS`. Headroom itself is managed
+by the user. See [setup](docs.html#launch-integrations) and the
+[full contract](https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md).
+
 ## The bus protocol
 
 Webviews should reach for the injected `window.workspacer` SDK (see "your first plugin") rather than these raw frames, but this is the protocol it speaks under the hood, and the one a sidecar (or the `wks.js` twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:

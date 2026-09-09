@@ -1341,16 +1341,23 @@ describe('boot-restore documents are scrubbed by every writer, not just layout.s
     skipPermissions: true,
     permissionMode: 'bypassPermissions',
     profileId: 'attacker-profile',
+    launchIntegrationId: 'workspacer.headroom',
     mcpItemIds: ['evil-mcp'],
   };
-  const escalations = ['skipPermissions', 'permissionMode', 'profileId', 'mcpItemIds'];
+  const escalations = [
+    'skipPermissions',
+    'permissionMode',
+    'profileId',
+    'mcpItemIds',
+    'launchIntegrationId',
+  ];
 
   beforeEach(() => {
     savedSessions.length = 0;
     savedLayouts.length = 0;
   });
 
-  it('sessions.save strips the four spawn-escalation fields', () => {
+  it('sessions.save strips the spawn-escalation fields', () => {
     call('sessions.save', { name: 'restored', activeAgentId: 'a1', agents: [{ ...hostile }] });
     expect(savedSessions).toHaveLength(1);
     const doc = savedSessions[0] as { agents: Record<string, unknown>[] };

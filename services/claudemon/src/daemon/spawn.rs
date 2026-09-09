@@ -893,14 +893,13 @@ pub(crate) fn start_native_managed(
         }
         first_message_queued
     };
-    let first_message_queued = if is_codex {
+    if is_codex {
         store.claim_generation_with(&session_id, |generation| {
             register_and_spawn(Some(generation))
         })
     } else {
         register_and_spawn(None)
-    };
-    first_message_queued
+    }
 }
 
 /// Query params for `GET /providers/:provider/models`.

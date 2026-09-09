@@ -583,7 +583,7 @@ var dangerousParams = map[string]ParamKind{
 	"url": KindURL, "uri": KindURL, "endpoint": KindURL, "href": KindURL,
 	"webhook": KindURL, "port": KindPort,
 	// Ids that RESOLVE into one of the above.
-	"id": KindID, "itemId": KindID, "mcpItemIds": KindID, "profileId": KindID,
+	"id": KindID, "itemId": KindID, "mcpItemIds": KindID, "profileId": KindID, "launchIntegrationId": KindID,
 	// An id that resolves into WHO THE CALLER IS rather than what it is acting
 	// on — agents.reportProgress derives its recipient from it. Listed so a
 	// second method that ever accepts one has to say where it comes from; on the
@@ -907,6 +907,7 @@ const (
 // refused.
 var unscopedParams = map[string]map[string]ParamDecision{
 	"agents.spawn": {
+		"launchIntegrationId":    {KindID, "selects a trusted sidecar whose preparation changes child env/argv; supported only by local desktop IPC. Both bus providers reject any non-null selection, and boot-document writers strip the field from untrusted saved agents so it cannot be planted for a later local resume"},
 		"dispatchOwnerSessionId": {KindID, "private facade stamp from the session credential; bus strips non-host copies"},
 		"retrySourceSessionId":   {KindID, "private respawn_with stamp, excluded from spawn_agent schema; bus strips non-host copies and desktop validates known source owner/project"},
 		"cwd":                    {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},

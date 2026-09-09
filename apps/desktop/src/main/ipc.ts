@@ -277,6 +277,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // knobs (profileId, mcpItemIds, facade toolScope — the peer's facade is
     // its own) are deliberately not forwarded.
     if (opts.targetHub?.trim()) {
+      if (opts.launchIntegrationId)
+        throw new Error('Launch integrations currently require a local desktop session');
       const res = (await callHub(`hub:${opts.targetHub.trim()}/agents.spawn`, {
         provider: opts.provider,
         transport: opts.transport,
@@ -346,6 +348,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         transport: 'stream',
         cwd: opts.cwd,
         profileId: opts.profileId,
+        launchIntegrationId: opts.launchIntegrationId,
         model: opts.model,
         modelIdentity: opts.modelIdentity,
         contextWindow: opts.contextWindow,
@@ -369,6 +372,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return spawnClaudeAgent({
       cwd: opts.cwd,
       profileId: opts.profileId,
+      launchIntegrationId: opts.launchIntegrationId,
       model: opts.model,
       modelIdentity: opts.modelIdentity,
       contextWindow: opts.contextWindow,

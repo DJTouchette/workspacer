@@ -136,6 +136,7 @@ remote/web/phone clients all view and drive the same fleet.
 
 | Feature | What it does | Maturity |
 |---|---|---|
+| Optional launch integrations | Per-session trusted-sidecar launch preparation for local desktop Claude/Codex, retained on resume; install-on-demand Headroom example with external proxy. [Setup and limits](launch-integrations.md) | 🔵 Working |
 | Plugin manifest + loader | `plugin.json` schema (server, panes, hotkeys, capabilities); validated dir scan | 🟢 Solid |
 | Plugin manager | Start/stop sidecars, lifecycle events, atomic install/remove | 🟢 Solid |
 | Plugin installer | Install from GitHub URL / tarball, zip-slip-guarded, runs build step | 🟢 Solid |

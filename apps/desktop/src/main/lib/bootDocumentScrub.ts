@@ -45,12 +45,13 @@
  * of this reasoning lives in cmd/brain/bootdoc.go.
  */
 
-/** The four fields, spelled the same as internal/layout's spawnEscalationKeys. */
+/** The launch fields, spelled the same as internal/layout's spawnEscalationKeys. */
 export const SPAWN_ESCALATION_KEYS = [
   'skipPermissions',
   'permissionMode',
   'profileId',
   'mcpItemIds',
+  'launchIntegrationId',
 ] as const;
 
 /**

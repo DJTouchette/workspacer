@@ -148,7 +148,7 @@ func scrubBootDocumentAgents(method string, doc map[string]any) []string {
 // spawnEscalationKeys is the same list internal/layout scrubs, spelled here
 // because cmd/brain must not import the hub's internal packages. The two are
 // held equal by TestBootDocumentWritersScrubTheSameFields.
-var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds"}
+var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profileId", "mcpItemIds", "launchIntegrationId"}
 
 // escalationScrubbedKey is the per-agent note this scrub leaves behind: the
 // keys THIS write lost. TWINS: internal/layout/layout.go and

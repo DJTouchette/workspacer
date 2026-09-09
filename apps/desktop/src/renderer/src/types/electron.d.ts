@@ -157,6 +157,7 @@ export interface ElectronAPI extends RoutingAPI {
      *  Omitted = the config default (claude.transport). */
     transport?: 'pty' | 'stream';
     profileId?: string;
+    launchIntegrationId?: string | null;
     model?: string;
     modelIdentity?: string;
     contextWindow?: number | null;

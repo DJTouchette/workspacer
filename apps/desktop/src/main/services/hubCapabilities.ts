@@ -632,6 +632,9 @@ export function registerHubCapabilities(): void {
   // Keep the spawn handler at its existing indentation for shared seam changes.
   // prettier-ignore
   registerCapability('agents.spawn', workflowSpawn(async (params: unknown) => {
+    if ((params as { launchIntegrationId?: unknown } | null)?.launchIntegrationId != null) {
+      throw new Error('Launch integrations currently require a local desktop session');
+    }
     const {
       provider: reqProvider,
       transport: reqTransport,

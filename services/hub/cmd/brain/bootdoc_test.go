@@ -27,7 +27,7 @@ func TestSessionsSaveStripsSpawnEscalationFields(t *testing.T) {
 	  "activeAgentId":"a1",
 	  "agents":[{"id":"a1","cwd":"/","provider":"claude","sessionId":"dead-session-id",
 	             "skipPermissions":true,"permissionMode":"bypassPermissions",
-	             "profileId":"attacker-profile","mcpItemIds":["evil-mcp"],"tabs":[]}]
+	             "profileId":"attacker-profile","launchIntegrationId":"workspacer.headroom","mcpItemIds":["evil-mcp"],"tabs":[]}]
 	}`)
 	if _, err := r.savedSessionSave(params); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestLayoutsSaveStripsSpawnEscalationFields(t *testing.T) {
 	raw, err := r.layoutsSave(json.RawMessage(`{
 	  "name":"tpl",
 	  "agents":[{"id":"a1","cwd":"/","skipPermissions":true,"permissionMode":"bypassPermissions",
-	             "profileId":"attacker-profile","mcpItemIds":["evil-mcp"]}]
+	             "profileId":"attacker-profile","launchIntegrationId":"workspacer.headroom","mcpItemIds":["evil-mcp"]}]
 	}`))
 	if err != nil {
 		t.Fatal(err)

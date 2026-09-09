@@ -23,6 +23,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   threshold moved.
 
 ### Added
+- **Optional Headroom routing for local Claude Code and Codex sessions.** Install
+  Headroom from Plugins → Browse examples, run your own proxy, and select it under
+  Launch integration in Spawn agent. The choice persists on restart/resume;
+  unavailable integrations stop launch with an error. The versioned plugin
+  contribution supplies child-local environment and arguments through existing
+  Claude and Codex drivers, including Windows. Setup and supported routing
+  configurations are documented; selecting None keeps ordinary launches.
 - **The Inspector's Usage tab now shows the account allowance a session spends
   from.** The paced provider windows that Overview draws per account are now on
   the session surface too — the same 5-hour, 7-day and monthly readings, the

@@ -25,6 +25,7 @@ const FULL_REQUEST: Required<AgentSpawnRequest> = {
   provider: 'codex',
   transport: 'stream',
   profileId: 'work-account',
+  launchIntegrationId: 'workspacer.headroom',
   manager: true,
   fleetFullAccess: true,
   model: 'gpt-5.5',

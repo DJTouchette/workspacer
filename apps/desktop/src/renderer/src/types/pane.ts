@@ -169,6 +169,7 @@ export interface AgentWorkspace {
    *  config default at spawn time. */
   transport?: 'pty' | 'stream';
   profileId?: string;
+  launchIntegrationId?: string | null;
   /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
   model?: string;
   /** Canonical requested pair retained across renderer restart/respawn. */
