@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
 
@@ -15,9 +15,17 @@ import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
  *   - handleAnswer      → PTY write("<n>\r") (questions bypass /answer by design)
  */
 
+const terminalLifecycle = vi.hoisted(() => ({
+  instances: [] as any[],
+  fonts: undefined as (() => Promise<void>) | undefined,
+}));
+
 // xterm needs a real canvas; stub it.
 vi.mock('@xterm/xterm', () => {
   class MockTerminal {
+    constructor() {
+      terminalLifecycle.instances.push(this);
+    }
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
@@ -49,7 +57,7 @@ vi.mock('@xterm/addon-web-fonts', () => ({
   WebFontsAddon: class {
     activate = vi.fn();
     dispose = vi.fn();
-    loadFonts = vi.fn().mockResolvedValue(undefined);
+    loadFonts = vi.fn(() => terminalLifecycle.fonts?.() ?? Promise.resolve());
   },
 }));
 
@@ -927,4 +935,26 @@ describe('shared chat inside Fleet', () => {
     expect(screen.getByText('A streamed update arrived')).toBeInTheDocument();
     expect(input).toHaveValue('Keep this draft');
   });
+});
+
+it('does not initialize a disposed terminal when fonts finish after a session remount', async () => {
+  let finish!: () => void;
+  const fonts = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  terminalLifecycle.fonts = () => fonts;
+  terminalLifecycle.instances.length = 0;
+  try {
+    const view = render(<ClaudePane paneId="retiring-pane" title="Claude" isActive cwd="/repo" />);
+    const terminal = terminalLifecycle.instances[0];
+    expect(terminal).toBeDefined();
+    view.unmount();
+    await act(async () => {
+      finish();
+      await fonts;
+    });
+    expect(terminal.open).not.toHaveBeenCalled();
+  } finally {
+    terminalLifecycle.fonts = undefined;
+  }
 });

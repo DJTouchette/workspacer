@@ -1,26 +1,26 @@
 import { test, expect } from '@playwright/test';
 import { spawn, type ChildProcess } from 'child_process';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { once } from 'events';
 import { freePort } from './fixtures/scratchState';
 let vite: ChildProcess;
 let base: string;
+let cache: string;
 test.beforeAll(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}/fleet-workflow-harness.html`;
+  cache = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-vite-cache-'));
+  const options = { cacheDir: cache, server: { host: '127.0.0.1', port, strictPort: true } };
   vite = spawn(
     process.execPath,
     [
-      path.resolve(__dirname, '../../src/renderer/node_modules/vite/bin/vite.js'),
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(port),
-      '--strictPort',
+      '--input-type=module',
+      '-e',
+      `import { createServer } from 'vite'; const server = await createServer(${JSON.stringify(options)}); await server.listen();`,
     ],
-    {
-      cwd: path.resolve(__dirname, '../../src/renderer'),
-      stdio: 'ignore',
-    },
+    { cwd: path.resolve(__dirname, '../../src/renderer'), stdio: 'ignore' },
   );
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
@@ -31,7 +31,14 @@ test.beforeAll(async () => {
   }
   throw new Error('Isolated handoff renderer harness did not start');
 });
-test.afterAll(() => vite?.kill());
+test.afterAll(async () => {
+  if (vite && vite.exitCode === null && vite.signalCode === null) {
+    const ended = once(vite, 'exit');
+    vite.kill();
+    await ended;
+  }
+  if (cache) fs.rmSync(cache, { recursive: true, force: true });
+});
 async function open(page: import('@playwright/test').Page, mode: string) {
   await page.goto(`${base}?handoff=${mode}`);
   await page.waitForFunction(() => !!(window as any).fleetHarness);
@@ -149,4 +156,25 @@ test('unavailable host is explicit and never opens ordinary handoff dialog', asy
       .filter({ visible: true }),
   ).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('ordinary-agent handoff still opens the provider/settings dialog', async ({ page }) => {
+  await page.goto(`${base}?handoff=happy`);
+  await page.waitForFunction(() => !!(window as any).fleetHarness);
+  await page.evaluate(() => (window as any).fleetHarness.pilot('worker'));
+  await page
+    .getByTitle(
+      'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)',
+    )
+    .filter({ visible: true })
+    .click();
+  await expect(page.getByRole('dialog', { name: 'Hand off session' })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fleetHarness.calls.filter(
+          (c: any) => c.method === 'replacement' && c.args[0].action === 'start',
+        ).length,
+    ),
+  ).toBe(0);
 });

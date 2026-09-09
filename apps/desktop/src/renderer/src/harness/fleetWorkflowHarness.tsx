@@ -330,6 +330,7 @@ function Harness() {
   const [currentSnapshots, setSnapshots] = useState(snapshots);
   const [view, setView] = useState<'fleet' | 'piloting'>('fleet');
   const [recent, setRecent] = useState(false);
+  const [pilotId, setPilotId] = useState('manager');
   useEffect(() => {
     manager.loadAgentsFromSession(initialAgents, 'manager');
   }, []);
@@ -372,7 +373,10 @@ function Harness() {
         manager.loadAgentsFromSession([...manager.agents, makeAgent('new-worker')], 'manager'),
       agents: () => manager.agents.map((a) => a.id),
       agentRecords: () => manager.agents,
-      pilot: () => setView('piloting'),
+      pilot: (id = 'manager') => {
+        setPilotId(id);
+        setView('piloting');
+      },
     };
   }, [manager.agents]);
   const attention = useAttentionFeed(currentSnapshots, manager.agents);
@@ -400,7 +404,7 @@ function Harness() {
                 <div
                   key={p.id}
                   style={{
-                    display: view === 'piloting' && a.id === 'manager' ? 'block' : 'none',
+                    display: view === 'piloting' && a.id === pilotId ? 'block' : 'none',
                     height: '100%',
                   }}
                 >
@@ -413,7 +417,7 @@ function Harness() {
                     provider="codex"
                     transport="stream"
                     attachSessionId={a.sessionId}
-                    isActive={view === 'piloting' && a.id === 'manager'}
+                    isActive={view === 'piloting' && a.id === pilotId}
                   />
                 </div>
               )),

@@ -698,6 +698,7 @@ export const useClaudePaneModel = ({
     const container = termContainerRef.current;
     if (!container || termInitRef.current) return;
     termInitRef.current = true;
+    let disposed = false;
 
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
@@ -731,6 +732,7 @@ export const useClaudePaneModel = ({
     term.loadAddon(webFontsAddon);
 
     webFontsAddon.loadFonts().then(() => {
+      if (disposed) return;
       term.open(container);
 
       // Spawn only once the terminal is laid out at its real, visible size.
@@ -744,7 +746,7 @@ export const useClaudePaneModel = ({
       let attempts = 0;
       const MAX_ATTEMPTS = 15; // ~1.5s of 100ms retries before giving up
       const startWhenSized = () => {
-        if (sessionStartedRef.current || !termInitRef.current) return;
+        if (disposed || sessionStartedRef.current || !termInitRef.current) return;
         const visible = isTermVisible(container);
         if (visible) {
           try {
@@ -803,6 +805,7 @@ export const useClaudePaneModel = ({
     });
 
     const fitRetry = () => {
+      if (disposed) return;
       try {
         fitAddon.fit();
       } catch {}
@@ -831,6 +834,7 @@ export const useClaudePaneModel = ({
     const onResizeDisp = term.onResize(({ cols, rows }) => resize(cols, rows));
 
     return () => {
+      disposed = true;
       onDataDisp.dispose();
       onBinaryDisp.dispose();
       onResizeDisp.dispose();
