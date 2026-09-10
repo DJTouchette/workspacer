@@ -238,7 +238,7 @@ export const managerReplacementService = new ManagerReplacementService(managerRe
     }
   },
   bound: (paneId, id) => claudemonSessionClient.attachedSession(paneId) === id,
-  send: (id, text) => claudemonSessionClient.messageDirect(id, text),
+  send: (id, text, sourceRequest) => claudemonSessionClient.messageDirect(id, text, sourceRequest),
   pause: (id) => claudemonSessionClient.signal(id, 'SIGINT'),
   async close(id) {
     const wire = await claudemonSessionClient.getSession(id);

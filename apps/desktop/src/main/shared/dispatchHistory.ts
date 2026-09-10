@@ -54,6 +54,10 @@ export interface DispatchAttempt extends DispatchLink {
   reviewEvidenceId?: string;
 }
 export interface DispatchTask {
+  sources?: import('./managerRequests').TaskSource[];
+  dependsOn?: string[];
+  cancelled?: boolean;
+  acceptedOutcome?: import('./managerRequests').AcceptedTaskOutcome;
   /** Legacy rows read as revision zero. Every persisted mutation advances it. */
   revision?: number;
   /** Durable admission fence across asynchronous worktree allocation. */
@@ -70,7 +74,7 @@ export interface DispatchTask {
   attempts: DispatchAttempt[];
 }
 export type DispatchHistoryResponse =
-  | { available: true; currentOwnerSessionId?: string; tasks: DispatchTask[] }
+  | { available: true; currentOwnerSessionId?: string; tasks: DispatchTask[]; requests?: Array<{ ownerSessionId: string; requestId: string; delivery: string; resolved: boolean }> }
   | { available: false; reason: string };
 
 export type TaskLinks = {
@@ -82,7 +86,7 @@ export type TaskAudit = {
   id: string;
   /** Who made the edit. Waivers are always host-user; managers may only touch references. */
   actor: 'host-user' | 'manager';
-  action: 'waive' | 'links';
+  action: 'waive' | 'links' | 'request' | 'outcome';
   stepId?: string;
   reason: string;
   createdAt: string;
@@ -107,6 +111,7 @@ export const TASK_INSPECTOR_UNAVAILABLE =
 export const terminalWorkflowStep = (state: string): boolean =>
   ['completed', 'skipped', 'waived'].includes(state);
 export function taskIsActive(task: DispatchTask): boolean {
+  if (task.cancelled) return false;
   return task.workflow
     ? task.workflow.steps.some((s) => !terminalWorkflowStep(s.state))
     : task.attempts.some((a) => a.lifecycle !== 'ended');

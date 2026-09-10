@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { taskDependencyState, type ManagerRequest } from '../shared/managerRequests';
 import fs from 'fs';
 import path from 'path';
 import { withConfigLock } from '../lib/configLock';
@@ -38,6 +39,7 @@ const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 /** No transcripts, parent reconstruction, schema parsing, or filesystem grants. */
 export class DispatchHistoryStore {
   private tasks?: DispatchTask[];
+  private requests: ManagerRequest[] = [];
   // Session updates are the hot path. Keep these small indexes alongside the
   // bounded in-memory history instead of re-scanning every task on each update.
   private tasksByID = new Map<string, DispatchTask>();
@@ -50,19 +52,23 @@ export class DispatchHistoryStore {
     return withConfigLock(this.filename(), () => {
       this.tasks = undefined;
       const before = structuredClone(this.load());
+      const beforeRequests = structuredClone(this.requests);
       const freshness = new Map(this.fresh);
       this.writing = true;
       try {
         const result = fn();
+        this.index();
         for (const task of this.tasks!) {
           const prior = before.find((t) => t.taskId === task.taskId);
           if (JSON.stringify(prior) !== JSON.stringify(task))
             task.revision = (prior?.revision ?? 0) + 1;
         }
-        if (JSON.stringify(before) !== JSON.stringify(this.tasks)) this.persist();
+        if (JSON.stringify(before) !== JSON.stringify(this.tasks) ||
+            JSON.stringify(beforeRequests) !== JSON.stringify(this.requests)) this.persist();
         return structuredClone(result);
       } catch (error) {
         this.tasks = before;
+        this.requests = beforeRequests;
         this.fresh = freshness;
         this.index();
         throw error;
@@ -87,6 +93,7 @@ export class DispatchHistoryStore {
   private load(): DispatchTask[] {
     if (this.tasks) return this.tasks;
     this.tasks = [];
+    this.requests = [];
     try {
       if (fs.statSync(this.filename()).size > this.limits.bytes)
         throw new Error('Task history exceeds its size limit');
@@ -106,6 +113,12 @@ export class DispatchHistoryStore {
           if (!a.dispatchId || !a.sessionId || !a.metrics) throw new Error('Invalid task attempt');
       }
       this.tasks = state.tasks;
+      if (state.requests !== undefined && (!Array.isArray(state.requests) ||
+          state.requests.some((r: ManagerRequest) => !r.requestId || !r.ownerSessionId ||
+            !r.sourceSessionId || !Number.isSafeInteger(r.revision) ||
+            !['pending', 'accepted', 'rejected', 'unknown'].includes(r.delivery))))
+        throw new Error('Invalid manager request history');
+      this.requests = state.requests ?? [];
       while (
         this.tasks!.length > this.limits.tasks ||
         this.tasks!.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
@@ -153,6 +166,17 @@ export class DispatchHistoryStore {
       return;
     }
     const task = taskId ? this.task(taskId) : undefined;
+    if (task && taskDependencyState(task, this.load()) !== 'ready')
+      throw new Error('Task is cancelled or waiting for accepted dependency evidence');
+    if (task?.sources?.length && !task.sources.some((s) => this.requests.some((r) =>
+        r.requestId === s.requestId && r.ownerSessionId === owner.sessionId &&
+        r.intents?.some((i) => i.key === s.intentKey && i.taskId === task.taskId && i.cwd === task.projectCwd))))
+      throw new Error('Task has no committed source request for this owner/project');
+    // Additive rollout: historical tasks/continuations remain eligible. Only
+    // owners that resolved an inbox request require a committed task for new work.
+    if (!taskId && !input.retrySourceSessionId && this.requests.some((r) =>
+        r.ownerSessionId === owner.sessionId && r.intents))
+      throw new Error('Resolve the source request and use its taskId before dispatch');
     if (
       taskId &&
       (!task ||
@@ -422,6 +446,8 @@ export class DispatchHistoryStore {
     }
     if (!owner.isWakeTarget || owner.status === 'ended' || owner.hub)
       throw new Error('Workflow requires a live local manager');
+    if (this.requests.some((r) => r.ownerSessionId === owner.sessionId && r.intents))
+      throw new Error('Resolve an inbox request to create new work; existing tasks keep their IDs');
     const task: DispatchTask = {
       taskId: randomUUID(),
       ownerSessionId: owner.sessionId,
@@ -693,6 +719,11 @@ export class DispatchHistoryStore {
         task.ownerSessionId = newOwner;
         task.ownerLabel = newOwner;
       }
+    for (const request of this.requests)
+      if (request.ownerSessionId === oldOwner) {
+        request.ownerSessionId = newOwner;
+        request.revision++;
+      }
     this.flush();
   }
   list(): DispatchTask[] {
@@ -707,11 +738,23 @@ export class DispatchHistoryStore {
       }
     return tasks;
   }
+  /** All source resolution and task creation share the existing JSON lock. */
+  requestTransaction<T>(fn: (requests: ManagerRequest[], tasks: DispatchTask[]) => T): T {
+    return this.transaction(() => fn(this.requests, this.load()));
+  }
+  listRequests(owner: string): ManagerRequest[] {
+    if (!this.writing) this.tasks = undefined;
+    this.load();
+    return structuredClone(this.requests.filter((r) => r.ownerSessionId === owner));
+  }
   private pruneOne(tasks: DispatchTask[]): void {
     const index = tasks.findIndex(
       (t) =>
-        !t.workflow ||
-        t.workflow.steps.every((s) => ['completed', 'skipped', 'waived'].includes(s.state)),
+        !t.attempts.some((a) => a.live) &&
+        !tasks.some((other) => other.dependsOn?.includes(t.taskId)) &&
+        !this.requests.some((r) => !r.intents && r.ownerSessionId === t.ownerSessionId) &&
+        (!t.workflow ||
+        t.workflow.steps.every((s) => ['completed', 'skipped', 'waived'].includes(s.state))),
     );
     if (index < 0)
       throw new Error('Workflow history capacity reached; active tasks cannot be evicted');
@@ -722,6 +765,13 @@ export class DispatchHistoryStore {
   }
   private persist(): void {
     const tasks = this.load();
+    // Never evict unresolved requests or the source of a retained task.
+    while (this.requests.length > 256) {
+      const i = this.requests.findIndex((r) => (r.intents || r.delivery === 'rejected') &&
+        !tasks.some((t) => t.sources?.some((s) => s.requestId === r.requestId)));
+      if (i < 0) throw new Error('Request inbox capacity reached; resolve pending requests');
+      this.requests.splice(i, 1);
+    }
     while (
       tasks.length > this.limits.tasks ||
       tasks.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
@@ -729,12 +779,14 @@ export class DispatchHistoryStore {
       this.pruneOne(tasks);
     while (
       tasks.length &&
-      Buffer.byteLength(JSON.stringify({ version: 1, tasks })) > this.limits.bytes
+      Buffer.byteLength(JSON.stringify({ version: 1, tasks, requests: this.requests })) > this.limits.bytes
     )
       this.pruneOne(tasks);
     this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
-    atomicWriteFileSync(this.filename(), JSON.stringify({ version: 1, tasks }), { mode: 0o600 });
+    const json = JSON.stringify({ version: 1, tasks, requests: this.requests });
+    if (Buffer.byteLength(json) > this.limits.bytes) throw new Error('Request history capacity reached');
+    atomicWriteFileSync(this.filename(), json, { mode: 0o600 });
   }
 }
 export class TaskConflict extends Error {}

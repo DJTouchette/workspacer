@@ -362,7 +362,7 @@ export class ManagerReplacementState {
   activeCount(id: string): number {
     return this.active.get(id) ?? 0;
   }
-  holdMessage(id: string, text: string, signatures: Array<[string, string]> = []): boolean {
+  holdMessage(id: string, text: string, signatures: Array<[string, string]> = [], sourceRequest?: ReplacementDelivery['sourceRequest']): boolean {
     const related = this.related(id);
     const o = this.held(id) ?? (related?.phase === 'activating' ? related : undefined);
     if (!o) return false;
@@ -371,7 +371,7 @@ export class ManagerReplacementState {
     this.change(o.operationId, (op) => {
       if (op.deliveries.length >= 256)
         throw new Error('Handoff message capacity reached; message was not accepted');
-      op.deliveries.push({ id: randomUUID(), kind: 'message', text, status: 'pending' });
+      op.deliveries.push({ id: randomUUID(), kind: 'message', text, status: 'pending', sourceRequest });
       for (const [worker, signature] of signatures) {
         op.signatures[worker] = signature;
         delete op.finishes[worker];

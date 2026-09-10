@@ -8,6 +8,7 @@ import { claudeSessionStore } from './claudeSessionStore';
 import { validateDispatchTemplateParams } from '../lib/dispatchTemplate';
 import { reviewPolicy, type WorkflowTemplate } from '../shared/fleetWorkflow';
 import type { DispatchTask } from '../shared/dispatchHistory';
+import { taskDependencyState } from '../shared/managerRequests';
 export const workflowBusy = new Set<string>();
 /**
  * The single ownership gate for manager-facing task operations: a live, local,
@@ -37,6 +38,8 @@ export function ownerTask(
   return task;
 }
 export function workflowInstructions(task: DispatchTask): string {
+  const state = taskDependencyState(task, dispatchHistoryStore.list());
+  if (state !== 'ready') return `Task ${task.taskId} is ${state}. Await explicit accepted dependency evidence; do not dispatch or bypass its pinned workflow. Check list_manager_requests once on your next wake for current task state.`;
   const pin = task.workflow!;
   const i = pin.steps.findIndex((s) => !['completed', 'skipped', 'waived'].includes(s.state));
   const run = pin.steps[i];
@@ -154,7 +157,8 @@ export function workflowWakeInstructions(sessionIds: string[]): string {
   const tasks = dispatchHistoryStore
     .list()
     .filter((t) => t.workflow && t.attempts.some((a) => sessionIds.includes(a.sessionId)));
-  return tasks.length ? '\n\n' + tasks.map(workflowInstructions).join('\n\n') : '';
+  return (tasks.length ? '\n\n' + tasks.map(workflowInstructions).join('\n\n') : '') +
+    '\n\nFleet event, not a new user request. Check list_manager_requests once for unresolved inbox requests and linked task readiness. Preserve existing request/task lineage.';
 }
 
 export function workflowResultSchema(sessionId: string): Record<string, unknown> | undefined {

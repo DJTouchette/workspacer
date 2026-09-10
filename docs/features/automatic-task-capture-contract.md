@@ -1,59 +1,85 @@
-# Manager request admission boundary
+# Automatic manager task capture
 
-Implementation baseline: `6d9a6b86414d942a5a9ece8f885153ca56176c0e`
-(the accepted compact Inspector and authenticated task references), fast-forwarded
-from `ac818c86` in the isolated automatic-task branch. The later Windows/integration
-commits are not included in this baseline.
+The local desktop owns an authenticated request inbox. A host request ID is
+persisted before chat delivery; the inbox is the source of actionable user
+content, independently of provider transcript rendering. No classifier call or
+daemon/provider protocol expansion is involved.
 
-## Transport facts verified in the implementation checkout
+## User behavior
 
-- `main/ipc.ts` handles `claude:message` with only session ID and text. Remote
-  sessions forward through `agents.sendMessage`; local sessions use
-  `ClaudemonSessionClient.message`.
-- `ClaudemonSessionClient.message` mints an in-memory frame ID **after** the
-  handoff hold check. `messageDirect` posts only `{text}` and discards the
-  successful response body, including the daemon's `queued` flag.
-- `daemon/api.rs::MessagePayload` contains only `text`. `post_message` reports
-  successful queue admission, not provider consumption.
-- `SessionStore::native_submit_message` forwards managed input to an
-  `UnboundedSender<String>`. The pending queue's drain explicitly maps every
-  `PendingMessage` to its text. Neither route carries host request identity or
-  separate trusted context to the provider.
-- `ManagerReplacementState.holdMessage` allocates another delivery ID and
-  persists text. `ManagerReplacementService.deliver` forwards only target and
-  text, appends a host correction into that text, and treats missing
-  acknowledgements as uncertain. Its explicit duplicate-risk retry creates a
-  new delivery ID; that ID therefore cannot be the logical user request ID.
+Manager chat saves a request, then attempts normal chat delivery. Inspector shows
+pending requests and tasks as the manager resolves them. A question or status
+request can resolve without a task. Corrections retain an existing task ID;
+independent work creates another task, even before any worker is dispatched.
 
-An HTTP 200 is evidence of admission only. A transcript UUID, text digest,
-timestamp, FIFO optimistic bubble, or replacement delivery ID cannot establish
-the identity of a logical request across all these boundaries.
+A followup such as “publish nightly after these fixes” becomes a separate pinned
+workflow task with concrete same-project task dependencies. Inspector shows the
+dependency title and waiting/ready state. Clicking the title selects that task.
+Internal IDs remain inside Details. No scheduler or publishing action is added.
 
-## Contract boundary needing a decision
+Delivery status is distinct from request interpretation and task success:
 
-A metadata-only desktop ledger can preserve a request ID and admission status,
-but cannot attach that ID to the actual provider input on the existing text-only
-transport. Publishing metadata through MCP alone does not identify which of
-several queued or identical messages the manager has actually received.
+- Pending: saved but not yet submitted, or held for manager replacement.
+- Accepted: the daemon acknowledged admission, possibly into its queue. This is
+  not evidence that the model consumed the turn.
+- Rejected: the daemon explicitly refused delivery; resolution is unavailable.
+  Retrying the restored draft keeps its logical request ID and adds an attempt.
+- Unknown: admission acknowledgement is ambiguous. The manager may fetch and
+  resolve the authoritative inbox request, without pretending chat delivery was
+  confirmed. The host never automatically replays that provider input.
 
-Two implementable contracts are:
+## Manager tools and authority
 
-1. Make a desktop-owned, authenticated MCP request inbox the authoritative source
-   of actionable user content. Retain bounded original request content while
-   unresolved, separate it from host identity/delivery metadata in tool results,
-   and interpret daemon admission as eligibility for inbox resolution even if
-   the matching chat input remains queued. Resolution no longer needs to match
-   a provider transcript turn. This changes the source-of-work contract and
-   content-retention requirement; it is not merely a metadata ledger.
-2. Add an explicit structured input envelope to daemon admission and provider
-   input channels, with capability negotiation, durable logical request IDs,
-   delivery-attempt IDs, and a distinct trusted context carrier. Preserve it
-   through queue drain and replacement replay. Enable capture only for provider
-   transports that can preserve that boundary, and report unavailable elsewhere.
+`list_manager_requests` returns trusted host metadata and task readiness.
+`get_manager_request` returns exact unresolved `userContent` separately; it
+remains user input, not trusted system instructions. The authenticated caller
+owns the request. Neither user content nor MCP arguments can choose another
+manager's identity.
 
-Neither choice may append an authoritative request ID to untrusted user text,
-infer identity from transcript matching, automatically replay ambiguous sends,
-or make request resolution grant execution/publishing authority.
+`resolve_manager_request` atomically resolves 1–8 stable intent keys under a
+request revision CAS. Supported kinds are create, followUp, update, question and
+none. Task updates additionally require the current task revision. An identical
+retry returns the committed task IDs; a conflict returns current state. Creation
+pins the currently selected project policy; it never changes workflow settings.
+A release-specific policy must already be selected under appropriate user scope.
 
-No feature behavior is enabled by this document. No local execution or hosted
-CI has been performed for this contract investigation.
+`accept_task_outcome` records the manager's explicit interpretation of concrete
+stored step results under task revision CAS. Schema validity alone, idle workers,
+waived steps and failed/blocked steps cannot satisfy a dependency. Recorded
+outcomes must continue to match the accepted evidence. Readiness informs the
+manager; resolution and acceptance grant no push, publication, destructive or
+credential authority. Cancellation changes task intent without stopping workers.
+
+## Persistence and compatibility
+
+Requests and tasks share the existing locked, atomic, private 0600 JSON history.
+Logical request IDs differ from delivery-attempt IDs and handoff delivery IDs.
+Ownership transfer moves unresolved requests and task/dependency lineage in the
+same transaction, preserving original source-session provenance. Captured handoff
+messages retain source references and do not receive IDs appended to chat text.
+
+Original content is retained only while unresolved (up to 64 KiB per request).
+Resolution deletes it, retaining bounded provenance and interpretation. The inbox
+caps retained requests at 256, retries at eight, and uses the existing total
+history byte limit. Pending requests and live task/dependency references cannot
+be evicted to admit new work; capacity exhaustion fails visibly.
+
+The rollout is additive. Local desktop composer and manager entry points prepare
+requests. Remote/headless clients report capture unavailable and retain legacy
+chat behavior. Ordinary non-manager chat and synthetic fleet events never create
+inbox requests. Once a manager resolves inbox requests, new work dispatches need a
+committed task; historical tasks and their continuations retain compatibility.
+Managers check the inbox once on each user/wake turn, then end their turn normally.
+
+## Review and validation
+
+Integrated baseline: `0664d03c0cc7f389fe438fa6d3ea94fb3e60eae3`, including compact
+Inspector/reference CAS and Windows handoff validation. No primary runtime or
+nightly artifact is modified by this branch.
+
+Start with `managerRequestService.ts`, `dispatchHistoryStore.ts`,
+`claudemonSessionClient.ts`, and the authenticated `manager_requests.go` tools.
+The feature workflow runs service/real-HTTP transport regressions, renderer tests,
+and the existing real authenticated MCP→bus→desktop integration using private
+fixtures and no real providers. Local execution is prohibited on the OOM-affected
+host; CI results must be reported against the actual branch commit.

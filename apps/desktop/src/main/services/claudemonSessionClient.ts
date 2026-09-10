@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
 import { ManagerDeliveryRejected } from '../shared/managerReplacement';
 import { managerReplacementState } from './managerReplacementState';
+import { managerRequests } from './managerRequestService';
+type SourceRequest = import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'];
 /**
  * Main-process proxy between the renderer and the claudemon daemon.
  *
@@ -64,6 +66,7 @@ class ClaudemonSessionClient {
       id: string;
       text: string;
       signatures?: Array<[string, string]>;
+      sourceRequest?: SourceRequest;
       promise: Promise<{ ok: boolean; mode?: string }>;
     }>
   >();
@@ -554,16 +557,21 @@ class ClaudemonSessionClient {
     sessionId: string,
     text: string,
     signatures?: Array<[string, string]>,
+    sourceRequest?: SourceRequest,
   ): Promise<{ ok: boolean; mode?: string }> {
-    if (managerReplacementState.holdMessage(sessionId, text, signatures)) return { ok: true };
+    if (managerReplacementState.holdMessage(sessionId, text, signatures, sourceRequest)) {
+      if (sourceRequest) managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'pending');
+      return { ok: true, mode: 'handoff-queued' };
+    }
     const pending = this.pendingMessages.get(sessionId) ?? new Set();
     const frame = {
       id: randomUUID(),
       text,
       signatures,
+      sourceRequest,
       promise: undefined as unknown as Promise<{ ok: boolean; mode?: string }>,
     };
-    frame.promise = this.messageDirect(sessionId, text)
+    frame.promise = this.messageDirect(sessionId, text, sourceRequest)
       .then(
         (result) => {
           managerReplacementState.noteInFlightMessage(
@@ -597,10 +605,10 @@ class ClaudemonSessionClient {
 
   inFlightMessages(
     sessionId: string,
-  ): Array<{ id: string; text: string; signatures?: Array<[string, string]> }> {
+  ): Array<{ id: string; text: string; signatures?: Array<[string, string]>; sourceRequest?: SourceRequest }> {
     return [...(this.pendingMessages.get(sessionId) ?? [])]
       .filter((f) => !managerReplacementState.acknowledged(f.id))
-      .map(({ id, text, signatures }) => ({ id, text, signatures }));
+      .map(({ id, text, signatures, sourceRequest }) => ({ id, text, signatures, sourceRequest }));
   }
   async waitForMessages(sessionIds: string[]): Promise<void> {
     await Promise.allSettled(
@@ -613,20 +621,38 @@ class ClaudemonSessionClient {
   }
 
   /** Host transaction only. Bypasses the durable handoff outbox, never IPC. */
-  async messageDirect(sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> {
+  async messageDirect(sessionId: string, text: string, sourceRequest?: SourceRequest): Promise<{ ok: boolean; mode?: string }> {
+    if (sourceRequest) {
+      // A replay is fenced by the inbox receipt, even if a handoff journal still
+      // says pending. Delivery IDs are attempts, never logical request IDs.
+      const r = managerRequests().request(sessionId, sourceRequest.requestId);
+      const attempt = r.attempts.find((a) => a.deliveryId === sourceRequest.deliveryId);
+      if (!attempt) throw new Error('Request delivery attempt unavailable');
+      if (attempt.status === 'accepted') return { ok: true };
+      if (attempt.status === 'unknown') throw new Error('Unknown request delivery must not replay');
+      if (r.intents) return { ok: true, mode: 'resolved-inbox' };
+      managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'unknown');
+    }
+    try {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/message`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text }),
     });
     if (res.status === 409) {
+      if (sourceRequest) managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'rejected');
       const body = (await res.json().catch(() => ({}) as any)) as { mode?: string };
       return { ok: false, mode: body.mode };
     }
     if ([400, 401, 403, 404, 410, 413, 422, 429].includes(res.status))
       throw new ManagerDeliveryRejected(res.status);
     if (!res.ok) throw new Error(`message HTTP ${res.status}`);
+    if (sourceRequest) managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'accepted');
     return { ok: true };
+    } catch (error) {
+      if (sourceRequest) managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, error instanceof ManagerDeliveryRejected ? 'rejected' : 'unknown');
+      throw error;
+    }
   }
 
   /**

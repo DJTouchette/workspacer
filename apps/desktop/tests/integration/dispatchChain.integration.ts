@@ -10,6 +10,7 @@ import { once, on } from 'node:events';
 import { createInterface } from 'node:readline';
 import WebSocket from 'ws';
 import type { DispatchTask } from '../../src/main/shared/dispatchHistory';
+import type { RequestIntent } from '../../src/main/shared/managerRequests';
 
 vi.mock('electron', () => ({
   app: {
@@ -906,4 +907,46 @@ it('records supplied task references through authenticated MCP and preserves hum
     );
     expect(denied.error).toBeTruthy();
   }
+});
+
+it('resolves authoritative multi-intent inbox requests through real authenticated MCP and transfers source ownership', async () => {
+  const { managerRequests } = await import('../../src/main/services/managerRequestService');
+  const inbox = managerRequests();
+  const capture = inbox.prepare('manager-current', 'Fix the issue and document it.');
+  if (!capture.available) throw new Error('Capture unavailable');
+  const delivery = inbox.beginDelivery('manager-current', capture.requestId)!;
+  inbox.finishDelivery(capture.requestId, delivery.deliveryId, 'unknown');
+  const call = (name: string, args: Record<string, unknown>, label = 'session:manager-current') => mcpTool(label, name, args);
+  const fetched = await call('get_manager_request', { requestId: capture.requestId });
+  expect(fetched.value.userContent).toEqual({ text: 'Fix the issue and document it.', trust: 'user' });
+  expect(fetched.value.host.delivery).toBe('unknown');
+  const intents: RequestIntent[] = ['Fix issue', 'Document behavior'].map((title, i) => ({ key: `intent-${i}`, kind: 'create', cwd: project, title, provenance: 'explicit', reason: 'Independent user-requested work' }));
+  const args = { requestId: capture.requestId, expectedRevision: fetched.value.host.revision, intents };
+  const before = launch.mock.calls.length;
+  const resolved = await call('resolve_manager_request', args);
+  expect(resolved.value.ok).toBe(true);
+  expect(resolved.value.tasks).toHaveLength(2);
+  expect(resolved.value.tasks.every((t: DispatchTask) => t.sources?.[0].requestId === capture.requestId && !t.attempts.length)).toBe(true);
+  expect(launch.mock.calls).toHaveLength(before);
+  const retry = await call('resolve_manager_request', args);
+  expect(retry.value.tasks.map((t: DispatchTask) => t.taskId)).toEqual(resolved.value.tasks.map((t: DispatchTask) => t.taskId));
+  const foreign = await call('get_manager_request', { requestId: capture.requestId }, 'session:manager-other');
+  expect(foreign.value.ok).toBe(false);
+  const follow = inbox.prepare('manager-current', 'Publish nightly after the fixes.');
+  if (!follow.available) throw new Error('Capture unavailable');
+  const attempt = inbox.beginDelivery('manager-current', follow.requestId)!;
+  inbox.finishDelivery(follow.requestId, attempt.deliveryId, 'accepted');
+  const followup = await call('resolve_manager_request', {
+    requestId: follow.requestId, expectedRevision: inbox.request('manager-current', follow.requestId).revision,
+    intents: [{ key: 'nightly', kind: 'followUp', cwd: project, title: 'Publish nightly', provenance: 'explicit', reason: 'Separate user-authorized delivery task', dependsOn: [resolved.value.tasks[0].taskId] }],
+  });
+  expect(followup.value.ok).toBe(true);
+  const next = await call('next_workflow_step', { cwd: project, taskId: followup.value.tasks[0].taskId });
+  expect(next.value.instructions).toContain('blocked');
+  expect(launch.mock.calls).toHaveLength(before);
+  history.adoptWorkflowTasks('manager-current', 'manager-other');
+  expect((await call('get_manager_request', { requestId: capture.requestId })).value.ok).toBe(false);
+  const transferred = await call('get_manager_request', { requestId: capture.requestId }, 'session:manager-other');
+  expect(transferred.value.host).toMatchObject({ requestId: capture.requestId, sourceSessionId: 'manager-current', ownerSessionId: 'manager-other' });
+  expect(transferred.value.userContent).toBeUndefined();
 });

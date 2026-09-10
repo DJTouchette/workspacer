@@ -78,6 +78,7 @@ export const IPC = {
   USAGE_PACING_SCHEDULE: 'usage:pacingSchedule', // invoke (read)
   USAGE_SET_PACING_SCHEDULE: 'usage:setPacingSchedule', // invoke (write)
   CLAUDE_MESSAGE: 'claude:message',
+  MANAGER_REQUEST_PREPARE: 'manager-request:prepare',
   CLAUDE_SET_PERMISSION_MODE: 'claude:setPermissionMode',
   CLAUDE_SET_EFFORT: 'claude:setEffort',
   CLAUDE_SET_MODEL: 'claude:setModel',

@@ -30,6 +30,7 @@ import { CONVERSATION_PAGE_SIZE, type useClaudePaneModel } from './ClaudePane';
 export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
   const {
     isManager,
+    requestCaptureStatus,
     managerHandoffBusy,
     handleManagerHandoff,
     replacementOperation,
@@ -566,6 +567,11 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                 )}
 
                 {/* Composer / Input area — session pills live inside its bottom row */}
+                {isManager && requestCaptureStatus && (
+                  <div role="status" style={{ padding: '4px 16px', color: 'var(--wks-text-secondary)', fontSize: '0.72rem' }}>
+                    {requestCaptureStatus}
+                  </div>
+                )}
                 {sendError && (
                   <div
                     role="alert"

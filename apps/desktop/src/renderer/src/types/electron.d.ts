@@ -280,7 +280,8 @@ export interface ElectronAPI extends RoutingAPI {
   setUsagePacingSchedule: (
     schedule: UsagePacingSchedule,
   ) => Promise<{ ok: true; state: UsagePacingScheduleWire } | { ok: false; error: string }>;
-  claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
+  managerRequestPrepare?: (sessionId: string, text: string, bootstrap?: boolean) => Promise<import('../../../main/shared/managerRequests').RequestCapture>;
+  claudeMessage: (sessionId: string, text: string, requestId?: string) => Promise<{ ok: boolean; mode?: string; requestId?: string; delivery?: string }>;
   claudeSetPermissionMode: (
     sessionId: string,
     mode: string,

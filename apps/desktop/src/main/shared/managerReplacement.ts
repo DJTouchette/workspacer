@@ -14,6 +14,7 @@ export type ReplacementPhase =
   | 'recovery-required';
 export type DeliveryStatus = 'pending' | 'sending' | 'accepted' | 'uncertain' | 'reconciled';
 export interface ReplacementDelivery {
+  sourceRequest?: { requestId: string; deliveryId: string };
   id: string;
   kind: 'preparation' | 'kickoff' | 'message';
   text: string;

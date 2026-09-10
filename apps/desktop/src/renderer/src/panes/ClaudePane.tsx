@@ -1256,6 +1256,8 @@ export const useClaudePaneModel = ({
   // (the pending count), and handleSend only ever runs from an event, long
   // after this render's body finished.
   const pendingCountRef = useSessionChatRef(uiSessionKey, 'pendingCountRef', 0);
+  const requestRetry = useSessionChatRef<{ requestId: string; text: string } | null>(uiSessionKey, 'requestRetry', null);
+  const [requestCaptureStatus, setRequestCaptureStatus] = useSessionChatState(uiSessionKey, 'requestCaptureStatus', '');
   pendingCountRef.current = optimisticMessages.length;
   const [optimisticLoading, setOptimisticLoading] = useSessionChatState(
     uiSessionKey,
@@ -1384,6 +1386,39 @@ export const useClaudePaneModel = ({
       // where the wrapper is gone and raw keystrokes can't help either — so the
       // raw PTY write stays reserved for transport failure (daemon unreachable).
       try {
+        if (manager || session?.isWakeTarget || session?.isFleetManager) {
+          const prepare = window.electronAPI.managerRequestPrepare;
+          if (prepare) {
+            const prior = requestRetry.current;
+            const capture = prior?.text === fullMessage
+              ? { available: true as const, requestId: prior.requestId }
+              : await prepare(messageSessionId, fullMessage);
+            if (capture.available) {
+              // Retry identity belongs to this restored draft, never a transcript
+              // text/timestamp match. Identical successful sends get fresh IDs.
+              requestRetry.current = { requestId: capture.requestId, text: fullMessage };
+              const res = await window.electronAPI.claudeMessage(messageSessionId, fullMessage, capture.requestId);
+              if (res.delivery === 'unknown') {
+                setRequestCaptureStatus('Saved in request inbox. Chat delivery is unknown; it will not be resent. Your manager can resolve it from the inbox.');
+                setOptimisticLoading(false);
+                releaseDelivered();
+                return { ok: false, error: 'Saved in inbox; chat delivery unknown' };
+              }
+              if (res.ok) {
+                requestRetry.current = null;
+                setRequestCaptureStatus(res.delivery === 'pending' ? 'Request saved; waiting for manager handoff delivery.' : 'Request saved for your manager. Task capture is pending.');
+                releaseDelivered();
+                return { ok: true };
+              }
+              setRequestCaptureStatus('Chat delivery rejected. No task was captured; retry keeps the same request.');
+              setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
+              setOptimisticLoading(false);
+              restoreComposer();
+              return { ok: false, error: 'Request delivery rejected' };
+            }
+            setRequestCaptureStatus(capture.reason);
+          } else setRequestCaptureStatus('Automatic request capture is unavailable on this client.');
+        }
         const res = await window.electronAPI.claudeMessage(messageSessionId, fullMessage);
         if (res.ok) {
           releaseDelivered(); // the paste is on its way; stop holding it
@@ -1401,10 +1436,15 @@ export const useClaudePaneModel = ({
         return { ok: false, error: `Session is not accepting input (${res.mode ?? 'rejected'})` };
       } catch (err) {
         console.warn('[ClaudePane] /message failed:', err);
+        if (manager || session?.isWakeTarget || session?.isFleetManager) {
+          setRequestCaptureStatus('Request delivery could not be confirmed. Inspect the manager inbox; no automatic resend.');
+          setOptimisticLoading(false);
+          return { ok: false, error: 'Manager delivery could not be confirmed' };
+        }
         return rawFallback(err instanceof Error ? err.message : String(err));
       }
     },
-    [inputValue, write, attachedFiles, sessionId, attachSessionId, hasTerminal],
+    [inputValue, write, attachedFiles, sessionId, attachSessionId, hasTerminal, manager, session?.isWakeTarget, session?.isFleetManager],
   );
 
   // Drop optimistic entries FIFO as session.conversation grows past the
@@ -2337,6 +2377,7 @@ export const useClaudePaneModel = ({
 
   return {
     isManager,
+    requestCaptureStatus,
     managerHandoffBusy,
     handleManagerHandoff,
     replacementOperation,

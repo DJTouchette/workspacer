@@ -32,7 +32,7 @@ export interface ReplacementHost {
   signatures(ids: string[]): Record<string, string>;
   inFlightMessages?(
     id: string,
-  ): Array<{ id: string; text: string; signatures?: Array<[string, string]> }>;
+  ): Array<{ id: string; text: string; signatures?: Array<[string, string]>; sourceRequest?: import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'] }>;
   finishes(id: string): Record<string, { reply: string; stopped: boolean }>;
   receipt(id: string): string;
   settled(id: string): boolean;
@@ -41,7 +41,7 @@ export interface ReplacementHost {
   transfer(source: string, successor: string, operationId: string): void;
   restore(metadata: ReplacementMetadata[]): Promise<void>;
   bound(paneId: string, id: string): boolean;
-  send(id: string, text: string): Promise<{ ok: boolean; mode?: string }>;
+  send(id: string, text: string, sourceRequest?: import('../shared/managerReplacement').ReplacementDelivery['sourceRequest']): Promise<{ ok: boolean; mode?: string }>;
   pause(id: string): Promise<void>;
   close(id: string): Promise<void>;
   kickoff(op: ReplacementRecord): string;
@@ -159,6 +159,8 @@ export class ManagerReplacementService {
         if (!delivery || !['uncertain', 'pending'].includes(delivery.status))
           throw new Error('Delivery is not awaiting resolution');
         const original = delivery;
+        if (original.sourceRequest && request.resolution === 'retry')
+          throw new Error('Resolve this authoritative inbox request instead. Handoff does not replay captured user requests.');
         let nextId = original.id;
         this.state.change(op.operationId, (o) => {
           const d = o.deliveries.find((d) => d.id === original.id)!;
@@ -279,6 +281,7 @@ export class ManagerReplacementService {
           id: frame.id,
           kind: 'message',
           text: frame.text,
+          sourceRequest: frame.sourceRequest,
           status: 'sending',
         })),
         launch,
@@ -505,7 +508,7 @@ export class ManagerReplacementService {
     if (['accepted', 'reconciled'].includes(delivery.status)) return true;
     if (delivery.status !== 'pending') return false;
     const op = this.state.get(id);
-    if (delivery.kind === 'message' && op.committed && target === op.successorSessionId) {
+    if (delivery.kind === 'message' && !delivery.sourceRequest && op.committed && target === op.successorSessionId) {
       const correction = `\n\n[Host manager handoff ${id}] Current manager/parentSessionId is ${op.successorSessionId}. Earlier owner IDs in quoted worker instructions or workflow hints refer to the predecessor. Preserve task IDs and pinned policy; call next_workflow_step for current workflow state before any continuation. Do not adopt again or replay a worker task.`;
       if (!delivery.text.includes(correction))
         this.state.change(id, (o) => {
@@ -521,9 +524,10 @@ export class ManagerReplacementService {
       while (true) {
         if (Date.now() >= deadline) throw new ManagerDeliveryRejected(404);
         try {
-          return await this.host.send(target, delivery.text);
+          return await this.host.send(target, delivery.text, delivery.sourceRequest);
         } catch (error) {
           if (
+            delivery.sourceRequest ||
             !(error instanceof ManagerDeliveryRejected) ||
             error.status !== 404 ||
             Date.now() + this.timing.pollMs >= deadline

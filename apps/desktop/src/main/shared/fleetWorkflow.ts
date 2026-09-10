@@ -78,7 +78,13 @@ export type WorkflowRequest = {
     | 'next'
     | 'decide'
     | 'taskReferences'
-    | 'setTaskReferences';
+    | 'setTaskReferences'
+    | 'requestInbox'
+    | 'requestContent'
+    | 'resolveRequest'
+    | 'acceptTaskOutcome';
+  requestId?: string;
+  intents?: import('./managerRequests').RequestIntent[];
   id?: string;
   expectedRevision?: number;
   /** Task-row CAS for reference edits. Distinct from the definition/selection revision. */

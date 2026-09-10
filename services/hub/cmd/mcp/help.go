@@ -477,6 +477,16 @@ so one bad path never costs you the other rows. "unpushed" is ABSENT (not 0)
 when a branch has no upstream — that is "nowhere to push", not "nothing to
 push".`),
 	"workflows": strings.TrimSpace(`
+Manager request inbox: call list_manager_requests once at the start of each user
+or wake turn, then get_manager_request for exact original user content. Trusted
+host identity/status is separate from that user content. Resolve all independent
+intents together with resolve_manager_request and its revision CAS before work.
+Unknown delivery can be resolved here without replaying provider input. Rejected
+requests cannot be resolved. Corrections keep taskId; independent followups create
+linked visible tasks immediately. accept_task_outcome records explicit acceptance
+of concrete evidence, never permission to dispatch/publish. Ready tasks require
+normal manager decisions. Synthetic fleet events are not new user requests.
+
 Fleet workflows are LOCAL DESKTOP only. On a headless or older host these tools
 return unavailable — report that plainly, never claim a workflow ran.
 

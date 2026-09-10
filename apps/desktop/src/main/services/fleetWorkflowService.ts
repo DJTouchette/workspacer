@@ -18,6 +18,7 @@ import {
   type WorkflowTemplate,
 } from '../shared/fleetWorkflow';
 import { workflowSelections } from '../shared/fleetWorkflowSelection';
+import { managerRequests } from './managerRequestService';
 const templates = (): WorkflowTemplate[] =>
   libraryService
     .list(undefined, (full) => {
@@ -57,6 +58,11 @@ export function fleetWorkflowRequest(
     if (request.cwd && (typeof request.cwd !== 'string' || !path.isAbsolute(request.cwd)))
       throw new Error('Workflow project cwd must be absolute');
     const { op, id, expectedRevision } = request;
+    if (['requestInbox', 'requestContent', 'resolveRequest', 'acceptTaskOutcome'].includes(op))
+      return managerRequests().handle(
+        request as import('../shared/managerRequests').ManagerRequestOperation,
+        callerSessionId ?? '',
+      ) as WorkflowResponse;
     if (op === 'select' && request.cwd)
       request = { ...request, cwd: configuredWorkflowProjectKey(request.cwd) };
     if (op === 'list')

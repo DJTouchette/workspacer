@@ -315,6 +315,8 @@ export function useAgentManager() {
        *  user never has to press Enter — use only where clicking the trigger IS
        *  the consent to send (e.g. a guide tour chip, a manager kickoff). */
       kickoffMessage?: string;
+      /** Manager inbox bootstrap runs after local session registration, before any user input. */
+      onSessionReady?: (sessionId: string) => Promise<void>;
       /** The id of the agent this one nests under in the sidebar. */
       parentId?: string;
       /** Federation: spawn on this peer hub instead of locally. Plumbed to the
@@ -445,6 +447,7 @@ export function useAgentManager() {
         agent,
       ]);
       setActiveAgentId(agent.id);
+      await opts.onSessionReady?.(sessionId);
       return agent.id;
     },
     [],
@@ -768,6 +771,14 @@ export function useAgentManager() {
       contextWindow?: number | null,
       effort?: string,
     ): Promise<string | undefined> => {
+      const sendAsk = async (id: string, bootstrap = false) => {
+        const capture = await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
+        const result = await window.electronAPI.claudeMessage(id,
+          bootstrap ? buildManagerKickoff(ask, fullAccess) : buildManagerWorkflowAsk(ask),
+          capture?.available ? capture.requestId : undefined);
+        if (result?.ok === false) throw new Error(result.delivery === 'unknown'
+          ? 'Request saved in inbox; chat delivery unknown. Do not resend.' : spawnFailureMessage(provider));
+      };
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
       );
@@ -783,11 +794,7 @@ export function useAgentManager() {
         } catch (err) {
           console.warn('[fleet-manager] token grant reconcile failed:', err);
         }
-        const result = await window.electronAPI.claudeMessage(
-          live.sessionId,
-          buildManagerWorkflowAsk(ask),
-        );
-        if (result?.ok === false) throw new Error(spawnFailureMessage(provider));
+        await sendAsk(live.sessionId);
         return live.sessionId;
       }
       // A stopped manager card respawns (resuming its conversation) before
@@ -814,9 +821,9 @@ export function useAgentManager() {
         const sessionId = await respawnFromRecord(
           record,
           stopped.lastSessionId,
-          buildManagerWorkflowAsk(ask),
         );
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
+        await sendAsk(sessionId);
         if (!stopped.manager) {
           mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
         }
@@ -855,7 +862,7 @@ export function useAgentManager() {
         // full-access; per-project yolo is applied per dispatch by doctrine.
         fleetFullAccess: grantYolo,
         ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
-        kickoffMessage: buildManagerKickoff(ask, fullAccess),
+        onSessionReady: (id) => sendAsk(id, true),
       }).then((id) => id ?? undefined);
     },
     [spawnAgent, respawnFromRecord, mutateAgent],
