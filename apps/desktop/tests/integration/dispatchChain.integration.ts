@@ -1307,38 +1307,58 @@ it('handles unknown paired replay idempotently and returns a local task result o
     // send fails. Do not manufacture this state by reopening an acknowledged
     // receipt: exercise retainEvidence -> beginDelivery -> uncertain send.
     await fetch(ready.control + '/control', {
-      method: 'POST', body: JSON.stringify({ kind: 'replay-known' }),
+      method: 'POST',
+      body: JSON.stringify({ kind: 'replay-known' }),
     });
     const next = await mcpTool('session:manager-other', 'start_workflow', {
-      cwd: project, title: 'Retained outcome with uncertain manager wake',
+      cwd: project,
+      title: 'Retained outcome with uncertain manager wake',
     });
     expect(next.isError, next.text).toBe(false);
     await mcpTool('session:manager-other', 'decide_workflow_step', {
-      cwd: project, taskId: next.value.task.taskId, stepId: 'scout', run: false,
+      cwd: project,
+      taskId: next.value.task.taskId,
+      stepId: 'scout',
+      run: false,
       reason: 'Exercise the existing paired result receipt',
     });
     const uncertain = await mcpSpawn('session:manager-other', {
-      provider: 'claude', model: route.value.model, capability: route.value.capability,
-      decisionId: route.value.decisionId, role: 'implementer', executionTarget: 'paired',
-      remoteCwd: ready.repo, parentSessionId: 'manager-other', taskId: next.value.task.taskId,
-      workflowStepId: 'implement', stage: 'implement', template: 'ship-task',
-      templateParams: { task: 'Return the retained outcome fixture' }, toolScope: 'view',
+      provider: 'claude',
+      model: route.value.model,
+      capability: route.value.capability,
+      decisionId: route.value.decisionId,
+      role: 'implementer',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      parentSessionId: 'manager-other',
+      taskId: next.value.task.taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      template: 'ship-task',
+      templateParams: { task: 'Return the retained outcome fixture' },
+      toolScope: 'view',
     });
     expect(uncertain.isError, uncertain.text).toBe(false);
-    const pending = remoteDispatchRegistry.list().find((r) =>
-      r.localSessionId === uncertain.value.sessionId)!;
+    const pending = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === uncertain.value.sessionId)!;
     delivery.mockRejectedValueOnce(new Error('fixture: manager wake delivery uncertain'));
     await fetch(ready.control + '/control', {
-      method: 'POST', body: JSON.stringify({
-        kind: 'finish', reply: 'Known terminal outcome.\n```wks-result\n{"commit":"retained-outcome"}\n```',
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'finish',
+        reply: 'Known terminal outcome.\n```wks-result\n{"commit":"retained-outcome"}\n```',
       }),
     });
-    await vi.waitFor(() => {
-      expect(pending.lastUpdate?.final).toBe(true);
-      expect(pending.deliveringSeq).toEqual(expect.any(Number));
-      expect(pending.deliveringSeq).toBe(pending.lastUpdate?.seq);
-      expect(pending.note).toContain('delivery is unknown');
-    }, { timeout: 10_000 });
+    await vi.waitFor(
+      () => {
+        expect(pending.lastUpdate?.final).toBe(true);
+        expect(pending.deliveringSeq).toEqual(expect.any(Number));
+        expect(pending.deliveringSeq).toBe(pending.lastUpdate?.seq);
+        expect(pending.note).toContain('delivery is unknown');
+      },
+      { timeout: 10_000 },
+    );
     const pendingBefore = structuredClone(pending);
     const terminalEvidence = pending.lastUpdate;
     const attempts = delivery.mock.calls.length;
@@ -1372,11 +1392,21 @@ it('handles unknown paired replay idempotently and returns a local task result o
     const accepts = vi.spyOn(remoteDispatchRegistry, 'accept');
     try {
       await reconnect('replay-known', pending);
-      await vi.waitFor(() => expect(accepts.mock.results.some((r, i) =>
-        (accepts.mock.calls[i][1] as { dispatchId?: string })?.dispatchId === pending.dispatchId &&
-        r.type === 'return' && !r.value.ok && r.value.reason === 'delivery-unknown',
-      )).toBe(true));
-    } finally { accepts.mockRestore(); }
+      await vi.waitFor(() =>
+        expect(
+          accepts.mock.results.some(
+            (r, i) =>
+              (accepts.mock.calls[i][1] as { dispatchId?: string })?.dispatchId ===
+                pending.dispatchId &&
+              r.type === 'return' &&
+              !r.value.ok &&
+              r.value.reason === 'delivery-unknown',
+          ),
+        ).toBe(true),
+      );
+    } finally {
+      accepts.mockRestore();
+    }
     expect(pending).toEqual(precise);
     expect(pending.lastUpdate).toBe(terminalEvidence);
     expect(delivery.mock.calls).toHaveLength(attempts);

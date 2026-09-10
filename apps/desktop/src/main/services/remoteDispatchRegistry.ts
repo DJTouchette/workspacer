@@ -278,9 +278,10 @@ export class RemoteDispatchRegistry {
     // Remote journal loss cannot erase a locally retained terminal outcome.
     // An open receipt means delivery is unconfirmed, not that the outcome is
     // unknown. Nonterminal evidence still cannot establish an outcome.
-    const projectedNote = record.lastUpdate?.final === true
-      ? 'The remote server no longer has a record of this dispatch. The terminal outcome is retained locally; manager wake delivery is unconfirmed. Reconcile delivery without repeating the spawn or wake.'
-      : note;
+    const projectedNote =
+      record.lastUpdate?.final === true
+        ? 'The remote server no longer has a record of this dispatch. The terminal outcome is retained locally; manager wake delivery is unconfirmed. Reconcile delivery without repeating the spawn or wake.'
+        : note;
     if (record.note === projectedNote) return;
     // Peer ignorance is not proof a worker ended. Keep the origin record open.
     const previous = record.note;

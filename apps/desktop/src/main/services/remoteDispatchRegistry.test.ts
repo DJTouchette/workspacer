@@ -147,42 +147,56 @@ it('retries a verified unknown note after a failed journal write', () => {
 it.each([
   { name: 'no outcome', evidence: 'none', delivering: false, acknowledged: false },
   { name: 'nonterminal update', evidence: 'progress', delivering: true, acknowledged: false },
-  { name: 'terminal before delivery', evidence: 'terminal', delivering: false, acknowledged: false },
-  { name: 'terminal with uncertain delivery', evidence: 'terminal', delivering: true, acknowledged: false },
+  {
+    name: 'terminal before delivery',
+    evidence: 'terminal',
+    delivering: false,
+    acknowledged: false,
+  },
+  {
+    name: 'terminal with uncertain delivery',
+    evidence: 'terminal',
+    delivering: true,
+    acknowledged: false,
+  },
   { name: 'acknowledged terminal', evidence: 'terminal', delivering: true, acknowledged: true },
-] as const)('applies replay-unknown precedence for $name', ({ evidence, delivering, acknowledged }) => {
-  const { registry, file, update } = fixture();
-  const input = 'Worker outcome is unknown; reconcile before retrying';
-  // A newly retained terminal packet must outrank even an identical earlier
-  // generic note, before the delivery guard has been created.
-  if (evidence === 'terminal' && !delivering) registry.markLost(update.dispatchId, input);
-  if (evidence !== 'none') registry.retainEvidence(update.dispatchId, {
-    ...update,
-    kind: evidence === 'terminal' ? 'worker-finished' : 'progress',
-    final: evidence === 'terminal',
-  });
-  if (delivering) registry.beginDelivery(update.dispatchId, update.seq);
-  if (acknowledged) registry.acknowledge(update.dispatchId, update);
-  const before = structuredClone(registry.list()[0]);
-  const retained = registry.list()[0].lastUpdate;
-  registry.markLost(update.dispatchId, input);
-  const after = structuredClone(registry.list()[0]);
-  if (acknowledged) expect(after).toEqual(before);
-  else {
-    expect(after).toEqual({ ...before, note: after.note });
-    if (evidence === 'terminal') {
-      expect(after.note).toContain('terminal outcome is retained locally');
-      expect(after.note).toContain('wake delivery is unconfirmed');
-      expect(after.note).not.toContain('outcome is unknown');
-    } else expect(after.note).toBe(input);
-  }
-  expect(registry.list()[0].lastUpdate).toBe(retained);
-  const inode = fs.statSync(file).ino;
-  registry.markLost(update.dispatchId, input);
-  expect(registry.list()[0]).toEqual(after);
-  expect(fs.statSync(file).ino).toBe(inode);
-  expect(JSON.parse(fs.readFileSync(file, 'utf8'))[0]).toEqual(JSON.parse(JSON.stringify(after)));
-});
+] as const)(
+  'applies replay-unknown precedence for $name',
+  ({ evidence, delivering, acknowledged }) => {
+    const { registry, file, update } = fixture();
+    const input = 'Worker outcome is unknown; reconcile before retrying';
+    // A newly retained terminal packet must outrank even an identical earlier
+    // generic note, before the delivery guard has been created.
+    if (evidence === 'terminal' && !delivering) registry.markLost(update.dispatchId, input);
+    if (evidence !== 'none')
+      registry.retainEvidence(update.dispatchId, {
+        ...update,
+        kind: evidence === 'terminal' ? 'worker-finished' : 'progress',
+        final: evidence === 'terminal',
+      });
+    if (delivering) registry.beginDelivery(update.dispatchId, update.seq);
+    if (acknowledged) registry.acknowledge(update.dispatchId, update);
+    const before = structuredClone(registry.list()[0]);
+    const retained = registry.list()[0].lastUpdate;
+    registry.markLost(update.dispatchId, input);
+    const after = structuredClone(registry.list()[0]);
+    if (acknowledged) expect(after).toEqual(before);
+    else {
+      expect(after).toEqual({ ...before, note: after.note });
+      if (evidence === 'terminal') {
+        expect(after.note).toContain('terminal outcome is retained locally');
+        expect(after.note).toContain('wake delivery is unconfirmed');
+        expect(after.note).not.toContain('outcome is unknown');
+      } else expect(after.note).toBe(input);
+    }
+    expect(registry.list()[0].lastUpdate).toBe(retained);
+    const inode = fs.statSync(file).ino;
+    registry.markLost(update.dispatchId, input);
+    expect(registry.list()[0]).toEqual(after);
+    expect(fs.statSync(file).ino).toBe(inode);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))[0]).toEqual(JSON.parse(JSON.stringify(after)));
+  },
+);
 
 it('keeps terminal evidence and the delivery guard precise across a failed note write', () => {
   const { registry, file, update } = fixture();
@@ -201,6 +215,9 @@ it('keeps terminal evidence and the delivery guard precise across a failed note 
   expect(after.note).toContain('terminal outcome is retained locally');
   expect(after.note).toContain('wake delivery is unconfirmed');
   expect(after).toEqual({ ...before, note: after.note });
-  expect(registry.accept('paired-credential-a', update)).toEqual({ ok: false, reason: 'delivery-unknown' });
+  expect(registry.accept('paired-credential-a', update)).toEqual({
+    ok: false,
+    reason: 'delivery-unknown',
+  });
   expect(JSON.parse(fs.readFileSync(file, 'utf8'))[0].lastUpdate).toEqual(update);
 });
