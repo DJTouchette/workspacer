@@ -1000,66 +1000,164 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   expect(transferred.value.userContent).toBeUndefined();
 });
 
-
 it('dispatches through the real paired host and brain, returns a local task result once', async () => {
-  const binary = path.join(scratch,'paired-brain-fixture');
-  const build = spawn('go',['test','-c','-o',binary,'./cmd/brain'],{cwd:path.resolve('../../services/hub'),env:fixtureEnv,stdio:'pipe',timeout:120_000});
-  let errors = ''; build.stderr.on('data',(data) => { errors += data; }); build.stdout.resume();
-  const [code] = await once(build,'exit');
+  const binary = path.join(scratch, 'paired-brain-fixture');
+  const build = spawn('go', ['test', '-c', '-o', binary, './cmd/brain'], {
+    cwd: path.resolve('../../services/hub'),
+    env: fixtureEnv,
+    stdio: 'pipe',
+    timeout: 120_000,
+  });
+  let errors = '';
+  build.stderr.on('data', (data) => {
+    errors += data;
+  });
+  build.stdout.resume();
+  const [code] = await once(build, 'exit');
   if (code !== 0) throw new Error(errors);
-  const peer = spawn(binary,['-test.run=^TestPairedDispatchHostFixture$','-test.timeout=120s'],{cwd:path.resolve('../../services/hub'),env:{...fixtureEnv,WKS_PAIRED_CHAIN_FIXTURE:'1'},stdio:'pipe'});
+  const peer = spawn(binary, ['-test.run=^TestPairedDispatchHostFixture$', '-test.timeout=120s'], {
+    cwd: path.resolve('../../services/hub'),
+    env: { ...fixtureEnv, WKS_PAIRED_CHAIN_FIXTURE: '1' },
+    stdio: 'pipe',
+  });
   peer.stderr.resume();
-  const lines = createInterface({input:peer.stdout});
-  const ready = await Promise.race([once(lines,'line').then(([line]) => JSON.parse(line)),once(peer,'exit').then(() => {throw new Error('Remote fixture exited before readiness');})]);
+  const lines = createInterface({ input: peer.stdout });
+  const ready = await Promise.race([
+    once(lines, 'line').then(([line]) => JSON.parse(line)),
+    once(peer, 'exit').then(() => {
+      throw new Error('Remote fixture exited before readiness');
+    }),
+  ]);
   lines.close();
-  const {setRemoteServer,getRemoteServer} = await import('../../src/main/services/remoteServer');
-  const {pairedWorkerConnection} = await import('../../src/main/services/pairedWorkerConnection');
-  const {claudemonSessionClient} = await import('../../src/main/services/claudemonSessionClient');
-  const delivery = vi.spyOn(claudemonSessionClient,'message').mockResolvedValue({ok:true});
+  const { setRemoteServer, getRemoteServer } = await import('../../src/main/services/remoteServer');
+  const { pairedWorkerConnection } = await import('../../src/main/services/pairedWorkerConnection');
+  const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
+  const delivery = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
   try {
-    setRemoteServer({url:ready.oldURL,token:'paired-fixture-operator',mode:'workers'});
-    const oldPeer = await mcpTool('session:manager-current','list_dispatch_targets',{});
-    expect(oldPeer.value.targets.find((t:{name:string}) => t.name === 'paired').ready).toBe(false);
+    setRemoteServer({ url: ready.oldURL, token: 'paired-fixture-operator', mode: 'workers' });
+    const oldPeer = await mcpTool('session:manager-current', 'list_dispatch_targets', {});
+    expect(oldPeer.value.targets.find((t: { name: string }) => t.name === 'paired').ready).toBe(
+      false,
+    );
     pairedWorkerConnection.stop();
-    setRemoteServer({url:ready.url,token:'paired-fixture-operator',mode:'workers'});
+    setRemoteServer({ url: ready.url, token: 'paired-fixture-operator', mode: 'workers' });
     expect(getRemoteServer()).toBeNull();
-    const discovery = await mcpTool('session:manager-current','list_dispatch_targets',{});
-    expect(discovery.isError,discovery.text).toBe(false);
-    expect(discovery.value.targets).toEqual(expect.arrayContaining([expect.objectContaining({name:'paired',ready:true,cwds:expect.arrayContaining([expect.objectContaining({path:ready.repo})])})]));
+    const discovery = await mcpTool('session:manager-current', 'list_dispatch_targets', {});
+    expect(discovery.isError, discovery.text).toBe(false);
+    expect(discovery.value.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'paired',
+          ready: true,
+          cwds: expect.arrayContaining([expect.objectContaining({ path: ready.repo })]),
+        }),
+      ]),
+    );
     const localLaunches = launch.mock.calls.length;
-    for (const override of [{remoteCwd:project},{provider:'codex'},{parentSessionId:'manager-other'}]) {
-      const rejected = await mcpSpawn('session:manager-current',{provider:'claude',model:'sonnet',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',message:'Do not launch',...override});
-      expect(rejected.isError,rejected.text).toBe(true);
+    for (const override of [
+      { remoteCwd: project },
+      { provider: 'codex' },
+      { parentSessionId: 'manager-other' },
+    ]) {
+      const rejected = await mcpSpawn('session:manager-current', {
+        provider: 'claude',
+        model: 'sonnet',
+        executionTarget: 'paired',
+        remoteCwd: ready.repo,
+        parentSessionId: 'manager-current',
+        message: 'Do not launch',
+        ...override,
+      });
+      expect(rejected.isError, rejected.text).toBe(true);
     }
-    const {PairedWorkerConnection} = await import('../../src/main/services/pairedWorkerConnection');
-    const view = new PairedWorkerConnection(() => ({httpUrl:ready.url,busUrl:ready.url.replace('http:','ws:')+'/bus',token:'paired-fixture-view'}));
+    const { PairedWorkerConnection } =
+      await import('../../src/main/services/pairedWorkerConnection');
+    const view = new PairedWorkerConnection(() => ({
+      httpUrl: ready.url,
+      busUrl: ready.url.replace('http:', 'ws:') + '/bus',
+      token: 'paired-fixture-view',
+    }));
     try {
-      await expect(view.call('agents.spawn',{cwd:ready.repo,provider:'claude',skipPermissions:true})).rejects.toThrow(/authoriz|scope/);
-      await expect(view.call('agents.dispatchPrepare',{cwd:ready.repo,provider:'claude'})).rejects.toThrow(/authoriz|scope/);
-    } finally {view.stop();}
+      await expect(
+        view.call('agents.spawn', { cwd: ready.repo, provider: 'claude', skipPermissions: true }),
+      ).rejects.toThrow(/authoriz|scope/);
+      await expect(
+        view.call('agents.dispatchPrepare', { cwd: ready.repo, provider: 'claude' }),
+      ).rejects.toThrow(/authoriz|scope/);
+    } finally {
+      view.stop();
+    }
 
-    const workflows = await mcpTool('session:manager-current','list_workflows',{});
-    await mcpTool('session:manager-current','select_project_workflow',{cwd:project,workflowId:'scout-implement-review',expectedRevision:workflows.value.catalog.selectionRevision});
-    const {managerRequests} = await import('../../src/main/services/managerRequestService');
+    const workflows = await mcpTool('session:manager-current', 'list_workflows', {});
+    await mcpTool('session:manager-current', 'select_project_workflow', {
+      cwd: project,
+      workflowId: 'scout-implement-review',
+      expectedRevision: workflows.value.catalog.selectionRevision,
+    });
+    const { managerRequests } = await import('../../src/main/services/managerRequestService');
     const inbox = managerRequests();
-    const request = inbox.prepare('manager-current','Read the remote fixture and return the result contract.');
+    const request = inbox.prepare(
+      'manager-current',
+      'Read the remote fixture and return the result contract.',
+    );
     if (!request.available) throw new Error('Request capture unavailable');
-    const send = inbox.beginDelivery('manager-current',request.requestId)!;
-    inbox.finishDelivery(request.requestId,send.deliveryId,'accepted');
-    const resolved = await mcpTool('session:manager-current','resolve_manager_request',{requestId:request.requestId,expectedRevision:inbox.request('manager-current',request.requestId).revision,intents:[{key:'paired-task',kind:'create',cwd:project,title:'Paired fixture',provenance:'explicit',reason:'User requested this remote task'}]});
-    expect(resolved.isError,resolved.text).toBe(false);
+    const send = inbox.beginDelivery('manager-current', request.requestId)!;
+    inbox.finishDelivery(request.requestId, send.deliveryId, 'accepted');
+    const resolved = await mcpTool('session:manager-current', 'resolve_manager_request', {
+      requestId: request.requestId,
+      expectedRevision: inbox.request('manager-current', request.requestId).revision,
+      intents: [
+        {
+          key: 'paired-task',
+          kind: 'create',
+          cwd: project,
+          title: 'Paired fixture',
+          provenance: 'explicit',
+          reason: 'User requested this remote task',
+        },
+      ],
+    });
+    expect(resolved.isError, resolved.text).toBe(false);
     const task = resolved.value.tasks[0] as DispatchTask;
-    await mcpTool('session:manager-current','decide_workflow_step',{cwd:project,taskId:task.taskId,stepId:'scout',run:false,reason:'Fixture scope is established'});
-    const route = await mcpTool('session:manager-current','select_dispatch_model',{cwd:ready.repo,provider:'claude',role:'implementer'});
-    expect(route.isError,route.text).toBe(false);
-    const result = await mcpSpawn('session:manager-current',{provider:'claude',model:route.value.model,capability:route.value.capability,decisionId:route.value.decisionId,role:'implementer',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',taskId:task.taskId,workflowStepId:'implement',stage:'implement',template:'ship-task',templateParams:{task:'Read the remote fixture and return the result contract.'},toolScope:'view'});
-    expect(result.isError,result.text).toBe(false);
+    await mcpTool('session:manager-current', 'decide_workflow_step', {
+      cwd: project,
+      taskId: task.taskId,
+      stepId: 'scout',
+      run: false,
+      reason: 'Fixture scope is established',
+    });
+    const route = await mcpTool('session:manager-current', 'select_dispatch_model', {
+      cwd: ready.repo,
+      provider: 'claude',
+      role: 'implementer',
+    });
+    expect(route.isError, route.text).toBe(false);
+    const result = await mcpSpawn('session:manager-current', {
+      provider: 'claude',
+      model: route.value.model,
+      capability: route.value.capability,
+      decisionId: route.value.decisionId,
+      role: 'implementer',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      parentSessionId: 'manager-current',
+      taskId: task.taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      template: 'ship-task',
+      templateParams: { task: 'Read the remote fixture and return the result contract.' },
+      toolScope: 'view',
+    });
+    expect(result.isError, result.text).toBe(false);
     expect(launch.mock.calls.length).toBe(localLaunches);
     expect(result.value.sessionId).toMatch(/^paired:/);
     expect(result.value.executionCwd).not.toBe(project);
     expect(result.value.executionCwd).not.toBe(ready.repo);
-    expect(fs.existsSync(path.join(result.value.executionCwd,'.git'))).toBe(true);
-    const evidence = await (await fetch(ready.control+'/evidence')).json() as Array<{cwd:string;first_message:string}>;
+    expect(fs.existsSync(path.join(result.value.executionCwd, '.git'))).toBe(true);
+    const evidence = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
+      cwd: string;
+      first_message: string;
+    }>;
     expect(evidence).toHaveLength(1);
     expect(evidence[0].cwd).toBe(result.value.executionCwd);
     expect(evidence[0].first_message).toContain('Read the remote fixture');
@@ -1068,18 +1166,54 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(JSON.stringify(evidence)).not.toContain(task.taskId);
     expect(JSON.stringify(evidence)).not.toContain(request.requestId);
     expect(evidence[0]).not.toHaveProperty('workflowStepId');
-    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'progress'})});
-    await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('remote fixture progress'))).toBe(true),{timeout:10_000});
-    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'block'})});
-    await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('blocked on a decision'))).toBe(true),{timeout:10_000});
-    sessions.reparentChildren('manager-current','manager-other');
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'progress' }),
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          delivery.mock.calls.some(
+            ([id, text]) => id === 'manager-current' && text.includes('remote fixture progress'),
+          ),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'block' }),
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          delivery.mock.calls.some(
+            ([id, text]) => id === 'manager-current' && text.includes('blocked on a decision'),
+          ),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
+    sessions.reparentChildren('manager-current', 'manager-other');
     pairedWorkerConnection.stop();
     const reply = 'Remote task complete.\n```wks-result\n{"commit":"fixture-commit"}\n```';
-    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'finish',reply})});
-    await new Promise((resolve) => setTimeout(resolve,100));
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'finish', reply }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await pairedWorkerConnection.connect();
-    await vi.waitFor(() => expect(persisted().flatMap((t) => t.attempts).find((a) => a.sessionId === result.value.sessionId)?.resultContract).toBe('valid'),{timeout:10_000});
-    const wakes = () => delivery.mock.calls.filter(([id,text]) => id === 'manager-other' && text.includes('fixture-commit'));
+    await vi.waitFor(
+      () =>
+        expect(
+          persisted()
+            .flatMap((t) => t.attempts)
+            .find((a) => a.sessionId === result.value.sessionId)?.resultContract,
+        ).toBe('valid'),
+      { timeout: 10_000 },
+    );
+    const wakes = () =>
+      delivery.mock.calls.filter(
+        ([id, text]) => id === 'manager-other' && text.includes('fixture-commit'),
+      );
     await vi.waitFor(() => expect(wakes()).toHaveLength(1));
     expect(wakes()[0][1]).toContain('not a new user request');
     const retained = persisted().find((t) => t.taskId === task.taskId)!;
@@ -1087,13 +1221,20 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(retained.ownerSessionId).toBe('manager-other');
     expect(retained.workflow?.hash).toBe(task.workflow?.hash);
     expect(retained.workflow?.steps.find((s) => s.id === 'implement')?.state).toBe('completed');
-    const {remoteDispatchRegistry} = await import('../../src/main/services/remoteDispatchRegistry');
-    const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === result.value.sessionId)!;
-    await pairedWorkerConnection.call('agents.dispatchReplay',{dispatchId:record.dispatchId});
-    await new Promise((resolve) => setTimeout(resolve,100));
+    const { remoteDispatchRegistry } =
+      await import('../../src/main/services/remoteDispatchRegistry');
+    const record = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === result.value.sessionId)!;
+    await pairedWorkerConnection.call('agents.dispatchReplay', { dispatchId: record.dispatchId });
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(wakes()).toHaveLength(1);
   } finally {
-    setRemoteServer(null); pairedWorkerConnection.stop(); delivery.mockRestore();
-    const exited = once(peer,'exit'); peer.stdin.end(); await exited;
+    setRemoteServer(null);
+    pairedWorkerConnection.stop();
+    delivery.mockRestore();
+    const exited = once(peer, 'exit');
+    peer.stdin.end();
+    await exited;
   }
-},180_000);
+}, 180_000);

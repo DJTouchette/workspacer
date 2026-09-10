@@ -761,7 +761,14 @@ function TaskDetails({
             </summary>
             <IdRow label="Worker" value={a.sessionId} />
             <IdRow label="Attempt" value={a.dispatchId} />
-            <IdRow label="Execution" value={a.executionTarget === 'paired' ? `Paired worker: ${a.executionHost ?? 'server'}` : 'Local desktop'} />
+            <IdRow
+              label="Execution"
+              value={
+                a.executionTarget === 'paired'
+                  ? `Paired worker: ${a.executionHost ?? 'server'}`
+                  : 'Local desktop'
+              }
+            />
             <IdRow label="Folder" value={a.executionCwd} />
             <IdRow label="Branch" value={a.worktree?.branch ?? 'Not recorded'} />
             {a.worktree?.fallback && (
@@ -780,7 +787,9 @@ function TaskDetails({
             )}
             {a.worktree?.allocated && !a.worktree.directoryIdentity && (
               <p style={{ margin: '2px 0', ...meta }}>
-                {a.executionTarget === 'paired' ? 'This folder belongs to the paired server.' : 'This older record cannot verify the worktree folder for opening.'}
+                {a.executionTarget === 'paired'
+                  ? 'This folder belongs to the paired server.'
+                  : 'This older record cannot verify the worktree folder for opening.'}
               </p>
             )}
           </details>

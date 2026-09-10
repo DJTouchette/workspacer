@@ -105,7 +105,8 @@ export function callHub<T = unknown>(method: string, params: unknown = {}): Prom
     const p = { ...(params as Record<string, unknown>) };
     const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId);
     if (record) {
-      if (record.peer !== pairedDestinationKey()) throw new Error('This dispatch belongs to a different pairing');
+      if (record.peer !== pairedDestinationKey())
+        throw new Error('This dispatch belongs to a different pairing');
       if (!record.sessionId) return Promise.reject(new Error('Remote admission is unresolved'));
       p.sessionId = record.sessionId;
     }
@@ -148,13 +149,30 @@ export function emitToRenderer(channel: string, ...args: unknown[]): void {
 export function registerCapability(method: string, handler: CapabilityHandler): void {
   handlers.set(method, (params) => {
     const p = (params ?? {}) as Record<string, unknown>;
-    const actions = ['agents.sendMessage','claude.approve','claude.answer','claude.signal','claude.gate','claude.setModel','claude.setEffort','claude.setPermissionMode','sessions.conversation','sessions.transcript'];
-    const record = actions.includes(method) ? remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId) : undefined;
+    const actions = [
+      'agents.sendMessage',
+      'claude.approve',
+      'claude.answer',
+      'claude.signal',
+      'claude.gate',
+      'claude.setModel',
+      'claude.setEffort',
+      'claude.setPermissionMode',
+      'sessions.conversation',
+      'sessions.transcript',
+    ];
+    const record = actions.includes(method)
+      ? remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId)
+      : undefined;
     if (record) {
-      if (record.peer !== pairedDestinationKey()) throw new Error('This dispatch belongs to a different pairing');
+      if (record.peer !== pairedDestinationKey())
+        throw new Error('This dispatch belongs to a different pairing');
       if (!record.sessionId) throw new Error('Remote admission unresolved');
-      if (method === 'agents.sendMessage' && record.state !== 'open') throw new Error('This paired dispatch has finished; use a fresh task dispatch for further work');
-      return pairedWorkerConnection.call(method,{...p,sessionId:record.sessionId});
+      if (method === 'agents.sendMessage' && record.state !== 'open')
+        throw new Error(
+          'This paired dispatch has finished; use a fresh task dispatch for further work',
+        );
+      return pairedWorkerConnection.call(method, { ...p, sessionId: record.sessionId });
     }
     return handler(params);
   });

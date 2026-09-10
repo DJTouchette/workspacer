@@ -94,9 +94,9 @@ describe('setRemoteServer / getRemoteServer roundtrip', () => {
   });
 });
 
-
 it('worker pairing preserves local mode and reuses the same host-only credential', async () => {
-  const { setRemoteServer, getRemoteServer, getPairedWorkerTarget, getPairedWorkerInfo } = await import('./remoteServer');
+  const { setRemoteServer, getRemoteServer, getPairedWorkerTarget, getPairedWorkerInfo } =
+    await import('./remoteServer');
   setRemoteServer({ url: 'https://worker.example', token: 'fixture-secret' });
   setRemoteServer({ url: 'https://worker.example', token: '', mode: 'workers' });
   expect(getRemoteServer()).toBeNull();

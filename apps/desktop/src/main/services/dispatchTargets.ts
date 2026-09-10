@@ -143,7 +143,12 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export type CapabilitiesProbe = (peer: string) => Promise<CapabilitiesReply>;
 
 const defaultProbe: CapabilitiesProbe = (peer) =>
-  withTimeout(peer === 'paired' ? pairedWorkerConnection.call<CapabilitiesReply>('fleet.dispatchCapabilities') : callHub<CapabilitiesReply>(`hub:${peer}/fleet.dispatchCapabilities`, {}), PROBE_TIMEOUT_MS);
+  withTimeout(
+    peer === 'paired'
+      ? pairedWorkerConnection.call<CapabilitiesReply>('fleet.dispatchCapabilities')
+      : callHub<CapabilitiesReply>(`hub:${peer}/fleet.dispatchCapabilities`, {}),
+    PROBE_TIMEOUT_MS,
+  );
 
 /**
  * Build the target list. Probes run in parallel — one slow machine costs its own
@@ -156,7 +161,13 @@ export async function listDispatchTargets(
 ): Promise<DispatchTargetsAnswer> {
   const pair = getPairedWorkerTarget();
   const configured = peersFn().filter((p) => !pair || p.name !== 'paired');
-  if (pair) configured.unshift({name:'paired',url:pair.busUrl,hasToken:!!pair.token,dispatch:true});
+  if (pair)
+    configured.unshift({
+      name: 'paired',
+      url: pair.busUrl,
+      hasToken: !!pair.token,
+      dispatch: true,
+    });
   const live = new Map(liveFn().map((p) => [p.name, p]));
   const enabled = configured.filter((p) => p.dispatch);
   const linkedButNotEnabled = configured.filter((p) => !p.dispatch).map((p) => p.name);
@@ -191,7 +202,8 @@ export async function listDispatchTargets(
         // network problem and a version problem. UNKNOWN IS NEVER SUCCESS.
         return {
           ...base,
-          readiness: `unreachable or unsupported: ${err instanceof Error ? err.message : String(err)}. ` +
+          readiness:
+            `unreachable or unsupported: ${err instanceof Error ? err.message : String(err)}. ` +
             `A machine that does not answer fleet.dispatchCapabilities is either offline or running a workspacer older than remote worker dispatch.`,
         };
       }

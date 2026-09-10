@@ -26,11 +26,7 @@ const MAX_RECORDS = 256;
 
 /** The subset of FleetMessageKind the return channel can carry. Twin: the
  *  dispatchKind* constants in cmd/brain/remotedispatch.go. */
-export type RemoteDispatchKind =
-  | 'worker-finished'
-  | 'worker-escalated'
-  | 'blocked'
-  | 'progress';
+export type RemoteDispatchKind = 'worker-finished' | 'worker-escalated' | 'blocked' | 'progress';
 
 const KINDS: ReadonlySet<string> = new Set([
   'worker-finished',
@@ -83,7 +79,12 @@ export interface RemoteDispatchRecord {
 
 /** What `accept` decided, so callers (and tests) can assert the reason. */
 export type AcceptOutcome =
-  | { ok: true; record: RemoteDispatchRecord; parentSessionId: string; update: RemoteDispatchUpdate }
+  | {
+      ok: true;
+      record: RemoteDispatchRecord;
+      parentSessionId: string;
+      update: RemoteDispatchUpdate;
+    }
   | { ok: false; reason: AcceptRejection };
 
 export type AcceptRejection =
@@ -160,9 +161,11 @@ export class RemoteDispatchRegistry {
     for (const item of parsed) {
       if (!isRecord(item)) throw new Error('Invalid remote dispatch record');
       const r = item as Partial<RemoteDispatchRecord>;
-      if (typeof r.dispatchId !== 'string' || !DISPATCH_ID_RE.test(r.dispatchId)) throw new Error('Invalid remote dispatch id');
+      if (typeof r.dispatchId !== 'string' || !DISPATCH_ID_RE.test(r.dispatchId))
+        throw new Error('Invalid remote dispatch id');
       if (typeof r.peer !== 'string' || !r.peer) throw new Error('Invalid remote destination');
-      if (typeof r.ownerSessionId !== 'string' || !r.ownerSessionId) throw new Error('Invalid remote dispatch owner');
+      if (typeof r.ownerSessionId !== 'string' || !r.ownerSessionId)
+        throw new Error('Invalid remote dispatch owner');
       const openedAt = typeof r.openedAt === 'number' ? r.openedAt : now;
       this.records.set(r.dispatchId, {
         dispatchId: r.dispatchId,
@@ -189,9 +192,14 @@ export class RemoteDispatchRegistry {
   private persist(): void {
     if (!this.file || !this.ready) return;
     // Never evict active/uncertain work to make room for history.
-    const terminal = [...this.records.values()].filter((r) => r.state === 'done' || r.state === 'failed').sort((a,b) => a.openedAt-b.openedAt);
-    for (const r of terminal.slice(0, Math.max(0,this.records.size-MAX_RECORDS))) this.records.delete(r.dispatchId);
-    atomicWriteFileSync(this.file, `${JSON.stringify([...this.records.values()], null, 2)}\n`, { mode: 0o600 });
+    const terminal = [...this.records.values()]
+      .filter((r) => r.state === 'done' || r.state === 'failed')
+      .sort((a, b) => a.openedAt - b.openedAt);
+    for (const r of terminal.slice(0, Math.max(0, this.records.size - MAX_RECORDS)))
+      this.records.delete(r.dispatchId);
+    atomicWriteFileSync(this.file, `${JSON.stringify([...this.records.values()], null, 2)}\n`, {
+      mode: 0o600,
+    });
   }
 
   /**
@@ -217,12 +225,12 @@ export class RemoteDispatchRegistry {
   }): RemoteDispatchRecord | null {
     const dispatchId = typeof rec.dispatchId === 'string' ? rec.dispatchId : '';
     const peer = typeof rec.peer === 'string' ? rec.peer.trim() : '';
-    const ownerSessionId =
-      typeof rec.ownerSessionId === 'string' ? rec.ownerSessionId.trim() : '';
+    const ownerSessionId = typeof rec.ownerSessionId === 'string' ? rec.ownerSessionId.trim() : '';
     if (!DISPATCH_ID_RE.test(dispatchId) || !peer || !ownerSessionId) return null;
     const existing = this.records.get(dispatchId);
     if (existing) return existing; // a re-published open is not a second dispatch
-    if ([...this.records.values()].filter((r) => r.state === 'open').length >= MAX_RECORDS) throw new Error('Unresolved remote dispatch limit reached; no worker started');
+    if ([...this.records.values()].filter((r) => r.state === 'open').length >= MAX_RECORDS)
+      throw new Error('Unresolved remote dispatch limit reached; no worker started');
     const str = (v: unknown): string | undefined =>
       typeof v === 'string' && v.trim() ? v : undefined;
     const record: RemoteDispatchRecord = {
@@ -366,7 +374,7 @@ export class RemoteDispatchRegistry {
   retainEvidence(dispatchId: string, update: RemoteDispatchUpdate): void {
     const record = this.records.get(dispatchId);
     if (!record) throw new Error('Unknown dispatch');
-    record.lastUpdate = {...update, entry:sanitizeRemoteEntry(update.entry)};
+    record.lastUpdate = { ...update, entry: sanitizeRemoteEntry(update.entry) };
     this.persist();
   }
 
@@ -374,7 +382,8 @@ export class RemoteDispatchRegistry {
     const record = this.records.get(dispatchId);
     if (!record) throw new Error('Unknown dispatch');
     record.deliveringSeq = seq;
-    record.note = 'Wake delivery in progress; after interruption delivery is unknown, never resend blindly';
+    record.note =
+      'Wake delivery in progress; after interruption delivery is unknown, never resend blindly';
     this.persist();
   }
 
@@ -403,7 +412,8 @@ export class RemoteDispatchRegistry {
     if (typeof payload.sessionId !== 'string' || !payload.sessionId) return null;
     if (!isRecord(entry)) return null;
     if (entry.sessionId !== payload.sessionId) return null;
-    if ((payload.final === true) !== (kind === 'worker-finished' || kind === 'worker-escalated')) return null;
+    if ((payload.final === true) !== (kind === 'worker-finished' || kind === 'worker-escalated'))
+      return null;
     if (typeof entry.label !== 'string') return null;
     return {
       protocol: typeof payload.protocol === 'number' ? payload.protocol : 0,

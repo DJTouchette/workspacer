@@ -405,7 +405,13 @@ function createWindow(): void {
             // Federation: ingest peer hubs' agent.* events + hub.peer.*
             // lifecycle into the session store (remote fleet cards).
             startFederationBridge();
-            try { startPairedDispatch(); } catch { console.warn('[paired] dispatch journal unavailable; local sessions remain available'); }
+            try {
+              startPairedDispatch();
+            } catch {
+              console.warn(
+                '[paired] dispatch journal unavailable; local sessions remain available',
+              );
+            }
             // The MCP facade bridges hub capabilities to MCP tools for supervisor
             // sessions. Started after the hub so its bus connection has a target.
             // Optional: a failure only costs the supervisor its action tools.

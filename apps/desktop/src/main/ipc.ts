@@ -580,7 +580,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     (_event, setting: { url: string; token: string; mode?: 'client' | 'workers' } | null) => {
       try {
         setRemoteServer(
-          setting && setting.url ? { url: setting.url, token: setting.token ?? '', mode: setting.mode } : null,
+          setting && setting.url
+            ? { url: setting.url, token: setting.token ?? '', mode: setting.mode }
+            : null,
         );
         return { ok: true as const };
       } catch (err) {

@@ -146,11 +146,20 @@ export function setRemoteServer(setting: RemoteServerSetting | null): void {
   if (!token) {
     try {
       const prior = JSON.parse(fs.readFileSync(file, 'utf-8')) as RemoteServerSetting;
-      if (normalizeRemoteServerUrl(prior.url)?.busUrl === normalizeRemoteServerUrl(setting.url)?.busUrl)
+      if (
+        normalizeRemoteServerUrl(prior.url)?.busUrl ===
+        normalizeRemoteServerUrl(setting.url)?.busUrl
+      )
         token = prior.token;
-    } catch { /* no stored pairing */ }
+    } catch {
+      /* no stored pairing */
+    }
   }
-  atomicWriteFileSync(file, JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client' }, null, 2), {
-    mode: 0o600,
-  });
+  atomicWriteFileSync(
+    file,
+    JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client' }, null, 2),
+    {
+      mode: 0o600,
+    },
+  );
 }
