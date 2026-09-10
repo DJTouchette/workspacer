@@ -296,8 +296,8 @@ it('shows the PR chip immediately from a persisted production resolver result', 
   const fs = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
-  const { ManagerRequestService } = await import('../../../../main/services/managerRequestService');
-  const { DispatchHistoryStore } = await import('../../../../main/services/dispatchHistoryStore');
+  const { ManagerRequestService } = await import('../../../main/services/managerRequestService');
+  const { DispatchHistoryStore } = await import('../../../main/services/dispatchHistoryStore');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inspector-resolver-'));
   const store = new DispatchHistoryStore(() => path.join(dir, 'history.json'));
   const service = new ManagerRequestService(
