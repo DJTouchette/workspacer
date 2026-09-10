@@ -235,6 +235,22 @@ export class ManagerRequestService {
               return { ok: false, code: 'conflict', request: requestContext(r), task };
           }
         const referenceMapping = mapRequestReferences(r.userContent ?? '', intents);
+        // Check every reference change, including existing singleton conflicts,
+        // before creating/updating any task or deleting source content.
+        const referenceLinks = new Map<string, DispatchTask['links']>();
+        for (const i of intents) {
+          if (i.kind === 'none' || i.kind === 'question') continue;
+          const current =
+            i.kind === 'update' ? ownedTask(tasks, caller, i.cwd, i.taskId).links : undefined;
+          referenceLinks.set(
+            i.key,
+            attachRequestReferences(
+              current,
+              referenceMapping.get(i.key) ?? [],
+              i.replacePullRequest,
+            ),
+          );
+        }
         const resolved: RequestIntent[] = [];
         for (const i of intents) {
           if (i.kind === 'none' || i.kind === 'question') {
@@ -288,7 +304,7 @@ export class ManagerRequestService {
           };
           check(task.taskId);
           const references = referenceMapping.get(i.key) ?? [];
-          task.links = attachRequestReferences(task.links, references, i.replacePullRequest);
+          task.links = referenceLinks.get(i.key);
           if (references.length)
             audit(
               task,

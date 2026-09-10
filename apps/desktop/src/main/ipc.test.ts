@@ -908,6 +908,31 @@ it('installs the default production bridge and carries preparation and tagged se
     expect(daemon).toHaveBeenCalledOnce();
     expect(bridgeMocks.busCall).not.toHaveBeenCalled();
 
+    const beforeResolution = fs.readFileSync(filename, 'utf8');
+    expect(
+      service.handle(
+        {
+          op: 'resolveRequest',
+          requestId: prepared.requestId,
+          expectedRevision: service.request('bridge-owner', prepared.requestId).revision,
+          intents: [
+            {
+              key: 'fix',
+              kind: 'create',
+              cwd: dir,
+              title: 'Fix PR',
+              provenance: 'explicit',
+              reason: 'Submitted request',
+              references: [{ kind: 'pullRequest', number: '999' }],
+            },
+          ],
+        },
+        'bridge-owner',
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/PR number must match/) });
+    expect(fs.readFileSync(filename, 'utf8')).toBe(beforeResolution);
+    expect(service.request('bridge-owner', prepared.requestId).userContent).toBe(body);
+
     const resolution = service.handle(
       {
         op: 'resolveRequest',

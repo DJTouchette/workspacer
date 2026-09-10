@@ -601,3 +601,148 @@ it('rechecks task ownership, project and concurrent human edits before attaching
     pullRequest: { number: '12', url: 'https://github.com/o/r/pull/12' },
   });
 });
+
+const pr = (number: string, url?: string) => ({
+  kind: 'pullRequest' as const,
+  number,
+  ...(url ? { url } : {}),
+});
+for (const content of [
+  'Fix PR #1; estimated 999 lines',
+  'Fix MR!1',
+  'Fix https://github.com/o/r/pull/1',
+  'Fix 999 lines',
+  'Fix PR #999_extra',
+  'Fix PR #999-2',
+  'Fix éPR999',
+  'Read https://example.com/PR999',
+]) {
+  it(`rejects invented number-only PR 999 without purging original content: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    expect(f.resolve(request, [{ ...create(), references: [pr('999')] }])).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/PR number must match/),
+    });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    expect(f.service.request('manager', request).userContent).toBe(content);
+    expect(f.store.list()).toEqual([]);
+  });
+}
+for (const content of [
+  'Fix PR #12',
+  'Fix PR12.',
+  'Fix MR !12',
+  'Fix pull request number 12',
+  'Fix merge request #12',
+  'Fix https://github.com/o/r/pull/12',
+  'Fix https://gitlab.com/o/r/-/merge_requests/12',
+  'Fix https://business.visualstudio.com/p/_git/r/pullrequest/12',
+]) {
+  it(`accepts a sourced explicit identifier without inventing its missing URL: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const result = f.resolve(request, [{ ...create(), references: [pr('12')] }]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links).toEqual({ pullRequest: { number: '12' } });
+    expect(f.service.request('manager', request).userContent).toBeUndefined();
+  });
+}
+for (const suffix of ['2', '-child', '_child', 'é', '\u0301', '—child', '\u200dchild']) {
+  it(`rejects ticket identifier prefix TASK-1 before ${JSON.stringify(suffix)}`, () => {
+    const f = fixture();
+    const content = `Please fix ticket TASK-1${suffix}`;
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    expect(
+      f.resolve(request, [{ ...create(), references: [{ kind: 'ticket', id: 'TASK-1' }] }]),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/whole identifier/) });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  });
+}
+for (const id of ['TASK-12', 'TASK_12', 'ÉQUIPE-12', '任务-12', 'TASK.12']) {
+  it(`accepts exact explicit ticket identifier ${id} bounded by punctuation`, () => {
+    const f = fixture();
+    const result = f.resolve(f.admitted('accepted', `Fix ticket (${id}).`), [
+      { ...create(), references: [{ kind: 'ticket', id }] },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links.tickets).toEqual([{ id }]);
+  });
+}
+
+it('rejects URL/number disagreement even when both IDs independently occur in the request', () => {
+  const f = fixture();
+  const url = 'https://github.com/o/r/pull/1';
+  const request = f.admitted('accepted', `Fix ${url}; PR #999 is separate`);
+  const before = fs.readFileSync(f.file, 'utf8');
+  expect(f.resolve(request, [{ ...create(), references: [pr('999', url)] }])).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/URL and number/),
+  });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  expect(f.resolve(request, [{ ...create(), references: [pr('1', url)] }]).ok).toBe(true);
+});
+
+it('rejects multiple distinct mapped PRs before any intent mutates a task, even with replacement enabled', () => {
+  const f = fixture();
+  const old = 'https://github.com/o/r/pull/1';
+  const task = f.resolve(f.admitted('accepted', old), [create('existing')]).tasks[0];
+  f.store.requestTransaction((_requests, tasks) => {
+    tasks[0].links!.tickets = [{ id: 'HUMAN-12' }];
+  });
+  const content = 'Replace PR #1 with PR #2 or PR #3';
+  const request = f.admitted('accepted', content);
+  const before = fs.readFileSync(f.file, 'utf8');
+  const update: RequestIntent = {
+    key: 'update',
+    kind: 'update',
+    title: 'Must not change',
+    cwd: '/project',
+    taskId: task.taskId,
+    expectedTaskRevision: f.store.list()[0].revision,
+    reason: 'Explicit replacement',
+    replacePullRequest: true,
+    references: [pr('2'), pr('3')],
+  };
+  expect(f.resolve(request, [{ ...create('first'), references: [] }, update])).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/one distinct PR/),
+  });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  expect(f.service.request('manager', request).userContent).toBe(content);
+  expect(f.store.list()[0].links).toEqual({
+    pullRequest: { number: '1', url: old },
+    tickets: [{ id: 'HUMAN-12' }],
+  });
+  // Two intents cannot circumvent the singleton by updating the same target twice.
+  expect(
+    f.resolve(request, [
+      { ...update, references: [pr('2')] },
+      { ...update, key: 'second', references: [pr('3')] },
+    ]),
+  ).toMatchObject({ ok: false, error: expect.stringMatching(/unique task/) });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  // Exact duplicates are harmless; a legitimate explicit replacement preserves human refs.
+  const accepted = f.resolve(request, [{ ...update, references: [pr('2'), pr('2')] }]);
+  expect(accepted.ok).toBe(true);
+  expect(accepted.tasks[0].links).toEqual({
+    pullRequest: { number: '2' },
+    tickets: [{ id: 'HUMAN-12' }],
+  });
+  expect(f.resolve(request, [{ ...update, references: [pr('2'), pr('2')] }]).ok).toBe(true);
+});
+
+for (const content of ['Fix éTASK-1', 'Fix PARENT_TASK-1', 'Fix PARENT-TASK-1', 'Fix TASKx12']) {
+  it(`rejects partial ticket matches including regex metacharacters: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    const id = content.includes('TASKx12') ? 'TASK.12' : 'TASK-1';
+    expect(f.resolve(request, [{ ...create(), references: [{ kind: 'ticket', id }] }]).ok).toBe(
+      false,
+    );
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  });
+}

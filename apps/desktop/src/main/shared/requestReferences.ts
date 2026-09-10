@@ -20,7 +20,9 @@ export function requestUrls(content: string): string[] {
   return [...urls];
 }
 
-function inferredReference(url: string): TaskReferenceUpsert | undefined {
+function inferredReference(
+  url: string,
+): Extract<TaskReferenceUpsert, { kind: 'pullRequest' }> | undefined {
   const parsed = new URL(url);
   const knownProvider =
     parsed.hostname === 'github.com' ||
@@ -35,6 +37,25 @@ function inferredReference(url: string): TaskReferenceUpsert | undefined {
   return number ? { kind: 'pullRequest', number, url } : undefined;
 }
 
+// Treat Unicode letters, marks, digits, connectors, dashes and join controls as
+// identifier continuations. JS \b would accept TASK-1 inside TASK-1-extra/éTASK-1.
+const IDENTIFIER_PART = String.raw`[\p{L}\p{N}\p{M}\p{Pc}\p{Pd}\u200c\u200d]`;
+function containsIdentifier(content: string, identifier: string): boolean {
+  const escaped = identifier.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<!${IDENTIFIER_PART})${escaped}(?!${IDENTIFIER_PART})`, 'u').test(content);
+}
+
+function explicitPrNumbers(content: string): Set<string> {
+  // URL path/query words are not prose PR declarations. Only the known URL
+  // parser above may derive identifiers from URLs.
+  const prose = content.replace(/https?:\/\/[^\s<>"`]+/gi, ' ');
+  const pattern = new RegExp(
+    `(?<!${IDENTIFIER_PART})(?:PR|MR|pull\\s+request|merge\\s+request)\\s*(?:[#!]|(?:number|no\\.?)\\s+)?\\s*([1-9][0-9]{0,9})(?!${IDENTIFIER_PART})`,
+    'giu',
+  );
+  return new Set([...prose.matchAll(pattern)].map((match) => match[1]));
+}
+
 /** Resolve the mapping before any task/content mutation. Empty arrays explicitly leave URLs unassigned. */
 export function mapRequestReferences(
   content: string,
@@ -44,6 +65,11 @@ export function mapRequestReferences(
   const work = intents.filter((i) => i.kind !== 'none' && i.kind !== 'question');
   const result = new Map<string, TaskReferenceUpsert[]>();
   if (!work.length) return result;
+  const sourceNumbers = explicitPrNumbers(content);
+  for (const url of urls) {
+    const number = inferredReference(url)?.number;
+    if (number) sourceNumbers.add(number);
+  }
   const explicit = work.some((i) => i.references !== undefined);
   if (urls.length && !explicit) {
     const reference = urls.length === 1 ? inferredReference(urls[0]) : undefined;
@@ -59,14 +85,40 @@ export function mapRequestReferences(
       throw new Error(
         'Reference mapping required on every work intent; use an empty array where none belong.',
       );
-    const refs = intent.references ?? [];
-    if (refs.length) applyTaskReferences(undefined, refs, undefined);
-    for (const ref of refs) {
+    const refs: TaskReferenceUpsert[] = [];
+    let pullRequest: string | undefined;
+    for (const ref of intent.references ?? []) {
+      // Validate entries individually: combining first can hide invalid earlier
+      // singleton values behind a later overwrite.
+      const validated = applyTaskReferences(undefined, [ref], undefined);
       if (ref.url && !urls.includes(validateTaskUrl(ref.url)))
         throw new Error('Mapped reference URL must occur in the original submitted request');
-      if (ref.kind === 'ticket' && !content.includes(ref.id))
-        throw new Error('Explicit ticket ID must occur in the original submitted request');
+      if (ref.kind === 'pullRequest') {
+        if (ref.number !== undefined) {
+          if (!sourceNumbers.has(ref.number))
+            throw new Error(
+              'PR number must match an explicit original PR/MR identifier or original PR URL',
+            );
+          if (ref.url && inferredReference(validateTaskUrl(ref.url))?.number !== ref.number)
+            throw new Error('PR URL and number must identify the same original pull request');
+        }
+        const identity = JSON.stringify(validated.pullRequest);
+        if (pullRequest !== undefined) {
+          if (pullRequest !== identity)
+            throw new Error(
+              'Map at most one distinct PR per task; replacement cannot discard other mapped PRs',
+            );
+          continue; // Exact validated duplicates are idempotent, not replacements.
+        }
+        pullRequest = identity;
+      }
+      if (ref.kind === 'ticket' && !containsIdentifier(content, ref.id))
+        throw new Error(
+          'Explicit ticket ID must occur as a whole identifier in the original submitted request',
+        );
+      refs.push(ref);
     }
+    if (refs.length) applyTaskReferences(undefined, refs, undefined);
     result.set(intent.key, refs);
   }
   return result;

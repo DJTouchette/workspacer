@@ -951,6 +951,19 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
     intents,
   };
   const before = launch.mock.calls.length;
+  const beforeTasks = history.list();
+  const invalid = await call('resolve_manager_request', {
+    ...args,
+    intents: [{ ...intents[0], references: [{ kind: 'pullRequest', number: '999' }] }, intents[1]],
+  });
+  expect(invalid.value).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/PR number must match/),
+  });
+  expect(history.list()).toEqual(beforeTasks);
+  expect(
+    (await call('get_manager_request', { requestId: capture.requestId })).value.userContent,
+  ).toEqual(fetched.value.userContent);
   const resolved = await call('resolve_manager_request', args);
   expect(resolved.value.ok).toBe(true);
   expect(resolved.value.tasks).toHaveLength(2);
