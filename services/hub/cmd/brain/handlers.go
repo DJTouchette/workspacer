@@ -765,6 +765,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	}
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err == nil {
+		if v, ok := present["taskSource"]; ok && string(v) != "null" {
+			return nil, fmt.Errorf("taskSource requires origin desktop preparation; execution must consume a verified handoff receipt")
+		}
 		_, p.contextWindowSet = present["contextWindow"]
 		if v, ok := present["launchIntegrationId"]; ok && string(v) != "null" {
 			return nil, fmt.Errorf("Launch integrations currently require a local desktop session")

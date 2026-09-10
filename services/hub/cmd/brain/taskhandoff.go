@@ -55,20 +55,20 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
-	Predecessor string `json:"predecessor,omitempty"`
-	Owner      string                  `json:"owner"`
-	Plan       handoffPlan             `json:"plan"`
-	Digest     string                  `json:"digest"`
-	State      string                  `json:"state"`
-	Allocation string                  `json:"allocation,omitempty"`
-	Result     *taskartifacts.Manifest `json:"result,omitempty"`
-	Custody    string                  `json:"custody,omitempty"`
-	AcceptedAt int64                   `json:"acceptedAt,omitempty"`
-	Keep       bool                    `json:"keep,omitempty"`
+	Predecessor string                  `json:"predecessor,omitempty"`
+	Owner       string                  `json:"owner"`
+	Plan        handoffPlan             `json:"plan"`
+	Digest      string                  `json:"digest"`
+	State       string                  `json:"state"`
+	Allocation  string                  `json:"allocation,omitempty"`
+	Result      *taskartifacts.Manifest `json:"result,omitempty"`
+	Custody     string                  `json:"custody,omitempty"`
+	AcceptedAt  int64                   `json:"acceptedAt,omitempty"`
+	Keep        bool                    `json:"keep,omitempty"`
 }
 
 type handoffRequest struct {
-	FromTask string `json:"fromTask,omitempty"`
+	FromTask   string                  `json:"fromTask,omitempty"`
 	Cwd        string                  `json:"cwd,omitempty"`
 	Operation  string                  `json:"operation"`
 	OriginKey  string                  `json:"originKey"`
@@ -137,8 +137,12 @@ func planDigest(p handoffPlan) (string, error) {
 	}
 	outputs := p.Input
 	outputs.Entries = nil
-	for _, out := range p.Outputs { outputs.Entries = append(outputs.Entries, taskartifacts.Entry{Name: out.Name, Kind: out.Kind, SHA256: taskartifacts.Digest(nil)}) }
-	if err := outputs.Validate(); err != nil { return "", err }
+	for _, out := range p.Outputs {
+		outputs.Entries = append(outputs.Entries, taskartifacts.Entry{Name: out.Name, Kind: out.Kind, SHA256: taskartifacts.Digest(nil)})
+	}
+	if err := outputs.Validate(); err != nil {
+		return "", err
+	}
 	b, err := json.Marshal(p)
 	return taskartifacts.Digest(b), err
 }
@@ -203,24 +207,38 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			expectedCommit := ""
 			expectedArtifacts := map[string]string{}
 			if p.FromTask != "" {
-				if !taskartifacts.ID.MatchString(p.FromTask) { return nil, fmt.Errorf("invalid predecessor task") }
+				if !taskartifacts.ID.MatchString(p.FromTask) {
+					return nil, fmt.Errorf("invalid predecessor task")
+				}
 				b, err := os.ReadFile(filepath.Join(r.handoffDir(binding, p.FromTask), "receipt.json"))
 				var previous handoffRecord
-				if err != nil || taskartifacts.Decode(b, &previous) != nil || previous.Owner != "local-host" || previous.Plan.Binding != binding.ID || previous.State != "received" || previous.Custody == "" || previous.Result == nil { return nil, fmt.Errorf("predecessor output is not in verified local custody") }
+				if err != nil || taskartifacts.Decode(b, &previous) != nil || previous.Owner != "local-host" || previous.Plan.Binding != binding.ID || previous.State != "received" || previous.Custody == "" || previous.Result == nil {
+					return nil, fmt.Errorf("predecessor output is not in verified local custody")
+				}
 				source, folder = previous.Allocation, ".workspacer/handoffs/"+p.FromTask
 				expectedCommit = previous.Result.Commit
-				for _, entry := range previous.Result.Entries { expectedArtifacts[entry.Name] = entry.SHA256 }
+				for _, entry := range previous.Result.Entries {
+					expectedArtifacts[entry.Name] = entry.SHA256
+				}
 				for _, selection := range p.Selections {
 					selected := false
-					for _, entry := range previous.Result.Entries { if entry.Name == selection.Name && entry.Kind == selection.Kind { selected = true } }
-					if !selected { return nil, fmt.Errorf("artifact was not returned by the selected predecessor") }
+					for _, entry := range previous.Result.Entries {
+						if entry.Name == selection.Name && entry.Kind == selection.Kind {
+							selected = true
+						}
+					}
+					if !selected {
+						return nil, fmt.Errorf("artifact was not returned by the selected predecessor")
+					}
 				}
 			}
 			commit, format, err := taskartifacts.CheckSource(ctx, source)
 			if err != nil {
 				return nil, err
 			}
-			if expectedCommit != "" && commit != expectedCommit { return nil, fmt.Errorf("predecessor checkpoint changed since custody verification") }
+			if expectedCommit != "" && commit != expectedCommit {
+				return nil, fmt.Errorf("predecessor checkpoint changed since custody verification")
+			}
 			if err := taskartifacts.VerifyTree(ctx, source, commit); err != nil {
 				return nil, err
 			}
@@ -230,10 +248,16 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			}
 			if p.FromTask != "" {
 				m.Producer = p.FromTask
-				for _, entry := range m.Entries { if expectedArtifacts[entry.Name] != entry.SHA256 { return nil, fmt.Errorf("predecessor artifact changed since custody verification") } }
+				for _, entry := range m.Entries {
+					if expectedArtifacts[entry.Name] != entry.SHA256 {
+						return nil, fmt.Errorf("predecessor artifact changed since custody verification")
+					}
+				}
 			}
 			after, afterFormat, err := taskartifacts.CheckSource(ctx, source)
-			if err != nil || after != commit || afterFormat != format { return nil, fmt.Errorf("source checkpoint changed during freeze") }
+			if err != nil || after != commit || afterFormat != format {
+				return nil, fmt.Errorf("source checkpoint changed during freeze")
+			}
 			rec = handoffRecord{Owner: p.OriginKey, Plan: handoffPlan{1, binding.ID, binding.Revision, p.Provider, m, p.Outputs}, State: "frozen"}
 			rec.Predecessor = p.FromTask
 			rec.Digest, err = planDigest(rec.Plan)
@@ -326,7 +350,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		localSource := ""
-		if local { localSource = filepath.Join(r.handoffDir(binding, rec.Predecessor), "result-git") }
+		if local {
+			localSource = filepath.Join(r.handoffDir(binding, rec.Predecessor), "result-git")
+		}
 		allocation, err := importHandoffCode(ctx, binding, dir, p.Task, "input", rec.Plan.Input, localSource)
 		if err != nil {
 			return nil, err
@@ -558,9 +584,13 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 	if localSource != "" {
 		// This path is derived only from an origin-owned verified custody
 		// receipt. It is never a peer URL or a caller filesystem grant.
-		if _, err := taskartifacts.Git(ctx, repo, "", "-c", "protocol.file.allow=always", "fetch", "--no-tags", "--no-recurse-submodules", "--", localSource, m.Commit+":refs/handoff/verified"); err != nil { return "", err }
+		if _, err := taskartifacts.Git(ctx, repo, "", "-c", "protocol.file.allow=always", "fetch", "--no-tags", "--no-recurse-submodules", "--", localSource, m.Commit+":refs/handoff/verified"); err != nil {
+			return "", err
+		}
 	} else {
-		if _, err := binding.GitRemote(ctx, repo, "fetch", "--no-tags", "--no-recurse-submodules", "--", binding.Remote, ref+":refs/handoff/verified"); err != nil { return "", err }
+		if _, err := binding.GitRemote(ctx, repo, "fetch", "--no-tags", "--no-recurse-submodules", "--", binding.Remote, ref+":refs/handoff/verified"); err != nil {
+			return "", err
+		}
 	}
 	got, err := taskartifacts.Git(ctx, repo, "", "rev-parse", "--verify", "refs/handoff/verified^{commit}")
 	if err != nil || strings.TrimSpace(string(got)) != m.Commit {

@@ -1503,7 +1503,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .list()
       .find((r) => r.localSessionId === exact.value.sessionId)!;
     expect(exactRecord.handoff?.state).toBe('prepared');
-    const actualLaunches = await (await fetch(ready.control + '/evidence')).json();
+    const actualLaunches = await (await fetch(ready.control + '/evidence')).json() as Array<{ cwd: string }>;
     const execution = actualLaunches.at(-1);
     expect(
       execFileSync('git', ['-C', execution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

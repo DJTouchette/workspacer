@@ -16,6 +16,10 @@ export interface TaskSource {
   artifacts: HandoffSelection[];
   outputs: HandoffSelection[];
 }
+export interface HandoffReceiptSelector {
+  binding: string;
+  digest: string;
+}
 interface ArtifactManifest {
   version: number;
   task: string;

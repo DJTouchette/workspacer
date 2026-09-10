@@ -42,7 +42,7 @@ import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { spawnPairedWorker, selectPairedModel } from './pairedDispatch';
-import { prepareLocalTaskHandoff, type TaskSource } from './taskHandoff';
+import { prepareLocalTaskHandoff, type TaskSource, type HandoffReceiptSelector } from './taskHandoff';
 import { listDispatchTargets } from './dispatchTargets';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
@@ -693,7 +693,7 @@ export function registerHubCapabilities(): void {
       taskSource,
     } = (params ?? {}) as {
       taskSource?: TaskSource;
-      handoff?: { binding: string; digest: string };
+      handoff?: HandoffReceiptSelector;
       executionTarget?: 'paired';
       remoteCwd?: string;
       workflowStepId?: string;

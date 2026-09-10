@@ -164,7 +164,7 @@ const ipc = {
             run.state = 'waived';
             run.waiverId = audit.id;
             task.audit = [...(task.audit ?? []), audit];
-          } else {
+          } else if (request.action === 'links') {
             task.links = validateTaskLinks(request.links);
             task.audit = [
               ...(task.audit ?? []),
