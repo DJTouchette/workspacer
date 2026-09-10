@@ -945,3 +945,34 @@ test('Codex readiness success stays on Codex and never adds a launch gate', asyn
       .map((c: any) => c.args[0]),
   ).toEqual(['codex']);
 });
+
+for (const capture of ['legacy', 'missing', 'remote']) {
+  test(`manager bootstrap delivers one ask with explicit ${capture} capture capability`, async ({ page }) => {
+    await page.goto(`${base}?capture=${capture}&spawn=success`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    const ask = `One ${capture} manager request`;
+    await page.getByRole('textbox', { name: 'Ask the Fleet Manager' }).fill(ask);
+    await page.getByRole('textbox', { name: 'Ask the Fleet Manager' }).press('Enter');
+    await expect.poll(async () => {
+      const history = await calls(page);
+      return history.filter((c: any) =>
+        (c.method === 'spawnClaude' && c.args[0].message?.includes(ask)) ||
+        (c.method === 'claudeMessage' && c.args[1]?.includes(ask))).length;
+    }).toBe(1);
+    const history = await calls(page);
+    const spawns = history.filter((c: any) => c.method === 'spawnClaude');
+    const sends = history.filter((c: any) => c.method === 'claudeMessage');
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0].args[0]).toMatchObject({ manager: true, transport: 'stream' });
+    expect(history.filter((c: any) => c.method === 'managerRequestPrepare')).toHaveLength(0);
+    expect(await page.evaluate(() => (window as any).firstUse.requests())).toEqual([]);
+    if (capture === 'remote') {
+      expect(spawns[0].args[0].message).toBeUndefined();
+      expect(sends).toHaveLength(1);
+      expect(sends[0].args).toHaveLength(2);
+    } else {
+      expect(spawns[0].args[0].message.split(ask)).toHaveLength(2);
+      expect(sends).toHaveLength(0);
+    }
+  });
+}

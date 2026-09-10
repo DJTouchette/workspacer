@@ -242,3 +242,59 @@ it.each(['throw', 'unknown', 'wrong-identity'])(
     delete window.electronAPI.managerRequestPrepare;
   },
 );
+
+it('does not borrow a late capture ID for a draft explicitly edited while preparation was pending', async () => {
+  mockSession = makeSnapshot({ isWakeTarget: true });
+  let finish!: (value: unknown) => void;
+  const prepare = vi.fn()
+    .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockResolvedValueOnce({ available: true, requestId: 'new-draft-id', delivery: 'pending' });
+  window.electronAPI.managerRequestPrepare = prepare;
+  const send = vi.fn()
+    .mockResolvedValueOnce({ ok: false, requestId: 'old-draft-id', delivery: 'rejected' })
+    .mockResolvedValueOnce({ ok: true, requestId: 'new-draft-id', delivery: 'accepted' });
+  window.electronAPI.claudeMessage = send;
+  render(pane());
+  const composer = screen.getByRole('textbox');
+  fireEvent.change(composer, { target: { value: 'same words' } });
+  fireEvent.keyDown(composer, { key: 'Enter' });
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  fireEvent.change(composer, { target: { value: 'same words' } });
+  await act(async () => { finish({ available: true, requestId: 'old-draft-id', delivery: 'pending' }); });
+  await waitFor(() => expect(send).toHaveBeenCalledOnce());
+  await waitFor(() => expect(composer).toHaveValue('same words'));
+  fireEvent.keyDown(composer, { key: 'Enter' });
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls.map((args) => args[2])).toEqual(['old-draft-id', 'new-draft-id']);
+  delete window.electronAPI.managerRequestPrepare;
+});
+
+it('retries one captured card request without duplicate bubbles, but new identical submissions get new IDs', async () => {
+  const { useClaudePaneModel } = await import('../../src/panes/ClaudePane');
+  const { SessionChatView } = await import('../../src/panes/SessionChatView');
+  let model!: ReturnType<typeof useClaudePaneModel>;
+  function CardChat() {
+    model = useClaudePaneModel({ paneId: 'card-retry', title: 'Manager', isActive: true, cwd: '/repo' });
+    return <SessionChatView {...model} />;
+  }
+  mockSession = makeSnapshot({ isWakeTarget: true });
+  const prepare = vi.fn()
+    .mockResolvedValueOnce({ available: true, requestId: 'card-id', delivery: 'pending' })
+    .mockResolvedValueOnce({ available: true, requestId: 'new-id', delivery: 'pending' });
+  window.electronAPI.managerRequestPrepare = prepare;
+  const send = vi.fn(async (_id, _text, requestId) => ({ ok: false, requestId, delivery: 'unknown' }));
+  window.electronAPI.claudeMessage = send;
+  const { container } = render(<CardChat />);
+  await act(async () => { await model.handleSend('Identical card request'); });
+  await act(async () => { await model.handleSend('Identical card request'); });
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(send.mock.calls.map((args) => args[2])).toEqual(['card-id', 'card-id']);
+  expect([...container.querySelectorAll('p')].filter((p) => p.textContent === 'Identical card request')).toHaveLength(1);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Identical card request' } });
+  await act(async () => { await model.handleSend(); });
+  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[2][2]).toBe('new-id');
+  expect([...container.querySelectorAll('p')].filter((p) => p.textContent === 'Identical card request')).toHaveLength(2);
+  delete window.electronAPI.managerRequestPrepare;
+});
