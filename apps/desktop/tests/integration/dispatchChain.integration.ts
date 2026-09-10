@@ -1566,7 +1566,8 @@ it('handles unknown paired replay idempotently and returns a local task result o
           'Reported test claim: passed.\n```wks-result\n{"commit":"worker-claimed-commit"}\n```',
       }),
     });
-    await vi.waitFor(() => expect(exactRecord.handoff?.state).toBe('received'), { timeout: 20000 });
+    await vi.waitFor(() => expect(exactRecord.state).toBe('done'), { timeout: 20000 });
+    expect(exactRecord.handoff?.state).toBe('received');
     const imported = history
       .task(exact.value.taskId)!
       .attempts.find((a) => a.sessionId === exact.value.sessionId)!;
