@@ -104,9 +104,11 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		return nil, fmt.Errorf("provider is not authenticated on this execution host")
 	}
 	known := false
+	repositoryRoot := false
 	for _, choice := range r.dispatchCwdChoices(ctx) {
 		if choice.Path == p.Cwd && filepath.IsAbs(choice.Path) {
 			known = true
+			repositoryRoot = choice.Git
 		}
 	}
 	if !known {
@@ -115,6 +117,15 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 	root, err := filepath.EvalSymlinks(p.Cwd)
 	if err != nil || root != filepath.Clean(p.Cwd) {
 		return nil, fmt.Errorf("remote cwd must be canonical")
+	}
+	if p.Worktree {
+		if !repositoryRoot {
+			return nil, fmt.Errorf("remote isolated worktree allocation failed: select an actual repository root; no worker started")
+		}
+		actual, err := gitWorkRoot(ctx, root)
+		if err != nil || filepath.Clean(actual) != root {
+			return nil, fmt.Errorf("remote isolated worktree allocation failed: Git root differs from the selected directory; no worker started")
+		}
 	}
 	s := r.remote
 	s.mu.Lock()
