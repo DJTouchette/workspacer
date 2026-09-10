@@ -1,7 +1,7 @@
 name: manager-request-inbox
 on:
   push:
-    branches: [wks/workspacer-automatic-tasks-from-manager-]
+    branches: [wks/workspacer-request-toast-and-pasted-pr-c]
   workflow_dispatch:
 concurrency:
   group: manager-request-inbox
@@ -33,7 +33,7 @@ jobs:
       - name: Produce formatter patch for OOM-constrained author
         working-directory: apps/desktop
         run: |
-          git diff --name-only 0664d03c0cc7f389fe438fa6d3ea94fb3e60eae3 HEAD -- '*.ts' '*.tsx' | sed 's#^apps/desktop/##' | xargs -r npx prettier --write
+          git diff --name-only 3a16f4bb HEAD -- '*.ts' '*.tsx' | sed 's#^apps/desktop/##' | xargs -r npx prettier --write
           cd ../..
           gofmt -w services/hub/cmd/mcp/manager_requests*.go
           git diff --binary > manager-request-format.patch
@@ -52,6 +52,14 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: apps/desktop/src/renderer
         run: npx vitest run tests/components/TaskInspector.test.tsx tests/components/ClaudePane.test.tsx tests/components/ClaudePaneAttachmentRestore.test.tsx tests/components/ClaudePaneOptimisticLoading.test.tsx tests/fleetManager.test.tsx tests/firstUseSpawn.test.tsx tests/reconcileRespawn.test.tsx tests/backend/backendParity.test.ts
+      - name: Full desktop main suite
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npx vitest run --no-file-parallelism
+      - name: Full renderer suite
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop/src/renderer
+        run: npx vitest run --no-file-parallelism
       - name: MCP tool and headless compatibility tests
         if: ${{ !cancelled() }}
         working-directory: services/hub

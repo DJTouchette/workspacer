@@ -11,6 +11,7 @@ import {
   type RequestContext,
   type RequestIntent,
 } from '../shared/managerRequests';
+import { attachRequestReferences, mapRequestReferences } from '../shared/requestReferences';
 import { DispatchHistoryStore } from './dispatchHistoryStore';
 
 type Owner = {
@@ -233,6 +234,23 @@ export class ManagerRequestService {
             if ((task.revision ?? 0) !== i.expectedTaskRevision)
               return { ok: false, code: 'conflict', request: requestContext(r), task };
           }
+        const referenceMapping = mapRequestReferences(r.userContent ?? '', intents);
+        // Check every reference change, including existing singleton conflicts,
+        // before creating/updating any task or deleting source content.
+        const referenceLinks = new Map<string, DispatchTask['links']>();
+        for (const i of intents) {
+          if (i.kind === 'none' || i.kind === 'question') continue;
+          const current =
+            i.kind === 'update' ? ownedTask(tasks, caller, i.cwd, i.taskId).links : undefined;
+          referenceLinks.set(
+            i.key,
+            attachRequestReferences(
+              current,
+              referenceMapping.get(i.key) ?? [],
+              i.replacePullRequest,
+            ),
+          );
+        }
         const resolved: RequestIntent[] = [];
         for (const i of intents) {
           if (i.kind === 'none' || i.kind === 'question') {
@@ -285,6 +303,14 @@ export class ManagerRequestService {
             visiting.delete(id);
           };
           check(task.taskId);
+          const references = referenceMapping.get(i.key) ?? [];
+          task.links = referenceLinks.get(i.key);
+          if (references.length)
+            audit(
+              task,
+              'request',
+              `References mapped from submitted request ${r.requestId}, intent ${i.key}`,
+            );
           task.sources = [
             ...(task.sources ?? []),
             {
@@ -334,6 +360,8 @@ export class ManagerRequestService {
               'dependsOn',
               'dependsOnKeys',
               'cancel',
+              'references',
+              'replacePullRequest',
             ].includes(k),
         )
       )
@@ -349,6 +377,14 @@ export class ManagerRequestService {
           throw new Error('Conversational resolutions cannot mutate tasks');
         continue;
       }
+      if (i.references !== undefined && (!Array.isArray(i.references) || i.references.length > 20))
+        throw new Error('Use at most 20 mapped references per intent');
+      if (
+        i.replacePullRequest !== undefined &&
+        (typeof i.replacePullRequest !== 'boolean' ||
+          !i.references?.some((r: { kind?: string }) => r.kind === 'pullRequest'))
+      )
+        throw new Error('PR replacement requires an explicit PR mapping');
       if (typeof i.cwd !== 'string' || !path.isAbsolute(i.cwd))
         throw new Error('Task requires an absolute project cwd');
       if (i.title !== undefined) text(i.title, 300);

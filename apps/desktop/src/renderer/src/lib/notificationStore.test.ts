@@ -244,3 +244,12 @@ describe('timeAgo', () => {
     expect(timeAgo(now - 2 * 86_400_000, now)).toBe('2d');
   });
 });
+
+it('keeps manager request receipts in-app even when unfocused', () => {
+  const receipt = normalizeNotification(
+    { title: 'Request received', source: 'manager-request' },
+    'app',
+  )!;
+  expect(shouldEscalate(receipt, 'renderer', false)).toBe(false);
+  expect(shouldEscalate({ ...receipt, source: 'app' }, 'renderer', false)).toBe(true);
+});

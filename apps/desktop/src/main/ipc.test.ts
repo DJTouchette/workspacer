@@ -822,7 +822,19 @@ it('installs the default production bridge and carries preparation and tagged se
     store,
     (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
     () => {
-      throw new Error('This transport fixture never selects policy or starts a worker');
+      return {
+        hash: 'fixture',
+        templates: {},
+        definition: {
+          id: 'fixture',
+          name: 'Fixture',
+          revision: 1,
+          enabled: true,
+          description: '',
+          steps: [],
+        },
+        steps: [],
+      };
     },
   );
   const runtime = vi.spyOn(requests, 'managerRequests').mockReturnValue(service);
@@ -833,7 +845,8 @@ it('installs the default production bridge and carries preparation and tagged se
     busUrl: 'ws://local-fixture/bus',
   }));
   vi.stubGlobal('window', { electronAPI: preload });
-  const body = '[File: /project/spec.md] Original user request';
+  const body =
+    '[File: /project/spec.md] Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492';
   try {
     await installBackend();
     const api = window.electronAPI;
@@ -895,6 +908,55 @@ it('installs the default production bridge and carries preparation and tagged se
     expect(daemon).toHaveBeenCalledOnce();
     expect(bridgeMocks.busCall).not.toHaveBeenCalled();
 
+    const beforeResolution = fs.readFileSync(filename, 'utf8');
+    expect(
+      service.handle(
+        {
+          op: 'resolveRequest',
+          requestId: prepared.requestId,
+          expectedRevision: service.request('bridge-owner', prepared.requestId).revision,
+          intents: [
+            {
+              key: 'fix',
+              kind: 'create',
+              cwd: dir,
+              title: 'Fix PR',
+              provenance: 'explicit',
+              reason: 'Submitted request',
+              references: [{ kind: 'pullRequest', number: '999' }],
+            },
+          ],
+        },
+        'bridge-owner',
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/PR number must match/) });
+    expect(fs.readFileSync(filename, 'utf8')).toBe(beforeResolution);
+    expect(service.request('bridge-owner', prepared.requestId).userContent).toBe(body);
+
+    const resolution = service.handle(
+      {
+        op: 'resolveRequest',
+        requestId: prepared.requestId,
+        expectedRevision: service.request('bridge-owner', prepared.requestId).revision,
+        intents: [
+          {
+            key: 'fix',
+            kind: 'create',
+            cwd: dir,
+            title: 'Fix PR',
+            provenance: 'explicit',
+            reason: 'Submitted request',
+          },
+        ],
+      },
+      'bridge-owner',
+    );
+    expect(resolution.ok).toBe(true);
+    expect(new DispatchHistoryStore(() => filename).list()[0].links?.pullRequest).toEqual({
+      number: '9492',
+      url: 'https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492',
+    });
+
     const rejected = await api.managerRequestPrepare!('bridge-owner', body);
     if (!rejected.available) throw new Error('Preparation unavailable');
     expect(rejected.requestId).not.toBe(prepared.requestId);
@@ -919,6 +981,67 @@ it('installs the default production bridge and carries preparation and tagged se
     const attempts = service.request('bridge-owner', rejected.requestId).attempts;
     expect(attempts.map((a) => a.status)).toEqual(['rejected', 'accepted']);
     expect(attempts[0].deliveryId).not.toBe(attempts[1].deliveryId);
+
+    const genericText = 'Attach https://example.com/spec/9492';
+    const generic = await api.managerRequestPrepare!('bridge-owner', genericText);
+    if (!generic.available) throw new Error('Preparation unavailable');
+    expect(await api.claudeMessage('bridge-owner', genericText, generic.requestId)).toMatchObject({
+      ok: true,
+      delivery: 'accepted',
+    });
+    const target = store.list()[0];
+    const genericUpdate = {
+      key: 'docs',
+      kind: 'update' as const,
+      cwd: dir,
+      taskId: target.taskId,
+      expectedTaskRevision: target.revision,
+      reason: 'Submitted documentation',
+      title: 'Updated task',
+    };
+    const genericOperation = {
+      op: 'resolveRequest' as const,
+      requestId: generic.requestId,
+      expectedRevision: service.request('bridge-owner', generic.requestId).revision,
+    };
+    const beforeGeneric = fs.readFileSync(filename, 'utf8');
+    expect(
+      service.handle(
+        {
+          ...genericOperation,
+          intents: [
+            {
+              ...genericUpdate,
+              replacePullRequest: true,
+              references: [{ kind: 'pullRequest', url: 'https://example.com/spec/9492' }],
+            },
+          ],
+        },
+        'bridge-owner',
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/PR URL must identify/) });
+    expect(fs.readFileSync(filename, 'utf8')).toBe(beforeGeneric);
+    expect(service.request('bridge-owner', generic.requestId).userContent).toBe(genericText);
+    expect(
+      service.handle(
+        {
+          ...genericOperation,
+          intents: [
+            {
+              ...genericUpdate,
+              references: [
+                { kind: 'reference', label: 'Specification', url: 'https://example.com/spec/9492' },
+              ],
+            },
+          ],
+        },
+        'bridge-owner',
+      ).ok,
+    ).toBe(true);
+    expect(store.list()[0].links).toEqual({
+      ...target.links,
+      references: [{ label: 'Specification', url: 'https://example.com/spec/9492' }],
+    });
 
     const uncertain = await api.managerRequestPrepare!('bridge-owner', body);
     if (!uncertain.available) throw new Error('Preparation unavailable');
@@ -981,7 +1104,14 @@ it('installs the default production bridge and carries preparation and tagged se
     });
     expect(ipcRenderer.invoke).not.toHaveBeenCalled();
     expect(bridgeMocks.busCall).not.toHaveBeenCalled();
-    expect(store.listRequests('successor')).toHaveLength(4);
+    expect(
+      store
+        .listRequests('successor')
+        .map((request) => request.requestId)
+        .sort(),
+    ).toEqual(
+      [prepared, rejected, generic, uncertain, held].map((request) => request.requestId).sort(),
+    );
     await remote.claudeMessage('remote-owner', 'ordinary remote message');
     expect(bridgeMocks.busCall).toHaveBeenCalledExactlyOnceWith(
       'agents.sendMessage',

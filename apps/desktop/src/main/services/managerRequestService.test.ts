@@ -430,3 +430,415 @@ it('reblocks downstream publication when accepted evidence further up its depend
   expect(taskDependencyState(third, f.store.list())).toBe('blocked');
   expect(f.store.task(third.taskId)!.attempts).toEqual([]);
 });
+
+for (const url of [
+  'https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492',
+  'https://dev.azure.com/business/Project/_git/Repo/pullrequest/9492',
+  'https://github.com/owner/repo/pull/9492',
+  'https://gitlab.com/group/repo/-/merge_requests/9492',
+]) {
+  it(`atomically captures original PR on create/update and deduplicates retries: ${url}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', `Please fix this PR: ${url}`);
+    const result = f.resolve(request, [create()]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links.pullRequest).toEqual({ number: '9492', url });
+    expect(f.resolve(request, [create()]).tasks[0].taskId).toBe(result.tasks[0].taskId);
+    const task = f.store.list()[0];
+    f.store.requestTransaction((_requests, tasks) => {
+      tasks[0].links!.references = [{ label: 'Human spec', url: 'https://example.com/spec' }];
+    });
+    const next = f.admitted('unknown', `Also fix ${url}`);
+    const update: RequestIntent = {
+      key: 'update',
+      kind: 'update',
+      taskId: task.taskId,
+      cwd: '/project',
+      expectedTaskRevision: f.store.list()[0].revision,
+      reason: 'Explicit correction',
+    };
+    expect(f.resolve(next, [{ ...update, expectedTaskRevision: -1 }]).ok).toBe(false);
+    expect(f.resolve(next, [update]).ok).toBe(true);
+    expect(f.store.list()[0].links).toEqual({
+      pullRequest: { number: '9492', url },
+      references: [{ label: 'Human spec', url: 'https://example.com/spec' }],
+    });
+    expect(f.store.list()[0].audit?.some((a) => a.reason.includes(next))).toBe(true);
+    const fresh = new DispatchHistoryStore(() => f.file);
+    expect(fresh.list()[0].links).toEqual(f.store.list()[0].links);
+  });
+}
+
+it('requires complete explicit mappings for ambiguous URLs/tasks and retains content on refusal', () => {
+  const f = fixture();
+  const a = 'https://github.com/o/r/pull/1';
+  const b = 'https://gitlab.com/o/r/-/merge_requests/2';
+  const id = f.admitted('accepted', `Fix ${a}, then ${b}`);
+  expect(f.resolve(id, [create('a'), create('b')])).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/mapping required/),
+  });
+  expect(f.store.list()).toHaveLength(0);
+  expect(f.service.request('manager', id).userContent).toContain(a);
+  expect(
+    f.resolve(id, [{ ...create('a'), references: [{ kind: 'pullRequest', url: a }] }, create('b')])
+      .ok,
+  ).toBe(false);
+  const result = f.resolve(id, [
+    { ...create('a'), references: [{ kind: 'pullRequest', url: a }] },
+    {
+      ...create('b'),
+      kind: 'followUp',
+      dependsOnKeys: ['a'],
+      references: [{ kind: 'pullRequest', url: b }],
+    },
+  ]);
+  expect(result.ok).toBe(true);
+  expect(result.tasks.map((t: any) => t.links.pullRequest.url)).toEqual([a, b]);
+});
+
+it('never creates question tasks or silently replaces existing PRs; supports explicit generic mapping', () => {
+  const f = fixture();
+  const url = 'https://github.com/o/r/pull/1';
+  expect(
+    f.resolve(f.admitted('accepted', `What is ${url}?`), [
+      { key: 'q', kind: 'question', reason: 'Question only' },
+    ]).ok,
+  ).toBe(true);
+  expect(f.store.list()).toHaveLength(0);
+  const task = f.resolve(f.admitted('accepted', url), [create()]).tasks[0];
+  const other = 'https://github.com/o/r/pull/2';
+  const request = f.admitted('accepted', `Replace with ${other}`);
+  const update: RequestIntent = {
+    key: 'u',
+    kind: 'update',
+    taskId: task.taskId,
+    cwd: '/project',
+    expectedTaskRevision: f.store.list()[0].revision,
+    reason: 'User correction',
+  };
+  expect(f.resolve(request, [update]).ok).toBe(false);
+  expect(f.store.list()[0].links?.pullRequest?.url).toBe(url);
+  expect(f.service.request('manager', request).userContent).toContain(other);
+  expect(
+    f.resolve(request, [
+      { ...update, replacePullRequest: true, references: [{ kind: 'pullRequest', url: other }] },
+    ]).ok,
+  ).toBe(true);
+  const generic = f.admitted('accepted', 'Read https://example.com/doc; ticket TASK-12');
+  expect(f.resolve(generic, [create('docs')]).ok).toBe(false);
+  expect(
+    f.resolve(generic, [
+      {
+        ...create('docs'),
+        references: [
+          { kind: 'reference', label: 'Specification', url: 'https://example.com/doc' },
+          { kind: 'ticket', id: 'TASK-12' },
+        ],
+      },
+    ]).ok,
+  ).toBe(true);
+});
+
+it('refuses invented or credentialed mappings atomically and preserves owner/project CAS', () => {
+  const f = fixture();
+  const id = f.admitted(
+    'accepted',
+    'https://github.com/o/r/pull/1 https://user:pass@example.com/doc',
+  );
+  for (const url of [
+    'https://example.com/invented',
+    'https://user:pass@example.com/doc',
+    'javascript:alert(1)',
+  ]) {
+    expect(
+      f.resolve(id, [{ ...create(), references: [{ kind: 'reference', label: 'Link', url }] }]).ok,
+    ).toBe(false);
+    expect(f.store.list()).toHaveLength(0);
+  }
+  expect(f.service.request('manager', id).userContent).toBeDefined();
+});
+
+it('rechecks task ownership, project and concurrent human edits before attaching request references', () => {
+  const f = fixture();
+  const task = f.resolve(f.admitted(), [create()]).tasks[0];
+  const request = f.admitted('accepted', 'Fix https://github.com/o/r/pull/12');
+  const update: RequestIntent = {
+    key: 'update',
+    kind: 'update',
+    taskId: task.taskId,
+    cwd: '/project',
+    expectedTaskRevision: task.revision,
+    reason: 'Requested update',
+  };
+  const concurrent = new DispatchHistoryStore(() => f.file);
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].links = { references: [{ label: 'Human notes', url: 'https://example.com/notes' }] };
+  });
+  expect(f.resolve(request, [update])).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.service.request('manager', request).userContent).toBeDefined();
+  const revision = f.store.list()[0].revision;
+  expect(
+    f.resolve(request, [{ ...update, cwd: '/other', expectedTaskRevision: revision }]).ok,
+  ).toBe(false);
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].ownerSessionId = 'foreign';
+  });
+  expect(
+    f.resolve(request, [{ ...update, expectedTaskRevision: f.store.list()[0].revision }]).ok,
+  ).toBe(false);
+  expect(f.store.list()[0].links).toEqual({
+    references: [{ label: 'Human notes', url: 'https://example.com/notes' }],
+  });
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].ownerSessionId = 'manager';
+  });
+  expect(
+    f.resolve(request, [{ ...update, expectedTaskRevision: f.store.list()[0].revision }]).ok,
+  ).toBe(true);
+  expect(f.store.list()[0].links).toEqual({
+    references: [{ label: 'Human notes', url: 'https://example.com/notes' }],
+    pullRequest: { number: '12', url: 'https://github.com/o/r/pull/12' },
+  });
+});
+
+const pr = (number: string, url?: string) => ({
+  kind: 'pullRequest' as const,
+  number,
+  ...(url ? { url } : {}),
+});
+for (const content of [
+  'Fix PR #1; estimated 999 lines',
+  'Fix MR!1',
+  'Fix https://github.com/o/r/pull/1',
+  'Fix 999 lines',
+  'Fix PR #999_extra',
+  'Fix PR #999-2',
+  'Fix éPR999',
+  'Read https://example.com/PR999',
+]) {
+  it(`rejects invented number-only PR 999 without purging original content: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    expect(f.resolve(request, [{ ...create(), references: [pr('999')] }])).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/PR number must match/),
+    });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+    expect(f.service.request('manager', request).userContent).toBe(content);
+    expect(f.store.list()).toEqual([]);
+  });
+}
+for (const content of [
+  'Fix PR #12',
+  'Fix PR12.',
+  'Fix MR !12',
+  'Fix pull request number 12',
+  'Fix merge request #12',
+  'Fix https://github.com/o/r/pull/12',
+  'Fix https://gitlab.com/o/r/-/merge_requests/12',
+  'Fix https://business.visualstudio.com/p/_git/r/pullrequest/12',
+]) {
+  it(`accepts a sourced explicit identifier without inventing its missing URL: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const result = f.resolve(request, [{ ...create(), references: [pr('12')] }]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links).toEqual({ pullRequest: { number: '12' } });
+    expect(f.service.request('manager', request).userContent).toBeUndefined();
+  });
+}
+for (const suffix of ['2', '-child', '_child', 'é', '\u0301', '—child', '\u200dchild']) {
+  it(`rejects ticket identifier prefix TASK-1 before ${JSON.stringify(suffix)}`, () => {
+    const f = fixture();
+    const content = `Please fix ticket TASK-1${suffix}`;
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    expect(
+      f.resolve(request, [{ ...create(), references: [{ kind: 'ticket', id: 'TASK-1' }] }]),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/whole identifier/) });
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  });
+}
+for (const id of ['TASK-12', 'TASK_12', 'ÉQUIPE-12', '任务-12', 'TASK.12']) {
+  it(`accepts exact explicit ticket identifier ${id} bounded by punctuation`, () => {
+    const f = fixture();
+    const result = f.resolve(f.admitted('accepted', `Fix ticket (${id}).`), [
+      { ...create(), references: [{ kind: 'ticket', id }] },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links.tickets).toEqual([{ id }]);
+  });
+}
+
+it('rejects URL/number disagreement even when both IDs independently occur in the request', () => {
+  const f = fixture();
+  const url = 'https://github.com/o/r/pull/1';
+  const request = f.admitted('accepted', `Fix ${url}; PR #999 is separate`);
+  const before = fs.readFileSync(f.file, 'utf8');
+  expect(f.resolve(request, [{ ...create(), references: [pr('999', url)] }])).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/URL and number/),
+  });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  expect(f.resolve(request, [{ ...create(), references: [pr('1', url)] }]).ok).toBe(true);
+});
+
+it('rejects multiple distinct mapped PRs before any intent mutates a task, even with replacement enabled', () => {
+  const f = fixture();
+  const old = 'https://github.com/o/r/pull/1';
+  const task = f.resolve(f.admitted('accepted', old), [create('existing')]).tasks[0];
+  f.store.requestTransaction((_requests, tasks) => {
+    tasks[0].links!.tickets = [{ id: 'HUMAN-12' }];
+  });
+  const content = 'Replace PR #1 with PR #2 or PR #3';
+  const request = f.admitted('accepted', content);
+  const before = fs.readFileSync(f.file, 'utf8');
+  const update: RequestIntent = {
+    key: 'update',
+    kind: 'update',
+    title: 'Must not change',
+    cwd: '/project',
+    taskId: task.taskId,
+    expectedTaskRevision: f.store.list()[0].revision,
+    reason: 'Explicit replacement',
+    replacePullRequest: true,
+    references: [pr('2'), pr('3')],
+  };
+  expect(f.resolve(request, [{ ...create('first'), references: [] }, update])).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/one distinct PR/),
+  });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  expect(f.service.request('manager', request).userContent).toBe(content);
+  expect(f.store.list()[0].links).toEqual({
+    pullRequest: { number: '1', url: old },
+    tickets: [{ id: 'HUMAN-12' }],
+  });
+  // Two intents cannot circumvent the singleton by updating the same target twice.
+  expect(
+    f.resolve(request, [
+      { ...update, references: [pr('2')] },
+      { ...update, key: 'second', references: [pr('3')] },
+    ]),
+  ).toMatchObject({ ok: false, error: expect.stringMatching(/unique task/) });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  // Exact duplicates are harmless; a legitimate explicit replacement preserves human refs.
+  const accepted = f.resolve(request, [{ ...update, references: [pr('2'), pr('2')] }]);
+  expect(accepted.ok).toBe(true);
+  expect(accepted.tasks[0].links).toEqual({
+    pullRequest: { number: '2' },
+    tickets: [{ id: 'HUMAN-12' }],
+  });
+  expect(f.resolve(request, [{ ...update, references: [pr('2'), pr('2')] }]).ok).toBe(true);
+});
+
+for (const content of ['Fix éTASK-1', 'Fix PARENT_TASK-1', 'Fix PARENT-TASK-1', 'Fix TASKx12']) {
+  it(`rejects partial ticket matches including regex metacharacters: ${content}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', content);
+    const before = fs.readFileSync(f.file, 'utf8');
+    const id = content.includes('TASKx12') ? 'TASK.12' : 'TASK-1';
+    expect(f.resolve(request, [{ ...create(), references: [{ kind: 'ticket', id }] }]).ok).toBe(
+      false,
+    );
+    expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+  });
+}
+
+// Each row exercises all four wire shapes. In the mismatch row each standalone
+// value is sourced; only combining the URL for 12 with the explicit MR 99 fails.
+for (const url of [
+  'https://github.com/o/r/pull/12',
+  'https://gitlab.com/o/r/-/merge_requests/12',
+  'https://business.visualstudio.com/p/_git/r/pullrequest/12',
+]) {
+  const scenarios = [
+    {
+      source: 'recognized PR',
+      content: `Fix ${url}`,
+      url,
+      number: '12',
+      accepted: [true, true, true, false],
+    },
+    {
+      source: 'ordinary URL',
+      content: 'Read https://example.com/spec/12',
+      url: 'https://example.com/spec/12',
+      number: '12',
+      accepted: [false, false, false, false],
+    },
+    {
+      source: 'original missing',
+      content: 'Fix the issue',
+      url,
+      number: '12',
+      accepted: [false, false, false, false],
+    },
+    {
+      source: 'mismatch',
+      content: `Fix ${url}; MR #99 is separate`,
+      url,
+      number: '99',
+      accepted: [true, true, false, false],
+    },
+  ];
+  for (const scenario of scenarios) {
+    for (const [index, form] of ['URL only', 'number only', 'both', 'neither'].entries()) {
+      it(`PR mapping matrix: ${form} / ${scenario.source} / ${url}`, () => {
+        const f = fixture();
+        const task = f.resolve(f.admitted(), [create()]).tasks[0];
+        f.store.requestTransaction((_requests, tasks) => {
+          tasks[0].links = {
+            references: [{ label: 'Human notes', url: 'https://example.com/human' }],
+          };
+        });
+        const current = f.store.list()[0];
+        const request = f.admitted('accepted', scenario.content);
+        const before = fs.readFileSync(f.file, 'utf8');
+        const reference = {
+          kind: 'pullRequest' as const,
+          ...(form === 'URL only' || form === 'both' ? { url: scenario.url } : {}),
+          ...(form === 'number only' || form === 'both' ? { number: scenario.number } : {}),
+        };
+        const update: RequestIntent = {
+          key: 'update',
+          kind: 'update',
+          cwd: '/project',
+          taskId: task.taskId,
+          expectedTaskRevision: current.revision,
+          title: 'Updated title',
+          reason: 'Original request mapping',
+          references: [reference],
+        };
+        const result = f.resolve(request, [update]);
+        expect(result.ok).toBe(scenario.accepted[index]);
+        if (scenario.accepted[index]) {
+          const { kind: _kind, ...pullRequest } = reference;
+          expect(result.tasks[0].links).toEqual({ ...current.links, pullRequest });
+          expect(f.service.request('manager', request).userContent).toBeUndefined();
+        } else {
+          expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+          expect(f.service.request('manager', request).userContent).toBe(scenario.content);
+          if (scenario.source === 'ordinary URL' && form === 'URL only') {
+            expect(result.error).toMatch(/PR URL must identify/);
+            const generic = f.resolve(request, [
+              {
+                ...update,
+                references: [{ kind: 'reference', label: 'Specification', url: scenario.url }],
+              },
+            ]);
+            expect(generic.ok).toBe(true);
+            expect(generic.tasks[0].links).toEqual({
+              references: [
+                ...current.links!.references!,
+                { label: 'Specification', url: scenario.url },
+              ],
+            });
+          }
+        }
+      });
+    }
+  }
+}

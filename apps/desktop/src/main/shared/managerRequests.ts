@@ -34,6 +34,9 @@ export type RequestIntent = {
   /** Earlier work intent keys in this atomic resolution, converted to task IDs. */
   dependsOnKeys?: string[];
   cancel?: boolean;
+  /** Explicit mapping from original submitted content; [] deliberately assigns no references. */
+  references?: import('./dispatchHistory').TaskReferenceUpsert[];
+  replacePullRequest?: boolean;
 };
 export type TaskSource = {
   requestId: string;
