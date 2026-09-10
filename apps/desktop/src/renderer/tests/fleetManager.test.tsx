@@ -543,9 +543,29 @@ describe('spawnFleetManager', () => {
     await waitFor(() =>
       expect(claudeMessage).toHaveBeenCalledWith(
         'mgr-live',
-        expect.stringContaining('and now?\n\nFor each NEW project task, call start_workflow'),
+        expect.stringContaining('and now?\n\nOn a local desktop with request inbox support'),
       ),
     );
     hook.unmount();
   });
+});
+
+it('prepares a modern manager bootstrap request before sending the first user ask', async () => {
+  const prepare = vi.fn().mockResolvedValue({ available: true, requestId: 'bootstrap-request', delivery: 'pending' });
+  window.electronAPI.managerRequestPrepare = prepare;
+  const spawn = window.electronAPI.spawnClaude as Mock;
+  const message = window.electronAPI.claudeMessage as Mock;
+  spawn.mockReset().mockResolvedValue('inbox-manager');
+  message.mockReset().mockResolvedValue({ ok: true, requestId: 'bootstrap-request', delivery: 'accepted' });
+  const hook = renderHook(() => useAgentManager());
+  try {
+    await act(async () => { await hook.result.current.spawnFleetManager('Fix two things', '/project'); });
+    expect(spawn.mock.calls[0][0].message).toBeUndefined();
+    expect(prepare).toHaveBeenCalledWith('inbox-manager', 'Fix two things', true);
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(message.mock.invocationCallOrder[0]);
+    expect(message).toHaveBeenCalledWith('inbox-manager', buildManagerKickoff('Fix two things'), 'bootstrap-request');
+  } finally {
+    delete window.electronAPI.managerRequestPrepare;
+    hook.unmount();
+  }
 });

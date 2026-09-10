@@ -192,3 +192,12 @@ it('provider readiness defaults to a free read; only explicit true requests a pi
   await api.providerReadiness('claude', true);
   expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.PROVIDER_READINESS, 'claude', true);
 });
+
+it('carries manager request preparation and immutable logical IDs over separate IPC fields', async () => {
+  const api = await loadPreload();
+  const { ipcRenderer } = await import('electron');
+  await api.managerRequestPrepare('manager', 'Original user content', true);
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.MANAGER_REQUEST_PREPARE, 'manager', 'Original user content', true);
+  await api.claudeMessage('manager', 'Original user content', 'host-request');
+  expect(ipcRenderer.invoke).toHaveBeenLastCalledWith(IPC.CLAUDE_MESSAGE, 'manager', 'Original user content', 'host-request');
+});

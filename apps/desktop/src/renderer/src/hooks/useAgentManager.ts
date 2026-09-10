@@ -760,6 +760,7 @@ export function useAgentManager() {
    * receives the ask as a plain message — its doctrine is already in
    * context, resending the preamble would just burn tokens.
    */
+  const managerAskRetry = useRef<{ sessionId: string; ask: string; requestId: string } | null>(null);
   const spawnFleetManager = useCallback(
     async (
       ask: string,
@@ -772,18 +773,22 @@ export function useAgentManager() {
       effort?: string,
     ): Promise<string | undefined> => {
       const sendAsk = async (id: string, bootstrap = false) => {
-        const capture = await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
-        const result = await window.electronAPI.claudeMessage(
-          id,
-          bootstrap ? buildManagerKickoff(ask, fullAccess) : buildManagerWorkflowAsk(ask),
-          capture?.available ? capture.requestId : undefined,
-        );
+        const previous = managerAskRetry.current;
+        const capture = previous?.sessionId === id && previous.ask === ask
+          ? { available: true as const, requestId: previous.requestId }
+          : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
+        if (capture?.available) managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
+        const message = bootstrap ? buildManagerKickoff(ask, fullAccess) : buildManagerWorkflowAsk(ask);
+        const result = capture?.available
+          ? await window.electronAPI.claudeMessage(id, message, capture.requestId)
+          : await window.electronAPI.claudeMessage(id, message);
         if (result?.ok === false)
           throw new Error(
             result.delivery === 'unknown'
               ? 'Request saved in inbox; chat delivery unknown. Do not resend.'
               : spawnFailureMessage(provider),
           );
+        managerAskRetry.current = null;
       };
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
@@ -824,9 +829,10 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(record, stopped.lastSessionId);
+        const sessionId = await respawnFromRecord(record, stopped.lastSessionId,
+          window.electronAPI.managerRequestPrepare ? undefined : buildManagerWorkflowAsk(ask));
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
-        await sendAsk(sessionId);
+        if (window.electronAPI.managerRequestPrepare) await sendAsk(sessionId);
         if (!stopped.manager) {
           mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
         }
@@ -865,7 +871,9 @@ export function useAgentManager() {
         // full-access; per-project yolo is applied per dispatch by doctrine.
         fleetFullAccess: grantYolo,
         ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
-        onSessionReady: (id) => sendAsk(id, true),
+        ...(window.electronAPI.managerRequestPrepare
+          ? { onSessionReady: (id: string) => sendAsk(id, true) }
+          : { kickoffMessage: buildManagerKickoff(ask, fullAccess) }),
       }).then((id) => id ?? undefined);
     },
     [spawnAgent, respawnFromRecord, mutateAgent],

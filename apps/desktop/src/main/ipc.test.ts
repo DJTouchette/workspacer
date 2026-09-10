@@ -111,7 +111,7 @@ vi.mock('./services/claudeModels', () => ({ listClaudeModels: vi.fn() }));
 vi.mock('./services/workflowWatcher', () => ({ workflowWatcher: {} }));
 vi.mock('./services/agentNotifier', () => ({ agentNotifier: {} }));
 vi.mock('./services/claudemonSessionClient', () => ({
-  claudemonSessionClient: { setMainWindow: vi.fn() },
+  claudemonSessionClient: { setMainWindow: vi.fn(), message: vi.fn() },
 }));
 vi.mock('./services/agentHandoff', () => ({ agentHandoffBrief: vi.fn() }));
 vi.mock('./services/agentProviders', () => ({

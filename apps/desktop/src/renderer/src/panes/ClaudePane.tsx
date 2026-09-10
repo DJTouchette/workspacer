@@ -1266,6 +1266,12 @@ export const useClaudePaneModel = ({
     'requestCaptureStatus',
     '',
   );
+  const setComposerInput = useCallback((value: Parameters<typeof setInputValue>[0]) => {
+    // An explicit new edit abandons the restored-draft retry. Re-entering the
+    // same words intentionally is a new logical request, not text deduplication.
+    requestRetry.current = null;
+    setInputValue(value);
+  }, [setInputValue, requestRetry]);
   pendingCountRef.current = optimisticMessages.length;
   const [optimisticLoading, setOptimisticLoading] = useSessionChatState(
     uiSessionKey,
@@ -1430,7 +1436,7 @@ export const useClaudePaneModel = ({
                 return { ok: true };
               }
               setRequestCaptureStatus(
-                'Chat delivery rejected. No task was captured; retry keeps the same request.',
+                'Chat delivery rejected. This request is not eligible for new task capture; retry keeps the same request.',
               );
               setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
               setOptimisticLoading(false);
@@ -2478,7 +2484,7 @@ export const useClaudePaneModel = ({
     sessionId,
     setDismissedPlanSig,
     setHandoffOpen,
-    setInputValue,
+    setInputValue: setComposerInput,
     setViewMode,
     showHookHint,
     showScrollBtn,

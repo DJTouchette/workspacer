@@ -677,6 +677,8 @@ class ClaudemonSessionClient {
       }
       if ([400, 401, 403, 404, 410, 413, 422, 429].includes(res.status))
         throw new ManagerDeliveryRejected(res.status);
+      if (res.status === 503 && (await res.text()) === 'session input queue is full')
+        throw new ManagerDeliveryRejected(503);
       if (!res.ok) throw new Error(`message HTTP ${res.status}`);
       if (sourceRequest)
         managerRequests().finishDelivery(
