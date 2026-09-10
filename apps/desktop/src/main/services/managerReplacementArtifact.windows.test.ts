@@ -67,14 +67,14 @@ function fixture(cwd = 'c:\\Users\\Manager', pointerRoot = cwd, sameIdentity = f
     isDirectory: () => !String(p).endsWith('.md') && !String(p).endsWith('.json'),
     isSymbolicLink: () => false,
     isFile: () => true,
-    size: key(p) === key(artifactPath) ? raw.length : brief.length,
+    size: BigInt(key(p) === key(artifactPath) ? raw.length : brief.length),
   });
   vi.spyOn(fs, 'lstatSync').mockImplementation(stat as typeof fs.lstatSync);
   vi.spyOn(fs, 'statSync').mockImplementation(stat as typeof fs.statSync);
   let openedPath: fs.PathLike;
   vi.spyOn(fs, 'openSync').mockImplementation((p) => {
     openedPath = p;
-    return 123;
+    return key(p) === key(artifactPath) ? 122 : 123;
   });
   vi.spyOn(fs, 'fstatSync').mockImplementation((() => stat(openedPath)) as typeof fs.fstatSync);
   vi.spyOn(fs, 'closeSync').mockImplementation(() => {});
@@ -155,24 +155,27 @@ it('rejects different file identities even when root identities match and bytes 
   vi.mocked(fs.lstatSync).mockImplementation(stat as typeof fs.lstatSync);
   vi.mocked(fs.statSync).mockImplementation(stat as typeof fs.statSync);
   expect(f.validate).toThrow('path is not an allowed brief pointer');
-  expect(fs.openSync).not.toHaveBeenCalled();
+  expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(f.op.artifactPath, 'r');
 });
 
 it('rejects unavailable filesystem identity instead of authorizing two zero IDs', () => {
   const f = fixture('C:\\Users\\Manager', 'c:\\users\\manager', true);
-  const stat = (p: fs.PathLike) => ({ ...f.stat(p), ino: 0n });
+  const stat = (p: fs.PathLike) => ({
+    ...f.stat(p),
+    ...(p === f.op.artifactPath ? {} : { ino: 0n }),
+  });
   vi.mocked(fs.lstatSync).mockImplementation(stat as typeof fs.lstatSync);
   vi.mocked(fs.statSync).mockImplementation(stat as typeof fs.statSync);
   expect(f.validate).toThrow('Checkpoint files[0]');
-  expect(fs.openSync).not.toHaveBeenCalled();
+  expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(f.op.artifactPath, 'r');
 });
 
 it('rejects a different identity at open before reading its bytes', () => {
   const f = fixture('C:\\Users\\Manager', 'c:\\users\\manager', true);
-  vi.mocked(fs.fstatSync).mockImplementation((() => ({
-    ...f.stat(f.artifact.checkpoint.files[0].path),
-    ino: 99999n,
-  })) as typeof fs.fstatSync);
+  vi.mocked(fs.fstatSync).mockImplementation(((fd: number) =>
+    fd === 122
+      ? f.stat(f.op.artifactPath)
+      : { ...f.stat(f.artifact.checkpoint.files[0].path), ino: 99999n }) as typeof fs.fstatSync);
   expect(f.validate).toThrow('path changed');
   expect(fs.readFileSync).not.toHaveBeenCalledWith(123);
   expect(fs.closeSync).toHaveBeenCalledWith(123);
@@ -185,7 +188,7 @@ it('rejects a junction even when realpath and stat identify the allowed target',
     isSymbolicLink: () => String(p) === 'c:\\users\\manager',
   })) as typeof fs.lstatSync);
   expect(f.validate).toThrow('Checkpoint files[0]');
-  expect(fs.openSync).not.toHaveBeenCalled();
+  expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(f.op.artifactPath, 'r');
 });
 
 it('rejects dot segments before any normalization can erase them', () => {
@@ -203,7 +206,40 @@ it('does not expand short-name aliases even when filesystem identities agree', (
   vi.mocked(fs.statSync).mockImplementation(stat as typeof fs.statSync);
   vi.mocked(fs.realpathSync).mockImplementation(longName as typeof fs.realpathSync);
   expect(f.validate).toThrow('path is not an allowed brief pointer');
-  expect(fs.openSync).not.toHaveBeenCalled();
+  expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(f.op.artifactPath, 'r');
+});
+
+it.each([
+  '\\\\host\\share\\.workspacer\\brief.md',
+  '//host/share/.workspacer/brief.md',
+  '\\/host/share/.workspacer/brief.md',
+  '/\\host\\share\\.workspacer\\brief.md',
+  '\\\\?\\C:\\Users\\Manager\\.workspacer\\brief.md',
+  '//?/C:/Users/Manager/.workspacer/brief.md',
+  '\\\\?\\UNC\\host\\share\\.workspacer\\brief.md',
+  '//?/UNC/host/share/.workspacer/brief.md',
+  '\\\\.\\C:\\Users\\Manager\\.workspacer\\brief.md',
+  '//./C:/Users/Manager/.workspacer/brief.md',
+  '\\??\\C:\\Users\\Manager\\.workspacer\\brief.md',
+  '/??/C:/Users/Manager/.workspacer/brief.md',
+  '/Users/Manager/.workspacer/brief.md',
+  'C:Users/Manager/.workspacer/brief.md',
+  'smb://host/share/.workspacer/brief.md',
+  'file://host/share/.workspacer/brief.md',
+])('rejects non-local-drive pointer %s without candidate filesystem access', (pointer) => {
+  // All filesystem entry points used by the validator are mocked: never SMB.
+  const f = fixture('C:\\Users\\Manager');
+  f.artifact.checkpoint.files[0].path = pointer;
+  f.write();
+  expect(f.validate).toThrow('path is not an allowed brief pointer');
+  // Only the trusted launch root and proposal may be inspected/read. This also
+  // catches a stat of the candidate volume or any candidate parent, not just leaf I/O.
+  for (const spy of [fs.lstatSync, fs.statSync, fs.realpathSync, fs.openSync, fs.readFileSync]) {
+    for (const [arg] of vi.mocked(spy).mock.calls) {
+      expect([f.op.launch.options.cwd, f.op.artifactPath, 122]).toContain(arg);
+    }
+  }
+  expect(fs.statSync).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -219,5 +255,5 @@ it.each([
   f.artifact.checkpoint.files[0].path = pointer;
   f.write();
   expect(f.validate).toThrow('path is not an allowed brief pointer');
-  expect(fs.openSync).not.toHaveBeenCalled();
+  expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(f.op.artifactPath, 'r');
 });

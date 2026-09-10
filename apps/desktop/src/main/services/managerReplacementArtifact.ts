@@ -29,8 +29,10 @@ function sameIdentity(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
 }
 function plainAbsolutePath(value: string): boolean {
   if (!path.isAbsolute(value)) return false;
+  // Win32 isAbsolute also accepts UNC, device and root-relative paths. Reject
+  // those spellings before even lstat-ing a candidate volume (which can do SMB I/O).
+  if (path.sep === '\\' && !/^[a-z]:[\\/]/i.test(value)) return false;
   const volume = path.parse(value).root;
-  if (path.sep === '\\' && volume.length < 3) return false;
   if (value === volume) return true;
   const parts = value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
   return parts.every(
@@ -120,10 +122,28 @@ export function validateManagerArtifact(
   );
   if (!samePath(op.artifactPath, expected) || !samePath(fs.realpathSync(expected), expected))
     throw new Error('Handoff artifact path changed or is a symbolic link');
-  const stat = fs.lstatSync(expected);
-  if (!stat.isFile() || stat.size === 0 || stat.size > 256 * 1024)
+  const stat = fs.lstatSync(expected, { bigint: true });
+  if (!stat.isFile() || stat.size === 0n || stat.size > 256n * 1024n)
     throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
-  const bytes = fs.readFileSync(expected);
+  let bytes: Buffer;
+  const fd = fs.openSync(expected, 'r');
+  try {
+    // Rebind the inspected proposal to the opened file before reading, just as
+    // for checkpoint briefs. A same-byte replacement is still a different file.
+    const opened = fs.fstatSync(fd, { bigint: true });
+    if (!opened.isFile() || !sameIdentity(opened, stat))
+      throw new Error('Handoff artifact path changed before read');
+    if (opened.size === 0n || opened.size > 256n * 1024n)
+      throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
+    if (opened.size !== stat.size) throw new Error('Handoff artifact path changed before read');
+    bytes = fs.readFileSync(fd);
+    if (bytes.length === 0 || bytes.length > 256 * 1024)
+      throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
+    if (BigInt(bytes.length) !== opened.size)
+      throw new Error('Handoff artifact size changed during read');
+  } finally {
+    fs.closeSync(fd);
+  }
   const raw = bytes.toString('utf8');
   if (!Buffer.from(raw).equals(bytes))
     throw new Error('Handoff artifact must contain valid UTF-8 bytes');

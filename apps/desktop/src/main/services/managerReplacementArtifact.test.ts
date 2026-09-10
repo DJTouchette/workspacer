@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -11,7 +11,10 @@ import {
 } from './managerReplacementArtifact';
 
 const dirs: string[] = [];
-afterEach(() => dirs.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
+afterEach(() => {
+  vi.restoreAllMocks();
+  dirs.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+});
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 function fixture() {
   const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-artifact-')));
@@ -54,6 +57,55 @@ it('validates generated preparation JSON and seals the exact UTF-8/CRLF bytes', 
   expect(Buffer.from(result.raw)).toEqual(fs.readFileSync(f.op.artifactPath));
   expect(result.hash).toBe(hash(fs.readFileSync(f.op.artifactPath)));
 });
+
+it.each(['replacement', 'empty', 'oversized'])(
+  'rejects a proposal %s after lstat before reading any proposal bytes',
+  (change) => {
+    const f = fixture();
+    const receipt = f.write();
+    const originalBytes = fs.readFileSync(f.op.artifactPath);
+    const lstat = fs.lstatSync;
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((p, options) => {
+      const inspected = lstat(p, options);
+      if (p === f.op.artifactPath) {
+        if (change === 'replacement') {
+          // Identical size and receipt hash, but a distinct file identity.
+          fs.renameSync(f.op.artifactPath, f.op.artifactPath + '.old');
+          fs.writeFileSync(f.op.artifactPath, originalBytes);
+        } else {
+          fs.writeFileSync(
+            f.op.artifactPath,
+            Buffer.alloc(change === 'empty' ? 0 : 256 * 1024 + 1),
+          );
+        }
+        close.mockClear(); // Ignore the fixture writer's own descriptor close.
+      }
+      return inspected;
+    }) as typeof fs.lstatSync);
+    const read = vi.spyOn(fs, 'readFileSync');
+    const close = vi.spyOn(fs, 'closeSync');
+    expect(() => validateManagerArtifact(f.op, receipt)).toThrow(
+      change === 'replacement' ? 'Handoff artifact path changed' : 'at most 256 KiB',
+    );
+    expect(read).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([0, 256 * 1024 + 1, 1])(
+  'rechecks proposal byte length %i after descriptor read',
+  (size) => {
+    const f = fixture();
+    const receipt = f.write();
+    const read = vi.spyOn(fs, 'readFileSync').mockReturnValueOnce(Buffer.alloc(size));
+    const close = vi.spyOn(fs, 'closeSync');
+    expect(() => validateManagerArtifact(f.op, receipt)).toThrow(
+      size === 1 ? 'Handoff artifact size changed during read' : 'at most 256 KiB',
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(expect.any(Number));
+    expect(close).toHaveBeenCalledExactlyOnceWith(read.mock.calls[0][0]);
+  },
+);
 
 it.runIf(process.platform === 'win32')(
   'uses actual Windows files for mixed drive case and separators',
