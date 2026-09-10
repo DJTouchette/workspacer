@@ -76,6 +76,11 @@ func main() {
 		// It is fed BEFORE the visibility filter on purpose — a session the
 		// shared layout hides is still a dispatch that came home, and hiding a
 		// row from a sidebar is not a reason to deny its manager the report.
+		// Dispatches other hubs are executing here (remotedispatch.go). Created
+		// beside the finish watcher and only in full scope, because those two
+		// facts are the same fact: the return channel is published FROM the
+		// watcher, so a scope with no watcher must not accept a dispatch at all.
+		reg.remote = newRemoteDispatchStore()
 		fin := newFinishWatcher(reg)
 		reg.fin = fin
 		store.onSeed = fin.prime

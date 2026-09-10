@@ -66,6 +66,11 @@ import (
 //   - services/hub/cmd/mcp/main.go         spawnAgentIn (the facade's caller side)
 var spawnParamKeys = []string{
 	"workflowStepId", "taskId", "stage", "afterDispatchId", "dispatchOwnerSessionId", "retrySourceSessionId",
+	// Router-stamped remote-dispatch provenance (remotedispatch.go). Listed
+	// here for the same reason yoloGranted is: the sanitizer DELETES it by exact
+	// name for every non-federated caller, so a `RemoteOrigin` spelling would
+	// survive that delete and still bind to the brain's decoder.
+	"remoteOrigin",
 	// ── identity / grant fields the router itself strips or stamps ──────────
 	"profileId",
 	"launchIntegrationId",

@@ -111,6 +111,10 @@ type finishWatcher struct {
 	// noise, not a new report. TWIN: lastReportedReply, and
 	// apps/desktop/PER_TURN_WAKE_FINDING.md for the observed duplicate.
 	lastReported map[string]string
+	// remoteTimers is the coalesce window for a worker whose manager lives on
+	// another hub (scheduleRemote). Keyed by WORKER id, because a remote
+	// dispatch is one worker by construction.
+	remoteTimers map[string]*time.Timer
 
 	// blocks is the sibling watcher (blockwake.go), fed from the SAME ambient
 	// transition this one reads. It deliberately keeps no prevAmbient of its
@@ -128,6 +132,7 @@ func newFinishWatcher(reg *registry) *finishWatcher {
 		pending:      map[string][]string{},
 		timers:       map[string]*time.Timer{},
 		lastReported: map[string]string{},
+		remoteTimers: map[string]*time.Timer{},
 		blocks:       newBlockWatcher(reg),
 	}
 }
@@ -205,6 +210,17 @@ func (w *finishWatcher) observe(ctx context.Context, snap json.RawMessage) {
 	if !seen || !wasWorking(prev) || s.AmbientState != "idle" {
 		return
 	}
+	// REMOTE ORIGIN takes the branch BEFORE the local parent lookup, and takes
+	// it EXCLUSIVELY (remotedispatch.go). The dispatching hub named itself as
+	// parentSessionId so this worker nests correctly and gets the host-authored
+	// worker contracts — but that id belongs to a session on ANOTHER machine, so
+	// the local lookup below would find nothing (the drop this feature exists to
+	// fix) or, on an unlucky id collision, the wrong session entirely. One
+	// dispatch, one route.
+	if dispatchID := w.reg.remoteDispatchID(s.SessionID); dispatchID != "" {
+		w.scheduleRemote(ctx, dispatchID, s.SessionID)
+		return
+	}
 	parentID := s.ParentSessionID
 	if parentID == "" || parentID == s.SessionID {
 		return
@@ -264,8 +280,17 @@ func (w *finishWatcher) forgetWorker(sessionID string) {
 	w.mu.Lock()
 	delete(w.lastReported, sessionID)
 	delete(w.prevAmbient, sessionID)
+	if t, ok := w.remoteTimers[sessionID]; ok {
+		delete(w.remoteTimers, sessionID)
+		t.Stop()
+	}
 	w.mu.Unlock()
 	w.blocks.forget(sessionID)
+	// The dispatch record goes with the row for the same reason: no map may
+	// retain an entry per session for the process lifetime.
+	if w.reg.remote != nil {
+		w.reg.remote.forget(sessionID)
+	}
 }
 
 // sendFinished composes and delivers one coalesced wake, re-verifying BOTH ends
@@ -290,46 +315,10 @@ func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, worke
 	// Signatures to BOOK, applied only once the send has actually landed.
 	delivered := map[string]string{}
 	for _, id := range workerIDs {
-		s, ok := findFleetSession(all, id)
+		e, sig, ok := w.finishEntry(ctx, all, id)
 		if !ok {
-			continue // the row was closed inside the window
-		}
-		// Genuinely idle? An ended session counts (it is not coming back); an
-		// unknown ambient state fails open, matching the desktop.
-		if !s.ended() && s.AmbientState != "" && s.AmbientState != "idle" {
 			continue
 		}
-		final := w.reg.workerFinalTurn(ctx, id)
-		if !final.hasUserTurn {
-			continue // boot idle: this session was never given its task
-		}
-		e := fleetEntry{Label: s.displayLabel(), SessionID: s.SessionID, Cwd: s.Cwd}
-		if s.ended() {
-			e.Stopped = true
-		}
-		reply := final.lastAssistant
-		if reply != "" {
-			e.LastReply = excerptReply(reply)
-			// Carry the complete message only when the excerpt is lossy —
-			// otherwise the bullet already IS the whole reply.
-			if e.LastReply != strings.TrimSpace(reply) {
-				e.FullReply = reply
-			}
-		}
-		if reason, failed := workerFailureReason(s.outOfCredits(), reply); failed {
-			e.Failed = reason
-		}
-		if outcome := readWorkerEscalation(reply); outcome != nil {
-			e.Escalation = outcome.JSON
-			e.EscalationError = outcome.Error
-		}
-		escalationState := ""
-		if e.Escalation != "" {
-			escalationState = "escalated"
-		} else if e.EscalationError != "" {
-			escalationState = "invalid-escalation"
-		}
-		sig := finishSignature(reply, e.Stopped, e.Failed, escalationState)
 		w.mu.Lock()
 		dup := w.lastReported[id] == sig
 		w.mu.Unlock()
@@ -380,6 +369,124 @@ func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, worke
 		}
 		w.mu.Unlock()
 	}
+}
+
+// finishEntry composes ONE worker's fleet bullet and its dedup signature from
+// live state, or reports ok=false when the edge that scheduled the wake turned
+// out to be a lie.
+//
+// EXTRACTED, not rewritten: this is verbatim the body sendFinished's loop used
+// to hold, and it is shared with the remote-dispatch path (remotedispatch.go) so
+// a worker whose manager is on another machine is described by exactly the same
+// code — same idle re-verification, same boot-idle gate, same excerpt/full-reply
+// split, same failure and escalation parsing. A second copy for the remote route
+// would have been the drift this codebase already paid for once with the
+// desktop's hand-copied spawn option literals.
+func (w *finishWatcher) finishEntry(ctx context.Context, all []fleetSession, id string) (fleetEntry, string, bool) {
+	s, ok := findFleetSession(all, id)
+	if !ok {
+		return fleetEntry{}, "", false // the row was closed inside the window
+	}
+	// Genuinely idle? An ended session counts (it is not coming back); an
+	// unknown ambient state fails open, matching the desktop.
+	if !s.ended() && s.AmbientState != "" && s.AmbientState != "idle" {
+		return fleetEntry{}, "", false
+	}
+	final := w.reg.workerFinalTurn(ctx, id)
+	if !final.hasUserTurn {
+		return fleetEntry{}, "", false // boot idle: this session was never given its task
+	}
+	e := fleetEntry{Label: s.displayLabel(), SessionID: s.SessionID, Cwd: s.Cwd}
+	if s.ended() {
+		e.Stopped = true
+	}
+	reply := final.lastAssistant
+	if reply != "" {
+		e.LastReply = excerptReply(reply)
+		// Carry the complete message only when the excerpt is lossy —
+		// otherwise the bullet already IS the whole reply.
+		if e.LastReply != strings.TrimSpace(reply) {
+			e.FullReply = reply
+		}
+	}
+	if reason, failed := workerFailureReason(s.outOfCredits(), reply); failed {
+		e.Failed = reason
+	}
+	if outcome := readWorkerEscalation(reply); outcome != nil {
+		e.Escalation = outcome.JSON
+		e.EscalationError = outcome.Error
+	}
+	escalationState := ""
+	if e.Escalation != "" {
+		escalationState = "escalated"
+	} else if e.EscalationError != "" {
+		escalationState = "invalid-escalation"
+	}
+	return e, finishSignature(reply, e.Stopped, e.Failed, escalationState), true
+}
+
+// ── the remote-origin route ─────────────────────────────────────────────────
+
+// scheduleRemote opens the coalesce window for a worker that belongs to another
+// hub's manager.
+//
+// It coalesces per WORKER rather than per parent, and that is not a shortcut: a
+// dispatch id names exactly one worker, so the per-parent batching the local
+// path needs (five workers into one build, one wake) has no counterpart here.
+// What the window still buys is the SAME thing it buys locally — the 1.5s in
+// which an idle blip mid-stream resolves itself, so a half-done turn is never
+// reported as a result.
+func (w *finishWatcher) scheduleRemote(ctx context.Context, dispatchID, workerID string) {
+	w.mu.Lock()
+	if _, open := w.remoteTimers[workerID]; open {
+		w.mu.Unlock()
+		return
+	}
+	w.remoteTimers[workerID] = w.after(w.coalesce, func() {
+		w.mu.Lock()
+		delete(w.remoteTimers, workerID)
+		w.mu.Unlock()
+		w.sendRemoteFinished(ctx, dispatchID, workerID)
+	})
+	w.mu.Unlock()
+}
+
+// sendRemoteFinished re-verifies the worker and publishes ONE terminal callback.
+//
+// The parent half of the local re-verification has no counterpart: this node
+// cannot see whether the origin's manager is still alive, and pretending to
+// check would be worse than not checking. That judgement belongs to the origin,
+// which validates its own record against its own live session store before
+// injecting anything — see remoteDispatchRegistry.ts. What this side owes is an
+// honest report of the WORKER, exactly once per distinct outcome.
+//
+// The dedup signature is the same map the local path books into, so a worker
+// that flaps idle→streaming→idle with an identical reply publishes one update,
+// not two. A publish that fails (a link that is down) deliberately does NOT
+// book: the origin's reconnect replay is the recovery, and booking a lost
+// callback would make the replay answer with a `last` this node never sent.
+func (w *finishWatcher) sendRemoteFinished(ctx context.Context, dispatchID, workerID string) {
+	all := w.reg.fleetSessions(ctx)
+	e, sig, ok := w.finishEntry(ctx, all, workerID)
+	if !ok {
+		return
+	}
+	w.mu.Lock()
+	dup := w.lastReported[workerID] == sig
+	w.mu.Unlock()
+	if dup {
+		return
+	}
+	kind := dispatchKindFinished
+	if e.Escalation != "" {
+		kind = dispatchKindEscalated
+	}
+	if !w.reg.emitDispatchUpdate(dispatchID, kind, workerID, e, true) {
+		return
+	}
+	w.mu.Lock()
+	w.lastReported[workerID] = sig
+	w.mu.Unlock()
 }
 
 // finishSignature is the "have I already told the parent exactly this?" key.

@@ -117,14 +117,22 @@ func (r *registry) reportProgress(ctx context.Context, raw json.RawMessage) (jso
 		return nil, fmt.Errorf("report_progress: session %s is not a tracked session", callerID)
 	}
 	parentID := me.ParentSessionID
-	if parentID == "" || parentID == callerID {
-		return nil, fmt.Errorf("report_progress: you have no parent session — nothing dispatched you, so there is nobody to report to. " +
-			"Tell the user directly in your reply instead.")
-	}
-	parent, ok := findFleetSession(all, parentID)
-	if !ok || parent.ended() {
-		return nil, fmt.Errorf("report_progress: your parent session (%s) has ended — there is nobody to receive this. "+
-			"Carry on and put it in your final message.", parentID)
+	// A worker dispatched from ANOTHER hub reports over the return channel
+	// (remotedispatch.go) instead. Its parentSessionId names a manager on the
+	// dispatching machine, so both checks below would refuse a perfectly valid
+	// report — "your parent session has ended" is the sentence a cross-machine
+	// worker used to get for a manager that was alive and waiting.
+	remoteDispatchID := r.remoteDispatchID(callerID)
+	if remoteDispatchID == "" {
+		if parentID == "" || parentID == callerID {
+			return nil, fmt.Errorf("report_progress: you have no parent session — nothing dispatched you, so there is nobody to report to. " +
+				"Tell the user directly in your reply instead.")
+		}
+		parent, ok := findFleetSession(all, parentID)
+		if !ok || parent.ended() {
+			return nil, fmt.Errorf("report_progress: your parent session (%s) has ended — there is nobody to receive this. "+
+				"Carry on and put it in your final message.", parentID)
+		}
 	}
 
 	now := time.Now()
@@ -156,13 +164,30 @@ func (r *registry) reportProgress(ctx context.Context, raw json.RawMessage) (jso
 	r.progress[callerID] = progressBudget{count: budget.count + 1, lastAt: now, lastNote: note}
 	r.progressMu.Unlock()
 
-	text := buildFleetMessage(fleetProgressHeader, fleetProgressTail, []fleetEntry{{
+	entry := fleetEntry{
 		Label:         me.displayLabel(),
 		SessionID:     callerID,
 		Cwd:           me.Cwd,
 		Note:          note,
 		NeedsDecision: p.NeedsDecision,
-	}})
+	}
+	if remoteDispatchID != "" {
+		// The ORIGIN renders the sentence with its own buildFleetMessage — the
+		// `[fleet]`/`[supervisor]` wire format has one authority per machine and
+		// a cross-machine progress line must read exactly like a local one.
+		//
+		// The answer says "queued", not "delivered", and that distinction is the
+		// honest one: this is a publish onto a link the origin owns, so what is
+		// certain here is that it left. A worker reading "delivered" for a hop
+		// this node cannot confirm would be the same lie the confirmFirstMessage
+		// fallback exists to avoid.
+		if !r.emitDispatchUpdate(remoteDispatchID, dispatchKindProgress, callerID, entry, false) {
+			return nil, fmt.Errorf("report_progress: this node could not publish to the machine that dispatched you. " +
+				"It was NOT delivered — carry on and fold it into your final message.")
+		}
+		return jsonResult(map[string]any{"queuedTo": "dispatching-hub", "route": "remote-dispatch"})
+	}
+	text := buildFleetMessage(fleetProgressHeader, fleetProgressTail, []fleetEntry{entry})
 	if err := r.deliverFleetWake(ctx, parentID, text); err != nil {
 		return nil, err
 	}

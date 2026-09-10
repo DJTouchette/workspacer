@@ -137,9 +137,13 @@ func TestReportProgressUntouchedWhenNoSessionIsClaimed(t *testing.T) {
 // ── The federated hop ───────────────────────────────────────────────────────
 
 // fakeFed records what federatedCall actually put on the wire to a peer.
-type fakeFed struct{ got chan json.RawMessage }
+type fakeFed struct {
+	got      chan json.RawMessage
+	dispatch bool
+}
 
-func (f *fakeFed) HasPeer(name string) bool { return name == "work" }
+func (f *fakeFed) HasPeer(name string) bool          { return name == "work" }
+func (f *fakeFed) DispatchEnabled(name string) bool  { return f.dispatch && name == "work" }
 func (f *fakeFed) Forward(_ context.Context, _, _ string, params json.RawMessage) (json.RawMessage, error) {
 	f.got <- params
 	return json.RawMessage(`{"ok":true}`), nil

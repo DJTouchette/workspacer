@@ -283,12 +283,17 @@ func (s *Server) lookupScoped(token string) (ScopedIdent, bool) {
 
 // NewServer wraps a broker.
 func NewServer(b *broker.Broker) *Server {
-	return &Server{
+	s := &Server{
 		broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{},
 		pluginTokens: map[string]pluginIdent{},
 		pluginConns:  map[string]map[*conn]struct{}{},
 		demand:       newDemandTable(),
 	}
+	// The router publishes hub-owned events of its own (today: remote-dispatch
+	// provenance — see remotedispatch.go). It has no broker reference, so it
+	// gets the one function it needs rather than the whole server.
+	s.router.publish = b.Publish
+	return s
 }
 
 // RegisterPluginToken maps a per-plugin bus token to the plugin's id and the

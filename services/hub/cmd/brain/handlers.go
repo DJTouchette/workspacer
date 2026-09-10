@@ -41,6 +41,12 @@ type registry struct {
 	// and such spawns fail loudly instead of starting without the requested tools.
 	mcpFacadeURL string
 
+	// remote holds the dispatches OTHER hubs are executing here — the peer half
+	// of remote worker dispatch (remotedispatch.go). Nil in catalog scope, which
+	// is why acceptRemoteOrigin refuses a dispatched spawn there instead of
+	// starting a worker whose report could never leave the machine.
+	remote *remoteDispatchStore
+
 	// The agent-facing fleet verbs' own state: per-worker progress budgets and
 	// armed threshold watches (agentops.go). In-memory and per-process by
 	// design, matching the desktop — a budget or a watch is a within-session
@@ -118,6 +124,14 @@ func (r *registry) methods() []string {
 		"agents.close",
 		"agents.orphans",
 		"agents.reparent",
+		// REMOTE WORKER DISPATCH (remotedispatch.go): the two methods a
+		// dispatching machine calls on THIS one. dispatchCapabilities is the
+		// readiness answer it reads before choosing a harness and a cwd;
+		// dispatchReplay is how it reconciles after its link was down. Both are
+		// operator-only by construction (neither is in a scoped tier's
+		// exact-name allowlist) and neither discloses a credential.
+		"agents.dispatchReplay",
+		"fleet.dispatchCapabilities",
 		"brief.append",
 		// The other two brief verbs, ported once a headless Fleet Manager became
 		// a real caller (briefboard.go, briefcheck.go). The MCP facade exposed
@@ -294,6 +308,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.orphans(ctx, params)
 	case "agents.reparent":
 		return r.reparent(ctx, params)
+	case "agents.dispatchReplay":
+		return r.dispatchReplay(ctx, params)
+	case "fleet.dispatchCapabilities":
+		return r.dispatchCapabilities(ctx, params)
 	case "brief.append":
 		return r.briefAppendCall(ctx, params)
 	case "brief.check":
@@ -621,6 +639,19 @@ type spawnParams struct {
 	// direct privilege implication, it must move behind the same hub-verified
 	// stamp as YoloGranted rather than staying caller-set.
 	Manager bool `json:"manager"`
+	// RemoteOrigin is per-dispatch provenance stamped by the DISPATCHING hub's
+	// router (internal/bus/remotedispatch.go) on a federated agents.spawn. It is
+	// an opaque id and a protocol number, and nothing else: the origin never
+	// tells this node which session to wake, which machine it is, or what its
+	// filesystem looks like. This node records the id and echoes it on every
+	// callback; the origin does the matching.
+	//
+	// NOT CALLER-SETTABLE. The peer's own sanitizeSpawnParams deletes this key
+	// from every non-federated caller, so a local client here cannot manufacture
+	// a dispatch whose callbacks would be addressed at another machine's
+	// manager. It carries no grant of any kind — the link token remains the
+	// ceiling on everything this spawn may do.
+	RemoteOrigin *remoteOriginParam `json:"remoteOrigin"`
 	// ── the routing wire ──────────────────────────────────────────────────
 	//
 	// Three RECORDED fields, mirrored rather than declined, and the reason to
@@ -731,6 +762,16 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		if v, ok := present["workflowStepId"]; ok && string(v) != "null" && string(v) != `""` {
 			return nil, fmt.Errorf("Fleet workflow execution requires the local desktop runtime")
 		}
+	}
+
+	// REMOTE WORKER DISPATCH admission (remotedispatch.go), FIRST — before a
+	// session id is minted, a facade token is written, or claudemon is asked for
+	// anything. Every refusal in there is a case where this node could not have
+	// reported back, and a worker that starts anyway is an orphan burning this
+	// machine's account with nobody watching it.
+	remoteDispatchID, admitErr := r.acceptRemoteOrigin(p)
+	if admitErr != nil {
+		return nil, admitErr
 	}
 
 	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the
@@ -886,6 +927,13 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
 			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
 		})
+	}
+	// Recorded BEFORE the session can register, for the reason the meta.set
+	// above states: the wake paths key off this the moment claudemon reports the
+	// first transition, and a dispatch recorded late is a finish reported to
+	// nobody.
+	if remoteDispatchID != "" && r.remote != nil {
+		r.remote.record(remoteDispatchID, sessionID)
 	}
 	// AFTER the wholesale set above, which would otherwise erase it. Unlike
 	// that one this is unconditional: every session has a permission mode, and
@@ -1060,6 +1108,14 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
 			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
 		})
+	}
+	// Recorded BEFORE the session can register — same contract as the PTY leg.
+	// Read off p rather than passed in: spawn() has already ADMITTED this
+	// dispatch (acceptRemoteOrigin), so by here the block is either absent or
+	// validated, and re-deriving it beats threading a parameter through a
+	// signature four callers share.
+	if p.RemoteOrigin != nil && r.remote != nil {
+		r.remote.record(p.RemoteOrigin.DispatchID, sessionID)
 	}
 	// Same contract as the PTY leg: after the wholesale set, unconditionally.
 	r.noteLaunch(sessionID, provider, p)

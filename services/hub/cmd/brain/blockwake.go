@@ -323,6 +323,26 @@ func (b *blockWatcher) broadcast(ctx context.Context, blockedID string) {
 		return // it cleared, ended or vanished — nothing to report
 	}
 
+	// A worker dispatched from another hub tells THAT hub's manager, over the
+	// return channel (remotedispatch.go). This runs BESIDE the local fan-out
+	// rather than instead of it, and the difference from the finish route is
+	// deliberate: a finish is the parent's dispatch coming home and belongs to
+	// one recipient, but a block is "somebody please look at this", and the
+	// local managers were always going to be told about any blocked worker on
+	// this machine. The origin's manager is an ADDITIONAL recipient, which is
+	// exactly what it is for a local block too.
+	//
+	// Emitted before the lock below, since publishing is I/O.
+	if dispatchID := b.reg.remoteDispatchID(blockedID); dispatchID != "" {
+		b.reg.emitDispatchUpdate(dispatchID, dispatchKindBlocked, blockedID, fleetEntry{
+			// A blocked bullet carries no cwd: the parser's `where` slot holds
+			// EITHER a cwd or the block kind, never both.
+			Label:     blocked.displayLabel(),
+			SessionID: blocked.SessionID,
+			BlockedOn: blockedOnKind(blocked.AmbientState),
+		}, false)
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, m := range all {

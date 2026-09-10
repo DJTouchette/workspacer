@@ -55,6 +55,24 @@ type Peer struct {
 	Name  string // the label stamped on forwarded envelopes; must be unique
 	URL   string // ws://host:7895/bus
 	Token string // a scoped token minted BY THE PEER (workspacer token create)
+
+	// Dispatch is the EXPLICIT opt-in that makes this linked machine a worker
+	// EXECUTION TARGET for a manager running here — the origin half of
+	// docs/remote-worker-dispatch.md.
+	//
+	// It is deliberately a separate bit from being linked at all. Linking a
+	// machine means "show me its fleet and let me act on its cards"; it must not
+	// silently also mean "agents on this machine may open a return channel that
+	// injects turns into my managers' conversations". Ambient all-hubs trust is
+	// exactly the thing the design refuses: a peer is a dispatch target because
+	// the operator ticked it, machine by machine.
+	//
+	// It grants the peer NOTHING here. All it does is let the local router stamp
+	// per-dispatch provenance on an outbound agents.spawn (rpc.go,
+	// federatedCall) so the answer has somewhere legitimate to land. A peer
+	// without it still federates, still shows cards, and a spawn to it still
+	// works exactly as before — fire-and-forget, with no wake coming home.
+	Dispatch bool
 }
 
 // ParsePeerFlag parses one repeatable -peer value:
@@ -78,8 +96,10 @@ func ParsePeerFlag(s string) (Peer, error) {
 			p.URL = strings.TrimSpace(v)
 		case "token":
 			p.Token = strings.TrimSpace(v)
+		case "dispatch":
+			p.Dispatch = strings.EqualFold(strings.TrimSpace(v), "true") || strings.TrimSpace(v) == "1"
 		default:
-			return Peer{}, fmt.Errorf("peer %q: unknown key %q (want name, url, token)", s, k)
+			return Peer{}, fmt.Errorf("peer %q: unknown key %q (want name, url, token, dispatch)", s, k)
 		}
 	}
 	if p.Name == "" || p.URL == "" {
@@ -279,6 +299,18 @@ func (m *Manager) HasPeer(name string) bool {
 	return m.Client(name) != nil
 }
 
+// DispatchEnabled implements bus.Federation: is this peer an operator-enabled
+// worker execution target (Peer.Dispatch)? An unknown peer is false, so the
+// caller never has to distinguish "not a target" from "not linked".
+func (m *Manager) DispatchEnabled(name string) bool {
+	for _, l := range m.links {
+		if l.peer.Name == name {
+			return l.peer.Dispatch
+		}
+	}
+	return false
+}
+
 // Forward implements bus.Federation: invoke the bare method on the peer over
 // its link and return the raw result. The peer authorizes the call against the
 // LINK token's scope — that grant is the ceiling on everything forwarded here,
@@ -319,13 +351,17 @@ func LoadPeersFile(path string) ([]Peer, error) {
 		Name  string `json:"name"`
 		URL   string `json:"url"`
 		Token string `json:"token,omitempty"`
+		// TWIN: apps/desktop/src/main/services/federationPeersConfig.ts
+		// (FederationPeerEntry.dispatch). Absent = false, which is the safe
+		// reading for every peers.json written before this field existed.
+		Dispatch bool `json:"dispatch,omitempty"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	out := make([]Peer, 0, len(raw))
 	for _, r := range raw {
-		p := Peer{Name: strings.TrimSpace(r.Name), URL: strings.TrimSpace(r.URL), Token: r.Token}
+		p := Peer{Name: strings.TrimSpace(r.Name), URL: strings.TrimSpace(r.URL), Token: r.Token, Dispatch: r.Dispatch}
 		if p.Name == "" || p.URL == "" {
 			return nil, fmt.Errorf("%s: peer entries need name and url", path)
 		}
@@ -348,6 +384,11 @@ type PeerInfo struct {
 	Connected bool   `json:"connected"`
 	// LastSeen is unix milliseconds of the last observed liveness; 0 = never.
 	LastSeen int64 `json:"lastSeen,omitempty"`
+	// Dispatch mirrors Peer.Dispatch: is this linked machine an enabled worker
+	// execution target? Emitted unconditionally (no omitempty) so a client can
+	// tell "not a target" from "this hub is too old to have the concept" — the
+	// field is simply absent in the second case.
+	Dispatch bool `json:"dispatch"`
 }
 
 // PeersInfo reports every configured peer's current link state.
@@ -355,7 +396,7 @@ func (m *Manager) PeersInfo() []PeerInfo {
 	out := make([]PeerInfo, 0, len(m.links))
 	for _, l := range m.links {
 		l.mu.Lock()
-		info := PeerInfo{Name: l.peer.Name, Connected: l.connected}
+		info := PeerInfo{Name: l.peer.Name, Connected: l.connected, Dispatch: l.peer.Dispatch}
 		if !l.lastSeen.IsZero() {
 			info.LastSeen = l.lastSeen.UnixMilli()
 		}

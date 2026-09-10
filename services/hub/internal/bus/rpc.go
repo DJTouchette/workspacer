@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
 // LocalHandler is an in-process capability implementation. Unlike a WebSocket
@@ -70,6 +72,10 @@ const callTimeout = 30 * time.Second
 type Federation interface {
 	// HasPeer reports whether the named peer is configured.
 	HasPeer(name string) bool
+	// DispatchEnabled reports whether the operator explicitly enabled this peer
+	// as a WORKER EXECUTION TARGET (federation.Peer.Dispatch). Being linked is
+	// not consent for that: see remotedispatch.go. Unknown peers are false.
+	DispatchEnabled(name string) bool
 	// Forward invokes the BARE method on the peer over its federation link and
 	// returns the raw result. It must apply its own (shorter-than-callTimeout)
 	// budget so the peer-side failure is the one the caller sees, not an
@@ -121,6 +127,10 @@ type router struct {
 	// startup — see [Server.SetSpawnCeiling] — and both nil-safe.
 	spawnCeiling SpawnCeilingFunc
 	spawnAudit   SpawnAuditFunc
+	// publish emits a hub-owned event onto the local broker. Injected by
+	// NewServer (the router has no broker of its own) and nil in the router's
+	// own unit tests, so every use goes through publishDispatchEvent.
+	publish func(event.Envelope)
 }
 
 // ceilingHooks reads the injected pair under the lock.
@@ -707,6 +717,16 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 		delete(m, "dispatchOwnerSessionId")
 		delete(m, "retrySourceSessionId")
 	}
+	// `remoteOrigin` is stamped by a ROUTER FORWARDING A DISPATCH and by nothing
+	// else (remotedispatch.go). Deleting it from every non-federated caller is
+	// what makes it provenance rather than a claim: on the ORIGIN nobody can
+	// pre-seed an id the router is about to mint, and on the PEER a local client
+	// cannot manufacture a dispatch that would publish callbacks addressed at
+	// another machine's manager. A federation link keeps it — that link IS the
+	// origin hub, and the peer's own capability ceiling is still the link token.
+	if !caller.federated {
+		delete(m, remoteOriginKey)
+	}
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
 	delete(m, "escalationScrubbed")
@@ -1256,17 +1276,61 @@ func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 		return
 	}
 	f.Params = sanitized
+	// REMOTE WORKER DISPATCH (remotedispatch.go). An agents.spawn leaving for a
+	// peer the operator enabled as a worker target, on behalf of a manager
+	// session the sanitizer above let keep its identity, is stamped with an
+	// unguessable dispatch id so the peer's progress/blocked/finished callbacks
+	// have a legitimate address to come home to. Every other federated call —
+	// and every spawn that fails either test — is untouched.
+	var opened map[string]any
+	if bare == spawnMethod {
+		if params, rec, ok := stampRemoteOrigin(peer, f.Params, fed.DispatchEnabled(peer)); ok {
+			f.Params = params
+			opened = rec
+			// Published BEFORE the forward, deliberately: the peer can start the
+			// worker (and a fast worker can block on its first tool call) before
+			// the spawn result gets back here, so a record created only on
+			// success would have a window in which a legitimate callback names a
+			// dispatch the origin has never heard of.
+			rt.publishDispatchEvent(TopicDispatchOpened, rec)
+		}
+	}
 	// Off the read loop: the forward blocks on the peer's reply. The forwarder
 	// owns the (shorter) timeout, so the failure the caller sees names the
 	// federated hop rather than an ambiguous local deadline.
 	go func() {
 		res, err := fed.Forward(context.Background(), peer, bare, f.Params)
 		if err != nil {
+			if opened != nil {
+				// The spawn never started, so nothing will ever call back. Say so
+				// rather than leaving an open record that a reconnect would keep
+				// trying to replay — an ORPHANED DISPATCH is precisely the state
+				// this feature must not create. The failure text is carried so
+				// the manager's own tool result and the operator's record agree.
+				rt.publishDispatchEvent(TopicDispatchFailed, withField(opened, "error", err.Error()))
+			}
 			_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "hub:" + peer + ": " + err.Error()})
 			return
 		}
+		if opened != nil {
+			// Join the record to the peer's session id when the result carries
+			// one. Absent is not an error: routing keys on the dispatch id, and
+			// the id is what the peer echoes.
+			rt.publishDispatchEvent(TopicDispatchRegistered, withField(opened, "sessionId", spawnResultSessionID(res)))
+		}
 		_ = caller.send(Frame{Op: "result", ID: f.ID, Result: res})
 	}()
+}
+
+// withField copies a record and adds one field, so the opened-record map is
+// never mutated by the goroutine that publishes a follow-up about it.
+func withField(rec map[string]any, key string, value any) map[string]any {
+	out := make(map[string]any, len(rec)+1)
+	for k, v := range rec {
+		out[k] = v
+	}
+	out[key] = value
+	return out
 }
 
 // result routes a provider's reply (result or error) back to the caller.
