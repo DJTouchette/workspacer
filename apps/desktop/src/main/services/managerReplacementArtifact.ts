@@ -17,6 +17,7 @@ function samePath(a: string, b: string): boolean {
   return spelling(a) === spelling(b);
 }
 interface VerifiedPath {
+  spelling: string;
   volume: string;
   canonical: string;
   stat: fs.BigIntStats;
@@ -55,13 +56,16 @@ function verifyPath(value: string): VerifiedPath {
   const canonical = fs.realpathSync(value);
   if (!sameIdentity(stat, fs.statSync(canonical, { bigint: true })))
     throw new Error('path changed');
-  return { volume, canonical, stat };
+  return { spelling: value, volume, canonical, stat };
 }
 function sameLocation(a: VerifiedPath, b: VerifiedPath): boolean {
-  // No drive, UNC or mapped-drive alias expansion. Component spelling is not
-  // authority on Windows: case-sensitive directories must still have equal IDs.
+  // Case folding only limits which spellings can be candidates; the filesystem
+  // IDs below are the authority, including inside case-sensitive directories.
+  // Identity alone would also expand short-name aliases, outside this contract.
+  const candidate = (p: string) => (path.sep === '\\' ? p.replaceAll('/', '\\').toLowerCase() : p);
   return (
     samePath(a.volume, b.volume) &&
+    candidate(a.spelling) === candidate(b.spelling) &&
     (path.sep === '\\' || samePath(a.canonical, b.canonical)) &&
     sameIdentity(a.stat, b.stat)
   );

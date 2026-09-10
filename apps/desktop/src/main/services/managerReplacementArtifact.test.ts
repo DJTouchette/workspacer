@@ -161,15 +161,16 @@ it('rejects oversized briefs and invalid artifact UTF-8', () => {
   expect(() => validateManagerArtifact(f.op, receipt)).toThrow('valid UTF-8 bytes');
 });
 
-it.runIf(process.platform === 'win32')(
-  'verifies actual Windows root and file identities across component case',
-  () => {
+it.runIf(process.platform === 'win32').each(['metadata', 'projectCwds'] as const)(
+  'verifies actual Windows root and file identities across component case in %s',
+  (source) => {
     const f = fixture();
     const project = path.join(f.cwd, 'Users', 'Name');
     const projectBrief = path.join(project, '.workspacer', 'brief.md');
     fs.mkdirSync(path.dirname(projectBrief), { recursive: true });
     fs.writeFileSync(projectBrief, '## Now\r\n- Review the verified handoff\r\n');
-    f.op.projectCwds = [project];
+    if (source === 'metadata') f.op.metadata = [{ sessionId: 'worker', cwd: project }];
+    else f.op.projectCwds = [project];
     const pointer = path.join(project.toLowerCase(), '.workspacer', 'brief.md');
     expect(fs.statSync(pointer, { bigint: true }).ino).toBe(
       fs.statSync(projectBrief, { bigint: true }).ino,

@@ -194,3 +194,30 @@ it('rejects dot segments before any normalization can erase them', () => {
   f.write();
   expect(f.validate).toThrow('path is not an allowed brief pointer');
 });
+
+it('does not expand short-name aliases even when filesystem identities agree', () => {
+  const f = fixture('C:\\Users\\Manager', 'C:\\Users\\MANAGE~1', true);
+  const longName = (p: fs.PathLike) => String(p).replace('MANAGE~1', 'Manager');
+  const stat = (p: fs.PathLike) => f.stat(longName(p));
+  vi.mocked(fs.lstatSync).mockImplementation(stat as typeof fs.lstatSync);
+  vi.mocked(fs.statSync).mockImplementation(stat as typeof fs.statSync);
+  vi.mocked(fs.realpathSync).mockImplementation(longName as typeof fs.realpathSync);
+  expect(f.validate).toThrow('path is not an allowed brief pointer');
+  expect(fs.openSync).not.toHaveBeenCalled();
+});
+
+it.each([
+  'C:Users\\Manager\\.workspacer\\brief.md',
+  '\\Users\\Manager\\.workspacer\\brief.md',
+  'C:\\Users\\Manager.\\.workspacer\\brief.md',
+  'C:\\Users\\Manager \\.workspacer\\brief.md',
+  'C:\\Users\\Manager\\.workspacer\\brief.md:stream',
+  'C:\\Users\\Manager\\..\\Manager\\.workspacer\\brief.md',
+  'C:\\Users\\Manager\\\\.workspacer\\brief.md',
+])('rejects ambiguous or non-plain Windows pointer %s before opening a file', (pointer) => {
+  const f = fixture();
+  f.artifact.checkpoint.files[0].path = pointer;
+  f.write();
+  expect(f.validate).toThrow('path is not an allowed brief pointer');
+  expect(fs.openSync).not.toHaveBeenCalled();
+});

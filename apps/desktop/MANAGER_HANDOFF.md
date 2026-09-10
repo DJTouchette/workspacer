@@ -99,13 +99,22 @@ tests. Use the repository-pinned Node 22 for both desktop suites.
 Node's Win32 path implementation and fixture filesystem responses. Before the
 fix, both a lower-case drive changed by `realpath` and a forward-slash launch
 root reproduced `Checkpoint brief pointer or content hash is invalid` with
-correct SHA-256 values. Comparison now tolerates Windows drive-letter case and
-slash spelling only. Component case, dot segments, root containment, allowed
-basenames, link rejection, file limits and exact operation identity remain
-restricted. POSIX comparisons remain byte-exact.
+correct SHA-256 values. Checkpoint comparison now tolerates Windows drive-letter
+case and slash spelling, plus component case only when the filesystem proves
+the authored root and brief are the same directory and file as the host-known
+root and brief. This applies to fleet, worker-metadata and project roots.
+Every path component is inspected for links before realpath; directory and file
+identity use nonzero BigInt inode IDs together with device IDs. Case-sensitive
+Windows directories with different IDs remain distinct. Case folding only
+filters candidate spellings and never grants authority by itself; short-name,
+drive and UNC aliases are not expanded. POSIX comparisons remain byte-exact.
+Dot segments, ambiguous Windows components, allowed basenames, link rejection,
+file limits and exact operation identity remain restricted. The host opens the
+verified canonical brief and checks its file ID again before hashing its bytes.
 
 `managerReplacementArtifact.test.ts` uses native temporary files and includes a
-Windows-only drive/separator case. Both suites run in the existing
+Windows-only drive/separator and component-case cases for both metadata and
+project roots. Both suites run in the existing
 `containment-windows` CI job. Linux execution of the Win32 fixture is source
 coverage, not evidence of an executed Windows handoff.
 
@@ -127,6 +136,19 @@ offending checkpoint index/category, whether root/pointer/realpath differ in
 drive, slash or component case, whether the hash is 64 lowercase hex characters,
 and whether a locally computed digest matches it. Brief contents and full
 private paths are unnecessary.
+
+Recovery verification (2026-09-09, Linux, Node 22.22.2): the original seven-file
+commit was imported as `aba7ad7a`; the three interrupted source/test edits were
+banked exactly in `4242eb42`, with matching binary-diff SHA-256 and the old
+worktree preserved. After the candidate-spelling restriction and native metadata
+coverage were finished, the two artifact suites, service suite, real service
+integration fixture and message suite passed: 59 tests, three native Windows
+cases skipped. Main and renderer typechecks ran sequentially and passed;
+changed TypeScript formatting and `git diff --check` passed. Checks used private
+worktree dependencies, temp/config directories and fixture provider/daemon
+boundaries. Native Windows CI and a real Windows handoff remain unexecuted here;
+the exact remote failed predicate remains unknown. Independent security review
+and manager-controlled delivery remain pending.
 
 ## Combined integration for review
 
