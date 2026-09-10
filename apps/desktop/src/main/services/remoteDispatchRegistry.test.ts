@@ -152,6 +152,10 @@ it.each([
   { name: 'acknowledged terminal', evidence: 'terminal', delivering: true, acknowledged: true },
 ] as const)('applies replay-unknown precedence for $name', ({ evidence, delivering, acknowledged }) => {
   const { registry, file, update } = fixture();
+  const input = 'Worker outcome is unknown; reconcile before retrying';
+  // A newly retained terminal packet must outrank even an identical earlier
+  // generic note, before the delivery guard has been created.
+  if (evidence === 'terminal' && !delivering) registry.markLost(update.dispatchId, input);
   if (evidence !== 'none') registry.retainEvidence(update.dispatchId, {
     ...update,
     kind: evidence === 'terminal' ? 'worker-finished' : 'progress',
@@ -161,7 +165,6 @@ it.each([
   if (acknowledged) registry.acknowledge(update.dispatchId, update);
   const before = structuredClone(registry.list()[0]);
   const retained = registry.list()[0].lastUpdate;
-  const input = 'Worker outcome is unknown; reconcile before retrying';
   registry.markLost(update.dispatchId, input);
   const after = structuredClone(registry.list()[0]);
   if (acknowledged) expect(after).toEqual(before);
