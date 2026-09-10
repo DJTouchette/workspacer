@@ -300,17 +300,59 @@ it('shows the PR chip immediately from a persisted production resolver result', 
   const { DispatchHistoryStore } = await import('../../../../main/services/dispatchHistoryStore');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inspector-resolver-'));
   const store = new DispatchHistoryStore(() => path.join(dir, 'history.json'));
-  const service = new ManagerRequestService(store,
+  const service = new ManagerRequestService(
+    store,
     (id) => ({ sessionId: id, cwd: dir, isWakeTarget: true, status: 'active' }),
-    () => ({ hash: 'fixture', templates: {}, definition: { id: 'fixture', name: 'Fixture', revision: 1, enabled: true, description: '', steps: [] }, steps: [] }));
+    () => ({
+      hash: 'fixture',
+      templates: {},
+      definition: {
+        id: 'fixture',
+        name: 'Fixture',
+        revision: 1,
+        enabled: true,
+        description: '',
+        steps: [],
+      },
+      steps: [],
+    }),
+  );
   let view: ReturnType<typeof render> | undefined;
   try {
-    const request = service.prepare('manager', 'Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492');
+    const request = service.prepare(
+      'manager',
+      'Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492',
+    );
     if (!request.available) throw new Error('Capture unavailable');
     const delivery = service.beginDelivery('manager', request.requestId)!;
     service.finishDelivery(request.requestId, delivery.deliveryId, 'accepted');
-    expect(service.handle({ op: 'resolveRequest', requestId: request.requestId, expectedRevision: service.request('manager', request.requestId).revision, intents: [{ key: 'fix', kind: 'create', title: 'Fix PR', cwd: dir, provenance: 'explicit', reason: 'Original user request' }] }, 'manager').ok).toBe(true);
-    window.electronAPI = { dispatchHistoryRead: async () => ({ available: true, currentOwnerSessionId: 'manager', tasks: store.list() }) } as unknown as ElectronAPI;
+    expect(
+      service.handle(
+        {
+          op: 'resolveRequest',
+          requestId: request.requestId,
+          expectedRevision: service.request('manager', request.requestId).revision,
+          intents: [
+            {
+              key: 'fix',
+              kind: 'create',
+              title: 'Fix PR',
+              cwd: dir,
+              provenance: 'explicit',
+              reason: 'Original user request',
+            },
+          ],
+        },
+        'manager',
+      ).ok,
+    ).toBe(true);
+    window.electronAPI = {
+      dispatchHistoryRead: async () => ({
+        available: true,
+        currentOwnerSessionId: 'manager',
+        tasks: store.list(),
+      }),
+    } as unknown as ElectronAPI;
     view = render(<TaskInspector />);
     expect(await screen.findByText('PR 9492')).toBeVisible();
   } finally {

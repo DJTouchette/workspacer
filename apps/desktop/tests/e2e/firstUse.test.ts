@@ -995,6 +995,7 @@ test('manager request receipt fits 360px and disappears without a routine compos
 }, info) => {
   await page.setViewportSize({ width: 360, height: 900 });
   await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
   await page.getByLabel('Ask the Fleet Manager').fill('Initial request');
   await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
   await expect

@@ -246,7 +246,10 @@ describe('timeAgo', () => {
 });
 
 it('keeps manager request receipts in-app even when unfocused', () => {
-  const receipt = normalizeNotification({ title: 'Request received', source: 'manager-request' }, 'app')!;
+  const receipt = normalizeNotification(
+    { title: 'Request received', source: 'manager-request' },
+    'app',
+  )!;
   expect(shouldEscalate(receipt, 'renderer', false)).toBe(false);
   expect(shouldEscalate({ ...receipt, source: 'app' }, 'renderer', false)).toBe(true);
 });
