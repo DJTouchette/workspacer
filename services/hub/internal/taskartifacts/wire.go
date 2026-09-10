@@ -26,6 +26,63 @@ func Decode(raw []byte, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
+// CheckJSON runs before a router rewrites identity fields; otherwise decoding
+// into a map would already have erased duplicate-key evidence.
+func CheckJSON(raw []byte) error {
+	if len(raw) > 1<<20 {
+		return fmt.Errorf("handoff payload exceeds wire limit")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	var walk func(int) error
+	walk = func(depth int) error {
+		if depth > 16 {
+			return fmt.Errorf("handoff nesting exceeds limit")
+		}
+		t, err := d.Token()
+		if err != nil {
+			return err
+		}
+		if delim, ok := t.(json.Delim); ok {
+			switch delim {
+			case '{':
+				seen := map[string]bool{}
+				for d.More() {
+					key, err := d.Token()
+					if err != nil {
+						return err
+					}
+					name, ok := key.(string)
+					if !ok || seen[strings.ToLower(name)] {
+						return fmt.Errorf("duplicate or aliased handoff key")
+					}
+					seen[strings.ToLower(name)] = true
+					if err := walk(depth + 1); err != nil {
+						return err
+					}
+				}
+			case '[':
+				for d.More() {
+					if err := walk(depth + 1); err != nil {
+						return err
+					}
+				}
+			default:
+				return fmt.Errorf("invalid handoff JSON")
+			}
+			_, err := d.Token()
+			return err
+		}
+		return nil
+	}
+	if err := walk(0); err != nil {
+		return err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return fmt.Errorf("trailing handoff JSON")
+	}
+	return nil
+}
+
 func validateValue(d *json.Decoder, typ reflect.Type) error {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/taskartifacts"
 )
 
 // LocalHandler is an in-process capability implementation. Unlike a WebSocket
@@ -1093,6 +1094,9 @@ var methodSanitizers = map[string]paramSanitizer{
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
 func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) (json.RawMessage, error) {
 	if method == "agents.taskHandoff" {
+		if err := taskartifacts.CheckJSON(raw); err != nil {
+			return nil, err
+		}
 		// This is task-scoped transfer authority, not the generic image-upload
 		// grant. Identity comes from this connection on every operation.
 		if caller.pluginID != "" || (!caller.trusted && !caller.viaScopedToken) {

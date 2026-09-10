@@ -1,5 +1,7 @@
 name: workspace-handoff
 on:
+  push:
+    branches: [wks/workspacer-automate-git-and-report-hando]
   workflow_dispatch:
 permissions:
   contents: read

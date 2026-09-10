@@ -106,7 +106,7 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 		return "", "", err
 	}
 	for _, key := range strings.Fields(strings.ToLower(string(config))) {
-		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "core.sparsecheckout" {
+		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasPrefix(key, "url.") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "core.sparsecheckout" {
 			return "", "", fmt.Errorf("unsupported checkpoint configuration: %s", key)
 		}
 	}
@@ -155,8 +155,17 @@ func VerifyTree(ctx context.Context, repo, commit string) error {
 				return fmt.Errorf("unsupported code materialization input: %s", name)
 			}
 		}
-		if err := ValidName(strings.ReplaceAll(name, "/.", "/_")); err != nil && !strings.HasPrefix(name, ".") {
-			return err
+		parts := strings.Split(name, "/")
+		for _, part := range parts {
+			if part == "." || part == ".." {
+				return fmt.Errorf("invalid code path")
+			}
+			if err := ValidName("_" + strings.TrimPrefix(part, ".")); err != nil {
+				return err
+			}
+			if reserved.MatchString(part) {
+				return fmt.Errorf("reserved code path: %s", name)
+			}
 		}
 		key := strings.ToLower(name)
 		if seen[key] {
