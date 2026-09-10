@@ -3,6 +3,11 @@ on:
   push:
     branches: [wks/workspacer-automate-git-and-report-hando]
   workflow_dispatch:
+    inputs:
+      format_only:
+        description: Produce the formatting patch without duplicating active test runs
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -36,17 +41,18 @@ jobs:
           name: handoff-format
           path: handoff-format.patch
       - name: Typecheck
+        if: ${{ !inputs.format_only }}
         working-directory: apps/desktop
         run: npm run typecheck
       - name: Full desktop regression suites
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.format_only }}
         working-directory: apps/desktop
         run: npm test
       - name: Full hub regression suites
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.format_only }}
         working-directory: services/hub
         run: go test -race -count=1 ./...
       - name: Real MCP and paired workspace fixtures
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.format_only }}
         working-directory: apps/desktop
         run: npm run test:dispatch-chain
