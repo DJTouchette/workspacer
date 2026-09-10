@@ -330,7 +330,21 @@ jobs:
       # guard case that proves it searches the path the guard RETURNED has to run
       # the search to see where it looked. The Windows runner has no rg either.
       - name: Install ripgrep (search.project's engine)
-        run: choco install ripgrep -y --no-progress
+        shell: pwsh
+        run: |
+          # Pin the upstream archive: Chocolatey feed outages can report success
+          # without installing rg, making the later containment test misleading.
+          $rgArchive = Join-Path $env:RUNNER_TEMP 'ripgrep.zip'
+          $rgRoot = Join-Path $env:RUNNER_TEMP 'ripgrep'
+          Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-pc-windows-msvc.zip' -OutFile $rgArchive -MaximumRetryCount 3
+          if ((Get-FileHash $rgArchive -Algorithm SHA256).Hash -ne '124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a') {
+            throw 'ripgrep archive checksum mismatch'
+          }
+          Expand-Archive -Path $rgArchive -DestinationPath $rgRoot
+          $rgBin = Join-Path $rgRoot 'ripgrep-15.1.0-x86_64-pc-windows-msvc'
+          Add-Content -Path $env:GITHUB_PATH -Value $rgBin
+          & (Join-Path $rgBin 'rg.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'ripgrep is not runnable' }
 
       - name: hub (Go) test
         working-directory: services/hub
