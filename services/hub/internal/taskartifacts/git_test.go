@@ -39,6 +39,20 @@ func TestCheckpointPreflightDoesNotExecuteRepositoryFilters(t *testing.T) {
 	if err := VerifyTree(ctx, repo, commit); err != nil {
 		t.Fatal(err)
 	}
+	child := filepath.Join(repo, "subdirectory")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CheckSource(ctx, child); err == nil {
+		t.Fatal("subdirectory mapping exported its parent repository")
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(repo, alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CheckSource(ctx, alias); err == nil {
+		t.Fatal("mutable source alias admitted")
+	}
 	marker := filepath.Join(repo, "filter-ran")
 	git("config", "filter.untrusted.clean", "touch "+marker)
 	if err := os.WriteFile(filepath.Join(repo, ".git/info/attributes"), []byte("* filter=untrusted\n"), 0600); err != nil {

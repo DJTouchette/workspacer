@@ -125,6 +125,14 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 	if err := checkTransferConfig(ctx, repo); err != nil {
 		return "", "", err
 	}
+	canonical, err := filepath.EvalSymlinks(repo)
+	if err != nil || canonical != filepath.Clean(repo) {
+		return "", "", fmt.Errorf("checkpoint source must be a canonical repository root")
+	}
+	root, err := Git(ctx, repo, "", "rev-parse", "--show-toplevel")
+	if err != nil || filepath.Clean(strings.TrimSpace(string(root))) != canonical {
+		return "", "", fmt.Errorf("checkpoint source must name the whole approved repository, not a subdirectory")
+	}
 	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
 		return "", "", err
