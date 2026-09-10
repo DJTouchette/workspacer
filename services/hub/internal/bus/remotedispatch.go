@@ -67,6 +67,15 @@ const (
 	TopicDispatchUpdate = "agent.dispatch.update"
 )
 
+func isDispatchTopic(topic string) bool {
+	switch topic {
+	case TopicDispatchOpened, TopicDispatchRegistered, TopicDispatchFailed, TopicDispatchUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
 // remoteOriginKey is the spawn param the stamp lands on. It is in
 // spawnkeys.go's canonical set, so an aliased spelling is refused rather than
 // smuggled past the delete below.

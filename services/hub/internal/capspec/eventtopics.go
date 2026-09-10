@@ -125,6 +125,22 @@ type EventTopic struct {
 // publish call sites rather than this table, because a table that validates only
 // itself is the hand-maintained record this whole effort keeps replacing.
 var eventTopics = []EventTopic{
+	{
+		Pattern: "agent.dispatch.opened", Disposition: TopicHostOnly,
+		Reason: "private router admission record containing an origin manager and dispatch nonce; only the authenticated local host may receive it",
+	},
+	{
+		Pattern: "agent.dispatch.registered", Disposition: TopicHostOnly,
+		Reason: "private router receipt joining a dispatch nonce to the remote worker; only the authenticated local host may receive it",
+	},
+	{
+		Pattern: "agent.dispatch.failed", Disposition: TopicHostOnly,
+		Reason: "private router admission uncertainty containing a dispatch nonce; only the authenticated local host may receive it",
+	},
+	{
+		Pattern: "agent.dispatch.update", Disposition: TopicHostOnly, Publisher: "agents.spawn",
+		Reason: "worker result for the origin operator connection; view, triage and plugins cannot receive its dispatch nonce, and only the local host or spawn provider can publish it",
+	},
 	// ---- the PTY family -------------------------------------------------
 	// One stream, three topics. Round 6 guarded the first by name and left its
 	// two siblings open, which is what "fix the leg, not the class" looks like.

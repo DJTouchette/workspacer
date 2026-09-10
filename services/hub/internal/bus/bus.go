@@ -1107,6 +1107,12 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 				_ = cn.send(Frame{Op: "error", Error: "publish missing event"})
 				continue
 			}
+			// A dispatch's hub stamp is assigned only by our outbound link.
+			// Even a host publisher cannot supply a peer identity in the payload.
+			if isDispatchTopic(f.Event.Type) && f.Event.Hub != "" {
+				_ = cn.send(Frame{Op: "error", Error: "dispatch events cannot assert a hub identity"})
+				continue
+			}
 			// A plugin may publish only the event types its manifest declared in
 			// `emits`. This is the gate that stops an untrusted plugin from, e.g.,
 			// publishing a `command.*` event to drive the app without holding the
@@ -1437,6 +1443,13 @@ func (cn *conn) mayPublish(typ string) bool {
 	if cn.revoked.Load() {
 		return false
 	}
+	if isDispatchTopic(typ) {
+		// Admission records originate in the router, never on a socket. An
+		// operator pairing may request work but cannot manufacture its receipt
+		// or its result. Only our host or a spawn provider can report a worker.
+		return typ == TopicDispatchUpdate && !cn.federated &&
+			(cn.authenticatedHost || (cn.providerTier() && cn.mayProvide(spawnMethod)))
+	}
 	if cn.trusted {
 		return true
 	}
@@ -1515,6 +1528,11 @@ func (cn *conn) mayConsume(typ string) bool {
 	// the very hole this check exists for.
 	if cn.revoked.Load() {
 		return false
+	}
+	if isDispatchTopic(typ) && typ != TopicDispatchUpdate {
+		// The nonce and local owner are private admission state. In particular,
+		// another operator peer must not learn them from the ordinary fleet feed.
+		return cn.authenticatedHost
 	}
 	if cn.trusted {
 		return true

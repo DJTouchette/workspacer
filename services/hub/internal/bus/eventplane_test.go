@@ -56,19 +56,28 @@ import (
 // open row is every column true. Neither can be reached by editing eventtopics.go
 // alone.
 type topicDelivery struct {
-	topic string // the CONCRETE topic as it goes on the wire
-	view  bool
-	bare  bool
-	term  bool
-	watch bool
-	snap  bool
-	why   string
+	topic      string // the CONCRETE topic as it goes on the wire
+	view       bool
+	bare       bool
+	term       bool
+	watch      bool
+	snap       bool
+	noOperator bool // router-private records are not operator fleet events
+	why        string
 }
 
 // unclassifiedProbe is deliberately in no registry row: the plane's default.
 const unclassifiedProbe = "invented.topic.nobody.classified"
 
 var topicDeliveryKey = []topicDelivery{
+	{topic: "agent.dispatch.opened", noOperator: true,
+		why: "router-private nonce and origin manager; not disclosed to another operator peer"},
+	{topic: "agent.dispatch.registered", noOperator: true,
+		why: "router-private admission receipt; not operator-visible fleet state"},
+	{topic: "agent.dispatch.failed", noOperator: true,
+		why: "router-private admission uncertainty; not operator-visible fleet state"},
+	{topic: "agent.dispatch.update",
+		why: "result return channel for an operator connection; nonce is unavailable to view and plugins"},
 	// ---- the PTY family: the output of sessions.attachTerminal --------------
 	{topic: "pty.bytes.SECRET-42", term: true,
 		why: "raw PTY bytes with the ring-buffer replay — the output side of sessions.terminalInput, which no scoped tier holds"},
@@ -201,7 +210,7 @@ func (r topicDelivery) want(credential string) bool {
 	case "snap":
 		return r.snap
 	case "op":
-		return true
+		return !r.noOperator
 	}
 	return false
 }
@@ -239,6 +248,12 @@ func TestEachTopicReachesExactlyTheCredentialsEntitledToIt(t *testing.T) {
 
 	host := dialClientToken(t, url, "host-secret")
 	for _, row := range topicDeliveryKey {
+		if row.noOperator {
+			// Admission events can only be emitted inside the router.
+			srv.broker.Publish(event.Envelope{Type: row.topic,
+				Data: json.RawMessage(`{"secret":"MATRIX"}`)})
+			continue
+		}
 		host.send(Frame{Op: "publish", Event: &event.Envelope{Type: row.topic,
 			Data: json.RawMessage(`{"secret":"MATRIX"}`)}})
 	}

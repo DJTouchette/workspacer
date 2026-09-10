@@ -101,6 +101,22 @@
  },
  "topics": [
   {
+   "pattern": "agent.dispatch.opened",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "agent.dispatch.registered",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "agent.dispatch.failed",
+   "disposition": "host-only"
+  },
+  {
+   "pattern": "agent.dispatch.update",
+   "disposition": "host-only"
+  },
+  {
    "pattern": "agent.conversation.*",
    "disposition": "guarded-by-capability",
    "method": "sessions.conversation"
