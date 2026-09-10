@@ -86,6 +86,7 @@ type handoffRecord struct {
 	Custody     string                  `json:"custody,omitempty"`
 	AcceptedAt  int64                   `json:"acceptedAt,omitempty"`
 	Keep        bool                    `json:"keep,omitempty"`
+	Cleaning    bool                    `json:"cleaning,omitempty"`
 }
 
 type handoffRequest struct {
@@ -585,6 +586,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		return jsonResult(rec)
 	case "cleanup":
+		if rec.State == "cleaned" {
+			return jsonResult(rec)
+		}
 		if err := r.cleanupHandoff(ctx, binding, &rec, time.Now()); err != nil {
 			return nil, err
 		}
@@ -605,6 +609,22 @@ func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBind
 		return err
 	}
 	return nil
+}
+
+func deleteHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, commit, ref string) error {
+	got, err := binding.GitRemote(ctx, repo, "ls-remote", "--refs", "--", binding.Remote, ref)
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(got))
+	if len(fields) == 0 {
+		return nil
+	} // A previous compare-delete succeeded.
+	if len(fields) != 2 || fields[0] != commit || fields[1] != ref {
+		return fmt.Errorf("cleanup blocked: generated ref changed")
+	}
+	_, err = binding.GitRemote(ctx, repo, "push", "--porcelain", "--force-with-lease="+ref+":"+commit, "--", binding.Remote, ":"+ref)
+	return err
 }
 
 func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commit, format string, selections []handoffSelection, sourceBase, sourceRelative, dest string) (taskartifacts.Manifest, error) {
@@ -769,61 +789,102 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 	if !found || worker.Status != "ended" {
 		return fmt.Errorf("cleanup blocked: worker has not been verified stopped")
 	}
-	head, _, err := taskartifacts.CheckSource(ctx, rec.Allocation)
-	if err != nil || head != rec.Result.Commit {
-		return fmt.Errorf("cleanup blocked: checkpoint changed or worktree dirty")
+	_, allocationErr := os.Lstat(rec.Allocation)
+	allocationExists := allocationErr == nil
+	if allocationErr != nil && (!os.IsNotExist(allocationErr) || !rec.Cleaning) {
+		return fmt.Errorf("cleanup allocation missing before durable cleanup intent")
 	}
-	known := map[string]string{}
-	for _, m := range []taskartifacts.Manifest{rec.Plan.Input, *rec.Result} {
-		for _, e := range m.Entries {
-			known[".workspacer/handoffs/"+task+"/"+e.Name] = e.SHA256
+	if allocationExists {
+		head, _, err := taskartifacts.CheckSource(ctx, rec.Allocation)
+		if err != nil || head != rec.Result.Commit {
+			return fmt.Errorf("cleanup blocked: checkpoint changed or worktree dirty")
+		}
+		known := map[string]string{}
+		for _, m := range []taskartifacts.Manifest{rec.Plan.Input, *rec.Result} {
+			for _, e := range m.Entries {
+				known[".workspacer/handoffs/"+task+"/"+e.Name] = e.SHA256
+			}
+		}
+		ignored, err := taskartifacts.Git(ctx, rec.Allocation, "", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+		if err != nil {
+			return err
+		}
+		for _, name := range strings.Split(string(ignored), "\x00") {
+			if name == "" {
+				continue
+			}
+			expected, ok := known[name]
+			info, e := os.Lstat(filepath.Join(rec.Allocation, name))
+			if !ok || e != nil || !info.Mode().IsRegular() || info.Size() > taskartifacts.FileBytes {
+				return fmt.Errorf("cleanup blocked: unexpected ignored file")
+			}
+			b, e := os.ReadFile(filepath.Join(rec.Allocation, name))
+			if e != nil || taskartifacts.Digest(b) != expected {
+				return fmt.Errorf("cleanup blocked: artifact changed after sealing")
+			}
 		}
 	}
-	ignored, err := taskartifacts.Git(ctx, rec.Allocation, "", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
-	if err != nil {
+	// Validate all remaining spool entries before deleting any byte. Missing
+	// entries are allowed only after the durable cleanup intent was recorded.
+	for direction, m := range map[string]taskartifacts.Manifest{"input": rec.Plan.Input, "result": *rec.Result} {
+		folder := filepath.Join(dir, direction)
+		files, err := os.ReadDir(folder)
+		if err != nil {
+			if os.IsNotExist(err) && rec.Cleaning {
+				continue
+			}
+			return err
+		}
+		if !rec.Cleaning && len(files) != len(m.Entries) {
+			return fmt.Errorf("cleanup blocked: unexpected staging files")
+		}
+		for _, file := range files {
+			matched := false
+			for i, entry := range m.Entries {
+				if file.Name() != fmt.Sprintf("%d.bytes", i) {
+					continue
+				}
+				info, err := file.Info()
+				if err != nil || !info.Mode().IsRegular() || info.Size() != entry.Size {
+					return fmt.Errorf("cleanup staging file changed")
+				}
+				b, err := os.ReadFile(filepath.Join(folder, file.Name()))
+				if err != nil || taskartifacts.Digest(b) != entry.SHA256 {
+					return fmt.Errorf("cleanup staging checksum changed")
+				}
+				matched = true
+			}
+			if !matched {
+				return fmt.Errorf("cleanup blocked: unexpected staging file")
+			}
+		}
+	}
+	rec.Cleaning = true
+	if err := saveHandoff(dir, rec); err != nil {
 		return err
-	}
-	for _, name := range strings.Split(string(ignored), "\x00") {
-		if name == "" {
-			continue
-		}
-		expected, ok := known[name]
-		info, e := os.Lstat(filepath.Join(rec.Allocation, name))
-		if !ok || e != nil || !info.Mode().IsRegular() || info.Size() > taskartifacts.FileBytes {
-			return fmt.Errorf("cleanup blocked: unexpected ignored file")
-		}
-		b, e := os.ReadFile(filepath.Join(rec.Allocation, name))
-		if e != nil || taskartifacts.Digest(b) != expected {
-			return fmt.Errorf("cleanup blocked: artifact changed after sealing")
-		}
 	}
 	// Compare-delete only this binding's exact generated refs. A moved ref is
 	// never force-deleted. Receiver custody survives every failure below.
 	for direction, commit := range map[string]string{"input": rec.Plan.Input.Commit, "result": rec.Result.Commit} {
 		ref, _ := binding.Ref(task, direction)
-		if _, err := binding.GitRemote(ctx, rec.Allocation, "push", "--porcelain", "--force-with-lease="+ref+":"+commit, "--", binding.Remote, ":"+ref); err != nil {
+		if err := deleteHandoffRef(ctx, binding, filepath.Join(dir, "input-git"), commit, ref); err != nil {
 			return fmt.Errorf("cleanup blocked: ref changed or approved remote unavailable")
 		}
 	}
-	if _, err := taskartifacts.Git(ctx, filepath.Join(dir, "input-git"), "", "worktree", "remove", "--", rec.Allocation); err != nil {
-		return fmt.Errorf("cleanup blocked: worktree removal refused")
+	if allocationExists {
+		if _, err := taskartifacts.Git(ctx, filepath.Join(dir, "input-git"), "", "worktree", "remove", "--", rec.Allocation); err != nil {
+			return fmt.Errorf("cleanup blocked: worktree removal refused")
+		}
 	}
 	// These directories contain only generated numeric files. Unexpected
 	// entries block deletion instead of broad RemoveAll on a task root.
 	for direction, m := range map[string]taskartifacts.Manifest{"input": rec.Plan.Input, "result": *rec.Result} {
-		files, err := os.ReadDir(filepath.Join(dir, direction))
-		if err != nil {
-			return err
-		}
-		if len(files) != len(m.Entries) {
-			return fmt.Errorf("cleanup blocked: unexpected staging files")
-		}
 		for i := range m.Entries {
-			if err := os.Remove(filepath.Join(dir, direction, fmt.Sprintf("%d.bytes", i))); err != nil {
+			if err := os.Remove(filepath.Join(dir, direction, fmt.Sprintf("%d.bytes", i))); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
-		if err := os.Remove(filepath.Join(dir, direction)); err != nil {
+		if err := os.Remove(filepath.Join(dir, direction)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

@@ -270,6 +270,7 @@ func TestHandoffHTTPSRoundTripAndRestart(t *testing.T) {
 			if cleaned.State != "cleaned" {
 				t.Fatal("accepted cleanup did not finish")
 			}
+			must(target, binding.Owner, "cleanup", nil)
 			if _, err := os.Stat(prepared.Allocation); !os.IsNotExist(err) {
 				t.Fatal("execution worktree not cleaned")
 			}
