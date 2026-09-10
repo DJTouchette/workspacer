@@ -149,10 +149,18 @@ describe('web backend bus integration', () => {
   it('keeps paired worker actions on the local credential-owning host route', async () => {
     const api = createWebBackend('token', 'ws://host.test/bus');
     const off = api.onClaudeSessionUpdate(vi.fn());
-    client().emit('agent.snapshot', {sessionId:'paired:worker',hub:'@paired',status:'active',ambientState:'idle'});
-    client().results.set('claude.setModel',{ok:true,model:'sonnet'});
-    await api.claudeSetModel('paired:worker','sonnet');
-    expect(call('claude.setModel').at(-1)?.params).toMatchObject({sessionId:'paired:worker',model:'sonnet'});
+    client().emit('agent.snapshot', {
+      sessionId: 'paired:worker',
+      hub: '@paired',
+      status: 'active',
+      ambientState: 'idle',
+    });
+    client().results.set('claude.setModel', { ok: true, model: 'sonnet' });
+    await api.claudeSetModel('paired:worker', 'sonnet');
+    expect(call('claude.setModel').at(-1)?.params).toMatchObject({
+      sessionId: 'paired:worker',
+      model: 'sonnet',
+    });
     expect(call('hub:@paired/claude.setModel')).toHaveLength(0);
     off();
   });

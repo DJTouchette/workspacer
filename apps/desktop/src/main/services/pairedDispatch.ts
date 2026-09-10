@@ -36,8 +36,13 @@ function projectPairedSnapshot(
   try {
     dispatchHistoryStore.observeRemote(
       record.localSessionId,
-      snapshot.status === 'ended' ? 'ended' : state === 'idle' ? 'idle' :
-        ['waiting_approval', 'waiting_input'].includes(state) ? 'needs-decision' : 'running',
+      snapshot.status === 'ended'
+        ? 'ended'
+        : state === 'idle'
+          ? 'idle'
+          : ['waiting_approval', 'waiting_input'].includes(state)
+            ? 'needs-decision'
+            : 'running',
       record.state === 'done',
     );
   } catch {
@@ -61,7 +66,12 @@ export function startPairedDispatch(): void {
   connection.onConnected = () => {
     for (const record of registry.list()) {
       if (record.peer === pairedDestinationKey() && record.state === 'done') {
-        void connection.call('agents.dispatchReplay', {dispatchId:record.dispatchId, ackedSeq:record.ackedSeq}).catch(() => {});
+        void connection
+          .call('agents.dispatchReplay', {
+            dispatchId: record.dispatchId,
+            ackedSeq: record.ackedSeq,
+          })
+          .catch(() => {});
       }
     }
     for (const record of registry.openForPeer(pairedDestinationKey())) {
@@ -127,7 +137,13 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   }
   dispatchHistoryStore.observeRemote(
     entry.sessionId,
-    update.kind === 'blocked' ? 'needs-decision' : update.final ? entry.stopped ? 'ended' : 'idle' : 'running',
+    update.kind === 'blocked'
+      ? 'needs-decision'
+      : update.final
+        ? entry.stopped
+          ? 'ended'
+          : 'idle'
+        : 'running',
     update.final,
   );
   const text =
@@ -143,7 +159,9 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   }
   registry.acknowledge(record.dispatchId, update);
   if (update.final) {
-    void connection.call('agents.dispatchReplay', {dispatchId:record.dispatchId, ackedSeq:update.seq}).catch(() => {});
+    void connection
+      .call('agents.dispatchReplay', { dispatchId: record.dispatchId, ackedSeq: update.seq })
+      .catch(() => {});
   }
 }
 

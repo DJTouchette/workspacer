@@ -13,7 +13,15 @@ export const HubChip: React.FC<{
   style?: React.CSSProperties;
 }> = ({ name, offline, style }) => (
   <span
-    title={name === '@paired' ? (offline ? 'Paired worker server is offline' : 'Runs on the paired worker server; manager stays on this desktop') : offline ? `hub ${name} is offline` : `on hub ${name}`}
+    title={
+      name === '@paired'
+        ? offline
+          ? 'Paired worker server is offline'
+          : 'Runs on the paired worker server; manager stays on this desktop'
+        : offline
+          ? `hub ${name} is offline`
+          : `on hub ${name}`
+    }
     style={{
       display: 'inline-flex',
       alignItems: 'center',

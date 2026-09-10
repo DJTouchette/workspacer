@@ -461,11 +461,7 @@ export class DispatchHistoryStore {
   }
   /** Only authenticated paired dispatch records can drive this projection. No
    * remote path is opened and no remote snapshot becomes a local fs grant. */
-  observeRemote(
-    sessionId: string,
-    lifecycle: DispatchAttempt['lifecycle'],
-    final = false,
-  ): void {
+  observeRemote(sessionId: string, lifecycle: DispatchAttempt['lifecycle'], final = false): void {
     if (!this.writing)
       return this.transaction(() => this.observeRemote(sessionId, lifecycle, final));
     const found = this.find(sessionId);
@@ -482,7 +478,12 @@ export class DispatchHistoryStore {
     attempt.metrics.wallMs = Math.max(0, Date.parse(now) - Date.parse(attempt.acceptedAt));
     const step = found.task.workflow?.steps.find((s) => s.sessionId === sessionId);
     if (step && step.state !== 'waived' && !final && attempt.resultContract === 'absent')
-      step.state = lifecycle === 'needs-decision' ? 'blocked' : lifecycle === 'ended' ? 'failed' : 'dispatched';
+      step.state =
+        lifecycle === 'needs-decision'
+          ? 'blocked'
+          : lifecycle === 'ended'
+            ? 'failed'
+            : 'dispatched';
     this.flush();
   }
 

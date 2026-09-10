@@ -80,20 +80,27 @@ func probeProviderLogin(ctx context.Context, binary, provider string) *bool {
 	if ctx.Err() != nil || output.over {
 		return nil
 	}
+	return providerLoginFromOutput(provider, output.buf.Bytes(), err == nil)
+}
+
+func providerLoginFromOutput(provider string, output []byte, success bool) *bool {
 	if provider == "claude" {
 		var status struct {
 			LoggedIn *bool `json:"loggedIn"`
 		}
-		if json.Unmarshal([]byte(output.buf.String()), &status) == nil {
+		if json.Unmarshal(output, &status) == nil {
+			if status.LoggedIn != nil && *status.LoggedIn && !success {
+				return nil
+			}
 			return status.LoggedIn
 		}
 		return nil
 	}
-	if err == nil && strings.Contains(strings.ToLower(output.buf.String()), "logged in") {
-		return boolPtr(true)
-	}
-	if strings.Contains(strings.ToLower(output.buf.String()), "not logged in") {
+	if strings.Contains(strings.ToLower(string(output)), "not logged in") {
 		return boolPtr(false)
+	}
+	if success && strings.Contains(strings.ToLower(string(output)), "logged in") {
+		return boolPtr(true)
 	}
 	return nil
 }
