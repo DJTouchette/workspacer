@@ -459,6 +459,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if !binding.Export || rec.Allocation == "" {
 			return nil, fmt.Errorf("result export is not authorized")
 		}
+		if rec.State != "prepared" && rec.State != "needs-checkpoint" && rec.State != "result-sealed" {
+			return nil, fmt.Errorf("handoff is not an execution result eligible for sealing")
+		}
 		if rec.State == "result-sealed" {
 			return jsonResult(rec)
 		}
