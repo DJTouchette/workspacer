@@ -1181,7 +1181,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
     const record = remoteDispatchRegistry
       .list()
       .find((r) => r.localSessionId === result.value.sessionId)!;
-    const reconnect = async (mode: string) => {
+    const reconnect = async (mode: string, target = record) => {
       await fetch(ready.control + '/control', {
         method: 'POST',
         body: JSON.stringify({ kind: mode }),
@@ -1195,7 +1195,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
           ([method, params], i) =>
             i >= from &&
             method === 'agents.dispatchReplay' &&
-            (params as { dispatchId?: string })?.dispatchId === record.dispatchId,
+            (params as { dispatchId?: string })?.dispatchId === target.dispatchId,
         );
         expect(index).toBeGreaterThanOrEqual(0);
       });
@@ -1302,6 +1302,87 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(record.state).toBe('done');
     expect(wakes()).toHaveLength(1);
     expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(1);
+
+    // A separate real dispatch retains its terminal packet, then its manager
+    // send fails. Do not manufacture this state by reopening an acknowledged
+    // receipt: exercise retainEvidence -> beginDelivery -> uncertain send.
+    await fetch(ready.control + '/control', {
+      method: 'POST', body: JSON.stringify({ kind: 'replay-known' }),
+    });
+    const next = await mcpTool('session:manager-other', 'start_workflow', {
+      cwd: project, title: 'Retained outcome with uncertain manager wake',
+    });
+    expect(next.isError, next.text).toBe(false);
+    await mcpTool('session:manager-other', 'decide_workflow_step', {
+      cwd: project, taskId: next.value.task.taskId, stepId: 'scout', run: false,
+      reason: 'Exercise the existing paired result receipt',
+    });
+    const uncertain = await mcpSpawn('session:manager-other', {
+      provider: 'claude', model: route.value.model, capability: route.value.capability,
+      decisionId: route.value.decisionId, role: 'implementer', executionTarget: 'paired',
+      remoteCwd: ready.repo, parentSessionId: 'manager-other', taskId: next.value.task.taskId,
+      workflowStepId: 'implement', stage: 'implement', template: 'ship-task',
+      templateParams: { task: 'Return the retained outcome fixture' }, toolScope: 'view',
+    });
+    expect(uncertain.isError, uncertain.text).toBe(false);
+    const pending = remoteDispatchRegistry.list().find((r) =>
+      r.localSessionId === uncertain.value.sessionId)!;
+    delivery.mockRejectedValueOnce(new Error('fixture: manager wake delivery uncertain'));
+    await fetch(ready.control + '/control', {
+      method: 'POST', body: JSON.stringify({
+        kind: 'finish', reply: 'Known terminal outcome.\n```wks-result\n{"commit":"retained-outcome"}\n```',
+      }),
+    });
+    await vi.waitFor(() => {
+      expect(pending.lastUpdate?.final).toBe(true);
+      expect(pending.deliveringSeq).toEqual(expect.any(Number));
+      expect(pending.deliveringSeq).toBe(pending.lastUpdate?.seq);
+      expect(pending.note).toContain('delivery is unknown');
+    }, { timeout: 10_000 });
+    const pendingBefore = structuredClone(pending);
+    const terminalEvidence = pending.lastUpdate;
+    const attempts = delivery.mock.calls.length;
+    expect(pendingBefore.state).toBe('open');
+    expect(pendingBefore.ackedSeq).toBe(0);
+    const journalBefore = fs.readFileSync(journal, 'utf8');
+    fs.rmSync(journal);
+    fs.mkdirSync(journal);
+    await reconnect('replay-unknown', pending);
+    expect(pending).toEqual(pendingBefore);
+    expect(pending.lastUpdate).toBe(terminalEvidence);
+    fs.rmdirSync(journal);
+    fs.writeFileSync(journal, journalBefore);
+    await reconnect('replay-unknown', pending);
+    expect(pending.note).toContain('terminal outcome is retained locally');
+    expect(pending.note).toContain('wake delivery is unconfirmed');
+    expect(pending.note).not.toContain('Worker outcome is unknown');
+    expect(pending).toEqual({ ...pendingBefore, note: pending.note });
+    expect(pending.lastUpdate).toBe(terminalEvidence);
+    const precise = structuredClone(pending);
+    const preciseInode = fs.statSync(journal).ino;
+    await reconnect('replay-unknown', pending);
+    expect(pending).toEqual(precise);
+    expect(fs.statSync(journal).ino).toBe(preciseInode);
+    const saved = JSON.parse(fs.readFileSync(journal, 'utf8')).find(
+      (r: { dispatchId: string }) => r.dispatchId === pending.dispatchId,
+    );
+    expect(saved.lastUpdate).toEqual(terminalEvidence);
+    expect(saved.deliveringSeq).toBe(pendingBefore.deliveringSeq);
+    expect(saved.note).toBe(precise.note);
+    const accepts = vi.spyOn(remoteDispatchRegistry, 'accept');
+    try {
+      await reconnect('replay-known', pending);
+      await vi.waitFor(() => expect(accepts.mock.results.some((r, i) =>
+        (accepts.mock.calls[i][1] as { dispatchId?: string })?.dispatchId === pending.dispatchId &&
+        r.type === 'return' && !r.value.ok && r.value.reason === 'delivery-unknown',
+      )).toBe(true));
+    } finally { accepts.mockRestore(); }
+    expect(pending).toEqual(precise);
+    expect(pending.lastUpdate).toBe(terminalEvidence);
+    expect(delivery.mock.calls).toHaveLength(attempts);
+    expect(launch.mock.calls).toHaveLength(localLaunches);
+    expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
+    expect(record).toEqual(completed);
   } finally {
     setRemoteServer(null);
     pairedWorkerConnection.stop();

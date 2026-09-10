@@ -274,10 +274,17 @@ export class RemoteDispatchRegistry {
    *  operator can see is recoverable; one that stays pending forever is not. */
   markLost(dispatchId: string, note: string): void {
     const record = this.records.get(dispatchId);
-    if (!record || record.state !== 'open' || record.note === note) return;
+    if (!record || record.state !== 'open') return;
+    // Remote journal loss cannot erase a locally retained terminal outcome.
+    // An open receipt means delivery is unconfirmed, not that the outcome is
+    // unknown. Nonterminal evidence still cannot establish an outcome.
+    const projectedNote = record.lastUpdate?.final === true
+      ? 'The remote server no longer has a record of this dispatch. The terminal outcome is retained locally; manager wake delivery is unconfirmed. Reconcile delivery without repeating the spawn or wake.'
+      : note;
+    if (record.note === projectedNote) return;
     // Peer ignorance is not proof a worker ended. Keep the origin record open.
     const previous = record.note;
-    record.note = note;
+    record.note = projectedNote;
     try {
       this.persist();
     } catch (error) {
