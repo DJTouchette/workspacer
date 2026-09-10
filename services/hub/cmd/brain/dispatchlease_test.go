@@ -150,3 +150,29 @@ func TestTerminalAcknowledgementIsBoundToOriginAndSurvivesRestart(t *testing.T) 
 		t.Fatal("acknowledgement was not durable")
 	}
 }
+
+func TestRemoteFinishMissedDuringBrainRestartIsReconciledOnce(t *testing.T) {
+	rig := newWakeRig(t)
+	rig.reg.remote = newRemoteDispatchStore()
+	const id = "0123456789abcdef"
+	if err := rig.reg.remote.record(id, "remote-worker"); err != nil {
+		t.Fatal(err)
+	}
+	published := 0
+	rig.reg.publish = func(topic string, raw json.RawMessage) {
+		if topic == bus.TopicDispatchUpdate {
+			published++
+		}
+	}
+	now := time.Now()
+	rig.store.seed(map[string]json.RawMessage{"remote-worker": json.RawMessage(atTime("remote-worker", "/remote/repo", "input", now.Add(-fleetMissedWakeGrace-time.Minute)))})
+	rig.d.setConv("remote-worker", dispatched("Recovered remote final result"))
+	rig.fin.sweepMissedFinishes(context.Background(), now)
+	rig.fin.sweepMissedFinishes(context.Background(), now)
+	if published != 1 {
+		t.Fatalf("missed remote finish produced %d callbacks, want one", published)
+	}
+	if len(rig.d.sent) != 0 {
+		t.Fatal("remote result attempted to wake a peer-local manager")
+	}
+}

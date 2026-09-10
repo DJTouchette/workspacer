@@ -525,6 +525,24 @@ func (w *finishWatcher) runBackstop(ctx context.Context) {
 // re-fires next sweep. TWIN: sweepMissedFinishes.
 func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) {
 	all := w.reg.fleetSessions(ctx)
+	// The origin manager is not in this store. Reconcile a persisted dispatch
+	// whose finish edge occurred while the brain was restarting, using the same
+	// age, live-state and actual-conversation checks as ordinary missed wakes.
+	for _, worker := range all {
+		dispatchID := w.reg.remoteDispatchID(worker.SessionID)
+		if dispatchID == "" || (worker.AmbientState != "idle" && !worker.ended()) ||
+			worker.LastActivity <= 0 || now.Sub(time.UnixMilli(worker.LastActivity)) <= fleetMissedWakeGrace {
+			continue
+		}
+		last, _, _ := w.reg.remote.replay(dispatchID)
+		if last != nil && last.Final {
+			continue
+		}
+		if !worker.ended() && strings.TrimSpace(w.reg.workerFinalTurn(ctx, worker.SessionID).lastAssistant) == "" {
+			continue
+		}
+		w.sendRemoteFinished(ctx, dispatchID, worker.SessionID)
+	}
 	for _, manager := range all {
 		if !manager.IsWakeTarget || manager.ended() || manager.AmbientState != "idle" {
 			continue
