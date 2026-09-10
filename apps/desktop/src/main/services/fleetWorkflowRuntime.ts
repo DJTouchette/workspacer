@@ -9,10 +9,17 @@ import { validateDispatchTemplateParams } from '../lib/dispatchTemplate';
 import { reviewPolicy, type WorkflowTemplate } from '../shared/fleetWorkflow';
 import type { DispatchTask } from '../shared/dispatchHistory';
 export const workflowBusy = new Set<string>();
+/**
+ * The single ownership gate for manager-facing task operations: a live, local,
+ * wake-target manager session, addressing its OWN task in that task's exact project.
+ * `requireWorkflow` is only relaxed for operations that read or annotate a task
+ * without interpreting pinned workflow policy (task references).
+ */
 export function ownerTask(
   taskId: string | undefined,
   caller: string | undefined,
   cwd: string | undefined,
+  requireWorkflow = true,
 ): DispatchTask {
   managerReplacementState.assertAvailable(caller);
   const owner = caller ? claudeSessionStore.getSnapshot(caller) : undefined;
@@ -21,7 +28,8 @@ export function ownerTask(
     !owner?.isWakeTarget ||
     owner.status === 'ended' ||
     owner.hub ||
-    !task?.workflow ||
+    !task ||
+    (requireWorkflow && !task.workflow) ||
     task.ownerSessionId !== caller ||
     task.projectCwd !== cwd
   )

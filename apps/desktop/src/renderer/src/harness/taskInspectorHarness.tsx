@@ -73,6 +73,21 @@ const task: DispatchTask = {
     },
   ],
 };
+if (mode === 'links') {
+  task.links = {
+    pullRequest: {
+      number: '9492',
+      url: 'https://dev.azure.test/org/project/_git/repo/pullrequest/9492',
+    },
+    tickets: [{ id: 'WKS-412', url: 'https://jira.test/browse/WKS-412' }, { id: 'SUP-77' }],
+    references: [{ label: 'Design notes', url: 'https://example.test/design' }],
+  };
+  task.workflow!.steps[0].reason =
+    'Scout skipped: the change is confined to one renderer component';
+  task.workflow!.steps[1].state = 'completed';
+  task.workflow!.steps[1].outcome = { commit: 'abc1234' };
+  task.workflow!.steps[2].state = 'planned';
+}
 if (mode === 'failed' || mode === 'stale') {
   task.workflow!.steps[1].state = 'failed';
   task.workflow!.steps[1].outcome = { failure: 'Original failure evidence' };
@@ -99,7 +114,17 @@ Object.assign(window, {
   fixtureChange: () => {
     task.revision!++;
     task.ownerLabel = 'Replacement manager';
-    task.links = { tickets: [{ id: 'EXTERNAL-1' }] };
+    task.links = { ...task.links, tickets: [...(task.links?.tickets ?? []), { id: 'EXTERNAL-1' }] };
+    task.audit = [
+      ...(task.audit ?? []),
+      {
+        id: `manager-links-${task.revision}`,
+        actor: 'manager',
+        action: 'links',
+        reason: 'Task references edited by manager',
+        createdAt: '2026-09-09T03:00:00Z',
+      },
+    ];
   },
 });
 const ipc = {
@@ -139,7 +164,19 @@ const ipc = {
             run.state = 'waived';
             run.waiverId = audit.id;
             task.audit = [...(task.audit ?? []), audit];
-          } else task.links = validateTaskLinks(request.links);
+          } else {
+            task.links = validateTaskLinks(request.links);
+            task.audit = [
+              ...(task.audit ?? []),
+              {
+                id: `host-links-${task.revision}`,
+                actor: 'host-user',
+                action: 'links',
+                reason: 'Task references edited by you',
+                createdAt: '2026-09-09T04:00:00Z',
+              },
+            ];
+          }
           task.revision!++;
           return { ok: true, task: structuredClone(task) };
         },
@@ -189,8 +226,12 @@ function Harness() {
   return (
     <div
       style={{
-        maxWidth: 500,
-        margin: 'auto',
+        // The rail is narrow in production. `width` lets a screenshot reproduce
+        // the real 360-480px sidebar as well as a wide pane.
+        width: params.get('width') ? Number(params.get('width')) : undefined,
+        maxWidth: params.get('width') ? undefined : 500,
+        margin: params.get('width') ? 0 : 'auto',
+        background: 'var(--wks-bg-base)',
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',

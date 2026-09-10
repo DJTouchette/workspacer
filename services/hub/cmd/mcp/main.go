@@ -719,6 +719,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Config ─────────────────────────────────────────────────────────────
 	addWorkflowTools(b)
+	addTaskReferenceTools(b)
 	b.group = "config"
 	addTool[listAgentsIn](b, "get_config",
 		"Get the full workspacer config (theme, keybindings, pane and session settings).",

@@ -101,3 +101,160 @@ it('defaults a recorded manager to its supplied project and can explicitly show 
   fireEvent.change(screen.getByLabelText('Task project'), { target: { value: '' } });
   expect(screen.getByRole('option', { name: /Other project task/ })).toBeInTheDocument();
 });
+
+describe('compact default view', () => {
+  const workflowTask = (): DispatchTask => ({
+    ...makeTask('task-1'),
+    title: 'Ship the inspector',
+    revision: 3,
+    workflow: {
+      hash: 'pin-hash',
+      definition: {
+        id: 'w',
+        revision: 2,
+        name: 'Scout implement review',
+        description: '',
+        enabled: true,
+        steps: [
+          {
+            id: 'implement',
+            label: 'Implement',
+            kind: 'implement',
+            stage: 'implement',
+            role: 'implementer',
+            template: 't',
+            instructions: 'Do the work',
+          },
+          {
+            id: 'review',
+            label: 'Review',
+            kind: 'review',
+            stage: 'review',
+            role: 'reviewer',
+            template: 't',
+            instructions: 'Review the work',
+          },
+        ],
+      },
+      templates: { t: { id: 't', body: 'body', params: [], resultSchema: {} } },
+      steps: [
+        { id: 'implement', state: 'completed', reason: 'A long completed rationale' },
+        { id: 'review', state: 'planned' },
+      ],
+    } as never,
+  });
+  const mount = async (task: DispatchTask) => {
+    window.electronAPI = {
+      dispatchHistoryRead: async () => ({
+        available: true,
+        currentOwnerSessionId: 'manager',
+        tasks: [task],
+      }),
+    } as unknown as ElectronAPI;
+    render(<TaskInspector sessionId="manager" projectCwd="/project" />);
+    await screen.findByLabelText('Current and recent tasks');
+  };
+  it('shows the title once and keeps ids, paths and finished rationale out of the default view', async () => {
+    await mount(workflowTask());
+    // The <option> in the switcher carries the title too; nothing else may.
+    const titled = screen
+      .getAllByText('Ship the inspector')
+      .filter((el) => el.tagName !== 'OPTION');
+    expect(titled).toHaveLength(1);
+    expect(screen.getByLabelText('Current and recent tasks')).not.toBeVisible();
+    // Present in the DOM but behind a closed disclosure — preserved, not shown.
+    expect(screen.getByText('task-1')).not.toBeVisible();
+    expect(screen.getByText('/project')).not.toBeVisible();
+    expect(screen.getByText(/pin-hash/)).not.toBeVisible();
+    // A completed step's rationale is collapsed, not deleted.
+    expect(screen.getAllByText('A long completed rationale')[0]).not.toBeVisible();
+  });
+  it('offers a skip only on unfinished steps and never a disabled one on a finished step', async () => {
+    await mount(workflowTask());
+    expect(screen.queryByRole('button', { name: 'Skip Implement…' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skip Review…' })).toBeEnabled();
+  });
+  it('hides a running step action and keeps its explanation under Step details', async () => {
+    const task = workflowTask();
+    task.workflow!.steps[0].state = 'dispatched';
+    task.workflow!.steps[0].reason = undefined;
+    task.ownerLabel = task.ownerSessionId;
+    await mount(task);
+    expect(screen.queryByRole('button', { name: 'Skip Implement…' })).not.toBeInTheDocument();
+    expect(screen.getByText('A worker has been dispatched for this step')).not.toBeVisible();
+    expect(screen.getByText(task.ownerSessionId, { exact: true })).not.toBeVisible();
+  });
+  it('exposes ids behind Details with a copy affordance', async () => {
+    await mount(workflowTask());
+    fireEvent.click(screen.getByText('Details'));
+    expect(screen.getByText('task-1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Copy task')).toBeInTheDocument();
+    expect(screen.getByLabelText('Copy project')).toBeInTheDocument();
+  });
+  it('renders references as chips and hides the editor until asked', async () => {
+    const task = workflowTask();
+    task.links = {
+      pullRequest: { number: '9492', url: 'https://dev.azure.test/pullrequest/9492' },
+      tickets: [{ id: 'WKS-1' }],
+    };
+    await mount(task);
+    expect(screen.getByRole('button', { name: /PR 9492/ })).toBeInTheDocument();
+    expect(screen.getByText('WKS-1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('PR number')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Links/ }));
+    expect(screen.getByLabelText('PR number')).toHaveValue('9492');
+  });
+  it('shows only recorded link actors and timestamps under Details, with unknown older origins', async () => {
+    const task = workflowTask();
+    task.audit = [
+      {
+        id: 'm',
+        action: 'links',
+        actor: 'manager',
+        reason: 'Updated references',
+        createdAt: '2026-09-09T03:00:00Z',
+      },
+      {
+        id: 'h',
+        action: 'links',
+        actor: 'host-user',
+        reason: 'Updated references',
+        createdAt: '2026-09-09T04:00:00Z',
+      },
+      {
+        id: 'w',
+        action: 'waive',
+        actor: 'host-user',
+        reason: 'Not a links edit',
+        createdAt: '2026-09-09T05:00:00Z',
+      },
+    ];
+    await mount(task);
+    const history = screen.getByLabelText('Reference edit history');
+    expect(history).not.toBeVisible();
+    fireEvent.click(screen.getByText('Details', { exact: true }));
+    expect(history).toBeVisible();
+    expect(history).toHaveTextContent('References updated by manager');
+    expect(history).toHaveTextContent('References updated by you');
+    expect(Array.from(history.querySelectorAll('time'), (t) => t.dateTime)).toEqual([
+      '2026-09-09T03:00:00Z',
+      '2026-09-09T04:00:00Z',
+    ]);
+    expect(history).not.toHaveTextContent('Not a links edit');
+    expect(history).toHaveTextContent(
+      'Individual link origins and older edits outside this recorded history are unknown.',
+    );
+  });
+  it('does not attribute legacy references with no recorded audit to a manager or host user', async () => {
+    const task = workflowTask();
+    task.links = { tickets: [{ id: 'LEGACY' }] };
+    await mount(task);
+    const history = screen.getByLabelText('Reference edit history');
+    expect(history).not.toHaveTextContent('References updated by');
+    expect(history).toHaveTextContent('unknown');
+    expect(screen.getByText('LEGACY').closest('[title]')).toHaveAttribute(
+      'title',
+      'Recorded reference; edit history in Details. Not verified with the provider.',
+    );
+  });
+});

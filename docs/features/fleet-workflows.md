@@ -32,6 +32,7 @@ The local IPC `fleetWorkflowRequest` and desktop capability `fleetWorkflows.requ
 - `create_workflow`, `update_workflow`, `clone_workflow`, `disable_workflow`, `delete_workflow`
 - `select_default_workflow`, `select_project_workflow` (explicit `workflowId:null` inherits)
 - `start_workflow`, `next_workflow_step`, `decide_workflow_step`
+- `get_task_references`, `update_task_references` — additive PR/ticket/link records on a task the caller owns, under task-revision CAS. See `docs/features/task-inspector.md`.
 
 Mutation/clone/delete calls use the definition's `expectedRevision`; selectors use the catalog's `selectionRevision`. Custom creation accepts a unique slug id and assigns revision 1. Errors are `{ok:false,code,error,currentRevision?}`. MCP caller identity is stamped from the request credential, never accepted in the public tool schema. The bus admits this method only from the actual local host control-plane credential; scoped/plugin/federated connections are rejected. The facade requires an authenticated local session; runtime operations additionally verify live manager and project ownership. Human host management uses desktop Settings.
 

@@ -246,7 +246,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		}
 		return r.cm.listSessions(ctx)
 	case "fleetWorkflows.request":
-		return jsonResult(map[string]any{"ok": false, "code": "unavailable", "error": "Fleet workflows require a local desktop runtime; headless execution is unavailable"})
+		return jsonResult(map[string]any{"ok": false, "code": "unavailable", "error": "Fleet workflows and task references require a local desktop runtime; headless execution is unavailable"})
 	case "agents.spawn":
 		return r.spawn(ctx, params)
 	case "agents.sendMessage":

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { withConfigLock } from '../lib/configLock';
 import {
+  applyTaskReferences,
   taskSkipDisabledReason,
   validateTaskLinks,
   validateTaskUrl,
@@ -569,19 +570,8 @@ export class DispatchHistoryStore {
           task.audit = [...(task.audit ?? []), audit];
         } else throw new Error('Unknown task action');
         if (request.action === 'links')
-          task.audit = [
-            ...(task.audit ?? []),
-            {
-              id: randomUUID(),
-              actor: 'host-user',
-              action: 'links',
-              reason: 'Task references edited by you',
-              createdAt: new Date().toISOString(),
-            },
-          ];
-        // Preserve all step waivers; cap editable-reference history independently.
-        const linkEntries = task.audit!.filter((a) => a.action === 'links').slice(-40);
-        task.audit = task.audit!.filter((a) => a.action === 'waive' || linkEntries.includes(a));
+          this.recordLinkAudit(task, 'host-user', 'Task references edited by you');
+        else this.capLinkAudit(task);
       });
       return { ok: true, task: this.task(request.taskId)! };
     } catch (e) {
@@ -595,6 +585,56 @@ export class DispatchHistoryStore {
         task: request?.taskId ? this.task(request.taskId) : undefined,
       };
     }
+  }
+  /** Append a reference-edit audit row, then cap that history without touching waivers. */
+  private recordLinkAudit(
+    task: DispatchTask,
+    actor: 'host-user' | 'manager',
+    reason: string,
+  ): void {
+    task.audit = [
+      ...(task.audit ?? []),
+      { id: randomUUID(), actor, action: 'links', reason, createdAt: new Date().toISOString() },
+    ];
+    this.capLinkAudit(task);
+  }
+  /** Preserve all step waivers; cap editable-reference history independently. */
+  private capLinkAudit(task: DispatchTask): void {
+    const linkEntries = (task.audit ?? []).filter((a) => a.action === 'links').slice(-40);
+    task.audit = (task.audit ?? []).filter((a) => a.action === 'waive' || linkEntries.includes(a));
+  }
+  /**
+   * Manager-facing reference edit. Deliberately NARROWER than editByHostUser: it can
+   * only upsert/remove exact reference entries under the caller's own revision CAS.
+   * It never waives a step, never touches lifecycle, ownership, workflow or attempt
+   * facts, and never replaces the whole reference set — the host user's other entries
+   * survive a manager edit. Ownership/liveness is verified by the caller.
+   */
+  updateReferencesByManager(
+    taskId: string,
+    expectedTaskRevision: number,
+    upsert: unknown,
+    remove: unknown,
+    reason: string,
+    authorize: () => void,
+  ): DispatchTask {
+    return this.transaction(() => {
+      // Recheck the live owner against the reloaded row under the write lock.
+      authorize();
+      if (!Number.isSafeInteger(expectedTaskRevision) || expectedTaskRevision < 0)
+        throw new Error('Task reference updates require the current expectedTaskRevision');
+      const task = this.task(taskId);
+      if (!task) throw new Error('Task is no longer available');
+      if ((task.revision ?? 0) !== expectedTaskRevision) throw new TaskConflict();
+      const links = applyTaskReferences(task.links, upsert, remove);
+      // Idempotent: an edit that changes nothing records no audit row and leaves the
+      // revision alone, so a retried manager call cannot inflate the audit history.
+      if (JSON.stringify(links) !== JSON.stringify(task.links ?? {})) {
+        task.links = links;
+        this.recordLinkAudit(task, 'manager', reason);
+      }
+      return this.task(taskId)!;
+    });
   }
   /** Resolve only recorded, task-owned targets; renderer never supplies a path/URL. */
   openTarget(request: TaskOpenRequest): { kind: 'url' | 'worktree'; target: string } {
@@ -697,7 +737,7 @@ export class DispatchHistoryStore {
     atomicWriteFileSync(this.filename(), JSON.stringify({ version: 1, tasks }), { mode: 0o600 });
   }
 }
-class TaskConflict extends Error {}
+export class TaskConflict extends Error {}
 export const dispatchHistoryStore = new DispatchHistoryStore(() =>
   path.join(getConfigDir(), 'dispatch-history.json'),
 );
