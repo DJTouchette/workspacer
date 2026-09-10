@@ -113,9 +113,11 @@ function fixture() {
     recoverFinishes: vi.fn(),
   };
   const service = new ManagerReplacementService(state, host, {
-    preparationMs: 50,
+    // This fixture syncs real files. Hosted disk latency must not consume the
+    // whole budget before the intended validation/timeout assertion is reached.
+    preparationMs: 1000,
     pollMs: 1,
-    deliveryMs: 50,
+    deliveryMs: 500,
   });
   const start = async () => {
     const response = await service.request({
