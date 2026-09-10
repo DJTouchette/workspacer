@@ -100,6 +100,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 export class RemoteDispatchRegistry {
+  /** Adoption is also a reconciliation edge: a result may have arrived while
+   * its old manager was unavailable, without any network disconnect. */
+  onReparent: () => void = () => {};
   private records = new Map<string, RemoteDispatchRecord>();
   private file: string | null = null;
   private resolveManager: ManagerResolver = () => null;
@@ -126,6 +129,7 @@ export class RemoteDispatchRegistry {
 
   /** Test/teardown hook: forget everything without touching disk. */
   reset(): void {
+    this.onReparent = () => {};
     this.records.clear();
     this.file = null;
     this.ready = false;
@@ -294,7 +298,10 @@ export class RemoteDispatchRegistry {
       r.ownerSessionId = newManagerId;
       moved.push(r.dispatchId);
     }
-    if (moved.length) this.persist();
+    if (moved.length) {
+      this.persist();
+      this.onReparent();
+    }
     return moved;
   }
 

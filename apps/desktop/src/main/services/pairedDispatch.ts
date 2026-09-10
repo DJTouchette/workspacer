@@ -63,6 +63,7 @@ export function startPairedDispatch(): void {
   });
   started = true;
   connection.onDisconnected = () => claudeSessionStore.markHubPeerOffline('@paired');
+  registry.onReparent = () => connection.onConnected();
   connection.onConnected = () => {
     for (const record of registry.list()) {
       if (record.peer === pairedDestinationKey() && record.state === 'done') {

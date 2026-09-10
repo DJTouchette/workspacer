@@ -104,3 +104,13 @@ it('corrupt durable state refuses new admission without overwriting it', () => {
   expect(() => new RemoteDispatchRegistry().start(file, () => 'manager')).toThrow(/invalid/);
   expect(fs.readFileSync(file, 'utf8')).toBe('not-json');
 });
+
+it('reconciles adoption only after the new origin owner is durable', () => {
+  const { registry, file } = fixture();
+  let replayOwner = '';
+  registry.onReparent = () => {
+    replayOwner = JSON.parse(fs.readFileSync(file, 'utf8'))[0].ownerSessionId;
+  };
+  registry.reparent('manager', 'successor');
+  expect(replayOwner).toBe('successor');
+});
