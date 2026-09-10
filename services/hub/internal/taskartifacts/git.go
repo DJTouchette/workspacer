@@ -29,6 +29,7 @@ type RepositoryBinding struct {
 	// An explicitly approved host adapter, never read from a repository or
 	// peer. Empty means no helper; unavailable credentials fail preflight.
 	CredentialHelper string `json:"credentialHelper,omitempty"`
+	TLSCAFile        string `json:"tlsCAFile,omitempty"`
 }
 
 func (b RepositoryBinding) Validate() error {
@@ -55,6 +56,19 @@ func (b RepositoryBinding) Ref(task, direction string) (string, error) {
 		return "", fmt.Errorf("invalid generated ref identity")
 	}
 	return b.RefPrefix + "/" + b.Origin + "/" + task + "/" + direction, nil
+}
+
+func (b RepositoryBinding) GitRemote(ctx context.Context, repo string, args ...string) ([]byte, error) {
+	if err := b.Validate(); err != nil {
+		return nil, err
+	}
+	if b.TLSCAFile != "" {
+		if !filepath.IsAbs(b.TLSCAFile) {
+			return nil, fmt.Errorf("approved CA file must be absolute")
+		}
+		args = append([]string{"-c", "http.sslCAInfo=" + b.TLSCAFile}, args...)
+	}
+	return Git(ctx, repo, b.CredentialHelper, args...)
 }
 
 type boundedOutput struct {

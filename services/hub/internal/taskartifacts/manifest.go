@@ -96,6 +96,11 @@ func (m Manifest) Validate() error {
 		default:
 			return fmt.Errorf("unsupported artifact kind")
 		}
+		ext := strings.ToLower(path.Ext(e.Name))
+		allowed := (e.Kind == "report" || e.Kind == "criteria") && (ext == ".md" || ext == ".txt") || e.Kind == "log" && (ext == ".log" || ext == ".txt" || ext == ".json" || ext == ".jsonl") || e.Kind == "image" && (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp")
+		if !allowed {
+			return fmt.Errorf("artifact kind and safe file extension disagree: %s", e.Name)
+		}
 		total += e.Size
 	}
 	if total > TaskBytes {

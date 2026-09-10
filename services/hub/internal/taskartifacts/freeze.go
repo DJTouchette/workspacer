@@ -4,7 +4,35 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
+
+func OpenSelectedRoot(base, relative string) (*os.Root, error) {
+	before, err := os.Lstat(base)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("artifact producer root must be a real directory")
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	after, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		return nil, fmt.Errorf("artifact root changed during selection")
+	}
+	parts := strings.Split(relative, "/")
+	for i, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return nil, fmt.Errorf("invalid artifact folder")
+		}
+		info, err := root.Lstat(strings.Join(parts[:i+1], "/"))
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("artifact folder must not contain symlinks")
+		}
+	}
+	return root.OpenRoot(relative)
+}
 
 // ReadSelected reads only a selected regular file under a trusted producer
 // root. A report's absolute paths or URLs are never followed as selections.
@@ -13,6 +41,13 @@ import (
 func ReadSelected(root *os.Root, name string) ([]byte, error) {
 	if err := ValidName(name); err != nil {
 		return nil, err
+	}
+	parts := strings.Split(name, "/")
+	for i := 1; i < len(parts); i++ {
+		info, err := root.Lstat(strings.Join(parts[:i], "/"))
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("selected artifact parent must not be a symlink")
+		}
 	}
 	info, err := root.Lstat(name)
 	if err != nil || !info.Mode().IsRegular() {

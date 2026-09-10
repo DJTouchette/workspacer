@@ -21,6 +21,7 @@ import { workflowWakeInstructions } from './fleetWorkflowRuntime';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { renderDispatchTemplate } from '../lib/dispatchTemplate';
 import { prepareTaskHandoff, importTaskHandoffResult, type TaskSource } from './taskHandoff';
+import { fleetReviewStore, reviewAllocation } from './fleetReviewStore';
 
 function projectPairedSnapshot(
   record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
@@ -127,6 +128,7 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   registry.retainEvidence(record.dispatchId, update);
   const entry = sanitizeRemoteEntry(update.entry);
   entry.sessionId = record.localSessionId;
+  let checkpointRequired = false;
   if (update.final && record.handoff) {
     const result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
     registry.setHandoff(record.dispatchId, {
@@ -135,11 +137,40 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
       reviewCwd: result.state === 'received' ? result.allocation : undefined,
     });
     if (result.state === 'needs-checkpoint') {
+      checkpointRequired = true;
       entry.needsDecision = true;
-      entry.failed = 'Checkpoint required: execution workspace has uncommitted changes; output is retained.';
+      entry.failed =
+        'Checkpoint required: execution workspace has uncommitted changes; output is retained.';
     } else {
-      entry.note = 'Code and required artifacts verified locally. Reported test results remain worker claims.';
+      entry.note =
+        'Code and required artifacts verified locally. Reported test results remain worker claims.';
+      if (result.allocation && result.result && record.handoff.sourceCwd) {
+        const branch = `wks/handoff-${record.dispatchId}-result`;
+        const allocation = await reviewAllocation(
+          path.join(path.dirname(result.allocation), 'result-git'),
+          result.allocation,
+          branch,
+        );
+        fleetReviewStore.register(parentSessionId, entry.sessionId, {
+          ...allocation,
+          projectRoot: record.handoff.sourceCwd,
+          baseCommit: result.plan.input.commit,
+        });
+        entry.reviewEvidenceId = await fleetReviewStore.capture(
+          parentSessionId,
+          entry.sessionId,
+          'turn-ended',
+        );
+      }
     }
+    dispatchHistoryStore.observeHandoff(entry.sessionId, {
+      state: checkpointRequired ? 'needs-checkpoint' : 'received',
+      base: result.plan.input.commit,
+      head: result.result?.commit,
+      reviewCwd: result.state === 'received' ? result.allocation : undefined,
+      artifacts: result.result?.entries,
+      artifactTask: record.dispatchId,
+    });
   }
   // No remote snapshot or parent id is trusted to select a local recipient.
   const reply = entry.fullReply ?? entry.lastReply ?? '';
@@ -154,14 +185,16 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
     }
     dispatchHistoryStore.validated(
       entry.sessionId,
-      entry.escalation
-        ? 'escalated'
-        : entry.result
-          ? 'valid'
-          : entry.resultError
-            ? 'invalid'
-            : 'absent',
-      undefined,
+      checkpointRequired
+        ? 'invalid'
+        : entry.escalation
+          ? 'escalated'
+          : entry.result
+            ? 'valid'
+            : entry.resultError
+              ? 'invalid'
+              : 'absent',
+      entry.reviewEvidenceId,
       entry.result ? JSON.parse(entry.result) : entry.escalation,
     );
   }
@@ -236,8 +269,15 @@ export async function spawnPairedWorker(
   if (capabilities.protocol !== DISPATCH_PROTOCOL || !capabilities.executes)
     throw new Error('Paired worker dispatch unsupported; upgrade the older endpoint');
   const taskSource = p.taskSource as TaskSource | undefined;
-  if (taskSource && (capabilities.handoff?.version !== 1 || capabilities.handoff.transport !== 'git-remote' || capabilities.handoff.chunkBytes !== 256 * 1024))
-    throw new Error('Exact workspace handoff is unsupported by this target; upgrade before dispatch');
+  if (
+    taskSource &&
+    (capabilities.handoff?.version !== 1 ||
+      capabilities.handoff.transport !== 'git-remote' ||
+      capabilities.handoff.chunkBytes !== 256 * 1024)
+  )
+    throw new Error(
+      'Exact workspace handoff is unsupported by this target; upgrade before dispatch',
+    );
   if (!capabilities.cwds?.some((c) => c.path === p.remoteCwd))
     throw new Error('Choose an actual remote cwd from list_dispatch_targets');
   if (
@@ -261,12 +301,44 @@ export async function spawnPairedWorker(
     label: p.label,
   });
   if (!record) throw new Error('Could not persist paired dispatch admission');
+  const preAdmission = taskSource
+    ? dispatchHistoryStore.accept({
+        ...admission,
+        sessionId: localSessionId,
+        executionCwd: String(p.remoteCwd),
+        provider: String(p.provider),
+        requestedProvider: String(p.provider),
+        requestedModel: typeof p.model === 'string' ? p.model : undefined,
+        worktree: { requested: true, allocated: false, fallback: false },
+        executionTarget: 'paired',
+        executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
+      })
+    : undefined;
   let handoff: { binding: string; digest: string } | undefined;
   if (taskSource) {
-    registry.setHandoff(dispatchId, { binding: taskSource.binding, state: 'preparing' });
-    const prepared = await prepareTaskHandoff(dispatchId, taskSource, String(p.provider), String(p.cwd));
+    dispatchHistoryStore.observeHandoff(localSessionId, { state: 'preparing' });
+    registry.setHandoff(dispatchId, {
+      binding: taskSource.binding,
+      state: 'preparing',
+      sourceCwd: String(p.cwd),
+    });
+    let prepared;
+    try {
+      prepared = await prepareTaskHandoff(
+        dispatchId,
+        taskSource,
+        String(p.provider),
+        String(p.cwd),
+      );
+    } catch (error) {
+      dispatchHistoryStore.observeHandoff(localSessionId, {
+        state: 'blocked',
+        note: String(error),
+      });
+      throw error;
+    }
     handoff = { binding: taskSource.binding, digest: prepared.digest };
-    registry.setHandoff(dispatchId, { ...handoff, state: 'prepared' });
+    registry.setHandoff(dispatchId, { ...handoff, state: 'prepared', sourceCwd: String(p.cwd) });
   }
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };
   const prepared = await connection.call<{
@@ -290,17 +362,19 @@ export async function spawnPairedWorker(
   if (p.worktree && !prepared.worktree) throw new Error('Remote isolated worktree required');
   // Book the local workflow attempt before starting the remote process. A lost
   // reply leaves this attempt pending and prevents blindly repeating the step.
-  const ids = dispatchHistoryStore.accept({
-    ...admission,
-    sessionId: localSessionId,
-    executionCwd: prepared.cwd,
-    provider: String(p.provider),
-    requestedProvider: String(p.provider),
-    requestedModel: typeof p.model === 'string' ? p.model : undefined,
-    worktree,
-    executionTarget: 'paired',
-    executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
-  });
+  const ids =
+    preAdmission ??
+    dispatchHistoryStore.accept({
+      ...admission,
+      sessionId: localSessionId,
+      executionCwd: prepared.cwd,
+      provider: String(p.provider),
+      requestedProvider: String(p.provider),
+      requestedModel: typeof p.model === 'string' ? p.model : undefined,
+      worktree,
+      executionTarget: 'paired',
+      executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
+    });
   let message = templateBody
     ? renderDispatchTemplate(templateBody, (p.templateParams ?? {}) as Record<string, string>, {
         cwd: prepared.cwd,
@@ -308,6 +382,11 @@ export async function spawnPairedWorker(
       })
     : p.message;
   if (resultSchema) message = `${message ?? ''}\n\n${buildResultContract(resultSchema)}`;
+  if (taskSource) {
+    const folder = `.workspacer/handoffs/${dispatchId}`;
+    message = `${message ?? ''}\n\nTask evidence folder: ${folder}. Selected inputs: ${taskSource.artifacts.map((a) => a.name).join(', ') || 'none'}. Required output artifacts: ${taskSource.outputs.map((a) => a.name).join(', ') || 'none'}. The workspace host transfers code and artifacts; keep this evidence folder out of code commits.`;
+    dispatchHistoryStore.observeHandoff(localSessionId, { state: 'running' });
+  }
   // Allowlist supported execution metadata. All origin workflow/request and
   // grant fields stay local. The remote token and remote routing ceiling win.
   const wire: Record<string, unknown> = {

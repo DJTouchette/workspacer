@@ -22,6 +22,8 @@ import (
 // registry holds the dependencies the handlers close over and dispatches calls
 // by method name.
 type registry struct {
+	handoffRoot string // brain-owned task state; fixed for this host instance
+
 	cm    *claudemonClient
 	cfg   *configService
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
@@ -77,7 +79,7 @@ func (r *registry) visibleSnapshots(ctx context.Context) []json.RawMessage {
 const brainProbeMethod = "brain.info"
 
 func newRegistry(cm *claudemonClient) *registry {
-	return &registry{cm: cm, cfg: newConfigService()}
+	return &registry{cm: cm, cfg: newConfigService(), handoffRoot: configDir()}
 }
 
 // methods is the set of capabilities this provider registers on the bus. Names

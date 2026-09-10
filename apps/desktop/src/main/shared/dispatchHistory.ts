@@ -25,6 +25,17 @@ export interface DispatchMetrics {
   context?: { used?: number; limit?: number; observedAt: string };
 }
 export interface DispatchAttempt extends DispatchLink {
+  handoff?: {
+    state: 'preparing' | 'running' | 'received' | 'needs-checkpoint' | 'blocked';
+    note?: string;
+    base?: string;
+    head?: string;
+    reviewCwd?: string;
+    directoryIdentity?: { dev: number; ino: number };
+    artifacts?: Array<{ name: string; kind: string; sha256: string }>;
+    artifactTask?: string;
+    disposition?: 'accepted' | 'keep';
+  };
   dispatchId: string;
   sessionId: string;
   kind: 'fresh' | 'retry';
@@ -104,7 +115,9 @@ export type TaskAudit = {
   createdAt: string;
 };
 export type TaskEditRequest = { taskId: string; expectedTaskRevision: number } & (
-  { action: 'waive'; stepId: string; reason?: string } | { action: 'links'; links: TaskLinks }
+  | { action: 'waive'; stepId: string; reason?: string }
+  | { action: 'links'; links: TaskLinks }
+  | { action: 'handoff-disposition'; dispatchId: string; keep: boolean }
 );
 export type TaskEditResponse =
   | { ok: true; task: DispatchTask }
@@ -116,6 +129,7 @@ export type TaskEditResponse =
     };
 export type TaskOpenRequest = { taskId: string } & (
   | { kind: 'worktree'; dispatchId: string }
+  | { kind: 'handoff'; dispatchId: string; artifact?: number }
   | { kind: 'url'; reference: 'pullRequest' | 'tickets' | 'references'; index?: number }
 );
 export const TASK_INSPECTOR_UNAVAILABLE =

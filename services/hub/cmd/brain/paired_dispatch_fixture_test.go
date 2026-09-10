@@ -83,6 +83,19 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 			id, dir := sid, cwd
 			reply = command.Reply
 			mu.Unlock()
+			if command.Kind == "handoff-result" {
+				if err := os.WriteFile(filepath.Join(dir, "implementation.txt"), []byte("result C\n"), 0600); err != nil {
+					t.Error(err)
+				}
+				handoffFixtureGit(t, dir, "add", "implementation.txt")
+				handoffFixtureGit(t, dir, "commit", "-m", "workspace fixture result C")
+				reg.remote.mu.Lock()
+				dispatch := reg.remote.bySession[id]
+				reg.remote.mu.Unlock()
+				if err := os.WriteFile(filepath.Join(dir, ".workspacer", "handoffs", dispatch, "implementation.md"), []byte("# Result evidence\nSynthetic provider claim: tests passed.\n"), 0600); err != nil {
+					t.Error(err)
+				}
+			}
 			mode := "idle"
 			if command.Kind == "block" {
 				mode = "waiting_approval"
@@ -196,6 +209,10 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	defer oldHost.Close()
 	host := httptest.NewServer(srv.Handler())
 	defer host.Close()
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": host.URL, "oldURL": oldHost.URL, "repo": repo, "nonRepo": nonRepo, "control": daemon.URL})
+	ready := map[string]string{"url": host.URL, "oldURL": oldHost.URL, "repo": repo, "nonRepo": nonRepo, "control": daemon.URL}
+	for key, value := range configureHandoffChainFixture(t, reg, repo) {
+		ready[key] = value
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(ready)
 	_, _ = io.Copy(io.Discard, os.Stdin)
 }

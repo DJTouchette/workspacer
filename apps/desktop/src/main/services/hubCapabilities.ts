@@ -688,7 +688,9 @@ export function registerHubCapabilities(): void {
       workflowStepId,
       executionTarget,
       remoteCwd,
+      handoff,
     } = (params ?? {}) as {
+      handoff?: { binding: string; digest: string };
       executionTarget?: 'paired';
       remoteCwd?: string;
       workflowStepId?: string;
@@ -839,6 +841,8 @@ export function registerHubCapabilities(): void {
     // finished-looking text, so a dispatch missing its task slot must fail
     // loudly instead of dispatching without the reasoning only the caller can
     // write (lib/dispatchTemplate.ts carries the rule).
+    if (handoff)
+      throw new Error('Exact handoff receipt admission requires the workspace execution backend; no worker started');
     let message = reqMessage;
     let resultSchema = reqResultSchema;
     let templateBody: string | undefined;

@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { taskDependencyState, type ManagerRequest } from '../shared/managerRequests';
 import fs from 'fs';
 import path from 'path';
@@ -514,6 +514,22 @@ export class DispatchHistoryStore {
     if (evidenceId) a.reviewEvidenceId = evidenceId;
     this.flush();
   }
+
+  observeHandoff(sessionId: string, handoff: NonNullable<DispatchAttempt['handoff']>): void {
+    if (!this.writing) return this.transaction(() => this.observeHandoff(sessionId, handoff));
+    const found = this.find(sessionId);
+    if (!found || found.attempt.executionTarget !== 'paired')
+      throw new Error('No admitted paired task');
+    if (handoff.reviewCwd) {
+      const canonical = fs.realpathSync(handoff.reviewCwd);
+      const stat = fs.statSync(canonical);
+      if (canonical !== path.resolve(handoff.reviewCwd) || !stat.isDirectory())
+        throw new Error('Imported review allocation is unavailable');
+      handoff = { ...handoff, directoryIdentity: { dev: stat.dev, ino: stat.ino } };
+    }
+    found.attempt.handoff = handoff;
+    this.flush();
+  }
   startWorkflow(
     owner: Owner,
     projectCwd: string,
@@ -748,6 +764,33 @@ export class DispatchHistoryStore {
   openTarget(request: TaskOpenRequest): { kind: 'url' | 'worktree'; target: string } {
     const task = this.task(request?.taskId);
     if (!task) throw new Error('Task unavailable');
+    if (request.kind === 'handoff') {
+      const handoff = task.attempts.find((a) => a.dispatchId === request.dispatchId)?.handoff;
+      if (handoff?.state !== 'received' || !handoff.reviewCwd || !handoff.directoryIdentity)
+        throw new Error('Verified review custody is unavailable');
+      const canonical = fs.realpathSync(handoff.reviewCwd);
+      const stat = fs.statSync(canonical);
+      if (
+        canonical !== path.resolve(handoff.reviewCwd) ||
+        stat.dev !== handoff.directoryIdentity.dev ||
+        stat.ino !== handoff.directoryIdentity.ino
+      )
+        throw new Error('Review allocation identity changed');
+      if (request.artifact === undefined) return { kind: 'worktree', target: canonical };
+      const artifact = handoff.artifacts?.[request.artifact];
+      if (!artifact || !handoff.artifactTask)
+        throw new Error('Artifact not selected for this task');
+      const root = path.join(canonical, '.workspacer', 'handoffs', handoff.artifactTask);
+      const target = fs.realpathSync(path.join(root, artifact.name));
+      if (!target.startsWith(root + path.sep) || !fs.statSync(target).isFile())
+        throw new Error('Artifact left its verified task allocation');
+      if (
+        fs.statSync(target).size > 16 * 1024 * 1024 ||
+        createHash('sha256').update(fs.readFileSync(target)).digest('hex') !== artifact.sha256
+      )
+        throw new Error('Artifact bytes changed after custody verification');
+      return { kind: 'worktree', target };
+    }
     if (request.kind === 'worktree') {
       const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
       if (

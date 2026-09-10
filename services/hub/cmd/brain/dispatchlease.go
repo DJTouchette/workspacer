@@ -106,7 +106,7 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		return nil, fmt.Errorf("provider is not authenticated on this execution host")
 	}
 	if p.Handoff != nil {
-		rec, err := preparedHandoff(p.RemoteOrigin.OwnerKey, id, p.Handoff)
+		rec, err := r.preparedHandoff(p.RemoteOrigin.OwnerKey, id, p.Handoff)
 		if err != nil {
 			return nil, err
 		}
@@ -258,7 +258,7 @@ func (r *registry) claimDispatch(p spawnParams) error {
 		return fmt.Errorf("spawn must consume the exact verified handoff receipt")
 	}
 	if p.Handoff != nil {
-		if _, err := preparedHandoff(p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
+		if _, err := r.preparedHandoff(p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
 			return err
 		}
 	}
@@ -275,6 +275,17 @@ func (r *registry) resumeDispatchLeases() {
 	r.remote.mu.Lock()
 	defer r.remote.mu.Unlock()
 	for id, d := range r.remote.m {
+		if d.lease != nil && d.lease.Handoff != nil {
+			binding, err := r.handoffBinding(d.lease.Handoff.Binding, d.lease.Owner)
+			if err == nil {
+				var rec handoffRecord
+				b, readErr := os.ReadFile(filepath.Join(r.handoffDir(binding, id), "receipt.json"))
+				if readErr == nil && json.Unmarshal(b, &rec) == nil && rec.AcceptedAt > 0 && !rec.Keep {
+					r.scheduleHandoffCleanup(binding, id, rec.AcceptedAt)
+				}
+			}
+			continue
+		}
 		if d.lease == nil || d.lease.Claimed {
 			continue
 		}

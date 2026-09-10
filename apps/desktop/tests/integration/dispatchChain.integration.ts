@@ -1063,7 +1063,13 @@ it('handles unknown paired replay idempotently and returns a local task result o
   if (code !== 0) throw new Error(errors);
   const peer = spawn(binary, ['-test.run=^TestPairedDispatchHostFixture$', '-test.timeout=120s'], {
     cwd: path.resolve('../../services/hub'),
-    env: { ...fixtureEnv, WKS_PAIRED_CHAIN_FIXTURE: '1' },
+    env: {
+      ...fixtureEnv,
+      WKS_PAIRED_CHAIN_FIXTURE: '1',
+      WKS_HANDOFF_ORIGIN_BUS: busURL,
+      WKS_HANDOFF_SOURCE: project,
+      WKS_HANDOFF_ORIGIN_CONFIG: configDir,
+    },
     stdio: 'pipe',
   });
   peer.stderr.resume();
@@ -1474,6 +1480,63 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(launch.mock.calls).toHaveLength(localLaunches);
     expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
     expect(record).toEqual(completed);
+    const sourceBefore = execFileSync('git', ['-C', project, 'status', '--porcelain=v1']);
+    const exact = await mcpSpawn('session:manager-other', {
+      provider: 'claude',
+      model: route.value.model,
+      capability: route.value.capability,
+      decisionId: route.value.decisionId,
+      role: 'implementer',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      parentSessionId: 'manager-other',
+      worktree: true,
+      message: 'Implement using the verified scout evidence. Return the required report.',
+      taskSource: {
+        binding: ready.handoffBinding,
+        artifacts: [{ name: 'scout.md', kind: 'report' }],
+        outputs: [{ name: 'implementation.md', kind: 'report' }],
+      },
+    });
+    expect(exact.isError, exact.text).toBe(false);
+    const exactRecord = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === exact.value.sessionId)!;
+    expect(exactRecord.handoff?.state).toBe('prepared');
+    const actualLaunches = await (await fetch(ready.control + '/evidence')).json();
+    const execution = actualLaunches.at(-1);
+    expect(
+      execFileSync('git', ['-C', execution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    ).toBe(ready.sourceCommit);
+    expect(
+      fs.readFileSync(
+        path.join(execution.cwd, '.workspacer', 'handoffs', exactRecord.dispatchId, 'scout.md'),
+        'utf8',
+      ),
+    ).toContain('Task evidence');
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'handoff-result', reply: 'Reported test claim: passed.' }),
+    });
+    await vi.waitFor(() => expect(exactRecord.handoff?.state).toBe('received'), { timeout: 20000 });
+    const imported = history
+      .task(exact.value.taskId)!
+      .attempts.find((a) => a.sessionId === exact.value.sessionId)!;
+    expect(imported.handoff?.head).not.toBe(ready.sourceCommit);
+    expect(imported.handoff?.base).toBe(ready.sourceCommit);
+    expect(imported.reviewEvidenceId).toEqual(expect.any(String));
+    expect(
+      history.openTarget({
+        taskId: exact.value.taskId,
+        kind: 'handoff',
+        dispatchId: imported.dispatchId,
+        artifact: 0,
+      }).target,
+    ).toContain('implementation.md');
+    expect(execFileSync('git', ['-C', project, 'status', '--porcelain=v1'])).toEqual(sourceBefore);
+    expect(
+      execFileSync('git', ['-C', project, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    ).toBe(ready.sourceCommit);
   } finally {
     setRemoteServer(null);
     pairedWorkerConnection.stop();

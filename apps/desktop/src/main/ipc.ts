@@ -1476,14 +1476,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
   ipcMain.handle(
     IPC.TASK_INSPECTOR_EDIT,
-    (_event, request: import('./shared/dispatchHistory').TaskEditRequest) =>
+    async (_event, request: import('./shared/dispatchHistory').TaskEditRequest) =>
       isRemoteClientMode()
         ? { ok: false, code: 'unavailable', error: TASK_INSPECTOR_UNAVAILABLE }
-        : dispatchHistoryStore.editByHostUser(
-            request,
-            (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
-            (id) => workflowBusy.has(id),
-          ),
+        : request.action === 'handoff-disposition'
+          ? (await import('./services/taskHandoff')).setTaskHandoffDisposition(request)
+          : dispatchHistoryStore.editByHostUser(
+              request,
+              (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+              (id) => workflowBusy.has(id),
+            ),
   );
   ipcMain.handle(
     IPC.TASK_INSPECTOR_OPEN,

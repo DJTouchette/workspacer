@@ -26,20 +26,20 @@ type handoffReceiptSelector struct {
 	Digest  string `json:"digest"`
 }
 
-func preparedHandoff(owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
+func (r *registry) preparedHandoff(owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
 	if selector == nil {
 		return nil, fmt.Errorf("exact handoff receipt required")
 	}
-	binding, err := handoffBinding(selector.Binding, owner)
+	binding, err := r.handoffBinding(selector.Binding, owner)
 	if err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(filepath.Join(handoffDir(binding, task), "receipt.json"))
+	b, err := os.ReadFile(filepath.Join(r.handoffDir(binding, task), "receipt.json"))
 	if err != nil {
 		return nil, fmt.Errorf("handoff preparation required")
 	}
 	var rec handoffRecord
-	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(handoffDir(binding, task), "input-worktree") {
+	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(r.handoffDir(binding, task), "input-worktree") {
 		return nil, fmt.Errorf("handoff receipt does not match this admission")
 	}
 	return &rec, nil
@@ -87,11 +87,11 @@ type handoffRequest struct {
 
 // Per-task locks avoid holding the dispatch journal mutex during I/O. The
 // bounded journal admission below also bounds the number of retained locks.
-var handoffLocks sync.Map
+var handoffLocks [64]sync.Mutex
 
-func handoffBinding(id, owner string) (taskartifacts.RepositoryBinding, error) {
+func (r *registry) handoffBinding(id, owner string) (taskartifacts.RepositoryBinding, error) {
 	var bindings []taskartifacts.RepositoryBinding
-	b, err := os.ReadFile(filepath.Join(configDir(), "handoff-bindings.json"))
+	b, err := os.ReadFile(filepath.Join(r.handoffConfigDir(), "handoff-bindings.json"))
 	if err != nil || len(b) > 1<<20 || json.Unmarshal(b, &bindings) != nil {
 		return taskartifacts.RepositoryBinding{}, fmt.Errorf("repository handoff setup required: install an approved handoff-bindings.json on both workspaces")
 	}
@@ -106,8 +106,8 @@ func handoffBinding(id, owner string) (taskartifacts.RepositoryBinding, error) {
 	return taskartifacts.RepositoryBinding{}, fmt.Errorf("repository binding unavailable for this workspace owner")
 }
 
-func handoffDir(binding taskartifacts.RepositoryBinding, task string) string {
-	return filepath.Join(configDir(), "task-handoffs", binding.Origin, task)
+func (r *registry) handoffDir(binding taskartifacts.RepositoryBinding, task string) string {
+	return filepath.Join(r.handoffConfigDir(), "task-handoffs", binding.Origin, task)
 }
 
 func saveHandoff(dir string, rec *handoffRecord) error {
@@ -145,13 +145,13 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	if !taskartifacts.ID.MatchString(p.Task) || p.OriginKey == "" {
 		return nil, fmt.Errorf("authenticated task identity required")
 	}
-	binding, err := handoffBinding(p.Binding, p.OriginKey)
+	binding, err := r.handoffBinding(p.Binding, p.OriginKey)
 	if err != nil {
 		return nil, err
 	}
-	dir := handoffDir(binding, p.Task)
-	lock, _ := handoffLocks.LoadOrStore(dir, &sync.Mutex{})
-	mu := lock.(*sync.Mutex)
+	dir := r.handoffDir(binding, p.Task)
+	key := taskartifacts.Digest([]byte(dir))
+	mu := &handoffLocks[int(key[0])%len(handoffLocks)]
 	mu.Lock()
 	defer mu.Unlock()
 	var rec handoffRecord
@@ -179,7 +179,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		// Pending and sole-copy records never expire to make room. Operators
 		// see capacity failure and can accept/clean completed work explicitly.
-		entries, _ := os.ReadDir(filepath.Join(configDir(), "task-handoffs", binding.Origin))
+		entries, _ := os.ReadDir(filepath.Join(r.handoffConfigDir(), "task-handoffs", binding.Origin))
 		if len(entries) >= 32 {
 			return nil, fmt.Errorf("handoff capacity reached: accept and clean retained work before admitting more")
 		}
@@ -200,7 +200,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			if err := taskartifacts.VerifyTree(ctx, binding.Repository, commit); err != nil {
 				return nil, err
 			}
-			m, err := freezeHandoffArtifacts(binding, p.Task, commit, format, p.Selections, filepath.Join(binding.Repository, ".workspacer", "reports"), filepath.Join(dir, "input"))
+			m, err := freezeHandoffArtifacts(binding, p.Task, commit, format, p.Selections, binding.Repository, ".workspacer/reports", filepath.Join(dir, "input"))
 			if err != nil {
 				return nil, err
 			}
@@ -236,10 +236,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, fmt.Errorf("source publication requires local export authority")
 		}
 		ref, _ := binding.Ref(p.Task, "input")
-		_, err := taskartifacts.Git(ctx, binding.Repository, binding.CredentialHelper, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, rec.Plan.Input.Commit+":"+ref)
+		_, err := binding.GitRemote(ctx, binding.Repository, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, rec.Plan.Input.Commit+":"+ref)
 		if err != nil {
 			// A lost successful push is accepted only at the exact expected ID.
-			got, e := taskartifacts.Git(ctx, binding.Repository, binding.CredentialHelper, "ls-remote", "--refs", "--", binding.Remote, ref)
+			got, e := binding.GitRemote(ctx, binding.Repository, "ls-remote", "--refs", "--", binding.Remote, ref)
 			fields := strings.Fields(string(got))
 			if e != nil || len(fields) != 2 || fields[0] != rec.Plan.Input.Commit || fields[1] != ref {
 				return nil, err
@@ -338,7 +338,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err := taskartifacts.VerifyTree(ctx, rec.Allocation, commit); err != nil {
 			return nil, err
 		}
-		manifest, err := freezeHandoffArtifacts(binding, p.Task, commit, format, rec.Plan.Outputs, filepath.Join(rec.Allocation, ".workspacer", "handoffs", p.Task), filepath.Join(dir, "result"))
+		manifest, err := freezeHandoffArtifacts(binding, p.Task, commit, format, rec.Plan.Outputs, rec.Allocation, ".workspacer/handoffs/"+p.Task, filepath.Join(dir, "result"))
 		if err != nil {
 			return nil, err
 		}
@@ -445,6 +445,14 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err := saveHandoff(dir, &rec); err != nil {
 			return nil, err
 		}
+		if !p.Keep {
+			r.scheduleHandoffCleanup(binding, p.Task, rec.AcceptedAt)
+		}
+		return jsonResult(rec)
+	case "cleanup":
+		if err := r.cleanupHandoff(ctx, binding, &rec, time.Now()); err != nil {
+			return nil, err
+		}
 		return jsonResult(rec)
 	default:
 		return nil, fmt.Errorf("unsupported handoff operation")
@@ -452,11 +460,11 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 }
 
 func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, commit, ref string) error {
-	_, err := taskartifacts.Git(ctx, repo, binding.CredentialHelper, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, commit+":"+ref)
+	_, err := binding.GitRemote(ctx, repo, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, commit+":"+ref)
 	if err == nil {
 		return nil
 	}
-	got, checkErr := taskartifacts.Git(ctx, repo, binding.CredentialHelper, "ls-remote", "--refs", "--", binding.Remote, ref)
+	got, checkErr := binding.GitRemote(ctx, repo, "ls-remote", "--refs", "--", binding.Remote, ref)
 	fields := strings.Fields(string(got))
 	if checkErr != nil || len(fields) != 2 || fields[0] != commit || fields[1] != ref {
 		return err
@@ -464,7 +472,7 @@ func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBind
 	return nil
 }
 
-func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commit, format string, selections []handoffSelection, source, dest string) (taskartifacts.Manifest, error) {
+func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commit, format string, selections []handoffSelection, sourceBase, sourceRelative, dest string) (taskartifacts.Manifest, error) {
 	m := taskartifacts.Manifest{Version: 1, Task: task, Origin: binding.Origin, Producer: task, Commit: commit, ObjectFormat: format, Entries: []taskartifacts.Entry{}}
 	if len(selections) > taskartifacts.MaxFiles {
 		return m, fmt.Errorf("too many selected artifacts")
@@ -475,7 +483,7 @@ func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commi
 	if len(selections) == 0 {
 		return m, nil
 	}
-	root, err := os.OpenRoot(source)
+	root, err := taskartifacts.OpenSelectedRoot(sourceBase, sourceRelative)
 	if err != nil {
 		return m, err
 	}
@@ -513,7 +521,7 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 		return "", err
 	}
 	ref, _ := binding.Ref(task, direction)
-	if _, err := taskartifacts.Git(ctx, repo, binding.CredentialHelper, "fetch", "--no-tags", "--no-recurse-submodules", "--", binding.Remote, ref+":refs/handoff/verified"); err != nil {
+	if _, err := binding.GitRemote(ctx, repo, "fetch", "--no-tags", "--no-recurse-submodules", "--", binding.Remote, ref+":refs/handoff/verified"); err != nil {
 		return "", err
 	}
 	got, err := taskartifacts.Git(ctx, repo, "", "rev-parse", "--verify", "refs/handoff/verified^{commit}")
@@ -521,6 +529,9 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 		return "", fmt.Errorf("handoff ref moved or exact commit missing; no worker started")
 	}
 	if err := taskartifacts.VerifyTree(ctx, repo, m.Commit); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "info"), 0700); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(repo, "info", "exclude"), []byte("/.workspacer/handoffs/\n"), 0600); err != nil {
@@ -538,3 +549,120 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 
 // Seven days starts at accepted disposition, never terminal-message ACK.
 const handoffCleanupGrace = 7 * 24 * time.Hour
+
+func handoffCleanupAllowed(binding taskartifacts.RepositoryBinding, rec *handoffRecord, now time.Time) error {
+	if !binding.Cleanup || rec.Keep || rec.AcceptedAt == 0 || now.Before(time.UnixMilli(rec.AcceptedAt).Add(handoffCleanupGrace)) || rec.Custody == "" || rec.Result == nil || rec.State != "result-sealed" {
+		return fmt.Errorf("cleanup retained: accepted disposition, seven-day grace and durable receiver custody are required")
+	}
+	digest, err := rec.Result.Seal()
+	if err != nil || digest != rec.Custody {
+		return fmt.Errorf("cleanup custody identity mismatch")
+	}
+	return nil
+}
+
+func (r *registry) scheduleHandoffCleanup(binding taskartifacts.RepositoryBinding, task string, acceptedAt int64) {
+	if r.remote == nil {
+		return
+	} // The origin keeps its review custody.
+	wait := time.Until(time.UnixMilli(acceptedAt).Add(handoffCleanupGrace))
+	if wait < 0 {
+		wait = 0
+	}
+	time.AfterFunc(wait, func() {
+		raw, _ := json.Marshal(handoffRequest{Operation: "cleanup", Binding: binding.ID, Task: task, OriginKey: binding.Owner})
+		_, _ = r.taskHandoff(context.Background(), raw)
+	})
+}
+
+func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.RepositoryBinding, rec *handoffRecord, now time.Time) error {
+	if err := handoffCleanupAllowed(binding, rec, now); err != nil {
+		return err
+	}
+	task := rec.Plan.Input.Task
+	dir := r.handoffDir(binding, task)
+	if rec.Allocation != filepath.Join(dir, "input-worktree") || r.remote == nil {
+		return fmt.Errorf("cleanup allocation identity mismatch")
+	}
+	r.remote.mu.Lock()
+	d := r.remote.m[task]
+	var sessionID string
+	if d != nil && d.lease != nil && d.lease.Handoff != nil && d.lease.Handoff.Digest == rec.Digest && d.lease.Owner == rec.Owner && d.lease.Cwd == rec.Allocation && d.lease.Claimed && d.last != nil && d.last.Final {
+		sessionID = d.sessionID
+	}
+	r.remote.mu.Unlock()
+	if sessionID == "" {
+		return fmt.Errorf("cleanup blocked: admission or worker outcome unknown")
+	}
+	worker, found := findFleetSession(r.fleetSessions(ctx), sessionID)
+	if !found || worker.Status != "ended" {
+		return fmt.Errorf("cleanup blocked: worker has not been verified stopped")
+	}
+	head, _, err := taskartifacts.CheckSource(ctx, rec.Allocation)
+	if err != nil || head != rec.Result.Commit {
+		return fmt.Errorf("cleanup blocked: checkpoint changed or worktree dirty")
+	}
+	known := map[string]string{}
+	for _, m := range []taskartifacts.Manifest{rec.Plan.Input, *rec.Result} {
+		for _, e := range m.Entries {
+			known[".workspacer/handoffs/"+task+"/"+e.Name] = e.SHA256
+		}
+	}
+	ignored, err := taskartifacts.Git(ctx, rec.Allocation, "", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+	if err != nil {
+		return err
+	}
+	for _, name := range strings.Split(string(ignored), "\x00") {
+		if name == "" {
+			continue
+		}
+		expected, ok := known[name]
+		info, e := os.Lstat(filepath.Join(rec.Allocation, name))
+		if !ok || e != nil || !info.Mode().IsRegular() || info.Size() > taskartifacts.FileBytes {
+			return fmt.Errorf("cleanup blocked: unexpected ignored file")
+		}
+		b, e := os.ReadFile(filepath.Join(rec.Allocation, name))
+		if e != nil || taskartifacts.Digest(b) != expected {
+			return fmt.Errorf("cleanup blocked: artifact changed after sealing")
+		}
+	}
+	// Compare-delete only this binding's exact generated refs. A moved ref is
+	// never force-deleted. Receiver custody survives every failure below.
+	for direction, commit := range map[string]string{"input": rec.Plan.Input.Commit, "result": rec.Result.Commit} {
+		ref, _ := binding.Ref(task, direction)
+		if _, err := binding.GitRemote(ctx, rec.Allocation, "push", "--porcelain", "--force-with-lease="+ref+":"+commit, "--", binding.Remote, ":"+ref); err != nil {
+			return fmt.Errorf("cleanup blocked: ref changed or approved remote unavailable")
+		}
+	}
+	if _, err := taskartifacts.Git(ctx, filepath.Join(dir, "input-git"), "", "worktree", "remove", "--", rec.Allocation); err != nil {
+		return fmt.Errorf("cleanup blocked: worktree removal refused")
+	}
+	// These directories contain only generated numeric files. Unexpected
+	// entries block deletion instead of broad RemoveAll on a task root.
+	for direction, m := range map[string]taskartifacts.Manifest{"input": rec.Plan.Input, "result": *rec.Result} {
+		files, err := os.ReadDir(filepath.Join(dir, direction))
+		if err != nil {
+			return err
+		}
+		if len(files) != len(m.Entries) {
+			return fmt.Errorf("cleanup blocked: unexpected staging files")
+		}
+		for i := range m.Entries {
+			if err := os.Remove(filepath.Join(dir, direction, fmt.Sprintf("%d.bytes", i))); err != nil {
+				return err
+			}
+		}
+		if err := os.Remove(filepath.Join(dir, direction)); err != nil {
+			return err
+		}
+	}
+	rec.State = "cleaned"
+	return saveHandoff(dir, rec)
+}
+
+func (r *registry) handoffConfigDir() string {
+	if r.handoffRoot != "" {
+		return r.handoffRoot
+	}
+	return configDir()
+}

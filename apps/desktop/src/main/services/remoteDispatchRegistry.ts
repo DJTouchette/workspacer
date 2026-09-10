@@ -39,8 +39,14 @@ export interface RemoteDispatchUpdate {
 }
 
 export interface RemoteDispatchRecord {
-	/** Stable task transfer binding, independent of manager succession. */
-  handoff?: { binding: string; digest?: string; state: string; reviewCwd?: string };
+  /** Stable task transfer binding, independent of manager succession. */
+  handoff?: {
+    binding: string;
+    digest?: string;
+    state: string;
+    reviewCwd?: string;
+    sourceCwd?: string;
+  };
   dispatchId: string;
   localSessionId?: string;
   resultSchema?: Record<string, unknown>;

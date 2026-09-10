@@ -715,7 +715,94 @@ function TaskDetails({
           </div>
         </Surface>
       )}
+      {task.attempts
+        .filter((a) => a.handoff)
+        .map((a) => (
+          <section
+            key={a.dispatchId}
+            aria-label="Workspace handoff"
+            style={{ minWidth: 0, marginTop: 8 }}
+          >
+            <div role="status" style={{ fontSize: '0.8rem', overflowWrap: 'anywhere' }}>
+              {a.handoff?.state === 'received'
+                ? 'Ready for review'
+                : a.handoff?.state === 'running'
+                  ? 'Running'
+                  : a.handoff?.state === 'needs-checkpoint'
+                    ? 'Checkpoint required — workspace retained'
+                    : a.handoff?.state === 'blocked'
+                      ? 'Preparation needs attention'
+                      : `Preparing on ${a.executionHost ?? 'destination workspace'}`}
+            </div>
+            {a.handoff?.note && <p style={meta}>{a.handoff.note}</p>}
+            {a.handoff?.disposition && (
+              <p style={meta}>
+                {a.handoff.disposition === 'keep'
+                  ? 'Kept for this task'
+                  : 'Outputs accepted. Target cleanup waits seven days and a verified stopped worker.'}
+              </p>
+            )}
+            {a.handoff?.state === 'received' && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                <SmallButton
+                  label="Open review workspace"
+                  onClick={() =>
+                    void open({ taskId: task.taskId, kind: 'handoff', dispatchId: a.dispatchId })
+                  }
+                />
+                {a.handoff.artifacts?.map((artifact, index) => (
+                  <SmallButton
+                    key={artifact.name}
+                    label={artifact.name}
+                    onClick={() =>
+                      void open({
+                        taskId: task.taskId,
+                        kind: 'handoff',
+                        dispatchId: a.dispatchId,
+                        artifact: index,
+                      })
+                    }
+                  />
+                ))}
+                <SmallButton
+                  label="Accept outputs"
+                  disabled={busy || a.handoff.disposition === 'accepted'}
+                  onClick={() =>
+                    void edit({
+                      taskId: task.taskId,
+                      expectedTaskRevision: task.revision ?? 0,
+                      action: 'handoff-disposition',
+                      dispatchId: a.dispatchId,
+                      keep: false,
+                    })
+                  }
+                />
+                <SmallButton
+                  label="Keep"
+                  disabled={busy || a.handoff.disposition === 'keep'}
+                  onClick={() =>
+                    void edit({
+                      taskId: task.taskId,
+                      expectedTaskRevision: task.revision ?? 0,
+                      action: 'handoff-disposition',
+                      dispatchId: a.dispatchId,
+                      keep: true,
+                    })
+                  }
+                />
+              </div>
+            )}
+          </section>
+        ))}
       <Disclosure label="Details">
+        {task.attempts
+          .filter((a) => a.handoff)
+          .map((a) => (
+            <div key={a.dispatchId} style={{ ...meta, overflowWrap: 'anywhere' }}>
+              <IdRow label="Verified source" value={a.handoff?.base ?? 'Not yet verified'} />
+              <IdRow label="Review head" value={a.handoff?.head ?? 'Not yet received'} />
+            </div>
+          ))}
         <IdRow label="Task" value={task.taskId} />
         <IdRow label="Manager" value={task.ownerSessionId} />
         <IdRow label="Project" value={task.projectCwd} />
