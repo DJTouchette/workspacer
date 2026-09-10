@@ -232,6 +232,22 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	switch p.Operation {
 	case "freeze", "reserve":
 		if readErr == nil {
+			if p.Operation == "freeze" {
+				if p.OriginKey != "local-host" || !binding.Export || filepath.Clean(p.Cwd) != binding.Repository || p.FromTask != rec.Predecessor || p.Provider != rec.Plan.Provider || len(p.Selections) != len(rec.Plan.Input.Entries) || len(p.Outputs) != len(rec.Plan.Outputs) {
+					return nil, fmt.Errorf("conflicting immutable source retry")
+				}
+				for i, selection := range p.Selections {
+					entry := rec.Plan.Input.Entries[i]
+					if selection.Name != entry.Name || selection.Kind != entry.Kind {
+						return nil, fmt.Errorf("conflicting input selection retry")
+					}
+				}
+				for i, output := range p.Outputs {
+					if output != rec.Plan.Outputs[i] {
+						return nil, fmt.Errorf("conflicting required output retry")
+					}
+				}
+			}
 			if p.Plan != nil {
 				digest, err := planDigest(*p.Plan)
 				if err != nil || digest != rec.Digest {

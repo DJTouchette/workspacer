@@ -130,7 +130,16 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   entry.sessionId = record.localSessionId;
   let checkpointRequired = false;
   if (update.final && record.handoff) {
-    const result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
+    let result;
+    try {
+      result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
+    } catch (error) {
+      dispatchHistoryStore.observeHandoff(entry.sessionId, {
+        state: 'blocked',
+        note: `Output custody pending: ${String(error)}`,
+      });
+      throw error; // Retain the update; no acknowledgment before byte custody.
+    }
     registry.setHandoff(record.dispatchId, {
       ...record.handoff,
       state: result.state,
