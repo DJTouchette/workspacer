@@ -5,6 +5,7 @@ import { pairedWorkerConnection } from './pairedWorkerConnection';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { pairedDestinationKey } from './pairedWorkerConnection';
+import { randomBytes } from 'crypto';
 
 export interface HandoffSelection {
   name: string;
@@ -42,6 +43,32 @@ export interface HandoffRecord {
 export type HandoffCall = <T>(method: string, params: unknown) => Promise<T>;
 const remote: HandoffCall = (method, params) => pairedWorkerConnection.call(method, params);
 const CHUNK_BYTES = 256 * 1024;
+
+export async function prepareLocalTaskHandoff(
+  source: TaskSource,
+  taskId: string | undefined,
+  predecessor: string | undefined,
+  ownerSessionId: string | undefined,
+  provider: string,
+  cwd: string,
+): Promise<HandoffRecord> {
+  const task = taskId ? dispatchHistoryStore.task(taskId) : undefined;
+  const attempt = task?.attempts.find((a) => a.dispatchId === predecessor);
+  const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === attempt?.sessionId);
+  if (!task || task.ownerSessionId !== ownerSessionId || !predecessor || !record?.handoff || record.handoff.binding !== source.binding || record.handoff.state !== 'received' || record.peer !== pairedDestinationKey())
+    throw new Error('Local continuation requires the preceding verified handoff in this same owned task');
+  const nextTask = randomBytes(32).toString('hex');
+  await callHub('agents.taskHandoff', {
+    operation: 'freeze', binding: source.binding, task: nextTask, fromTask: record.dispatchId,
+    provider, cwd, selections: source.artifacts, outputs: source.outputs,
+  });
+  const prepared = await callHub<HandoffRecord>('agents.taskHandoff', {
+    operation: 'prepareLocal', binding: source.binding, task: nextTask,
+  });
+  if (prepared.state !== 'prepared' || !prepared.allocation)
+    throw new Error('Local handoff checkpoint or required artifacts are not verified');
+  return prepared;
+}
 
 /** Called only by the local host-user Task Inspector action, never by a
  * worker's reported test/pass claim or terminal-message acknowledgment. */

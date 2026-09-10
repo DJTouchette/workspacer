@@ -42,6 +42,7 @@ import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { spawnPairedWorker, selectPairedModel } from './pairedDispatch';
+import { prepareLocalTaskHandoff, type TaskSource } from './taskHandoff';
 import { listDispatchTargets } from './dispatchTargets';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
@@ -689,7 +690,9 @@ export function registerHubCapabilities(): void {
       executionTarget,
       remoteCwd,
       handoff,
+      taskSource,
     } = (params ?? {}) as {
+      taskSource?: TaskSource;
       handoff?: { binding: string; digest: string };
       executionTarget?: 'paired';
       remoteCwd?: string;
@@ -1012,6 +1015,7 @@ export function registerHubCapabilities(): void {
     // is done here. A soft failure (cwd not a repo, git error) falls back to
     // `cwd` with a warning rather than refusing the dispatch.
     let spawnCwd = cwd;
+    let handoffEvidence: string | undefined;
     let reviewAllocation: ReviewAllocation | undefined;
     let worktreeResult:
       | {
@@ -1024,7 +1028,20 @@ export function registerHubCapabilities(): void {
           error?: string;
         }
       | undefined;
-    if (worktree && cwd) {
+    if (taskSource) {
+      if (resumeSessionId || !dispatchAdmission.owner?.isWakeTarget)
+        throw new Error('Local task handoff requires a fresh worker owned by the local manager');
+      const prepared = await prepareLocalTaskHandoff(taskSource, taskId, afterDispatchId, dispatchAdmission.owner.sessionId, resolveSpawnProvider({ provider: reqProvider, manager }), requestedExecutionCwd);
+      spawnCwd = prepared.allocation!;
+      const branch = `wks/handoff-${prepared.plan.input.task}-input`;
+      reviewAllocation = {
+        projectRoot: requestedExecutionCwd, allocatedCwd: spawnCwd,
+        commonDir: path.join(path.dirname(spawnCwd), 'input-git'),
+        branch, baseCommit: prepared.plan.input.commit,
+      };
+      worktreeResult = { projectCwd: requestedExecutionCwd, executionCwd: spawnCwd, requested: true, allocated: true, fallback: false, branch };
+      handoffEvidence = `Verified task evidence: .workspacer/handoffs/${prepared.plan.input.task}. Required outputs: ${taskSource.outputs.map((a) => a.name).join(', ') || 'none'}.`;
+    } else if (worktree && cwd) {
       try {
         const wt = await createWorktree({
           repoCwd: cwd,
@@ -1090,6 +1107,7 @@ export function registerHubCapabilities(): void {
         projectCwd: projectCwd ?? requestedExecutionCwd,
       });
     }
+    if (handoffEvidence) message = `${message ?? ''}\n\n${handoffEvidence}`;
     const recordDispatch = (sessionId: string) => {
       // Resumes are observations of the original attempt, never new dispatches.
       if (resumeSessionId) return {};
