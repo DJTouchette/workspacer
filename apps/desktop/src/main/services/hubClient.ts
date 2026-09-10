@@ -101,7 +101,7 @@ const pending = new Map<
  *  socket is down, the call errors, or it times out. Our ids are prefixed `m`
  *  so they never collide with the hub-assigned numeric ids of inbound calls. */
 export function callHub<T = unknown>(method: string, params: unknown = {}): Promise<T> {
-  if (method.startsWith('hub:paired/')) {
+  if (method.startsWith('hub:@paired/')) {
     const p = { ...(params as Record<string, unknown>) };
     const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId);
     if (record) {
@@ -110,7 +110,7 @@ export function callHub<T = unknown>(method: string, params: unknown = {}): Prom
       if (!record.sessionId) return Promise.reject(new Error('Remote admission is unresolved'));
       p.sessionId = record.sessionId;
     }
-    return pairedWorkerConnection.call<T>(method.slice('hub:paired/'.length), p);
+    return pairedWorkerConnection.call<T>(method.slice('hub:@paired/'.length), p);
   }
   return new Promise<T>((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -159,6 +159,7 @@ export function registerCapability(method: string, handler: CapabilityHandler): 
       'claude.setEffort',
       'claude.setPermissionMode',
       'sessions.conversation',
+      'sessions.subagentConversation',
       'sessions.transcript',
     ];
     const record = actions.includes(method)

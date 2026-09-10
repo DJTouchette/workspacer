@@ -21,6 +21,31 @@ import { workflowWakeInstructions } from './fleetWorkflowRuntime';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { renderDispatchTemplate } from '../lib/dispatchTemplate';
 
+function projectPairedSnapshot(
+  record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
+  snapshot: import('./claudeSessionStore').RemoteSnapshotWire,
+): void {
+  if (!record.localSessionId) return;
+  claudeSessionStore.upsertRemoteSession('@paired', {
+    ...snapshot,
+    sessionId: record.localSessionId,
+    parentSessionId: record.ownerSessionId,
+    isWakeTarget: false,
+  });
+  const state = String(snapshot.ambientState ?? '');
+  try {
+    dispatchHistoryStore.observeRemote(
+      record.localSessionId,
+      snapshot.status === 'ended' ? 'ended' : state === 'idle' ? 'idle' :
+        ['waiting_approval', 'waiting_input'].includes(state) ? 'needs-decision' : 'running',
+      record.state === 'done',
+    );
+  } catch {
+    // Historical task retention may have expired; the remote card remains an
+    // observation and never creates a replacement task or a local fs grant.
+  }
+}
+
 let started = false;
 let deliveries = Promise.resolve();
 
@@ -32,8 +57,13 @@ export function startPairedDispatch(): void {
     return manager?.isWakeTarget && !manager.hub && manager.status !== 'ended' ? target : null;
   });
   started = true;
-  connection.onDisconnected = () => claudeSessionStore.markHubPeerOffline('paired');
+  connection.onDisconnected = () => claudeSessionStore.markHubPeerOffline('@paired');
   connection.onConnected = () => {
+    for (const record of registry.list()) {
+      if (record.peer === pairedDestinationKey() && record.state === 'done') {
+        void connection.call('agents.dispatchReplay', {dispatchId:record.dispatchId, ackedSeq:record.ackedSeq}).catch(() => {});
+      }
+    }
     for (const record of registry.openForPeer(pairedDestinationKey())) {
       void connection
         .call('agents.dispatchReplay', { dispatchId: record.dispatchId })
@@ -43,14 +73,7 @@ export function startPairedDispatch(): void {
           .call<import('./claudeSessionStore').RemoteSnapshotWire>('sessions.snapshot', {
             sessionId: record.sessionId,
           })
-          .then((snapshot) =>
-            claudeSessionStore.upsertRemoteSession('paired', {
-              ...snapshot,
-              sessionId: record.localSessionId,
-              parentSessionId: record.ownerSessionId,
-              isWakeTarget: false,
-            }),
-          )
+          .then((snapshot) => projectPairedSnapshot(record, snapshot))
           .catch(() => {});
     }
   };
@@ -60,13 +83,7 @@ export function startPairedDispatch(): void {
       const record = registry
         .list()
         .find((r) => r.peer === pairedDestinationKey() && r.sessionId === snapshot?.sessionId);
-      if (record?.localSessionId)
-        claudeSessionStore.upsertRemoteSession('paired', {
-          ...snapshot,
-          sessionId: record.localSessionId,
-          parentSessionId: record.ownerSessionId,
-          isWakeTarget: false,
-        });
+      if (record) projectPairedSnapshot(record, snapshot);
       return;
     }
     if (event.type !== 'agent.dispatch.update') return;
@@ -108,16 +125,11 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
       entry.result ? JSON.parse(entry.result) : entry.escalation,
     );
   }
-  dispatchHistoryStore.observe({
-    sessionId: entry.sessionId,
-    status: 'active',
-    ambientState: update.final ? 'idle' : 'streaming',
-    pendingApproval: null,
-    pendingQuestions: null,
-    usage: null,
-    statusLine: undefined,
-    hub: undefined,
-  });
+  dispatchHistoryStore.observeRemote(
+    entry.sessionId,
+    update.kind === 'blocked' ? 'needs-decision' : update.final ? entry.stopped ? 'ended' : 'idle' : 'running',
+    update.final,
+  );
   const text =
     buildFleetMessage(update.kind, [entry]) + workflowWakeInstructions([entry.sessionId]);
   const signatures: Array<[string, string]> = [
@@ -130,6 +142,9 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
     managerReplacementState.recordSignature(entry.sessionId, signatures[0][1]);
   }
   registry.acknowledge(record.dispatchId, update);
+  if (update.final) {
+    void connection.call('agents.dispatchReplay', {dispatchId:record.dispatchId, ackedSeq:update.seq}).catch(() => {});
+  }
 }
 
 type Admission = Parameters<typeof dispatchHistoryStore.accept>[0];
@@ -265,7 +280,7 @@ export async function spawnPairedWorker(
         sessionId: result.sessionId,
       })
       .catch(() => ({ cwd: prepared.cwd, status: 'starting' as const }));
-    claudeSessionStore.upsertRemoteSession('paired', {
+    claudeSessionStore.upsertRemoteSession('@paired', {
       ...snapshot,
       sessionId: localSessionId,
       parentSessionId: owner.sessionId,

@@ -410,6 +410,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const remoteSnaps = new Map<string, ClaudeSessionSnapshot>();
   const qualify = (sessionId: string, method: string): string => {
     const hub = sessionHub.get(sessionId);
+    // Paired ids belong to the local origin host, which holds the credential
+    // and maps them to remote ids. They are not Go federation peer ids.
+    if (hub === '@paired' && sessionId.startsWith('paired:')) return method;
     return hub ? `hub:${hub}/${method}` : method;
   };
   const readProviderSubagentConversation = async (
@@ -438,6 +441,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const withPeerFleets = async (
     local: ClaudeSessionSnapshot[],
   ): Promise<ClaudeSessionSnapshot[]> => {
+    for (const snap of local) {
+      if (snap.hub === '@paired' && snap.sessionId.startsWith('paired:')) {
+        sessionHub.set(snap.sessionId, '@paired');
+        remoteSnaps.set(snap.sessionId, snap);
+      }
+    }
     let peers: Array<{ name: string; connected: boolean }> = [];
     try {
       peers = ((await client.call('federation.peers', {})) ?? []) as typeof peers;
@@ -1158,8 +1167,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         // payload (and remember it) or a remote session renders as an
         // unlabeled local-looking card with no gating.
         const snap = ev.hub ? { ...raw, hub: ev.hub, hubOffline: undefined } : raw;
-        if (ev.hub) {
-          sessionHub.set(snap.sessionId, ev.hub);
+        if (ev.hub || (snap.hub === '@paired' && snap.sessionId.startsWith('paired:'))) {
+          sessionHub.set(snap.sessionId, ev.hub ?? '@paired');
           remoteSnaps.set(snap.sessionId, snap);
         }
         // Sparse rows carry no conversation of their own — they overlay the

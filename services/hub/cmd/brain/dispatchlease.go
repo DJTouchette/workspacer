@@ -29,6 +29,7 @@ type persistedRemoteDispatch struct {
 	Seq     int64           `json:"seq"`
 	Last    *dispatchUpdate `json:"last,omitempty"`
 	Lease   *dispatchLease  `json:"lease,omitempty"`
+	AckedAt int64           `json:"ackedAt,omitempty"`
 }
 
 func (s *remoteDispatchStore) persistLocked() error {
@@ -37,7 +38,7 @@ func (s *remoteDispatchStore) persistLocked() error {
 	}
 	rows := make([]persistedRemoteDispatch, 0, len(s.m))
 	for id, d := range s.m {
-		rows = append(rows, persistedRemoteDispatch{id, d.sessionID, d.seq, d.last, d.lease})
+		rows = append(rows, persistedRemoteDispatch{id, d.sessionID, d.seq, d.last, d.lease, d.acknowledgedAt})
 	}
 	b, err := json.Marshal(rows)
 	if err != nil {
@@ -68,7 +69,7 @@ func (s *remoteDispatchStore) load(file string) error {
 		if row.Lease != nil && (row.Lease.Owner == "" || (row.Lease.Worktree && row.Lease.Cwd != filepath.Join(configDir(), "dispatch-worktrees", row.ID))) {
 			return fmt.Errorf("invalid remote dispatch journal destination")
 		}
-		s.m[row.ID] = &remoteDispatch{dispatchID: row.ID, sessionID: row.Session, seq: row.Seq, last: row.Last, lease: row.Lease}
+		s.m[row.ID] = &remoteDispatch{dispatchID: row.ID, sessionID: row.Session, seq: row.Seq, last: row.Last, lease: row.Lease, acknowledgedAt: row.AckedAt}
 		if row.Session != "" {
 			s.bySession[row.Session] = row.ID
 		}
@@ -123,6 +124,19 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 			return nil, fmt.Errorf("dispatch already admitted or lease does not match; do not spawn again")
 		}
 		return jsonResult(map[string]any{"cwd": prior.lease.Cwd, "repo": prior.lease.Repo, "worktree": prior.lease.Worktree, "branch": prior.lease.Branch, "expires": prior.lease.Expires})
+	}
+	if len(s.m) >= 1024 {
+		oldestID := ""
+		var oldest int64
+		for key, row := range s.m {
+			if row.acknowledgedAt > 0 && (oldestID == "" || row.acknowledgedAt < oldest) {
+				oldestID, oldest = key, row.acknowledgedAt
+			}
+		}
+		if oldestID != "" {
+			delete(s.bySession, s.m[oldestID].sessionID)
+			delete(s.m, oldestID)
+		}
 	}
 	if len(s.m) >= 1024 {
 		return nil, fmt.Errorf("remote dispatch journal is full; no worker was started")

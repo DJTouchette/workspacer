@@ -146,6 +146,6 @@ export const pairedWorkerConnection = new PairedWorkerConnection();
 export function pairedDestinationKey(): string {
   const target = getPairedWorkerTarget();
   return target
-    ? `paired-${createHash('sha256').update(target.busUrl).update('\0').update(target.token).digest('hex')}`
+    ? `@paired:${createHash('sha256').update(target.busUrl).update('\0').update(target.token).digest('hex')}`
     : '';
 }

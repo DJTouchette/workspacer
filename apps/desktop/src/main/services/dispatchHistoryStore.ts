@@ -459,6 +459,33 @@ export class DispatchHistoryStore {
       };
     this.flush();
   }
+  /** Only authenticated paired dispatch records can drive this projection. No
+   * remote path is opened and no remote snapshot becomes a local fs grant. */
+  observeRemote(
+    sessionId: string,
+    lifecycle: DispatchAttempt['lifecycle'],
+    final = false,
+  ): void {
+    if (!this.writing)
+      return this.transaction(() => this.observeRemote(sessionId, lifecycle, final));
+    const found = this.find(sessionId);
+    if (!found || found.attempt.executionTarget !== 'paired')
+      throw new Error('No admitted paired attempt for this observation');
+    const attempt = found.attempt;
+    const now = new Date().toISOString();
+    attempt.lifecycle = lifecycle;
+    attempt.observedAt = now;
+    attempt.stale = false;
+    attempt.live = lifecycle !== 'ended';
+    this.fresh.set(sessionId, now);
+    if (lifecycle === 'ended') attempt.endedAt = now;
+    attempt.metrics.wallMs = Math.max(0, Date.parse(now) - Date.parse(attempt.acceptedAt));
+    const step = found.task.workflow?.steps.find((s) => s.sessionId === sessionId);
+    if (step && step.state !== 'waived' && !final && attempt.resultContract === 'absent')
+      step.state = lifecycle === 'needs-decision' ? 'blocked' : lifecycle === 'ended' ? 'failed' : 'dispatched';
+    this.flush();
+  }
+
   validated(
     sessionId: string,
     resultContract: DispatchAttempt['resultContract'],

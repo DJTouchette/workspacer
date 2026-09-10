@@ -13,7 +13,7 @@ export const HubChip: React.FC<{
   style?: React.CSSProperties;
 }> = ({ name, offline, style }) => (
   <span
-    title={offline ? `hub ${name} is offline` : `on hub ${name}`}
+    title={name === '@paired' ? (offline ? 'Paired worker server is offline' : 'Runs on the paired worker server; manager stays on this desktop') : offline ? `hub ${name} is offline` : `on hub ${name}`}
     style={{
       display: 'inline-flex',
       alignItems: 'center',
@@ -33,6 +33,6 @@ export const HubChip: React.FC<{
     }}
   >
     <Server size={10} strokeWidth={2} style={{ flexShrink: 0 }} />
-    {name === 'paired' ? 'Paired worker' : name}
+    {name === '@paired' ? 'Paired worker' : name}
   </span>
 );

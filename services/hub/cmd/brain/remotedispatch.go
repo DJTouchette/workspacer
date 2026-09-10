@@ -103,18 +103,16 @@ type remoteDispatch struct {
 	dispatchID string
 	sessionID  string
 	seq        int64
-	// last is the terminal update, kept so a reconnecting origin can ask for it
-	// again. Only the FINAL one is retained: a missed progress line is
-	// information a manager can live without, a missed result is not.
-	last  *dispatchUpdate
-	lease *dispatchLease
+	// last is the latest durable update, including a block or progress report
+	// while the worker is running. A final update closes its sequence.
+	last           *dispatchUpdate
+	lease          *dispatchLease
+	acknowledgedAt int64
 }
 
-// remoteDispatchStore holds them. In-memory and per-process, matching every
-// other piece of fleet wake bookkeeping on both providers: a dispatch whose
-// executing node restarted has lost its worker too, and the origin's own
-// reconcile (a replay that answers "unknown dispatch") is what turns that into
-// a visible tombstone rather than a silent wait.
+// remoteDispatchStore journals admission leases and the latest progress/block/
+// terminal update. A brain restart cannot make a claimed lease reusable or
+// discard a result whose origin was disconnected.
 type remoteDispatchStore struct {
 	mu   sync.Mutex
 	file string
@@ -302,6 +300,7 @@ func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.
 	var p struct {
 		DispatchID string `json:"dispatchId"`
 		OriginKey  string `json:"originKey"`
+		AckedSeq   int64  `json:"ackedSeq"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -319,12 +318,33 @@ func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.
 	if !authorized {
 		return nil, fmt.Errorf("dispatch unavailable for this connection")
 	}
+	if p.AckedSeq > 0 {
+		r.remote.mu.Lock()
+		d := r.remote.m[p.DispatchID]
+		if d == nil || d.last == nil || !d.last.Final || d.last.Seq != p.AckedSeq {
+			r.remote.mu.Unlock()
+			return nil, fmt.Errorf("terminal acknowledgement does not match")
+		}
+		d.acknowledgedAt = time.Now().UnixMilli()
+		err := r.remote.persistLocked()
+		r.remote.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(map[string]any{"state": "acknowledged"})
+	}
 	last, sessionID, known := r.remote.replay(p.DispatchID)
 	switch {
 	case !known:
 		return jsonResult(map[string]any{"state": "unknown", "dispatchId": p.DispatchID})
 	case last == nil:
 		return jsonResult(map[string]any{"state": "running", "dispatchId": p.DispatchID, "sessionId": sessionID})
+	}
+	if last.Kind == dispatchKindBlocked {
+		current, exists := findFleetSession(r.fleetSessions(context.Background()), sessionID)
+		if exists && !isBlockedAmbient(current.AmbientState) {
+			return jsonResult(map[string]any{"state": "running", "dispatchId": p.DispatchID, "sessionId": sessionID})
+		}
 	}
 	if data, err := json.Marshal(*last); err == nil && r.publish != nil {
 		r.publish(bus.TopicDispatchUpdate, data)

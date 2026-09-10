@@ -12,15 +12,6 @@ export const DISPATCH_PROTOCOL = 2;
 /** Twin: bus.DispatchIDPattern. */
 const DISPATCH_ID_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
-/**
- * How long a record with no terminal update survives. A dispatch whose peer
- * never comes back must eventually stop being replayed at, or every reconnect
- * forever re-asks about a machine that was decommissioned a month ago. Twelve
- * hours is longer than any plausible single agent task and short enough that the
- * file cannot grow without bound.
- */
-export const DISPATCH_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
 /** Cap on stored records, oldest-first eviction. Bounded file, bounded scan. */
 const MAX_RECORDS = 256;
 
@@ -263,13 +254,7 @@ export class RemoteDispatchRegistry {
     this.persist();
   }
 
-  /**
-   * Close a record that will never produce a result — the forwarded spawn itself
-   * failed. This is what stops the feature from creating ORPHANED DISPATCHES:
-   * without it a failed spawn leaves an open record that every reconnect
-   * replays at, and an operator with no way to tell it apart from work in
-   * flight.
-   */
+  /** Retain uncertain admission for reconciliation; transport failure is not rejection. */
   fail(dispatchId: unknown, note?: unknown): void {
     if (typeof dispatchId !== 'string') return;
     const record = this.records.get(dispatchId);
@@ -315,7 +300,6 @@ export class RemoteDispatchRegistry {
 
   /** Dispatches still awaiting a result on one peer — the reconnect replay set. */
   openForPeer(peer: string): RemoteDispatchRecord[] {
-    const now = Date.now();
     const out: RemoteDispatchRecord[] = [];
     for (const r of this.records.values()) {
       if (r.peer !== peer || r.state !== 'open') continue;

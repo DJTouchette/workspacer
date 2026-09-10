@@ -63,3 +63,18 @@ func TestDispatchPublicationRequiresLocalExecutionAuthority(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatchReplayReplacesClaimedOriginWithCredentialIdentity(t *testing.T) {
+	rt := &router{}
+	raw, err := rt.sanitizeCallParams(&conn{tokenID: "actual-origin"}, "agents.dispatchReplay", json.RawMessage(`{"dispatchId":"0123456789abcdef","originKey":"forged-origin","ackedSeq":7}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["originKey"] != "actual-origin" || params["ackedSeq"] != float64(7) {
+		t.Fatalf("incorrect replay identity: %s", raw)
+	}
+}

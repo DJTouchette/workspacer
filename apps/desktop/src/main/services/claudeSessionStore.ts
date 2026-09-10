@@ -1134,7 +1134,7 @@ class ClaudeSessionStore {
     for (const record of remoteDispatchRegistry.list()) {
       if (record.ownerSessionId !== newManagerId || !record.localSessionId) continue;
       const session = this.sessions.get(record.localSessionId);
-      if (session?.hub === 'paired' && session.parentSessionId === oldManagerId) {
+      if (session?.hub === '@paired' && session.parentSessionId === oldManagerId) {
         session.parentSessionId = newManagerId;
         moved.push(session.sessionId);
         this.pushUpdate(session);

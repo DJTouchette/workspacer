@@ -1054,6 +1054,11 @@ it('dispatches through the real paired host and brain, returns a local task resu
       ]),
     );
     const localLaunches = launch.mock.calls.length;
+    await expect(pairedWorkerConnection.call('agents.dispatchPrepare', {
+      remoteOrigin:{protocol:2,dispatchId:'failed-worktree-fixture-nonce'},
+      cwd:ready.nonRepo,provider:'claude',worktree:true,
+    })).rejects.toThrow(/worktree allocation failed/);
+
     for (const override of [
       { remoteCwd: project },
       { provider: 'codex' },
@@ -1192,6 +1197,7 @@ it('dispatches through the real paired host and brain, returns a local task resu
         ).toBe(true),
       { timeout: 10_000 },
     );
+    expect(history.task(task.taskId)!.workflow!.steps.find((s) => s.id === 'implement')?.state).toBe('blocked');
     sessions.reparentChildren('manager-current', 'manager-other');
     pairedWorkerConnection.stop();
     const reply = 'Remote task complete.\n```wks-result\n{"commit":"fixture-commit"}\n```';
@@ -1219,6 +1225,7 @@ it('dispatches through the real paired host and brain, returns a local task resu
     const retained = persisted().find((t) => t.taskId === task.taskId)!;
     expect(retained.sources?.[0].requestId).toBe(request.requestId);
     expect(retained.ownerSessionId).toBe('manager-other');
+    expect(retained.attempts[0].worktree?.directoryIdentity).toBeUndefined();
     expect(retained.workflow?.hash).toBe(task.workflow?.hash);
     expect(retained.workflow?.steps.find((s) => s.id === 'implement')?.state).toBe('completed');
     const { remoteDispatchRegistry } =

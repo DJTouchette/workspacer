@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -120,5 +121,32 @@ func TestDispatchWireUsesDesktopFieldNames(t *testing.T) {
 	}
 	if _, exists := entry["SessionID"]; exists {
 		t.Fatal("internal Go field spelling leaked onto dispatch wire")
+	}
+}
+
+func TestTerminalAcknowledgementIsBoundToOriginAndSurvivesRestart(t *testing.T) {
+	r, p := leaseRegistry(t)
+	if err := r.remote.record(p.RemoteOrigin.DispatchID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if !r.emitDispatchUpdate(p.RemoteOrigin.DispatchID, dispatchKindFinished, "worker", fleetEntry{SessionID: "worker"}, true) {
+		t.Fatal("no terminal receipt")
+	}
+	call := func(owner string) (json.RawMessage, error) {
+		raw, _ := json.Marshal(map[string]any{"dispatchId": p.RemoteOrigin.DispatchID, "originKey": owner, "ackedSeq": 1})
+		return r.dispatchReplay(context.Background(), raw)
+	}
+	if _, err := call("other-origin"); err == nil {
+		t.Fatal("different origin acknowledged a receipt")
+	}
+	if _, err := call("origin-a"); err != nil {
+		t.Fatal(err)
+	}
+	restored := newRemoteDispatchStore()
+	if err := restored.load(r.remote.file); err != nil {
+		t.Fatal(err)
+	}
+	if restored.m[p.RemoteOrigin.DispatchID].acknowledgedAt == 0 {
+		t.Fatal("acknowledgement was not durable")
 	}
 }

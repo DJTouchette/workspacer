@@ -1,38 +1,7 @@
-/**
- * REMOTE WORKER DISPATCH — DISCOVERY: what a Fleet Manager on this machine is
- * allowed to know about the machines it may send work to.
- *
- * This is the answer behind the `list_dispatch_targets` MCP tool and the
- * `fleet.dispatchTargets` bus capability. It exists because the alternative —
- * a manager guessing — fails in two specific, observed ways:
- *
- *  1. IT GUESSES A HARNESS. The desktop is signed into Claude and Codex, so a
- *     manager dispatches a Codex worker to the linked node… where Codex is
- *     installed and has no login at all. The session opens, answers nothing and
- *     ends, which is indistinguishable from "the first message never arrived".
- *     So readiness is read ON THE TARGET (fleet.dispatchCapabilities) and
- *     reported per provider, tri-state, never inferred from this desktop.
- *  2. IT GUESSES A DIRECTORY. There is no path translation anywhere in this
- *     feature and there must not be: `/home/me/Work/x` on this laptop means
- *     nothing on a container running as uid 10001. So the cwd choices come back
- *     from the target as absolute paths on ITS filesystem, and a dispatch names
- *     one of them verbatim.
- *
- * WHAT IT NEVER DISCLOSES. The peer's bearer token lives in peers.json and is
- * redacted out of every read (`readRedactedPeers` returns `hasToken`, never the
- * value). This module does not read, log or return it; it only reports whether
- * a credential is configured at all, because "linked but no token" is a real
- * misconfiguration a manager would otherwise experience as an unexplained
- * failure. The peer URL is reduced to its host for the same reason a label is
- * useful and a full URL is not.
- *
- * ONLY EXPLICITLY ENABLED TARGETS ARE LISTED. A linked machine that has not been
- * ticked as a worker target is not a dispatch target — being linked is not
- * consent — and it is omitted rather than listed as unavailable, because a
- * manager reading a list of targets should read a list of things it may use.
- * The count of linked-but-not-enabled machines is reported alongside so the
- * absence is explicable rather than mysterious.
- */
+/** Explicit worker-target discovery. Pairing credentials stay in main; the
+ * remote host supplies protocol support, provider login status and repository
+ * choices. Enabling a paired worker target never switches the desktop backend.
+ * Existing federation peers retain their separate opt-in dispatch flag. */
 import { getPairedWorkerTarget } from './remoteServer';
 import { pairedWorkerConnection } from './pairedWorkerConnection';
 import { callHub } from './hubClient';

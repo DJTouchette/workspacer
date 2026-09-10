@@ -1,34 +1,9 @@
 package main
 
-// THE HONEST READINESS ANSWER for a machine somebody else is about to dispatch
-// work onto — the data half of fleet.dispatchCapabilities (remotedispatch.go).
-//
-// THE RULE THIS FILE EXISTS TO ENFORCE: a dispatching machine may not infer
-// anything about this one. Not which harnesses are installed, not which are
-// LOGGED IN, and above all not which directories exist. The failure it prevents
-// is specific and was observed on a real combined Fly node: Codex is installed
-// there and has no login at all, while Claude is signed in — so a manager on a
-// desktop where both work would have dispatched a Codex worker that opens a
-// session, answers nothing, and ends. That reads exactly like "the first message
-// never arrived", and the manager cannot tell the difference.
-//
-// So every field below is measured HERE:
-//
-//   - `found` is a PATH probe on this machine, through the same
-//     checkAllProviders the desktop's own provider check uses.
-//   - `authenticated` is read off this machine's credential file, and it is
-//     TRI-STATE: true, false, or ABSENT for a harness that keeps its login
-//     somewhere unreadable (copilot uses the OS credential store). Absent means
-//     "this node cannot tell", never "probably fine" — the note says which.
-//   - `cwds` are real absolute directories on THIS filesystem: the projects this
-//     node has configured, plus the directories its live agents are already
-//     working in. There is NO path translation anywhere in this feature; a
-//     dispatch names one of these verbatim or it names a directory the spawn
-//     will reject.
-//
-// NOTHING HERE READS A SECRET'S VALUE. The credential files are probed for
-// presence and, for codex, for two non-secret fields; no token is ever loaded,
-// returned, or logged.
+// Remote readiness is measured on the execution host. CLI login probes return
+// only a tri-state result; their bounded output is never logged or returned.
+// Repository choices come from this host config and active sessions, never a
+// desktop path translation or an automatic clone.
 
 import (
 	"context"
@@ -121,98 +96,6 @@ func probeProviderLogin(ctx context.Context, binary, provider string) *bool {
 		return boolPtr(false)
 	}
 	return nil
-}
-
-// claudeConfigRoot is where the Claude CLI keeps its state on this machine:
-// CLAUDE_CONFIG_DIR when set, else ~/.claude. TWIN of the resolution
-// apps/desktop/src/main/lib/profileAccounts.ts performs for the DEFAULT profile.
-func claudeConfigRoot() string {
-	if v := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); v != "" {
-		return expandTilde(v)
-	}
-	home := homeDir()
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".claude")
-}
-
-// claudeLoginPresent reports whether this machine has a usable Claude login.
-//
-// Two sources, matching profileAccounts.ts: the OAuth credential file inside
-// the config root, and `oauthAccount` in `.claude.json` (whose location differs
-// for the default root — the quirk the desktop's claudeAccountSetup owns). An
-// API key in the environment counts too: it is how a headless node is most
-// often credentialled.
-func claudeLoginPresent() bool {
-	if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "" {
-		return true
-	}
-	root := claudeConfigRoot()
-	if root == "" {
-		return false
-	}
-	if fileExists(filepath.Join(root, ".credentials.json")) {
-		return true
-	}
-	// The default root keeps its json beside the directory, not inside it.
-	candidates := []string{filepath.Join(root, ".claude.json")}
-	if home := homeDir(); home != "" && filepath.Clean(root) == filepath.Join(home, ".claude") {
-		candidates = append(candidates, filepath.Join(home, ".claude.json"))
-	}
-	for _, c := range candidates {
-		var doc struct {
-			OAuthAccount map[string]any `json:"oauthAccount"`
-		}
-		if readJSONFile(c, &doc) && len(doc.OAuthAccount) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// codexLoginPresent reads $CODEX_HOME/auth.json for the same three signals
-// codexAccountFromAuthFile checks, and NONE of their values: presence only.
-func codexLoginPresent() bool {
-	if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
-		return true
-	}
-	root := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if root == "" {
-		home := homeDir()
-		if home == "" {
-			return false
-		}
-		root = filepath.Join(home, ".codex")
-	} else {
-		root = expandTilde(root)
-	}
-	var doc struct {
-		OpenAIAPIKey string `json:"OPENAI_API_KEY"`
-		Tokens       struct {
-			AccountID   string `json:"account_id"`
-			AccessToken string `json:"access_token"`
-		} `json:"tokens"`
-	}
-	if !readJSONFile(filepath.Join(root, "auth.json"), &doc) {
-		return false
-	}
-	return doc.OpenAIAPIKey != "" || doc.Tokens.AccountID != "" || doc.Tokens.AccessToken != ""
-}
-
-func fileExists(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && !st.IsDir()
-}
-
-// readJSONFile decodes a file into v, reporting whether it worked. Never
-// surfaces the bytes on failure.
-func readJSONFile(p string, v any) bool {
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return false
-	}
-	return json.Unmarshal(b, v) == nil
 }
 
 // dispatchCwd is one directory on THIS machine a dispatched worker may be
