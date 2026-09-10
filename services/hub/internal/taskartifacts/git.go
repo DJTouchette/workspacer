@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -33,6 +34,9 @@ type RepositoryBinding struct {
 }
 
 func (b RepositoryBinding) Validate() error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("workspace handoff requires POSIX custody permissions; Windows ACL custody is not supported in v1")
+	}
 	if !ID.MatchString(b.ID) || !ID.MatchString(b.Origin) || b.Revision == "" || b.Owner == "" || !filepath.IsAbs(b.Repository) {
 		return fmt.Errorf("repository binding setup required")
 	}
@@ -60,6 +64,9 @@ func (b RepositoryBinding) Ref(task, direction string) (string, error) {
 
 func (b RepositoryBinding) GitRemote(ctx context.Context, repo string, args ...string) ([]byte, error) {
 	if err := b.Validate(); err != nil {
+		return nil, err
+	}
+	if err := checkTransferConfig(ctx, repo); err != nil {
 		return nil, err
 	}
 	if b.TLSCAFile != "" {
@@ -115,14 +122,8 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 // CheckSource refuses execution-valued local config before status can invoke
 // clean filters. It never stages, commits, stashes or modifies the user index.
 func CheckSource(ctx context.Context, repo string) (string, string, error) {
-	config, err := Git(ctx, repo, "", "config", "--local", "--name-only", "--list")
-	if err != nil {
+	if err := checkTransferConfig(ctx, repo); err != nil {
 		return "", "", err
-	}
-	for _, key := range strings.Fields(strings.ToLower(string(config))) {
-		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasPrefix(key, "url.") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "core.sparsecheckout" {
-			return "", "", fmt.Errorf("unsupported checkpoint configuration: %s", key)
-		}
 	}
 	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
@@ -137,6 +138,19 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 	}
 	format, err := Git(ctx, repo, "", "rev-parse", "--show-object-format")
 	return strings.TrimSpace(string(head)), strings.TrimSpace(string(format)), err
+}
+
+func checkTransferConfig(ctx context.Context, repo string) error {
+	config, err := Git(ctx, repo, "", "config", "--local", "--no-includes", "--name-only", "--list")
+	if err != nil {
+		return err
+	}
+	for _, key := range strings.Fields(strings.ToLower(string(config))) {
+		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasPrefix(key, "url.") || strings.HasPrefix(key, "http.") || strings.HasPrefix(key, "credential.") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "extensions.worktreeconfig" || key == "core.sparsecheckout" || key == "core.gitproxy" {
+			return fmt.Errorf("unsupported checkpoint configuration: %s", key)
+		}
+	}
+	return nil
 }
 
 // VerifyTree rejects unsupported materialization BEFORE worktree creation.

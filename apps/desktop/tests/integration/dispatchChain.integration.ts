@@ -1537,6 +1537,33 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(
       execFileSync('git', ['-C', project, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     ).toBe(ready.sourceCommit);
+    const localRoute = await mcpTool('session:manager-other', 'select_model', { role: 'implementer', cwd: project });
+    expect(localRoute.isError, localRoute.text).toBe(false);
+    const continuation = {
+      provider: localRoute.value.provider,
+      model: localRoute.value.model,
+      capability: localRoute.value.capability,
+      decisionId: localRoute.value.decisionId,
+      role: 'implementer',
+      parentSessionId: 'manager-other',
+      taskId: exact.value.taskId,
+      afterDispatchId: imported.dispatchId,
+      message: 'Continue locally from the verified returned checkpoint and report.',
+      taskSource: {
+        binding: ready.handoffBinding,
+        artifacts: [{ name: 'implementation.md', kind: 'report' }],
+        outputs: [],
+      },
+    };
+    const continued = await mcpSpawn('session:manager-other', continuation);
+    expect(continued.isError, continued.text).toBe(false);
+    const localExecution = launch.mock.lastCall![0];
+    expect(execFileSync('git', ['-C', localExecution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(imported.handoff!.head);
+    const evidenceFolder = fs.readdirSync(path.join(localExecution.cwd, '.workspacer/handoffs'))[0];
+    expect(fs.readFileSync(path.join(localExecution.cwd, '.workspacer/handoffs', evidenceFolder, 'implementation.md'), 'utf8')).toContain('Result evidence');
+    const launchCount = launch.mock.calls.length;
+    expect((await mcpSpawn('session:manager-other', continuation)).isError).toBe(true);
+    expect(launch.mock.calls).toHaveLength(launchCount);
   } finally {
     setRemoteServer(null);
     pairedWorkerConnection.stop();

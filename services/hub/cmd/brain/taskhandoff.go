@@ -42,7 +42,28 @@ func (r *registry) preparedHandoff(owner, task string, selector *handoffReceiptS
 	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(r.handoffDir(binding, task), "input-worktree") {
 		return nil, fmt.Errorf("handoff receipt does not match this admission")
 	}
+	if err := verifyHandoffAllocation(context.Background(), rec.Allocation, filepath.Join(r.handoffDir(binding, task), "input-git"), task, "input", rec.Plan.Input); err != nil {
+		return nil, err
+	}
+	if err := verifyHandoffEvidence(rec.Allocation, task, rec.Plan.Input); err != nil {
+		return nil, err
+	}
 	return &rec, nil
+}
+
+func verifyHandoffEvidence(allocation, task string, m taskartifacts.Manifest) error {
+	root, err := taskartifacts.OpenSelectedRoot(allocation, ".workspacer/handoffs/"+task)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for _, e := range m.Entries {
+		b, err := taskartifacts.ReadSelected(root, e.Name)
+		if err != nil || int64(len(b)) != e.Size || taskartifacts.Digest(b) != e.SHA256 {
+			return fmt.Errorf("prepared artifact changed: %s", e.Name)
+		}
+	}
+	return nil
 }
 
 type handoffPlan struct {
@@ -117,7 +138,38 @@ func saveHandoff(dir string, rec *handoffRecord) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic0600(filepath.Join(dir, "receipt.json"), b)
+	return writeHandoffAtomic(filepath.Join(dir, "receipt.json"), b)
+}
+
+// Receipt success means durable bytes, including the containing directory
+// entry. This is deliberately stricter than UI preference persistence.
+func writeHandoffAtomic(name string, b []byte) error {
+	dir := filepath.Dir(name)
+	f, err := os.CreateTemp(dir, ".handoff-")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err = f.Write(b); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(tmp, name); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func planDigest(p handoffPlan) (string, error) {
@@ -290,11 +342,15 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if !binding.Export || p.OriginKey != "local-host" {
 			return nil, fmt.Errorf("source publication requires local export authority")
 		}
+		source := binding.Repository
+		if rec.Predecessor != "" {
+			source = filepath.Join(r.handoffDir(binding, rec.Predecessor), "result-git")
+		}
 		ref, _ := binding.Ref(p.Task, "input")
-		_, err := binding.GitRemote(ctx, binding.Repository, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, rec.Plan.Input.Commit+":"+ref)
+		_, err := binding.GitRemote(ctx, source, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, rec.Plan.Input.Commit+":"+ref)
 		if err != nil {
 			// A lost successful push is accepted only at the exact expected ID.
-			got, e := binding.GitRemote(ctx, binding.Repository, "ls-remote", "--refs", "--", binding.Remote, ref)
+			got, e := binding.GitRemote(ctx, source, "ls-remote", "--refs", "--", binding.Remote, ref)
 			fields := strings.Fields(string(got))
 			if e != nil || len(fields) != 2 || fields[0] != rec.Plan.Input.Commit || fields[1] != ref {
 				return nil, err
@@ -365,6 +421,21 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		return jsonResult(rec)
+	case "claimLocal":
+		if p.OriginKey != "local-host" || rec.Predecessor == "" || rec.State != "prepared" || rec.Digest != p.Digest {
+			return nil, fmt.Errorf("local admission already claimed or receipt mismatched; do not repeat an uncertain spawn")
+		}
+		if err := verifyHandoffAllocation(ctx, rec.Allocation, filepath.Join(dir, "input-git"), p.Task, "input", rec.Plan.Input); err != nil {
+			return nil, err
+		}
+		if err := verifyHandoffEvidence(rec.Allocation, p.Task, rec.Plan.Input); err != nil {
+			return nil, err
+		}
+		rec.State = "admitted"
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
 	case "status":
 		return jsonResult(rec)
 	case "sealResult":
@@ -401,6 +472,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		manifest, err := freezeHandoffArtifacts(binding, p.Task, commit, format, rec.Plan.Outputs, rec.Allocation, ".workspacer/handoffs/"+p.Task, filepath.Join(dir, "result"))
 		if err != nil {
 			return nil, err
+		}
+		after, afterFormat, err := taskartifacts.CheckSource(ctx, rec.Allocation)
+		if err != nil || after != commit || afterFormat != format {
+			return nil, fmt.Errorf("result checkpoint changed during sealing")
 		}
 		rec.Result = &manifest
 		if err := saveHandoff(dir, &rec); err != nil {
@@ -562,7 +637,7 @@ func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commi
 		if err := m.Validate(); err != nil {
 			return m, err
 		}
-		if err := writeFileAtomic0600(filepath.Join(dest, fmt.Sprintf("%d.bytes", i)), b); err != nil {
+		if err := writeHandoffAtomic(filepath.Join(dest, fmt.Sprintf("%d.bytes", i)), b); err != nil {
 			return m, err
 		}
 	}
@@ -574,6 +649,14 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 	// never the receiver's active checkout or the source's index/worktree.
 	repo := filepath.Join(dir, direction+"-git")
 	allocation := filepath.Join(dir, direction+"-worktree")
+	if _, err := os.Lstat(allocation); err == nil {
+		if err := verifyHandoffAllocation(ctx, allocation, repo, task, direction, m); err != nil {
+			return "", err
+		}
+		return allocation, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
 	if err := os.MkdirAll(repo, 0700); err != nil {
 		return "", err
 	}
@@ -613,6 +696,26 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 		return "", fmt.Errorf("materialized checkpoint verification failed")
 	}
 	return allocation, nil
+}
+
+func verifyHandoffAllocation(ctx context.Context, allocation, repo, task, direction string, m taskartifacts.Manifest) error {
+	info, err := os.Lstat(allocation)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("allocation identity changed")
+	}
+	head, format, err := taskartifacts.CheckSource(ctx, allocation)
+	if err != nil || head != m.Commit || format != m.ObjectFormat {
+		return fmt.Errorf("allocation checkpoint changed")
+	}
+	common, err := taskartifacts.Git(ctx, allocation, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || filepath.Clean(strings.TrimSpace(string(common))) != filepath.Clean(repo) {
+		return fmt.Errorf("allocation repository changed")
+	}
+	branch, err := taskartifacts.Git(ctx, allocation, "", "symbolic-ref", "HEAD")
+	if err != nil || strings.TrimSpace(string(branch)) != "refs/heads/wks/handoff-"+task+"-"+direction {
+		return fmt.Errorf("allocation branch changed")
+	}
+	return nil
 }
 
 // Seven days starts at accepted disposition, never terminal-message ACK.

@@ -5,7 +5,7 @@ import { pairedWorkerConnection } from './pairedWorkerConnection';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { pairedDestinationKey } from './pairedWorkerConnection';
-import { randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 
 export interface HandoffSelection {
   name: string;
@@ -61,7 +61,9 @@ export async function prepareLocalTaskHandoff(
   const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === attempt?.sessionId);
   if (!task || task.ownerSessionId !== ownerSessionId || !predecessor || !record?.handoff || record.handoff.binding !== source.binding || record.handoff.state !== 'received' || record.peer !== pairedDestinationKey())
     throw new Error('Local continuation requires the preceding verified handoff in this same owned task');
-  const nextTask = randomBytes(32).toString('hex');
+  // One admission per exact task predecessor. A lost launch reply cannot
+  // allocate another worker by generating another transfer nonce.
+  const nextTask = createHash('sha256').update(JSON.stringify([taskId, predecessor, source.binding])).digest('hex');
   await callHub('agents.taskHandoff', {
     operation: 'freeze', binding: source.binding, task: nextTask, fromTask: record.dispatchId,
     provider, cwd, selections: source.artifacts, outputs: source.outputs,
@@ -71,6 +73,9 @@ export async function prepareLocalTaskHandoff(
   });
   if (prepared.state !== 'prepared' || !prepared.allocation)
     throw new Error('Local handoff checkpoint or required artifacts are not verified');
+  await callHub('agents.taskHandoff', {
+    operation: 'claimLocal', binding: source.binding, task: nextTask, digest: prepared.digest,
+  });
   return prepared;
 }
 

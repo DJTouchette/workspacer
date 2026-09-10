@@ -121,6 +121,15 @@ func (s *Store) Materialize(dir string) error {
 	}
 	defer dest.Close()
 	for i, e := range s.manifest.Entries {
+		if _, err := dest.Lstat(e.Name); err == nil {
+			b, err := ReadSelected(dest, e.Name)
+			if err != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
+				return fmt.Errorf("existing materialized artifact changed: %s", e.Name)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 		if err := dest.MkdirAll(filepath.Dir(e.Name), 0700); err != nil {
 			return err
 		}

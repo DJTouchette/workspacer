@@ -73,6 +73,15 @@ func TestChunkRetryAndRequiredCustody(t *testing.T) {
 	if err != nil || string(b) != "hello" {
 		t.Fatal("custody mismatch", err)
 	}
+	if err := s.Materialize(dest); err != nil {
+		t.Fatal("identical retry failed", err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "report.md"), []byte("user edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if s.Materialize(dest) == nil {
+		t.Fatal("retry overwrote changed artifact")
+	}
 }
 
 func TestManifestSealBindsOwnershipAndCommit(t *testing.T) {
