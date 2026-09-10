@@ -773,11 +773,17 @@ export function useAgentManager() {
     ): Promise<string | undefined> => {
       const sendAsk = async (id: string, bootstrap = false) => {
         const capture = await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
-        const result = await window.electronAPI.claudeMessage(id,
+        const result = await window.electronAPI.claudeMessage(
+          id,
           bootstrap ? buildManagerKickoff(ask, fullAccess) : buildManagerWorkflowAsk(ask),
-          capture?.available ? capture.requestId : undefined);
-        if (result?.ok === false) throw new Error(result.delivery === 'unknown'
-          ? 'Request saved in inbox; chat delivery unknown. Do not resend.' : spawnFailureMessage(provider));
+          capture?.available ? capture.requestId : undefined,
+        );
+        if (result?.ok === false)
+          throw new Error(
+            result.delivery === 'unknown'
+              ? 'Request saved in inbox; chat delivery unknown. Do not resend.'
+              : spawnFailureMessage(provider),
+          );
       };
       const live = agentsRef.current.find(
         (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
@@ -818,10 +824,7 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(
-          record,
-          stopped.lastSessionId,
-        );
+        const sessionId = await respawnFromRecord(record, stopped.lastSessionId);
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
         await sendAsk(sessionId);
         if (!stopped.manager) {

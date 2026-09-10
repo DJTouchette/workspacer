@@ -854,7 +854,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           ok: false as const,
           error: err instanceof Error ? err.message : String(err),
         })),
-    managerRequestPrepare: async () => ({ available: false as const, reason: 'Automatic request capture is unavailable on remote/headless connections.' }),
+    managerRequestPrepare: async () => ({
+      available: false as const,
+      reason: 'Automatic request capture is unavailable on remote/headless connections.',
+    }),
     claudeMessage: (sessionId, text) =>
       client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,

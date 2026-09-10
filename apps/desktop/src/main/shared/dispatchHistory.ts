@@ -74,7 +74,17 @@ export interface DispatchTask {
   attempts: DispatchAttempt[];
 }
 export type DispatchHistoryResponse =
-  | { available: true; currentOwnerSessionId?: string; tasks: DispatchTask[]; requests?: Array<{ ownerSessionId: string; requestId: string; delivery: string; resolved: boolean }> }
+  | {
+      available: true;
+      currentOwnerSessionId?: string;
+      tasks: DispatchTask[];
+      requests?: Array<{
+        ownerSessionId: string;
+        requestId: string;
+        delivery: string;
+        resolved: boolean;
+      }>;
+    }
   | { available: false; reason: string };
 
 export type TaskLinks = {

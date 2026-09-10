@@ -300,10 +300,27 @@ export default function TaskInspector({
       )}
       {data?.available && (
         <>
-          {data.requests?.some((r) => !r.resolved && r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId)) && (
+          {data.requests?.some(
+            (r) => !r.resolved && r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId),
+          ) && (
             <p role="status" style={{ margin: 0, ...meta }}>
-              Request inbox: {data.requests.filter((r) => !r.resolved && r.delivery !== 'rejected' && r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId)).length} awaiting resolution.
-              {data.requests.some((r) => !r.resolved && r.delivery === 'unknown' && r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId)) && ' Some chat deliveries are unknown; inbox requests remain available without resending.'}
+              Request inbox:{' '}
+              {
+                data.requests.filter(
+                  (r) =>
+                    !r.resolved &&
+                    r.delivery !== 'rejected' &&
+                    r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId),
+                ).length
+              }{' '}
+              awaiting resolution.
+              {data.requests.some(
+                (r) =>
+                  !r.resolved &&
+                  r.delivery === 'unknown' &&
+                  r.ownerSessionId === (sessionId ?? data.currentOwnerSessionId),
+              ) &&
+                ' Some chat deliveries are unknown; inbox requests remain available without resending.'}
             </p>
           )}
           <details>
@@ -460,13 +477,42 @@ function TaskDetails({
         {!!task.sources?.length && <div style={{ ...meta, marginTop: 4 }}>Source: {task.sources.at(-1)!.label}{task.sources.at(-1)!.delivery === 'rejected' ? ' · delivery rejected' : task.sources.at(-1)!.delivery === 'unknown' ? ' · chat delivery unknown' : ''}</div>}
         {(task.cancelled || !!task.dependsOn?.length) && <div style={{ ...meta, marginTop: 4 }}>{taskDependencyState(task, tasks) === 'ready' ? 'Ready for manager decision' : task.cancelled ? 'Cancelled · workers unchanged' : 'Waiting for accepted evidence'}</div>}
         {task.dependsOn?.map((id) => {
-          const dependency = tasks.find((t) => t.taskId === id && t.ownerSessionId === task.ownerSessionId && t.projectCwd === task.projectCwd);
-          return <div key={id} style={{ ...meta, marginTop: 4 }}>
-            {dependency ? <SmallButton label={dependency.title} onClick={() => selectTask(dependency.taskId)} /> : 'Dependency unavailable'}
-            {' · '}{dependency && taskOutcomeAccepted(dependency) ? 'Accepted' : dependency?.cancelled ? 'Cancelled' : 'Waiting'}
-          </div>;
+          const dependency = tasks.find(
+            (t) =>
+              t.taskId === id &&
+              t.ownerSessionId === task.ownerSessionId &&
+              t.projectCwd === task.projectCwd,
+          );
+          return (
+            <div key={id} style={{ ...meta, marginTop: 4 }}>
+              {dependency ? (
+                <SmallButton
+                  label={dependency.title}
+                  onClick={() => selectTask(dependency.taskId)}
+                />
+              ) : (
+                'Dependency unavailable'
+              )}
+              {' · '}
+              {dependency && taskOutcomeAccepted(dependency)
+                ? 'Accepted'
+                : dependency?.cancelled
+                  ? 'Cancelled'
+                  : 'Waiting'}
+            </div>
+          );
         })}
-        {!!task.sources?.length && <Disclosure label="Source details">{task.sources.map((s) => <IdRow key={`${s.requestId}:${s.intentKey}`} label={s.intentKey} value={s.requestId} />)}</Disclosure>}
+        {!!task.sources?.length && (
+          <Disclosure label="Source details">
+            {task.sources.map((s) => (
+              <IdRow
+                key={`${s.requestId}:${s.intentKey}`}
+                label={s.intentKey}
+                value={s.requestId}
+              />
+            ))}
+          </Disclosure>
+        )}
       </Surface>
       {error && (
         <p role="alert" style={{ margin: 0, color: 'var(--wks-error)' }}>

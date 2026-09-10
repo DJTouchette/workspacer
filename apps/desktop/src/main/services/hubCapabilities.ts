@@ -628,8 +628,11 @@ export function registerHubCapabilities(): void {
     if (request.cwd)
       request.cwd = assertPathAllowed('fleetWorkflows.request', request.cwd, browseRoots());
     if (Array.isArray(request.intents))
-      request.intents = request.intents.map((intent) => ({ ...intent,
-        ...(intent.cwd ? { cwd: assertPathAllowed('fleetWorkflows.request', intent.cwd, browseRoots()) } : {}),
+      request.intents = request.intents.map((intent) => ({
+        ...intent,
+        ...(intent.cwd
+          ? { cwd: assertPathAllowed('fleetWorkflows.request', intent.cwd, browseRoots()) }
+          : {}),
       }));
     managerReplacementState.assertAvailable(callerSessionId);
     return fleetWorkflowRequest(request, callerSessionId);

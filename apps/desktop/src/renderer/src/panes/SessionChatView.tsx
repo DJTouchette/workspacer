@@ -568,7 +568,14 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
 
                 {/* Composer / Input area — session pills live inside its bottom row */}
                 {isManager && requestCaptureStatus && (
-                  <div role="status" style={{ padding: '4px 16px', color: 'var(--wks-text-secondary)', fontSize: '0.72rem' }}>
+                  <div
+                    role="status"
+                    style={{
+                      padding: '4px 16px',
+                      color: 'var(--wks-text-secondary)',
+                      fontSize: '0.72rem',
+                    }}
+                  >
                     {requestCaptureStatus}
                   </div>
                 )}

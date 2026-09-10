@@ -362,7 +362,12 @@ export class ManagerReplacementState {
   activeCount(id: string): number {
     return this.active.get(id) ?? 0;
   }
-  holdMessage(id: string, text: string, signatures: Array<[string, string]> = [], sourceRequest?: ReplacementDelivery['sourceRequest']): boolean {
+  holdMessage(
+    id: string,
+    text: string,
+    signatures: Array<[string, string]> = [],
+    sourceRequest?: ReplacementDelivery['sourceRequest'],
+  ): boolean {
     const related = this.related(id);
     const o = this.held(id) ?? (related?.phase === 'activating' ? related : undefined);
     if (!o) return false;

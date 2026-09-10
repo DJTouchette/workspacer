@@ -63,8 +63,11 @@ export class DispatchHistoryStore {
           if (JSON.stringify(prior) !== JSON.stringify(task))
             task.revision = (prior?.revision ?? 0) + 1;
         }
-        if (JSON.stringify(before) !== JSON.stringify(this.tasks) ||
-            JSON.stringify(beforeRequests) !== JSON.stringify(this.requests)) this.persist();
+        if (
+          JSON.stringify(before) !== JSON.stringify(this.tasks) ||
+          JSON.stringify(beforeRequests) !== JSON.stringify(this.requests)
+        )
+          this.persist();
         return structuredClone(result);
       } catch (error) {
         this.tasks = before;
@@ -113,10 +116,18 @@ export class DispatchHistoryStore {
           if (!a.dispatchId || !a.sessionId || !a.metrics) throw new Error('Invalid task attempt');
       }
       this.tasks = state.tasks;
-      if (state.requests !== undefined && (!Array.isArray(state.requests) ||
-          state.requests.some((r: ManagerRequest) => !r.requestId || !r.ownerSessionId ||
-            !r.sourceSessionId || !Number.isSafeInteger(r.revision) ||
-            !['pending', 'accepted', 'rejected', 'unknown'].includes(r.delivery))))
+      if (
+        state.requests !== undefined &&
+        (!Array.isArray(state.requests) ||
+          state.requests.some(
+            (r: ManagerRequest) =>
+              !r.requestId ||
+              !r.ownerSessionId ||
+              !r.sourceSessionId ||
+              !Number.isSafeInteger(r.revision) ||
+              !['pending', 'accepted', 'rejected', 'unknown'].includes(r.delivery),
+          ))
+      )
         throw new Error('Invalid manager request history');
       this.requests = state.requests ?? [];
       while (
@@ -168,9 +179,19 @@ export class DispatchHistoryStore {
     const task = taskId ? this.task(taskId) : undefined;
     if (task && taskDependencyState(task, this.load()) !== 'ready')
       throw new Error('Task is cancelled or waiting for accepted dependency evidence');
-    if (task?.sources?.length && !task.sources.some((s) => this.requests.some((r) =>
-        r.requestId === s.requestId && r.ownerSessionId === owner.sessionId &&
-        r.intents?.some((i) => i.key === s.intentKey && i.taskId === task.taskId && i.cwd === task.projectCwd))))
+    if (
+      task?.sources?.length &&
+      !task.sources.some((s) =>
+        this.requests.some(
+          (r) =>
+            r.requestId === s.requestId &&
+            r.ownerSessionId === owner.sessionId &&
+            r.intents?.some(
+              (i) => i.key === s.intentKey && i.taskId === task.taskId && i.cwd === task.projectCwd,
+            ),
+        ),
+      )
+    )
       throw new Error('Task has no committed source request for this owner/project');
     // Additive rollout: historical tasks/continuations remain eligible. Only
     // owners that resolved an inbox request require a committed task for new work.
@@ -754,7 +775,7 @@ export class DispatchHistoryStore {
         !tasks.some((other) => other.dependsOn?.includes(t.taskId)) &&
         !this.requests.some((r) => !r.intents && r.ownerSessionId === t.ownerSessionId) &&
         (!t.workflow ||
-        t.workflow.steps.every((s) => ['completed', 'skipped', 'waived'].includes(s.state))),
+          t.workflow.steps.every((s) => ['completed', 'skipped', 'waived'].includes(s.state))),
     );
     if (index < 0)
       throw new Error('Workflow history capacity reached; active tasks cannot be evicted');
@@ -767,8 +788,11 @@ export class DispatchHistoryStore {
     const tasks = this.load();
     // Never evict unresolved requests or the source of a retained task.
     while (this.requests.length > 256) {
-      const i = this.requests.findIndex((r) => (r.intents || r.delivery === 'rejected') &&
-        !tasks.some((t) => t.sources?.some((s) => s.requestId === r.requestId)));
+      const i = this.requests.findIndex(
+        (r) =>
+          (r.intents || r.delivery === 'rejected') &&
+          !tasks.some((t) => t.sources?.some((s) => s.requestId === r.requestId)),
+      );
       if (i < 0) throw new Error('Request inbox capacity reached; resolve pending requests');
       this.requests.splice(i, 1);
     }
@@ -779,13 +803,15 @@ export class DispatchHistoryStore {
       this.pruneOne(tasks);
     while (
       tasks.length &&
-      Buffer.byteLength(JSON.stringify({ version: 1, tasks, requests: this.requests })) > this.limits.bytes
+      Buffer.byteLength(JSON.stringify({ version: 1, tasks, requests: this.requests })) >
+        this.limits.bytes
     )
       this.pruneOne(tasks);
     this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
     const json = JSON.stringify({ version: 1, tasks, requests: this.requests });
-    if (Buffer.byteLength(json) > this.limits.bytes) throw new Error('Request history capacity reached');
+    if (Buffer.byteLength(json) > this.limits.bytes)
+      throw new Error('Request history capacity reached');
     atomicWriteFileSync(this.filename(), json, { mode: 0o600 });
   }
 }

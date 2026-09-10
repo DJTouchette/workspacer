@@ -337,9 +337,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     schedule: UsagePacingSchedule,
   ): Promise<{ ok: true; state: UsagePacingScheduleWire } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.USAGE_SET_PACING_SCHEDULE, schedule),
-  managerRequestPrepare: (sessionId: string, text: string, bootstrap?: boolean): Promise<import('./shared/managerRequests').RequestCapture> =>
+  managerRequestPrepare: (
+    sessionId: string,
+    text: string,
+    bootstrap?: boolean,
+  ): Promise<import('./shared/managerRequests').RequestCapture> =>
     ipcRenderer.invoke(IPC.MANAGER_REQUEST_PREPARE, sessionId, text, bootstrap),
-  claudeMessage: (sessionId: string, text: string, requestId?: string): Promise<{ ok: boolean; mode?: string; requestId?: string; delivery?: string }> =>
+  claudeMessage: (
+    sessionId: string,
+    text: string,
+    requestId?: string,
+  ): Promise<{ ok: boolean; mode?: string; requestId?: string; delivery?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text, requestId),
   claudeSetPermissionMode: (
     sessionId: string,

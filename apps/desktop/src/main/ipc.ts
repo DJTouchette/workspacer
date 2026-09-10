@@ -1102,43 +1102,70 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle(IPC.MANAGER_REQUEST_PREPARE, (_event, sessionId: string, text: string, bootstrap?: boolean) => {
-    if (isRemoteClientMode() || remoteHubOf(sessionId) || !claudeSessionStore.getSnapshot(sessionId)?.isWakeTarget)
-      return { available: false, reason: REQUEST_CAPTURE_UNAVAILABLE };
-    return managerRequests().prepare(managerReplacementState.wakeTarget(sessionId), text, bootstrap === true);
-  });
-  ipcMain.handle(IPC.CLAUDE_MESSAGE, async (_event, sessionId: string, text: string, requestId?: string) => {
-    const hub = remoteHubOf(sessionId);
-    if (requestId) {
-      if (isRemoteClientMode() || hub) return { ok: false, mode: REQUEST_CAPTURE_UNAVAILABLE };
-      const target = managerReplacementState.wakeTarget(sessionId);
-      const service = managerRequests();
-      const delivery = service.beginDelivery(target, requestId);
-      if (delivery) {
+  ipcMain.handle(
+    IPC.MANAGER_REQUEST_PREPARE,
+    (_event, sessionId: string, text: string, bootstrap?: boolean) => {
+      if (
+        isRemoteClientMode() ||
+        remoteHubOf(sessionId) ||
+        !claudeSessionStore.getSnapshot(sessionId)?.isWakeTarget
+      )
+        return { available: false, reason: REQUEST_CAPTURE_UNAVAILABLE };
+      return managerRequests().prepare(
+        managerReplacementState.wakeTarget(sessionId),
+        text,
+        bootstrap === true,
+      );
+    },
+  );
+  ipcMain.handle(
+    IPC.CLAUDE_MESSAGE,
+    async (_event, sessionId: string, text: string, requestId?: string) => {
+      const hub = remoteHubOf(sessionId);
+      if (requestId) {
+        if (isRemoteClientMode() || hub) return { ok: false, mode: REQUEST_CAPTURE_UNAVAILABLE };
+        const target = managerReplacementState.wakeTarget(sessionId);
+        const service = managerRequests();
+        const delivery = service.beginDelivery(target, requestId);
+        if (delivery) {
+          try {
+            const content = delivery.bootstrap
+              ? buildManagerKickoff(
+                  delivery.text,
+                  !!configService.getConfig().agents?.fleetFullAccess,
+                )
+              : delivery.text;
+            await claudemonSessionClient.message(target, content, undefined, {
+              requestId,
+              deliveryId: delivery.deliveryId,
+            });
+          } catch {
+            // Persisted receipt is authoritative; IPC errors must not trigger raw
+            // PTY fallback or an automatic provider replay in the renderer.
+          }
+        }
+        const request = service.request(managerReplacementState.wakeTarget(target), requestId);
+        return {
+          ok: request.delivery === 'accepted' || request.delivery === 'pending',
+          requestId,
+          delivery: request.delivery,
+          mode: request.delivery,
+        };
+      }
+      if (hub) {
+        // Peer capability throws when the session isn't accepting input; fold
+        // that back into the local handler's { ok } shape.
         try {
-          const content = delivery.bootstrap ? buildManagerKickoff(delivery.text, !!configService.getConfig().agents?.fleetFullAccess) : delivery.text;
-          await claudemonSessionClient.message(target, content, undefined, { requestId, deliveryId: delivery.deliveryId });
-        } catch {
-          // Persisted receipt is authoritative; IPC errors must not trigger raw
-          // PTY fallback or an automatic provider replay in the renderer.
+          await callHub(`hub:${hub}/agents.sendMessage`, { sessionId, text });
+          return { ok: true };
+        } catch (err) {
+          console.warn(`[federation] sendMessage to ${hub}:${sessionId} failed:`, err);
+          return { ok: false };
         }
       }
-      const request = service.request(managerReplacementState.wakeTarget(target), requestId);
-      return { ok: request.delivery === 'accepted' || request.delivery === 'pending', requestId, delivery: request.delivery, mode: request.delivery };
-    }
-    if (hub) {
-      // Peer capability throws when the session isn't accepting input; fold
-      // that back into the local handler's { ok } shape.
-      try {
-        await callHub(`hub:${hub}/agents.sendMessage`, { sessionId, text });
-        return { ok: true };
-      } catch (err) {
-        console.warn(`[federation] sendMessage to ${hub}:${sessionId} failed:`, err);
-        return { ok: false };
-      }
-    }
-    return claudemonSessionClient.message(sessionId, text);
-  });
+      return claudemonSessionClient.message(sessionId, text);
+    },
+  );
   // Live permission-mode switch (no restart). On success, reflect the
   // daemon-confirmed mode into the snapshot store immediately — the switch
   // itself fires no hook, so telemetry would otherwise lag until the next one.
@@ -1482,8 +1509,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return {
       available: true,
       currentOwnerSessionId: currentOwner?.sessionId,
-      requests: claudeSessionStore.getAllSnapshots().filter((s) => s.isWakeTarget && !s.hub).flatMap((s) =>
-        dispatchHistoryStore.listRequests(s.sessionId).map((r) => ({ ownerSessionId: r.ownerSessionId, requestId: r.requestId, delivery: r.delivery, resolved: !!r.intents }))),
+      requests: claudeSessionStore
+        .getAllSnapshots()
+        .filter((s) => s.isWakeTarget && !s.hub)
+        .flatMap((s) =>
+          dispatchHistoryStore
+            .listRequests(s.sessionId)
+            .map((r) => ({
+              ownerSessionId: r.ownerSessionId,
+              requestId: r.requestId,
+              delivery: r.delivery,
+              resolved: !!r.intents,
+            })),
+        ),
       tasks: dispatchHistoryStore.listForHostUser(
         (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
       ),

@@ -10,7 +10,11 @@ export interface ManagerRequest {
   digest: string;
   bootstrap?: boolean;
   delivery: 'pending' | 'accepted' | 'rejected' | 'unknown';
-  attempts: Array<{ deliveryId: string; status: 'pending' | 'accepted' | 'rejected' | 'unknown'; at: string }>;
+  attempts: Array<{
+    deliveryId: string;
+    status: 'pending' | 'accepted' | 'rejected' | 'unknown';
+    at: string;
+  }>;
   /** Retained only until resolved; never used for identity or authority. */
   userContent?: string;
   revision: number;
@@ -71,12 +75,21 @@ export function taskOutcomeAccepted(task: DispatchTask): boolean {
         a.sessionId === s.sessionId && a.resultContract === 'valid');
   });
 }
-export function taskDependencyState(task: DispatchTask, tasks: DispatchTask[]): 'blocked' | 'ready' | 'cancelled' {
+export function taskDependencyState(
+  task: DispatchTask,
+  tasks: DispatchTask[],
+): 'blocked' | 'ready' | 'cancelled' {
   if (task.cancelled) return 'cancelled';
   if (task.sources?.length && !task.sources.some((s) => s.delivery === 'accepted' || s.delivery === 'unknown')) return 'blocked';
   return (task.dependsOn ?? []).every((id) => {
     const dependency = tasks.find((t) => t.taskId === id);
-    return dependency && dependency.ownerSessionId === task.ownerSessionId &&
-      dependency.projectCwd === task.projectCwd && taskOutcomeAccepted(dependency);
-  }) ? 'ready' : 'blocked';
+    return (
+      dependency &&
+      dependency.ownerSessionId === task.ownerSessionId &&
+      dependency.projectCwd === task.projectCwd &&
+      taskOutcomeAccepted(dependency)
+    );
+  })
+    ? 'ready'
+    : 'blocked';
 }
