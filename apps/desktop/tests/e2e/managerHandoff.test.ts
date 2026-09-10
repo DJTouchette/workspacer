@@ -64,25 +64,31 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
     .filter({ visible: true });
   await button.click();
   await expect(page.getByText('Manager handoff complete').filter({ visible: true })).toBeVisible();
-  const result = await page.evaluate(() => {
-    const h = (window as any).fleetHarness;
-    const manager = h.agentRecords().find((a: any) => a.id === 'manager');
-    return {
-      id: manager.id,
-      sid: manager.sessionId,
-      pane: manager.tabs[0].panes[0].id,
-      count: h.agentRecords().filter((a: any) => a.sessionId === 'fixture-successor').length,
-      starts: h.calls.filter((c: any) => c.method === 'replacement' && c.args[0].action === 'start')
-        .length,
-    };
-  });
-  expect(result).toEqual({
-    id: 'manager',
-    sid: 'fixture-successor',
-    pane: 'p-manager',
-    count: 1,
-    starts: 1,
-  });
+  // The harness publishes agentRecords in an effect after the status renders.
+  // Wait for that snapshot while retaining the complete workspace assertion.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const h = (window as any).fleetHarness;
+        const manager = h.agentRecords().find((a: any) => a.id === 'manager');
+        return {
+          id: manager.id,
+          sid: manager.sessionId,
+          pane: manager.tabs[0].panes[0].id,
+          count: h.agentRecords().filter((a: any) => a.sessionId === 'fixture-successor').length,
+          starts: h.calls.filter(
+            (c: any) => c.method === 'replacement' && c.args[0].action === 'start',
+          ).length,
+        };
+      }),
+    )
+    .toEqual({
+      id: 'manager',
+      sid: 'fixture-successor',
+      pane: 'p-manager',
+      count: 1,
+      starts: 1,
+    });
   await expect(
     page.getByText('Fresh manager context; pending decisions retained.').filter({ visible: true }),
   ).toBeVisible();
