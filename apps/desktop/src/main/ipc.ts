@@ -577,10 +577,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // (index.ts), so the UI calls APP_RELAUNCH after a successful set/clear.
   ipcMain.handle(
     IPC.HUB_SET_REMOTE_SERVER,
-    (_event, setting: { url: string; token: string } | null) => {
+    (_event, setting: { url: string; token: string; mode?: 'client' | 'workers' } | null) => {
       try {
         setRemoteServer(
-          setting && setting.url ? { url: setting.url, token: setting.token ?? '' } : null,
+          setting && setting.url ? { url: setting.url, token: setting.token ?? '', mode: setting.mode } : null,
         );
         return { ok: true as const };
       } catch (err) {

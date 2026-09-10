@@ -1,0 +1,52 @@
+name: paired-dispatch
+on:
+  push:
+    branches: [wks/workspacer-recover-paired-fly-offload-on]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  feature:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install hosted dependencies
+        run: |
+          cd apps/desktop
+          npm ci --ignore-scripts
+          cd src/renderer
+          npm ci --ignore-scripts
+      - name: Produce formatting patch
+        working-directory: apps/desktop
+        run: |
+          git diff --name-only 3a16f4bb88de7cf3d49eb9fe894b887e4507fa12 HEAD -- '*.ts' '*.tsx' | sed 's#^apps/desktop/##' | xargs -r npx prettier --write
+          git diff --binary > ../../paired-format.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paired-format
+          path: paired-format.patch
+      - name: Typecheck
+        working-directory: apps/desktop
+        run: npm run typecheck
+      - name: Desktop regression suites
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npm test
+      - name: Hub regression suites
+        if: ${{ !cancelled() }}
+        working-directory: services/hub
+        run: go test -race -count=1 ./...
+      - name: Real MCP to desktop dispatch fixtures
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npm run test:dispatch-chain

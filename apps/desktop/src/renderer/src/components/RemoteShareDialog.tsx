@@ -360,13 +360,14 @@ function AdoptedNote({ claudemon }: { claudemon: boolean }) {
  * the setting can be persisted (the desktop preload exposes setRemoteServer).
  */
 function RemoteClientSection({ info }: { info: RemoteInfo }) {
+  const [mode, setMode] = useState<'workers' | 'client'>('workers');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!window.electronAPI.setRemoteServer) return null;
 
-  const apply = async (setting: { url: string; token: string } | null) => {
+  const apply = async (setting: { url: string; token: string; mode?: 'workers' | 'client' } | null) => {
     setBusy(true);
     setError(null);
     try {
@@ -395,7 +396,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
           marginBottom: 4,
         }}
       >
-        {connected ? 'Connected as a client' : 'Use another machine as the host'}
+        {connected ? 'Connected as a client' : info.pairedWorker ? 'Paired worker target enabled' : 'Pair another machine'}
       </div>
       {connected ? (
         <>
@@ -411,6 +412,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             Agents run on that server, not this machine. Disconnect to go back to running agents
             locally.
           </div>
+          <button onClick={() => apply({ url: connected.httpUrl, token: '', mode: 'workers' })} disabled={busy} style={primaryBtnStyle(busy)}>Keep manager here; use server for workers (restarts)</button>
           <button onClick={() => apply(null)} disabled={busy} style={dangerBtnStyle(busy)}>
             {busy ? 'Disconnecting…' : 'Disconnect (restarts the app)'}
           </button>
@@ -425,10 +427,14 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
               marginBottom: 10,
             }}
           >
-            Point this desktop app at <code style={inlineCode}>workspacer serve</code> on another
-            machine. This is different from Phone sharing: after restart, this window becomes a
-            client and agents run on the server you enter here.
+            Keep the manager on this desktop and explicitly dispatch selected workers to the paired server.
+            Provider readiness and repository choices are read on that server.
+            {info.pairedWorker && <> Current target: {info.pairedWorker.httpUrl}.</>}
           </div>
+          <select aria-label="Paired server use" value={mode} onChange={(e) => setMode(e.target.value as 'workers' | 'client')} style={textInputStyle}>
+            <option value="workers">Workers only — keep manager on this desktop</option>
+            <option value="client">Use server as this app’s host</option>
+          </select>
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -448,11 +454,11 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             </div>
           )}
           <button
-            onClick={() => apply({ url, token })}
-            disabled={busy || !url.trim()}
-            style={{ ...primaryBtnStyle(busy || !url.trim()), marginTop: 8 }}
+            onClick={() => apply({ url: url || info.pairedWorker?.httpUrl || '', token, mode })}
+            disabled={busy || (!url.trim() && !info.pairedWorker)}
+            style={{ ...primaryBtnStyle(busy), marginTop: 8 }}
           >
-            {busy ? 'Connecting…' : 'Connect (restarts the app)'}
+            {busy ? 'Saving…' : mode === 'workers' ? 'Enable worker target (restarts the app)' : 'Connect as client (restarts the app)'}
           </button>
         </>
       )}

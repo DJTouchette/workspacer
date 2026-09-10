@@ -21,7 +21,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL, isClaudemonAdopted } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
-import { getRemoteServer } from './remoteServer';
+import { getRemoteServer, getPairedWorkerInfo } from './remoteServer';
 import { suspectedStateLoss } from '../lib/stateLoss';
 import {
   killStaleListener,
@@ -350,6 +350,7 @@ export interface RemoteShareInfo {
   /** Configured "connect to remote server" target (client mode), or null.
    *  When set, the renderer boots against this REMOTE hub instead of the
    *  local one and main skips spawning local daemons — see remoteServer.ts. */
+  pairedWorker?: { httpUrl: string } | null;
   remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
 }
 
@@ -390,6 +391,7 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
     claudemonAdopted: isClaudemonAdopted(),
     advertisedUnreachable,
     remoteClient: getRemoteServer(),
+    pairedWorker: getPairedWorkerInfo(),
   };
 }
 

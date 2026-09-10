@@ -18,9 +18,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getConfigDir } from './configService';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 /** What the user enters + persists. */
 export interface RemoteServerSetting {
+  mode?: 'client' | 'workers';
   /** Server address in any reasonable form (host, host:port, http(s)://…, ws(s)://…/bus). */
   url: string;
   /** Hub bus bearer token (the pairing token `workspacer serve` prints). */
@@ -85,6 +87,7 @@ export function getRemoteServer(): ResolvedRemoteServer | null {
   cache = null;
   try {
     const parsed = JSON.parse(fs.readFileSync(settingFile(), 'utf-8')) as RemoteServerSetting;
+    if (parsed.mode === 'workers') return null;
     const normalized = parsed?.url ? normalizeRemoteServerUrl(parsed.url) : null;
     if (normalized && typeof parsed.token === 'string') {
       cache = { ...normalized, token: parsed.token };
@@ -93,6 +96,24 @@ export function getRemoteServer(): ResolvedRemoteServer | null {
     /* absent or unreadable → local mode */
   }
   return cache;
+}
+
+/** Host-only credential access. Worker pairing does not switch backend mode. */
+export function getPairedWorkerTarget(): ResolvedRemoteServer | null {
+  try {
+    const setting = JSON.parse(fs.readFileSync(settingFile(), 'utf-8')) as RemoteServerSetting;
+    const normalized = normalizeRemoteServerUrl(setting.url);
+    return setting.mode === 'workers' && normalized && typeof setting.token === 'string'
+      ? { ...normalized, token: setting.token }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getPairedWorkerInfo(): { httpUrl: string } | null {
+  const target = getPairedWorkerTarget();
+  return target ? { httpUrl: target.httpUrl } : null;
 }
 
 /** True when the app should run as a client of an external server. */
@@ -120,7 +141,16 @@ export function setRemoteServer(setting: RemoteServerSetting | null): void {
     throw new Error(`unrecognized server address: ${setting.url}`);
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ url: setting.url, token: setting.token }, null, 2), {
+  // An empty token can reuse the existing credential only for the same endpoint.
+  let token = setting.token;
+  if (!token) {
+    try {
+      const prior = JSON.parse(fs.readFileSync(file, 'utf-8')) as RemoteServerSetting;
+      if (normalizeRemoteServerUrl(prior.url)?.busUrl === normalizeRemoteServerUrl(setting.url)?.busUrl)
+        token = prior.token;
+    } catch { /* no stored pairing */ }
+  }
+  atomicWriteFileSync(file, JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client' }, null, 2), {
     mode: 0o600,
   });
 }

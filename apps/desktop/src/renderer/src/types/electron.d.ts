@@ -523,6 +523,7 @@ export interface ElectronAPI extends RoutingAPI {
     /** Same, for claudemon. */
     claudemonAdopted?: boolean;
     /** Configured "connect to remote server" target (client mode), or null. */
+    pairedWorker?: { httpUrl: string } | null;
     remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
   }>;
   /** Toggle remote sharing at runtime (persists + restarts the hub). Returns fresh share info. */
@@ -535,6 +536,7 @@ export interface ElectronAPI extends RoutingAPI {
     desktopBus?: boolean;
     hubAdopted?: boolean;
     claudemonAdopted?: boolean;
+    pairedWorker?: { httpUrl: string } | null;
     remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
   }>;
   /** Capability-scoped remote pairing tokens. Desktop-only; web mirrors may omit these. */
@@ -547,7 +549,7 @@ export interface ElectronAPI extends RoutingAPI {
   /** Persist/clear the "connect to remote server" target (client mode). Takes
    *  effect on relaunch — pair with appRelaunch(). Desktop-only. */
   setRemoteServer?: (
-    setting: { url: string; token: string } | null,
+    setting: { url: string; token: string; mode?: 'client' | 'workers' } | null,
   ) => Promise<{ ok: boolean; error?: string }>;
   /** Relaunch the app (used to apply remote-client connect/disconnect). */
   appRelaunch?: () => Promise<void>;

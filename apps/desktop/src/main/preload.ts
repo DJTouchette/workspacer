@@ -694,6 +694,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     desktopBus: boolean;
     hubAdopted: boolean;
     claudemonAdopted: boolean;
+    pairedWorker?: { httpUrl: string } | null;
     remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
   }> => ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   setRemoteShare: (
@@ -707,6 +708,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     desktopBus: boolean;
     hubAdopted: boolean;
     claudemonAdopted: boolean;
+    pairedWorker?: { httpUrl: string } | null;
     remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
   }> => ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
   remoteTokensList: (): Promise<RemoteTokenRecord[]> =>
@@ -723,7 +725,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // "Connect to remote server" (client mode): persist/clear the target hub.
   // Applied on relaunch — pair with appRelaunch() after a successful set.
   setRemoteServer: (
-    setting: { url: string; token: string } | null,
+    setting: { url: string; token: string; mode?: 'client' | 'workers' } | null,
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SERVER, setting),
   appRelaunch: (): Promise<void> => ipcRenderer.invoke(IPC.APP_RELAUNCH),
