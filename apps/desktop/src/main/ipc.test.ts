@@ -822,7 +822,7 @@ it('installs the default production bridge and carries preparation and tagged se
     store,
     (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
     () => {
-      throw new Error('This transport fixture never selects policy or starts a worker');
+      return { hash: 'fixture', templates: {}, definition: { id: 'fixture', name: 'Fixture', revision: 1, enabled: true, description: '', steps: [] }, steps: [] };
     },
   );
   const runtime = vi.spyOn(requests, 'managerRequests').mockReturnValue(service);
@@ -833,7 +833,7 @@ it('installs the default production bridge and carries preparation and tagged se
     busUrl: 'ws://local-fixture/bus',
   }));
   vi.stubGlobal('window', { electronAPI: preload });
-  const body = '[File: /project/spec.md] Original user request';
+  const body = '[File: /project/spec.md] Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492';
   try {
     await installBackend();
     const api = window.electronAPI;
@@ -894,6 +894,14 @@ it('installs the default production bridge and carries preparation and tagged se
     );
     expect(daemon).toHaveBeenCalledOnce();
     expect(bridgeMocks.busCall).not.toHaveBeenCalled();
+
+    const resolution = service.handle({
+      op: 'resolveRequest', requestId: prepared.requestId,
+      expectedRevision: service.request('bridge-owner', prepared.requestId).revision,
+      intents: [{ key: 'fix', kind: 'create', cwd: dir, title: 'Fix PR', provenance: 'explicit', reason: 'Submitted request' }],
+    }, 'bridge-owner');
+    expect(resolution.ok).toBe(true);
+    expect(new DispatchHistoryStore(() => filename).list()[0].links?.pullRequest).toEqual({ number: '9492', url: 'https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492' });
 
     const rejected = await api.managerRequestPrepare!('bridge-owner', body);
     if (!rejected.available) throw new Error('Preparation unavailable');

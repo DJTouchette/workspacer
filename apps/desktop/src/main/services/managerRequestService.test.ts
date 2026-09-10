@@ -430,3 +430,76 @@ it('reblocks downstream publication when accepted evidence further up its depend
   expect(taskDependencyState(third, f.store.list())).toBe('blocked');
   expect(f.store.task(third.taskId)!.attempts).toEqual([]);
 });
+
+for (const url of [
+  'https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492',
+  'https://dev.azure.com/business/Project/_git/Repo/pullrequest/9492',
+  'https://github.com/owner/repo/pull/9492',
+  'https://gitlab.com/group/repo/-/merge_requests/9492',
+]) {
+  it(`atomically captures original PR on create/update and deduplicates retries: ${url}`, () => {
+    const f = fixture();
+    const request = f.admitted('accepted', `Please fix this PR: ${url}`);
+    const result = f.resolve(request, [create()]);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].links.pullRequest).toEqual({ number: '9492', url });
+    expect(f.resolve(request, [create()]).tasks[0].taskId).toBe(result.tasks[0].taskId);
+    const task = f.store.list()[0];
+    f.store.requestTransaction((_requests, tasks) => {
+      tasks[0].links!.references = [{ label: 'Human spec', url: 'https://example.com/spec' }];
+    });
+    const next = f.admitted('unknown', `Also fix ${url}`);
+    const update: RequestIntent = { key: 'update', kind: 'update', taskId: task.taskId, cwd: '/project', expectedTaskRevision: f.store.list()[0].revision, reason: 'Explicit correction' };
+    expect(f.resolve(next, [{ ...update, expectedTaskRevision: -1 }]).ok).toBe(false);
+    expect(f.resolve(next, [update]).ok).toBe(true);
+    expect(f.store.list()[0].links).toEqual({ pullRequest: { number: '9492', url }, references: [{ label: 'Human spec', url: 'https://example.com/spec' }] });
+    expect(f.store.list()[0].audit?.some((a) => a.reason.includes(next))).toBe(true);
+    const fresh = new DispatchHistoryStore(() => f.file);
+    expect(fresh.list()[0].links).toEqual(f.store.list()[0].links);
+  });
+}
+
+it('requires complete explicit mappings for ambiguous URLs/tasks and retains content on refusal', () => {
+  const f = fixture();
+  const a = 'https://github.com/o/r/pull/1';
+  const b = 'https://gitlab.com/o/r/-/merge_requests/2';
+  const id = f.admitted('accepted', `Fix ${a}, then ${b}`);
+  expect(f.resolve(id, [create('a'), create('b')])).toMatchObject({ ok: false, error: expect.stringMatching(/mapping required/) });
+  expect(f.store.list()).toHaveLength(0);
+  expect(f.service.request('manager', id).userContent).toContain(a);
+  expect(f.resolve(id, [{ ...create('a'), references: [{ kind: 'pullRequest', url: a }] }, create('b')]).ok).toBe(false);
+  const result = f.resolve(id, [
+    { ...create('a'), references: [{ kind: 'pullRequest', url: a }] },
+    { ...create('b'), kind: 'followUp', dependsOnKeys: ['a'], references: [{ kind: 'pullRequest', url: b }] },
+  ]);
+  expect(result.ok).toBe(true);
+  expect(result.tasks.map((t: any) => t.links.pullRequest.url)).toEqual([a, b]);
+});
+
+it('never creates question tasks or silently replaces existing PRs; supports explicit generic mapping', () => {
+  const f = fixture();
+  const url = 'https://github.com/o/r/pull/1';
+  expect(f.resolve(f.admitted('accepted', `What is ${url}?`), [{ key: 'q', kind: 'question', reason: 'Question only' }]).ok).toBe(true);
+  expect(f.store.list()).toHaveLength(0);
+  const task = f.resolve(f.admitted('accepted', url), [create()]).tasks[0];
+  const other = 'https://github.com/o/r/pull/2';
+  const request = f.admitted('accepted', `Replace with ${other}`);
+  const update: RequestIntent = { key: 'u', kind: 'update', taskId: task.taskId, cwd: '/project', expectedTaskRevision: f.store.list()[0].revision, reason: 'User correction' };
+  expect(f.resolve(request, [update]).ok).toBe(false);
+  expect(f.store.list()[0].links?.pullRequest?.url).toBe(url);
+  expect(f.service.request('manager', request).userContent).toContain(other);
+  expect(f.resolve(request, [{ ...update, replacePullRequest: true, references: [{ kind: 'pullRequest', url: other }] }]).ok).toBe(true);
+  const generic = f.admitted('accepted', 'Read https://example.com/doc; ticket TASK-12');
+  expect(f.resolve(generic, [create('docs')]).ok).toBe(false);
+  expect(f.resolve(generic, [{ ...create('docs'), references: [{ kind: 'reference', label: 'Specification', url: 'https://example.com/doc' }, { kind: 'ticket', id: 'TASK-12' }] }]).ok).toBe(true);
+});
+
+it('refuses invented or credentialed mappings atomically and preserves owner/project CAS', () => {
+  const f = fixture();
+  const id = f.admitted('accepted', 'https://github.com/o/r/pull/1 https://user:pass@example.com/doc');
+  for (const url of ['https://example.com/invented', 'https://user:pass@example.com/doc', 'javascript:alert(1)']) {
+    expect(f.resolve(id, [{ ...create(), references: [{ kind: 'reference', label: 'Link', url }] }]).ok).toBe(false);
+    expect(f.store.list()).toHaveLength(0);
+  }
+  expect(f.service.request('manager', id).userContent).toBeDefined();
+});

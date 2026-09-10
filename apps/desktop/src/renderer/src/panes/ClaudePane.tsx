@@ -1,3 +1,4 @@
+import { postNotification } from '../lib/notificationBus';
 import { managerReplacementRequest, useManagerReplacementStatus } from '../lib/managerReplacement';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
@@ -1269,6 +1270,7 @@ export const useClaudePaneModel = ({
     'requestCaptureStatus',
     '',
   );
+  const notifiedRequests = useSessionChatRef<Set<string>>(uiSessionKey, 'notifiedRequests', new Set());
   const composerRevision = useSessionChatRef(uiSessionKey, 'requestComposerRevision', 0);
   const setComposerInput = useCallback(
     (value: Parameters<typeof setInputValue>[0]) => {
@@ -1457,11 +1459,16 @@ export const useClaudePaneModel = ({
               if (res.ok && ['pending', 'accepted'].includes(res.delivery!)) {
                 if (requestRetry.current?.requestId === capture.requestId)
                   requestRetry.current = null;
-                setRequestCaptureStatus(
-                  res.delivery === 'pending'
-                    ? 'Request saved; waiting for manager handoff delivery.'
-                    : 'Request saved for your manager. Task capture is pending.',
-                );
+                setRequestCaptureStatus('');
+                if (!notifiedRequests.current.has(capture.requestId)) {
+                  notifiedRequests.current.add(capture.requestId);
+                  postNotification({
+                    id: `request-received:${capture.requestId}`,
+                    title: 'Request received',
+                    source: 'manager-request',
+                    sessionId: messageSessionId,
+                  });
+                }
                 releaseDelivered();
                 return { ok: true };
               }
