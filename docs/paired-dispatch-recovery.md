@@ -53,10 +53,10 @@ Recovery commit `23e64e83b98f34d93549e28294b272136fdde339` preserves
 and the two named new source files were compared byte-for-byte. The old worktree
 was untouched; generated skills, dependencies, caches and secrets were excluded.
 
-Execution is hosted-only. The feature suite at `665290e8` passed in
-[run 34500995473](https://github.com/DJTouchette/workspacer/actions/runs/34500995473),
-and the complete CI matrix at formatter commit `da02d8c7` passed in
-[run 34501180265](https://github.com/DJTouchette/workspacer/actions/runs/34501180265).
+Execution is hosted-only. The feature suite at `9489a1f5` passed in
+[run 34503712829](https://github.com/DJTouchette/workspacer/actions/runs/34503712829),
+and the complete CI matrix at that same commit passed in
+[run 34503713309](https://github.com/DJTouchette/workspacer/actions/runs/34503713309).
 Subsequent hardening requires fresh exact-commit verification; the final handoff
 records those runs. No local build/test/browser/server or child agent was used.
 
