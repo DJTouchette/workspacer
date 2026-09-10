@@ -1310,14 +1310,29 @@ it('handles unknown paired replay idempotently and returns a local task result o
       method: 'POST',
       body: JSON.stringify({ kind: 'replay-known' }),
     });
-    const next = await mcpTool('session:manager-other', 'start_workflow', {
-      cwd: project,
-      title: 'Retained outcome with uncertain manager wake',
+    const nextRequest = inbox.prepare('manager-other', 'Return the retained outcome fixture.');
+    if (!nextRequest.available) throw new Error('Request capture unavailable');
+    const nextSend = inbox.beginDelivery('manager-other', nextRequest.requestId)!;
+    inbox.finishDelivery(nextRequest.requestId, nextSend.deliveryId, 'accepted');
+    const next = await mcpTool('session:manager-other', 'resolve_manager_request', {
+      requestId: nextRequest.requestId,
+      expectedRevision: inbox.request('manager-other', nextRequest.requestId).revision,
+      intents: [
+        {
+          key: 'retained-outcome-task',
+          kind: 'create',
+          cwd: project,
+          title: 'Retained outcome with uncertain manager wake',
+          provenance: 'explicit',
+          reason: 'User requested the retained outcome fixture',
+        },
+      ],
     });
     expect(next.isError, next.text).toBe(false);
+    expect(next.value.ok, next.text).toBe(true);
     await mcpTool('session:manager-other', 'decide_workflow_step', {
       cwd: project,
-      taskId: next.value.task.taskId,
+      taskId: next.value.tasks[0].taskId,
       stepId: 'scout',
       run: false,
       reason: 'Exercise the existing paired result receipt',
@@ -1331,7 +1346,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       executionTarget: 'paired',
       remoteCwd: ready.repo,
       parentSessionId: 'manager-other',
-      taskId: next.value.task.taskId,
+      taskId: next.value.tasks[0].taskId,
       workflowStepId: 'implement',
       stage: 'implement',
       template: 'ship-task',
