@@ -142,8 +142,8 @@ type fakeFed struct {
 	dispatch bool
 }
 
-func (f *fakeFed) HasPeer(name string) bool          { return name == "work" }
-func (f *fakeFed) DispatchEnabled(name string) bool  { return f.dispatch && name == "work" }
+func (f *fakeFed) HasPeer(name string) bool         { return name == "work" }
+func (f *fakeFed) DispatchEnabled(name string) bool { return f.dispatch && name == "work" }
 func (f *fakeFed) Forward(_ context.Context, _, _ string, params json.RawMessage) (json.RawMessage, error) {
 	f.got <- params
 	return json.RawMessage(`{"ok":true}`), nil
