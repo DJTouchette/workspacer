@@ -226,11 +226,7 @@ it.each(['missing', 'unavailable', 'prepare-error', 'malformed', 'rejected', 'tr
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(composer).toHaveValue('Uncaptured matrix request'));
     expect(screen.getByText('retained.txt')).toBeVisible();
-    expect(
-      [...container.querySelectorAll('p')].some((p) =>
-        p.textContent?.includes('Uncaptured matrix request'),
-      ),
-    ).toBe(false);
+    expect(screen.queryAllByText(/Uncaptured matrix request/, { selector: 'div' })).toHaveLength(0);
     expect(mockWrite).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(['prepare-error', 'malformed'].includes(mode) ? 0 : 1);
     expect(screen.queryByText(/Inspect the manager inbox/)).not.toBeInTheDocument();

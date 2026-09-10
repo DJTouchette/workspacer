@@ -68,6 +68,8 @@ vi.mock('@xterm/addon-web-fonts', () => ({
 // PTY-facing write + restart, exposed so tests can assert the question-answer
 // path and the restart-preserves-transport contract.
 const mockWrite = vi.fn();
+const mockResize = vi.fn();
+const mockAttachToTerminal = vi.fn();
 const mockRestartSession = vi.fn().mockResolvedValue(undefined);
 let mockSessionId: string | null = 'sess-1';
 vi.mock('../../src/hooks/useClaudeSpawn', () => ({
@@ -76,8 +78,8 @@ vi.mock('../../src/hooks/useClaudeSpawn', () => ({
     isReady: mockSessionId !== null,
     spawnError: null,
     write: mockWrite,
-    resize: vi.fn(),
-    attachToTerminal: vi.fn(),
+    resize: mockResize,
+    attachToTerminal: mockAttachToTerminal,
     startSession: vi.fn(),
     retry: vi.fn(),
     restartSession: mockRestartSession,
@@ -968,7 +970,9 @@ it('does not initialize a disposed terminal when fonts finish after a session re
 
 it('still opens an active terminal after owner-controlled font loading completes', async () => {
   let finish!: () => void;
-  const fonts = new Promise<void>((resolve) => { finish = resolve; });
+  const fonts = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
   terminalLifecycle.fonts = () => fonts;
   terminalLifecycle.instances.length = 0;
   terminalLifecycle.automaticRelayouts.length = 0;
@@ -977,7 +981,10 @@ it('still opens an active terminal after owner-controlled font loading completes
     const terminal = terminalLifecycle.instances[0];
     expect(terminalLifecycle.automaticRelayouts).toEqual([false]);
     expect(terminal.open).not.toHaveBeenCalled();
-    await act(async () => { finish(); await fonts; });
+    await act(async () => {
+      finish();
+      await fonts;
+    });
     expect(terminal.open).toHaveBeenCalledOnce();
   } finally {
     view.unmount();
