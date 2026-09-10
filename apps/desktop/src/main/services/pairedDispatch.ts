@@ -77,7 +77,21 @@ export function startPairedDispatch(): void {
     }
     for (const record of registry.openForPeer(pairedDestinationKey())) {
       void connection
-        .call('agents.dispatchReplay', { dispatchId: record.dispatchId })
+        .call<{ state?: string; dispatchId?: string }>('agents.dispatchReplay', {
+          dispatchId: record.dispatchId,
+        })
+        .then((reply) => {
+          if (
+            reply?.state === 'unknown' &&
+            reply.dispatchId === record.dispatchId &&
+            record.peer === pairedDestinationKey()
+          ) {
+            registry.markLost(
+              record.dispatchId,
+              'The paired server no longer has a record of this dispatch. Worker outcome is unknown; reconcile the remote worker before retrying. Do not repeat the spawn.',
+            );
+          }
+        })
         .catch(() => {});
       if (record.sessionId && record.localSessionId)
         void connection

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,6 +53,7 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	var launches []map[string]any
 	var sid, cwd, reply string
 	var reg *registry
+	var replayMode atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/control" {
 			var command struct {
@@ -58,6 +61,24 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 				Reply string `json:"reply"`
 			}
 			_ = json.NewDecoder(req.Body).Decode(&command)
+			if strings.HasPrefix(command.Kind, "replay-") {
+				switch command.Kind {
+				case "replay-unknown":
+					replayMode.Store(1)
+				case "replay-error":
+					replayMode.Store(2)
+				case "replay-known":
+					replayMode.Store(0)
+				case "replay-wrong-id":
+					replayMode.Store(3)
+				default:
+					http.Error(w, "unknown fixture replay mode", http.StatusBadRequest)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+				return
+			}
+
 			mu.Lock()
 			id, dir := sid, cwd
 			reply = command.Reply
@@ -151,7 +172,23 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	})
 	for _, method := range reg.methods() {
 		method := method
-		srv.RegisterLocal(method, func(raw json.RawMessage) (any, error) { return reg.handle(context.Background(), method, raw) })
+		srv.RegisterLocal(method, func(raw json.RawMessage) (any, error) {
+			if method == "agents.dispatchReplay" {
+				switch replayMode.Load() {
+				case 1:
+					// Exercise the production response for an unavailable journal
+					// on the real authenticated paired socket, without racing the
+					// active worker's registry or emitting a fabricated finish.
+					unavailable := &registry{}
+					return unavailable.dispatchReplay(context.Background(), raw)
+				case 2:
+					return nil, fmt.Errorf("fixture replay transport failure")
+				case 3:
+					return jsonResult(map[string]any{"state": "unknown", "dispatchId": "unrelated-dispatch-nonce"})
+				}
+			}
+			return reg.handle(context.Background(), method, raw)
+		})
 	}
 	oldServer := bus.NewServer(broker.New())
 	oldServer.SetToken("paired-fixture-operator")

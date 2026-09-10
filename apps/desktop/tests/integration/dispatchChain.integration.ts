@@ -1000,7 +1000,7 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   expect(transferred.value.userContent).toBeUndefined();
 });
 
-it('dispatches through the real paired host and brain, returns a local task result once', async () => {
+it('handles unknown paired replay idempotently and returns a local task result once', async () => {
   const binary = path.join(scratch, 'paired-brain-fixture');
   const build = spawn('go', ['test', '-c', '-o', binary, './cmd/brain'], {
     cwd: path.resolve('../../services/hub'),
@@ -1033,6 +1033,7 @@ it('dispatches through the real paired host and brain, returns a local task resu
   const { pairedWorkerConnection } = await import('../../src/main/services/pairedWorkerConnection');
   const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
   const delivery = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
+  const pairedCalls = vi.spyOn(pairedWorkerConnection, 'call');
   try {
     setRemoteServer({ url: ready.oldURL, token: 'paired-fixture-operator', mode: 'workers' });
     const oldPeer = await mcpTool('session:manager-current', 'list_dispatch_targets', {});
@@ -1175,6 +1176,57 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(JSON.stringify(evidence)).not.toContain(task.taskId);
     expect(JSON.stringify(evidence)).not.toContain(request.requestId);
     expect(evidence[0]).not.toHaveProperty('workflowStepId');
+    const { remoteDispatchRegistry } =
+      await import('../../src/main/services/remoteDispatchRegistry');
+    const record = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === result.value.sessionId)!;
+    const reconnect = async (mode: string) => {
+      await fetch(ready.control + '/control', {
+        method: 'POST', body: JSON.stringify({ kind: mode }),
+      });
+      const from = pairedCalls.mock.calls.length;
+      pairedWorkerConnection.stop();
+      await pairedWorkerConnection.connect();
+      let index = -1;
+      await vi.waitFor(() => {
+        index = pairedCalls.mock.calls.findIndex(([method, params], i) =>
+          i >= from && method === 'agents.dispatchReplay' &&
+          (params as { dispatchId?: string })?.dispatchId === record.dispatchId,
+        );
+        expect(index).toBeGreaterThanOrEqual(0);
+      });
+      // Await the actual onConnected RPC; its production response handler was
+      // registered first, so negative assertions cannot pass before it runs.
+      await Promise.resolve(pairedCalls.mock.results[index].value).catch(() => {});
+    };
+    const admitted = structuredClone(record);
+    const beforeWakes = delivery.mock.calls.length;
+    await reconnect('replay-error');
+    expect(record).toEqual(admitted);
+    await reconnect('replay-wrong-id');
+    expect(record).toEqual(admitted);
+    await reconnect('replay-unknown');
+    expect(record.note).toContain('no longer has a record');
+    expect(record.note).toContain('Do not repeat the spawn');
+    expect(record).toEqual({ ...admitted, note: record.note });
+    const visible = await mcpTool('session:manager-current', 'list_dispatches', {});
+    expect(visible.value.dispatches.find((r: { dispatchId: string }) =>
+      r.dispatchId === record.dispatchId).note).toBe(record.note);
+    const unknown = structuredClone(record);
+    const journal = path.join(configDir, 'remote-dispatches.json');
+    const inode = fs.statSync(journal).ino;
+    await reconnect('replay-unknown');
+    expect(record).toEqual(unknown);
+    expect(fs.statSync(journal).ino).toBe(inode);
+    expect(delivery.mock.calls).toHaveLength(beforeWakes);
+    expect(launch.mock.calls).toHaveLength(localLaunches);
+    expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(1);
+    expect(history.task(task.taskId)!.workflow!.steps.find((s) =>
+      s.id === 'implement')?.state).toBe('dispatched');
+    await reconnect('replay-known');
+    expect(record).toEqual(unknown);
+
     await fetch(ready.control + '/control', {
       method: 'POST',
       body: JSON.stringify({ kind: 'progress' }),
@@ -1234,17 +1286,20 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(retained.attempts[0].worktree?.directoryIdentity).toBeUndefined();
     expect(retained.workflow?.hash).toBe(task.workflow?.hash);
     expect(retained.workflow?.steps.find((s) => s.id === 'implement')?.state).toBe('completed');
-    const { remoteDispatchRegistry } =
-      await import('../../src/main/services/remoteDispatchRegistry');
-    const record = remoteDispatchRegistry
-      .list()
-      .find((r) => r.localSessionId === result.value.sessionId)!;
     await pairedWorkerConnection.call('agents.dispatchReplay', { dispatchId: record.dispatchId });
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(wakes()).toHaveLength(1);
+    const completed = structuredClone(record);
+    await reconnect('replay-unknown');
+    expect(record).toEqual(completed);
+    expect(record.state).toBe('done');
+    expect(wakes()).toHaveLength(1);
+    expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(1);
+
   } finally {
     setRemoteServer(null);
     pairedWorkerConnection.stop();
+    pairedCalls.mockRestore();
     delivery.mockRestore();
     const exited = once(peer, 'exit');
     peer.stdin.end();

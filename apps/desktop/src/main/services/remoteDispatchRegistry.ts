@@ -274,7 +274,7 @@ export class RemoteDispatchRegistry {
    *  operator can see is recoverable; one that stays pending forever is not. */
   markLost(dispatchId: string, note: string): void {
     const record = this.records.get(dispatchId);
-    if (!record || record.state !== 'open') return;
+    if (!record || record.state !== 'open' || record.note === note) return;
     // Peer ignorance is not proof a worker ended. Keep the origin record open.
     record.note = note;
     this.persist();

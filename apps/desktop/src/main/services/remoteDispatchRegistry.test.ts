@@ -114,3 +114,20 @@ it('reconciles adoption only after the new origin owner is durable', () => {
   registry.reparent('manager', 'successor');
   expect(replayOwner).toBe('successor');
 });
+
+
+it('records verified unknown once without closing the dispatch or rewriting terminal state', () => {
+  const { registry, file, update } = fixture();
+  registry.markLost(update.dispatchId, 'Verified unknown; reconcile before retrying');
+  const first = structuredClone(registry.list()[0]);
+  const inode = fs.statSync(file).ino;
+  registry.markLost(update.dispatchId, first.note!);
+  expect(registry.list()[0]).toEqual(first);
+  expect(fs.statSync(file).ino).toBe(inode);
+  expect(first.state).toBe('open');
+  expect(first.ownerSessionId).toBe('manager');
+  registry.acknowledge(update.dispatchId, update);
+  const terminal = structuredClone(registry.list()[0]);
+  registry.markLost(update.dispatchId, 'Verified unknown; reconcile before retrying');
+  expect(registry.list()[0]).toEqual(terminal);
+});
