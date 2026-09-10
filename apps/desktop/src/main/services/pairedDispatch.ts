@@ -25,9 +25,11 @@ export function startPairedDispatch(): void {
     return manager?.isWakeTarget && !manager.hub && manager.status !== 'ended' ? target : null;
   });
   started = true;
+  connection.onDisconnected = () => claudeSessionStore.markHubPeerOffline('paired');
   connection.onConnected = () => {
     for (const record of registry.openForPeer(pairedDestinationKey())) {
       void connection.call('agents.dispatchReplay', { dispatchId: record.dispatchId }).catch(() => {});
+      if (record.sessionId && record.localSessionId) void connection.call<import('./claudeSessionStore').RemoteSnapshotWire>('sessions.snapshot', {sessionId:record.sessionId}).then((snapshot) => claudeSessionStore.upsertRemoteSession('paired', {...snapshot,sessionId:record.localSessionId,parentSessionId:record.ownerSessionId,isWakeTarget:false})).catch(() => {});
     }
   };
   connection.onEvent = (event) => {
@@ -68,6 +70,7 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   const text = buildFleetMessage(update.kind, [entry]) + workflowWakeInstructions([entry.sessionId]);
   const signatures: Array<[string,string]> = [[entry.sessionId, `paired:${record.dispatchId}:${update.seq}`]];
   if (managerReplacementState.signature(entry.sessionId) !== signatures[0][1]) {
+    registry.beginDelivery(record.dispatchId, update.seq);
     const response = await claudemonSessionClient.message(parentSessionId, text, signatures);
     if (!response.ok) throw new Error('Remote result wake was not accepted');
     managerReplacementState.recordSignature(entry.sessionId, signatures[0][1]);

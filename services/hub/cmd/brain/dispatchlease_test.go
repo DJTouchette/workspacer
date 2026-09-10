@@ -1,0 +1,106 @@
+package main
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/bus"
+)
+
+func leaseRegistry(t *testing.T) (*registry, spawnParams) {
+	t.Helper()
+	s := newRemoteDispatchStore()
+	if err := s.load(filepath.Join(t.TempDir(), "dispatches.json")); err != nil {
+		t.Fatal(err)
+	}
+	id := "0123456789abcdef"
+	s.m[id] = &remoteDispatch{dispatchID: id, lease: &dispatchLease{Owner: "origin-a", Repo: "remote-repo", Cwd: "isolated-remote-worktree", Provider: "claude", Expires: time.Now().Add(time.Minute).UnixMilli()}}
+	r := &registry{remote: s, store: newSessionStore(), publish: func(string, json.RawMessage) {}}
+	return r, spawnParams{RemoteOrigin: &remoteOriginParam{Protocol: bus.DispatchProtocol, DispatchID: id, OwnerKey: "origin-a"}, Cwd: "isolated-remote-worktree", Provider: "claude"}
+}
+
+func TestDispatchLeaseBindsOriginCwdProviderAndSingleAdmission(t *testing.T) {
+	for _, mutation := range []string{"owner", "cwd", "provider", "expired"} {
+		t.Run(mutation, func(t *testing.T) {
+			r, p := leaseRegistry(t)
+			switch mutation {
+			case "owner":
+				p.RemoteOrigin.OwnerKey = "different-origin"
+			case "cwd":
+				p.Cwd = "desktop-local-path"
+			case "provider":
+				p.Provider = "codex"
+			case "expired":
+				r.remote.m[p.RemoteOrigin.DispatchID].lease.Expires = 1
+			}
+			if r.claimDispatch(p) == nil {
+				t.Fatal("mismatched remote admission was accepted")
+			}
+		})
+	}
+	r, p := leaseRegistry(t)
+	if err := r.claimDispatch(p); err != nil {
+		t.Fatal(err)
+	}
+	if r.claimDispatch(p) == nil {
+		t.Fatal("same dispatch admitted twice")
+	}
+	restored := newRemoteDispatchStore()
+	if err := restored.load(r.remote.file); err != nil {
+		t.Fatal(err)
+	}
+	r.remote = restored
+	if r.claimDispatch(p) == nil {
+		t.Fatal("restart made a consumed admission reusable")
+	}
+}
+
+func TestDispatchJournalFailureRefusesAdmissionAndPublication(t *testing.T) {
+	r, p := leaseRegistry(t)
+	r.remote.file = filepath.Join(t.TempDir(), "missing", "journal.json")
+	if r.claimDispatch(p) == nil {
+		t.Fatal("admitted without durable receipt")
+	}
+	if r.remote.record(p.RemoteOrigin.DispatchID, "worker") == nil {
+		t.Fatal("recording succeeded without persistence")
+	}
+	published := false
+	r.publish = func(string, json.RawMessage) { published = true }
+	if r.emitDispatchUpdate(p.RemoteOrigin.DispatchID, dispatchKindFinished, "worker", fleetEntry{SessionID: "worker"}, true) || published {
+		t.Fatal("published a terminal result without durable replay")
+	}
+}
+
+func TestRemoteResultSurvivesRestartAndClosingTheCard(t *testing.T) {
+	r, p := leaseRegistry(t)
+	if err := r.remote.record(p.RemoteOrigin.DispatchID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{dispatchKindProgress, dispatchKindBlocked, dispatchKindFinished} {
+		if !r.emitDispatchUpdate(p.RemoteOrigin.DispatchID, kind, "worker", fleetEntry{SessionID: "worker", Label: "fixture"}, kind == dispatchKindFinished) {
+			t.Fatal("update not retained")
+		}
+	}
+	r.remote.forget("worker")
+	restored := newRemoteDispatchStore()
+	if err := restored.load(r.remote.file); err != nil {
+		t.Fatal(err)
+	}
+	last, session, ok := restored.replay(p.RemoteOrigin.DispatchID)
+	if !ok || session != "worker" || last == nil || !last.Final || last.Seq != 3 {
+		t.Fatalf("lost terminal receipt: %+v", last)
+	}
+	if _, ok := restored.next(p.RemoteOrigin.DispatchID, false); ok {
+		t.Fatal("terminal dispatch accepted later progress")
+	}
+}
+
+func TestOldDispatchProtocolRefusesBeforeSpawn(t *testing.T) {
+	r, p := leaseRegistry(t)
+	p.RemoteOrigin.Protocol = 1
+	if _, err := r.acceptRemoteOrigin(p); err == nil {
+		t.Fatal("older protocol silently accepted")
+	}
+}

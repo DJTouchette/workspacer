@@ -33,6 +33,6 @@ export const HubChip: React.FC<{
     }}
   >
     <Server size={10} strokeWidth={2} style={{ flexShrink: 0 }} />
-    {name}
+    {name === 'paired' ? 'Paired worker' : name}
   </span>
 );

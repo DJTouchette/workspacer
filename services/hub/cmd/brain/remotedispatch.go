@@ -128,7 +128,7 @@ func newRemoteDispatchStore() *remoteDispatchStore {
 	return &remoteDispatchStore{m: map[string]*remoteDispatch{}, bySession: map[string]string{}}
 }
 
-func (s *remoteDispatchStore) record(dispatchID, sessionID string) {
+func (s *remoteDispatchStore) record(dispatchID, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.m[dispatchID]
@@ -138,7 +138,7 @@ func (s *remoteDispatchStore) record(dispatchID, sessionID string) {
 	}
 	d.sessionID = sessionID
 	s.bySession[sessionID] = dispatchID
-	_ = s.persistLocked()
+	return s.persistLocked()
 }
 
 func (s *remoteDispatchStore) forSession(sessionID string) string {
@@ -154,21 +154,22 @@ func (s *remoteDispatchStore) next(dispatchID string, final bool) (int64, bool) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.m[dispatchID]
-	if !ok {
+	if !ok || (d.last != nil && d.last.Final) {
 		return 0, false
 	}
 	d.seq++
 	return d.seq, true
 }
 
-func (s *remoteDispatchStore) keepFinal(u dispatchUpdate) {
+func (s *remoteDispatchStore) keepFinal(u dispatchUpdate) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if d, ok := s.m[u.DispatchID]; ok {
 		copyOf := u
 		d.last = &copyOf
-		_ = s.persistLocked()
+		return s.persistLocked() == nil
 	}
+	return false
 }
 
 func (s *remoteDispatchStore) replay(dispatchID string) (*dispatchUpdate, string, bool) {
@@ -192,7 +193,8 @@ func (s *remoteDispatchStore) forget(sessionID string) {
 		return
 	}
 	delete(s.bySession, sessionID)
-	delete(s.m, id)
+	// Retain the durable result after a session card is closed.
+	_ = id
 }
 
 // ── spawn-time admission ────────────────────────────────────────────────────
@@ -262,7 +264,9 @@ func (r *registry) emitDispatchUpdate(dispatchID, kind, sessionID string, entry 
 		Final:      final,
 		Entry:      entry,
 	}
-	r.remote.keepFinal(u)
+	if !r.remote.keepFinal(u) {
+		return false
+	}
 	data, err := json.Marshal(u)
 	if err != nil {
 		return false

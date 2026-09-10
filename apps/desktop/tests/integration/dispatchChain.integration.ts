@@ -1030,7 +1030,7 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(result.value.executionCwd).not.toBe(project);
     expect(result.value.executionCwd).not.toBe(ready.repo);
     expect(fs.existsSync(path.join(result.value.executionCwd,'.git'))).toBe(true);
-    const evidence = await (await fetch(ready.control+'/evidence')).json();
+    const evidence = await (await fetch(ready.control+'/evidence')).json() as Array<{cwd:string;first_message:string}>;
     expect(evidence).toHaveLength(1);
     expect(evidence[0].cwd).toBe(result.value.executionCwd);
     expect(evidence[0].first_message).toContain('Read the remote fixture');

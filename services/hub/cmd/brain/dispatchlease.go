@@ -115,7 +115,7 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		if prior.lease == nil || prior.lease.Owner != p.RemoteOrigin.OwnerKey || prior.lease.Repo != root || prior.lease.Provider != p.Provider || prior.lease.Worktree != p.Worktree || prior.lease.Claimed {
 			return nil, fmt.Errorf("dispatch already admitted or lease does not match; do not spawn again")
 		}
-		return jsonResult(prior.lease)
+		return jsonResult(map[string]any{"cwd": prior.lease.Cwd, "repo": prior.lease.Repo, "worktree": prior.lease.Worktree, "branch": prior.lease.Branch, "expires": prior.lease.Expires})
 	}
 	if len(s.m) >= 1024 {
 		return nil, fmt.Errorf("remote dispatch journal is full; no worker was started")
@@ -187,4 +187,25 @@ func (r *registry) claimDispatch(p spawnParams) error {
 	}
 	d.lease.Claimed = true
 	return s.persistLocked()
+}
+
+// Resume cleanup timers after a brain restart; unknown claimed admissions are
+// retained for reconciliation and are never cleaned as abandoned worktrees.
+func (r *registry) resumeDispatchLeases() {
+	if r.remote == nil {
+		return
+	}
+	r.remote.mu.Lock()
+	defer r.remote.mu.Unlock()
+	for id, d := range r.remote.m {
+		if d.lease == nil || d.lease.Claimed {
+			continue
+		}
+		id := id
+		wait := time.Until(time.UnixMilli(d.lease.Expires))
+		if wait < 0 {
+			wait = 0
+		}
+		time.AfterFunc(wait, func() { r.expireDispatchLease(id) })
+	}
 }

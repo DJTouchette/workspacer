@@ -53,6 +53,8 @@ function resolveToken(): string {
 
 /** The slice of getRemoteInfo() the desktop transport decision reads. */
 export interface BackendModeInfo {
+  /** Host-only worker pairing never changes the renderer backend. */
+  pairedWorker?: { httpUrl: string } | null;
   desktopBus?: boolean;
   busUrl?: string;
   token?: string;

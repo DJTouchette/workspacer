@@ -12,6 +12,7 @@ export class PairedWorkerConnection {
   private retry?: NodeJS.Timeout;
   onEvent: (event: { type: string; data?: unknown }) => void = () => {};
   onConnected: () => void = () => {};
+  onDisconnected: () => void = () => {};
 
   constructor(private setting = getPairedWorkerTarget) {}
 
@@ -55,7 +56,9 @@ export class PairedWorkerConnection {
       socket.on('error', () => { /* close supplies a credential-free error */ });
       socket.on('close', () => {
         clearTimeout(timeout);
-        if (this.socket === socket) this.socket = undefined;
+        if (this.socket !== socket) return;
+        this.socket = undefined;
+        this.onDisconnected();
         if (!settled) reject(new Error('Paired worker connection unavailable'));
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);

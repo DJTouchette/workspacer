@@ -1,60 +1,6 @@
-/**
- * REMOTE WORKER DISPATCH — the ORIGIN's record and its admission gate.
- *
- * THE OTHER TWO THIRDS: `services/hub/internal/bus/remotedispatch.go` (the local
- * hub's router, which mints the dispatch id and stamps it onto the outbound
- * `agents.spawn`) and `services/hub/cmd/brain/remotedispatch.go` (the executing
- * node, which records the id and publishes callbacks against it). Read the bus
- * file first: it states the problem this feature exists to solve.
- *
- * WHAT THIS FILE IS. A local manager dispatched a worker onto a linked machine.
- * That worker's progress, blocks and final result arrive here as
- * `agent.dispatch.update` events, hub-stamped by our own federation link. This
- * module is the thing that decides whether one of them may become a TURN IN A
- * MANAGER'S CONVERSATION — which is a real privilege, because a fleet wake is
- * indistinguishable, to the model reading it, from something the user said.
- *
- * THE FIVE CHECKS, and why each is separate rather than folded into one:
- *
- *  1. THE EVENT MUST BE HUB-STAMPED. An unstamped `agent.dispatch.update` is a
- *     LOCAL publish — anything holding a bus connection that may publish could
- *     emit one. The stamp is applied by federation.go on OUR outbound link, from
- *     the peer name in OUR peers.json; it is not a field the payload can set
- *     (the forwarder overwrites it, and a pre-stamped event is dropped by the
- *     tree invariant). So the stamp is the one part of the message we know
- *     rather than believe.
- *  2. THE STAMP MUST MATCH THE RECORD'S PEER. Two linked machines are ordinary.
- *     Without this, a dispatch id that leaked from peer A could be acknowledged
- *     by peer B — cross-peer forgery, from inside the set of machines the
- *     operator did trust.
- *  3. THE DISPATCH ID MUST BE OPEN HERE. Unguessable, minted locally, closed on
- *     the terminal update. This is what makes a callback an ANSWER rather than a
- *     request: a peer never names a recipient, it acknowledges an id it was
- *     given.
- *  4. THE WORKER SESSION MUST MATCH the one our own spawn result recorded, once
- *     we know it. A dispatch id observed by another session on that machine
- *     still cannot report as a different worker.
- *  5. THE PARENT MUST BE A LIVE, LOCAL, WAKE-ELIGIBLE MANAGER at delivery time.
- *     Not at dispatch time — a manager can end, be closed, or be replaced inside
- *     a long-running dispatch. And LOCAL specifically: a federated snapshot in
- *     our store is another machine's session, and letting one become a wake
- *     target here is exactly the "remote snapshots become local recipients" hole
- *     that must not exist.
- *
- * WHAT IS DELIBERATELY NOT PROMISED. Exactly-once DELIVERY: the transport is a
- * websocket, not a queue. What is promised is an exactly-once EFFECT — updates
- * carry a per-dispatch monotonic `seq`, this module records the highest one it
- * has acted on, and a replayed or duplicated update is dropped. Combined with
- * the peer's replay-by-id, a link that was down when a worker finished is
- * reconciled on reconnect rather than polled for, and reconciling twice costs
- * nothing.
- *
- * DURABILITY. The records are written to `<userData>/remote-dispatches.json` so
- * a desktop restart does not lose track of work that is still running on another
- * machine. That file holds NO credential: peer NAME, dispatch id, session ids, a
- * label and the remote cwd string. The peer's bearer token lives in peers.json
- * and never reaches this module.
- */
+/** Durable origin admission and result receipts. The host supplies destination
+ * provenance; peer payloads never select a manager. Interrupted sends stay
+ * explicitly unknown rather than being replayed as new manager work. */
 import * as fs from 'fs';
 import * as path from 'path';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
@@ -126,6 +72,7 @@ export interface RemoteDispatchRecord {
   openedAt: number;
   /** Highest update seq acted on. 0 = nothing delivered yet. */
   ackedSeq: number;
+  deliveringSeq?: number;
   state: 'open' | 'done' | 'failed' | 'lost';
   /** Why a record left `open` other than normally — a spawn that never started,
    *  or a peer that no longer knows the dispatch. Shown, never acted on. */
@@ -146,7 +93,8 @@ export type AcceptRejection =
   | 'closed'
   | 'session-mismatch'
   | 'duplicate'
-  | 'no-live-manager';
+  | 'no-live-manager'
+  | 'delivery-unknown';
 
 /** The store's one dependency on the session store, injected so this module is
  *  unit-testable without Electron or a live fleet. Returns null when the id is
@@ -194,17 +142,17 @@ export class RemoteDispatchRegistry {
     let raw: string;
     try {
       raw = fs.readFileSync(this.file, 'utf-8');
-    } catch {
-      return; // absent or unreadable → no dispatches, same as the peers loader
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new Error('Remote dispatch journal is unreadable; dispatch disabled');
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      console.warn('[dispatch] remote-dispatches.json is not valid JSON — starting empty');
-      return;
+      throw new Error('Remote dispatch journal is invalid; dispatch disabled');
     }
-    if (!Array.isArray(parsed)) return;
+    if (!Array.isArray(parsed)) throw new Error('Remote dispatch journal has invalid shape');
     const now = Date.now();
     for (const item of parsed) {
       if (!isRecord(item)) continue;
@@ -213,11 +161,6 @@ export class RemoteDispatchRegistry {
       if (typeof r.peer !== 'string' || !r.peer) continue;
       if (typeof r.ownerSessionId !== 'string' || !r.ownerSessionId) continue;
       const openedAt = typeof r.openedAt === 'number' ? r.openedAt : now;
-      // An open record older than the ceiling is loaded as LOST rather than
-      // dropped: the operator's question after a crash is "what happened to the
-      // thing I sent to the other machine", and a silently absent row answers
-      // it wrongly.
-      const stale = false;
       this.records.set(r.dispatchId, {
         dispatchId: r.dispatchId,
         localSessionId: r.localSessionId,
@@ -231,17 +174,10 @@ export class RemoteDispatchRegistry {
         model: typeof r.model === 'string' ? r.model : undefined,
         toolScope: typeof r.toolScope === 'string' ? r.toolScope : undefined,
         openedAt,
+        deliveringSeq: r.deliveringSeq,
         ackedSeq: typeof r.ackedSeq === 'number' ? r.ackedSeq : 0,
-        state: stale
-          ? 'lost'
-          : r.state === 'done' || r.state === 'failed' || r.state === 'lost'
-            ? r.state
-            : 'open',
-        note: stale
-          ? 'still open after this desktop restarted and no result arrived within 12h'
-          : typeof r.note === 'string'
-            ? r.note
-            : undefined,
+        state: r.state === 'done' || r.state === 'failed' ? r.state : 'open',
+        note: typeof r.note === 'string' ? r.note : undefined,
       });
     }
   }
@@ -415,16 +351,27 @@ export class RemoteDispatchRegistry {
     // Ordering/dedup. `seq` is monotonic per dispatch on the peer, so an
     // out-of-order or replayed update is one we have already acted on.
     if (update.seq <= record.ackedSeq) return { ok: false, reason: 'duplicate' };
+    if (record.deliveringSeq !== undefined) return { ok: false, reason: 'delivery-unknown' };
     // 5. A live, LOCAL, wake-eligible manager — resolved now, not at dispatch.
     const parentSessionId = this.resolveManager(record.ownerSessionId);
     if (!parentSessionId) return { ok: false, reason: 'no-live-manager' };
     return { ok: true, record, parentSessionId, update };
   }
 
+  beginDelivery(dispatchId: string, seq: number): void {
+    const record = this.records.get(dispatchId);
+    if (!record) throw new Error('Unknown dispatch');
+    record.deliveringSeq = seq;
+    record.note = 'Wake delivery in progress; after interruption delivery is unknown, never resend blindly';
+    this.persist();
+  }
+
   acknowledge(dispatchId: string, update: RemoteDispatchUpdate): void {
     const record = this.records.get(dispatchId);
     if (!record || update.seq <= record.ackedSeq) return;
     record.ackedSeq = update.seq;
+    delete record.deliveringSeq;
+    delete record.note;
     if (update.final) record.state = 'done';
     if (!record.sessionId) record.sessionId = update.sessionId;
     this.persist();

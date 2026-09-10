@@ -737,6 +737,21 @@ func TestCompositionRecordNamesOnlyRegisteredCapabilities(t *testing.T) {
 	for _, m := range goReg.FindAllStringSubmatch(hubMain, -1) {
 		registered[m[1]] = true
 	}
+	// Headless execution capabilities are registered by the brain, not the
+	// desktop's catalog delegation. Include the actual full registry body.
+	brain := string(mustReadRepoFile(t, "services", "hub", "cmd", "brain", "handlers.go"))
+	start := strings.Index(brain, "func (r *registry) methods() []string {")
+	if start < 0 {
+		t.Fatal("brain methods registry missing")
+	}
+	end := strings.Index(brain[start:], "\n}")
+	if end < 0 {
+		t.Fatal("brain methods registry boundary missing")
+	}
+	methodName := regexp.MustCompile(`"([a-zA-Z][\w]*\.[\w.]+)"`)
+	for _, m := range methodName.FindAllStringSubmatch(brain[start:start+end], -1) {
+		registered[m[1]] = true
+	}
 	if len(registered) < 50 {
 		t.Fatalf("parsed only %d registered capabilities from the two providers — the registration syntax changed and this guard is comparing against nothing", len(registered))
 	}

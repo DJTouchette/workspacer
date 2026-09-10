@@ -534,11 +534,11 @@ func brainGitCwdGuard(method, handler string) Witness {
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
 	"agents.dispatchPrepare": {
-		Reason:    "Allocates a remote worktree but executes no agent or repository setup hook. Its canonical cwd and nonce are validated before allocation; agents.spawn separately requires the same credential and consumes the durable single-use lease. No local workflow identifier or permission grant is accepted from the origin.",
+		Reason:    "Allocates a remote worktree but executes no agent or repository setup hook. Its canonical `cwd` and `remoteOrigin` nonce are validated before allocation; agents.spawn separately requires the same credential and consumes the durable single-use lease. No local workflow identifier or permission grant is accepted from the origin.",
 		Witnesses: []Witness{paramsClassified("cwd", "remoteOrigin")},
 	},
 	"fleet.selectDispatchModel": {
-		Reason:    "Forwards only a model-selection request to the explicitly paired host. The response is a routing decision, not a spawn; the remote spawn gate separately applies credential and routing ceilings and validates actual provider readiness and cwd. No local path is opened and no worker is launched here.",
+		Reason:    "Forwards only a model-selection request and its remote `cwd` to the explicitly paired host. The response is a routing decision, not a spawn; the remote spawn gate separately applies credential and routing ceilings and validates actual provider readiness and cwd. No local path is opened and no worker is launched here.",
 		Witnesses: []Witness{paramsClassified("cwd")},
 	},
 

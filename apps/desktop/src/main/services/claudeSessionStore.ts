@@ -1131,6 +1131,15 @@ class ClaudeSessionStore {
     // silently drops every cross-machine dispatch in flight: exactly the
     // orphaning agents.reparent exists to end, reintroduced one hub over.
     remoteDispatchRegistry.reparent(oldManagerId, newManagerId);
+    for (const record of remoteDispatchRegistry.list()) {
+      if (record.ownerSessionId !== newManagerId || !record.localSessionId) continue;
+      const session = this.sessions.get(record.localSessionId);
+      if (session?.hub === 'paired' && session.parentSessionId === oldManagerId) {
+        session.parentSessionId = newManagerId;
+        moved.push(session.sessionId);
+        this.pushUpdate(session);
+      }
+    }
 
     // The per-worker "nothing new to report" signature (supervisorNudge's
     // lastReportedReply) is deliberately NOT cleared. A worker that already

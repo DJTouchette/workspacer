@@ -86,6 +86,7 @@ func main() {
 			log.Printf("brain: remote dispatch journal unavailable; dispatch disabled")
 			reg.remote = nil
 		}
+		reg.resumeDispatchLeases()
 		fin := newFinishWatcher(reg)
 		reg.fin = fin
 		store.onSeed = fin.prime

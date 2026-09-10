@@ -939,7 +939,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// first transition, and a dispatch recorded late is a finish reported to
 	// nobody.
 	if remoteDispatchID != "" && r.remote != nil {
-		r.remote.record(remoteDispatchID, sessionID)
+		if err := r.remote.record(remoteDispatchID, sessionID); err != nil {
+			return nil, err
+		}
 	}
 	// AFTER the wholesale set above, which would otherwise erase it. Unlike
 	// that one this is unconditional: every session has a permission mode, and
@@ -1121,7 +1123,9 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	// validated, and re-deriving it beats threading a parameter through a
 	// signature four callers share.
 	if p.RemoteOrigin != nil && r.remote != nil {
-		r.remote.record(p.RemoteOrigin.DispatchID, sessionID)
+		if err := r.remote.record(p.RemoteOrigin.DispatchID, sessionID); err != nil {
+			return nil, err
+		}
 	}
 	// Same contract as the PTY leg: after the wholesale set, unconditionally.
 	r.noteLaunch(sessionID, provider, p)

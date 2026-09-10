@@ -36,6 +36,10 @@ describe('selectBackendMode', () => {
     expect(selectBackendMode(local)).toBe('bridged');
   });
 
+  it('keeps the default local backend with an enabled paired worker target', () => {
+    expect(selectBackendMode({...local, pairedWorker:{httpUrl:'https://worker.example'}, remoteClient:null})).toBe('bridged');
+  });
+
   it('honors the WORKSPACER_DESKTOP_DIRECT kill switch (desktopBus:false → ipc)', () => {
     expect(selectBackendMode({ ...local, desktopBus: false })).toBe('ipc');
   });
