@@ -17,6 +17,8 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/limits"
+	"github.com/djtouchette/workspacer-hub/internal/routing"
 )
 
 // Hosted cross-language fixture: real paired bus authorization and production
@@ -118,6 +120,7 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	})
 	reg = newRegistry(newClaudemonClient(daemon.URL))
 	reg.scope = "full"
+	reg.mcpFacadeURL = daemon.URL + "/mcp"
 	reg.meta = newMetaStore()
 	reg.store = newSessionStore()
 	reg.store.enrich = func(raw json.RawMessage) json.RawMessage { return enrichAndCompat(raw, reg.meta) }
@@ -130,6 +133,20 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	reg.fin.coalesce = time.Millisecond
 	reg.fin.blocks.debounce = time.Millisecond
 	reg.store.onChange = func(_ string, raw json.RawMessage) { reg.fin.observe(context.Background(), raw) }
+	matrix, err := routing.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matrix.ActiveProfile = "anthropic_only"
+	srv.RegisterLocal("routing.select", func(raw json.RawMessage) (any, error) {
+		var req routing.Request
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		decision := routing.Select(matrix, limits.Snapshot{}, nil, nil, time.Now(), req)
+		decision.DecisionID = routing.NewDecisionID()
+		return decision, nil
+	})
 	for _, method := range reg.methods() {
 		method := method
 		srv.RegisterLocal(method, func(raw json.RawMessage) (any, error) { return reg.handle(context.Background(), method, raw) })

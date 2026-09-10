@@ -153,6 +153,7 @@ export function registerCapability(method: string, handler: CapabilityHandler): 
     if (record) {
       if (record.peer !== pairedDestinationKey()) throw new Error('This dispatch belongs to a different pairing');
       if (!record.sessionId) throw new Error('Remote admission unresolved');
+      if (method === 'agents.sendMessage' && record.state !== 'open') throw new Error('This paired dispatch has finished; use a fresh task dispatch for further work');
       return pairedWorkerConnection.call(method,{...p,sessionId:record.sessionId});
     }
     return handler(params);

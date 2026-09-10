@@ -259,6 +259,7 @@ export class DispatchHistoryStore {
       title?: string;
       executionCwd: string;
       executionTarget?: 'paired';
+      executionHost?: string;
       requestedProvider?: string;
       provider?: string;
       requestedModel?: string;
@@ -299,6 +300,7 @@ export class DispatchHistoryStore {
       observedAt: now,
       executionCwd: input.executionCwd,
       executionTarget: input.executionTarget,
+      executionHost: input.executionHost,
       requestedProvider: input.requestedProvider,
       provider: input.provider,
       requestedModel: input.requestedModel,

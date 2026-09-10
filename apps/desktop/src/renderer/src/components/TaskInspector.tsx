@@ -761,7 +761,7 @@ function TaskDetails({
             </summary>
             <IdRow label="Worker" value={a.sessionId} />
             <IdRow label="Attempt" value={a.dispatchId} />
-            <IdRow label="Execution" value={a.executionTarget === 'paired' ? 'Paired worker server' : 'Local desktop'} />
+            <IdRow label="Execution" value={a.executionTarget === 'paired' ? `Paired worker: ${a.executionHost ?? 'server'}` : 'Local desktop'} />
             <IdRow label="Folder" value={a.executionCwd} />
             <IdRow label="Branch" value={a.worktree?.branch ?? 'Not recorded'} />
             {a.worktree?.fallback && (

@@ -105,7 +105,7 @@ export async function spawnPairedWorker(
   if (p.worktree && !prepared.worktree) throw new Error('Remote isolated worktree required');
   // Book the local workflow attempt before starting the remote process. A lost
   // reply leaves this attempt pending and prevents blindly repeating the step.
-  const ids = dispatchHistoryStore.accept({ ...admission, sessionId:localSessionId, executionCwd:prepared.cwd, provider:String(p.provider), requestedProvider:String(p.provider), requestedModel:typeof p.model === 'string' ? p.model : undefined, worktree, executionTarget:'paired' });
+  const ids = dispatchHistoryStore.accept({ ...admission, sessionId:localSessionId, executionCwd:prepared.cwd, provider:String(p.provider), requestedProvider:String(p.provider), requestedModel:typeof p.model === 'string' ? p.model : undefined, worktree, executionTarget:'paired', executionHost:new URL(getPairedWorkerTarget()!.httpUrl).host });
   let message = templateBody ? renderDispatchTemplate(templateBody, (p.templateParams ?? {}) as Record<string,string>, {cwd:prepared.cwd, projectCwd:prepared.repo}) : p.message;
   if (resultSchema) message = `${message ?? ''}\n\n${buildResultContract(resultSchema)}`;
   // Allowlist supported execution metadata. All origin workflow/request and

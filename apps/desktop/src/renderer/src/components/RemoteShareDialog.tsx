@@ -430,7 +430,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
           >
             Keep the manager on this desktop and explicitly dispatch selected workers to the paired server.
             Provider readiness and repository choices are read on that server.
-            {info.pairedWorker && <> Current target: {info.pairedWorker.httpUrl}.</>}
+            {info.pairedWorker && <> Current target: {info.pairedWorker.httpUrl}. <button onClick={() => apply(null)} disabled={busy} style={dangerBtnStyle(busy)}>Remove pairing (restarts)</button></>}
           </div>
           <select aria-label="Paired server use" value={mode} onChange={(e) => setMode(e.target.value as 'workers' | 'client')} style={textInputStyle}>
             <option value="workers">Workers only — keep manager on this desktop</option>

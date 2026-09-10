@@ -34,6 +34,7 @@ export interface DispatchAttempt extends DispatchLink {
   endedAt?: string;
   executionCwd: string;
   executionTarget?: 'paired';
+  executionHost?: string;
   worktree?: {
     requested: boolean;
     allocated: boolean;

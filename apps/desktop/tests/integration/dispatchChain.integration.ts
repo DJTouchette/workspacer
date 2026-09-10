@@ -1038,7 +1038,21 @@ it('dispatches through the real paired host and brain, returns a local task resu
       await expect(view.call('agents.dispatchPrepare',{cwd:ready.repo,provider:'claude'})).rejects.toThrow(/authoriz|scope/);
     } finally {view.stop();}
 
-    const result = await mcpSpawn('session:manager-current',{provider:'claude',model:'sonnet',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',worktree:true,message:'Read the remote fixture and return the result contract.',resultSchema:{type:'object',required:['commit'],properties:{commit:{type:'string'}}}});
+    const workflows = await mcpTool('session:manager-current','list_workflows',{});
+    await mcpTool('session:manager-current','select_project_workflow',{cwd:project,workflowId:'scout-implement-review',expectedRevision:workflows.value.catalog.selectionRevision});
+    const {managerRequests} = await import('../../src/main/services/managerRequestService');
+    const inbox = managerRequests();
+    const request = inbox.prepare('manager-current','Read the remote fixture and return the result contract.');
+    if (!request.available) throw new Error('Request capture unavailable');
+    const send = inbox.beginDelivery('manager-current',request.requestId)!;
+    inbox.finishDelivery(request.requestId,send.deliveryId,'accepted');
+    const resolved = await mcpTool('session:manager-current','resolve_manager_request',{requestId:request.requestId,expectedRevision:inbox.request('manager-current',request.requestId).revision,intents:[{key:'paired-task',kind:'create',cwd:project,title:'Paired fixture',provenance:'explicit',reason:'User requested this remote task'}]});
+    expect(resolved.isError,resolved.text).toBe(false);
+    const task = resolved.value.tasks[0] as DispatchTask;
+    await mcpTool('session:manager-current','decide_workflow_step',{cwd:project,taskId:task.taskId,stepId:'scout',run:false,reason:'Fixture scope is established'});
+    const route = await mcpTool('session:manager-current','select_dispatch_model',{cwd:ready.repo,provider:'claude',role:'implementer'});
+    expect(route.isError,route.text).toBe(false);
+    const result = await mcpSpawn('session:manager-current',{provider:'claude',model:route.value.model,capability:route.value.capability,decisionId:route.value.decisionId,role:'implementer',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',taskId:task.taskId,workflowStepId:'implement',stage:'implement',template:'ship-task',templateParams:{task:'Read the remote fixture and return the result contract.'},toolScope:'view'});
     expect(result.isError,result.text).toBe(false);
     expect(launch.mock.calls.length).toBe(localLaunches);
     expect(result.value.sessionId).toMatch(/^paired:/);
@@ -1051,6 +1065,9 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(evidence[0].first_message).toContain('Read the remote fixture');
     expect(JSON.stringify(evidence)).not.toContain('paired-fixture-operator');
     expect(JSON.stringify(evidence)).not.toContain('manager-current');
+    expect(JSON.stringify(evidence)).not.toContain(task.taskId);
+    expect(JSON.stringify(evidence)).not.toContain(request.requestId);
+    expect(evidence[0]).not.toHaveProperty('workflowStepId');
     await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'progress'})});
     await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('remote fixture progress'))).toBe(true),{timeout:10_000});
     await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'block'})});
@@ -1065,6 +1082,11 @@ it('dispatches through the real paired host and brain, returns a local task resu
     const wakes = () => delivery.mock.calls.filter(([id,text]) => id === 'manager-other' && text.includes('fixture-commit'));
     await vi.waitFor(() => expect(wakes()).toHaveLength(1));
     expect(wakes()[0][1]).toContain('not a new user request');
+    const retained = persisted().find((t) => t.taskId === task.taskId)!;
+    expect(retained.sources?.[0].requestId).toBe(request.requestId);
+    expect(retained.ownerSessionId).toBe('manager-other');
+    expect(retained.workflow?.hash).toBe(task.workflow?.hash);
+    expect(retained.workflow?.steps.find((s) => s.id === 'implement')?.state).toBe('completed');
     const {remoteDispatchRegistry} = await import('../../src/main/services/remoteDispatchRegistry');
     const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === result.value.sessionId)!;
     await pairedWorkerConnection.call('agents.dispatchReplay',{dispatchId:record.dispatchId});
