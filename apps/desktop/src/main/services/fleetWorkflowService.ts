@@ -9,7 +9,7 @@ import fs from 'fs';
 import { configService, getConfigDir } from './configService';
 import { libraryService } from './libraryService';
 import { dispatchTemplateParams } from '../lib/dispatchTemplate';
-import { dispatchHistoryStore } from './dispatchHistoryStore';
+import { dispatchHistoryStore, TaskConflict } from './dispatchHistoryStore';
 import { claudeSessionStore } from './claudeSessionStore';
 import { FleetWorkflowStore, WorkflowConflict } from './fleetWorkflowStore';
 import {
@@ -154,6 +154,29 @@ export function fleetWorkflowRequest(
         },
       );
     }
+    if (op === 'taskReferences' || op === 'setTaskReferences') {
+      // Reference edits need ownership, not pinned policy, so an unpinned owned task
+      // can still carry the PR/ticket the user pasted into chat.
+      let task = ownerTask(request.taskId, callerSessionId, request.cwd, false);
+      if (op === 'setTaskReferences') {
+        if (workflowBusy.has(task.taskId)) throw new Error('Step dispatch in progress');
+        task = dispatchHistoryStore.updateReferencesByManager(
+          task.taskId,
+          request.expectedTaskRevision as number,
+          request.upsert,
+          request.remove,
+          'Task references recorded by your manager from the conversation',
+        );
+        // Re-run the ownership gate against the committed row.
+        task = ownerTask(task.taskId, callerSessionId, request.cwd, false);
+      }
+      return {
+        ok: true,
+        task: structuredClone(task),
+        references: structuredClone(task.links ?? {}),
+        taskRevision: task.revision ?? 0,
+      };
+    }
     if (op === 'next' || op === 'decide') {
       let task = ownerTask(request.taskId, callerSessionId, request.cwd);
       if (op === 'decide') {
@@ -178,11 +201,24 @@ export function fleetWorkflowRequest(
     }
     throw new Error('Unknown workflow operation');
   } catch (e) {
+    const conflict = e instanceof TaskConflict;
     return {
       ok: false,
-      code: e instanceof WorkflowConflict ? 'conflict' : 'unavailable',
-      error: e instanceof Error ? e.message : String(e),
+      code: e instanceof WorkflowConflict || conflict ? 'conflict' : 'unavailable',
+      error: conflict
+        ? 'This task changed. Read its current references and revision, then reapply your edit.'
+        : e instanceof Error
+          ? e.message
+          : String(e),
       ...(e instanceof WorkflowConflict ? { currentRevision: e.currentRevision } : {}),
+      ...(conflict && request?.taskId
+        ? (() => {
+            const current = dispatchHistoryStore.task(request.taskId);
+            return current
+              ? { currentRevision: current.revision ?? 0, references: current.links ?? {} }
+              : {};
+          })()
+        : {}),
     };
   }
 }

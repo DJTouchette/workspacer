@@ -77,9 +77,17 @@ for (const width of [360, 1280])
   test(`future required review skip and recorded work at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto(`${base}?worker=worker`);
+    // Identifiers are not in the default view: the raw task id and the absolute
+    // project path exist only behind the Details disclosure.
+    await expect(page.getByText('task-current').first()).toBeHidden();
+    await expect(page.getByText('/project/alpha').first()).toBeHidden();
+    await page.getByText('Filters', { exact: true }).click();
     await expect(
       page.getByText('Tasks linked to worker worker by a recorded attempt.'),
     ).toBeVisible();
+    await page.getByText('Details', { exact: true }).click();
+    await expect(page.getByText('task-current').first()).toBeVisible();
+    await expect(page.getByText('/project/alpha').first()).toBeVisible();
     await expect(page.getByText('Worker worker', { exact: false }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Skip implement…' })).toBeDisabled();
     await page.getByRole('button', { name: 'Skip review…' }).click();
@@ -91,7 +99,8 @@ for (const width of [360, 1280])
     await dialog.getByRole('button', { name: 'Skip this step' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByText(/Skipped by you/).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Skip review…' })).toBeDisabled();
+    // A finished step offers no skip affordance at all — not a disabled one.
+    await expect(page.getByRole('button', { name: 'Skip review…' })).toHaveCount(0);
     const task = await page.evaluate(() => (window as any).fixtureTask);
     expect(task.workflow.steps.map((s: any) => s.state)).toEqual([
       'skipped',
@@ -118,13 +127,15 @@ test('save references, safe selectors, preserve conflict draft and deep-link act
   page,
 }) => {
   await page.goto(base);
+  await page.getByRole('button', { name: 'Links' }).click();
   await page.getByLabel('PR number', { exact: true }).fill('123');
   await page.getByLabel('PR URL', { exact: true }).fill('https://example.test/pr/123');
   await page.getByRole('button', { name: 'Add ticket', exact: true }).click();
   await page.getByLabel('Ticket ID', { exact: true }).fill('WKS-9');
   await page.getByRole('button', { name: 'Save references' }).click();
-  await expect(page.getByRole('button', { name: 'Open PR' })).toBeVisible();
-  await page.getByRole('button', { name: 'Open PR' }).click();
+  // The saved link surfaces as a chip at the top, not as another form row.
+  await expect(page.getByRole('button', { name: 'PR 123' })).toBeVisible();
+  await page.getByRole('button', { name: 'PR 123' }).click();
   expect(await page.evaluate(() => (window as any).taskCalls.at(-1))).toEqual({
     taskId: 'task-current',
     kind: 'url',
@@ -157,9 +168,15 @@ test('save references, safe selectors, preserve conflict draft and deep-link act
 });
 test('failure evidence survives an explicit skip', async ({ page }) => {
   await page.goto(`${base}?mode=failed`);
+  await expect(page.getByText('Worker result contract: invalid').first()).toBeVisible();
   await page.getByRole('button', { name: 'Skip implement…' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Skip this step' }).click();
+  // The step is finished now, so its rationale and reported outcome collapse —
+  // they are preserved, not deleted.
+  await expect(page.getByText('Worker result contract: invalid').first()).toBeHidden();
+  await page.getByText('Step details', { exact: true }).first().click();
   await expect(page.getByText('Worker result contract: invalid').first()).toBeVisible();
+  await expect(page.getByText('Original failure evidence').first()).toBeVisible();
   expect(await page.evaluate(() => (window as any).fixtureTask.workflow.steps[1].outcome)).toEqual({
     failure: 'Original failure evidence',
   });
@@ -181,10 +198,14 @@ test('unknown worker attribution stays empty and recent tasks remain selectable'
 }) => {
   await page.goto(`${base}?worker=unrecorded`);
   await expect(page.getByText(/No recorded tasks match/)).toBeVisible();
+  await page.getByText('Filters', { exact: true }).click();
   await page.getByLabel('All recorded tasks', { exact: true }).check();
   await page.getByLabel('Current and recent tasks', { exact: true }).selectOption('recent');
   await expect(page.getByText('No workflow was recorded for this task.')).toBeVisible();
-  await expect(page.getByText(/Previous manager \(old-manager\)/)).toBeVisible();
+  // Short manager label by default; the raw owner session id is under Details.
+  await expect(page.getByText(/Previous manager · beta/)).toBeVisible();
+  await page.getByText('Details', { exact: true }).click();
+  await expect(page.getByText('old-manager').first()).toBeVisible();
 });
 test('stale worker skip is disabled and task routing selects the explicit task', async ({
   page,
@@ -224,6 +245,7 @@ test('reference validation refuses unsafe schemes and supports user-named http r
   page,
 }) => {
   await page.goto(base);
+  await page.getByRole('button', { name: 'Links' }).click();
   await page.getByLabel('PR URL', { exact: true }).fill('file:///etc/passwd');
   await page.getByRole('button', { name: 'Save references' }).click();
   await expect(page.getByRole('alert')).toContainText('Only http(s)');
@@ -233,11 +255,54 @@ test('reference validation refuses unsafe schemes and supports user-named http r
   await page.getByLabel('Reference label', { exact: true }).fill('Design notes');
   await page.getByLabel('Reference URL', { exact: true }).fill('https://example.test/design');
   await page.getByRole('button', { name: 'Save references' }).click();
-  await page.getByRole('button', { name: 'Open Design notes' }).click();
+  await page.getByRole('button', { name: 'Design notes' }).click();
   expect(await page.evaluate(() => (window as any).taskCalls.at(-1))).toEqual({
     taskId: 'task-current',
     kind: 'url',
     reference: 'references',
     index: 0,
+  });
+});
+
+/* Screenshots of the real component at the widths the rail actually uses, in
+ * two themes. These are for human review of density and brand fit; the test
+ * itself only asserts that nothing overflows horizontally. */
+for (const theme of ['everforest', 'dark'])
+  for (const width of [360, 480, 1280])
+    test(`compact layout at ${width}px in ${theme}`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: 1100 });
+      await page.goto(`${base}?mode=links&theme=${theme}&width=${width}`);
+      await expect(page.getByText('Build Task Inspector')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'PR 9492' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'WKS-412' })).toBeVisible();
+      // SUP-77 has no URL, so it is a plain chip rather than a link button.
+      await expect(page.getByRole('button', { name: 'SUP-77' })).toHaveCount(0);
+      await expect(page.getByText('SUP-77')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({
+        path: path.resolve(__dirname, `../../test-results/task-inspector/${theme}-${width}.png`),
+        fullPage: true,
+      });
+      info.annotations.push({ type: 'screenshot', description: `${theme}-${width}` });
+    });
+
+test('a reference recorded outside this panel appears on the next refresh', async ({ page }) => {
+  await page.goto(base);
+  await expect(page.getByText('No links recorded yet.')).toBeHidden();
+  // Stands in for a manager writing the task reference over MCP while the
+  // panel is open: the Inspector polls dispatch history and must pick it up.
+  await page.evaluate(() => {
+    const t = (window as any).fixtureTask;
+    t.revision++;
+    t.links = { pullRequest: { number: '9492', url: 'https://dev.azure.test/pullrequest/9492' } };
+  });
+  await expect(page.getByRole('button', { name: 'PR 9492' })).toBeVisible({ timeout: 10000 });
+  await page.getByRole('button', { name: 'PR 9492' }).click();
+  expect(await page.evaluate(() => (window as any).taskCalls.at(-1))).toEqual({
+    taskId: 'task-current',
+    kind: 'url',
+    reference: 'pullRequest',
   });
 });

@@ -80,7 +80,8 @@ export type TaskLinks = {
 };
 export type TaskAudit = {
   id: string;
-  actor: 'host-user';
+  /** Who made the edit. Waivers are always host-user; managers may only touch references. */
+  actor: 'host-user' | 'manager';
   action: 'waive' | 'links';
   stepId?: string;
   reason: string;
@@ -204,4 +205,105 @@ export function validateTaskLinks(value: unknown): TaskLinks {
     else links.references = rows as TaskLinks['references'];
   }
   return links;
+}
+
+/** Additive reference mutation. Managers upsert/remove exact entries, never replace the set. */
+export type TaskReferenceUpsert =
+  | { kind: 'pullRequest'; number?: string; url?: string }
+  | { kind: 'ticket'; id: string; url?: string }
+  | { kind: 'reference'; label: string; url: string };
+export type TaskReferenceRemove =
+  | { kind: 'pullRequest' }
+  | { kind: 'ticket'; id: string }
+  | { kind: 'reference'; label: string };
+export const TASK_REFERENCE_KINDS = ['pullRequest', 'ticket', 'reference'] as const;
+const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+function referenceKind(value: unknown, allowed: string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Each reference must be an object');
+  const row = value as Record<string, unknown>;
+  if (typeof row.kind !== 'string' || !TASK_REFERENCE_KINDS.includes(row.kind as 'ticket'))
+    throw new Error('Reference kind must be pullRequest, ticket or reference');
+  for (const key of Object.keys(row))
+    if (key !== 'kind' && !allowed.includes(key)) throw new Error(`Unknown reference field: ${key}`);
+  return row;
+}
+/**
+ * Apply additive upserts/removals to a task's existing references and revalidate the
+ * whole result. Entries the caller did not name are preserved exactly, so a manager
+ * edit never silently discards what the host user entered. All URL scheme, credential,
+ * length, count and duplicate rules come from validateTaskLinks — there is no second
+ * validator to drift.
+ */
+export function applyTaskReferences(
+  current: TaskLinks | undefined,
+  upsert: unknown,
+  remove: unknown,
+): TaskLinks {
+  const list = (v: unknown, what: string): unknown[] => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v) || v.length > 20) throw new Error(`Use at most 20 ${what} entries`);
+    return v;
+  };
+  const upserts = list(upsert, 'upsert');
+  const removals = list(remove, 'remove');
+  if (!upserts.length && !removals.length)
+    throw new Error('Supply at least one reference to upsert or remove');
+  // Start from the validated stored value so a legacy or hand-edited row cannot
+  // smuggle unvalidated data through an unrelated additive edit.
+  const links: TaskLinks = structuredClone(validateTaskLinks(current ?? {}));
+  for (const raw of removals) {
+    const row = referenceKind(raw, ['id', 'label']);
+    if (row.kind === 'pullRequest') delete links.pullRequest;
+    else if (row.kind === 'ticket') {
+      if (typeof row.id !== 'string') throw new Error('Removing a ticket requires its id');
+      links.tickets = (links.tickets ?? []).filter((t) => !same(t.id, row.id as string));
+      if (!links.tickets.length) delete links.tickets;
+    } else {
+      if (typeof row.label !== 'string') throw new Error('Removing a reference requires its label');
+      links.references = (links.references ?? []).filter(
+        (r) => !same(r.label, row.label as string),
+      );
+      if (!links.references.length) delete links.references;
+    }
+  }
+  for (const raw of upserts) {
+    const row = referenceKind(raw, ['number', 'url', 'id', 'label']);
+    if (row.kind === 'pullRequest') {
+      if (row.number === undefined && row.url === undefined)
+        throw new Error('A pull request reference needs a number or a URL');
+      links.pullRequest = {
+        ...links.pullRequest,
+        ...(row.number !== undefined ? { number: row.number as string } : {}),
+        ...(row.url !== undefined ? { url: row.url as string } : {}),
+      };
+    } else if (row.kind === 'ticket') {
+      if (typeof row.id !== 'string' || !row.id.trim())
+        throw new Error('A ticket reference needs an id');
+      const tickets = [...(links.tickets ?? [])];
+      const at = tickets.findIndex((t) => same(t.id, row.id as string));
+      const next = {
+        id: row.id.trim(),
+        ...(row.url !== undefined
+          ? { url: row.url as string }
+          : at >= 0 && tickets[at].url
+            ? { url: tickets[at].url }
+            : {}),
+      };
+      if (at >= 0) tickets[at] = next;
+      else tickets.push(next);
+      links.tickets = tickets;
+    } else {
+      if (typeof row.label !== 'string' || !row.label.trim())
+        throw new Error('A named reference needs a label');
+      if (row.url === undefined) throw new Error('A named reference needs a URL');
+      const references = [...(links.references ?? [])];
+      const at = references.findIndex((r) => same(r.label, row.label as string));
+      const next = { label: row.label.trim(), url: row.url as string };
+      if (at >= 0) references[at] = next;
+      else references.push(next);
+      links.references = references;
+    }
+  }
+  return validateTaskLinks(links);
 }

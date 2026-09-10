@@ -476,6 +476,39 @@ limit it. A directory that is not a repo comes back as a row carrying an error,
 so one bad path never costs you the other rows. "unpushed" is ABSENT (not 0)
 when a branch has no upstream — that is "nowhere to push", not "nothing to
 push".`),
+	"workflows": strings.TrimSpace(`
+Fleet workflows are LOCAL DESKTOP only. On a headless or older host these tools
+return unavailable — report that plainly, never claim a workflow ran.
+
+Per task: start_workflow {cwd,title} BEFORE the first worker, then
+next_workflow_step {taskId,cwd} for instructions, and decide_workflow_step for
+conditional or bounded-repair steps. Copy the returned step metadata verbatim
+into select_model and spawn_agent. Never infer a pass from an idle worker or a
+merely well-formed result. A required review step cannot be skipped by any tool
+here; only the human can waive a step, from the desktop Task Inspector.
+
+Task references (get_task_references / update_task_references) are where a task
+records the PR, ticket and links that belong to it:
+- When the USER gives you a PR number, ticket id or URL in chat, or a worker you
+  dispatched reports one in a result you trust, store it on that exact task. This
+  is the only way it reaches the Inspector the user is looking at.
+- Read first: get_task_references {taskId,cwd} returns the current references and
+  a taskRevision. Pass that back as expectedTaskRevision, or the write is refused
+  as a conflict. On conflict, re-read and reapply — do not retry blindly.
+- Writes are ADDITIVE per entry: upsert [{kind:"pullRequest",number,url}],
+  [{kind:"ticket",id,url}], [{kind:"reference",label,url}]; remove names the same
+  identity. Entries you do not name are left exactly as they are, including ones
+  the user typed in themselves. Never re-send the whole set to "sync" it.
+- Any provider: a PR/MR URL from GitHub, Azure DevOps, GitLab or anywhere else is
+  a pullRequest reference; Jira keys and plain ticket ids are tickets; anything
+  else with a URL is a named reference. Do not assume GitHub from a bare number.
+- What you store is what you were given. These are unverified references, not
+  provider status. Never fetch the URL, call an external API, mutate anything on
+  the provider, or guess a PR number that the user did not state.
+- Bind to the right task. You may only edit tasks you own, in their own project.
+  If a link could belong to more than one of your tasks, ask which one rather
+  than scanning transcripts for a guess.
+`),
 	"config": strings.TrimSpace(`
 get_config returns the full workspacer config; save_config deep-merges a
 partial patch (pass ONLY the keys you change). reload_config re-reads disk.`),

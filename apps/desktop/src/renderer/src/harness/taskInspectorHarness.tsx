@@ -73,6 +73,21 @@ const task: DispatchTask = {
     },
   ],
 };
+if (mode === 'links') {
+  task.links = {
+    pullRequest: {
+      number: '9492',
+      url: 'https://dev.azure.test/org/project/_git/repo/pullrequest/9492',
+    },
+    tickets: [{ id: 'WKS-412', url: 'https://jira.test/browse/WKS-412' }, { id: 'SUP-77' }],
+    references: [{ label: 'Design notes', url: 'https://example.test/design' }],
+  };
+  task.workflow!.steps[0].reason =
+    'Scout skipped: the change is confined to one renderer component';
+  task.workflow!.steps[1].state = 'completed';
+  task.workflow!.steps[1].outcome = { commit: 'abc1234' };
+  task.workflow!.steps[2].state = 'planned';
+}
 if (mode === 'failed' || mode === 'stale') {
   task.workflow!.steps[1].state = 'failed';
   task.workflow!.steps[1].outcome = { failure: 'Original failure evidence' };
@@ -189,8 +204,12 @@ function Harness() {
   return (
     <div
       style={{
-        maxWidth: 500,
-        margin: 'auto',
+        // The rail is narrow in production. `width` lets a screenshot reproduce
+        // the real 360-480px sidebar as well as a wide pane.
+        width: params.get('width') ? Number(params.get('width')) : undefined,
+        maxWidth: params.get('width') ? undefined : 500,
+        margin: params.get('width') ? 0 : 'auto',
+        background: 'var(--wks-bg-base)',
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',

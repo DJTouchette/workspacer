@@ -76,9 +76,15 @@ export type WorkflowRequest = {
     | 'select'
     | 'start'
     | 'next'
-    | 'decide';
+    | 'decide'
+    | 'taskReferences'
+    | 'setTaskReferences';
   id?: string;
   expectedRevision?: number;
+  /** Task-row CAS for reference edits. Distinct from the definition/selection revision. */
+  expectedTaskRevision?: number;
+  upsert?: unknown;
+  remove?: unknown;
   definition?: WorkflowDefinition;
   name?: string;
   cwd?: string;
@@ -104,8 +110,16 @@ export type WorkflowResponse =
       definition?: WorkflowDefinition;
       task?: import('./dispatchHistory').DispatchTask;
       instructions?: string;
+      references?: import('./dispatchHistory').TaskLinks;
+      taskRevision?: number;
     }
-  | { ok: false; code: string; error: string; currentRevision?: number };
+  | {
+      ok: false;
+      code: string;
+      error: string;
+      currentRevision?: number;
+      references?: import('./dispatchHistory').TaskLinks;
+    };
 export const DEFAULT_WORKFLOW_ID = 'scout-implement-review';
 export const reviewPolicy = (d: WorkflowDefinition): string =>
   d.steps.some((s) => s.kind === 'review')
@@ -235,4 +249,4 @@ export const WORKFLOW_STARTERS: WorkflowDefinition[] = [
   },
 ];
 export const WORKFLOW_DISCOVERY =
-  'For each NEW project task, call start_workflow with cwd and title BEFORE dispatching. The host resolves the current selected policy and pins its revision/templates. Call next_workflow_step for its instructions; decide_workflow_step records conditional decisions with reasons. Copy its step metadata into select_model and spawn_agent. Existing tasks keep their pinned policy. If these tools are unavailable, report Fleet workflows unavailable on this headless/older host; never claim a workflow ran. Do not retrofit historical task IDs.';
+  'For each NEW project task, call start_workflow with cwd and title BEFORE dispatching. The host resolves the current selected policy and pins its revision/templates. Call next_workflow_step for its instructions; decide_workflow_step records conditional decisions with reasons. Copy its step metadata into select_model and spawn_agent. Existing tasks keep their pinned policy. If these tools are unavailable, report Fleet workflows unavailable on this headless/older host; never claim a workflow ran. Do not retrofit historical task IDs. When the user gives you a pull request, ticket or link for work you own (in any provider: GitHub, Azure DevOps, GitLab, Jira, or a bare ticket id), or a worker reports one in a result you trust, record it with update_task_references on that exact task, after get_task_references for its taskRevision. Store what you were given as an unverified reference; never fetch the URL, call an external API, or invent a PR number. If it is unclear which task a link belongs to, ask.';

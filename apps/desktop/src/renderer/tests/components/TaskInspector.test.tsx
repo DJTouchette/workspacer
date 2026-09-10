@@ -101,3 +101,96 @@ it('defaults a recorded manager to its supplied project and can explicitly show 
   fireEvent.change(screen.getByLabelText('Task project'), { target: { value: '' } });
   expect(screen.getByRole('option', { name: /Other project task/ })).toBeInTheDocument();
 });
+
+describe('compact default view', () => {
+  const workflowTask = (): DispatchTask => ({
+    ...makeTask('task-1'),
+    title: 'Ship the inspector',
+    revision: 3,
+    workflow: {
+      hash: 'pin-hash',
+      definition: {
+        id: 'w',
+        revision: 2,
+        name: 'Scout implement review',
+        description: '',
+        enabled: true,
+        steps: [
+          {
+            id: 'implement',
+            label: 'Implement',
+            kind: 'implement',
+            stage: 'implement',
+            role: 'implementer',
+            template: 't',
+            instructions: 'Do the work',
+          },
+          {
+            id: 'review',
+            label: 'Review',
+            kind: 'review',
+            stage: 'review',
+            role: 'reviewer',
+            template: 't',
+            instructions: 'Review the work',
+          },
+        ],
+      },
+      templates: { t: { id: 't', body: 'body', params: [], resultSchema: {} } },
+      steps: [
+        { id: 'implement', state: 'completed', reason: 'A long completed rationale' },
+        { id: 'review', state: 'planned' },
+      ],
+    } as never,
+  });
+  const mount = async (task: DispatchTask) => {
+    window.electronAPI = {
+      dispatchHistoryRead: async () => ({
+        available: true,
+        currentOwnerSessionId: 'manager',
+        tasks: [task],
+      }),
+    } as unknown as ElectronAPI;
+    render(<TaskInspector sessionId="manager" projectCwd="/project" />);
+    await screen.findByLabelText('Current and recent tasks');
+  };
+  it('shows the title once and keeps ids, paths and finished rationale out of the default view', async () => {
+    await mount(workflowTask());
+    // The <option> in the switcher carries the title too; nothing else may.
+    const titled = screen
+      .getAllByText('Ship the inspector')
+      .filter((el) => el.tagName !== 'OPTION');
+    expect(titled).toHaveLength(1);
+    // Present in the DOM but behind a closed disclosure — preserved, not shown.
+    expect(screen.getByText('task-1')).not.toBeVisible();
+    expect(screen.getByText('/project')).not.toBeVisible();
+    expect(screen.getByText(/pin-hash/)).not.toBeVisible();
+    // A completed step's rationale is collapsed, not deleted.
+    expect(screen.getAllByText('A long completed rationale')[0]).not.toBeVisible();
+  });
+  it('offers a skip only on unfinished steps and never a disabled one on a finished step', async () => {
+    await mount(workflowTask());
+    expect(screen.queryByRole('button', { name: 'Skip Implement…' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skip Review…' })).toBeEnabled();
+  });
+  it('exposes ids behind Details with a copy affordance', async () => {
+    await mount(workflowTask());
+    fireEvent.click(screen.getByText('Details'));
+    expect(screen.getByText('task-1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Copy task')).toBeInTheDocument();
+    expect(screen.getByLabelText('Copy project')).toBeInTheDocument();
+  });
+  it('renders references as chips and hides the editor until asked', async () => {
+    const task = workflowTask();
+    task.links = {
+      pullRequest: { number: '9492', url: 'https://dev.azure.test/pullrequest/9492' },
+      tickets: [{ id: 'WKS-1' }],
+    };
+    await mount(task);
+    expect(screen.getByRole('button', { name: /PR 9492/ })).toBeInTheDocument();
+    expect(screen.getByText('WKS-1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('PR number')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Links/ }));
+    expect(screen.getByLabelText('PR number')).toHaveValue('9492');
+  });
+});

@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, ChevronRight, Copy, ExternalLink, FolderOpen, Pencil } from 'lucide-react';
 import { Surface } from './Surface';
 import { inputStyle, SmallButton } from './settings/primitives';
-import FleetWorkflowTask from './FleetWorkflowTask';
 import { openTaskWorkflowSettings } from '../lib/settingsBus';
 import {
   TASK_INSPECTOR_UNAVAILABLE,
   taskIsActive,
   taskSkipDisabledReason,
   validateTaskLinks,
+  type DispatchAttempt,
   type DispatchTask,
   type DispatchHistoryResponse,
   type TaskLinks,
@@ -15,7 +16,55 @@ import {
   type TaskOpenRequest,
 } from '../../../main/shared/dispatchHistory';
 
+/* Task Inspector.
+ *
+ * Density rules this file follows, so the panel stays readable at a 360px rail
+ * width (DESIGN_LANGUAGE.md §1–4, and see the Surface module comment):
+ *   - The task title appears ONCE, in the header. Nothing below repeats it.
+ *   - Identifiers (task/session/dispatch ids, absolute paths, snapshot hashes)
+ *     are facts, not headlines: they live under "Details" with a copy button,
+ *     never in the default view.
+ *   - Every step row is one line plus, at most, one short consequence line.
+ *     Rationale, reported outcomes and dispatch policy collapse behind a
+ *     disclosure. A finished step shows no skip affordance at all.
+ *   - Surfaces nest at most two deep: one raised header card, flat sections.
+ */
+
 const field: React.CSSProperties = { ...inputStyle, width: '100%', boxSizing: 'border-box' };
+const meta: React.CSSProperties = {
+  fontSize: '0.66rem',
+  color: 'var(--wks-text-secondary)',
+  fontFamily: 'var(--wks-font-mono)',
+};
+const overline: React.CSSProperties = {
+  fontSize: '0.6rem',
+  fontWeight: 600,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'var(--wks-text-faint)',
+};
+const summaryStyle: React.CSSProperties = {
+  ...overline,
+  cursor: 'pointer',
+  listStyle: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '6px 0',
+};
+const STEP_STATE: Record<string, { label: string; tone: string }> = {
+  planned: { label: 'Planned', tone: 'var(--wks-text-muted)' },
+  dispatched: { label: 'Working', tone: 'var(--wks-busy)' },
+  blocked: { label: 'Needs attention', tone: 'var(--wks-warning)' },
+  failed: { label: 'Failed', tone: 'var(--wks-error)' },
+  completed: { label: 'Result received', tone: 'var(--wks-success)' },
+  skipped: { label: 'Skipped by manager', tone: 'var(--wks-text-muted)' },
+  waived: { label: 'Skipped by you', tone: 'var(--wks-purple)' },
+};
+const TERMINAL = ['completed', 'skipped', 'waived'];
+/** Short name for a project or worktree folder. The full path stays under Details. */
+const folderName = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
 export function selectInspectorTasks(
   tasks: DispatchTask[],
   sessionId?: string,
@@ -38,6 +87,107 @@ export function selectInspectorTasks(
         Number(taskIsActive(b)) - Number(taskIsActive(a)) || b.createdAt.localeCompare(a.createdAt),
     );
 }
+
+/** A copyable identifier row. Ids are never in the default view; this is inside Details. */
+function IdRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', minWidth: 0 }}>
+      <span style={{ ...overline, flex: '0 0 auto' }}>{label}</span>
+      <span style={{ ...meta, flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{value}</span>
+      <button
+        aria-label={`Copy ${label.toLowerCase()}`}
+        title={`Copy ${label.toLowerCase()}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+        style={{
+          flex: '0 0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          background: 'transparent',
+          border: 'none',
+          padding: 2,
+          margin: 0,
+          cursor: 'pointer',
+          color: copied ? 'var(--wks-success)' : 'var(--wks-text-muted)',
+        }}
+      >
+        {copied ? <Check size={12} strokeWidth={2} /> : <Copy size={12} strokeWidth={2} />}
+      </button>
+    </div>
+  );
+}
+
+/** A compact link/fact chip. Chips carry the links; nothing here is a form. */
+function Chip({
+  label,
+  onClick,
+  icon,
+  title,
+}: {
+  label: string;
+  onClick?: () => void;
+  icon?: React.ReactNode;
+  title?: string;
+}) {
+  const style: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '100%',
+    padding: '3px 8px',
+    fontSize: '0.66rem',
+    fontFamily: 'inherit',
+    fontWeight: 500,
+    lineHeight: 1.4,
+    borderRadius: 'var(--wks-radius-pill)',
+    border: '1px solid var(--wks-border-subtle)',
+    background: 'transparent',
+    color: onClick ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
+    cursor: onClick ? 'pointer' : 'default',
+    overflowWrap: 'anywhere',
+    textAlign: 'left',
+  };
+  const body = (
+    <>
+      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{label}</span>
+      {icon}
+    </>
+  );
+  return onClick ? (
+    <button type="button" style={style} onClick={onClick} title={title ?? label}>
+      {body}
+    </button>
+  ) : (
+    <span style={style} title={title ?? label}>
+      {body}
+    </span>
+  );
+}
+
+function Disclosure({
+  label,
+  children,
+  open,
+}: {
+  label: string;
+  children: React.ReactNode;
+  open?: boolean;
+}) {
+  return (
+    <details open={open} style={{ borderTop: '1px solid var(--wks-border-subtle)' }}>
+      <summary style={summaryStyle}>
+        <ChevronRight size={10} strokeWidth={2.25} />
+        {label}
+      </summary>
+      <div style={{ paddingBottom: 8 }}>{children}</div>
+    </details>
+  );
+}
+
 /** Task-scoped sibling. InspectorCard remains a pure session snapshot projection. */
 export default function TaskInspector({
   taskId,
@@ -106,6 +256,9 @@ export default function TaskInspector({
       d?.available ? { ...d, tasks: d.tasks.map((t) => (t.taskId === next.taskId ? next : t)) } : d,
     );
   };
+  const projects = Array.from(
+    new Set([...tasks.map((t) => t.projectCwd), ...(selectedProject ? [selectedProject] : [])]),
+  );
   return (
     <section
       aria-label="Task Inspector"
@@ -115,91 +268,105 @@ export default function TaskInspector({
         minWidth: 0,
         minHeight: 0,
         flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
         fontFamily: 'var(--wks-font-sans)',
-        fontSize: '0.8rem',
+        fontSize: '0.72rem',
         color: 'var(--wks-text-primary)',
         overflowWrap: 'anywhere',
       }}
     >
-      <h3 style={{ fontSize: '0.9rem', marginTop: 0 }}>Tasks</h3>
       {error && (
-        <p role="alert">
+        <p role="alert" style={{ margin: 0, color: 'var(--wks-warning)' }}>
           Could not refresh tasks. {error}{' '}
           <SmallButton label="Retry" onClick={() => void reload()} />
         </p>
       )}
-      {!data && !error && <p role="status">Loading tasks…</p>}
-      {data && !data.available && <p role="status">{data.reason}</p>}
+      {!data && !error && (
+        <p role="status" style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
+          Loading tasks…
+        </p>
+      )}
+      {data && !data.available && (
+        <p role="status" style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
+          {data.reason}
+        </p>
+      )}
       {data?.available && (
         <>
-          {!data.currentOwnerSessionId && !sessionId && (
-            <p>No current manager. Showing recorded tasks.</p>
-          )}
-          {sessionId && !isManager && (
-            <p>Tasks linked to worker {sessionId} by a recorded attempt.</p>
-          )}
-          <label>
-            <input
-              type="checkbox"
-              checked={all}
-              onChange={(e) => {
-                setAll(e.target.checked);
-                setSelected('');
-              }}
-            />{' '}
-            All recorded tasks
-          </label>
-          <label style={{ display: 'block', marginTop: 8 }}>
-            Project
-            <select
-              aria-label="Task project"
-              style={field}
-              value={selectedProject}
-              onChange={(e) => {
-                setProject(e.target.value);
-                setSelected('');
-              }}
-            >
-              <option value="">All projects</option>
-              {Array.from(
-                new Set([
-                  ...tasks.map((t) => t.projectCwd),
-                  ...(selectedProject ? [selectedProject] : []),
-                ]),
-              ).map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: 'block', marginTop: 8 }}>
-            Current and recent tasks
-            <select
-              aria-label="Current and recent tasks"
-              style={field}
-              value={task?.taskId ?? ''}
-              onChange={(e) => setSelected(e.target.value)}
-            >
-              {!task && <option value="">Select a task</option>}
-              {[true, false].map((active) => (
-                <optgroup key={String(active)} label={active ? 'Current' : 'Recent'}>
-                  {choices
-                    .filter((t) => taskIsActive(t) === active)
-                    .map((t) => (
-                      <option key={t.taskId} value={t.taskId}>
-                        {t.title} · {t.ownerLabel}
-                      </option>
-                    ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+          <select
+            aria-label="Current and recent tasks"
+            style={{ ...field, fontWeight: 500, color: 'var(--wks-text-primary)' }}
+            value={task?.taskId ?? ''}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {!task && <option value="">Select a task</option>}
+            {[true, false].map((active) => (
+              <optgroup key={String(active)} label={active ? 'Current' : 'Recent'}>
+                {choices
+                  .filter((t) => taskIsActive(t) === active)
+                  .map((t) => (
+                    <option key={t.taskId} value={t.taskId}>
+                      {t.title}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
+          <details>
+            <summary style={summaryStyle}>
+              <ChevronRight size={10} strokeWidth={2.25} />
+              Filters
+            </summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 6 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={all}
+                  onChange={(e) => {
+                    setAll(e.target.checked);
+                    setSelected('');
+                  }}
+                />
+                All recorded tasks
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={overline}>Project</span>
+                <select
+                  aria-label="Task project"
+                  style={field}
+                  value={selectedProject}
+                  onChange={(e) => {
+                    setProject(e.target.value);
+                    setSelected('');
+                  }}
+                >
+                  <option value="">All projects</option>
+                  {projects.map((p) => (
+                    <option key={p} value={p}>
+                      {folderName(p)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!data.currentOwnerSessionId && !sessionId && (
+                <p style={{ margin: 0, ...meta }}>No current manager. Showing recorded tasks.</p>
+              )}
+              {sessionId && !isManager && (
+                <p style={{ margin: 0, ...meta }}>
+                  Tasks linked to worker {sessionId} by a recorded attempt.
+                </p>
+              )}
+            </div>
+          </details>
           {!choices.length && (
-            <p>
+            <p style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
               No recorded tasks match this selection. Task ownership is shown only when recorded.
             </p>
           )}
           {selected && !task && (
-            <p role="status">
+            <p role="status" style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
               The selected task is no longer available in this selection. Select another task or
               reload.
             </p>
@@ -219,6 +386,7 @@ export default function TaskInspector({
     </section>
   );
 }
+
 function TaskDetails({
   task,
   workerId,
@@ -259,192 +427,258 @@ function TaskDetails({
       setError(String(e));
     }
   };
+  const active = taskIsActive(task);
+  const skipStep = skip && task.workflow?.definition.steps.find((s) => s.id === skip.stepId);
   return (
     <>
-      <h3 style={{ fontSize: '0.9rem' }}>{task.title}</h3>
-      <p>
-        {taskIsActive(task) ? 'Current task' : 'Recent task'} · {task.taskId}
-        <br />
-        Manager: {task.ownerLabel} ({task.ownerSessionId})<br />
-        Project: {task.projectCwd}
-      </p>
+      <Surface elevation="raised" pad="md" tone={active ? 'var(--wks-busy)' : undefined}>
+        <div style={{ fontSize: '0.8rem', fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
+        <div style={{ ...meta, marginTop: 4 }}>
+          {active ? 'Current task' : 'Recent task'} · {task.ownerLabel} ·{' '}
+          {folderName(task.projectCwd)}
+        </div>
+      </Surface>
       {error && (
-        <p role="alert">
+        <p role="alert" style={{ margin: 0, color: 'var(--wks-error)' }}>
           {error} <SmallButton label="Reload task" onClick={() => void reload()} />
         </p>
       )}
+      <TaskReferences task={task} edit={edit} open={open} busy={busy || stale} />
       {task.workflow ? (
-        <>
-          <p>
-            {task.workflow.definition.name} · version {task.workflow.definition.revision}
-          </p>
-          <ol style={{ paddingLeft: 20 }}>
+        <section aria-label="Workflow steps">
+          <div style={overline}>{task.workflow.definition.name}</div>
+          <ol style={{ listStyle: 'none', margin: '6px 0 0', padding: 0 }}>
             {task.workflow.steps.map((run, i) => {
               const definition = task.workflow!.definition.steps[i];
               const audit = task.audit?.find((a) => a.id === run.waiverId);
+              const state = STEP_STATE[run.state] ?? {
+                label: 'Unknown status',
+                tone: 'var(--wks-text-muted)',
+              };
+              const terminal = TERMINAL.includes(run.state);
               const disabled = stale
                 ? 'Refresh tasks before making changes'
                 : taskSkipDisabledReason(task, run.id);
+              // A finished step gets no skip affordance and no explanation for one.
+              const showSkip = !terminal;
+              const detail =
+                (terminal && run.reason) || run.outcome !== undefined || definition.instructions;
               return (
-                <li key={run.id} style={{ marginBottom: 12 }}>
-                  <strong>{definition.label}</strong> ·{' '}
-                  {{
-                    planned: 'Planned',
-                    dispatched: 'Working',
-                    blocked: 'Needs attention',
-                    failed: 'Failed',
-                    completed: 'Result received',
-                    skipped: 'Skipped by manager',
-                    waived: 'Skipped by you',
-                  }[run.state] ?? 'Unknown status'}
-                  {definition.kind === 'review' && <span> · Required review</span>}
-                  {run.sessionId && (
-                    <p>
-                      Worker {run.sessionId}
-                      <br />
-                      Attempt {run.dispatchId ?? 'unknown'}
-                    </p>
-                  )}
+                <li
+                  key={run.id}
+                  style={{ padding: '6px 0', borderTop: '1px solid var(--wks-border-subtle)' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span
+                      aria-hidden
+                      style={{
+                        flex: '0 0 auto',
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: state.tone,
+                      }}
+                    />
+                    <span style={{ fontWeight: 500, flex: '0 0 auto' }}>{definition.label}</span>
+                    <span style={{ color: state.tone, fontSize: '0.66rem', minWidth: 0 }}>
+                      {state.label}
+                    </span>
+                    {definition.kind === 'review' && !terminal && (
+                      <span style={{ ...meta, flex: '0 0 auto' }}>required</span>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {showSkip && (
+                      <SmallButton
+                        label={`Skip ${definition.label}…`}
+                        disabled={busy || !!disabled}
+                        onClick={() =>
+                          setSkip({
+                            stepId: run.id,
+                            revision: task.revision ?? 0,
+                            reason: 'Not needed for this task',
+                          })
+                        }
+                      />
+                    )}
+                  </div>
                   {audit && (
-                    <p>
-                      Skipped by you · {new Date(audit.createdAt).toLocaleString()}
-                      <br />
-                      {audit.reason}
-                    </p>
+                    <div style={{ ...meta, color: 'var(--wks-purple)', marginTop: 2 }}>
+                      Skipped by you · {new Date(audit.createdAt).toLocaleString()} · {audit.reason}
+                    </div>
                   )}
-                  {run.reason && <p>{run.reason}</p>}
-                  {run.outcome !== undefined && (
-                    <details>
-                      <summary>Reported outcome</summary>
-                      <pre style={{ whiteSpace: 'pre-wrap' }}>
-                        {JSON.stringify(run.outcome, null, 2)}
+                  {!terminal && run.reason && (
+                    <div style={{ ...meta, marginTop: 2 }}>{run.reason}</div>
+                  )}
+                  {showSkip && disabled && <div style={{ ...meta, marginTop: 2 }}>{disabled}</div>}
+                  {detail && (
+                    <Disclosure label="Step details">
+                      {run.reason && <p style={{ margin: '0 0 4px', ...meta }}>{run.reason}</p>}
+                      {run.sessionId && (
+                        <>
+                          <IdRow label="Worker" value={run.sessionId} />
+                          <IdRow label="Attempt" value={run.dispatchId ?? 'unknown'} />
+                        </>
+                      )}
+                      {run.outcome !== undefined && (
+                        <>
+                          <div style={overline}>Reported outcome, not an inferred pass</div>
+                          <pre style={{ ...meta, whiteSpace: 'pre-wrap', margin: '2px 0 6px' }}>
+                            {JSON.stringify(run.outcome, null, 2)}
+                          </pre>
+                        </>
+                      )}
+                      <div style={overline}>Dispatch contract</div>
+                      <p style={{ margin: '2px 0', ...meta }}>{definition.instructions}</p>
+                      <pre style={{ ...meta, whiteSpace: 'pre-wrap', margin: '2px 0' }}>
+                        {task.workflow!.templates[definition.template]?.body}
                       </pre>
-                    </details>
+                    </Disclosure>
                   )}
-                  <SmallButton
-                    label={`Skip ${definition.label}…`}
-                    disabled={busy || !!disabled}
-                    onClick={() =>
-                      setSkip({
-                        stepId: run.id,
-                        revision: task.revision ?? 0,
-                        reason: 'Not needed for this task',
-                      })
-                    }
-                  />
-                  {disabled && <div style={{ color: 'var(--wks-text-secondary)' }}>{disabled}</div>}
                 </li>
               );
             })}
           </ol>
-          {skip && (
-            <Surface elevation="flat" style={{ padding: 12 }}>
-              <div role="dialog" aria-label="Skip task step" aria-modal="false">
-                <strong>
-                  Skip {task.workflow.definition.steps.find((s) => s.id === skip.stepId)?.label}?
-                </strong>
-                <p>
-                  This affects this task only. It does not mark the step as passed or reviewed.
-                  Earlier unfinished steps still need to finish.
-                </p>
-                {task.workflow.definition.steps.find((s) => s.id === skip.stepId)?.kind ===
-                  'review' && <p>This skips the required independent review for this task.</p>}
-                <label>
-                  Reason (optional)
-                  <input
-                    style={field}
-                    maxLength={2000}
-                    value={skip.reason}
-                    onChange={(e) => setSkip({ ...skip, reason: e.target.value })}
-                  />
-                </label>
-                {skip.revision !== (task.revision ?? 0) && (
-                  <p role="status">
-                    This task changed. Refresh this confirmation before skipping.
-                    <SmallButton
-                      label="Refresh confirmation"
-                      onClick={() => setSkip({ ...skip, revision: task.revision ?? 0 })}
-                    />
-                  </p>
-                )}
-                {taskSkipDisabledReason(task, skip.stepId) && (
-                  <p role="status">{taskSkipDisabledReason(task, skip.stepId)}</p>
-                )}
-                <SmallButton
-                  label="Skip this step"
-                  disabled={
-                    busy ||
-                    stale ||
-                    !!taskSkipDisabledReason(task, skip.stepId) ||
-                    skip.revision !== (task.revision ?? 0)
-                  }
-                  onClick={() =>
-                    void edit({
-                      taskId: task.taskId,
-                      expectedTaskRevision: skip.revision,
-                      action: 'waive',
-                      stepId: skip.stepId,
-                      reason: skip.reason.trim() || undefined,
-                    }).then((ok) => {
-                      if (ok) setSkip(undefined);
-                    })
-                  }
-                />{' '}
-                <SmallButton label="Cancel" disabled={busy} onClick={() => setSkip(undefined)} />
-              </div>
-            </Surface>
-          )}
-          <FleetWorkflowTask task={task} />
-        </>
+        </section>
       ) : (
-        <p>No workflow was recorded for this task.</p>
+        <p style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
+          No workflow was recorded for this task.
+        </p>
       )}
-      <h4>Recorded work</h4>
-      {!task.attempts.length && <p>No dispatches recorded yet.</p>}
-      {task.attempts.map((a) => (
-        <details key={a.dispatchId} open={a.sessionId === workerId}>
-          <summary>
-            {a.stage ?? 'Attempt'} · {a.sessionId === workerId ? 'Selected worker · ' : ''}
-            {a.stale ? 'Status unknown — last recorded' : a.lifecycle}
-          </summary>
-          <p>
-            Worker {a.sessionId}
-            <br />
-            Attempt {a.dispatchId}
-            <br />
-            Execution folder: {a.executionCwd}
-            <br />
-            Branch: {a.worktree?.branch ?? 'Not recorded'}
-          </p>
-          {a.worktree?.fallback && (
-            <p>Worktree allocation fell back to the project folder. {a.worktree.error}</p>
-          )}
-          {a.worktree?.allocated && (
-            <SmallButton
-              label="Open worktree"
-              disabled={!a.worktree.directoryIdentity}
-              onClick={() =>
-                void open({ taskId: task.taskId, kind: 'worktree', dispatchId: a.dispatchId })
-              }
+      {skip && skipStep && (
+        <Surface elevation="flat" pad="md">
+          <div role="dialog" aria-label="Skip task step" aria-modal="false">
+            <div style={{ fontWeight: 600 }}>Skip {skipStep.label}?</div>
+            <p style={{ margin: '4px 0', ...meta }}>
+              This task only. It does not mark the step passed or reviewed.
+              {skipStep.kind === 'review' && (
+                <>
+                  {' '}
+                  <span style={{ color: 'var(--wks-warning)' }}>
+                    This skips the required independent review for this task.
+                  </span>
+                </>
+              )}
+            </p>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={overline}>Reason (optional)</span>
+              <input
+                style={field}
+                maxLength={2000}
+                value={skip.reason}
+                onChange={(e) => setSkip({ ...skip, reason: e.target.value })}
+              />
+            </label>
+            {skip.revision !== (task.revision ?? 0) && (
+              <p role="status" style={{ margin: '6px 0', ...meta }}>
+                This task changed. Refresh this confirmation before skipping.{' '}
+                <SmallButton
+                  label="Refresh confirmation"
+                  onClick={() => setSkip({ ...skip, revision: task.revision ?? 0 })}
+                />
+              </p>
+            )}
+            {taskSkipDisabledReason(task, skip.stepId) && (
+              <p role="status" style={{ margin: '6px 0', ...meta }}>
+                {taskSkipDisabledReason(task, skip.stepId)}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              <SmallButton
+                label="Skip this step"
+                primary
+                disabled={
+                  busy ||
+                  stale ||
+                  !!taskSkipDisabledReason(task, skip.stepId) ||
+                  skip.revision !== (task.revision ?? 0)
+                }
+                onClick={() =>
+                  void edit({
+                    taskId: task.taskId,
+                    expectedTaskRevision: skip.revision,
+                    action: 'waive',
+                    stepId: skip.stepId,
+                    reason: skip.reason.trim() || undefined,
+                  }).then((ok) => {
+                    if (ok) setSkip(undefined);
+                  })
+                }
+              />
+              <SmallButton label="Cancel" disabled={busy} onClick={() => setSkip(undefined)} />
+            </div>
+          </div>
+        </Surface>
+      )}
+      <Disclosure label="Details">
+        <IdRow label="Task" value={task.taskId} />
+        <IdRow label="Manager" value={task.ownerSessionId} />
+        <IdRow label="Project" value={task.projectCwd} />
+        {task.workflow && (
+          <>
+            <IdRow
+              label="Workflow"
+              value={`${task.workflow.definition.name} v${task.workflow.definition.revision}`}
             />
-          )}
-          {a.worktree?.allocated && !a.worktree.directoryIdentity && (
-            <p>This older record cannot verify the worktree folder for opening.</p>
-          )}
-        </details>
-      ))}
-      <TaskReferences task={task} edit={edit} open={open} busy={busy || stale} />
-      <p>
-        <SmallButton
-          label="Configure workflow"
-          onClick={() => openTaskWorkflowSettings(task.projectCwd)}
-        />
-        <br />
-        Changes in Settings apply to new tasks only. This task keeps its recorded workflow.
-      </p>
+            <IdRow label="Snapshot" value={task.workflow.hash} />
+          </>
+        )}
+        <div style={{ ...overline, marginTop: 8 }}>Recorded work</div>
+        {!task.attempts.length && (
+          <p style={{ margin: '2px 0', ...meta }}>No dispatches recorded yet.</p>
+        )}
+        {task.attempts.map((a) => (
+          <details key={a.dispatchId} open={a.sessionId === workerId}>
+            <summary style={{ ...summaryStyle, textTransform: 'none', letterSpacing: 0 }}>
+              <ChevronRight size={10} strokeWidth={2.25} />
+              {a.stage ?? 'Attempt'} · {a.sessionId === workerId ? 'Selected worker · ' : ''}
+              {a.stale ? 'Status unknown — last recorded' : a.lifecycle}
+            </summary>
+            <IdRow label="Worker" value={a.sessionId} />
+            <IdRow label="Attempt" value={a.dispatchId} />
+            <IdRow label="Folder" value={a.executionCwd} />
+            <IdRow label="Branch" value={a.worktree?.branch ?? 'Not recorded'} />
+            {a.worktree?.fallback && (
+              <p style={{ margin: '2px 0', ...meta, color: 'var(--wks-warning)' }}>
+                Worktree allocation fell back to the project folder. {a.worktree.error}
+              </p>
+            )}
+            {a.worktree?.allocated && (
+              <SmallButton
+                label="Open folder"
+                disabled={!a.worktree.directoryIdentity}
+                onClick={() =>
+                  void open({ taskId: task.taskId, kind: 'worktree', dispatchId: a.dispatchId })
+                }
+              />
+            )}
+            {a.worktree?.allocated && !a.worktree.directoryIdentity && (
+              <p style={{ margin: '2px 0', ...meta }}>
+                This older record cannot verify the worktree folder for opening.
+              </p>
+            )}
+          </details>
+        ))}
+        <div style={{ marginTop: 8 }}>
+          <SmallButton
+            label="Configure workflow"
+            onClick={() => openTaskWorkflowSettings(task.projectCwd)}
+          />
+          <p style={{ margin: '4px 0 0', ...meta }}>
+            Settings apply to new tasks only. This task keeps its recorded workflow.
+          </p>
+        </div>
+      </Disclosure>
     </>
   );
 }
+
+/** The latest attempt whose worktree the host can still verify for opening. */
+function openableWorktree(task: DispatchTask): DispatchAttempt | undefined {
+  return [...task.attempts]
+    .reverse()
+    .find((a) => a.worktree?.allocated && a.worktree.directoryIdentity);
+}
+
 function TaskReferences({
   task,
   edit,
@@ -459,6 +693,7 @@ function TaskReferences({
   const [links, setLinks] = useState<TaskLinks>(task.links ?? {});
   const [revision, setRevision] = useState(task.revision ?? 0);
   const [dirty, setDirty] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     if (!dirty) {
@@ -471,208 +706,264 @@ function TaskReferences({
     setLinks(next);
   };
   const conflict = dirty && revision !== (task.revision ?? 0);
+  const worktree = openableWorktree(task);
+  const branch = worktree?.worktree?.branch;
+  const external = <ExternalLink size={10} strokeWidth={2.25} />;
+  const hasLinks =
+    !!task.links?.pullRequest || !!task.links?.tickets?.length || !!task.links?.references?.length;
   return (
     <section aria-label="Task references">
-      <h4>Your references</h4>
-      <p>Entered by you; external services have not verified these links.</p>
-      {!task.links || !Object.keys(task.links).length ? <p>No references recorded.</p> : null}
-      {task.links?.pullRequest && (
-        <p>
-          PR {task.links.pullRequest.number ?? ''}{' '}
-          {task.links.pullRequest.url && (
-            <SmallButton
-              label="Open PR"
-              onClick={() =>
-                void open({ taskId: task.taskId, kind: 'url', reference: 'pullRequest' })
-              }
-            />
-          )}
-        </p>
-      )}
-      {(['tickets', 'references'] as const).map((key) =>
-        task.links?.[key]?.map((r, index) => (
-          <p key={`${key}-${index}`}>
-            {'id' in r ? r.id : r.label}{' '}
-            {r.url && (
-              <SmallButton
-                label={`Open ${'id' in r ? r.id : r.label}`}
-                onClick={() =>
-                  void open({ taskId: task.taskId, kind: 'url', reference: key, index })
-                }
-              />
-            )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+        {task.links?.pullRequest && (
+          <Chip
+            label={`PR ${task.links.pullRequest.number ?? 'link'}`}
+            icon={task.links.pullRequest.url ? external : undefined}
+            title="Recorded by you or your manager; not verified with the provider"
+            onClick={
+              task.links.pullRequest.url
+                ? () => void open({ taskId: task.taskId, kind: 'url', reference: 'pullRequest' })
+                : undefined
+            }
+          />
+        )}
+        {task.links?.tickets?.map((t, index) => (
+          <Chip
+            key={`ticket-${index}`}
+            label={t.id}
+            icon={t.url ? external : undefined}
+            title="Recorded by you or your manager; not verified with the provider"
+            onClick={
+              t.url
+                ? () => void open({ taskId: task.taskId, kind: 'url', reference: 'tickets', index })
+                : undefined
+            }
+          />
+        ))}
+        {task.links?.references?.map((r, index) => (
+          <Chip
+            key={`reference-${index}`}
+            label={r.label}
+            icon={external}
+            title="Recorded by you or your manager; not verified with the provider"
+            onClick={() =>
+              void open({ taskId: task.taskId, kind: 'url', reference: 'references', index })
+            }
+          />
+        ))}
+        {branch && <Chip label={branch} title={`Recorded branch ${branch}`} />}
+        {worktree && (
+          <Chip
+            label="Open worktree"
+            icon={<FolderOpen size={10} strokeWidth={2.25} />}
+            onClick={() =>
+              void open({ taskId: task.taskId, kind: 'worktree', dispatchId: worktree.dispatchId })
+            }
+          />
+        )}
+        {!hasLinks && !branch && !worktree && <span style={meta}>No links recorded yet.</span>}
+        <SmallButton
+          label={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Pencil size={10} strokeWidth={2.25} />
+              {editing ? 'Done' : 'Links'}
+            </span>
+          }
+          onClick={() => setEditing((v) => !v)}
+        />
+      </div>
+      {editing && (
+        <Surface elevation="flat" pad="md" style={{ marginTop: 6 }}>
+          <p style={{ margin: '0 0 6px', ...meta }}>
+            Links you or your manager record. Nothing here is checked with the provider.
           </p>
-        )),
-      )}
-      <label>
-        PR number
-        <input
-          style={field}
-          maxLength={10}
-          value={links.pullRequest?.number ?? ''}
-          onChange={(e) =>
-            change({
-              ...links,
-              pullRequest: { ...links.pullRequest, number: e.target.value || undefined },
-            })
-          }
-        />
-      </label>
-      <label>
-        PR URL
-        <input
-          style={field}
-          maxLength={2048}
-          value={links.pullRequest?.url ?? ''}
-          onChange={(e) =>
-            change({
-              ...links,
-              pullRequest: { ...links.pullRequest, url: e.target.value || undefined },
-            })
-          }
-        />
-      </label>
-      {links.tickets?.map((ticket, index) => (
-        <div key={index} style={{ marginTop: 8 }}>
-          <label>
-            Ticket ID
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={overline}>PR number</span>
             <input
               style={field}
-              maxLength={200}
-              value={ticket.id}
+              maxLength={10}
+              value={links.pullRequest?.number ?? ''}
               onChange={(e) =>
                 change({
                   ...links,
-                  tickets: links.tickets!.map((r, i) =>
-                    i === index ? { ...r, id: e.target.value } : r,
-                  ),
+                  pullRequest: { ...links.pullRequest, number: e.target.value || undefined },
                 })
               }
             />
           </label>
-          <label>
-            Ticket URL (optional)
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+            <span style={overline}>PR URL</span>
             <input
               style={field}
               maxLength={2048}
-              value={ticket.url ?? ''}
+              value={links.pullRequest?.url ?? ''}
               onChange={(e) =>
                 change({
                   ...links,
-                  tickets: links.tickets!.map((r, i) =>
-                    i === index ? { ...r, url: e.target.value || undefined } : r,
-                  ),
+                  pullRequest: { ...links.pullRequest, url: e.target.value || undefined },
                 })
               }
             />
           </label>
-          <SmallButton
-            label="Remove ticket"
-            onClick={() =>
-              change({ ...links, tickets: links.tickets!.filter((_, i) => i !== index) })
-            }
-          />
-        </div>
-      ))}
-      <SmallButton
-        label="Add ticket"
-        disabled={(links.tickets?.length ?? 0) >= 20}
-        onClick={() => change({ ...links, tickets: [...(links.tickets ?? []), { id: '' }] })}
-      />
-      {links.references?.map((reference, index) => (
-        <div key={index} style={{ marginTop: 8 }}>
-          <label>
-            Reference label
-            <input
-              style={field}
-              maxLength={200}
-              value={reference.label}
-              onChange={(e) =>
+          {links.tickets?.map((ticket, index) => (
+            <div key={index} style={{ marginTop: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={overline}>Ticket ID</span>
+                <input
+                  style={field}
+                  maxLength={200}
+                  value={ticket.id}
+                  onChange={(e) =>
+                    change({
+                      ...links,
+                      tickets: links.tickets!.map((r, i) =>
+                        i === index ? { ...r, id: e.target.value } : r,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                <span style={overline}>Ticket URL (optional)</span>
+                <input
+                  style={field}
+                  maxLength={2048}
+                  value={ticket.url ?? ''}
+                  onChange={(e) =>
+                    change({
+                      ...links,
+                      tickets: links.tickets!.map((r, i) =>
+                        i === index ? { ...r, url: e.target.value || undefined } : r,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <div style={{ marginTop: 4 }}>
+                <SmallButton
+                  label="Remove ticket"
+                  onClick={() =>
+                    change({ ...links, tickets: links.tickets!.filter((_, i) => i !== index) })
+                  }
+                />
+              </div>
+            </div>
+          ))}
+          {links.references?.map((reference, index) => (
+            <div key={index} style={{ marginTop: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={overline}>Reference label</span>
+                <input
+                  style={field}
+                  maxLength={200}
+                  value={reference.label}
+                  onChange={(e) =>
+                    change({
+                      ...links,
+                      references: links.references!.map((r, i) =>
+                        i === index ? { ...r, label: e.target.value } : r,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                <span style={overline}>Reference URL</span>
+                <input
+                  style={field}
+                  maxLength={2048}
+                  value={reference.url}
+                  onChange={(e) =>
+                    change({
+                      ...links,
+                      references: links.references!.map((r, i) =>
+                        i === index ? { ...r, url: e.target.value } : r,
+                      ),
+                    })
+                  }
+                />
+              </label>
+              <div style={{ marginTop: 4 }}>
+                <SmallButton
+                  label="Remove reference"
+                  onClick={() =>
+                    change({
+                      ...links,
+                      references: links.references!.filter((_, i) => i !== index),
+                    })
+                  }
+                />
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            <SmallButton
+              label="Add ticket"
+              disabled={(links.tickets?.length ?? 0) >= 20}
+              onClick={() => change({ ...links, tickets: [...(links.tickets ?? []), { id: '' }] })}
+            />
+            <SmallButton
+              label="Add reference"
+              disabled={(links.references?.length ?? 0) >= 20}
+              onClick={() =>
                 change({
                   ...links,
-                  references: links.references!.map((r, i) =>
-                    i === index ? { ...r, label: e.target.value } : r,
-                  ),
+                  references: [...(links.references ?? []), { label: '', url: '' }],
                 })
               }
             />
-          </label>
-          <label>
-            Reference URL
-            <input
-              style={field}
-              maxLength={2048}
-              value={reference.url}
-              onChange={(e) =>
-                change({
-                  ...links,
-                  references: links.references!.map((r, i) =>
-                    i === index ? { ...r, url: e.target.value } : r,
-                  ),
-                })
-              }
+          </div>
+          {error && (
+            <p role="alert" style={{ margin: '6px 0 0', color: 'var(--wks-error)' }}>
+              {error}
+            </p>
+          )}
+          {conflict && (
+            <p role="status" style={{ margin: '6px 0 0', ...meta }}>
+              This task changed. Your draft is preserved.{' '}
+              <SmallButton
+                label="Keep draft on current task"
+                onClick={() => setRevision(task.revision ?? 0)}
+              />
+            </p>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            <SmallButton
+              label="Save references"
+              primary
+              disabled={busy || !dirty || conflict}
+              onClick={() => {
+                try {
+                  const normalized = { ...links };
+                  if (!normalized.pullRequest?.number && !normalized.pullRequest?.url)
+                    delete normalized.pullRequest;
+                  const valid = validateTaskLinks(normalized);
+                  setError('');
+                  void edit({
+                    taskId: task.taskId,
+                    expectedTaskRevision: revision,
+                    action: 'links',
+                    links: valid,
+                  }).then((ok) => {
+                    if (ok) setDirty(false);
+                  });
+                } catch (e) {
+                  setError(String(e));
+                }
+              }}
             />
-          </label>
-          <SmallButton
-            label="Remove reference"
-            onClick={() =>
-              change({ ...links, references: links.references!.filter((_, i) => i !== index) })
-            }
-          />
-        </div>
-      ))}
-      <SmallButton
-        label="Add reference"
-        disabled={(links.references?.length ?? 0) >= 20}
-        onClick={() =>
-          change({ ...links, references: [...(links.references ?? []), { label: '', url: '' }] })
-        }
-      />
-      {error && <p role="alert">{error}</p>}
-      {conflict && (
-        <p role="status">
-          This task changed. Your draft is preserved.{' '}
-          <SmallButton
-            label="Keep draft on current task"
-            onClick={() => setRevision(task.revision ?? 0)}
-          />
-        </p>
+            <SmallButton
+              label="Reload references"
+              disabled={busy}
+              onClick={() => {
+                setLinks(task.links ?? {});
+                setRevision(task.revision ?? 0);
+                setDirty(false);
+                setError('');
+              }}
+            />
+          </div>
+        </Surface>
       )}
-      <p>
-        <SmallButton
-          label="Save references"
-          disabled={busy || !dirty || conflict}
-          onClick={() => {
-            try {
-              const normalized = { ...links };
-              if (!normalized.pullRequest?.number && !normalized.pullRequest?.url)
-                delete normalized.pullRequest;
-              const valid = validateTaskLinks(normalized);
-              setError('');
-              void edit({
-                taskId: task.taskId,
-                expectedTaskRevision: revision,
-                action: 'links',
-                links: valid,
-              }).then((ok) => {
-                if (ok) setDirty(false);
-              });
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
-        />{' '}
-        <SmallButton
-          label="Reload references"
-          disabled={busy}
-          onClick={() => {
-            setLinks(task.links ?? {});
-            setRevision(task.revision ?? 0);
-            setDirty(false);
-            setError('');
-          }}
-        />
-      </p>
     </section>
   );
 }
