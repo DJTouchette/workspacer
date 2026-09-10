@@ -1486,19 +1486,35 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
     expect(record).toEqual(completed);
     const sourceBefore = execFileSync('git', ['-C', project, 'status', '--porcelain=v1']);
-    const transferRequest = inbox.prepare('manager-other', 'Transfer the exact checkpoint and required report, then review locally.');
+    const transferRequest = inbox.prepare(
+      'manager-other',
+      'Transfer the exact checkpoint and required report, then review locally.',
+    );
     if (!transferRequest.available) throw new Error('Request capture unavailable');
     const transferSend = inbox.beginDelivery('manager-other', transferRequest.requestId)!;
     inbox.finishDelivery(transferRequest.requestId, transferSend.deliveryId, 'accepted');
     const transferTask = await mcpTool('session:manager-other', 'resolve_manager_request', {
       requestId: transferRequest.requestId,
       expectedRevision: inbox.request('manager-other', transferRequest.requestId).revision,
-      intents: [{ key: 'exact-handoff', kind: 'create', cwd: project, title: 'Exact handoff and local review', provenance: 'explicit', reason: 'User requested exact code and report custody' }],
+      intents: [
+        {
+          key: 'exact-handoff',
+          kind: 'create',
+          cwd: project,
+          title: 'Exact handoff and local review',
+          provenance: 'explicit',
+          reason: 'User requested exact code and report custody',
+        },
+      ],
     });
     expect(transferTask.isError, transferTask.text).toBe(false);
     const transferTaskId = transferTask.value.tasks[0].taskId;
     await mcpTool('session:manager-other', 'decide_workflow_step', {
-      cwd: project, taskId: transferTaskId, stepId: 'scout', run: false, reason: 'Fixture supplies verified scout evidence',
+      cwd: project,
+      taskId: transferTaskId,
+      stepId: 'scout',
+      run: false,
+      reason: 'Fixture supplies verified scout evidence',
     });
     const exact = await mcpSpawn('session:manager-other', {
       provider: 'claude',
@@ -1513,7 +1529,9 @@ it('handles unknown paired replay idempotently and returns a local task result o
       workflowStepId: 'implement',
       stage: 'implement',
       worktree: true,
-      templateParams: { task: 'Implement using the verified scout evidence. Return the required report.' },
+      templateParams: {
+        task: 'Implement using the verified scout evidence. Return the required report.',
+      },
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [{ name: 'scout.md', kind: 'report' }],
@@ -1540,7 +1558,11 @@ it('handles unknown paired replay idempotently and returns a local task result o
     ).toContain('Task evidence');
     await fetch(ready.control + '/control', {
       method: 'POST',
-      body: JSON.stringify({ kind: 'handoff-result', reply: 'Reported test claim: passed.\n```wks-result\n{"commit":"worker-claimed-commit"}\n```' }),
+      body: JSON.stringify({
+        kind: 'handoff-result',
+        reply:
+          'Reported test claim: passed.\n```wks-result\n{"commit":"worker-claimed-commit"}\n```',
+      }),
     });
     await vi.waitFor(() => expect(exactRecord.handoff?.state).toBe('received'), { timeout: 20000 });
     const imported = history
@@ -1579,7 +1601,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
       afterDispatchId: imported.dispatchId,
       workflowStepId: 'review',
       stage: 'review',
-      templateParams: { task: 'Review the returned checkpoint locally.', handoff: 'Use the host-transferred implementation report.' },
+      templateParams: {
+        task: 'Review the returned checkpoint locally.',
+        handoff: 'Use the host-transferred implementation report.',
+      },
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [{ name: 'implementation.md', kind: 'report' }],
