@@ -558,3 +558,46 @@ it('refuses invented or credentialed mappings atomically and preserves owner/pro
   }
   expect(f.service.request('manager', id).userContent).toBeDefined();
 });
+
+it('rechecks task ownership, project and concurrent human edits before attaching request references', () => {
+  const f = fixture();
+  const task = f.resolve(f.admitted(), [create()]).tasks[0];
+  const request = f.admitted('accepted', 'Fix https://github.com/o/r/pull/12');
+  const update: RequestIntent = {
+    key: 'update',
+    kind: 'update',
+    taskId: task.taskId,
+    cwd: '/project',
+    expectedTaskRevision: task.revision,
+    reason: 'Requested update',
+  };
+  const concurrent = new DispatchHistoryStore(() => f.file);
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].links = { references: [{ label: 'Human notes', url: 'https://example.com/notes' }] };
+  });
+  expect(f.resolve(request, [update])).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.service.request('manager', request).userContent).toBeDefined();
+  const revision = f.store.list()[0].revision;
+  expect(
+    f.resolve(request, [{ ...update, cwd: '/other', expectedTaskRevision: revision }]).ok,
+  ).toBe(false);
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].ownerSessionId = 'foreign';
+  });
+  expect(
+    f.resolve(request, [{ ...update, expectedTaskRevision: f.store.list()[0].revision }]).ok,
+  ).toBe(false);
+  expect(f.store.list()[0].links).toEqual({
+    references: [{ label: 'Human notes', url: 'https://example.com/notes' }],
+  });
+  concurrent.requestTransaction((_requests, tasks) => {
+    tasks[0].ownerSessionId = 'manager';
+  });
+  expect(
+    f.resolve(request, [{ ...update, expectedTaskRevision: f.store.list()[0].revision }]).ok,
+  ).toBe(true);
+  expect(f.store.list()[0].links).toEqual({
+    references: [{ label: 'Human notes', url: 'https://example.com/notes' }],
+    pullRequest: { number: '12', url: 'https://github.com/o/r/pull/12' },
+  });
+});
