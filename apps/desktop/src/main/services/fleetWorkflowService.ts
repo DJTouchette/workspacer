@@ -18,8 +18,12 @@ import {
   type WorkflowTemplate,
 } from '../shared/fleetWorkflow';
 import { workflowSelections } from '../shared/fleetWorkflowSelection';
-import { configureManagerRequests, ManagerRequestService, managerRequests } from './managerRequestService';
 import { managerReplacementState } from './managerReplacementState';
+import {
+  configureManagerRequests,
+  ManagerRequestService,
+  managerRequests,
+} from './managerRequestService';
 const templates = (): WorkflowTemplate[] =>
   libraryService
     .list(undefined, (full) => {
@@ -49,17 +53,20 @@ export const fleetWorkflowStore = new FleetWorkflowStore(
     return [s.defaultId, ...Object.values(s.projects)];
   },
 );
-configureManagerRequests(() => new ManagerRequestService(
-  dispatchHistoryStore,
-  (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
-  (cwd) => {
-    const selections = workflowSelections(configService.getConfig());
-    return fleetWorkflowStore.withDefinition(
-      selections.projects[configuredWorkflowProjectKey(cwd)] ?? selections.defaultId,
-      (definition) => fleetWorkflowStore.pin(definition),
-    );
-  },
-));
+configureManagerRequests(
+  () =>
+    new ManagerRequestService(
+      dispatchHistoryStore,
+      (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+      (cwd) => {
+        const selections = workflowSelections(configService.getConfig());
+        return fleetWorkflowStore.withDefinition(
+          selections.projects[configuredWorkflowProjectKey(cwd)] ?? selections.defaultId,
+          (definition) => fleetWorkflowStore.pin(definition),
+        );
+      },
+    ),
+);
 export function fleetWorkflowRequest(
   request: WorkflowRequest,
   callerSessionId?: string,

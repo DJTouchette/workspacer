@@ -334,16 +334,38 @@ it('blocks a late definitive rejection after unknown inbox resolution and preser
   f.service.finishDelivery(id, delivery.deliveryId, 'rejected');
   expect(f.service.request('manager', id).delivery).toBe('rejected');
   expect(taskDependencyState(f.store.task(task.taskId)!, f.store.list())).toBe('blocked');
-  expect(() => f.store.validate({ owner, projectCwd: '/project', taskId: task.taskId, workflowStepId: 'implement' })).toThrow(/waiting/);
+  expect(() =>
+    f.store.validate({
+      owner,
+      projectCwd: '/project',
+      taskId: task.taskId,
+      workflowStepId: 'implement',
+    }),
+  ).toThrow(/waiting/);
 });
 
 it('does not accept a waived terminal workflow, retain resolved content, or bypass the gate with a fake retry source', () => {
   const f = fixture();
   const task = f.resolve(f.admitted(), [create()]).tasks[0];
-  f.store.requestTransaction((_requests, tasks) => { tasks.find((t) => t.taskId === task.taskId)!.workflow!.steps[0].state = 'waived'; });
-  expect(f.service.handle({ op: 'acceptTaskOutcome', taskId: task.taskId, cwd: '/project', expectedTaskRevision: f.store.task(task.taskId)!.revision, reason: 'Waiver is not evidence' }, 'manager').ok).toBe(false);
+  f.store.requestTransaction((_requests, tasks) => {
+    tasks.find((t) => t.taskId === task.taskId)!.workflow!.steps[0].state = 'waived';
+  });
+  expect(
+    f.service.handle(
+      {
+        op: 'acceptTaskOutcome',
+        taskId: task.taskId,
+        cwd: '/project',
+        expectedTaskRevision: f.store.task(task.taskId)!.revision,
+        reason: 'Waiver is not evidence',
+      },
+      'manager',
+    ).ok,
+  ).toBe(false);
   const reloaded = new DispatchHistoryStore(() => f.file);
-  expect(() => reloaded.validate({ owner, projectCwd: '/project', retrySourceSessionId: 'invented' })).toThrow(/Resolve/);
+  expect(() =>
+    reloaded.validate({ owner, projectCwd: '/project', retrySourceSessionId: 'invented' }),
+  ).toThrow(/Resolve/);
   expect(() => reloaded.validate({ owner, projectCwd: '/project' })).toThrow(/Resolve/);
 });
 
@@ -358,10 +380,15 @@ it('bounds unresolved content and preserves pending records when capacity is exh
 it('links independent intents in one message using host-created concrete task IDs', () => {
   const f = fixture();
   const id = f.admitted();
-  const intents: RequestIntent[] = [create('fixes'), { ...create('nightly'), kind: 'followUp', dependsOnKeys: ['fixes'] }];
+  const intents: RequestIntent[] = [
+    create('fixes'),
+    { ...create('nightly'), kind: 'followUp', dependsOnKeys: ['fixes'] },
+  ];
   const result = f.resolve(id, intents);
   expect(result.ok).toBe(true);
   expect(result.tasks[1].dependsOn).toEqual([result.tasks[0].taskId]);
-  expect(f.resolve(id, [...intents].reverse()).tasks.map((t: any) => t.taskId)).toEqual(result.tasks.map((t: any) => t.taskId));
+  expect(f.resolve(id, [...intents].reverse()).tasks.map((t: any) => t.taskId)).toEqual(
+    result.tasks.map((t: any) => t.taskId),
+  );
   expect(f.store.list().every((t) => !t.attempts.length)).toBe(true);
 });

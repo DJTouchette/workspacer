@@ -132,13 +132,25 @@ export class DispatchHistoryStore {
       this.requests = state.requests ?? [];
       const requestIds = new Set<string>();
       for (const r of this.requests) {
-        if (requestIds.has(r.requestId) || !Array.isArray(r.attempts) || r.attempts.length > 8 ||
-            typeof r.sourceCwd !== 'string' || typeof r.createdAt !== 'string' ||
-            typeof r.digest !== 'string' || !/^[0-9a-f]{64}$/.test(r.digest) || r.revision < 0 ||
-            (r.userContent !== undefined && (typeof r.userContent !== 'string' || r.userContent.length > 64 * 1024)) ||
-            (r.intents !== undefined && (!Array.isArray(r.intents) || !r.intents.length || r.intents.length > 8)) ||
-            new Set(r.attempts.map((a) => a.deliveryId)).size !== r.attempts.length ||
-            r.attempts.some((a) => !a.deliveryId || !['pending', 'accepted', 'rejected', 'unknown'].includes(a.status)))
+        if (
+          requestIds.has(r.requestId) ||
+          !Array.isArray(r.attempts) ||
+          r.attempts.length > 8 ||
+          typeof r.sourceCwd !== 'string' ||
+          typeof r.createdAt !== 'string' ||
+          typeof r.digest !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(r.digest) ||
+          r.revision < 0 ||
+          (r.userContent !== undefined &&
+            (typeof r.userContent !== 'string' || r.userContent.length > 64 * 1024)) ||
+          (r.intents !== undefined &&
+            (!Array.isArray(r.intents) || !r.intents.length || r.intents.length > 8)) ||
+          new Set(r.attempts.map((a) => a.deliveryId)).size !== r.attempts.length ||
+          r.attempts.some(
+            (a) =>
+              !a.deliveryId || !['pending', 'accepted', 'rejected', 'unknown'].includes(a.status),
+          )
+        )
           throw new Error('Invalid manager request envelope');
         requestIds.add(r.requestId);
       }
@@ -826,7 +838,11 @@ export class DispatchHistoryStore {
       this.pruneOne(tasks);
     this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
-    const json = JSON.stringify({ version: 1, tasks, ...(this.requests.length ? { requests: this.requests } : {}) });
+    const json = JSON.stringify({
+      version: 1,
+      tasks,
+      ...(this.requests.length ? { requests: this.requests } : {}),
+    });
     if (Buffer.byteLength(json) > this.limits.bytes)
       throw new Error('Request history capacity reached');
     atomicWriteFileSync(this.filename(), json, { mode: 0o600 });

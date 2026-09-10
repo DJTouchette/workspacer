@@ -64,7 +64,9 @@ function audit(task: DispatchTask, action: 'request' | 'outcome', reason: string
 }
 function resolvedTasks(request: ManagerRequest, tasks: DispatchTask[]): DispatchTask[] {
   return (request.intents ?? []).flatMap((intent) => {
-    const task = tasks.find((t) => t.taskId === intent.taskId && t.ownerSessionId === request.ownerSessionId);
+    const task = tasks.find(
+      (t) => t.taskId === intent.taskId && t.ownerSessionId === request.ownerSessionId,
+    );
     return task ? [task] : [];
   });
 }
@@ -183,9 +185,17 @@ export class ManagerRequestService {
       if (input.op === 'acceptTaskOutcome') return this.acceptOutcome(input, caller);
       if (input.op !== 'resolveRequest') throw new Error('Unknown request operation');
       const intents = this.validateIntents(input.intents);
-      const fingerprint = digest(canonical(intents.map((i) => ({ ...i,
-        dependsOn: i.dependsOn?.slice().sort(), dependsOnKeys: i.dependsOnKeys?.slice().sort(),
-      })).sort((a, b) => a.key.localeCompare(b.key))));
+      const fingerprint = digest(
+        canonical(
+          intents
+            .map((i) => ({
+              ...i,
+              dependsOn: i.dependsOn?.slice().sort(),
+              dependsOnKeys: i.dependsOnKeys?.slice().sort(),
+            }))
+            .sort((a, b) => a.key.localeCompare(b.key)),
+        ),
+      );
       const previous = this.request(caller, input.requestId!);
       if (previous.resolutionDigest === fingerprint)
         return {
@@ -250,12 +260,19 @@ export class ManagerRequestService {
             tasks.push(task);
           }
           if (i.dependsOn || i.dependsOnKeys) {
-            const dependencies = [...(i.dependsOn ?? []), ...(i.dependsOnKeys ?? []).map((key) => {
-              const earlier = resolved.find((intent) => intent.key === key);
-              if (!earlier?.taskId) throw new Error('Dependency intent key must name earlier work in this resolution');
-              return earlier.taskId;
-            })];
-            if (dependencies.length > 8 || new Set(dependencies).size !== dependencies.length) throw new Error('Use at most eight distinct task dependencies');
+            const dependencies = [
+              ...(i.dependsOn ?? []),
+              ...(i.dependsOnKeys ?? []).map((key) => {
+                const earlier = resolved.find((intent) => intent.key === key);
+                if (!earlier?.taskId)
+                  throw new Error(
+                    'Dependency intent key must name earlier work in this resolution',
+                  );
+                return earlier.taskId;
+              }),
+            ];
+            if (dependencies.length > 8 || new Set(dependencies).size !== dependencies.length)
+              throw new Error('Use at most eight distinct task dependencies');
             for (const id of dependencies) ownedTask(tasks, caller, task.projectCwd, id);
             task.dependsOn = dependencies;
           }
@@ -366,7 +383,12 @@ export class ManagerRequestService {
           i.dependsOn.some((id: unknown) => typeof id !== 'string'))
       )
         throw new Error('Use at most eight distinct dependency task IDs');
-      if (i.dependsOnKeys !== undefined && (!Array.isArray(i.dependsOnKeys) || i.dependsOnKeys.length > 8 || i.dependsOnKeys.some((key: unknown) => typeof key !== 'string' || !key)))
+      if (
+        i.dependsOnKeys !== undefined &&
+        (!Array.isArray(i.dependsOnKeys) ||
+          i.dependsOnKeys.length > 8 ||
+          i.dependsOnKeys.some((key: unknown) => typeof key !== 'string' || !key))
+      )
         throw new Error('Dependency intent keys must be nonempty strings');
     }
     return structuredClone(value);
