@@ -994,9 +994,9 @@ test('manager request receipt fits 360px and disappears without a routine compos
   await page.setViewportSize({ width: 360, height: 900 });
   await page.goto(`${base}?spawn=success&runtime=ready`);
   await page.getByLabel('Ask the Fleet Manager').fill('Initial request');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
   await expect.poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length).toBe(1);
-  const composer = page.locator('textarea').filter({ visible: true }).first();
+  const composer = page.locator('textarea:visible').first();
   await composer.fill('Please review https://github.com/owner/repo/pull/9492');
   await composer.press('Enter');
   const toast = page.getByRole('status').filter({ hasText: 'Request received' });

@@ -912,7 +912,7 @@ it('records supplied task references through authenticated MCP and preserves hum
 it('resolves authoritative multi-intent inbox requests through real authenticated MCP and transfers source ownership', async () => {
   const { managerRequests } = await import('../../src/main/services/managerRequestService');
   const inbox = managerRequests();
-  const capture = inbox.prepare('manager-current', 'Fix the issue and document it.');
+  const capture = inbox.prepare('manager-current', 'Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492 and document https://example.com/spec.');
   if (!capture.available) throw new Error('Capture unavailable');
   const delivery = inbox.beginDelivery('manager-current', capture.requestId)!;
   inbox.finishDelivery(capture.requestId, delivery.deliveryId, 'unknown');
@@ -920,12 +920,13 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
     mcpTool(label, name, args);
   const fetched = await call('get_manager_request', { requestId: capture.requestId });
   expect(fetched.value.userContent).toEqual({
-    text: 'Fix the issue and document it.',
+    text: 'Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492 and document https://example.com/spec.',
     trust: 'user',
   });
   expect(fetched.value.host.delivery).toBe('unknown');
   const intents: RequestIntent[] = ['Fix issue', 'Document behavior'].map((title, i) => ({
     key: `intent-${i}`,
+    references: i === 0 ? [{ kind: 'pullRequest', number: '9492', url: 'https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492' }] : [{ kind: 'reference', label: 'Specification', url: 'https://example.com/spec' }],
     kind: 'create',
     cwd: project,
     title,
@@ -941,6 +942,8 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   const resolved = await call('resolve_manager_request', args);
   expect(resolved.value.ok).toBe(true);
   expect(resolved.value.tasks).toHaveLength(2);
+  expect(resolved.value.tasks[0].links.pullRequest.number).toBe('9492');
+  expect(resolved.value.tasks[1].links.references[0].label).toBe('Specification');
   expect(
     resolved.value.tasks.every(
       (t: DispatchTask) => t.sources?.[0].requestId === capture.requestId && !t.attempts.length,
