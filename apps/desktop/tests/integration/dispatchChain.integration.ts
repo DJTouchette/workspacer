@@ -1533,6 +1533,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       templateParams: {
         task: 'Implement using the verified scout evidence. Return the required report.',
       },
+      toolScope: 'operator',
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [{ name: 'scout.md', kind: 'report' }],
@@ -1607,6 +1608,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
         task: 'Review the returned checkpoint locally.',
         handoff: 'Use the host-transferred implementation report.',
       },
+      toolScope: 'view',
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [{ name: 'implementation.md', kind: 'report' }],
