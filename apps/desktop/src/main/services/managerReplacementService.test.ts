@@ -521,8 +521,11 @@ it('keeps captured handoff content only in the inbox and retries with a new atte
   const count = f.state.get(id).deliveries.length;
   f.host.retryRequest = () => undefined;
   const refused = await f.service.request({
-    action: 'resolve-delivery', operationId: id, deliveryId: held.id,
-    resolution: 'retry', acknowledgeDuplicateRisk: true,
+    action: 'resolve-delivery',
+    operationId: id,
+    deliveryId: held.id,
+    resolution: 'retry',
+    acknowledgeDuplicateRisk: true,
   });
   expect(refused.error).toMatch(/definitively rejected/);
   expect(f.state.get(id).deliveries).toHaveLength(count);
@@ -532,11 +535,16 @@ it('keeps captured handoff content only in the inbox and retries with a new atte
     return { requestId, deliveryId: 'attempt-2' };
   };
   await f.service.request({
-    action: 'resolve-delivery', operationId: id, deliveryId: held.id,
-    resolution: 'retry', acknowledgeDuplicateRisk: true,
+    action: 'resolve-delivery',
+    operationId: id,
+    deliveryId: held.id,
+    resolution: 'retry',
+    acknowledgeDuplicateRisk: true,
   });
   await f.service.idle(id);
-  const retry = f.state.get(id).deliveries.find((d) => d.sourceRequest?.deliveryId === 'attempt-2')!;
+  const retry = f.state
+    .get(id)
+    .deliveries.find((d) => d.sourceRequest?.deliveryId === 'attempt-2')!;
   expect(retry.id).not.toBe(held.id);
   expect(retry.sourceRequest?.requestId).toBe('logical-request');
   expect(retry.status).toBe('accepted');

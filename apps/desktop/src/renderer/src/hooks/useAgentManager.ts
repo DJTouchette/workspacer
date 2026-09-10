@@ -760,7 +760,9 @@ export function useAgentManager() {
    * receives the ask as a plain message — its doctrine is already in
    * context, resending the preamble would just burn tokens.
    */
-  const managerAskRetry = useRef<{ sessionId: string; ask: string; requestId: string } | null>(null);
+  const managerAskRetry = useRef<{ sessionId: string; ask: string; requestId: string } | null>(
+    null,
+  );
   const spawnFleetManager = useCallback(
     async (
       ask: string,
@@ -774,11 +776,15 @@ export function useAgentManager() {
     ): Promise<string | undefined> => {
       const sendAsk = async (id: string, bootstrap = false) => {
         const previous = managerAskRetry.current;
-        const capture = previous?.sessionId === id && previous.ask === ask
-          ? { available: true as const, requestId: previous.requestId }
-          : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
-        if (capture?.available) managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
-        const message = bootstrap ? buildManagerKickoff(ask, fullAccess) : buildManagerWorkflowAsk(ask);
+        const capture =
+          previous?.sessionId === id && previous.ask === ask
+            ? { available: true as const, requestId: previous.requestId }
+            : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
+        if (capture?.available)
+          managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
+        const message = bootstrap
+          ? buildManagerKickoff(ask, fullAccess)
+          : buildManagerWorkflowAsk(ask);
         const result = capture?.available
           ? await window.electronAPI.claudeMessage(id, message, capture.requestId)
           : await window.electronAPI.claudeMessage(id, message);
@@ -829,8 +835,11 @@ export function useAgentManager() {
         const record: AgentWorkspace = stopped.manager
           ? stopped
           : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(record, stopped.lastSessionId,
-          window.electronAPI.managerRequestPrepare ? undefined : buildManagerWorkflowAsk(ask));
+        const sessionId = await respawnFromRecord(
+          record,
+          stopped.lastSessionId,
+          window.electronAPI.managerRequestPrepare ? undefined : buildManagerWorkflowAsk(ask),
+        );
         if (!sessionId) throw new Error(spawnFailureMessage(provider));
         if (window.electronAPI.managerRequestPrepare) await sendAsk(sessionId);
         if (!stopped.manager) {

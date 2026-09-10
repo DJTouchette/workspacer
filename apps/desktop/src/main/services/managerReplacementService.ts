@@ -49,7 +49,10 @@ export interface ReplacementHost {
     text: string,
     sourceRequest?: import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'],
   ): Promise<{ ok: boolean; mode?: string }>;
-  retryRequest?(target: string, requestId: string): { requestId: string; deliveryId: string } | undefined;
+  retryRequest?(
+    target: string,
+    requestId: string,
+  ): { requestId: string; deliveryId: string } | undefined;
   pause(id: string): Promise<void>;
   close(id: string): Promise<void>;
   kickoff(op: ReplacementRecord): string;
@@ -173,7 +176,10 @@ export class ManagerReplacementService {
             op.committed ? op.successorSessionId : op.sourceSessionId,
             sourceRequest.requestId,
           );
-          if (!sourceRequest) throw new Error('Only a definitively rejected inbox delivery can be retried. Resolve unknown delivery through the inbox without replay.');
+          if (!sourceRequest)
+            throw new Error(
+              'Only a definitively rejected inbox delivery can be retried. Resolve unknown delivery through the inbox without replay.',
+            );
         }
         let nextId = original.id;
         this.state.change(op.operationId, (o) => {

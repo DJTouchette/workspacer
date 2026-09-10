@@ -77,7 +77,11 @@ export function fleetWorkflowRequest(
     if (request.cwd && (typeof request.cwd !== 'string' || !path.isAbsolute(request.cwd)))
       throw new Error('Workflow project cwd must be absolute');
     const { op, id, expectedRevision } = request;
-    if (op === 'resolveRequest' && callerSessionId && managerReplacementState.activeCount(callerSessionId))
+    if (
+      op === 'resolveRequest' &&
+      callerSessionId &&
+      managerReplacementState.activeCount(callerSessionId)
+    )
       throw new Error('A dispatch is being admitted; resolve the inbox request after it settles');
     if (['requestInbox', 'requestContent', 'resolveRequest', 'acceptTaskOutcome'].includes(op))
       return managerRequests().handle(

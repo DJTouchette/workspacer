@@ -412,13 +412,18 @@ it('reblocks downstream publication when accepted evidence further up its depend
       sessionId: task.title,
     });
     f.store.validated(task.title, 'valid', undefined, { artifact: task.title });
-    expect(f.service.handle({
-      op: 'acceptTaskOutcome',
-      taskId: task.taskId,
-      cwd: '/project',
-      expectedTaskRevision: f.store.task(task.taskId)!.revision,
-      reason: 'Inspected the recorded artifact',
-    }, 'manager').ok).toBe(true);
+    expect(
+      f.service.handle(
+        {
+          op: 'acceptTaskOutcome',
+          taskId: task.taskId,
+          cwd: '/project',
+          expectedTaskRevision: f.store.task(task.taskId)!.revision,
+          reason: 'Inspected the recorded artifact',
+        },
+        'manager',
+      ).ok,
+    ).toBe(true);
   }
   expect(taskDependencyState(third, f.store.list())).toBe('ready');
   f.store.validated(first.title, 'invalid');

@@ -1266,12 +1266,15 @@ export const useClaudePaneModel = ({
     'requestCaptureStatus',
     '',
   );
-  const setComposerInput = useCallback((value: Parameters<typeof setInputValue>[0]) => {
-    // An explicit new edit abandons the restored-draft retry. Re-entering the
-    // same words intentionally is a new logical request, not text deduplication.
-    requestRetry.current = null;
-    setInputValue(value);
-  }, [setInputValue, requestRetry]);
+  const setComposerInput = useCallback(
+    (value: Parameters<typeof setInputValue>[0]) => {
+      // An explicit new edit abandons the restored-draft retry. Re-entering the
+      // same words intentionally is a new logical request, not text deduplication.
+      requestRetry.current = null;
+      setInputValue(value);
+    },
+    [setInputValue, requestRetry],
+  );
   pendingCountRef.current = optimisticMessages.length;
   const [optimisticLoading, setOptimisticLoading] = useSessionChatState(
     uiSessionKey,
