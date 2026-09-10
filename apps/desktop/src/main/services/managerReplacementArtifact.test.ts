@@ -160,3 +160,47 @@ it('rejects oversized briefs and invalid artifact UTF-8', () => {
   fs.appendFileSync(f.op.artifactPath, Buffer.from([0xff]));
   expect(() => validateManagerArtifact(f.op, receipt)).toThrow('valid UTF-8 bytes');
 });
+
+it.runIf(process.platform === 'win32')(
+  'verifies actual Windows root and file identities across component case',
+  () => {
+    const f = fixture();
+    const project = path.join(f.cwd, 'Users', 'Name');
+    const projectBrief = path.join(project, '.workspacer', 'brief.md');
+    fs.mkdirSync(path.dirname(projectBrief), { recursive: true });
+    fs.writeFileSync(projectBrief, '## Now\r\n- Review the verified handoff\r\n');
+    f.op.projectCwds = [project];
+    const pointer = path.join(project.toLowerCase(), '.workspacer', 'brief.md');
+    expect(fs.statSync(pointer, { bigint: true }).ino).toBe(
+      fs.statSync(projectBrief, { bigint: true }).ino,
+    );
+    f.artifact.checkpoint.files[0].path = path.join(f.cwd.toUpperCase(), '.workspacer', 'brief.md');
+    f.artifact.checkpoint.files.push({
+      path: pointer,
+      sha256: hash(fs.readFileSync(projectBrief)),
+    });
+    expect(f.validate().hash).toBe(hash(fs.readFileSync(f.op.artifactPath)));
+  },
+);
+
+it.runIf(process.platform === 'linux')(
+  'rejects real distinct case-sensitive directories even with identical brief bytes',
+  () => {
+    const f = fixture();
+    const allowed = path.join(f.cwd, 'Project');
+    const other = path.join(f.cwd, 'project');
+    for (const root of [allowed, other]) {
+      fs.mkdirSync(path.join(root, '.workspacer'), { recursive: true });
+      fs.copyFileSync(f.brief, path.join(root, '.workspacer', 'brief.md'));
+    }
+    expect(fs.statSync(allowed, { bigint: true }).ino).not.toBe(
+      fs.statSync(other, { bigint: true }).ino,
+    );
+    f.op.projectCwds = [allowed];
+    f.artifact.checkpoint.files.push({
+      path: path.join(other, '.workspacer', 'brief.md'),
+      sha256: hash(fs.readFileSync(f.brief)),
+    });
+    expect(f.validate).toThrow('path is not an allowed brief pointer');
+  },
+);

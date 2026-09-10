@@ -16,6 +16,56 @@ function samePath(a: string, b: string): boolean {
       : p;
   return spelling(a) === spelling(b);
 }
+interface VerifiedPath {
+  volume: string;
+  canonical: string;
+  stat: fs.BigIntStats;
+}
+function sameIdentity(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
+  // An unavailable file ID is not evidence of identity. BigInts avoid rounding
+  // the 64-bit Windows file index into a false match.
+  return a.ino > 0n && b.ino > 0n && a.dev === b.dev && a.ino === b.ino;
+}
+function plainAbsolutePath(value: string): boolean {
+  if (!path.isAbsolute(value)) return false;
+  const volume = path.parse(value).root;
+  if (path.sep === '\\' && volume.length < 3) return false;
+  if (value === volume) return true;
+  const parts = value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
+  return parts.every(
+    (part) =>
+      part !== '' && part !== '.' && part !== '..' && (path.sep !== '\\' || !/[ .]$|:/.test(part)),
+  );
+}
+/** Walk before realpath: realpath alone cannot distinguish harmless case
+ * spelling from a junction/symlink, or preserve the dot-segment policy. */
+function verifyPath(value: string): VerifiedPath {
+  if (!plainAbsolutePath(value)) throw new Error('invalid path spelling');
+  const volume = path.parse(value).root;
+  let current = volume;
+  let stat = fs.lstatSync(current, { bigint: true });
+  const parts =
+    value === volume ? [] : value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
+  for (const part of parts) {
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('linked parent');
+    current = path.join(current, part);
+    stat = fs.lstatSync(current, { bigint: true });
+  }
+  if (stat.isSymbolicLink()) throw new Error('linked path');
+  const canonical = fs.realpathSync(value);
+  if (!sameIdentity(stat, fs.statSync(canonical, { bigint: true })))
+    throw new Error('path changed');
+  return { volume, canonical, stat };
+}
+function sameLocation(a: VerifiedPath, b: VerifiedPath): boolean {
+  // No drive, UNC or mapped-drive alias expansion. Component spelling is not
+  // authority on Windows: case-sensitive directories must still have equal IDs.
+  return (
+    samePath(a.volume, b.volume) &&
+    (path.sep === '\\' || samePath(a.canonical, b.canonical)) &&
+    sameIdentity(a.stat, b.stat)
+  );
+}
 export interface ManagerHandoffArtifact {
   version: 1;
   operationId: string;
@@ -108,9 +158,7 @@ export function validateManagerArtifact(
     ...op.metadata.map((m) => m.cwd),
     ...(op.projectCwds ?? []),
   ];
-  const fleetBrief = path.join(op.launch.options.cwd!, '.workspacer', 'brief.md');
-  if (!a.checkpoint.files.some((f) => f && text(f.path) && samePath(f.path, fleetBrief)))
-    throw new Error('Checkpoint must include the fleet brief');
+  let includedFleetBrief = false;
   for (const [index, f] of a.checkpoint.files.entries()) {
     const invalid = (category: string): never => {
       throw new Error(`Checkpoint files[${index}] ${category}`);
@@ -118,33 +166,65 @@ export function validateManagerArtifact(
     if (
       !f ||
       !text(f.path) ||
-      !path.isAbsolute(f.path) ||
-      !roots.some((root) => samePath(root, path.dirname(path.dirname(f.path)))) ||
+      !plainAbsolutePath(f.path) ||
       path.basename(path.dirname(f.path)) !== '.workspacer' ||
       !['brief.md', 'brief.archive.md'].includes(path.basename(f.path))
     )
       invalid('path is not an allowed brief pointer');
     if (typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256))
       invalid('sha256 must be 64 lowercase hexadecimal characters');
-    let briefBytes: Buffer;
+    let pointer: VerifiedPath;
+    let pointerRoot: VerifiedPath;
     try {
-      const briefStat = fs.lstatSync(f.path);
-      if (
-        !samePath(fs.realpathSync(f.path), f.path) ||
-        briefStat.isSymbolicLink() ||
-        !briefStat.isFile()
-      )
+      pointerRoot = verifyPath(path.dirname(path.dirname(f.path)));
+    } catch {
+      return invalid('path is not an allowed brief pointer');
+    }
+    try {
+      pointer = verifyPath(f.path);
+    } catch {
+      return invalid('path changed or is not a regular file without links');
+    }
+    if (!pointer.stat.isFile()) invalid('path changed or is not a regular file without links');
+    let target: VerifiedPath | undefined;
+    for (const [rootIndex, root] of roots.entries()) {
+      // Stale unrelated project roots must not disable the valid fleet brief.
+      try {
+        const knownRoot = verifyPath(root);
+        if (!knownRoot.stat.isDirectory() || !sameLocation(pointerRoot, knownRoot)) continue;
+        const knownFile = verifyPath(path.join(root, '.workspacer', path.basename(f.path)));
+        if (!knownFile.stat.isFile() || !sameLocation(pointer, knownFile)) continue;
+        target = knownFile;
+        if (rootIndex === 0 && path.basename(f.path) === 'brief.md') includedFleetBrief = true;
+        break;
+      } catch {
+        /* Unverifiable roots/files grant no authority. */
+      }
+    }
+    if (!target) return invalid('path is not an allowed brief pointer');
+    let briefBytes: Buffer;
+    let fd: number | undefined;
+    try {
+      // Read the host-known canonical file, and bind the read to its verified
+      // identity even if a pathname is replaced after inspection.
+      fd = fs.openSync(target.canonical, 'r');
+      const opened = fs.fstatSync(fd, { bigint: true });
+      if (!opened.isFile() || !sameIdentity(opened, target.stat))
         invalid('path changed or is not a regular file without links');
-      if (briefStat.size > 2 * 1024 * 1024) invalid('file exceeds 2 MiB');
-      briefBytes = fs.readFileSync(f.path);
+      if (opened.size > 2n * 1024n * 1024n) invalid('file exceeds 2 MiB');
+      briefBytes = fs.readFileSync(fd);
+      if (briefBytes.length > 2 * 1024 * 1024) invalid('file exceeds 2 MiB');
     } catch (error) {
       if (error instanceof Error && error.message.startsWith(`Checkpoint files[${index}]`))
         throw error;
-      invalid('file could not be inspected or read');
+      return invalid('file could not be inspected or read');
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
     }
     if (artifactHash(briefBytes!) !== f.sha256)
       invalid('sha256 does not match current file bytes; checkpoint may have changed');
   }
+  if (!includedFleetBrief) throw new Error('Checkpoint must include the fleet brief');
   const hash = artifactHash(bytes);
   const blocks = [...receiptText.matchAll(/```wks-manager-handoff\s*\n([\s\S]*?)\n```/g)];
   if (blocks.length !== 1)
