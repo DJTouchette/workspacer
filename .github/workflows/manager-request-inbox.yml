@@ -47,7 +47,7 @@ jobs:
       - name: Main request, delivery, ownership and workflow regressions
         if: ${{ !cancelled() }}
         working-directory: apps/desktop
-        run: npx vitest run src/main/services/managerRequestService.test.ts src/main/services/managerRequestTransport.test.ts src/main/services/dispatchHistoryStore.test.ts src/main/services/fleetWorkflowService.test.ts src/main/services/fleetWorkflowRuntime.test.ts src/main/services/managerReplacementService.test.ts src/main/services/managerReplacementMessage.test.ts src/main/services/managerReplacement.integration.test.ts src/main/services/managerTaskReferencesService.test.ts src/main/services/hubCapabilities.test.ts src/main/ipc.test.ts src/main/preload.test.ts
+        run: npx vitest run --no-file-parallelism src/main/services/managerRequestService.test.ts src/main/services/managerRequestTransport.test.ts src/main/services/dispatchHistoryStore.test.ts src/main/services/fleetWorkflowService.test.ts src/main/services/fleetWorkflowRuntime.test.ts src/main/services/managerReplacementService.test.ts src/main/services/managerReplacementMessage.test.ts src/main/services/managerReplacement.integration.test.ts src/main/services/managerTaskReferencesService.test.ts src/main/services/hubCapabilities.test.ts src/main/ipc.test.ts src/main/preload.test.ts
       - name: Renderer capture, Inspector and chat regressions
         if: ${{ !cancelled() }}
         working-directory: apps/desktop/src/renderer

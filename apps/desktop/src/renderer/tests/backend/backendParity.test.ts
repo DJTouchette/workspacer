@@ -233,21 +233,45 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     const receipt = { ok: false, requestId: 'host-request', delivery: 'unknown', mode: 'unknown' };
     const prepare = vi.fn().mockResolvedValue({ available: true, requestId: 'host-request' });
     const send = vi.fn().mockResolvedValue(receipt);
-    const ipc = { platform: 'linux', managerRequestPrepare: prepare, claudeMessage: send } as unknown as ElectronAPI;
+    const ipc = {
+      platform: 'linux',
+      managerRequestPrepare: prepare,
+      claudeMessage: send,
+    } as unknown as ElectronAPI;
     const api = createBridgedBackend(ipc, 'token', 'ws://local-fixture/bus');
     usageBusCall.mockClear();
-    expect(await api.managerRequestPrepare!('manager', '[File: /project/spec.md] ship', true)).toMatchObject({ requestId: 'host-request' });
-    expect(prepare).toHaveBeenCalledExactlyOnceWith('manager', '[File: /project/spec.md] ship', true);
-    expect(await api.claudeMessage('manager', '[File: /project/spec.md] ship', 'host-request')).toBe(receipt);
-    expect(send).toHaveBeenCalledExactlyOnceWith('manager', '[File: /project/spec.md] ship', 'host-request');
+    expect(
+      await api.managerRequestPrepare!('manager', '[File: /project/spec.md] ship', true),
+    ).toMatchObject({ requestId: 'host-request' });
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(
+      'manager',
+      '[File: /project/spec.md] ship',
+      true,
+    );
+    expect(
+      await api.claudeMessage('manager', '[File: /project/spec.md] ship', 'host-request'),
+    ).toBe(receipt);
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      'manager',
+      '[File: /project/spec.md] ship',
+      'host-request',
+    );
     expect(usageBusCall).not.toHaveBeenCalled();
     send.mockRejectedValueOnce(new Error('IPC acknowledgement lost'));
-    await expect(api.claudeMessage('manager', 'retry', 'host-request')).rejects.toThrow('IPC acknowledgement lost');
+    await expect(api.claudeMessage('manager', 'retry', 'host-request')).rejects.toThrow(
+      'IPC acknowledgement lost',
+    );
     expect(usageBusCall).not.toHaveBeenCalled();
     await api.claudeMessage('manager', 'ordinary message');
-    expect(usageBusCall).toHaveBeenCalledExactlyOnceWith('agents.sendMessage', { sessionId: 'manager', text: 'ordinary message' }, 'ws://local-fixture/bus');
+    expect(usageBusCall).toHaveBeenCalledExactlyOnceWith(
+      'agents.sendMessage',
+      { sessionId: 'manager', text: 'ordinary message' },
+      'ws://local-fixture/bus',
+    );
     expect(send).toHaveBeenCalledTimes(2);
-    expect(await api.claudeMessage('manager', 'must not downgrade', '')).toMatchObject({ ok: false });
+    expect(await api.claudeMessage('manager', 'must not downgrade', '')).toMatchObject({
+      ok: false,
+    });
     expect(send).toHaveBeenCalledTimes(2);
     expect(usageBusCall).toHaveBeenCalledTimes(1);
   });
@@ -255,32 +279,65 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
   it('keeps remote and web request capture unavailable without invoking local capture or dropping IDs onto the bus', async () => {
     const prepare = vi.fn();
     const send = vi.fn();
-    const ipc = { platform: 'linux', managerRequestPrepare: prepare, claudeMessage: send } as unknown as ElectronAPI;
-    for (const api of [createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus'), createWebBackend('token', 'ws://remote-fixture/bus')]) {
+    const ipc = {
+      platform: 'linux',
+      managerRequestPrepare: prepare,
+      claudeMessage: send,
+    } as unknown as ElectronAPI;
+    for (const api of [
+      createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus'),
+      createWebBackend('token', 'ws://remote-fixture/bus'),
+    ]) {
       usageBusCall.mockClear();
-      expect(await api.managerRequestPrepare!('manager', 'remote request')).toMatchObject({ available: false });
-      expect(await api.claudeMessage('manager', 'tagged request', 'local-request')).toMatchObject({ ok: false, requestId: 'local-request' });
+      expect(await api.managerRequestPrepare!('manager', 'remote request')).toMatchObject({
+        available: false,
+      });
+      expect(await api.claudeMessage('manager', 'tagged request', 'local-request')).toMatchObject({
+        ok: false,
+        requestId: 'local-request',
+      });
       expect(prepare).not.toHaveBeenCalled();
       expect(send).not.toHaveBeenCalled();
       expect(usageBusCall).not.toHaveBeenCalled();
       await api.claudeMessage('manager', 'ordinary remote message');
-      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith('agents.sendMessage', { sessionId: 'manager', text: 'ordinary remote message' }, 'ws://remote-fixture/bus');
+      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith(
+        'agents.sendMessage',
+        { sessionId: 'manager', text: 'ordinary remote message' },
+        'ws://remote-fixture/bus',
+      );
     }
   });
 
   it('refuses request-tagged sends on old or incomplete preloads while ordinary bus messages remain available', async () => {
     const oldSend = vi.fn(async (_sessionId: string, _text: string) => ({ ok: true }));
     const orphanPrepare = vi.fn();
-    for (const ipc of [{ platform: 'linux', claudeMessage: oldSend }, { platform: 'linux', managerRequestPrepare: orphanPrepare }, { platform: 'linux' }]) {
-      const api = createBridgedBackend(ipc as unknown as ElectronAPI, 'token', 'ws://local-fixture/bus');
+    for (const ipc of [
+      { platform: 'linux', claudeMessage: oldSend },
+      { platform: 'linux', managerRequestPrepare: orphanPrepare },
+      { platform: 'linux' },
+    ]) {
+      const api = createBridgedBackend(
+        ipc as unknown as ElectronAPI,
+        'token',
+        'ws://local-fixture/bus',
+      );
       usageBusCall.mockClear();
-      expect(await api.managerRequestPrepare!('manager', 'request')).toMatchObject({ available: false });
-      expect(await api.claudeMessage('manager', 'request', 'retained-request')).toMatchObject({ ok: false, requestId: 'retained-request' });
+      expect(await api.managerRequestPrepare!('manager', 'request')).toMatchObject({
+        available: false,
+      });
+      expect(await api.claudeMessage('manager', 'request', 'retained-request')).toMatchObject({
+        ok: false,
+        requestId: 'retained-request',
+      });
       expect(oldSend).not.toHaveBeenCalled();
       expect(orphanPrepare).not.toHaveBeenCalled();
       expect(usageBusCall).not.toHaveBeenCalled();
       await api.claudeMessage('manager', 'legacy message');
-      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith('agents.sendMessage', { sessionId: 'manager', text: 'legacy message' }, 'ws://local-fixture/bus');
+      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith(
+        'agents.sendMessage',
+        { sessionId: 'manager', text: 'legacy message' },
+        'ws://local-fixture/bus',
+      );
     }
   });
 
