@@ -260,6 +260,8 @@ export async function spawnPairedWorker(
     toolScope: p.toolScope,
     label: p.label,
     model: p.model,
+    modelIdentity: p.modelIdentity,
+    contextWindow: p.contextWindow,
     effort: p.effort,
     role: p.role,
     capability: p.capability,
@@ -327,5 +329,10 @@ export async function selectPairedModel(raw: unknown): Promise<unknown> {
     difficulty,
     risk,
     decisionDensity,
+    previousProvider: p.previousProvider,
+    requireIndependentFamily: p.requireIndependentFamily,
+    profile: p.profile,
+    forecastDemandBeforeResetPct: p.forecastDemandBeforeResetPct,
+    expectedWork: p.expectedWork,
   });
 }
