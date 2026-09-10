@@ -156,7 +156,7 @@ export const CONVERSATION_PAGE_SIZE = 60;
  * ones that landed behind work in progress (so they wait for the current turn to
  * end) rather than being handed over immediately.
  */
-type PendingUserTurn = ConversationTurn & { queued?: boolean };
+type PendingUserTurn = ConversationTurn & { queued?: boolean; requestId?: string };
 
 export const useClaudePaneModel = ({
   paneId,
@@ -1266,14 +1266,16 @@ export const useClaudePaneModel = ({
     'requestCaptureStatus',
     '',
   );
+  const composerRevision = useSessionChatRef(uiSessionKey, 'requestComposerRevision', 0);
   const setComposerInput = useCallback(
     (value: Parameters<typeof setInputValue>[0]) => {
       // An explicit new edit abandons the restored-draft retry. Re-entering the
       // same words intentionally is a new logical request, not text deduplication.
       requestRetry.current = null;
+      composerRevision.current++;
       setInputValue(value);
     },
-    [setInputValue, requestRetry],
+    [setInputValue, requestRetry, composerRevision],
   );
   pendingCountRef.current = optimisticMessages.length;
   const [optimisticLoading, setOptimisticLoading] = useSessionChatState(
@@ -1307,6 +1309,7 @@ export const useClaudePaneModel = ({
   const handleSend = useCallback(
     async (cardText?: string): Promise<ChatSendResult> => {
       const fromCard = cardText !== undefined;
+      const draftRevision = composerRevision.current;
       const hasFiles = !fromCard && attachedFiles.length > 0;
       const hasText = (cardText ?? inputValue).trim().length > 0;
       if (!hasFiles && !hasText) return { ok: false, error: 'Message is empty' };
@@ -1402,6 +1405,7 @@ export const useClaudePaneModel = ({
       // no client-side retry race. The only rejection left is a stopped session,
       // where the wrapper is gone and raw keystrokes can't help either — so the
       // raw PTY write stays reserved for transport failure (daemon unreachable).
+      let capturedRequestId: string | undefined;
       try {
         if (manager || session?.isWakeTarget || session?.isFleetManager) {
           const prepare = window.electronAPI.managerRequestPrepare;
@@ -1411,15 +1415,27 @@ export const useClaudePaneModel = ({
               prior?.text === fullMessage
                 ? { available: true as const, requestId: prior.requestId }
                 : await prepare(messageSessionId, fullMessage);
+            if (!capture || typeof capture.available !== 'boolean')
+              throw new Error('Request capture response is unavailable; message was not sent');
             if (capture.available) {
+              if (typeof capture.requestId !== 'string' || !capture.requestId)
+                throw new Error('Request capture identity is unavailable; message was not sent');
+              capturedRequestId = capture.requestId;
               // Retry identity belongs to this restored draft, never a transcript
               // text/timestamp match. Identical successful sends get fresh IDs.
-              requestRetry.current = { requestId: capture.requestId, text: fullMessage };
+              if (composerRevision.current === draftRevision)
+                requestRetry.current = { requestId: capture.requestId, text: fullMessage };
+              optimisticTurn.requestId = capture.requestId;
+              setOptimisticMessages((prev) => prev.filter((turn) =>
+                turn === optimisticTurn || turn.requestId !== capture.requestId));
               const res = await window.electronAPI.claudeMessage(
                 messageSessionId,
                 fullMessage,
                 capture.requestId,
               );
+              if (res.requestId !== capture.requestId ||
+                  !['pending', 'accepted', 'rejected', 'unknown'].includes(res.delivery ?? ''))
+                throw new Error('Request delivery acknowledgement did not preserve its identity/status');
               if (res.delivery === 'unknown') {
                 setRequestCaptureStatus(
                   'Saved in request inbox. Chat delivery is unknown; it will not be resent. Your manager can resolve it from the inbox.',
@@ -1428,8 +1444,8 @@ export const useClaudePaneModel = ({
                 releaseDelivered();
                 return { ok: false, error: 'Saved in inbox; chat delivery unknown' };
               }
-              if (res.ok) {
-                requestRetry.current = null;
+              if (res.ok && ['pending', 'accepted'].includes(res.delivery!)) {
+                if (requestRetry.current?.requestId === capture.requestId) requestRetry.current = null;
                 setRequestCaptureStatus(
                   res.delivery === 'pending'
                     ? 'Request saved; waiting for manager handoff delivery.'
@@ -1438,6 +1454,7 @@ export const useClaudePaneModel = ({
                 releaseDelivered();
                 return { ok: true };
               }
+              if (res.delivery !== 'rejected') throw new Error('Inconsistent request delivery acknowledgement');
               setRequestCaptureStatus(
                 'Chat delivery rejected. This request is not eligible for new task capture; retry keeps the same request.',
               );
@@ -1467,12 +1484,22 @@ export const useClaudePaneModel = ({
         return { ok: false, error: `Session is not accepting input (${res.mode ?? 'rejected'})` };
       } catch (err) {
         console.warn('[ClaudePane] /message failed:', err);
-        if (manager || session?.isWakeTarget || session?.isFleetManager) {
+        if (capturedRequestId) {
           setRequestCaptureStatus(
             'Request delivery could not be confirmed. Inspect the manager inbox; no automatic resend.',
           );
           setOptimisticLoading(false);
           return { ok: false, error: 'Manager delivery could not be confirmed' };
+        }
+        if (manager || session?.isWakeTarget || session?.isFleetManager) {
+          setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
+          setOptimisticLoading(false);
+          restoreComposer();
+          const error = err instanceof Error ? err.message : String(err);
+          setRequestCaptureStatus(error);
+          // Restoring a draft is not a provider replay. In particular, never
+          // fall back to raw PTY input after an unconfirmed manager send.
+          return { ok: false, error };
         }
         return rawFallback(err instanceof Error ? err.message : String(err));
       }

@@ -192,3 +192,53 @@ it('captures before manager send, preserves a rejected draft request ID, and nev
   expect(mockWrite).not.toHaveBeenCalled();
   delete window.electronAPI.managerRequestPrepare;
 });
+
+it.each(['missing', 'unavailable', 'prepare-error', 'malformed', 'rejected', 'transport-error'])(
+  'restores an uncaptured manager draft and attachments without replay (%s)', async (mode) => {
+    mockSession = makeSnapshot({ isWakeTarget: true });
+    delete window.electronAPI.managerRequestPrepare;
+    if (mode === 'unavailable') window.electronAPI.managerRequestPrepare = vi.fn().mockResolvedValue({ available: false, reason: 'Capture unavailable' });
+    if (mode === 'prepare-error') window.electronAPI.managerRequestPrepare = vi.fn().mockRejectedValue(new Error('Prepare unavailable'));
+    if (mode === 'malformed') window.electronAPI.managerRequestPrepare = vi.fn().mockResolvedValue(undefined);
+    const send = vi.fn();
+    if (mode === 'rejected') send.mockResolvedValue({ ok: false, mode: 'stopped' });
+    else send.mockRejectedValue(new Error('Fixture message transport unavailable'));
+    window.electronAPI.claudeMessage = send;
+    const { container } = render(pane());
+    const drop = new Event('drop', { bubbles: true, cancelable: true }) as any;
+    drop.dataTransfer = { files: { length: 1, 0: { path: '/tmp/retained.txt', name: 'retained.txt' } } };
+    act(() => { container.querySelector('[data-session-chat-view]')!.dispatchEvent(drop); });
+    await screen.findByText('retained.txt');
+    const composer = screen.getByRole('textbox');
+    fireEvent.change(composer, { target: { value: 'Uncaptured matrix request' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(composer).toHaveValue('Uncaptured matrix request'));
+    expect(screen.getByText('retained.txt')).toBeVisible();
+    expect([...container.querySelectorAll('p')].some((p) => p.textContent?.includes('Uncaptured matrix request'))).toBe(false);
+    expect(mockWrite).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(['prepare-error', 'malformed'].includes(mode) ? 0 : 1);
+    expect(screen.queryByText(/Inspect the manager inbox/)).not.toBeInTheDocument();
+    delete window.electronAPI.managerRequestPrepare;
+  },
+);
+
+it.each(['throw', 'unknown', 'wrong-identity'])(
+  'keeps an actually captured request durable without restoring a replayable draft (%s)', async (mode) => {
+    mockSession = makeSnapshot({ isWakeTarget: true });
+    window.electronAPI.managerRequestPrepare = vi.fn().mockResolvedValue({ available: true, requestId: 'durable-id', delivery: 'pending' });
+    const send = vi.fn();
+    if (mode === 'throw') send.mockRejectedValue(new Error('Lost acknowledgement'));
+    else send.mockResolvedValue({ ok: mode === 'wrong-identity', requestId: mode === 'wrong-identity' ? 'foreign-id' : 'durable-id', delivery: mode === 'wrong-identity' ? 'accepted' : 'unknown' });
+    window.electronAPI.claudeMessage = send;
+    const { container } = render(pane());
+    const composer = screen.getByRole('textbox');
+    fireEvent.change(composer, { target: { value: 'Durable matrix request' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(send).toHaveBeenCalledExactlyOnceWith('sess-1', 'Durable matrix request', 'durable-id'));
+    await screen.findByText(mode === 'unknown' ? /Saved in request inbox/ : /Request delivery could not be confirmed/);
+    expect(composer).toHaveValue('');
+    expect([...container.querySelectorAll('p')].filter((p) => p.textContent === 'Durable matrix request')).toHaveLength(1);
+    expect(mockWrite).not.toHaveBeenCalled();
+    delete window.electronAPI.managerRequestPrepare;
+  },
+);

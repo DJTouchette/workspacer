@@ -55,7 +55,10 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
   page,
 }) => {
   const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('pageerror', (e) => {
+    errors.push(e.stack ?? e.message);
+    console.error('Handoff page error:', e.stack ?? e.message);
+  });
   await open(page, 'happy');
   const button = page
     .getByTitle(

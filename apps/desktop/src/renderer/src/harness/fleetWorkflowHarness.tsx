@@ -241,6 +241,11 @@ const record = async (method: string, ...args: unknown[]) => {
 (window as any).electronAPI = new Proxy(
   {
     platform: 'linux',
+    // These pre-inbox fleet cases deliberately exercise the legacy/missing
+    // capability path. Modern capture is covered by firstUse and the real bridge.
+    managerRequestPrepare: params.get('capture') === 'remote'
+      ? async () => ({ available: false, reason: 'Remote request capture unavailable' })
+      : undefined,
     managerReplacement: replacementRequest,
     getConfig: async () => config,
     reloadConfig: async () => config,
@@ -309,6 +314,7 @@ const record = async (method: string, ...args: unknown[]) => {
   {
     get(target: any, name: string) {
       if (name in target) return target[name];
+      if (name.startsWith('managerRequest')) return undefined;
       if (name.startsWith('on')) return () => () => {};
       return () => Promise.resolve(undefined);
     },

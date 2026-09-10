@@ -60,6 +60,19 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: apps/desktop
         run: npm run test:dispatch-chain
+      - name: Install hosted browser
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npx playwright install --with-deps chromium
+      - name: Scoped real-browser integration regressions
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npx playwright test --project=renderer --workers=1 firstUse.test.ts fleetContextMenu.test.ts managerHandoff.test.ts
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: browser-evidence
+          path: apps/desktop/test-results
       - name: Exact committed formatting
         if: ${{ !cancelled() }}
         run: git diff --exit-code

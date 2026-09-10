@@ -28,6 +28,8 @@ const noticeListeners = new Set<(notice: any) => void>();
 const configListeners = new Set<(config: any) => void>();
 let layout: any = null;
 let sequence = 0;
+const captureMode = params.get('capture') ?? 'default';
+const requests = new Map<string, { requestId: string; owner: string; text: string; bootstrap: boolean; delivery: 'pending' | 'accepted' }>();
 function merge(target: any, patch: any): any {
   for (const [key, value] of Object.entries(patch)) {
     target[key] =
@@ -45,6 +47,14 @@ function emit(id: string) {
 }
 const api = {
   platform: 'linux',
+  managerRequestPrepare: ['legacy', 'missing'].includes(captureMode) ? undefined : async (owner: string, text: string, bootstrap = false) => {
+    if (captureMode === 'remote') return { available: false, reason: 'Remote request capture unavailable' };
+    if (!snapshots[owner]) throw new Error('Unknown request owner');
+    const requestId = crypto.randomUUID();
+    requests.set(requestId, { requestId, owner, text, bootstrap, delivery: 'pending' });
+    record('managerRequestPrepare', owner, text, bootstrap, requestId);
+    return { available: true, requestId, delivery: 'pending' };
+  },
   onSystemNotice: (fn: (notice: any) => void) => {
     noticeListeners.add(fn);
     return () => noticeListeners.delete(fn);
@@ -180,21 +190,29 @@ const api = {
     emit(id);
     return id;
   },
-  claudeMessage: async (id: string, message: string) => {
-    record('claudeMessage', id, message);
+  claudeMessage: async (id: string, message: string, requestId?: string) => {
+    if (requestId !== undefined) {
+      const request = requests.get(requestId);
+      if (!request || request.owner !== id) throw new Error('Foreign request owner');
+      if (request.delivery === 'accepted') return { ok: true, requestId, delivery: 'accepted' };
+      request.delivery = 'accepted';
+      record('claudeMessage', id, message, requestId);
+    } else record('claudeMessage', id, message);
     snapshots[id].conversation.push({ role: 'user', content: message, timestamp: Date.now() });
     emit(id);
-    return { ok: true };
+    return { ok: true, ...(requestId ? { requestId, delivery: 'accepted' } : {}) };
   },
 };
 (window as any).electronAPI = new Proxy(api, {
   get(target: any, name: string) {
     if (name in target) return target[name];
+    if (name.startsWith('managerRequest')) return undefined;
     if (name.startsWith('on')) return () => () => {};
     return async () => undefined;
   },
 });
 (window as any).firstUse = {
+  requests: () => [...requests.values()],
   calls,
   notice: (notice: any) => {
     for (const fn of noticeListeners) fn(notice);
