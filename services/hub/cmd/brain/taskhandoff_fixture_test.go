@@ -234,6 +234,26 @@ func TestHandoffHTTPSRoundTripAndRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			sealed := must(target, binding.Owner, "sealResult", nil)
+			// Simulate publication success followed by a lost receipt promotion.
+			// A later artifact edit must not replace the frozen result on retry.
+			pendingSeal := sealed
+			pendingSeal.State = "prepared"
+			if err := saveHandoff(target.handoffDir(binding, task), &pendingSeal); err != nil {
+				t.Fatal(err)
+			}
+			outputPath := filepath.Join(prepared.Allocation, ".workspacer/handoffs", task, "result.png")
+			if err := os.WriteFile(outputPath, []byte("changed after seal"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			resumedSeal := must(target, binding.Owner, "sealResult", nil)
+			beforeDigest, _ := sealed.Result.Seal()
+			afterDigest, _ := resumedSeal.Result.Seal()
+			if beforeDigest != afterDigest {
+				t.Fatal("lost publication reply changed immutable result")
+			}
+			if err := os.WriteFile(outputPath, output, 0600); err != nil {
+				t.Fatal(err)
+			}
 			must(origin, "local-host", "receiveResult", map[string]any{"manifest": sealed.Result})
 			if _, err := call(origin, "local-host", "importResult", nil); err == nil {
 				t.Fatal("custody without required bytes")

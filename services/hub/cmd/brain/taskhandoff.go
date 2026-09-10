@@ -472,6 +472,20 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if !finished {
 			return nil, fmt.Errorf("worker outcome unresolved; result retained without sealing")
 		}
+		// The manifest and spool were frozen before publication. A crash or
+		// lost push reply must resume that exact result, even if the worker's
+		// artifact files subsequently change. Never refreeze a pending result.
+		if rec.Result != nil {
+			ref, _ := binding.Ref(p.Task, "result")
+			if err := publishHandoffRef(ctx, binding, rec.Allocation, rec.Result.Commit, ref); err != nil {
+				return nil, err
+			}
+			rec.State = "result-sealed"
+			if err := saveHandoff(dir, &rec); err != nil {
+				return nil, err
+			}
+			return jsonResult(rec)
+		}
 		commit, format, err := taskartifacts.CheckSource(ctx, rec.Allocation)
 		if err != nil {
 			rec.State = "needs-checkpoint"
