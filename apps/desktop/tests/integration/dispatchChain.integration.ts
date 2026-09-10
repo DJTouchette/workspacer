@@ -1093,7 +1093,12 @@ it('handles unknown paired replay idempotently and returns a local task result o
       false,
     );
     pairedWorkerConnection.stop();
-    setRemoteServer({ url: ready.url, token: 'paired-fixture-operator', mode: 'workers', displayName: 'Paired fixture workspace' });
+    setRemoteServer({
+      url: ready.url,
+      token: 'paired-fixture-operator',
+      mode: 'workers',
+      displayName: 'Paired fixture workspace',
+    });
     expect(getRemoteServer()).toBeNull();
     const discovery = await mcpTool('session:manager-current', 'list_dispatch_targets', {});
     expect(discovery.isError, discovery.text).toBe(false);
@@ -1503,7 +1508,9 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .list()
       .find((r) => r.localSessionId === exact.value.sessionId)!;
     expect(exactRecord.handoff?.state).toBe('prepared');
-    const actualLaunches = await (await fetch(ready.control + '/evidence')).json() as Array<{ cwd: string }>;
+    const actualLaunches = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
+      cwd: string;
+    }>;
     const execution = actualLaunches.at(-1)!;
     expect(
       execFileSync('git', ['-C', execution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -1538,7 +1545,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(
       execFileSync('git', ['-C', project, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     ).toBe(ready.sourceCommit);
-    const localRoute = await mcpTool('session:manager-other', 'select_model', { role: 'implementer', cwd: project });
+    const localRoute = await mcpTool('session:manager-other', 'select_model', {
+      role: 'implementer',
+      cwd: project,
+    });
     expect(localRoute.isError, localRoute.text).toBe(false);
     const continuation = {
       provider: localRoute.value.provider,
@@ -1559,9 +1569,18 @@ it('handles unknown paired replay idempotently and returns a local task result o
     const continued = await mcpSpawn('session:manager-other', continuation);
     expect(continued.isError, continued.text).toBe(false);
     const localExecution = launch.mock.lastCall![0];
-    expect(execFileSync('git', ['-C', localExecution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(imported.handoff!.head);
+    expect(
+      execFileSync('git', ['-C', localExecution.cwd, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      }).trim(),
+    ).toBe(imported.handoff!.head);
     const evidenceFolder = fs.readdirSync(path.join(localExecution.cwd, '.workspacer/handoffs'))[0];
-    expect(fs.readFileSync(path.join(localExecution.cwd, '.workspacer/handoffs', evidenceFolder, 'implementation.md'), 'utf8')).toContain('Result evidence');
+    expect(
+      fs.readFileSync(
+        path.join(localExecution.cwd, '.workspacer/handoffs', evidenceFolder, 'implementation.md'),
+        'utf8',
+      ),
+    ).toContain('Result evidence');
     const launchCount = launch.mock.calls.length;
     expect((await mcpSpawn('session:manager-other', continuation)).isError).toBe(true);
     expect(launch.mock.calls).toHaveLength(launchCount);

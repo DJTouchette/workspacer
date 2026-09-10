@@ -106,7 +106,14 @@ export function getPairedWorkerTarget(): ResolvedRemoteServer | null {
     const setting = JSON.parse(fs.readFileSync(settingFile(), 'utf-8')) as RemoteServerSetting;
     const normalized = normalizeRemoteServerUrl(setting.url);
     return setting.mode === 'workers' && normalized && typeof setting.token === 'string'
-      ? { ...normalized, token: setting.token, displayName: typeof setting.displayName === 'string' ? setting.displayName.trim().slice(0, 80) : undefined }
+      ? {
+          ...normalized,
+          token: setting.token,
+          displayName:
+            typeof setting.displayName === 'string'
+              ? setting.displayName.trim().slice(0, 80)
+              : undefined,
+        }
       : null;
   } catch {
     return null;
@@ -159,7 +166,16 @@ export function setRemoteServer(setting: RemoteServerSetting | null): void {
   }
   atomicWriteFileSync(
     file,
-    JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client', displayName: setting.displayName?.trim().slice(0, 80) }, null, 2),
+    JSON.stringify(
+      {
+        url: setting.url,
+        token,
+        mode: setting.mode ?? 'client',
+        displayName: setting.displayName?.trim().slice(0, 80),
+      },
+      null,
+      2,
+    ),
     {
       mode: 0o600,
     },
