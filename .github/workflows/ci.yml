@@ -346,3 +346,7 @@ jobs:
       - name: Path confinement + guard sweeps (TypeScript)
         working-directory: apps/desktop
         run: npx vitest run src/main/lib/pathConfinement.test.ts src/main/services/hubCapabilitiesGuards.test.ts src/main/services/hubCapabilitiesKillSwitch.test.ts
+
+      - name: Manager handoff artifact paths and byte contract
+        working-directory: apps/desktop
+        run: npx vitest run --no-file-parallelism src/main/services/managerReplacementArtifact.test.ts src/main/services/managerReplacementArtifact.windows.test.ts

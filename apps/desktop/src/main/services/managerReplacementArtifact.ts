@@ -3,7 +3,91 @@ import path from 'path';
 import { createHash } from 'crypto';
 import type { ReplacementRecord } from './managerReplacementState';
 
-export const artifactHash = (text: string) => createHash('sha256').update(text).digest('hex');
+export const artifactHash = (bytes: string | Buffer) =>
+  createHash('sha256').update(bytes).digest('hex');
+
+/** Compare spellings without resolving dot segments, links or component case.
+ * Windows drive letters and separators are interchangeable; directory names
+ * can still be case-sensitive. POSIX paths retain byte-exact comparison. */
+function samePath(a: string, b: string): boolean {
+  const spelling = (p: string) =>
+    path.sep === '\\'
+      ? p.replaceAll('/', '\\').replace(/^[a-z]:/, (drive) => drive.toUpperCase())
+      : p;
+  return spelling(a) === spelling(b);
+}
+interface VerifiedPath {
+  spelling: string;
+  volume: string;
+  canonical: string;
+  stat: fs.BigIntStats;
+}
+function sameIdentity(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
+  // An unavailable file ID is not evidence of identity. BigInts avoid rounding
+  // the 64-bit Windows file index into a false match.
+  return a.ino > 0n && b.ino > 0n && a.dev === b.dev && a.ino === b.ino;
+}
+function reservedWindowsComponent(part: string): boolean {
+  // DOS devices are reserved in every directory, also with extensions. Include
+  // Microsoft's recognized superscript digits and spaces before the extension.
+  // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]) *(?:\.|$)/i.test(part)) return true;
+  // CreateFileW also documents these exact console names. Do not infer DOS
+  // extension aliases for them; trailing spaces/dots are rejected separately.
+  // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#consoles
+  return /^(?:CONIN\$|CONOUT\$)$/i.test(part);
+}
+function plainAbsolutePath(value: string): boolean {
+  if (!path.isAbsolute(value)) return false;
+  // Win32 isAbsolute also accepts UNC, device and root-relative paths. Reject
+  // those spellings before even lstat-ing a candidate volume (which can do SMB I/O).
+  if (path.sep === '\\' && !/^[a-z]:[\\/]/i.test(value)) return false;
+  const volume = path.parse(value).root;
+  if (value === volume) return true;
+  const parts = value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
+  return parts.every(
+    (part) =>
+      part !== '' &&
+      part !== '.' &&
+      part !== '..' &&
+      (path.sep !== '\\' || (!/[ .]$|:/.test(part) && !reservedWindowsComponent(part))),
+  );
+}
+/** Walk before realpath: realpath alone cannot distinguish harmless case
+ * spelling from a junction/symlink, or preserve the dot-segment policy. */
+function verifyPath(value: string): VerifiedPath {
+  if (!plainAbsolutePath(value)) throw new Error('invalid path spelling');
+  const volume = path.parse(value).root;
+  let current = volume;
+  let stat = fs.lstatSync(current, { bigint: true });
+  const parts =
+    value === volume ? [] : value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
+  for (const part of parts) {
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('linked parent');
+    current = path.join(current, part);
+    stat = fs.lstatSync(current, { bigint: true });
+  }
+  if (stat.isSymbolicLink()) throw new Error('linked path');
+  const canonical = fs.realpathSync(value);
+  if (!sameIdentity(stat, fs.statSync(canonical, { bigint: true })))
+    throw new Error('path changed');
+  return { spelling: value, volume, canonical, stat };
+}
+function sameCandidateSpelling(a: string, b: string): boolean {
+  // Case folding only limits which spellings can be candidates; the filesystem
+  // IDs below are the authority, including inside case-sensitive directories.
+  // Identity alone would also expand short-name aliases, outside this contract.
+  const candidate = (p: string) => (path.sep === '\\' ? p.replaceAll('/', '\\').toLowerCase() : p);
+  return candidate(a) === candidate(b);
+}
+function sameLocation(a: VerifiedPath, b: VerifiedPath): boolean {
+  return (
+    samePath(a.volume, b.volume) &&
+    sameCandidateSpelling(a.spelling, b.spelling) &&
+    (path.sep === '\\' || samePath(a.canonical, b.canonical)) &&
+    sameIdentity(a.stat, b.stat)
+  );
+}
 export interface ManagerHandoffArtifact {
   version: 1;
   operationId: string;
@@ -52,12 +136,33 @@ export function validateManagerArtifact(
     op.operationId,
     'handoff.json',
   );
-  if (op.artifactPath !== expected || fs.realpathSync(expected) !== expected)
+  if (!samePath(op.artifactPath, expected) || !samePath(fs.realpathSync(expected), expected))
     throw new Error('Handoff artifact path changed or is a symbolic link');
-  const stat = fs.lstatSync(expected);
-  if (!stat.isFile() || stat.size === 0 || stat.size > 256 * 1024)
+  const stat = fs.lstatSync(expected, { bigint: true });
+  if (!stat.isFile() || stat.size === 0n || stat.size > 256n * 1024n)
     throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
-  const raw = fs.readFileSync(expected, 'utf8');
+  let bytes: Buffer;
+  const fd = fs.openSync(expected, 'r');
+  try {
+    // Rebind the inspected proposal to the opened file before reading, just as
+    // for checkpoint briefs. A same-byte replacement is still a different file.
+    const opened = fs.fstatSync(fd, { bigint: true });
+    if (!opened.isFile() || !sameIdentity(opened, stat))
+      throw new Error('Handoff artifact path changed before read');
+    if (opened.size === 0n || opened.size > 256n * 1024n)
+      throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
+    if (opened.size !== stat.size) throw new Error('Handoff artifact path changed before read');
+    bytes = fs.readFileSync(fd);
+    if (bytes.length === 0 || bytes.length > 256 * 1024)
+      throw new Error('Handoff artifact must be a nonempty regular file, at most 256 KiB');
+    if (BigInt(bytes.length) !== opened.size)
+      throw new Error('Handoff artifact size changed during read');
+  } finally {
+    fs.closeSync(fd);
+  }
+  const raw = bytes.toString('utf8');
+  if (!Buffer.from(raw).equals(bytes))
+    throw new Error('Handoff artifact must contain valid UTF-8 bytes');
   const a = JSON.parse(raw) as ManagerHandoffArtifact;
   if (
     a.version !== 1 ||
@@ -88,29 +193,84 @@ export function validateManagerArtifact(
     throw new Error(
       'Handoff checkpoint, identity, worker instructions, tasks or pending-decision protocol is invalid',
     );
-  const roots = new Set([
+  const roots = [
     op.launch.options.cwd!,
     ...op.metadata.map((m) => m.cwd),
     ...(op.projectCwds ?? []),
-  ]);
-  const fleetBrief = path.join(op.launch.options.cwd!, '.workspacer', 'brief.md');
-  if (!a.checkpoint.files.some((f) => f.path === fleetBrief))
-    throw new Error('Checkpoint must include the fleet brief');
-  for (const f of a.checkpoint.files) {
+  ];
+  let includedFleetBrief = false;
+  for (const [index, f] of a.checkpoint.files.entries()) {
+    const invalid = (category: string): never => {
+      throw new Error(`Checkpoint files[${index}] ${category}`);
+    };
     if (
+      !f ||
       !text(f.path) ||
-      !roots.has(path.dirname(path.dirname(f.path))) ||
+      !plainAbsolutePath(f.path) ||
       path.basename(path.dirname(f.path)) !== '.workspacer' ||
-      !['brief.md', 'brief.archive.md'].includes(path.basename(f.path)) ||
-      fs.realpathSync(f.path) !== f.path ||
-      fs.lstatSync(f.path).isSymbolicLink() ||
-      !fs.lstatSync(f.path).isFile() ||
-      fs.statSync(f.path).size > 2 * 1024 * 1024 ||
-      artifactHash(fs.readFileSync(f.path, 'utf8')) !== f.sha256
+      !['brief.md', 'brief.archive.md'].includes(path.basename(f.path))
     )
-      throw new Error('Checkpoint brief pointer or content hash is invalid');
+      invalid('path is not an allowed brief pointer');
+    if (typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256))
+      invalid('sha256 must be 64 lowercase hexadecimal characters');
+    const rootSpelling = path.dirname(path.dirname(f.path));
+    // Bound candidate traversal by the host-known lexical roots first. This is
+    // only a rejection filter; sameLocation still requires filesystem identity.
+    if (!roots.some((root) => plainAbsolutePath(root) && sameCandidateSpelling(rootSpelling, root)))
+      invalid('path is not an allowed brief pointer');
+    let pointer: VerifiedPath;
+    let pointerRoot: VerifiedPath;
+    try {
+      pointerRoot = verifyPath(rootSpelling);
+    } catch {
+      return invalid('path is not an allowed brief pointer');
+    }
+    try {
+      pointer = verifyPath(f.path);
+    } catch {
+      return invalid('path changed or is not a regular file without links');
+    }
+    if (!pointer.stat.isFile()) invalid('path changed or is not a regular file without links');
+    let target: VerifiedPath | undefined;
+    for (const [rootIndex, root] of roots.entries()) {
+      // Stale unrelated project roots must not disable the valid fleet brief.
+      try {
+        const knownRoot = verifyPath(root);
+        if (!knownRoot.stat.isDirectory() || !sameLocation(pointerRoot, knownRoot)) continue;
+        const knownFile = verifyPath(path.join(root, '.workspacer', path.basename(f.path)));
+        if (!knownFile.stat.isFile() || !sameLocation(pointer, knownFile)) continue;
+        target = knownFile;
+        if (rootIndex === 0 && path.basename(f.path) === 'brief.md') includedFleetBrief = true;
+        break;
+      } catch {
+        /* Unverifiable roots/files grant no authority. */
+      }
+    }
+    if (!target) return invalid('path is not an allowed brief pointer');
+    let briefBytes: Buffer;
+    let fd: number | undefined;
+    try {
+      // Read the host-known canonical file, and bind the read to its verified
+      // identity even if a pathname is replaced after inspection.
+      fd = fs.openSync(target.canonical, 'r');
+      const opened = fs.fstatSync(fd, { bigint: true });
+      if (!opened.isFile() || !sameIdentity(opened, target.stat))
+        invalid('path changed or is not a regular file without links');
+      if (opened.size > 2n * 1024n * 1024n) invalid('file exceeds 2 MiB');
+      briefBytes = fs.readFileSync(fd);
+      if (briefBytes.length > 2 * 1024 * 1024) invalid('file exceeds 2 MiB');
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(`Checkpoint files[${index}]`))
+        throw error;
+      return invalid('file could not be inspected or read');
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+    if (artifactHash(briefBytes!) !== f.sha256)
+      invalid('sha256 does not match current file bytes; checkpoint may have changed');
   }
-  const hash = artifactHash(raw);
+  if (!includedFleetBrief) throw new Error('Checkpoint must include the fleet brief');
+  const hash = artifactHash(bytes);
   const blocks = [...receiptText.matchAll(/```wks-manager-handoff\s*\n([\s\S]*?)\n```/g)];
   if (blocks.length !== 1)
     throw new Error('Expected one operation-correlated wks-manager-handoff receipt');
