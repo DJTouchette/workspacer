@@ -731,6 +731,14 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 		if json.Unmarshal(rawOrigin, &origin) != nil || origin == nil {
 			return nil, fmt.Errorf("invalid remote origin")
 		}
+		// encoding/json binds struct fields case-insensitively. Remove every
+		// alias before stamping, so a later-sorting "ownerkey" cannot replace
+		// this connection's identity when the brain decodes the object.
+		for key := range origin {
+			if strings.EqualFold(key, "ownerKey") {
+				delete(origin, key)
+			}
+		}
 		origin["ownerKey"], _ = json.Marshal(caller.tokenID)
 		m[remoteOriginKey], _ = json.Marshal(origin)
 	}
@@ -1088,6 +1096,11 @@ func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMe
 		var p map[string]json.RawMessage
 		if json.Unmarshal(raw, &p) != nil || p == nil {
 			return nil, fmt.Errorf("invalid replay")
+		}
+		for key := range p {
+			if strings.EqualFold(key, "originKey") {
+				delete(p, key)
+			}
 		}
 		p["originKey"], _ = json.Marshal(caller.tokenID)
 		return json.Marshal(p)

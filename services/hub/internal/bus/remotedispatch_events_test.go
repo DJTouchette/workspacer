@@ -66,7 +66,7 @@ func TestDispatchPublicationRequiresLocalExecutionAuthority(t *testing.T) {
 
 func TestDispatchReplayReplacesClaimedOriginWithCredentialIdentity(t *testing.T) {
 	rt := &router{}
-	raw, err := rt.sanitizeCallParams(&conn{tokenID: "actual-origin"}, "agents.dispatchReplay", json.RawMessage(`{"dispatchId":"0123456789abcdef","originKey":"forged-origin","ackedSeq":7}`))
+	raw, err := rt.sanitizeCallParams(&conn{tokenID: "actual-origin"}, "agents.dispatchReplay", json.RawMessage(`{"dispatchId":"0123456789abcdef","originKey":"forged-origin","originkey":"later-forgery","ORIGINKEY":"another-forgery","ackedSeq":7}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,26 @@ func TestDispatchReplayReplacesClaimedOriginWithCredentialIdentity(t *testing.T)
 	if err := json.Unmarshal(raw, &params); err != nil {
 		t.Fatal(err)
 	}
-	if params["originKey"] != "actual-origin" || params["ackedSeq"] != float64(7) {
+	if params["originKey"] != "actual-origin" || params["ackedSeq"] != float64(7) || len(params) != 3 {
 		t.Fatalf("incorrect replay identity: %s", raw)
+	}
+}
+
+func TestRemoteSpawnOriginIdentityCannotBeOverriddenByJSONFieldAliases(t *testing.T) {
+	rt := &router{}
+	raw, err := rt.sanitizeSpawnParams(&conn{trusted: true, federated: true, tokenID: "actual-origin"}, json.RawMessage(`{"remoteOrigin":{"protocol":2,"dispatchId":"0123456789abcdef","ownerkey":"forged","OwnerKey":"forged-again"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params struct {
+		RemoteOrigin struct {
+			OwnerKey string `json:"ownerKey"`
+		} `json:"remoteOrigin"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.RemoteOrigin.OwnerKey != "actual-origin" {
+		t.Fatalf("a case alias replaced authenticated origin identity: %s", raw)
 	}
 }
