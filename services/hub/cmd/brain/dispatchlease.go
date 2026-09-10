@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,6 +62,12 @@ func (s *remoteDispatchStore) load(file string) error {
 		return err
 	}
 	for _, row := range rows {
+		if !bus.ValidDispatchID(row.ID) || s.m[row.ID] != nil {
+			return fmt.Errorf("invalid remote dispatch journal identity")
+		}
+		if row.Lease != nil && (row.Lease.Owner == "" || (row.Lease.Worktree && row.Lease.Cwd != filepath.Join(configDir(), "dispatch-worktrees", row.ID))) {
+			return fmt.Errorf("invalid remote dispatch journal destination")
+		}
 		s.m[row.ID] = &remoteDispatch{dispatchID: row.ID, sessionID: row.Session, seq: row.Seq, last: row.Last, lease: row.Lease}
 		if row.Session != "" {
 			s.bySession[row.Session] = row.ID
@@ -163,11 +170,18 @@ func (r *registry) expireDispatchLease(id string) {
 		return
 	}
 	if d.lease.Worktree {
+		if d.lease.Cwd != filepath.Join(configDir(), "dispatch-worktrees", id) {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		res, err := runGit(ctx, d.lease.Repo, []string{"worktree", "remove", "--force", "--", d.lease.Cwd})
 		if err != nil || !res.ok {
+			time.AfterFunc(time.Minute, func() { r.expireDispatchLease(id) })
 			return
+		}
+		if d.lease.Branch != "" {
+			_, _ = runGit(ctx, d.lease.Repo, []string{"branch", "-d", "--", d.lease.Branch})
 		}
 	}
 	delete(s.m, id)

@@ -73,6 +73,8 @@ export interface RemoteDispatchRecord {
   /** Highest update seq acted on. 0 = nothing delivered yet. */
   ackedSeq: number;
   deliveringSeq?: number;
+  /** Authenticated peer evidence, retained locally before task/wake delivery. */
+  lastUpdate?: RemoteDispatchUpdate;
   state: 'open' | 'done' | 'failed' | 'lost';
   /** Why a record left `open` other than normally — a spawn that never started,
    *  or a peer that no longer knows the dispatch. Shown, never acted on. */
@@ -176,6 +178,7 @@ export class RemoteDispatchRegistry {
         toolScope: typeof r.toolScope === 'string' ? r.toolScope : undefined,
         openedAt,
         deliveringSeq: r.deliveringSeq,
+        lastUpdate: r.lastUpdate,
         ackedSeq: typeof r.ackedSeq === 'number' ? r.ackedSeq : 0,
         state: r.state === 'done' || r.state === 'failed' ? r.state : 'open',
         note: typeof r.note === 'string' ? r.note : undefined,
@@ -358,6 +361,13 @@ export class RemoteDispatchRegistry {
     const parentSessionId = this.resolveManager(record.ownerSessionId);
     if (!parentSessionId) return { ok: false, reason: 'no-live-manager' };
     return { ok: true, record, parentSessionId, update };
+  }
+
+  retainEvidence(dispatchId: string, update: RemoteDispatchUpdate): void {
+    const record = this.records.get(dispatchId);
+    if (!record) throw new Error('Unknown dispatch');
+    record.lastUpdate = {...update, entry:sanitizeRemoteEntry(update.entry)};
+    this.persist();
   }
 
   beginDelivery(dispatchId: string, seq: number): void {

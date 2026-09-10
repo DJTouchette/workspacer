@@ -104,3 +104,21 @@ func TestOldDispatchProtocolRefusesBeforeSpawn(t *testing.T) {
 		t.Fatal("older protocol silently accepted")
 	}
 }
+
+func TestDispatchWireUsesDesktopFieldNames(t *testing.T) {
+	raw, err := json.Marshal(dispatchUpdate{Protocol: bus.DispatchProtocol, DispatchID: "0123456789abcdef", SessionID: "worker", Kind: dispatchKindProgress, Seq: 1, Entry: fleetEntry{Label: "Worker", SessionID: "worker", Note: "phase finished", NeedsDecision: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	entry := data["entry"].(map[string]any)
+	if entry["sessionId"] != "worker" || entry["label"] != "Worker" || entry["note"] != "phase finished" || entry["needsDecision"] != true {
+		t.Fatalf("desktop cannot decode fleet entry: %s", raw)
+	}
+	if _, exists := entry["SessionID"]; exists {
+		t.Fatal("internal Go field spelling leaked onto dispatch wire")
+	}
+}

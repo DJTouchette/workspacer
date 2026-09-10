@@ -239,48 +239,48 @@ func fleetWorkerFinishedHeaderFor(entries []fleetEntry) string {
 // spawn declines to accept (parity_test.go's spawnParamsDeclined), so a field
 // here would have no writer.
 type fleetEntry struct {
-	Label     string
-	SessionID string
-	Cwd       string
+	Label     string `json:"label"`
+	SessionID string `json:"sessionId"`
+	Cwd       string `json:"cwd,omitempty"`
 	// BlockedOn is "approval" or "question", on 'blocked' entries only. It
 	// REPLACES the cwd in the bullet's parenthesised slot rather than adding to
 	// it — the desktop's grammar has one `where`, spelled either `cwd <path>` or
 	// the block kind, and emitting both makes the bullet unparseable.
-	BlockedOn string
+	BlockedOn string `json:"blockedOn,omitempty"`
 	// Stopped says the worker's SESSION ended (killed or exited) rather than
 	// going idle at its prompt: the bullet reads "stopped/killed" instead of as
 	// a clean finish. On 'worker-finished' / 'catch-up' entries only.
-	Stopped bool
+	Stopped bool `json:"stopped,omitempty"`
 	// Failed is why the worker DIED rather than completing — already flattened
 	// to one line by workerFailureReason. A SEPARATE axis from Stopped, which
 	// says the session went away: a provider error can arrive with the session
 	// still alive, and a SIGTERM is not an API refusal.
-	Failed string
+	Failed string `json:"failed,omitempty"`
 	// Crossed is the rendered threshold ("tokens 309,412 ≥ 250,000"), on
 	// 'threshold' entries only.
-	Crossed string
+	Crossed string `json:"crossed,omitempty"`
 	// Note is the worker's own progress line, on 'progress' entries only.
-	Note string
+	Note string `json:"note,omitempty"`
 	// NeedsDecision says the worker is BLOCKED on the manager's answer rather
 	// than merely keeping it informed. A rendering/urgency hint: the channel is
 	// one-way and the manager still replies with send_message.
-	NeedsDecision bool
+	NeedsDecision bool `json:"needsDecision,omitempty"`
 	// LastReply is the flattened, capped excerpt of the worker's final message,
 	// on 'worker-finished' entries. Mutually exclusive with Note — the bullet
 	// grammar has ONE rest-of-line, and a progress entry must never read as a
 	// finish, so Note wins.
-	LastReply string
+	LastReply string `json:"lastReply,omitempty"`
 	// FullReply is the worker's COMPLETE final message, rendered as its own
 	// block below the bullets. Builder-side only (the desktop's parser does not
 	// round-trip it): the card shows the excerpt, the full text is for the
 	// manager AGENT, so it never has to fetch a conversation to read a report.
 	// Set only when the excerpt is lossy.
-	FullReply string
+	FullReply string `json:"fullReply,omitempty"`
 	// Escalation is the validated fixed-shape terminal response. Error is set
 	// only when the tag existed but validation failed; that entry remains an
 	// ordinary completion so malformed data is never silently accepted.
-	Escalation      string
-	EscalationError string
+	Escalation      string `json:"escalation,omitempty"`
+	EscalationError string `json:"escalationError,omitempty"`
 }
 
 // formatFleetEntry renders one entry's bullet BODY (no leading "- ").

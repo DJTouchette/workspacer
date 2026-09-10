@@ -51,6 +51,7 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   if (!accepted.ok) return;
   const { record, update, parentSessionId } = accepted;
   if (!record.localSessionId) return;
+  registry.retainEvidence(record.dispatchId, update);
   const entry = sanitizeRemoteEntry(update.entry);
   entry.sessionId = record.localSessionId;
   // No remote snapshot or parent id is trusted to select a local recipient.
