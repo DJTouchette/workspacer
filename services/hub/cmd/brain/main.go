@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -81,6 +82,10 @@ func main() {
 		// facts are the same fact: the return channel is published FROM the
 		// watcher, so a scope with no watcher must not accept a dispatch at all.
 		reg.remote = newRemoteDispatchStore()
+		if err := reg.remote.load(filepath.Join(configDir(), "remote-dispatches.json")); err != nil {
+			log.Printf("brain: remote dispatch journal unavailable; dispatch disabled")
+			reg.remote = nil
+		}
 		fin := newFinishWatcher(reg)
 		reg.fin = fin
 		store.onSeed = fin.prime

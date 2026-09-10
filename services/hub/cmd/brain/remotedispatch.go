@@ -59,6 +59,7 @@ import (
 type remoteOriginParam struct {
 	Protocol   int    `json:"protocol"`
 	DispatchID string `json:"dispatchId"`
+	OwnerKey   string `json:"ownerKey"`
 }
 
 // dispatchUpdateKind is the vocabulary of the return channel, deliberately a
@@ -105,7 +106,8 @@ type remoteDispatch struct {
 	// last is the terminal update, kept so a reconnecting origin can ask for it
 	// again. Only the FINAL one is retained: a missed progress line is
 	// information a manager can live without, a missed result is not.
-	last *dispatchUpdate
+	last  *dispatchUpdate
+	lease *dispatchLease
 }
 
 // remoteDispatchStore holds them. In-memory and per-process, matching every
@@ -114,8 +116,9 @@ type remoteDispatch struct {
 // reconcile (a replay that answers "unknown dispatch") is what turns that into
 // a visible tombstone rather than a silent wait.
 type remoteDispatchStore struct {
-	mu sync.Mutex
-	m  map[string]*remoteDispatch // dispatchId -> record
+	mu   sync.Mutex
+	file string
+	m    map[string]*remoteDispatch // dispatchId -> record
 	// bySession is the reverse index the wake paths hit on every transition, so
 	// the common case (a worker with no remote origin at all) is one map read.
 	bySession map[string]string // sessionId -> dispatchId
@@ -128,8 +131,14 @@ func newRemoteDispatchStore() *remoteDispatchStore {
 func (s *remoteDispatchStore) record(dispatchID, sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[dispatchID] = &remoteDispatch{dispatchID: dispatchID, sessionID: sessionID}
+	d := s.m[dispatchID]
+	if d == nil {
+		d = &remoteDispatch{dispatchID: dispatchID}
+		s.m[dispatchID] = d
+	}
+	d.sessionID = sessionID
 	s.bySession[sessionID] = dispatchID
+	_ = s.persistLocked()
 }
 
 func (s *remoteDispatchStore) forSession(sessionID string) string {
@@ -158,6 +167,7 @@ func (s *remoteDispatchStore) keepFinal(u dispatchUpdate) {
 	if d, ok := s.m[u.DispatchID]; ok {
 		copyOf := u
 		d.last = &copyOf
+		_ = s.persistLocked()
 	}
 }
 
@@ -252,9 +262,7 @@ func (r *registry) emitDispatchUpdate(dispatchID, kind, sessionID string, entry 
 		Final:      final,
 		Entry:      entry,
 	}
-	if final {
-		r.remote.keepFinal(u)
-	}
+	r.remote.keepFinal(u)
 	data, err := json.Marshal(u)
 	if err != nil {
 		return false
@@ -289,6 +297,7 @@ func (r *registry) emitDispatchUpdate(dispatchID, kind, sessionID string, entry 
 func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		DispatchID string `json:"dispatchId"`
+		OriginKey  string `json:"originKey"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -298,6 +307,13 @@ func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.
 	}
 	if r.remote == nil {
 		return jsonResult(map[string]any{"state": "unknown", "dispatchId": p.DispatchID})
+	}
+	r.remote.mu.Lock()
+	d := r.remote.m[p.DispatchID]
+	authorized := d != nil && d.lease != nil && d.lease.Owner == p.OriginKey
+	r.remote.mu.Unlock()
+	if !authorized {
+		return nil, fmt.Errorf("dispatch unavailable for this connection")
 	}
 	last, sessionID, known := r.remote.replay(p.DispatchID)
 	switch {

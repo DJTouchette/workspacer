@@ -726,6 +726,13 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 	// origin hub, and the peer's own capability ceiling is still the link token.
 	if !caller.federated {
 		delete(m, remoteOriginKey)
+	} else if rawOrigin, ok := m[remoteOriginKey]; ok {
+		var origin map[string]json.RawMessage
+		if json.Unmarshal(rawOrigin, &origin) != nil || origin == nil {
+			return nil, fmt.Errorf("invalid remote origin")
+		}
+		origin["ownerKey"], _ = json.Marshal(caller.tokenID)
+		m[remoteOriginKey], _ = json.Marshal(origin)
 	}
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
@@ -1069,13 +1076,22 @@ type paramSanitizer func(rt *router, caller *conn, raw json.RawMessage) (json.Ra
 // agents.reportProgress the day it was added to the view tier: see
 // TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop.
 var methodSanitizers = map[string]paramSanitizer{
-	spawnMethod:          (*router).sanitizeSpawnParams,
-	reportProgressMethod: (*router).sanitizeReportProgressParams,
+	spawnMethod:              (*router).sanitizeSpawnParams,
+	"agents.dispatchPrepare": (*router).sanitizeSpawnParams,
+	reportProgressMethod:     (*router).sanitizeReportProgressParams,
 }
 
 // sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
 func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) (json.RawMessage, error) {
+	if method == "agents.dispatchReplay" {
+		var p map[string]json.RawMessage
+		if json.Unmarshal(raw, &p) != nil || p == nil {
+			return nil, fmt.Errorf("invalid replay")
+		}
+		p["originKey"], _ = json.Marshal(caller.tokenID)
+		return json.Marshal(p)
+	}
 	if method == "fleetWorkflows.request" {
 		if !caller.trusted || caller.viaScopedToken || caller.pluginID != "" || caller.federated {
 			return nil, fmt.Errorf("Fleet workflow management is local host only")

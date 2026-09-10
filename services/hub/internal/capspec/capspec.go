@@ -89,6 +89,8 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
+	"agents.dispatchPrepare":       "Operator-only remote admission: cwd must exactly match this host discovery and canonical filesystem, provider must be authenticated here. Allocates a fresh isolated worktree under this host config root with no repository clone or setup hook. The authenticated origin credential and nonce bind its expiring, single-use lease.",
+	"fleet.selectDispatchModel":    "Operator-only explicit paired routing. The host forwards a routing request over its stored pairing connection and the remote host applies its own provider readiness and routing policy. No local credential or local full-access grant is forwarded.",
 	"routing.preferences.validate": "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
 	"routing.preferences.save":     "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
 	"routing.preferences.reset":    "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
@@ -348,6 +350,8 @@ var unscopedByDecision = map[string]string{
 // none of it reaches a sink. "It is read-only" on its own is the shrug this map
 // replaced.
 var inertMethods = map[string]string{
+	"fleet.dispatchTargets":   "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
+	"fleet.dispatches":        "Read-only local durable dispatch records. No caller-selected recipient, process, path or credential is accepted; records describe already admitted work.",
 	"routing.preferences.get": "No arguments; returns only typed safe policy, defaults, inherited values, source badges, cached catalog and opaque revision. No security fields, paths or writes.",
 	"usage.report":            "no parameters; reads only the hub-owned usage watcher, installed pace configuration and the hub's own pacing-schedule preference, returning account identity, provenance, quota windows and sampled pace. No credentials, tokens, spend, config, decisions, probing or writes",
 
@@ -517,6 +521,9 @@ func KnownKind(k ParamKind) bool { return knownKinds[k] }
 // already owns, carried by two dozen read/control methods, and adding it would
 // drown the signal rather than sharpen it.
 var dangerousParams = map[string]ParamKind{
+	"remoteOrigin":           KindID,
+	"executionTarget":        KindID,
+	"remoteCwd":              KindPath,
 	"dispatchOwnerSessionId": KindID,
 	"retrySourceSessionId":   KindID,
 	// Filesystem locations.
@@ -908,6 +915,10 @@ const (
 // detector until that param is classified here, scoped in PathParam, or
 // refused.
 var unscopedParams = map[string]map[string]ParamDecision{
+	"agents.dispatchPrepare": {
+		"cwd":          {KindPath, "exact canonical remote repository selected from this host discovery; worktree allocation is remote and never falls back"},
+		"remoteOrigin": {KindID, "nonce and protocol with ownerKey replaced from the authenticated connection; single-use lease cannot be claimed by a different credential"},
+	},
 	"agents.spawn": {
 		"launchIntegrationId":    {KindID, "selects a trusted sidecar whose preparation changes child env/argv; supported only by local desktop IPC. Both bus providers reject any non-null selection, and boot-document writers strip the field from untrusted saved agents so it cannot be planted for a later local resume"},
 		"dispatchOwnerSessionId": {KindID, "private facade stamp from the session credential; bus strips non-host copies"},
@@ -922,6 +933,8 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		// escalation shipped unnoticed on claude.setPermissionMode.
 		"skipPermissions": {KindPermission, "--dangerously-skip-permissions by another name; clamped to false on both bus providers (assertNoPermissionBypass in hubCapabilities.ts, the same clamp in the brain's spawn) UNLESS the hub router stamped `yoloGranted`. THE TOKEN IS THE TRUST BOUNDARY (2026-08-26): internal/bus sanitizeSpawnParams deletes any incoming stamp and re-adds it for the trusted host, for an OPERATOR-tier token (ScopeOperator is host-equivalent by definition, so a remote operator is the user sitting at the machine), and for any record carrying the full-access grant (authtoken yoloAllowed). Refused for a plugin token, and for a FEDERATION LINK unless its own record carries yoloAllowed — a peer inherits no host trust from being authenticated. Whatever is refused is REPORTED to the caller in the spawn result (`fullAccess`, `escalationScrubbed`); nothing here downgrades silently"},
 		"permissionMode":  {KindPermission, "the same escalation spelled as a mode: 'bypassPermissions' and 'yolo' are dropped to undefined on both bus providers unless the spawn carries the hub-stamped `yoloGranted` (same tier rule and same reported-not-silent contract as skipPermissions); every other mode is passed through"},
+		"executionTarget": {KindID, "explicit paired route handled on local desktop after authenticated manager and workflow admission; unknown targets refuse without fallback"},
+		"remoteCwd":       {KindPath, "remote filesystem choice checked by remote discovery and admission, never opened or granted on the desktop"},
 		"remoteOrigin":    {KindID, "router-stamped remote-dispatch provenance: a protocol number and an opaque per-dispatch id, and nothing else. It is not caller-settable at all — internal/bus sanitizeSpawnParams DELETES the key from every non-federated caller, so on the dispatching machine nobody can pre-seed the id its own router is about to mint, and on the executing machine no local client can manufacture a dispatch whose callbacks would be addressed at another machine's manager. It grants nothing: the federation link token remains the ceiling on everything the spawn may do, and the id's only effect is that the worker's host-composed progress/blocked/finished bullets are published back over the link the origin opened instead of dropped"},
 		"effort":          {KindShell, "a reasoning-effort level handed to the daemon at spawn (codex model_reasoning_effort, claude's /effort); it selects among the provider's own levels and never becomes argv the caller composes"},
 	},

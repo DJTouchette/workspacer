@@ -41,6 +41,8 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
+import { spawnPairedWorker } from './pairedDispatch';
+import { pairedWorkerConnection } from './pairedWorkerConnection';
 import { listDispatchTargets } from './dispatchTargets';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
@@ -685,7 +687,11 @@ export function registerHubCapabilities(): void {
       dispatchOwnerSessionId,
       retrySourceSessionId,
       workflowStepId,
+      executionTarget,
+      remoteCwd,
     } = (params ?? {}) as {
+      executionTarget?: 'paired';
+      remoteCwd?: string;
       workflowStepId?: string;
       taskId?: string;
       stage?: import('../shared/dispatchHistory').TaskStage;
@@ -906,6 +912,10 @@ export function registerHubCapabilities(): void {
       if (resultSchema === undefined && item.resultSchema) resultSchema = item.resultSchema;
     } else if (templateParams && Object.keys(templateParams).length) {
       throw new Error('agents.spawn: templateParams was passed without a template to fill');
+    }
+    if (executionTarget !== undefined) {
+      if (executionTarget !== 'paired') throw new Error('Unsupported execution target');
+      return spawnPairedWorker({ ...(params as Record<string, unknown>), executionTarget, remoteCwd, message }, dispatchAdmission, templateBody, resultSchema);
     }
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -2436,6 +2446,7 @@ export function registerHubCapabilities(): void {
   // out of peers.json on every read (federationPeersConfig) and never touches
   // this path.
   registerCapability('fleet.dispatchTargets', () => listDispatchTargets());
+  registerCapability('fleet.selectDispatchModel', (params: unknown) => pairedWorkerConnection.call('routing.select', params));
 
   // The operator's record of what has been sent where. It answers the question
   // a cross-machine dispatch makes possible and nothing else could: "what did I

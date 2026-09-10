@@ -68,8 +68,8 @@ describe('readRedactedPeers', () => {
       { name: 'laptop', url: 'wss://laptop.ts.net/bus' },
     ]);
     expect(readRedactedPeers()).toEqual([
-      { name: 'work', url: 'ws://100.64.1.2:7895/bus', hasToken: true },
-      { name: 'laptop', url: 'wss://laptop.ts.net/bus', hasToken: false },
+      { name: 'work', url: 'ws://100.64.1.2:7895/bus', hasToken: true, dispatch: false },
+      { name: 'laptop', url: 'wss://laptop.ts.net/bus', hasToken: false, dispatch: false },
     ]);
   });
 

@@ -1,0 +1,190 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// Preparation allocates only on this host. A lease is scoped to the authenticated
+// origin credential and its unguessable dispatch id; claiming it is irreversible.
+type dispatchLease struct {
+	Owner    string `json:"owner"`
+	Repo     string `json:"repo"`
+	Cwd      string `json:"cwd"`
+	Provider string `json:"provider"`
+	Worktree bool   `json:"worktree"`
+	Branch   string `json:"branch,omitempty"`
+	Expires  int64  `json:"expires"`
+	Claimed  bool   `json:"claimed"`
+}
+
+type persistedRemoteDispatch struct {
+	ID      string          `json:"id"`
+	Session string          `json:"session"`
+	Seq     int64           `json:"seq"`
+	Last    *dispatchUpdate `json:"last,omitempty"`
+	Lease   *dispatchLease  `json:"lease,omitempty"`
+}
+
+func (s *remoteDispatchStore) persistLocked() error {
+	if s.file == "" {
+		return nil
+	}
+	rows := make([]persistedRemoteDispatch, 0, len(s.m))
+	for id, d := range s.m {
+		rows = append(rows, persistedRemoteDispatch{id, d.sessionID, d.seq, d.last, d.lease})
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic0600(s.file, b)
+}
+
+func (s *remoteDispatchStore) load(file string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.file = file
+	b, err := os.ReadFile(file)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var rows []persistedRemoteDispatch
+	if err := json.Unmarshal(b, &rows); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		s.m[row.ID] = &remoteDispatch{dispatchID: row.ID, sessionID: row.Session, seq: row.Seq, last: row.Last, lease: row.Lease}
+		if row.Session != "" {
+			s.bySession[row.Session] = row.ID
+		}
+	}
+	return nil
+}
+
+func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		RemoteOrigin *remoteOriginParam `json:"remoteOrigin"`
+		Cwd          string             `json:"cwd"`
+		Provider     string             `json:"provider"`
+		Worktree     bool               `json:"worktree"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	id, err := r.acceptRemoteOrigin(spawnParams{RemoteOrigin: p.RemoteOrigin})
+	if err != nil {
+		return nil, err
+	}
+	if id == "" || p.RemoteOrigin.OwnerKey == "" {
+		return nil, fmt.Errorf("authenticated paired origin required")
+	}
+	ready := false
+	for _, provider := range r.dispatchProviderReadiness(ctx) {
+		if provider.Provider == p.Provider && provider.Found && provider.Authenticated != nil && *provider.Authenticated {
+			ready = true
+		}
+	}
+	if !ready {
+		return nil, fmt.Errorf("provider is not authenticated on this execution host")
+	}
+	known := false
+	for _, choice := range r.dispatchCwdChoices(ctx) {
+		if choice.Path == p.Cwd && filepath.IsAbs(choice.Path) {
+			known = true
+		}
+	}
+	if !known {
+		return nil, fmt.Errorf("cwd must be an existing repository choice returned by this host")
+	}
+	root, err := filepath.EvalSymlinks(p.Cwd)
+	if err != nil || root != filepath.Clean(p.Cwd) {
+		return nil, fmt.Errorf("remote cwd must be canonical")
+	}
+	s := r.remote
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if prior := s.m[id]; prior != nil {
+		if prior.lease == nil || prior.lease.Owner != p.RemoteOrigin.OwnerKey || prior.lease.Repo != root || prior.lease.Provider != p.Provider || prior.lease.Worktree != p.Worktree || prior.lease.Claimed {
+			return nil, fmt.Errorf("dispatch already admitted or lease does not match; do not spawn again")
+		}
+		return jsonResult(prior.lease)
+	}
+	if len(s.m) >= 1024 {
+		return nil, fmt.Errorf("remote dispatch journal is full; no worker was started")
+	}
+	lease := &dispatchLease{Owner: p.RemoteOrigin.OwnerKey, Repo: root, Cwd: root, Provider: p.Provider, Worktree: p.Worktree, Expires: time.Now().Add(5 * time.Minute).UnixMilli()}
+	d := &remoteDispatch{dispatchID: id, lease: lease}
+	s.m[id] = d
+	if err := s.persistLocked(); err != nil {
+		delete(s.m, id)
+		return nil, err
+	}
+	if p.Worktree {
+		lease.Cwd = filepath.Join(configDir(), "dispatch-worktrees", id)
+		lease.Branch = "wks/paired-" + id
+		if err := os.MkdirAll(filepath.Dir(lease.Cwd), 0700); err != nil {
+			delete(s.m, id)
+			_ = s.persistLocked()
+			return nil, err
+		}
+		res, err := runGit(ctx, root, []string{"worktree", "add", "-b", lease.Branch, "--", lease.Cwd, "HEAD"})
+		if err != nil || !res.ok {
+			delete(s.m, id)
+			_ = s.persistLocked()
+			return nil, fmt.Errorf("remote isolated worktree allocation failed; no worker started")
+		}
+	}
+	if err := s.persistLocked(); err != nil {
+		if lease.Worktree {
+			_, _ = runGit(ctx, root, []string{"worktree", "remove", "--force", "--", lease.Cwd})
+		}
+		delete(s.m, id)
+		return nil, err
+	}
+	time.AfterFunc(5*time.Minute, func() { r.expireDispatchLease(id) })
+	// No credential identity is returned to the origin or worker.
+	return jsonResult(map[string]any{"cwd": lease.Cwd, "repo": lease.Repo, "worktree": lease.Worktree, "branch": lease.Branch, "expires": lease.Expires})
+}
+
+func (r *registry) expireDispatchLease(id string) {
+	s := r.remote
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.m[id]
+	if d == nil || d.lease == nil || d.lease.Claimed || d.lease.Expires > time.Now().UnixMilli() {
+		return
+	}
+	if d.lease.Worktree {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		res, err := runGit(ctx, d.lease.Repo, []string{"worktree", "remove", "--force", "--", d.lease.Cwd})
+		if err != nil || !res.ok {
+			return
+		}
+	}
+	delete(s.m, id)
+	_ = s.persistLocked()
+}
+
+func (r *registry) claimDispatch(p spawnParams) error {
+	if p.RemoteOrigin == nil {
+		return nil
+	}
+	s := r.remote
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.m[p.RemoteOrigin.DispatchID]
+	if d == nil || d.lease == nil || d.lease.Owner != p.RemoteOrigin.OwnerKey || d.lease.Cwd != p.Cwd || d.lease.Provider != p.Provider || d.lease.Claimed || d.lease.Expires <= time.Now().UnixMilli() {
+		return fmt.Errorf("remote dispatch requires a matching unused lease; do not retry an uncertain spawn")
+	}
+	d.lease.Claimed = true
+	return s.persistLocked()
+}

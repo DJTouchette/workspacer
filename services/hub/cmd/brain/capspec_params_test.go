@@ -522,7 +522,7 @@ func TestInertPathBearingMethodsBindNothing(t *testing.T) {
 var hubLocalRe = regexp.MustCompile(`(?m)\bRegisterLocal(?:Ident)?\(\s*"([a-zA-Z][\w.]*)"`)
 
 func TestInertMethodsAreActuallyRegistered(t *testing.T) {
-	registered := brainMethodSet()
+	registered := brainScopeSet("full")
 	body := readDesktopCapabilities(t)
 	for _, m := range names(catRe, body) {
 		registered[m] = true

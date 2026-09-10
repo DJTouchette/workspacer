@@ -68,10 +68,10 @@ const (
 // leak that started this file.
 var (
 	goEventNewRe = regexp.MustCompile(`event\.New\(\s*(?:"([\w.]+)"(\s*\+)?|([A-Za-z_][\w.]*))`)
-	goPublishRe  = regexp.MustCompile(`\bpublish\(\s*(?:"([\w.]+)"(\s*\+)?|([A-Za-z_][\w.]*))`)
+	goPublishRe  = regexp.MustCompile(`(?:\bpublish|\bpublishDispatchEvent)\(\s*(?:"([\w.]+)"(\s*\+)?|([A-Za-z_][\w.]*))`)
 	goEnvelopeRe = regexp.MustCompile(`event\.Envelope\{[\s\S]{0,200}?Type:\s*"([\w.]+)"`)
 	// Any call that puts something on the bus, for the accounting pass.
-	goPublishSiteRe = regexp.MustCompile(`\.[Pp]ublish\(|\bpublish\(`)
+	goPublishSiteRe = regexp.MustCompile(`\.[Pp]ublish\(|(?:\bpublish|\bpublishDispatchEvent)\(`)
 	// const ChangedTopic = "layout.changed" — resolvable indirection.
 	goTopicConstRe = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Za-z_]\w*)\s*=\s*"([\w.]+)"\s*$`)
 )

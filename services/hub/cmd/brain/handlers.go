@@ -131,6 +131,7 @@ func (r *registry) methods() []string {
 		// operator-only by construction (neither is in a scoped tier's
 		// exact-name allowlist) and neither discloses a credential.
 		"agents.dispatchReplay",
+		"agents.dispatchPrepare",
 		"fleet.dispatchCapabilities",
 		"brief.append",
 		// The other two brief verbs, ported once a headless Fleet Manager became
@@ -308,6 +309,8 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.orphans(ctx, params)
 	case "agents.reparent":
 		return r.reparent(ctx, params)
+	case "agents.dispatchPrepare":
+		return r.dispatchPrepare(ctx, params)
 	case "agents.dispatchReplay":
 		return r.dispatchReplay(ctx, params)
 	case "fleet.dispatchCapabilities":
@@ -745,7 +748,7 @@ func (p spawnParams) isWakeTarget() bool { return p.Manager }
 // the Fleet Manager itself even if a caller accidentally supplies a parent.
 // TWIN: main/shared/workerEscalation.ts isFleetDispatchedWorker.
 func (p spawnParams) isFleetWorker() bool {
-	return !p.Manager && strings.TrimSpace(p.ParentSessionID) != ""
+	return !p.Manager && (strings.TrimSpace(p.ParentSessionID) != "" || p.RemoteOrigin != nil)
 }
 
 func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -772,6 +775,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	remoteDispatchID, admitErr := r.acceptRemoteOrigin(p)
 	if admitErr != nil {
 		return nil, admitErr
+	}
+	if err := r.claimDispatch(p); err != nil {
+		return nil, err
 	}
 
 	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the

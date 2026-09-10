@@ -32,6 +32,7 @@ import { listLiveSessionIds } from './services/recentSessions';
 import { sweepSessionFacadeTokens } from './services/remoteTokens';
 import { reconcileFullAccessGrants, startFullAccessGrantSync } from './services/fullAccessGrants';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
+import { startPairedDispatch } from './services/pairedDispatch';
 import { startFederationBridge, stopFederationBridge } from './services/federationBridge';
 import { startFederationPeersConfig } from './services/federationPeersConfig';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
@@ -404,6 +405,7 @@ function createWindow(): void {
             // Federation: ingest peer hubs' agent.* events + hub.peer.*
             // lifecycle into the session store (remote fleet cards).
             startFederationBridge();
+            startPairedDispatch();
             // The MCP facade bridges hub capabilities to MCP tools for supervisor
             // sessions. Started after the hub so its bus connection has a target.
             // Optional: a failure only costs the supervisor its action tools.

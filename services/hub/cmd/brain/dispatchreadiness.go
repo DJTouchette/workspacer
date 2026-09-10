@@ -34,9 +34,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // dispatchProvider is one harness's readiness on this node.
@@ -56,7 +58,7 @@ type dispatchProvider struct {
 func boolPtr(v bool) *bool { return &v }
 
 // dispatchProviderReadiness reports every managed provider's usability here.
-func (r *registry) dispatchProviderReadiness(_ context.Context) []dispatchProvider {
+func (r *registry) dispatchProviderReadiness(ctx context.Context) []dispatchProvider {
 	out := make([]dispatchProvider, 0, len(managedProviders))
 	for _, st := range checkAllProviders(r.providerBinaries()) {
 		p := dispatchProvider{Provider: st.Provider, Found: st.Found}
@@ -66,32 +68,59 @@ func (r *registry) dispatchProviderReadiness(_ context.Context) []dispatchProvid
 			out = append(out, p)
 			continue
 		}
-		switch st.Provider {
-		case "claude":
-			ok := claudeLoginPresent()
-			p.Authenticated = boolPtr(ok)
-			if ok {
-				p.Note = "installed and signed in on this machine"
-			} else {
-				p.Note = "installed but this machine has no Claude login — a dispatched worker would fail to start a turn"
-			}
-		case "codex":
-			ok := codexLoginPresent()
-			p.Authenticated = boolPtr(ok)
-			if ok {
-				p.Note = "installed and signed in on this machine"
-			} else {
-				p.Note = "installed but this machine has no Codex login (no auth.json, no OPENAI_API_KEY) — " +
-					"a dispatched worker would open a session, answer nothing, and end"
-			}
+		if st.ResolvedPath != nil {
+			p.Authenticated = probeProviderLogin(ctx, *st.ResolvedPath, st.Provider)
+		}
+		switch {
+		case p.Authenticated == nil:
+			p.Note = "installed; this host could not confirm a usable login"
+		case *p.Authenticated:
+			p.Note = "installed; provider login status confirmed on this host"
 		default:
-			// copilot keeps its token in the OS credential store; opencode and pi
-			// have no single readable login file. Absent is the truthful answer.
-			p.Note = "installed; this machine cannot read " + st.Provider + "'s login state, so it is unknown rather than confirmed"
+			p.Note = "installed but not logged in on this host"
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// Probe the actual CLI login state, not a stale account label or file presence.
+// Output is bounded, parsed here and never logged or returned.
+func probeProviderLogin(ctx context.Context, binary, provider string) *bool {
+	var args []string
+	switch provider {
+	case "claude":
+		args = []string{"auth", "status", "--json"}
+	case "codex":
+		args = []string{"login", "status"}
+	default:
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	output := &cappedWriter{limit: 64 * 1024}
+	cmd.Stdout, cmd.Stderr = output, output
+	err := cmd.Run()
+	if ctx.Err() != nil || output.over {
+		return nil
+	}
+	if provider == "claude" {
+		var status struct {
+			LoggedIn *bool `json:"loggedIn"`
+		}
+		if json.Unmarshal([]byte(output.String()), &status) == nil {
+			return status.LoggedIn
+		}
+		return nil
+	}
+	if err == nil && strings.Contains(strings.ToLower(output.String()), "logged in") {
+		return boolPtr(true)
+	}
+	if strings.Contains(strings.ToLower(output.String()), "not logged in") {
+		return boolPtr(false)
+	}
+	return nil
 }
 
 // claudeConfigRoot is where the Claude CLI keeps its state on this machine:

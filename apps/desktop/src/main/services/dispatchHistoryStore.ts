@@ -258,6 +258,7 @@ export class DispatchHistoryStore {
       sessionId: string;
       title?: string;
       executionCwd: string;
+      executionTarget?: 'paired';
       requestedProvider?: string;
       provider?: string;
       requestedModel?: string;
@@ -297,6 +298,7 @@ export class DispatchHistoryStore {
       acceptedAt: now,
       observedAt: now,
       executionCwd: input.executionCwd,
+      executionTarget: input.executionTarget,
       requestedProvider: input.requestedProvider,
       provider: input.provider,
       requestedModel: input.requestedModel,
@@ -309,7 +311,7 @@ export class DispatchHistoryStore {
       metrics: {},
     };
     // Capture directory identity at acceptance, never from a renderer request.
-    if (attempt.worktree?.allocated && !attempt.worktree.fallback) {
+    if (!attempt.executionTarget && attempt.worktree?.allocated && !attempt.worktree.fallback) {
       try {
         const canonical = fs.realpathSync(attempt.executionCwd);
         const stat = fs.statSync(canonical);

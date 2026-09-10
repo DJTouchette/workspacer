@@ -11,6 +11,8 @@
  */
 
 import WebSocket from 'ws';
+import { pairedWorkerConnection } from './pairedWorkerConnection';
+import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { BrowserWindow } from 'electron';
 import { hubBusUrl, getHubToken } from './hubDaemon';
 import { notifySystem } from './systemNotice';
@@ -99,6 +101,15 @@ const pending = new Map<
  *  socket is down, the call errors, or it times out. Our ids are prefixed `m`
  *  so they never collide with the hub-assigned numeric ids of inbound calls. */
 export function callHub<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+  if (method.startsWith('hub:paired/')) {
+    const p = { ...(params as Record<string, unknown>) };
+    const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId);
+    if (record) {
+      if (!record.sessionId) return Promise.reject(new Error('Remote admission is unresolved'));
+      p.sessionId = record.sessionId;
+    }
+    return pairedWorkerConnection.call<T>(method.slice('hub:paired/'.length), p);
+  }
   return new Promise<T>((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       reject(new Error('hub not connected'));
@@ -134,7 +145,16 @@ export function emitToRenderer(channel: string, ...args: unknown[]): void {
 
 /** Register a capability main provides on the bus. Call before startHubClient. */
 export function registerCapability(method: string, handler: CapabilityHandler): void {
-  handlers.set(method, handler);
+  handlers.set(method, (params) => {
+    const p = (params ?? {}) as Record<string, unknown>;
+    const actions = ['agents.sendMessage','claude.approve','claude.answer','claude.signal','claude.gate','claude.setModel','claude.setEffort','claude.setPermissionMode','sessions.conversation','sessions.transcript'];
+    const record = actions.includes(method) ? remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId) : undefined;
+    if (record) {
+      if (!record.sessionId) throw new Error('Remote admission unresolved');
+      return pairedWorkerConnection.call(method,{...p,sessionId:record.sessionId});
+    }
+    return handler(params);
+  });
 }
 
 function forward(channel: string, ...args: unknown[]): void {

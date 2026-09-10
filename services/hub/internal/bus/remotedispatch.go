@@ -123,7 +123,7 @@ type dispatchStamp struct {
 }
 
 // DispatchProtocol is the version this build stamps and accepts.
-const DispatchProtocol = 1
+const DispatchProtocol = 2
 
 // stampRemoteOrigin decides whether an outbound federated agents.spawn should
 // carry dispatch provenance and, if so, rewrites its params.

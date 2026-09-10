@@ -70,7 +70,7 @@ var spawnParamKeys = []string{
 	// here for the same reason yoloGranted is: the sanitizer DELETES it by exact
 	// name for every non-federated caller, so a `RemoteOrigin` spelling would
 	// survive that delete and still bind to the brain's decoder.
-	"remoteOrigin",
+	"remoteOrigin", "executionTarget", "remoteCwd",
 	// ── identity / grant fields the router itself strips or stamps ──────────
 	"profileId",
 	"launchIntegrationId",

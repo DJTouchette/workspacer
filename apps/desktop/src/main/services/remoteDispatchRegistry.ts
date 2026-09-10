@@ -61,7 +61,7 @@ import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import type { FleetMessageEntry } from '../shared/fleetMessages';
 
 /** The wire protocol number both hubs stamp and check. Twin: bus.DispatchProtocol. */
-export const DISPATCH_PROTOCOL = 1;
+export const DISPATCH_PROTOCOL = 2;
 
 /** Twin: bus.DispatchIDPattern. */
 const DISPATCH_ID_RE = /^[A-Za-z0-9_-]{16,128}$/;
@@ -107,6 +107,8 @@ export interface RemoteDispatchUpdate {
 
 export interface RemoteDispatchRecord {
   dispatchId: string;
+  localSessionId?: string;
+  resultSchema?: Record<string, unknown>;
   /** The peer NAME from peers.json — the same string the envelope is stamped
    *  with. Never a URL and never a token. */
   peer: string;
@@ -155,7 +157,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-class RemoteDispatchRegistry {
+export class RemoteDispatchRegistry {
   private records = new Map<string, RemoteDispatchRecord>();
   private file: string | null = null;
   private resolveManager: ManagerResolver = () => null;
@@ -215,9 +217,11 @@ class RemoteDispatchRegistry {
       // dropped: the operator's question after a crash is "what happened to the
       // thing I sent to the other machine", and a silently absent row answers
       // it wrongly.
-      const stale = r.state === 'open' && now - openedAt > DISPATCH_MAX_AGE_MS;
+      const stale = false;
       this.records.set(r.dispatchId, {
         dispatchId: r.dispatchId,
+        localSessionId: r.localSessionId,
+        resultSchema: r.resultSchema,
         peer: r.peer,
         ownerSessionId: r.ownerSessionId,
         sessionId: typeof r.sessionId === 'string' ? r.sessionId : undefined,
@@ -244,25 +248,10 @@ class RemoteDispatchRegistry {
 
   private persist(): void {
     if (!this.file || !this.ready) return;
-    // Evict oldest first so the file is bounded. Terminal records go before open
-    // ones at the same age: a finished dispatch has already been reported.
-    if (this.records.size > MAX_RECORDS) {
-      const ordered = [...this.records.values()].sort(
-        (a, b) =>
-          Number(a.state !== 'open') - Number(b.state !== 'open') || a.openedAt - b.openedAt,
-      );
-      for (const r of ordered.slice(0, this.records.size - MAX_RECORDS)) {
-        this.records.delete(r.dispatchId);
-      }
-    }
-    try {
-      atomicWriteFileSync(this.file, `${JSON.stringify([...this.records.values()], null, 2)}\n`, {
-        mode: 0o600,
-      });
-    } catch (err) {
-      // Non-fatal: the in-memory records still route this session's callbacks.
-      console.warn('[dispatch] could not persist remote-dispatches.json:', err);
-    }
+    // Never evict active/uncertain work to make room for history.
+    const terminal = [...this.records.values()].filter((r) => r.state === 'done' || r.state === 'failed').sort((a,b) => a.openedAt-b.openedAt);
+    for (const r of terminal.slice(0, Math.max(0,this.records.size-MAX_RECORDS))) this.records.delete(r.dispatchId);
+    atomicWriteFileSync(this.file, `${JSON.stringify([...this.records.values()], null, 2)}\n`, { mode: 0o600 });
   }
 
   /**
@@ -275,6 +264,8 @@ class RemoteDispatchRegistry {
    * would be dropped.
    */
   open(rec: {
+    localSessionId?: string;
+    resultSchema?: Record<string, unknown>;
     dispatchId?: unknown;
     peer?: unknown;
     ownerSessionId?: unknown;
@@ -295,6 +286,8 @@ class RemoteDispatchRegistry {
       typeof v === 'string' && v.trim() ? v : undefined;
     const record: RemoteDispatchRecord = {
       dispatchId,
+      localSessionId: rec.localSessionId,
+      resultSchema: rec.resultSchema,
       peer,
       ownerSessionId,
       label: str(rec.label),
@@ -332,7 +325,8 @@ class RemoteDispatchRegistry {
     if (typeof dispatchId !== 'string') return;
     const record = this.records.get(dispatchId);
     if (!record || record.state !== 'open') return;
-    record.state = 'failed';
+    // A transport error does not prove rejection. Keep reconciling this id.
+    record.note = 'Admission unknown; do not repeat the spawn';
     if (typeof note === 'string' && note.trim()) record.note = note.trim().slice(0, 500);
     this.persist();
   }
@@ -343,7 +337,7 @@ class RemoteDispatchRegistry {
   markLost(dispatchId: string, note: string): void {
     const record = this.records.get(dispatchId);
     if (!record || record.state !== 'open') return;
-    record.state = 'lost';
+    // Peer ignorance is not proof a worker ended. Keep the origin record open.
     record.note = note;
     this.persist();
   }
@@ -376,10 +370,6 @@ class RemoteDispatchRegistry {
     const out: RemoteDispatchRecord[] = [];
     for (const r of this.records.values()) {
       if (r.peer !== peer || r.state !== 'open') continue;
-      if (now - r.openedAt > DISPATCH_MAX_AGE_MS) {
-        this.markLost(r.dispatchId, 'no result within 12h; this desktop stopped waiting');
-        continue;
-      }
       out.push(r);
     }
     return out;
@@ -428,21 +418,16 @@ class RemoteDispatchRegistry {
     // 5. A live, LOCAL, wake-eligible manager — resolved now, not at dispatch.
     const parentSessionId = this.resolveManager(record.ownerSessionId);
     if (!parentSessionId) return { ok: false, reason: 'no-live-manager' };
-    // Booked BEFORE delivery, deliberately, and this is the one place the
-    // trade-off is not obvious. Booking after a successful send would make a
-    // delivery failure re-deliverable — but the peer re-publishes on reconnect
-    // and the desktop's own message client journals its transition-time
-    // ambiguity, so the failure mode that booking-late creates (the same result
-    // injected twice into a manager's conversation, once per replay) is the
-    // worse one. A lost update is recoverable by the operator reading the
-    // worker's card; a duplicated result is a manager acting twice.
-    record.ackedSeq = update.seq;
-    if (update.final) {
-      record.state = 'done';
-    }
-    if (update.sessionId && !record.sessionId) record.sessionId = update.sessionId;
-    this.persist();
     return { ok: true, record, parentSessionId, update };
+  }
+
+  acknowledge(dispatchId: string, update: RemoteDispatchUpdate): void {
+    const record = this.records.get(dispatchId);
+    if (!record || update.seq <= record.ackedSeq) return;
+    record.ackedSeq = update.seq;
+    if (update.final) record.state = 'done';
+    if (!record.sessionId) record.sessionId = update.sessionId;
+    this.persist();
   }
 
   /** Strict decode. Anything the peer could get wrong is rejected rather than
@@ -455,9 +440,11 @@ class RemoteDispatchRegistry {
     const entry = payload.entry;
     if (typeof dispatchId !== 'string' || !DISPATCH_ID_RE.test(dispatchId)) return null;
     if (typeof kind !== 'string' || !KINDS.has(kind)) return null;
-    if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) return null;
+    if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq <= 0) return null;
+    if (typeof payload.sessionId !== 'string' || !payload.sessionId) return null;
     if (!isRecord(entry)) return null;
-    if (typeof entry.sessionId !== 'string' || !entry.sessionId) return null;
+    if (entry.sessionId !== payload.sessionId) return null;
+    if ((payload.final === true) !== (kind === 'worker-finished' || kind === 'worker-escalated')) return null;
     if (typeof entry.label !== 'string') return null;
     return {
       protocol: typeof payload.protocol === 'number' ? payload.protocol : 0,

@@ -405,6 +405,8 @@ func jsonStr(s string) string {
 // is neither in spawnParams' JSON tags nor here fails the drift guard below —
 // mirror it or decline it explicitly.
 var spawnParamsDeclined = map[string]string{
+	"executionTarget":        "Origin desktop selection: resolves existing host-only pairing while retaining the local manager and task workflow.",
+	"remoteCwd":              "Origin desktop selection: remote preparation consumes cwd on the selected host; local project identity never crosses as execution cwd.",
 	"workflowStepId":         "Fleet workflows are explicitly desktop-only v1",
 	"taskId":                 "desktop-only local dispatch projection",
 	"stage":                  "desktop-only explicit task stage",
@@ -429,7 +431,7 @@ var spawnParamsDeclined = map[string]string{
 // moment hubCapabilities.ts grows the param, this guard fails until the entry
 // is pruned), and must be a real brain JSON tag, so the exception can neither
 // linger past the desktop catching up nor outlive the field it excuses.
-var spawnParamsAhead = map[string]string{}
+var spawnParamsAhead = map[string]string{"remoteOrigin": "Peer execution provenance is accepted only on the headless execution host; the desktop originates durable paired dispatches and never accepts remote parent authority."}
 
 // desktopSpawnParamRe pulls the field names out of the agents.spawn params type
 // literal in hubCapabilities.ts (`provider?: AgentProvider;` → provider).

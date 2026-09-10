@@ -5,6 +5,7 @@ import type { PairingScope, RemoteTokenRecord } from '../../../main/shared/ipcTy
 import LinkedMachinesSection from './LinkedMachinesSection';
 
 interface RemoteInfo {
+  pairedWorker?: { httpUrl: string } | null;
   enabled: boolean;
   token: string;
   /** Lightweight client URL (the /remote single page), token included. */

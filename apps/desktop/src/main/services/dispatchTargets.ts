@@ -33,6 +33,8 @@
  * The count of linked-but-not-enabled machines is reported alongside so the
  * absence is explicable rather than mysterious.
  */
+import { getPairedWorkerTarget } from './remoteServer';
+import { pairedWorkerConnection } from './pairedWorkerConnection';
 import { callHub } from './hubClient';
 import { listFederationPeers } from './federationBridge';
 import { readRedactedPeers } from './federationPeersConfig';
@@ -104,7 +106,7 @@ interface CapabilitiesReply {
 }
 
 /** The protocol this desktop speaks. Twin: bus.DispatchProtocol. */
-export const DISPATCH_PROTOCOL = 1;
+export const DISPATCH_PROTOCOL = 2;
 
 /** Reduce a peer URL to a host for display. Never throws: an unparseable URL
  *  degrades to the raw string with any credentials-looking prefix removed. */
@@ -141,7 +143,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export type CapabilitiesProbe = (peer: string) => Promise<CapabilitiesReply>;
 
 const defaultProbe: CapabilitiesProbe = (peer) =>
-  withTimeout(callHub<CapabilitiesReply>(`hub:${peer}/fleet.dispatchCapabilities`, {}), PROBE_TIMEOUT_MS);
+  withTimeout(peer === 'paired' ? pairedWorkerConnection.call<CapabilitiesReply>('fleet.dispatchCapabilities') : callHub<CapabilitiesReply>(`hub:${peer}/fleet.dispatchCapabilities`, {}), PROBE_TIMEOUT_MS);
 
 /**
  * Build the target list. Probes run in parallel — one slow machine costs its own
@@ -152,7 +154,9 @@ export async function listDispatchTargets(
   peersFn = readRedactedPeers,
   liveFn = listFederationPeers,
 ): Promise<DispatchTargetsAnswer> {
-  const configured = peersFn();
+  const pair = getPairedWorkerTarget();
+  const configured = peersFn().filter((p) => !pair || p.name !== 'paired');
+  if (pair) configured.unshift({name:'paired',url:pair.busUrl,hasToken:!!pair.token,dispatch:true});
   const live = new Map(liveFn().map((p) => [p.name, p]));
   const enabled = configured.filter((p) => p.dispatch);
   const linkedButNotEnabled = configured.filter((p) => !p.dispatch).map((p) => p.name);
@@ -203,6 +207,7 @@ export async function listDispatchTargets(
         };
       }
       const executes = reply.executes === true;
+      if (peer.name === 'paired') base.connected = true;
       return {
         ...base,
         protocol,
