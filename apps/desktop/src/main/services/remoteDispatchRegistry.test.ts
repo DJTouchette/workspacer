@@ -115,7 +115,6 @@ it('reconciles adoption only after the new origin owner is durable', () => {
   expect(replayOwner).toBe('successor');
 });
 
-
 it('records verified unknown once without closing the dispatch or rewriting terminal state', () => {
   const { registry, file, update } = fixture();
   registry.markLost(update.dispatchId, 'Verified unknown; reconcile before retrying');
