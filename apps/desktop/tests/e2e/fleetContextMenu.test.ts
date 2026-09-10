@@ -271,9 +271,10 @@ test('card send restores a missing owning chat without opening it', async ({ pag
   await worker.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(worker.getByText('Send through the restored owner', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Back to fleet' })).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).fleetHarness.calls)).toEqual([
-    { method: 'message', args: ['s-worker', 'Send through the restored owner'] },
-  ]);
+  // A visible draft/optimistic preview is not proof the restored owner sent it.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).fleetHarness.calls))
+    .toEqual([{ method: 'message', args: ['s-worker', 'Send through the restored owner'] }]);
 });
 
 for (const width of [360, 1280]) {

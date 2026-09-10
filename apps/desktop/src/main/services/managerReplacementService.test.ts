@@ -150,6 +150,26 @@ function fixture() {
 }
 
 describe('host-owned manager replacement transaction', () => {
+  it('projects a safe stale-checkpoint diagnostic and retains ownership before spawning', async () => {
+    const f = fixture();
+    const send = f.host.send;
+    f.host.send = async (id, text) => {
+      const result = await send(id, text);
+      if (text.startsWith('HOST-OWNED')) fs.appendFileSync(f.brief, '\r\nLate checkpoint edit');
+      return result;
+    };
+    const id = await f.start();
+    expect(f.state.views()[0]).toMatchObject({
+      operationId: id,
+      phase: 'failed',
+      committed: false,
+      error:
+        'Checkpoint files[0] sha256 does not match current file bytes; checkpoint may have changed',
+    });
+    expect(f.owner()).toBe('old');
+    expect(f.host.spawn).not.toHaveBeenCalled();
+    expect(f.host.transfer).not.toHaveBeenCalled();
+  });
   it('captures a completion already awaiting acknowledgement and does not checkpoint or spawn after that acknowledgement is lost', async () => {
     const f = fixture();
     f.host.inFlightMessages = () => [{ id: 'early-message', text: 'Completion sent before click' }];

@@ -93,6 +93,111 @@ it exercises normal replacement, reload, failed preparation and explicit recover
 actions. No live manager, worker, app or daemon is replaced/restarted by these
 tests. Use the repository-pinned Node 22 for both desktop suites.
 
+### Windows checkpoint validation regression
+
+`managerReplacementArtifact.windows.test.ts` runs the production validator with
+Node's Win32 path implementation and fixture filesystem responses. Before the
+fix, both a lower-case drive changed by `realpath` and a forward-slash launch
+root reproduced `Checkpoint brief pointer or content hash is invalid` with
+correct SHA-256 values. Checkpoint comparison now tolerates Windows drive-letter
+case and slash spelling, plus component case only when the filesystem proves
+the authored root and brief are the same directory and file as the host-known
+root and brief. This applies to fleet, worker-metadata and project roots.
+Every path component is inspected for links before realpath; directory and file
+identity use nonzero BigInt inode IDs together with device IDs. Case-sensitive
+Windows directories with different IDs remain distinct. Case folding only
+filters candidate spellings and never grants authority by itself; short-name,
+drive and UNC aliases are not expanded. POSIX comparisons remain byte-exact.
+Dot segments, ambiguous Windows components, allowed basenames, link rejection,
+file limits and exact operation identity remain restricted. The host opens the
+verified canonical brief and checks its file ID again before hashing its bytes.
+
+`managerReplacementArtifact.test.ts` uses native temporary files and includes a
+Windows-only drive/separator and component-case cases for both metadata and
+project roots. Both suites run in the existing
+`containment-windows` CI job. Linux execution of the Win32 fixture is source
+coverage, not evidence of an executed Windows handoff.
+
+The preparation prompt still requires SHA-256 values from final file bytes:
+there is no evidence that the reported manager invented a hash, so this fix
+does not change that protocol or accept missing/synthesized hashes. Hashing
+reads buffers, preserving CRLF and non-ASCII bytes; proposal JSON must be valid
+UTF-8 so the sealed string reproduces its exact bytes. Checkpoint errors name
+the array index and category (pointer, file inspection/size, hash format, hash
+mismatch), never the path or brief contents. A mismatch can mean a stale file
+or an incorrect hash; it does not establish which.
+
+The reported error is emitted by `validateManagerArtifact` during preparation,
+before receipt-hash checking, sealing or spawn. `validateSuccessor` later checks
+the parked session identity, settings, grants and readiness; it does not parse
+checkpoint pointers again. An allocated successor ID alone proves no spawn or
+ownership transfer. To classify a remaining remote failure, collect only the
+offending checkpoint index/category, whether root/pointer/realpath differ in
+drive, slash or component case, whether the hash is 64 lowercase hex characters,
+and whether a locally computed digest matches it. Brief contents and full
+private paths are unnecessary.
+
+Recovery verification (2026-09-09, Linux, Node 22.22.2): the original seven-file
+commit was imported as `aba7ad7a`; the three interrupted source/test edits were
+banked exactly in `4242eb42`, with matching binary-diff SHA-256 and the old
+worktree preserved. After the candidate-spelling restriction and native metadata
+coverage were finished, the two artifact suites, service suite, real service
+integration fixture and message suite passed: 59 tests, three native Windows
+cases skipped. Main and renderer typechecks ran sequentially and passed;
+changed TypeScript formatting and `git diff --check` passed. Checks used private
+worktree dependencies, temp/config directories and fixture provider/daemon
+boundaries. Native Windows CI and a real Windows handoff remain unexecuted here;
+the exact remote failed predicate remains unknown. Independent security review
+and manager-controlled delivery remain pending.
+
+### Local security follow-up to `fef68807`
+
+The follow-up branch fast-forwarded from `ac818c86` to the preserved
+`fef68807756a59fa8c2d0e7d14942818304bdf0c`, retaining its ancestry. The source
+delta is confined to `managerReplacementArtifact.ts`: Windows checkpoint paths
+must begin with a drive letter, colon and separator before any candidate
+filesystem access; `handoff.json` now uses open/fstat identity and size checks
+before reading through that descriptor, with returned byte-length checks and
+unconditional descriptor cleanup. UNC, device/extended namespaces,
+root-relative/drive-relative paths and network URL spellings are rejected,
+including slash variants. Existing root/file identity, case, link, alias and
+exact-byte hash validation remains in place.
+
+The two artifact test files add mocked candidate-I/O assertions (including
+volume and parent calls), same-byte proposal replacement and size-change
+regressions, and distinguish proposal descriptors from brief descriptors.
+Every filesystem call in the Win32 fixture is mocked; no SMB request is made.
+Before the fix, the two artifact suites had 13 failing regressions (ten
+namespace spellings and three proposal replacement/size cases), 44 passing
+tests and three Windows skips. Three additional descriptor-read length cases
+were added after that reproduction.
+
+Focused verification on Linux with Node 22.22.2, private worktree dependencies,
+private temp/config directories and fixture provider/daemon boundaries:
+
+| Exact suite under `src/main/services/` | Passed | Skipped |
+| --- | ---: | ---: |
+| `managerReplacementArtifact.test.ts` | 22 | 3 |
+| `managerReplacementArtifact.windows.test.ts` | 38 | 0 |
+| `managerReplacementService.test.ts` | 19 | 0 |
+| `managerReplacement.integration.test.ts` | 1 | 0 |
+| `managerReplacementMessage.test.ts` | 1 | 0 |
+| Total | 81 | 3 |
+
+Main and renderer typechecks, changed TypeScript formatting and
+`git diff --check` passed. The prior 59-versus-57 reports used different suite
+sets; they are not a product defect. This follow-up adds 22 passing cases to
+the preserved five-suite baseline of 59 passes and three Windows skips.
+
+The per-component lstat/realpath walk remains **non-atomic**: ancestor/path
+mutation between filesystem calls is not eliminated by final-file identity
+rebinding. This is a localized repair, not an atomic-path redesign. Native
+Windows CI is wired but has not run here; no real Windows handoff was executed,
+and the original remote failure's exact predicate remains unknown. No primary
+app outputs, config, binaries or daemon state were changed. Independent security
+review should start at the validator and the two artifact suites and inspect
+the exact `fef68807..HEAD` delta before manager-controlled landing.
+
 ## Combined integration for review
 
 Handoff base: `a8bc902e71066dd5ccc78e1cd429c3e7c10df17f`.
