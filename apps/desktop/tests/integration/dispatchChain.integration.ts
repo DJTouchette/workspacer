@@ -967,6 +967,21 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   expect(
     (await call('get_manager_request', { requestId: capture.requestId })).value.userContent,
   ).toEqual(fetched.value.userContent);
+  const genericAsPr = await call('resolve_manager_request', {
+    ...args,
+    intents: [
+      { ...intents[0], references: [{ kind: 'pullRequest', url: 'https://example.com/spec' }] },
+      intents[1],
+    ],
+  });
+  expect(genericAsPr.value).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/PR URL must identify/),
+  });
+  expect(persistedTasks()).toEqual(beforeTasks);
+  expect(
+    (await call('get_manager_request', { requestId: capture.requestId })).value.userContent,
+  ).toEqual(fetched.value.userContent);
   const resolved = await call('resolve_manager_request', args);
   expect(resolved.value.ok).toBe(true);
   expect(resolved.value.tasks).toHaveLength(2);

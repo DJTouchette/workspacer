@@ -746,3 +746,99 @@ for (const content of ['Fix éTASK-1', 'Fix PARENT_TASK-1', 'Fix PARENT-TASK-1',
     expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
   });
 }
+
+// Each row exercises all four wire shapes. In the mismatch row each standalone
+// value is sourced; only combining the URL for 12 with the explicit MR 99 fails.
+for (const url of [
+  'https://github.com/o/r/pull/12',
+  'https://gitlab.com/o/r/-/merge_requests/12',
+  'https://business.visualstudio.com/p/_git/r/pullrequest/12',
+]) {
+  const scenarios = [
+    {
+      source: 'recognized PR',
+      content: `Fix ${url}`,
+      url,
+      number: '12',
+      accepted: [true, true, true, false],
+    },
+    {
+      source: 'ordinary URL',
+      content: 'Read https://example.com/spec/12',
+      url: 'https://example.com/spec/12',
+      number: '12',
+      accepted: [false, false, false, false],
+    },
+    {
+      source: 'original missing',
+      content: 'Fix the issue',
+      url,
+      number: '12',
+      accepted: [false, false, false, false],
+    },
+    {
+      source: 'mismatch',
+      content: `Fix ${url}; MR #99 is separate`,
+      url,
+      number: '99',
+      accepted: [true, true, false, false],
+    },
+  ];
+  for (const scenario of scenarios) {
+    for (const [index, form] of ['URL only', 'number only', 'both', 'neither'].entries()) {
+      it(`PR mapping matrix: ${form} / ${scenario.source} / ${url}`, () => {
+        const f = fixture();
+        const task = f.resolve(f.admitted(), [create()]).tasks[0];
+        f.store.requestTransaction((_requests, tasks) => {
+          tasks[0].links = {
+            references: [{ label: 'Human notes', url: 'https://example.com/human' }],
+          };
+        });
+        const current = f.store.list()[0];
+        const request = f.admitted('accepted', scenario.content);
+        const before = fs.readFileSync(f.file, 'utf8');
+        const reference = {
+          kind: 'pullRequest' as const,
+          ...(form === 'URL only' || form === 'both' ? { url: scenario.url } : {}),
+          ...(form === 'number only' || form === 'both' ? { number: scenario.number } : {}),
+        };
+        const update: RequestIntent = {
+          key: 'update',
+          kind: 'update',
+          cwd: '/project',
+          taskId: task.taskId,
+          expectedTaskRevision: current.revision,
+          title: 'Updated title',
+          reason: 'Original request mapping',
+          references: [reference],
+        };
+        const result = f.resolve(request, [update]);
+        expect(result.ok).toBe(scenario.accepted[index]);
+        if (scenario.accepted[index]) {
+          const { kind: _kind, ...pullRequest } = reference;
+          expect(result.tasks[0].links).toEqual({ ...current.links, pullRequest });
+          expect(f.service.request('manager', request).userContent).toBeUndefined();
+        } else {
+          expect(fs.readFileSync(f.file, 'utf8')).toBe(before);
+          expect(f.service.request('manager', request).userContent).toBe(scenario.content);
+          if (scenario.source === 'ordinary URL' && form === 'URL only') {
+            expect(result.error).toMatch(/PR URL must identify/);
+            const generic = f.resolve(request, [
+              {
+                ...update,
+                references: [{ kind: 'reference', label: 'Specification', url: scenario.url }],
+              },
+            ]);
+            expect(generic.ok).toBe(true);
+            expect(generic.tasks[0].links).toEqual({
+              references: [
+                ...current.links!.references!,
+                { label: 'Specification', url: scenario.url },
+              ],
+            });
+          }
+        }
+      });
+    }
+  }
+}

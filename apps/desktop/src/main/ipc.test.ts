@@ -982,6 +982,67 @@ it('installs the default production bridge and carries preparation and tagged se
     expect(attempts.map((a) => a.status)).toEqual(['rejected', 'accepted']);
     expect(attempts[0].deliveryId).not.toBe(attempts[1].deliveryId);
 
+    const genericText = 'Attach https://example.com/spec/9492';
+    const generic = await api.managerRequestPrepare!('bridge-owner', genericText);
+    if (!generic.available) throw new Error('Preparation unavailable');
+    expect(await api.claudeMessage('bridge-owner', genericText, generic.requestId)).toMatchObject({
+      ok: true,
+      delivery: 'accepted',
+    });
+    const target = store.list()[0];
+    const genericUpdate = {
+      key: 'docs',
+      kind: 'update' as const,
+      cwd: dir,
+      taskId: target.taskId,
+      expectedTaskRevision: target.revision,
+      reason: 'Submitted documentation',
+      title: 'Updated task',
+    };
+    const genericOperation = {
+      op: 'resolveRequest' as const,
+      requestId: generic.requestId,
+      expectedRevision: service.request('bridge-owner', generic.requestId).revision,
+    };
+    const beforeGeneric = fs.readFileSync(filename, 'utf8');
+    expect(
+      service.handle(
+        {
+          ...genericOperation,
+          intents: [
+            {
+              ...genericUpdate,
+              replacePullRequest: true,
+              references: [{ kind: 'pullRequest', url: 'https://example.com/spec/9492' }],
+            },
+          ],
+        },
+        'bridge-owner',
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/PR URL must identify/) });
+    expect(fs.readFileSync(filename, 'utf8')).toBe(beforeGeneric);
+    expect(service.request('bridge-owner', generic.requestId).userContent).toBe(genericText);
+    expect(
+      service.handle(
+        {
+          ...genericOperation,
+          intents: [
+            {
+              ...genericUpdate,
+              references: [
+                { kind: 'reference', label: 'Specification', url: 'https://example.com/spec/9492' },
+              ],
+            },
+          ],
+        },
+        'bridge-owner',
+      ).ok,
+    ).toBe(true);
+    expect(store.list()[0].links).toEqual({
+      ...target.links,
+      references: [{ label: 'Specification', url: 'https://example.com/spec/9492' }],
+    });
+
     const uncertain = await api.managerRequestPrepare!('bridge-owner', body);
     if (!uncertain.available) throw new Error('Preparation unavailable');
     daemon.mockRejectedValue(new Error('Lost acknowledgement'));

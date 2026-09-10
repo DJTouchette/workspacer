@@ -19,3 +19,8 @@ for live attempts, so before/after view equality fails across an awaited MCP
 call even when persisted data did not change. For complete no-mutation assertions,
 read task records through requestTransaction (which clones its return value);
 retain byte-for-byte fixture-file assertions in synchronous resolver tests.
+
+Resolver URL identity validation must run whenever a pullRequest URL is supplied,
+including URL-only mappings. Presence in original text proves source, not PR kind:
+ordinary URLs remain generic references. Keep URL-only, number-only, both and
+neither forms in one provenance matrix to prevent optional-field validation gaps.

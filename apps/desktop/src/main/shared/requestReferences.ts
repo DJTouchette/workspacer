@@ -94,12 +94,17 @@ export function mapRequestReferences(
       if (ref.url && !urls.includes(validateTaskUrl(ref.url)))
         throw new Error('Mapped reference URL must occur in the original submitted request');
       if (ref.kind === 'pullRequest') {
+        const parsed = ref.url ? inferredReference(validateTaskUrl(ref.url)) : undefined;
+        if (ref.url && !parsed)
+          throw new Error(
+            'PR URL must identify a supported original pull/merge request; use a generic reference for other URLs',
+          );
         if (ref.number !== undefined) {
           if (!sourceNumbers.has(ref.number))
             throw new Error(
               'PR number must match an explicit original PR/MR identifier or original PR URL',
             );
-          if (ref.url && inferredReference(validateTaskUrl(ref.url))?.number !== ref.number)
+          if (ref.url && parsed?.number !== ref.number)
             throw new Error('PR URL and number must identify the same original pull request');
         }
         const identity = JSON.stringify(validated.pullRequest);
