@@ -31,6 +31,12 @@ func TestPortableManifestRefusesAliasesAndLimits(t *testing.T) {
 		}
 	}
 	m := fixtureManifest()
+	m.Entries[0].Name = "Reports/a.md"
+	m.Entries = append(m.Entries, Entry{Name: "reports/b.md", Kind: "report", Size: 0, SHA256: Digest(nil)})
+	if m.Validate() == nil {
+		t.Fatal("accepted directory case alias")
+	}
+	m = fixtureManifest()
 	m.Entries[0].Size = FileBytes + 1
 	if m.Validate() == nil {
 		t.Fatal("accepted excessive size")

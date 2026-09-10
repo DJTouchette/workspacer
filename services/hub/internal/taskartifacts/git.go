@@ -163,6 +163,7 @@ func VerifyTree(ctx context.Context, repo, commit string) error {
 	var total int64
 	count := 0
 	seen := map[string]bool{}
+	spelling := map[string]string{}
 	for _, row := range bytes.Split(listing, []byte{0}) {
 		if len(row) == 0 {
 			continue
@@ -196,6 +197,9 @@ func VerifyTree(ctx context.Context, repo, commit string) error {
 			}
 		}
 		key := strings.ToLower(name)
+		if err := recordPortablePath(spelling, name); err != nil {
+			return err
+		}
 		if seen[key] {
 			return fmt.Errorf("code path case collision: %s", name)
 		}

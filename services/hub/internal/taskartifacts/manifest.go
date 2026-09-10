@@ -56,6 +56,19 @@ func ValidName(name string) error {
 
 func Digest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 
+func recordPortablePath(spelling map[string]string, name string) error {
+	parts := strings.Split(name, "/")
+	for i := range parts {
+		prefix := strings.Join(parts[:i+1], "/")
+		key := strings.ToLower(prefix)
+		if prior, ok := spelling[key]; ok && prior != prefix {
+			return fmt.Errorf("path component case collision: %s", name)
+		}
+		spelling[key] = prefix
+	}
+	return nil
+}
+
 func (m Manifest) Validate() error {
 	if m.Version != Version || !ID.MatchString(m.Task) || !ID.MatchString(m.Origin) || !ID.MatchString(m.Producer) {
 		return fmt.Errorf("unsupported manifest version or task ownership")
@@ -73,9 +86,13 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("artifact count exceeds %d", MaxFiles)
 	}
 	seen := map[string]bool{}
+	spelling := map[string]string{}
 	var total int64
 	for _, e := range m.Entries {
 		if err := ValidName(e.Name); err != nil {
+			return err
+		}
+		if err := recordPortablePath(spelling, e.Name); err != nil {
 			return err
 		}
 		key := strings.ToLower(e.Name)
