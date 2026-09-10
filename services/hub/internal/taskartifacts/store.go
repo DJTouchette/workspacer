@@ -2,6 +2,7 @@ package taskartifacts
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -57,11 +58,18 @@ func (s *Store) Write(index int, offset int64, b []byte) error {
 		return fmt.Errorf("invalid staging file")
 	}
 	if offset < st.Size() {
-		old := make([]byte, len(b))
-		if _, err := f.ReadAt(old, offset); err != nil || !bytes.Equal(old, b) {
+		overlap := min(int64(len(b)), st.Size()-offset)
+		old := make([]byte, overlap)
+		if _, err := f.ReadAt(old, offset); err != nil || !bytes.Equal(old, b[:overlap]) {
 			return fmt.Errorf("conflicting chunk retry")
 		}
-		return nil
+		if overlap == int64(len(b)) {
+			return nil
+		}
+		if _, err := f.WriteAt(b[overlap:], offset+overlap); err != nil {
+			return err
+		}
+		return f.Sync()
 	}
 	if offset != st.Size() {
 		return fmt.Errorf("chunk offset mismatch; resume at %d", st.Size())
@@ -124,7 +132,29 @@ func (s *Store) Materialize(dir string) error {
 		if err := dest.MkdirAll(filepath.Dir(e.Name), 0700); err != nil {
 			return err
 		}
-		out, err := dest.OpenFile(e.Name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if existing, err := dest.Open(e.Name); err == nil {
+			info, statErr := existing.Stat()
+			b, readErr := io.ReadAll(io.LimitReader(existing, e.Size+1))
+			existing.Close()
+			if statErr != nil || !info.Mode().IsRegular() || readErr != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
+				return fmt.Errorf("materialized artifact changed: %s", e.Name)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		temporary := fmt.Sprintf(".handoff-%d.partial", i)
+		if info, err := dest.Lstat(temporary); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("unexpected artifact staging type")
+			}
+			if err := dest.Remove(temporary); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		out, err := dest.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}
@@ -133,13 +163,21 @@ func (s *Store) Materialize(dir string) error {
 			out.Close()
 			return err
 		}
-		_, err = io.Copy(out, io.LimitReader(in, e.Size))
+		hash := sha256.New()
+		var written int64
+		written, err = io.Copy(io.MultiWriter(out, hash), io.LimitReader(in, e.Size))
 		in.Close()
+		if err == nil && (written != e.Size || fmt.Sprintf("%x", hash.Sum(nil)) != e.SHA256) {
+			err = fmt.Errorf("artifact changed during materialization")
+		}
 		if err == nil {
 			err = out.Sync()
 		}
 		out.Close()
 		if err != nil {
+			return err
+		}
+		if err := dest.Rename(temporary, e.Name); err != nil {
 			return err
 		}
 	}

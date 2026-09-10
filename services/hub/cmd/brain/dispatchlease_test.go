@@ -36,16 +36,16 @@ func TestDispatchLeaseBindsOriginCwdProviderAndSingleAdmission(t *testing.T) {
 			case "expired":
 				r.remote.m[p.RemoteOrigin.DispatchID].lease.Expires = 1
 			}
-			if r.claimDispatch(p) == nil {
+			if r.claimDispatch(context.Background(), p) == nil {
 				t.Fatal("mismatched remote admission was accepted")
 			}
 		})
 	}
 	r, p := leaseRegistry(t)
-	if err := r.claimDispatch(p); err != nil {
+	if err := r.claimDispatch(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	if r.claimDispatch(p) == nil {
+	if r.claimDispatch(context.Background(), p) == nil {
 		t.Fatal("same dispatch admitted twice")
 	}
 	restored := newRemoteDispatchStore()
@@ -53,7 +53,7 @@ func TestDispatchLeaseBindsOriginCwdProviderAndSingleAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.remote = restored
-	if r.claimDispatch(p) == nil {
+	if r.claimDispatch(context.Background(), p) == nil {
 		t.Fatal("restart made a consumed admission reusable")
 	}
 }
@@ -61,7 +61,7 @@ func TestDispatchLeaseBindsOriginCwdProviderAndSingleAdmission(t *testing.T) {
 func TestDispatchJournalFailureRefusesAdmissionAndPublication(t *testing.T) {
 	r, p := leaseRegistry(t)
 	r.remote.file = filepath.Join(t.TempDir(), "missing", "journal.json")
-	if r.claimDispatch(p) == nil {
+	if r.claimDispatch(context.Background(), p) == nil {
 		t.Fatal("admitted without durable receipt")
 	}
 	if r.remote.record(p.RemoteOrigin.DispatchID, "worker") == nil {

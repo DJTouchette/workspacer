@@ -83,17 +83,29 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 			id, dir := sid, cwd
 			reply = command.Reply
 			mu.Unlock()
-			if command.Kind == "handoff-result" {
-				if err := os.WriteFile(filepath.Join(dir, "implementation.txt"), []byte("result C\n"), 0600); err != nil {
-					t.Error(err)
+			if command.Kind == "handoff-result" || command.Kind == "handoff-scout" {
+				if command.Kind == "handoff-result" {
+					if err := os.WriteFile(filepath.Join(dir, "implementation.txt"), []byte("result C\n"), 0600); err != nil {
+						t.Error(err)
+					}
+					handoffFixtureGit(t, dir, "add", "implementation.txt")
+					handoffFixtureGit(t, dir, "commit", "-m", "workspace fixture result C")
 				}
-				handoffFixtureGit(t, dir, "add", "implementation.txt")
-				handoffFixtureGit(t, dir, "commit", "-m", "workspace fixture result C")
 				reg.remote.mu.Lock()
 				dispatch := reg.remote.bySession[id]
 				reg.remote.mu.Unlock()
 				if err := os.WriteFile(filepath.Join(dir, ".workspacer", "handoffs", dispatch, "implementation.md"), []byte("# Result evidence\nSynthetic provider claim: tests passed.\n"), 0600); err != nil {
 					t.Error(err)
+				}
+				if command.Kind == "handoff-result" {
+					folder := filepath.Join(dir, ".workspacer", "handoffs", dispatch)
+					png, err := os.ReadFile(filepath.Join(folder, "diagram.png"))
+					if err != nil {
+						t.Error(err)
+					}
+					if err := os.WriteFile(filepath.Join(folder, "result.png"), png, 0600); err != nil {
+						t.Error(err)
+					}
 				}
 			}
 			mode := "idle"

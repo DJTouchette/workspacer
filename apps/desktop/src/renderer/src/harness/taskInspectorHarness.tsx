@@ -164,6 +164,11 @@ const ipc = {
             run.state = 'waived';
             run.waiverId = audit.id;
             task.audit = [...(task.audit ?? []), audit];
+          } else if (request.action === 'handoff-disposition') {
+            const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
+            if (!attempt?.handoff)
+              return { ok: false, code: 'ineligible', error: 'No verified handoff' };
+            attempt.handoff.disposition = request.keep ? 'keep' : 'accepted';
           } else {
             task.links = validateTaskLinks(request.links);
             task.audit = [

@@ -533,7 +533,7 @@ func brainGitCwdGuard(method, handler string) Witness {
 // compositionInert is the written record of "considered, and it cannot be half
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
-	"agents.taskHandoff": {Reason: "Transfers only explicitly selected task bytes and exact commits under host-installed repository bindings; no process admission. The separate agents.dispatchPrepare and agents.spawn gates must bind and consume a verified receipt.", Witnesses: []Witness{paramsClassified("cwd")}},
+	"agents.taskHandoff": {Reason: "Transfers only explicitly selected task bytes and exact commits under host-installed repository bindings; cwd must match the configured source repository and never becomes a peer-selected destination. No process admission. The separate agents.dispatchPrepare and agents.spawn gates must bind and consume a verified receipt.", Witnesses: []Witness{paramsClassified("cwd")}},
 	"agents.dispatchPrepare": {
 		Reason:    "Allocates a remote worktree but executes no agent or repository setup hook. Its canonical `cwd` and `remoteOrigin` nonce are validated before allocation; agents.spawn separately requires the same credential and consumes the durable single-use lease. No local workflow identifier or permission grant is accepted from the origin.",
 		Witnesses: []Witness{paramsClassified("cwd", "remoteOrigin")},

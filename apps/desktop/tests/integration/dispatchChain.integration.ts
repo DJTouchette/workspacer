@@ -1494,8 +1494,14 @@ it('handles unknown paired replay idempotently and returns a local task result o
       message: 'Implement using the verified scout evidence. Return the required report.',
       taskSource: {
         binding: ready.handoffBinding,
-        artifacts: [{ name: 'scout.md', kind: 'report' }],
-        outputs: [{ name: 'implementation.md', kind: 'report' }],
+        artifacts: [
+          { name: 'scout.md', kind: 'report' },
+          { name: 'diagram.png', kind: 'image' },
+        ],
+        outputs: [
+          { name: 'implementation.md', kind: 'report' },
+          { name: 'result.png', kind: 'image' },
+        ],
       },
     });
     expect(exact.isError, exact.text).toBe(false);
@@ -1503,8 +1509,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .list()
       .find((r) => r.localSessionId === exact.value.sessionId)!;
     expect(exactRecord.handoff?.state).toBe('prepared');
-    const actualLaunches = await (await fetch(ready.control + '/evidence')).json();
-    const execution = actualLaunches.at(-1);
+    const actualLaunches = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
+      cwd: string;
+    }>;
+    const execution = actualLaunches.at(-1)!;
     expect(
       execFileSync('git', ['-C', execution.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     ).toBe(ready.sourceCommit);
@@ -1533,6 +1541,70 @@ it('handles unknown paired replay idempotently and returns a local task result o
         artifact: 0,
       }).target,
     ).toContain('implementation.md');
+    const imageTarget = history.openTarget({
+      taskId: exact.value.taskId,
+      kind: 'handoff',
+      dispatchId: imported.dispatchId,
+      artifact: 1,
+    }).target;
+    expect(fs.readFileSync(imageTarget)).toEqual(
+      fs.readFileSync(path.join(project, '.workspacer', 'reports', 'diagram.png')),
+    );
+    // Report-only execution return, followed by local implementation under
+    // the same original owner/task, uses the production local spawn route.
+    const scout = await mcpSpawn('session:manager-other', {
+      provider: 'claude',
+      model: route.value.model,
+      role: 'scout',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      parentSessionId: 'manager-other',
+      worktree: true,
+      message: 'Return a scout report without modifying code.',
+      taskSource: {
+        binding: ready.handoffBinding,
+        artifacts: [],
+        outputs: [{ name: 'implementation.md', kind: 'report' }],
+      },
+    });
+    expect(scout.isError, scout.text).toBe(false);
+    const scoutRecord = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === scout.value.sessionId)!;
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'handoff-scout', reply: 'Scout report ready.' }),
+    });
+    await vi.waitFor(() => expect(scoutRecord.handoff?.state).toBe('received'), { timeout: 20000 });
+    const scoutAttempt = history
+      .task(scout.value.taskId)!
+      .attempts.find((a) => a.sessionId === scout.value.sessionId)!;
+    expect(scoutAttempt.handoff?.head).toBe(ready.sourceCommit);
+    const local = await mcpSpawn('session:manager-other', {
+      parentSessionId: 'manager-other',
+      taskId: scout.value.taskId,
+      afterDispatchId: scout.value.dispatchId,
+      stage: 'implement',
+      worktree: true,
+      message: 'Implement using the returned scout evidence.',
+      taskSource: {
+        binding: ready.handoffBinding,
+        artifacts: [{ name: 'implementation.md', kind: 'report' }],
+        outputs: [],
+      },
+    });
+    expect(local.isError, local.text).toBe(false);
+    const localOpts = launch.mock.lastCall![0];
+    expect(
+      execFileSync('git', ['-C', localOpts.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    ).toBe(ready.sourceCommit);
+    const localEvidenceRoot = path.join(localOpts.cwd, '.workspacer', 'handoffs');
+    const localEvidence = path.join(
+      localEvidenceRoot,
+      fs.readdirSync(localEvidenceRoot)[0],
+      'implementation.md',
+    );
+    expect(fs.readFileSync(localEvidence, 'utf8')).toContain('Synthetic provider claim');
     expect(execFileSync('git', ['-C', project, 'status', '--porcelain=v1'])).toEqual(sourceBefore);
     expect(
       execFileSync('git', ['-C', project, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

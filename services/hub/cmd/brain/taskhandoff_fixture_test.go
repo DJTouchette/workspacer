@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"net/http/cgi"
@@ -85,6 +86,13 @@ func configureHandoffChainFixture(t *testing.T, receiver *registry, seed string)
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(reports, "scout.md"), []byte("# Task evidence\nImplement at the selected checkpoint.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1cAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reports, "diagram.png"), png, 0600); err != nil {
 		t.Fatal(err)
 	}
 	binding := taskartifacts.RepositoryBinding{ID: "workspace-fixture-binding", Revision: "1", Repository: source, Remote: remote, RefPrefix: "refs/heads/wks-transfer", Owner: "local-host", Origin: "workspace-fixture-origin", Export: true, Import: true, Cleanup: true, TLSCAFile: ca}
