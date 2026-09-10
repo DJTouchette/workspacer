@@ -8,6 +8,10 @@ on:
         description: Produce the formatting patch without duplicating active test runs
         type: boolean
         default: false
+      integration_only:
+        description: Run the real MCP paired fixture without repeating full regression suites
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -45,11 +49,11 @@ jobs:
         working-directory: apps/desktop
         run: npm run typecheck
       - name: Full desktop regression suites
-        if: ${{ !cancelled() && !inputs.format_only }}
+        if: ${{ !cancelled() && !inputs.format_only && !inputs.integration_only }}
         working-directory: apps/desktop
         run: npm test
       - name: Full hub regression suites
-        if: ${{ !cancelled() && !inputs.format_only }}
+        if: ${{ !cancelled() && !inputs.format_only && !inputs.integration_only }}
         working-directory: services/hub
         run: go test -race -count=1 ./...
       - name: Real MCP and paired workspace fixtures

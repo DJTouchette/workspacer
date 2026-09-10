@@ -1529,6 +1529,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       workflowStepId: 'implement',
       stage: 'implement',
       worktree: true,
+      template: 'ship-task',
       templateParams: {
         task: 'Implement using the verified scout evidence. Return the required report.',
       },
@@ -1601,6 +1602,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       afterDispatchId: imported.dispatchId,
       workflowStepId: 'review',
       stage: 'review',
+      template: 'review-task',
       templateParams: {
         task: 'Review the returned checkpoint locally.',
         handoff: 'Use the host-transferred implementation report.',
