@@ -98,7 +98,10 @@ export function taskOutcomeAccepted(task: DispatchTask): boolean {
 export function taskDependencyState(
   task: DispatchTask,
   tasks: DispatchTask[],
+  visited = new Set<string>(),
 ): 'blocked' | 'ready' | 'cancelled' {
+  if (visited.has(task.taskId)) return 'blocked';
+  const next = new Set(visited).add(task.taskId);
   if (task.cancelled) return 'cancelled';
   if (
     task.sources?.length &&
@@ -111,7 +114,8 @@ export function taskDependencyState(
       dependency &&
       dependency.ownerSessionId === task.ownerSessionId &&
       dependency.projectCwd === task.projectCwd &&
-      taskOutcomeAccepted(dependency)
+      taskOutcomeAccepted(dependency) &&
+      taskDependencyState(dependency, tasks, next) === 'ready'
     );
   })
     ? 'ready'

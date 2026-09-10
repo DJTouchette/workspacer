@@ -49,6 +49,7 @@ export interface ReplacementHost {
     text: string,
     sourceRequest?: import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'],
   ): Promise<{ ok: boolean; mode?: string }>;
+  retryRequest?(target: string, requestId: string): { requestId: string; deliveryId: string } | undefined;
   pause(id: string): Promise<void>;
   close(id: string): Promise<void>;
   kickoff(op: ReplacementRecord): string;
@@ -166,10 +167,14 @@ export class ManagerReplacementService {
         if (!delivery || !['uncertain', 'pending'].includes(delivery.status))
           throw new Error('Delivery is not awaiting resolution');
         const original = delivery;
-        if (original.sourceRequest && request.resolution === 'retry')
-          throw new Error(
-            'Resolve this authoritative inbox request instead. Handoff does not replay captured user requests.',
+        let sourceRequest = original.sourceRequest;
+        if (sourceRequest && request.resolution === 'retry') {
+          sourceRequest = this.host.retryRequest?.(
+            op.committed ? op.successorSessionId : op.sourceSessionId,
+            sourceRequest.requestId,
           );
+          if (!sourceRequest) throw new Error('Only a definitively rejected inbox delivery can be retried. Resolve unknown delivery through the inbox without replay.');
+        }
         let nextId = original.id;
         this.state.change(op.operationId, (o) => {
           const d = o.deliveries.find((d) => d.id === original.id)!;
@@ -188,6 +193,7 @@ export class ManagerReplacementService {
               id: nextId,
               kind: d.kind,
               text: d.text,
+              sourceRequest,
               status: 'pending',
               error: `Explicit retry of ${d.id}; may duplicate work`,
             });

@@ -392,3 +392,36 @@ it('links independent intents in one message using host-created concrete task ID
   );
   expect(f.store.list().every((t) => !t.attempts.length)).toBe(true);
 });
+
+it('reblocks downstream publication when accepted evidence further up its dependency chain is revoked', () => {
+  const f = fixture();
+  const first = f.resolve(f.admitted(), [create('fixes')]).tasks[0];
+  const second = f.resolve(f.admitted(), [
+    { ...create('prepare'), kind: 'followUp', dependsOn: [first.taskId] },
+  ]).tasks[0];
+  const third = f.resolve(f.admitted(), [
+    { ...create('publish'), kind: 'followUp', dependsOn: [second.taskId] },
+  ]).tasks[0];
+  for (const task of [first, second]) {
+    f.store.accept({
+      owner,
+      projectCwd: '/project',
+      executionCwd: '/project',
+      taskId: task.taskId,
+      workflowStepId: 'implement',
+      sessionId: task.title,
+    });
+    f.store.validated(task.title, 'valid', undefined, { artifact: task.title });
+    expect(f.service.handle({
+      op: 'acceptTaskOutcome',
+      taskId: task.taskId,
+      cwd: '/project',
+      expectedTaskRevision: f.store.task(task.taskId)!.revision,
+      reason: 'Inspected the recorded artifact',
+    }, 'manager').ok).toBe(true);
+  }
+  expect(taskDependencyState(third, f.store.list())).toBe('ready');
+  f.store.validated(first.title, 'invalid');
+  expect(taskDependencyState(third, f.store.list())).toBe('blocked');
+  expect(f.store.task(third.taskId)!.attempts).toEqual([]);
+});

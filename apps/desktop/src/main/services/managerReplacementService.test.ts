@@ -502,3 +502,43 @@ describe('host-owned manager replacement transaction', () => {
     expect(f.host.spawn).not.toHaveBeenCalled();
   });
 });
+
+it('keeps captured handoff content only in the inbox and retries with a new attempt under the same logical request', async () => {
+  const f = fixture();
+  const send = f.host.send;
+  f.host.send = async (target, text, source) => {
+    if (source?.deliveryId === 'attempt-1') throw new ManagerDeliveryRejected(409);
+    return send(target, text, source);
+  };
+  const id = await f.start();
+  f.state.holdMessage('old', 'Private original request', [], {
+    requestId: 'logical-request',
+    deliveryId: 'attempt-1',
+  });
+  const held = f.state.get(id).deliveries.at(-1)!;
+  expect(held.text).toBe('');
+  await f.bind(id);
+  const count = f.state.get(id).deliveries.length;
+  f.host.retryRequest = () => undefined;
+  const refused = await f.service.request({
+    action: 'resolve-delivery', operationId: id, deliveryId: held.id,
+    resolution: 'retry', acknowledgeDuplicateRisk: true,
+  });
+  expect(refused.error).toMatch(/definitively rejected/);
+  expect(f.state.get(id).deliveries).toHaveLength(count);
+  f.host.retryRequest = (target, requestId) => {
+    expect(target).toBe(f.state.get(id).successorSessionId);
+    expect(requestId).toBe('logical-request');
+    return { requestId, deliveryId: 'attempt-2' };
+  };
+  await f.service.request({
+    action: 'resolve-delivery', operationId: id, deliveryId: held.id,
+    resolution: 'retry', acknowledgeDuplicateRisk: true,
+  });
+  await f.service.idle(id);
+  const retry = f.state.get(id).deliveries.find((d) => d.sourceRequest?.deliveryId === 'attempt-2')!;
+  expect(retry.id).not.toBe(held.id);
+  expect(retry.sourceRequest?.requestId).toBe('logical-request');
+  expect(retry.status).toBe('accepted');
+  expect(retry.text).toBe('');
+});

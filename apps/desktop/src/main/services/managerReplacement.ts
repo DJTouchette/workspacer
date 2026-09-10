@@ -14,6 +14,7 @@ import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { supervisorNudge } from './supervisorNudge';
 import { spawnManagedAgent } from './managedSpawn';
 import { managerReplacementState, type ManagerLaunch } from './managerReplacementState';
+import { managerRequests } from './managerRequestService';
 import { ManagerReplacementService } from './managerReplacementService';
 import { sessionFacadeGrantFingerprint, revokeSessionFacadeTokens } from './remoteTokens';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
@@ -239,6 +240,12 @@ export const managerReplacementService = new ManagerReplacementService(managerRe
   },
   bound: (paneId, id) => claudemonSessionClient.attachedSession(paneId) === id,
   send: (id, text, sourceRequest) => claudemonSessionClient.messageDirect(id, text, sourceRequest),
+  retryRequest: (target, requestId) => {
+    const inbox = managerRequests();
+    if (inbox.request(target, requestId).delivery !== 'rejected') return;
+    const next = inbox.beginDelivery(target, requestId);
+    return next ? { requestId, deliveryId: next.deliveryId } : undefined;
+  },
   pause: (id) => claudemonSessionClient.signal(id, 'SIGINT'),
   async close(id) {
     const wire = await claudemonSessionClient.getSession(id);
