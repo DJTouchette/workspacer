@@ -191,6 +191,17 @@ func TestHandoffHTTPSRoundTripAndRestart(t *testing.T) {
 				t.Fatal("missing required evidence admitted")
 			}
 			must(target, binding.Owner, "write", map[string]any{"direction": "input", "index": 0, "data": input})
+			ref, _ := binding.Ref(task, "input")
+			older := handoffFixtureGit(t, source, "rev-parse", "HEAD^")
+			if _, err := binding.GitRemote(ctx, source, "push", "--force", "--", remote, older+":"+ref); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := call(target, binding.Owner, "prepare", nil); err == nil {
+				t.Fatal("moved source ref admitted wrong checkpoint")
+			}
+			if _, err := binding.GitRemote(ctx, source, "push", "--force", "--", remote, base+":"+ref); err != nil {
+				t.Fatal(err)
+			}
 			// Reconstructed registry reads the durable transfer receipt and bytes.
 			target = &registry{handoffRoot: target.handoffRoot}
 			prepared := must(target, binding.Owner, "prepare", nil)
