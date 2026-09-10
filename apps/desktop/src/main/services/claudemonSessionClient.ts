@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { ManagerDeliveryRejected } from '../shared/managerReplacement';
 import { managerReplacementState } from './managerReplacementState';
 import { managerRequests } from './managerRequestService';
+import { buildManagerKickoff } from '../shared/managerDoctrine';
 type SourceRequest = import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'];
 /**
  * Main-process proxy between the renderer and the claudemon daemon.
@@ -631,6 +632,13 @@ class ClaudemonSessionClient {
       if (attempt.status === 'accepted') return { ok: true };
       if (attempt.status === 'unknown') throw new Error('Unknown request delivery must not replay');
       if (r.intents) return { ok: true, mode: 'resolved-inbox' };
+      if (r.userContent === undefined) throw new Error('Unresolved request content unavailable');
+      // The handoff journal stores references only, so resolving an inbox
+      // request does not leave another private copy of its original content.
+      if (!text) {
+        const { configService } = require('./configService') as typeof import('./configService');
+        text = r.bootstrap ? buildManagerKickoff(r.userContent, !!configService.getConfig().agents?.fleetFullAccess) : r.userContent;
+      }
       managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'unknown');
     }
     try {

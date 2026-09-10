@@ -280,7 +280,7 @@ export class ManagerReplacementService {
         deliveries: (this.host.inFlightMessages?.(sourceSessionId) ?? []).map((frame) => ({
           id: frame.id,
           kind: 'message',
-          text: frame.text,
+          text: frame.sourceRequest ? '' : frame.text,
           sourceRequest: frame.sourceRequest,
           status: 'sending',
         })),

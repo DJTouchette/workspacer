@@ -457,7 +457,7 @@ function TaskDetails({
           {task.ownerLabel === task.ownerSessionId ? 'Manager' : task.ownerLabel} ·{' '}
           {folderName(task.projectCwd)}
         </div>
-        {!!task.sources?.length && <div style={{ ...meta, marginTop: 4 }}>Source: {task.sources.at(-1)!.label}</div>}
+        {!!task.sources?.length && <div style={{ ...meta, marginTop: 4 }}>Source: {task.sources.at(-1)!.label}{task.sources.at(-1)!.delivery === 'rejected' ? ' · delivery rejected' : task.sources.at(-1)!.delivery === 'unknown' ? ' · chat delivery unknown' : ''}</div>}
         {(task.cancelled || !!task.dependsOn?.length) && <div style={{ ...meta, marginTop: 4 }}>{taskDependencyState(task, tasks) === 'ready' ? 'Ready for manager decision' : task.cancelled ? 'Cancelled · workers unchanged' : 'Waiting for accepted evidence'}</div>}
         {task.dependsOn?.map((id) => {
           const dependency = tasks.find((t) => t.taskId === id && t.ownerSessionId === task.ownerSessionId && t.projectCwd === task.projectCwd);
