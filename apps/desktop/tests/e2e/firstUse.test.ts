@@ -428,7 +428,9 @@ test('Fleet Manager failure retains the ask and succeeds on retry', async ({ pag
     transport: 'stream',
   });
   expect(spawns[1].args[0].message).toBeUndefined();
-  await expect.poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length).toBe(1);
+  await expect
+    .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)
+    .toBe(1);
   const history = await calls(page);
   const prepared = history.filter((c: any) => c.method === 'managerRequestPrepare');
   const delivered = history.filter((c: any) => c.method === 'claudeMessage');
@@ -440,7 +442,12 @@ test('Fleet Manager failure retains the ask and succeeds on retry', async ({ pag
   expect(delivered[0].args[1].split('Coordinate my first task')).toHaveLength(2);
   expect(history.indexOf(prepared[0])).toBeLessThan(history.indexOf(delivered[0]));
   expect(await page.evaluate(() => (window as any).firstUse.requests())).toEqual([
-    expect.objectContaining({ requestId: prepared[0].args[3], owner: delivered[0].args[0], text: 'Coordinate my first task', delivery: 'accepted' }),
+    expect.objectContaining({
+      requestId: prepared[0].args[3],
+      owner: delivered[0].args[0],
+      text: 'Coordinate my first task',
+      delivery: 'accepted',
+    }),
   ]);
   expect(spawns[1].args[0].skipPermissions).not.toBe(true);
 });

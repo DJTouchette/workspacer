@@ -5,6 +5,7 @@ import type {
 /** Isolated workflow fixture: every backend action is mocked; no live agents or ports. */
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
+import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '../App.css';
 import { DEFAULT_CONFIG } from '../hooks/configDefaults';
 import type { AgentWorkspace } from '../types/pane';
@@ -52,6 +53,28 @@ let initialAgents = [
   makeAgent('offline', false, 'offline-peer'),
 ];
 const params = new URLSearchParams(location.search);
+let releaseFontRelayouts = () => {};
+let deferredFontRelayouts = 0;
+if (params.get('fontRetirementProbe') === '1') {
+  // Hold the real addon's internal await, not the pane's font loader. This
+  // deterministically retires a terminal between relayout's guard and options
+  // access, the window seen in the hosted handoff page error.
+  const ready = document.fonts.ready;
+  const gate = new Promise<FontFaceSet>((resolve) => {
+    releaseFontRelayouts = () => resolve(document.fonts);
+  });
+  let insideRelayout = false;
+  const relayout = WebFontsAddon.prototype.relayout;
+  WebFontsAddon.prototype.relayout = function () {
+    insideRelayout = true;
+    try { return relayout.call(this); }
+    finally { insideRelayout = false; }
+  };
+  Object.defineProperty(document.fonts, 'ready', { configurable: true, get() {
+    if (insideRelayout) { deferredFontRelayouts++; return gate; }
+    return ready;
+  } });
+}
 if (params.get('fleet') === 'few') initialAgents = initialAgents.slice(0, 2);
 if (params.get('fleet') === 'empty') initialAgents = [];
 if (params.get('fleet') === 'busy')
@@ -243,9 +266,10 @@ const record = async (method: string, ...args: unknown[]) => {
     platform: 'linux',
     // These pre-inbox fleet cases deliberately exercise the legacy/missing
     // capability path. Modern capture is covered by firstUse and the real bridge.
-    managerRequestPrepare: params.get('capture') === 'remote'
-      ? async () => ({ available: false, reason: 'Remote request capture unavailable' })
-      : undefined,
+    managerRequestPrepare:
+      params.get('capture') === 'remote'
+        ? async () => ({ available: false, reason: 'Remote request capture unavailable' })
+        : undefined,
     managerReplacement: replacementRequest,
     getConfig: async () => config,
     reloadConfig: async () => config,
@@ -342,6 +366,8 @@ function Harness() {
   }, []);
   useEffect(() => {
     (window as any).fleetHarness = {
+      releaseFontRelayouts,
+      fontRelayouts: () => deferredFontRelayouts,
       calls,
       sendMode: (mode: typeof sendMode) => {
         sendMode = mode;

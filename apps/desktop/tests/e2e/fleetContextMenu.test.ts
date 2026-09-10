@@ -236,8 +236,16 @@ for (const width of [360, 1280]) {
     await card('manager').getByRole('textbox').fill('Only for the manager');
     await card('manager').getByRole('textbox').press('Enter');
     await expect(card('manager').getByRole('textbox')).toHaveValue('');
-    await expect(card('manager').locator('p').filter({ hasText: /^Only for the manager$/ })).toHaveCount(1);
-    await expect(card('manager').locator('p').filter({ hasText: /^Only for the manager$/ })).toBeVisible();
+    await expect(
+      card('manager')
+        .locator('p')
+        .filter({ hasText: /^Only for the manager$/ }),
+    ).toHaveCount(1);
+    await expect(
+      card('manager')
+        .locator('p')
+        .filter({ hasText: /^Only for the manager$/ }),
+    ).toBeVisible();
     await expect(worker.getByText('Only for the manager', { exact: true })).toHaveCount(0);
     const calls = await page.evaluate(() => (window as any).fleetHarness.calls);
     expect(calls).toEqual([

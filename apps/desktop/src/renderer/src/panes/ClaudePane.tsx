@@ -1426,16 +1426,23 @@ export const useClaudePaneModel = ({
               if (composerRevision.current === draftRevision)
                 requestRetry.current = { requestId: capture.requestId, text: fullMessage };
               optimisticTurn.requestId = capture.requestId;
-              setOptimisticMessages((prev) => prev.filter((turn) =>
-                turn === optimisticTurn || turn.requestId !== capture.requestId));
+              setOptimisticMessages((prev) =>
+                prev.filter(
+                  (turn) => turn === optimisticTurn || turn.requestId !== capture.requestId,
+                ),
+              );
               const res = await window.electronAPI.claudeMessage(
                 messageSessionId,
                 fullMessage,
                 capture.requestId,
               );
-              if (res.requestId !== capture.requestId ||
-                  !['pending', 'accepted', 'rejected', 'unknown'].includes(res.delivery ?? ''))
-                throw new Error('Request delivery acknowledgement did not preserve its identity/status');
+              if (
+                res.requestId !== capture.requestId ||
+                !['pending', 'accepted', 'rejected', 'unknown'].includes(res.delivery ?? '')
+              )
+                throw new Error(
+                  'Request delivery acknowledgement did not preserve its identity/status',
+                );
               if (res.delivery === 'unknown') {
                 setRequestCaptureStatus(
                   'Saved in request inbox. Chat delivery is unknown; it will not be resent. Your manager can resolve it from the inbox.',
@@ -1445,7 +1452,8 @@ export const useClaudePaneModel = ({
                 return { ok: false, error: 'Saved in inbox; chat delivery unknown' };
               }
               if (res.ok && ['pending', 'accepted'].includes(res.delivery!)) {
-                if (requestRetry.current?.requestId === capture.requestId) requestRetry.current = null;
+                if (requestRetry.current?.requestId === capture.requestId)
+                  requestRetry.current = null;
                 setRequestCaptureStatus(
                   res.delivery === 'pending'
                     ? 'Request saved; waiting for manager handoff delivery.'
@@ -1454,7 +1462,8 @@ export const useClaudePaneModel = ({
                 releaseDelivered();
                 return { ok: true };
               }
-              if (res.delivery !== 'rejected') throw new Error('Inconsistent request delivery acknowledgement');
+              if (res.delivery !== 'rejected')
+                throw new Error('Inconsistent request delivery acknowledgement');
               setRequestCaptureStatus(
                 'Chat delivery rejected. This request is not eligible for new task capture; retry keeps the same request.',
               );

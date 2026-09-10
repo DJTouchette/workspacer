@@ -39,8 +39,8 @@ test.afterAll(async () => {
   }
   if (cache) fs.rmSync(cache, { recursive: true, force: true });
 });
-async function open(page: import('@playwright/test').Page, mode: string) {
-  await page.goto(`${base}?handoff=${mode}`);
+async function open(page: import('@playwright/test').Page, mode: string, fontProbe = false) {
+  await page.goto(`${base}?handoff=${mode}${fontProbe ? '&fontRetirementProbe=1' : ''}`);
   await page.waitForFunction(() => !!(window as any).fleetHarness);
   await page.evaluate(() => (window as any).fleetHarness.pilot());
   await expect(
@@ -59,7 +59,7 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
     errors.push(e.stack ?? e.message);
     console.error('Handoff page error:', e.stack ?? e.message);
   });
-  await open(page, 'happy');
+  await open(page, 'happy', true);
   const button = page
     .getByTitle(
       'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
@@ -95,6 +95,11 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
   await expect(
     page.getByText('Fresh manager context; pending decisions retained.').filter({ visible: true }),
   ).toBeVisible();
+  await page.evaluate(async () => {
+    (window as any).fleetHarness.releaseFontRelayouts();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  });
+  expect(await page.evaluate(() => (window as any).fleetHarness.calls.filter((c: any) => c.method === 'message'))).toEqual([]);
   await page.reload();
   await page.waitForFunction(() => !!(window as any).fleetHarness);
   await page.evaluate(() => (window as any).fleetHarness.pilot());

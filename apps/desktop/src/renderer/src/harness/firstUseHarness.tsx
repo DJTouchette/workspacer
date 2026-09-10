@@ -29,7 +29,16 @@ const configListeners = new Set<(config: any) => void>();
 let layout: any = null;
 let sequence = 0;
 const captureMode = params.get('capture') ?? 'default';
-const requests = new Map<string, { requestId: string; owner: string; text: string; bootstrap: boolean; delivery: 'pending' | 'accepted' }>();
+const requests = new Map<
+  string,
+  {
+    requestId: string;
+    owner: string;
+    text: string;
+    bootstrap: boolean;
+    delivery: 'pending' | 'accepted';
+  }
+>();
 function merge(target: any, patch: any): any {
   for (const [key, value] of Object.entries(patch)) {
     target[key] =
@@ -47,14 +56,17 @@ function emit(id: string) {
 }
 const api = {
   platform: 'linux',
-  managerRequestPrepare: ['legacy', 'missing'].includes(captureMode) ? undefined : async (owner: string, text: string, bootstrap = false) => {
-    if (captureMode === 'remote') return { available: false, reason: 'Remote request capture unavailable' };
-    if (!snapshots[owner]) throw new Error('Unknown request owner');
-    const requestId = crypto.randomUUID();
-    requests.set(requestId, { requestId, owner, text, bootstrap, delivery: 'pending' });
-    record('managerRequestPrepare', owner, text, bootstrap, requestId);
-    return { available: true, requestId, delivery: 'pending' };
-  },
+  managerRequestPrepare: ['legacy', 'missing'].includes(captureMode)
+    ? undefined
+    : async (owner: string, text: string, bootstrap = false) => {
+        if (captureMode === 'remote')
+          return { available: false, reason: 'Remote request capture unavailable' };
+        if (!snapshots[owner]) throw new Error('Unknown request owner');
+        const requestId = crypto.randomUUID();
+        requests.set(requestId, { requestId, owner, text, bootstrap, delivery: 'pending' });
+        record('managerRequestPrepare', owner, text, bootstrap, requestId);
+        return { available: true, requestId, delivery: 'pending' };
+      },
   onSystemNotice: (fn: (notice: any) => void) => {
     noticeListeners.add(fn);
     return () => noticeListeners.delete(fn);
