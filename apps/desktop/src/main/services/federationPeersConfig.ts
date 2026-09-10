@@ -36,6 +36,21 @@ export interface FederationPeerEntry {
   name: string;
   url: string;
   token?: string;
+  /**
+   * Is this linked machine an enabled WORKER EXECUTION TARGET?
+   *
+   * TWIN: federation.Peer.Dispatch (services/hub/internal/federation/federation.go),
+   * which is what actually reads it. Deliberately a separate bit from being
+   * linked: linking means "show me its fleet and let me act on its cards", and
+   * it must not silently also mean "agents over there may open a return channel
+   * that injects turns into my managers' conversations". A peer becomes a
+   * dispatch target because the operator ticked it, machine by machine — see
+   * docs/remote-worker-dispatch.md.
+   *
+   * Absent = false, which is the right reading for every peers.json written
+   * before the field existed.
+   */
+  dispatch?: boolean;
 }
 
 /** What the renderer sees: the token never crosses, only its presence. */
@@ -43,6 +58,7 @@ export interface RedactedFederationPeer {
   name: string;
   url: string;
   hasToken: boolean;
+  dispatch: boolean;
 }
 
 export type SavePeersResult = { ok: true } | { ok: false; error: string };
@@ -85,6 +101,7 @@ function readStoredPeers(): FederationPeerEntry[] {
     if (typeof r.name !== 'string' || typeof r.url !== 'string') continue;
     const entry: FederationPeerEntry = { name: r.name.trim(), url: r.url.trim() };
     if (typeof r.token === 'string' && r.token) entry.token = r.token;
+    if (r.dispatch === true) entry.dispatch = true;
     out.push(entry);
   }
   return out;
@@ -92,7 +109,12 @@ function readStoredPeers(): FederationPeerEntry[] {
 
 /** The read side of the IPC contract: configured peers, tokens redacted. */
 export function readRedactedPeers(): RedactedFederationPeer[] {
-  return readStoredPeers().map((p) => ({ name: p.name, url: p.url, hasToken: !!p.token }));
+  return readStoredPeers().map((p) => ({
+    name: p.name,
+    url: p.url,
+    hasToken: !!p.token,
+    dispatch: p.dispatch === true,
+  }));
 }
 
 /**
@@ -104,10 +126,10 @@ export function readRedactedPeers(): RedactedFederationPeer[] {
 function normalizePeers(
   peers: unknown,
 ):
-  | { ok: true; peers: Array<{ name: string; url: string; token?: string }> }
+  | { ok: true; peers: Array<{ name: string; url: string; token?: string; dispatch: boolean }> }
   | { ok: false; error: string } {
   if (!Array.isArray(peers)) return { ok: false, error: 'peers must be an array' };
-  const out: Array<{ name: string; url: string; token?: string }> = [];
+  const out: Array<{ name: string; url: string; token?: string; dispatch: boolean }> = [];
   const seen = new Set<string>();
   for (const item of peers) {
     if (!item || typeof item !== 'object') {
@@ -128,7 +150,15 @@ function normalizePeers(
     if (r.token !== undefined && typeof r.token !== 'string') {
       return { ok: false, error: `peer "${name}": token must be a string` };
     }
-    const entry: { name: string; url: string; token?: string } = { name, url };
+    // Unlike `token`, `dispatch` has NO keep-what-is-stored semantics: it is
+    // not a secret, the renderer always sees its true value, and an omitted
+    // flag on a save is an operator turning the target OFF. A three-state
+    // merge here would make "untick and save" silently do nothing.
+    const entry: { name: string; url: string; token?: string; dispatch: boolean } = {
+      name,
+      url,
+      dispatch: r.dispatch === true,
+    };
     if (typeof r.token === 'string') {
       // An explicit token replaces; an explicit empty string clears. Only
       // `undefined` (property left absent here) means "keep what's stored".
@@ -155,6 +185,7 @@ export async function savePeersConfig(peersInput: unknown): Promise<SavePeersRes
     // stored token for this peer name.
     const token = 'token' in p ? p.token : storedByName.get(p.name)?.token;
     if (token) entry.token = token;
+    if (p.dispatch) entry.dispatch = true;
     return entry;
   });
 

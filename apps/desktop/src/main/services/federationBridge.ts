@@ -49,6 +49,12 @@ import { subscribeHubEvents, subscribeHubConnected, callHub, type HubEvent } fro
 import { claudeSessionStore, type RemoteSnapshotWire } from './claudeSessionStore';
 import type { ConversationItemWire } from './sessionStore/conversationApplier';
 import type { FederationPeerInfo } from '../shared/ipcTypes';
+import {
+  remoteDispatchRegistry,
+  sanitizeRemoteEntry,
+  type RemoteDispatchRecord,
+} from './remoteDispatchRegistry';
+import { supervisorNudge } from './supervisorNudge';
 
 const peers = new Map<string, FederationPeerInfo>();
 let unsubscribe: (() => void) | null = null;
@@ -142,8 +148,50 @@ function markConnected(name: string): void {
   peers.set(name, p);
 }
 
+/**
+ * Reconcile the dispatches we still believe are running on a peer, once its
+ * link is back.
+ *
+ * NOT A POLL, and the distinction is the design. This runs on the CONNECTED
+ * EDGE only — the same edge that reseeds the peer's sessions — and asks the
+ * peer to RE-PUBLISH the terminal update it already composed
+ * (`agents.dispatchReplay`). A replay of something that did arrive is deduped
+ * by seq into a no-op; a dispatch the peer no longer knows (it restarted, and
+ * the worker went with it) is tombstoned here rather than waited on forever,
+ * because a lost dispatch an operator can SEE is recoverable and one that stays
+ * silently pending is not.
+ *
+ * Failures are swallowed per dispatch: a peer too old to answer the method, or
+ * a link that flapped again, simply leaves the record open for the next
+ * connected edge.
+ */
+async function reconcileDispatches(name: string): Promise<void> {
+  const open: RemoteDispatchRecord[] = remoteDispatchRegistry.openForPeer(name);
+  for (const record of open) {
+    try {
+      const res = await callHub<{ state?: string }>(`hub:${name}/agents.dispatchReplay`, {
+        dispatchId: record.dispatchId,
+      });
+      if (res?.state === 'unknown') {
+        remoteDispatchRegistry.markLost(
+          record.dispatchId,
+          `the machine "${name}" no longer has a record of this dispatch — it most likely restarted, taking the worker with it`,
+        );
+      }
+      // 'running' and 'replayed' both mean "keep waiting": a replayed update
+      // arrives on the event channel like any other.
+    } catch (err) {
+      console.warn(
+        `[dispatch] reconcile of ${record.dispatchId} with peer "${name}" failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
 /** Pull the peer's full session list and replace that hub's remote sessions. */
 async function seedPeer(name: string): Promise<void> {
+  void reconcileDispatches(name);
   try {
     const snaps = await callHub<RemoteSnapshotWire[]>(`hub:${name}/sessions.snapshots`, {});
     claudeSessionStore.reseedRemoteSessions(name, Array.isArray(snaps) ? snaps : []);
@@ -199,6 +247,28 @@ async function refreshPeers(): Promise<void> {
 }
 
 function handleEvent(ev: HubEvent): void {
+  // REMOTE WORKER DISPATCH, origin side (remoteDispatchRegistry.ts). These
+  // three are published by OUR OWN hub's router when it stamps provenance onto
+  // an outbound federated agents.spawn, so they are deliberately handled BEFORE
+  // the `ev.hub` guard below: they are local events about a remote dispatch,
+  // not remote events.
+  if (
+    ev.type === 'agent.dispatch.opened' ||
+    ev.type === 'agent.dispatch.registered' ||
+    ev.type === 'agent.dispatch.failed'
+  ) {
+    // A HUB-STAMPED copy of one of these came from a PEER's router describing
+    // ITS dispatches to somewhere else. It is none of our business and must
+    // never open a record here.
+    if (ev.hub) return;
+    const d = (ev.data ?? {}) as Record<string, unknown>;
+    if (ev.type === 'agent.dispatch.opened') remoteDispatchRegistry.open(d);
+    else if (ev.type === 'agent.dispatch.registered')
+      remoteDispatchRegistry.attachSession(d.dispatchId, d.sessionId);
+    else remoteDispatchRegistry.fail(d.dispatchId, d.error);
+    return;
+  }
+
   if (ev.type === 'hub.peer.connected' || ev.type === 'hub.peer.disconnected') {
     const data = (ev.data ?? {}) as { peer?: string; lastSeen?: string };
     const name = data.peer;
@@ -229,6 +299,32 @@ function handleEvent(ev: HubEvent): void {
     void seedPeer(hub);
   } else {
     known.lastSeen = Date.now();
+  }
+
+  if (ev.type === 'agent.dispatch.update') {
+    // The return channel. `hub` is the stamp OUR link applied from OUR
+    // peers.json — the one part of this message we know rather than believe —
+    // and it is the registry's first check.
+    const outcome = remoteDispatchRegistry.accept(hub, ev.data);
+    if (!outcome.ok) {
+      // Every rejection is logged with its reason and NOT delivered. `duplicate`
+      // is the ordinary one (a reconnect replay doing its job) and is quiet;
+      // the rest are worth seeing, because each names a real condition — a
+      // forged or misdirected callback, a peer that outlived our record, a
+      // manager that ended while its worker ran.
+      if (outcome.reason !== 'duplicate') {
+        console.warn(`[dispatch] update from hub "${hub}" refused: ${outcome.reason}`);
+      }
+      return;
+    }
+    supervisorNudge.deliverRemote(
+      outcome.parentSessionId,
+      outcome.update.kind,
+      // Peer-authored text becomes a LINE of a parsed bullet. Flatten and cap
+      // it at the machine boundary — see sanitizeRemoteEntry.
+      sanitizeRemoteEntry(outcome.update.entry),
+    );
+    return;
   }
 
   if (ev.type === 'agent.snapshot') {

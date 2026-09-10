@@ -41,6 +41,8 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
+import { listDispatchTargets } from './dispatchTargets';
+import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
 import { agentNotifier } from './agentNotifier';
 import { appIconPath } from '../lib/appIcon';
@@ -2415,6 +2417,38 @@ export function registerHubCapabilities(): void {
           `its sessionId as fromSessionId to adopt_workers. Adopting the wrong group re-points another manager's ` +
           `workers onto you, so do not guess between two candidates: read a worker of each first.`
         : 'Nothing is orphaned here: every live agent either has a live parent or was never dispatched by one.',
+    };
+  });
+
+  // ── Remote worker dispatch: DISCOVERY ─────────────────────────────────
+  //
+  // The read a Fleet Manager makes before it offloads a step to a linked
+  // machine: which machines the operator has ENABLED as worker targets, whether
+  // each can actually execute work and report back right now, which harnesses
+  // are signed in ON THAT MACHINE, and which absolute directories on ITS
+  // filesystem a worker may be pointed at. See services/dispatchTargets.ts for
+  // why every one of those is measured there rather than inferred here.
+  //
+  // OPERATOR-ONLY by the same construction as agents.orphans: `fleet.*` matches
+  // no scoped tier's exact-name allowlist, so a view scout or a phone token
+  // cannot reach it. It discloses a peer NAME, a host, a connected bit, provider
+  // readiness and directories — never the peer's bearer token, which is redacted
+  // out of peers.json on every read (federationPeersConfig) and never touches
+  // this path.
+  registerCapability('fleet.dispatchTargets', () => listDispatchTargets());
+
+  // The operator's record of what has been sent where. It answers the question
+  // a cross-machine dispatch makes possible and nothing else could: "what did I
+  // put on that machine, and did it come back?" Purely a read of this host's own
+  // records — no peer is contacted, nothing is started or cancelled.
+  registerCapability('fleet.dispatches', () => {
+    const records = remoteDispatchRegistry.list();
+    const open = records.filter((r) => r.state === 'open');
+    return {
+      dispatches: records,
+      note: open.length
+        ? `${open.length} dispatch(es) are still running on a linked machine. You do not need to poll them — their progress, blocks and final result arrive as ordinary fleet wakes.`
+        : 'Nothing is currently running on a linked machine.',
     };
   });
 

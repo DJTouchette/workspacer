@@ -74,6 +74,11 @@ type FinishedWorker = Pick<ClaudeSessionState, 'sessionId'> &
     >
   >;
 
+/** The wake kinds a remote dispatch can produce. A strict subset of
+ *  FleetMessageKind: `catch-up` is this machine's own backstop and `threshold`
+ *  is armed where the watcher lives, so neither crosses a hub boundary. */
+export type RemoteWakeKind = 'worker-finished' | 'worker-escalated' | 'blocked' | 'progress';
+
 interface PendingFinish {
   timer: NodeJS.Timeout;
   /** Scheduled entry + the live session it was built from, per worker id. */
@@ -135,6 +140,11 @@ class SupervisorNudge {
    * doesn't retain an entry per session for the process lifetime.
    */
   private lastReportedReply = new Map<string, string>();
+  /** Coalesce windows for REMOTE dispatch callbacks, keyed by
+   *  `${manager}\u0000${kind}` — see deliverRemote. Kept apart from the local
+   *  maps because nothing about a remote entry needs live re-verification here:
+   *  the executing machine already did it against the session it can see. */
+  private pendingRemote = new Map<string, PendingNudge>();
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
@@ -612,6 +622,65 @@ class SupervisorNudge {
           managerReplacementState.recordSignature(entry.sessionId, signature);
         }
       }
+    }
+  }
+
+  /**
+   * REMOTE WORKER DISPATCH: deliver one callback from a worker executing on a
+   * linked machine, as an ordinary fleet wake in this manager's conversation.
+   *
+   * ADMISSION IS NOT THIS METHOD'S JOB. By the time anything reaches here,
+   * remoteDispatchRegistry.accept has established that the update arrived over
+   * OUR federation link to the peer this dispatch went to, names a dispatch id
+   * we minted, matches the worker our own spawn result recorded, is not a
+   * replay, and resolves to a live LOCAL wake-eligible manager. This method
+   * renders and sends.
+   *
+   * IT RENDERS WITH THE SAME BUILDER as every local wake, deliberately. The
+   * `[supervisor]` headers are PARSED, not merely displayed (shared/
+   * fleetMessages.ts, and a hand-ported copy in /m), so the executing machine
+   * sends DATA — a fleetEntry — and the sentence is composed here. A cross-
+   * machine result therefore renders as the same FleetMessageCard a local one
+   * does, and a header change stays a change to one file rather than a
+   * synchronized two-machine deploy.
+   *
+   * COALESCED PER (manager, kind) exactly like the local paths, so two workers
+   * on the peer finishing together cost the manager one turn. No dedup
+   * signature is kept here: the registry's monotonic `seq` already made this
+   * update the first and only time this outcome will be presented.
+   *
+   * Best-effort send, like every other wake: the manager may have ended in the
+   * milliseconds since it was resolved.
+   */
+  deliverRemote(parentId: string, kind: RemoteWakeKind, entry: FleetMessageEntry): void {
+    if (!parentId || parentId === entry.sessionId) return;
+    const target = managerReplacementState.automaticWakeTarget(parentId);
+    if (managerReplacementState.parkedSuccessor(target)) return;
+    const key = `${target}\u0000${kind}`;
+    const pending = this.pendingRemote.get(key);
+    if (pending) {
+      pending.entries.set(entry.sessionId, entry);
+      return;
+    }
+    const entries = new Map([[entry.sessionId, entry]]);
+    const timer = setTimeout(() => {
+      this.pendingRemote.delete(key);
+      void this.sendRemote(target, kind, entries);
+    }, COALESCE_MS);
+    timer.unref?.();
+    this.pendingRemote.set(key, { timer, entries });
+  }
+
+  private async sendRemote(
+    target: string,
+    kind: RemoteWakeKind,
+    entries: Map<string, FleetMessageEntry>,
+  ): Promise<void> {
+    const text = buildFleetMessage(kind, Array.from(entries.values()));
+    try {
+      await claudemonSessionClient.message(target, text);
+    } catch {
+      /* the manager may have just ended — best-effort, as every wake is */
     }
   }
 

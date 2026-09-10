@@ -9,6 +9,7 @@ import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
 import { supervisorNudge } from './supervisorNudge';
+import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { checkBudget } from './budgetWatcher';
 import {
   workflowWatcher,
@@ -1122,6 +1123,14 @@ class ClaudeSessionStore {
     // addressed to the old manager. Re-address it rather than let it land on a
     // manager that is being retired.
     supervisorNudge.reassignPendingFinish(oldManagerId, newManagerId);
+
+    // Workers executing on a LINKED MACHINE follow the fleet too. They are not
+    // in `this.sessions` as children (a remote row's parent is that peer's
+    // fact, skipped above) — the dispatch record here is the only thing that
+    // knows the outgoing manager owned them, so without this an adoption
+    // silently drops every cross-machine dispatch in flight: exactly the
+    // orphaning agents.reparent exists to end, reintroduced one hub over.
+    remoteDispatchRegistry.reparent(oldManagerId, newManagerId);
 
     // The per-worker "nothing new to report" signature (supervisorNudge's
     // lastReportedReply) is deliberately NOT cleared. A worker that already
