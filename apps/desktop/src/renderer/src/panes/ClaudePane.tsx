@@ -728,7 +728,10 @@ export const useClaudePaneModel = ({
     fitAddonRef.current = fitAddon;
 
     // Use web-fonts addon to ensure @font-face fonts are loaded before canvas renders
-    const webFontsAddon = new WebFontsAddon();
+    // The addon auto-relayout can resume after dispose and dereference its
+    // cleared terminal. We already wait for fonts before opening below, with
+    // an owner-lifetime guard, so no separate automatic relayout is needed.
+    const webFontsAddon = new WebFontsAddon(false);
     term.loadAddon(webFontsAddon);
 
     webFontsAddon.loadFonts().then(() => {

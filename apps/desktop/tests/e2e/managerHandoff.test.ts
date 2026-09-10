@@ -99,7 +99,12 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
     (window as any).fleetHarness.releaseFontRelayouts();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   });
-  expect(await page.evaluate(() => (window as any).fleetHarness.calls.filter((c: any) => c.method === 'message'))).toEqual([]);
+  expect(await page.evaluate(() => (window as any).fleetHarness.fontRelayouts())).toBe(0);
+  expect(
+    await page.evaluate(() =>
+      (window as any).fleetHarness.calls.filter((c: any) => c.method === 'message'),
+    ),
+  ).toEqual([]);
   await page.reload();
   await page.waitForFunction(() => !!(window as any).fleetHarness);
   await page.evaluate(() => (window as any).fleetHarness.pilot());

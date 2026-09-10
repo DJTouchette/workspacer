@@ -67,13 +67,22 @@ if (params.get('fontRetirementProbe') === '1') {
   const relayout = WebFontsAddon.prototype.relayout;
   WebFontsAddon.prototype.relayout = function () {
     insideRelayout = true;
-    try { return relayout.call(this); }
-    finally { insideRelayout = false; }
+    try {
+      return relayout.call(this);
+    } finally {
+      insideRelayout = false;
+    }
   };
-  Object.defineProperty(document.fonts, 'ready', { configurable: true, get() {
-    if (insideRelayout) { deferredFontRelayouts++; return gate; }
-    return ready;
-  } });
+  Object.defineProperty(document.fonts, 'ready', {
+    configurable: true,
+    get() {
+      if (insideRelayout) {
+        deferredFontRelayouts++;
+        return gate;
+      }
+      return ready;
+    },
+  });
 }
 if (params.get('fleet') === 'few') initialAgents = initialAgents.slice(0, 2);
 if (params.get('fleet') === 'empty') initialAgents = [];

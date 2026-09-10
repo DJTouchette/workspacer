@@ -18,6 +18,7 @@ import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
 const terminalLifecycle = vi.hoisted(() => ({
   instances: [] as any[],
   fonts: undefined as (() => Promise<void>) | undefined,
+  automaticRelayouts: [] as boolean[],
 }));
 
 // xterm needs a real canvas; stub it.
@@ -55,6 +56,9 @@ vi.mock('@xterm/addon-fit', () => ({
 }));
 vi.mock('@xterm/addon-web-fonts', () => ({
   WebFontsAddon: class {
+    constructor(initialRelayout = true) {
+      terminalLifecycle.automaticRelayouts.push(initialRelayout);
+    }
     activate = vi.fn();
     dispose = vi.fn();
     loadFonts = vi.fn(() => terminalLifecycle.fonts?.() ?? Promise.resolve());
@@ -944,17 +948,39 @@ it('does not initialize a disposed terminal when fonts finish after a session re
   });
   terminalLifecycle.fonts = () => fonts;
   terminalLifecycle.instances.length = 0;
+  terminalLifecycle.automaticRelayouts.length = 0;
   try {
     const view = render(<ClaudePane paneId="retiring-pane" title="Claude" isActive cwd="/repo" />);
     const terminal = terminalLifecycle.instances[0];
     expect(terminal).toBeDefined();
+    expect(terminalLifecycle.automaticRelayouts).toEqual([false]);
     view.unmount();
     await act(async () => {
       finish();
       await fonts;
     });
     expect(terminal.open).not.toHaveBeenCalled();
+    expect(terminal.dispose).toHaveBeenCalledOnce();
   } finally {
+    terminalLifecycle.fonts = undefined;
+  }
+});
+
+it('still opens an active terminal after owner-controlled font loading completes', async () => {
+  let finish!: () => void;
+  const fonts = new Promise<void>((resolve) => { finish = resolve; });
+  terminalLifecycle.fonts = () => fonts;
+  terminalLifecycle.instances.length = 0;
+  terminalLifecycle.automaticRelayouts.length = 0;
+  const view = render(<ClaudePane paneId="active-fonts" title="Claude" isActive cwd="/repo" />);
+  try {
+    const terminal = terminalLifecycle.instances[0];
+    expect(terminalLifecycle.automaticRelayouts).toEqual([false]);
+    expect(terminal.open).not.toHaveBeenCalled();
+    await act(async () => { finish(); await fonts; });
+    expect(terminal.open).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
     terminalLifecycle.fonts = undefined;
   }
 });
