@@ -155,11 +155,18 @@ export async function listDispatchTargets(
         providers: [],
         cwds: [],
       };
+      if (!pair || peer.name !== 'paired') {
+        return {
+          ...base,
+          readiness:
+            'Legacy federation link: use Connect to Server → Workers only for a local-manager execution target. This link is not a paired dispatch route.',
+        };
+      }
       if (!peer.hasToken) {
         return {
           ...base,
           readiness:
-            'no credential is configured for this machine — add its token in Settings → Remote Control → Linked machines',
+            'No pairing credential is configured. Set up Workers only in Connect to Server.',
         };
       }
       let reply: CapabilitiesReply;
@@ -210,9 +217,9 @@ export async function listDispatchTargets(
     targets,
     linkedButNotEnabled,
     note: targets.length
-      ? 'Pass a target NAME and one of that target’s own `cwds` paths verbatim — there is no path translation, and a local directory means nothing there. Choose a provider whose `authenticated` is true ON THAT MACHINE; `null` means it could not be read, not that it is fine.'
+      ? 'For the ready paired target, use spawn_agent with executionTarget="paired", cwd=the LOCAL task project, remoteCwd=one returned REMOTE cwd, and your own parentSessionId. Use select_dispatch_model with that remote cwd and an authenticated remote provider. Unknown authentication is unavailable. Do not use hub="paired"; this route is owned by the local desktop.'
       : linkedButNotEnabled.length
-        ? `No machine is enabled as a worker target. ${linkedButNotEnabled.length} linked machine(s) exist but none is ticked — being linked shows you a machine's fleet, it does not authorise dispatching work there. Enable one in Settings → Remote Control → Linked machines.`
-        : 'No machines are linked to this one, so there is nowhere to dispatch. Everything you spawn runs here.',
+        ? 'Federation links are present, but no paired worker target is enabled. Use Connect to Server → Workers only to keep this manager local.'
+        : 'No paired worker target is enabled. Use Connect to Server → Workers only; ordinary spawns continue to run locally.',
   };
 }
