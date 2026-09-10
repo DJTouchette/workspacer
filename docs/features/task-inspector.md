@@ -47,9 +47,8 @@ absolute project path, snapshot hash) and the recorded-work attempts sit under
 
 A finished step (completed, skipped by manager, skipped by you) renders no skip
 affordance at all and collapses its rationale, reported outcome and dispatch contract
-behind **Step details**. An unfinished step that cannot be skipped keeps its button,
-disabled, with the one-line reason — that state is actionable information, so it is
-not hidden. A host-user waiver still reads **Skipped by you** with its timestamp and
+behind **Step details**. An unfinished step that cannot be skipped offers no Skip button; its reason is
+discoverable under Step details. Only available step actions appear at rest. A host-user waiver still reads **Skipped by you** with its timestamp and
 reason inline, distinct from a completed check.
 
 The panel renders inside a 360px rail without horizontal overflow. Colour, radius,
@@ -103,7 +102,8 @@ facade stamps `callerSessionId` from its authenticated session; it is never a to
 argument. The host then re-checks ownership through the same `ownerTask` gate the
 workflow tools use: a live, local, wake-target manager, its OWN task, in that task's
 exact project. A pinned workflow is not required for a reference edit, so the gate is
-called with `requireWorkflow=false`.
+called with `requireWorkflow=false`. Writes repeat that gate under the history file
+lock, and conflict replies check ownership again before returning current references.
 
 Writes are additive per entry. `upsert` matches `{kind:'pullRequest'}` as a singleton
 and `{kind:'ticket',id}` / `{kind:'reference',label}` case-insensitively by identity,
@@ -158,7 +158,7 @@ The focused main tests are `taskInspector.test.ts`, `fleetWorkflowRuntime.test.t
 Inspector sibling isolation and local/remote backend parity. Playwright
 `tests/e2e/taskInspector.test.ts` uses the production UI and bridged backend with
 synthetic IPC, including 360px and 1280px views; it does not use live fleet data. It
-also renders 360/480/1280px in two themes to `test-results/task-inspector/` for human
+also renders 360/480/1280px in three themes (Everforest, dark and light) to `test-results/task-inspector/` for human
 review, and covers a reference recorded outside the panel appearing on the next poll.
 The harness accepts `?width=` and `?mode=links`.
 
@@ -172,3 +172,30 @@ On Node 26, run renderer Vitest with
 `NODE_OPTIONS=--no-experimental-webstorage npm run test:renderer` so jsdom owns
 `localStorage`. The default Node 26 web-storage global caused existing chat/What’s New
 suites to fail with undefined `localStorage`; the same suites pass with this flag.
+
+## Recovery verification (2026-09-09)
+
+Recovered the stopped worker's 14 tracked changes and four explicitly named new
+source files unchanged in recovery commit `ab06a1f3`; the saved worktree was not
+modified. Follow-up changes hide unavailable Skip actions, move task selection into
+Filters, and recheck reference ownership under the history lock.
+
+Verified in the isolated worktree with private dependencies on Node 22.22.2:
+main/renderer typechecks; 119 focused main tests; 1,894 renderer tests plus 13 focused
+renderer checks after final UI edits; 12 contained dispatch-chain tests; Go MCP and
+brain package tests; and all 27 Task Inspector Playwright cases in Chromium
+148.0.7778.96. Main and renderer checks ran sequentially. Changed TypeScript files
+were formatted with the project's Prettier, and Go files with gofmt.
+
+Visually inspected 360/480/1280px screenshots in Everforest, dark and light themes,
+plus running-step views at 360px. Review artifacts are in the local worktree at
+`apps/desktop/test-results/task-inspector/`. Production components use synthetic IPC;
+the dispatch-chain fixture exercises authenticated HTTP MCP through the real bus and
+desktop store with private configuration and ephemeral ports. No live app/fleet or
+Windows artifact validation was performed, and no production output was rebuilt.
+
+Use normal OS temporary folders for the broader unit suites: placing TMPDIR below
+this worktree makes unrelated Git-confinement fixtures inherit a repository, makes
+home-confinement fixtures fall inside the allowed home, and puts the literal
+`worktree` in a path-sensitive Go library assertion. The dispatch-chain harness
+already owns its isolated state, binaries, caches and ports.

@@ -161,6 +161,7 @@ describe('compact default view', () => {
       .getAllByText('Ship the inspector')
       .filter((el) => el.tagName !== 'OPTION');
     expect(titled).toHaveLength(1);
+    expect(screen.getByLabelText('Current and recent tasks')).not.toBeVisible();
     // Present in the DOM but behind a closed disclosure — preserved, not shown.
     expect(screen.getByText('task-1')).not.toBeVisible();
     expect(screen.getByText('/project')).not.toBeVisible();
@@ -172,6 +173,16 @@ describe('compact default view', () => {
     await mount(workflowTask());
     expect(screen.queryByRole('button', { name: 'Skip Implement…' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Skip Review…' })).toBeEnabled();
+  });
+  it('hides a running step action and keeps its explanation under Step details', async () => {
+    const task = workflowTask();
+    task.workflow!.steps[0].state = 'dispatched';
+    task.workflow!.steps[0].reason = undefined;
+    task.ownerLabel = task.ownerSessionId;
+    await mount(task);
+    expect(screen.queryByRole('button', { name: 'Skip Implement…' })).not.toBeInTheDocument();
+    expect(screen.getByText('A worker has been dispatched for this step')).not.toBeVisible();
+    expect(screen.getByText(task.ownerSessionId, { exact: true })).not.toBeVisible();
   });
   it('exposes ids behind Details with a copy affordance', async () => {
     await mount(workflowTask());

@@ -1,11 +1,75 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestTaskReferencesTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name, label, tool, op string
+		args                  map[string]any
+		refuse                bool
+	}{
+		{"read", "session:manager", "get_task_references", "taskReferences", map[string]any{"taskId": "task", "cwd": "/project"}, false},
+		{"write", "session:manager", "update_task_references", "setTaskReferences", map[string]any{"taskId": "task", "cwd": "/project", "expectedTaskRevision": 7, "upsert": []any{map[string]any{"kind": "ticket", "id": "JIRA-9"}}}, false},
+		{"remove", "session:manager", "update_task_references", "setTaskReferences", map[string]any{"taskId": "task", "cwd": "/project", "expectedTaskRevision": 0, "remove": []any{map[string]any{"kind": "ticket", "id": "JIRA-9"}}}, false},
+		{"no identity", "", "get_task_references", "", map[string]any{"taskId": "task", "cwd": "/project"}, true},
+		{"missing CAS", "session:manager", "update_task_references", "", map[string]any{"taskId": "task", "cwd": "/project", "upsert": []any{map[string]any{"kind": "ticket", "id": "X"}}}, true},
+		{"empty edit", "session:manager", "update_task_references", "", map[string]any{"taskId": "task", "cwd": "/project", "expectedTaskRevision": 1}, true},
+		{"spoofed identity", "session:manager", "get_task_references", "", map[string]any{"taskId": "task", "cwd": "/project", "callerSessionId": "victim"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			ctx = context.WithValue(ctx, tokenLabelKey{}, tc.label)
+			var got map[string]any
+			cs := connectToolClient(t, ctx, func(b *build) {
+				b.caller = func(_ context.Context, method string, params any) (json.RawMessage, error) {
+					if method != "fleetWorkflows.request" {
+						t.Errorf("unexpected method %s", method)
+					}
+					raw, _ := json.Marshal(params)
+					_ = json.Unmarshal(raw, &got)
+					return json.RawMessage(`{"ok":false,"code":"conflict","currentRevision":8,"references":{"tickets":[{"id":"HUMAN"}]}}`), nil
+				}
+				addTaskReferenceTools(b)
+			})
+			res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.refuse {
+				if !res.IsError || got != nil {
+					t.Fatal("invalid request reached provider")
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatal(resultText(res))
+			}
+			if got["callerSessionId"] != "manager" || got["op"] != tc.op {
+				t.Fatalf("bad identity/op: %v", got)
+			}
+			for k, v := range tc.args {
+				want, _ := json.Marshal(v)
+				actual, _ := json.Marshal(got[k])
+				if string(want) != string(actual) {
+					t.Errorf("lost %s", k)
+				}
+			}
+			if !strings.Contains(resultText(res), `"currentRevision":8`) || !strings.Contains(resultText(res), "HUMAN") {
+				t.Fatal("provider conflict was not preserved")
+			}
+		})
+	}
+}
 
 // The task-reference tools are a NARROW manager write. This pins the two ways
 // that narrowness could silently be traded away: the tools appearing at a tier

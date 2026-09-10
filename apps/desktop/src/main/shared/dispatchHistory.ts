@@ -213,19 +213,30 @@ export type TaskReferenceUpsert =
   | { kind: 'ticket'; id: string; url?: string }
   | { kind: 'reference'; label: string; url: string };
 export type TaskReferenceRemove =
-  | { kind: 'pullRequest' }
-  | { kind: 'ticket'; id: string }
-  | { kind: 'reference'; label: string };
+  { kind: 'pullRequest' } | { kind: 'ticket'; id: string } | { kind: 'reference'; label: string };
 export const TASK_REFERENCE_KINDS = ['pullRequest', 'ticket', 'reference'] as const;
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
-function referenceKind(value: unknown, allowed: string[]): Record<string, unknown> {
+function referenceKind(value: unknown, removing = false): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Each reference must be an object');
   const row = value as Record<string, unknown>;
   if (typeof row.kind !== 'string' || !TASK_REFERENCE_KINDS.includes(row.kind as 'ticket'))
     throw new Error('Reference kind must be pullRequest, ticket or reference');
+  const allowed =
+    row.kind === 'pullRequest'
+      ? removing
+        ? []
+        : ['number', 'url']
+      : row.kind === 'ticket'
+        ? removing
+          ? ['id']
+          : ['id', 'url']
+        : removing
+          ? ['label']
+          : ['label', 'url'];
   for (const key of Object.keys(row))
-    if (key !== 'kind' && !allowed.includes(key)) throw new Error(`Unknown reference field: ${key}`);
+    if (key !== 'kind' && !allowed.includes(key))
+      throw new Error(`Unknown reference field: ${key}`);
   return row;
 }
 /**
@@ -253,7 +264,7 @@ export function applyTaskReferences(
   // smuggle unvalidated data through an unrelated additive edit.
   const links: TaskLinks = structuredClone(validateTaskLinks(current ?? {}));
   for (const raw of removals) {
-    const row = referenceKind(raw, ['id', 'label']);
+    const row = referenceKind(raw, true);
     if (row.kind === 'pullRequest') delete links.pullRequest;
     else if (row.kind === 'ticket') {
       if (typeof row.id !== 'string') throw new Error('Removing a ticket requires its id');
@@ -268,7 +279,7 @@ export function applyTaskReferences(
     }
   }
   for (const raw of upserts) {
-    const row = referenceKind(raw, ['number', 'url', 'id', 'label']);
+    const row = referenceKind(raw);
     if (row.kind === 'pullRequest') {
       if (row.number === undefined && row.url === undefined)
         throw new Error('A pull request reference needs a number or a URL');

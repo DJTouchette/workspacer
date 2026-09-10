@@ -295,31 +295,31 @@ export default function TaskInspector({
       )}
       {data?.available && (
         <>
-          <select
-            aria-label="Current and recent tasks"
-            style={{ ...field, fontWeight: 500, color: 'var(--wks-text-primary)' }}
-            value={task?.taskId ?? ''}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            {!task && <option value="">Select a task</option>}
-            {[true, false].map((active) => (
-              <optgroup key={String(active)} label={active ? 'Current' : 'Recent'}>
-                {choices
-                  .filter((t) => taskIsActive(t) === active)
-                  .map((t) => (
-                    <option key={t.taskId} value={t.taskId}>
-                      {t.title}
-                    </option>
-                  ))}
-              </optgroup>
-            ))}
-          </select>
           <details>
             <summary style={summaryStyle}>
               <ChevronRight size={10} strokeWidth={2.25} />
               Filters
             </summary>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 6 }}>
+              <select
+                aria-label="Current and recent tasks"
+                style={{ ...field, fontWeight: 500, color: 'var(--wks-text-primary)' }}
+                value={task?.taskId ?? ''}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                {!task && <option value="">Select a task</option>}
+                {[true, false].map((active) => (
+                  <optgroup key={String(active)} label={active ? 'Current' : 'Recent'}>
+                    {choices
+                      .filter((t) => taskIsActive(t) === active)
+                      .map((t) => (
+                        <option key={t.taskId} value={t.taskId}>
+                          {t.title}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input
                   type="checkbox"
@@ -350,9 +350,6 @@ export default function TaskInspector({
                   ))}
                 </select>
               </label>
-              {!data.currentOwnerSessionId && !sessionId && (
-                <p style={{ margin: 0, ...meta }}>No current manager. Showing recorded tasks.</p>
-              )}
               {sessionId && !isManager && (
                 <p style={{ margin: 0, ...meta }}>
                   Tasks linked to worker {sessionId} by a recorded attempt.
@@ -360,6 +357,9 @@ export default function TaskInspector({
               )}
             </div>
           </details>
+          {!data.currentOwnerSessionId && !sessionId && (
+            <p style={{ margin: 0, ...meta }}>No current manager. Showing recorded tasks.</p>
+          )}
           {!choices.length && (
             <p style={{ margin: 0, color: 'var(--wks-text-secondary)' }}>
               No recorded tasks match this selection. Task ownership is shown only when recorded.
@@ -432,9 +432,12 @@ function TaskDetails({
   return (
     <>
       <Surface elevation="raised" pad="md" tone={active ? 'var(--wks-busy)' : undefined}>
-        <div style={{ fontSize: '0.8rem', fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
+        <h2 style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, lineHeight: 1.35 }}>
+          {task.title}
+        </h2>
         <div style={{ ...meta, marginTop: 4 }}>
-          {active ? 'Current task' : 'Recent task'} · {task.ownerLabel} ·{' '}
+          {active ? 'Current task' : 'Recent task'} ·{' '}
+          {task.ownerLabel === task.ownerSessionId ? 'Manager' : task.ownerLabel} ·{' '}
           {folderName(task.projectCwd)}
         </div>
       </Surface>
@@ -460,15 +463,26 @@ function TaskDetails({
                 ? 'Refresh tasks before making changes'
                 : taskSkipDisabledReason(task, run.id);
               // A finished step gets no skip affordance and no explanation for one.
-              const showSkip = !terminal;
+              const showSkip = !terminal && !disabled;
               const detail =
-                (terminal && run.reason) || run.outcome !== undefined || definition.instructions;
+                (terminal && run.reason) ||
+                disabled ||
+                run.outcome !== undefined ||
+                definition.instructions;
               return (
                 <li
                   key={run.id}
                   style={{ padding: '6px 0', borderTop: '1px solid var(--wks-border-subtle)' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: 6,
+                      minWidth: 0,
+                    }}
+                  >
                     <span
                       aria-hidden
                       style={{
@@ -479,7 +493,7 @@ function TaskDetails({
                         background: state.tone,
                       }}
                     />
-                    <span style={{ fontWeight: 500, flex: '0 0 auto' }}>{definition.label}</span>
+                    <span style={{ fontWeight: 500, minWidth: 0 }}>{definition.label}</span>
                     <span style={{ color: state.tone, fontSize: '0.66rem', minWidth: 0 }}>
                       {state.label}
                     </span>
@@ -509,9 +523,11 @@ function TaskDetails({
                   {!terminal && run.reason && (
                     <div style={{ ...meta, marginTop: 2 }}>{run.reason}</div>
                   )}
-                  {showSkip && disabled && <div style={{ ...meta, marginTop: 2 }}>{disabled}</div>}
                   {detail && (
                     <Disclosure label="Step details">
+                      {!terminal && disabled && (
+                        <p style={{ margin: '0 0 4px', ...meta }}>{disabled}</p>
+                      )}
                       {run.reason && <p style={{ margin: '0 0 4px', ...meta }}>{run.reason}</p>}
                       {run.sessionId && (
                         <>

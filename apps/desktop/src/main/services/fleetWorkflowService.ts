@@ -166,6 +166,9 @@ export function fleetWorkflowRequest(
           request.upsert,
           request.remove,
           'Task references recorded by your manager from the conversation',
+          () => {
+            ownerTask(request.taskId, callerSessionId, request.cwd, false);
+          },
         );
         // Re-run the ownership gate against the committed row.
         task = ownerTask(task.taskId, callerSessionId, request.cwd, false);
@@ -213,7 +216,12 @@ export function fleetWorkflowRequest(
       ...(e instanceof WorkflowConflict ? { currentRevision: e.currentRevision } : {}),
       ...(conflict && request?.taskId
         ? (() => {
-            const current = dispatchHistoryStore.task(request.taskId);
+            let current;
+            try {
+              current = ownerTask(request.taskId, callerSessionId, request.cwd, false);
+            } catch {
+              return {};
+            }
             return current
               ? { currentRevision: current.revision ?? 0, references: current.links ?? {} }
               : {};

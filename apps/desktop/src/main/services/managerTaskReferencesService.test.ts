@@ -38,6 +38,7 @@ vi.mock('./libraryService', () => ({
 }));
 
 import { fleetWorkflowRequest } from './fleetWorkflowService';
+import { dispatchHistoryStore } from './dispatchHistoryStore';
 
 const live = (sessionId: string) => ({ sessionId, isWakeTarget: true, status: 'active' });
 fixture.sessions = {
@@ -74,6 +75,51 @@ afterAll(() => {
 });
 
 describe('who may edit a task reference', () => {
+  it.each([
+    { sessionId: 'manager', status: 'active', isWakeTarget: false },
+    { sessionId: 'manager', status: 'ended', isWakeTarget: true },
+    { ...live('manager'), hub: 'peer' },
+  ])('refuses an ineligible actual owner: %j', (session) => {
+    const task = start();
+    fixture.sessions.manager = session;
+    try {
+      expect(get(task.taskId)).toMatchObject({ ok: false });
+      expect(set(task.taskId, [{ kind: 'ticket', id: 'X' }], task.revision ?? 0)).toMatchObject({
+        ok: false,
+      });
+    } finally {
+      fixture.sessions.manager = live('manager');
+    }
+    expect(get(task.taskId)).toMatchObject({ ok: true, references: {} });
+  });
+  it('annotates a legacy owned task with no workflow pin', () => {
+    const task = start();
+    const file = path.join(fixture.root, 'dispatch-history.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete state.tasks.find((t: { taskId: string }) => t.taskId === task.taskId).workflow;
+    fs.writeFileSync(file, JSON.stringify(state));
+    expect(
+      set(task.taskId, [{ kind: 'ticket', id: 'LEGACY-1' }], task.revision ?? 0),
+    ).toMatchObject({ ok: true, references: { tickets: [{ id: 'LEGACY-1' }] } });
+  });
+  it('rechecks ownership at the write boundary when another host adopts the task', () => {
+    const task = start();
+    const write = dispatchHistoryStore.updateReferencesByManager.bind(dispatchHistoryStore);
+    const spy = vi
+      .spyOn(dispatchHistoryStore, 'updateReferencesByManager')
+      .mockImplementationOnce((...args) => {
+        dispatchHistoryStore.adoptWorkflowTasks('manager', 'other');
+        return write(...args);
+      });
+    try {
+      const result = set(task.taskId, [{ kind: 'ticket', id: 'LATE' }], task.revision ?? 0);
+      expect(result).toMatchObject({ ok: false, code: 'unavailable' });
+      expect(result).not.toHaveProperty('references');
+      expect(get(task.taskId, 'other')).toMatchObject({ ok: true, references: {} });
+    } finally {
+      spy.mockRestore();
+    }
+  });
   it('lets the owning live local manager read and write its own task', () => {
     const task = start();
     const read = get(task.taskId);

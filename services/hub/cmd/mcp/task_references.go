@@ -35,7 +35,7 @@ func addTaskReferenceTools(b *build) {
 	}
 	for _, item := range []struct{ name, op, desc string }{
 		{"get_task_references", "taskReferences", "Read the PR/ticket/link references recorded on one of YOUR tasks, with the taskRevision to pass back as expectedTaskRevision. Desktop local only; headless returns unavailable."},
-		{"update_task_references", "setTaskReferences", "Record a PR, ticket or named link the user gave you on YOUR exact task, as upsert/remove entries under expectedTaskRevision CAS. Stores the supplied id/URL as an unverified reference; never fetches it, guesses a PR number, or edits any other task field."},
+		{"update_task_references", "setTaskReferences", "Record a PR, ticket or named link the user gave you on YOUR exact task, as upsert/remove entries under expectedTaskRevision CAS. Stores the supplied id/URL as an unverified reference; never fetches it, guesses a PR number, or edits any other task field. Preserve unmentioned references; ask the user if task attribution is ambiguous. Do not scrape transcripts."},
 	} {
 		item := item
 		b.tools = append(b.tools, toolInfo{Name: item.name, Desc: item.desc, Method: method, Group: "workflows"})

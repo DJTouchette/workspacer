@@ -839,3 +839,71 @@ it('runs a custom research-only template, refuses missing inputs, and records in
     message.mockRestore();
   }
 });
+
+it('records supplied task references through authenticated MCP and preserves human edits and review policy', async () => {
+  const call = (name: string, args: Record<string, unknown>, label = 'session:manager-current') =>
+    mcpTool(label, name, args);
+  const started = await call('start_workflow', { cwd: project, title: 'Reference transport' });
+  const task = started.value.task as DispatchTask;
+  const taskId = task.taskId;
+  const human = history.editByHostUser(
+    {
+      taskId,
+      expectedTaskRevision: task.revision ?? 0,
+      action: 'links',
+      links: { tickets: [{ id: 'HUMAN-1' }] },
+    },
+    (id) => sessions.getSnapshot(id) ?? undefined,
+    () => false,
+  );
+  expect(human.ok).toBe(true);
+  const read = await call('get_task_references', { taskId, cwd: project });
+  const args = {
+    taskId,
+    cwd: project,
+    expectedTaskRevision: read.value.taskRevision,
+    upsert: [{ kind: 'pullRequest', url: 'https://dev.azure.test/p/_git/r/pullrequest/9492' }],
+  };
+  const written = await call('update_task_references', args);
+  expect(written.isError).toBe(false);
+  expect(written.value).toMatchObject({
+    ok: true,
+    references: { tickets: [{ id: 'HUMAN-1' }], pullRequest: { url: args.upsert[0].url } },
+  });
+  expect(written.value.taskRevision).toBe(read.value.taskRevision + 1);
+  expect(written.value.task.audit.at(-1).actor).toBe('manager');
+  expect(written.value.task.workflow).toEqual(task.workflow);
+  const repeated = await call('update_task_references', {
+    ...args,
+    expectedTaskRevision: written.value.taskRevision,
+  });
+  expect(repeated.value.taskRevision).toBe(written.value.taskRevision);
+  const stale = await call('update_task_references', args);
+  expect(stale.value).toMatchObject({
+    ok: false,
+    code: 'conflict',
+    currentRevision: written.value.taskRevision,
+    references: written.value.references,
+  });
+  for (const label of ['session:manager-other', 'pairing']) {
+    const refused = await call('update_task_references', args, label);
+    expect(refused.isError || refused.value?.ok === false).toBe(true);
+  }
+  expect((await call('get_task_references', { taskId, cwd: `${project}/wrong` })).value.ok).toBe(
+    false,
+  );
+  expect(history.task(taskId)!.links).toEqual(written.value.references);
+  for (const [token, federated] of [
+    [tokenFor('session:manager-current'), false],
+    ['dispatch-chain-synthetic-plugin', false],
+    ['dispatch-chain-synthetic-host', true],
+  ] as const) {
+    const denied = await busSpawn(
+      token,
+      { ...args, op: 'setTaskReferences', callerSessionId: 'manager-current' },
+      federated,
+      'fleetWorkflows.request',
+    );
+    expect(denied.error).toBeTruthy();
+  }
+});

@@ -37,7 +37,7 @@ function fixture() {
   const task = store.startWorkflow(owner, dir, 'Task', pin);
   const rev = () => store.task(task.taskId)!.revision ?? 0;
   const set = (upsert?: unknown, remove?: unknown, revision = rev()) =>
-    store.updateReferencesByManager(task.taskId, revision, upsert, remove, 'from chat');
+    store.updateReferencesByManager(task.taskId, revision, upsert, remove, 'from chat', () => {});
   return { dir, store, task, rev, set };
 }
 
@@ -120,6 +120,7 @@ describe('reference validation is the host validator, not a second one', () => {
     ['oversized label', [{ kind: 'ticket', id: 'a'.repeat(201) }]],
     ['non-numeric pr number', [{ kind: 'pullRequest', number: '12a' }]],
     ['unknown field', [{ kind: 'ticket', id: 'A', extra: 'x' }]],
+    ['field from another reference kind', [{ kind: 'ticket', id: 'A', number: '3' }]],
     ['unknown kind', [{ kind: 'waive', id: 'A' }]],
   ];
   for (const [name, upsert] of bad)
@@ -141,6 +142,13 @@ describe('reference validation is the host validator, not a second one', () => {
         undefined,
       ),
     ).toThrow(/at most 20/);
+  });
+  it('rejects a mismatched removal identity', () => {
+    expect(() =>
+      applyTaskReferences({ pullRequest: { number: '3' } }, undefined, [
+        { kind: 'pullRequest', id: 'WRONG' },
+      ]),
+    ).toThrow(/Unknown reference field/);
   });
   it('requires at least one entry and caps the batch size', () => {
     expect(() => applyTaskReferences({}, undefined, undefined)).toThrow(/at least one/);
@@ -215,6 +223,7 @@ describe('store-level manager edit', () => {
         [{ kind: 'ticket', id: 'X' }],
         undefined,
         'r',
+        () => {},
       ),
     ).toThrow(/no longer available/);
     expect(() => f.set([{ kind: 'ticket', id: 'X' }], undefined, -1 as number)).toThrow(

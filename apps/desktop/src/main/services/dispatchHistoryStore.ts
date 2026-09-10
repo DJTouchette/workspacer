@@ -587,7 +587,11 @@ export class DispatchHistoryStore {
     }
   }
   /** Append a reference-edit audit row, then cap that history without touching waivers. */
-  private recordLinkAudit(task: DispatchTask, actor: 'host-user' | 'manager', reason: string): void {
+  private recordLinkAudit(
+    task: DispatchTask,
+    actor: 'host-user' | 'manager',
+    reason: string,
+  ): void {
     task.audit = [
       ...(task.audit ?? []),
       { id: randomUUID(), actor, action: 'links', reason, createdAt: new Date().toISOString() },
@@ -612,8 +616,11 @@ export class DispatchHistoryStore {
     upsert: unknown,
     remove: unknown,
     reason: string,
+    authorize: () => void,
   ): DispatchTask {
     return this.transaction(() => {
+      // Recheck the live owner against the reloaded row under the write lock.
+      authorize();
       if (!Number.isSafeInteger(expectedTaskRevision) || expectedTaskRevision < 0)
         throw new Error('Task reference updates require the current expectedTaskRevision');
       const task = this.task(taskId);

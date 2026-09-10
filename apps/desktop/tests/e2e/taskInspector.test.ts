@@ -89,7 +89,7 @@ for (const width of [360, 1280])
     await expect(page.getByText('task-current').first()).toBeVisible();
     await expect(page.getByText('/project/alpha').first()).toBeVisible();
     await expect(page.getByText('Worker worker', { exact: false }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Skip implement…' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Skip implement…' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Skip review…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Skip task step' });
     await expect(
@@ -151,6 +151,7 @@ test('save references, safe selectors, preserve conflict draft and deep-link act
   expect(await page.evaluate(() => (window as any).fixtureTask.ownerLabel)).toBe(
     'Replacement manager',
   );
+  await page.getByText('Details', { exact: true }).click();
   await page.getByRole('button', { name: 'Configure workflow', exact: true }).click();
   await expect(page.getByText('New tasks in /project/alpha')).toBeVisible();
   await page
@@ -174,7 +175,7 @@ test('failure evidence survives an explicit skip', async ({ page }) => {
   // The step is finished now, so its rationale and reported outcome collapse —
   // they are preserved, not deleted.
   await expect(page.getByText('Worker result contract: invalid').first()).toBeHidden();
-  await page.getByText('Step details', { exact: true }).first().click();
+  await page.getByText('Step details', { exact: true }).nth(1).click();
   await expect(page.getByText('Worker result contract: invalid').first()).toBeVisible();
   await expect(page.getByText('Original failure evidence').first()).toBeVisible();
   expect(await page.evaluate(() => (window as any).fixtureTask.workflow.steps[1].outcome)).toEqual({
@@ -207,11 +208,13 @@ test('unknown worker attribution stays empty and recent tasks remain selectable'
   await page.getByText('Details', { exact: true }).click();
   await expect(page.getByText('old-manager').first()).toBeVisible();
 });
-test('stale worker skip is disabled and task routing selects the explicit task', async ({
+test('stale worker skip is unavailable and task routing selects the explicit task', async ({
   page,
 }) => {
   await page.goto(`${base}?mode=stale`);
-  await expect(page.getByRole('button', { name: 'Skip implement…' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Skip implement…' })).toHaveCount(0);
+  await expect(page.getByText(/Worker status is unknown/)).toBeHidden();
+  await page.getByText('Step details', { exact: true }).last().click();
   await expect(page.getByText(/Worker status is unknown/)).toBeVisible();
   await page.goto(`${base}?mode=route`);
   await page.getByRole('button', { name: 'Inspect recent task' }).click();
@@ -265,14 +268,14 @@ test('reference validation refuses unsafe schemes and supports user-named http r
 });
 
 /* Screenshots of the real component at the widths the rail actually uses, in
- * two themes. These are for human review of density and brand fit; the test
+ * three themes. These are for human review of density and brand fit; the test
  * itself only asserts that nothing overflows horizontally. */
-for (const theme of ['everforest', 'dark'])
+for (const theme of ['everforest', 'dark', 'light'])
   for (const width of [360, 480, 1280])
     test(`compact layout at ${width}px in ${theme}`, async ({ page }, info) => {
       await page.setViewportSize({ width, height: 1100 });
       await page.goto(`${base}?mode=links&theme=${theme}&width=${width}`);
-      await expect(page.getByText('Build Task Inspector')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Build Task Inspector' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'PR 9492' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'WKS-412' })).toBeVisible();
       // SUP-77 has no URL, so it is a plain chip rather than a link button.
@@ -306,3 +309,17 @@ test('a reference recorded outside this panel appears on the next refresh', asyn
     reference: 'pullRequest',
   });
 });
+
+for (const theme of ['everforest', 'dark', 'light'])
+  test(`working step at 360px in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.goto(`${base}?theme=${theme}&width=360`);
+    await expect(page.getByRole('button', { name: 'Skip implement…' })).toHaveCount(0);
+    await expect(page.getByText('A worker has been dispatched for this step')).toBeHidden();
+    await page.screenshot({
+      path: path.resolve(__dirname, `../../test-results/task-inspector/${theme}-working-360.png`),
+      fullPage: true,
+    });
+    await page.getByText('Step details', { exact: true }).last().click();
+    await expect(page.getByText('A worker has been dispatched for this step')).toBeVisible();
+  });
