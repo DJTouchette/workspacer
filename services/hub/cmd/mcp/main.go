@@ -644,11 +644,11 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// a third meaning is how a doctrine sentence ends up true of the wrong
 	// mechanism.
 	b.group = "routing"
-	addTool[listAgentsIn](b, "list_dispatch_targets", "Discover explicitly enabled worker targets, protocol support and actual remote provider authentication and repository choices. The manager remains local.", "fleet.dispatchTargets")
-	addTool[routingSelectIn](b, "select_dispatch_model", "Select a model using the paired server own providers and readiness. Pass a cwd returned by list_dispatch_targets. Use this for an explicit paired worker, then preserve its provider/model/capability decision.", "fleet.selectDispatchModel")
 	addTool[routingSelectIn](b, "select_model",
 		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer is PREFERRED to land on a different model family from the implementer — the matrix tries candidates in that order where capacity allows, and requireIndependentFamily makes it required rather than merely preferred, with the answer saying plainly if it could not be arranged), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). When the matrix's primary pairing for the capability could not be used — its allowance is red, its provider is conserving, or the host asked that provider's CLI what it can launch and the CLI answered with no launchable model — the answer falls over to the next candidate on its own `alternatives:` list and names the primary it passed over in fellOverFrom. That live check detects only the CLI-ran-and-listed-nothing case: a probe that FAILED (a CLI that is not installed makes the host's spawn fail and the daemon answer 502, or the daemon is down) is unknown and is used as normal, claude is never reported unavailable because its model list comes from aliases and past transcripts rather than from a running CLI, and the check runs only inside the fallover walk, so it is not applied to a provider you PIN, to a capability with no alternatives, or to the provider a mode shift lands on. A routing mode may also step the EFFORT one notch along the provider's own ladder without changing the model at all, reported as effortStep (from, to, why), and under conserve the tier shift and the effort step can both fire on one decision: pass the `provider`, `model` and `effort` the answer gives you rather than the ones you expected. The answer also carries capacity.pace when the host has pacing on: the same allowance judged against the CLOCK (consumed vs expected-by-now on the running window), which can make a decision CONSERVE that the used-percentage alone would call normal, and which never promotes anything. Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent. See help topic 'routing'.",
 		"routing.select")
+	addTool[listAgentsIn](b, "list_dispatch_targets", "Discover explicitly enabled worker targets, protocol support and actual remote provider authentication and repository choices. The manager remains local.", "fleet.dispatchTargets")
+	addTool[routingSelectIn](b, "select_dispatch_model", "Select a model using the paired server own providers and readiness. Pass a cwd returned by list_dispatch_targets. Use this for an explicit paired worker, then preserve its provider/model/capability decision.", "fleet.selectDispatchModel")
 
 	addRoutingPreferencesGetTool(b, "routing_preferences_get", "Read this connected hub's safe routing defaults, managed preferences, source revision and cached catalog.", "routing.preferences.get")
 	addRoutingPreferenceTool[routing.PreferencesRequest](b, "routing_preferences_validate", "Validate a sparse typed routing patch against its source revision without writing; authenticated host authority required.", "routing.preferences.validate")
@@ -1108,7 +1108,9 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	if err != nil || res == nil || res.IsError {
 		return res, aux, err
 	}
-	if in.ExecutionTarget != "" { return res, aux, nil }
+	if in.ExecutionTarget != "" {
+		return res, aux, nil
+	}
 	return confirmFirstMessage(ctx, b, peer, in.Message, res), aux, nil
 }
 
@@ -1570,8 +1572,8 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
- ExecutionTarget string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
- RemoteCwd string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
+	ExecutionTarget string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
+	RemoteCwd       string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
 	WorkflowStepID  string `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
 	TaskID          string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
 	Stage           string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`

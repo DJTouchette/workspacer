@@ -915,6 +915,7 @@ const (
 // detector until that param is classified here, scoped in PathParam, or
 // refused.
 var unscopedParams = map[string]map[string]ParamDecision{
+	"fleet.selectDispatchModel": {"cwd": {KindPath, "remote routing input sent only to the explicitly paired host; no desktop filesystem operation or credential propagation"}},
 	"agents.dispatchPrepare": {
 		"cwd":          {KindPath, "exact canonical remote repository selected from this host discovery; worktree allocation is remote and never falls back"},
 		"remoteOrigin": {KindID, "nonce and protocol with ownerKey replaced from the authenticated connection; single-use lease cannot be claimed by a different credential"},

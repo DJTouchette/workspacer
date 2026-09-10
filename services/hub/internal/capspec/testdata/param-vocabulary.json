@@ -47,6 +47,9 @@
     "TestDangerousParamVocabularyMatchesTheGolden."
   ],
   "params": {
+    "executionTarget": "id",
+    "remoteCwd": "path",
+    "remoteOrigin": "id",
     "dispatchOwnerSessionId": "id",
     "retrySourceSessionId": "id",
     "answers": "shell",

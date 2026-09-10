@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'crypto';
 import path from 'path';
 import { getConfigDir } from './configService';
-import { pairedWorkerConnection as connection } from './pairedWorkerConnection';
+import { pairedWorkerConnection as connection, pairedDestinationKey } from './pairedWorkerConnection';
 import { getPairedWorkerTarget } from './remoteServer';
 import { remoteDispatchRegistry as registry, sanitizeRemoteEntry, DISPATCH_PROTOCOL } from './remoteDispatchRegistry';
 import { claudeSessionStore } from './claudeSessionStore';
@@ -26,14 +26,14 @@ export function startPairedDispatch(): void {
   });
   started = true;
   connection.onConnected = () => {
-    for (const record of registry.openForPeer('paired')) {
+    for (const record of registry.openForPeer(pairedDestinationKey())) {
       void connection.call('agents.dispatchReplay', { dispatchId: record.dispatchId }).catch(() => {});
     }
   };
   connection.onEvent = (event) => {
     if (event.type === 'agent.snapshot') {
       const snapshot = event.data as import('./claudeSessionStore').RemoteSnapshotWire;
-      const record = registry.list().find((r) => r.peer === 'paired' && r.sessionId === snapshot?.sessionId);
+      const record = registry.list().find((r) => r.peer === pairedDestinationKey() && r.sessionId === snapshot?.sessionId);
       if (record?.localSessionId) claudeSessionStore.upsertRemoteSession('paired', { ...snapshot, sessionId:record.localSessionId, parentSessionId:record.ownerSessionId, isWakeTarget:false });
       return;
     }
@@ -45,7 +45,7 @@ export function startPairedDispatch(): void {
 }
 
 async function deliverPairedUpdate(data: unknown): Promise<void> {
-  const accepted = registry.accept('paired', data);
+  const accepted = registry.accept(pairedDestinationKey(), data);
   if (!accepted.ok) return;
   const { record, update, parentSessionId } = accepted;
   if (!record.localSessionId) return;
@@ -64,7 +64,7 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
     }
     dispatchHistoryStore.validated(entry.sessionId, entry.escalation ? 'escalated' : entry.result ? 'valid' : entry.resultError ? 'invalid' : 'absent', undefined, entry.result ? JSON.parse(entry.result) : entry.escalation);
   }
-  dispatchHistoryStore.observe({ sessionId: entry.sessionId, status: 'active', ambientState: update.final ? 'idle' : 'streaming', pendingApproval: undefined, pendingQuestions: undefined, usage: undefined, statusLine: undefined, hub: undefined });
+  dispatchHistoryStore.observe({ sessionId: entry.sessionId, status: 'active', ambientState: update.final ? 'idle' : 'streaming', pendingApproval: null, pendingQuestions: null, usage: null, statusLine: undefined, hub: undefined });
   const text = buildFleetMessage(update.kind, [entry]) + workflowWakeInstructions([entry.sessionId]);
   const signatures: Array<[string,string]> = [[entry.sessionId, `paired:${record.dispatchId}:${update.seq}`]];
   if (managerReplacementState.signature(entry.sessionId) !== signatures[0][1]) {
@@ -94,7 +94,7 @@ export async function spawnPairedWorker(
   if (!capabilities.providers?.some((provider) => provider.provider === p.provider && provider.found && provider.authenticated === true)) throw new Error('Selected provider is not authenticated on the remote host');
   const dispatchId = randomBytes(32).toString('hex');
   const localSessionId = `paired:${randomUUID()}`;
-  const record = registry.open({ dispatchId, peer: 'paired', ownerSessionId: owner.sessionId, localSessionId, resultSchema, cwd: p.remoteCwd, provider: p.provider, model: p.model, label: p.label });
+  const record = registry.open({ dispatchId, peer: pairedDestinationKey(), ownerSessionId: owner.sessionId, localSessionId, resultSchema, cwd: p.remoteCwd, provider: p.provider, model: p.model, label: p.label });
   if (!record) throw new Error('Could not persist paired dispatch admission');
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };
   const prepared = await connection.call<{cwd:string;repo:string;worktree:boolean;branch?:string}>('agents.dispatchPrepare', {remoteOrigin, cwd:p.remoteCwd, provider:p.provider, worktree:p.worktree === true});

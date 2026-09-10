@@ -116,7 +116,7 @@ beforeAll(async () => {
   });
   const [code] = await once(build, 'exit');
   if (code !== 0) throw new Error(`Go fixture build failed: ${buildErrors}`);
-  child = spawn(binary, ['-test.run=^TestDesktopDispatchChainFixture$', '-test.timeout=120s'], {
+  child = spawn(binary, ['-test.run=^TestDesktopDispatchChainFixture$', '-test.timeout=300s'], {
     cwd: path.resolve('../../services/hub'),
     env: fixtureEnv,
     stdio: 'pipe',
@@ -999,3 +999,58 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   });
   expect(transferred.value.userContent).toBeUndefined();
 });
+
+
+it('dispatches through the real paired host and brain, returns a local task result once', async () => {
+  const binary = path.join(scratch,'paired-brain-fixture');
+  const build = spawn('go',['test','-c','-o',binary,'./cmd/brain'],{cwd:path.resolve('../../services/hub'),env:fixtureEnv,stdio:'pipe',timeout:120_000});
+  let errors = ''; build.stderr.on('data',(data) => { errors += data; }); build.stdout.resume();
+  const [code] = await once(build,'exit');
+  if (code !== 0) throw new Error(errors);
+  const peer = spawn(binary,['-test.run=^TestPairedDispatchHostFixture$','-test.timeout=120s'],{cwd:path.resolve('../../services/hub'),env:{...fixtureEnv,WKS_PAIRED_CHAIN_FIXTURE:'1'},stdio:'pipe'});
+  peer.stderr.resume();
+  const lines = createInterface({input:peer.stdout});
+  const ready = await Promise.race([once(lines,'line').then(([line]) => JSON.parse(line)),once(peer,'exit').then(() => {throw new Error('Remote fixture exited before readiness');})]);
+  lines.close();
+  const {setRemoteServer,getRemoteServer} = await import('../../src/main/services/remoteServer');
+  const {pairedWorkerConnection} = await import('../../src/main/services/pairedWorkerConnection');
+  const {claudemonSessionClient} = await import('../../src/main/services/claudemonSessionClient');
+  const delivery = vi.spyOn(claudemonSessionClient,'message').mockResolvedValue({ok:true});
+  try {
+    setRemoteServer({url:ready.url,token:'paired-fixture-operator',mode:'workers'});
+    expect(getRemoteServer()).toBeNull();
+    const discovery = await mcpTool('session:manager-current','list_dispatch_targets',{});
+    expect(discovery.isError,discovery.text).toBe(false);
+    expect(discovery.value.targets).toEqual(expect.arrayContaining([expect.objectContaining({name:'paired',ready:true,cwds:expect.arrayContaining([expect.objectContaining({path:ready.repo})])})]));
+    const localLaunches = launch.mock.calls.length;
+    const result = await mcpSpawn('session:manager-current',{provider:'claude',model:'sonnet',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',worktree:true,message:'Read the remote fixture and return the result contract.',resultSchema:{type:'object',required:['commit'],properties:{commit:{type:'string'}}}});
+    expect(result.isError,result.text).toBe(false);
+    expect(launch.mock.calls.length).toBe(localLaunches);
+    expect(result.value.sessionId).toMatch(/^paired:/);
+    expect(result.value.executionCwd).not.toBe(project);
+    expect(result.value.executionCwd).not.toBe(ready.repo);
+    expect(fs.existsSync(path.join(result.value.executionCwd,'.git'))).toBe(true);
+    const evidence = await (await fetch(ready.control+'/evidence')).json();
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].cwd).toBe(result.value.executionCwd);
+    expect(evidence[0].first_message).toContain('Read the remote fixture');
+    expect(JSON.stringify(evidence)).not.toContain('paired-fixture-operator');
+    expect(JSON.stringify(evidence)).not.toContain('manager-current');
+    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'progress'})});
+    await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('remote fixture progress'))).toBe(true),{timeout:10_000});
+    const reply = 'Remote task complete.\n```wks-result\n{"commit":"fixture-commit"}\n```';
+    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'finish',reply})});
+    await vi.waitFor(() => expect(persisted().flatMap((t) => t.attempts).find((a) => a.sessionId === result.value.sessionId)?.resultContract).toBe('valid'),{timeout:10_000});
+    const wakes = () => delivery.mock.calls.filter(([id,text]) => id === 'manager-current' && text.includes('fixture-commit'));
+    await vi.waitFor(() => expect(wakes()).toHaveLength(1));
+    expect(wakes()[0][1]).toContain('not a new user request');
+    const {remoteDispatchRegistry} = await import('../../src/main/services/remoteDispatchRegistry');
+    const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === result.value.sessionId)!;
+    await pairedWorkerConnection.call('agents.dispatchReplay',{dispatchId:record.dispatchId});
+    await new Promise((resolve) => setTimeout(resolve,100));
+    expect(wakes()).toHaveLength(1);
+  } finally {
+    setRemoteServer(null); pairedWorkerConnection.stop(); delivery.mockRestore();
+    const exited = once(peer,'exit'); peer.stdin.end(); await exited;
+  }
+},180_000);

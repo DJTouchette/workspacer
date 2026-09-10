@@ -11,7 +11,7 @@
  */
 
 import WebSocket from 'ws';
-import { pairedWorkerConnection } from './pairedWorkerConnection';
+import { pairedWorkerConnection, pairedDestinationKey } from './pairedWorkerConnection';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { BrowserWindow } from 'electron';
 import { hubBusUrl, getHubToken } from './hubDaemon';
@@ -105,6 +105,7 @@ export function callHub<T = unknown>(method: string, params: unknown = {}): Prom
     const p = { ...(params as Record<string, unknown>) };
     const record = remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId);
     if (record) {
+      if (record.peer !== pairedDestinationKey()) throw new Error('This dispatch belongs to a different pairing');
       if (!record.sessionId) return Promise.reject(new Error('Remote admission is unresolved'));
       p.sessionId = record.sessionId;
     }
@@ -150,6 +151,7 @@ export function registerCapability(method: string, handler: CapabilityHandler): 
     const actions = ['agents.sendMessage','claude.approve','claude.answer','claude.signal','claude.gate','claude.setModel','claude.setEffort','claude.setPermissionMode','sessions.conversation','sessions.transcript'];
     const record = actions.includes(method) ? remoteDispatchRegistry.list().find((r) => r.localSessionId === p.sessionId) : undefined;
     if (record) {
+      if (record.peer !== pairedDestinationKey()) throw new Error('This dispatch belongs to a different pairing');
       if (!record.sessionId) throw new Error('Remote admission unresolved');
       return pairedWorkerConnection.call(method,{...p,sessionId:record.sessionId});
     }

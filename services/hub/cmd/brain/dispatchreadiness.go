@@ -109,15 +109,15 @@ func probeProviderLogin(ctx context.Context, binary, provider string) *bool {
 		var status struct {
 			LoggedIn *bool `json:"loggedIn"`
 		}
-		if json.Unmarshal([]byte(output.String()), &status) == nil {
+		if json.Unmarshal([]byte(output.buf.String()), &status) == nil {
 			return status.LoggedIn
 		}
 		return nil
 	}
-	if err == nil && strings.Contains(strings.ToLower(output.String()), "logged in") {
+	if err == nil && strings.Contains(strings.ToLower(output.buf.String()), "logged in") {
 		return boolPtr(true)
 	}
-	if strings.Contains(strings.ToLower(output.String()), "not logged in") {
+	if strings.Contains(strings.ToLower(output.buf.String()), "not logged in") {
 		return boolPtr(false)
 	}
 	return nil

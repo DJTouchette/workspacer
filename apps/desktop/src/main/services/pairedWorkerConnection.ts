@@ -1,9 +1,11 @@
 import WebSocket from 'ws';
+import { createHash } from 'crypto';
 import { getPairedWorkerTarget } from './remoteServer';
 
 /** One outbound, host-only socket. Credentials never enter the renderer or an agent. */
 export class PairedWorkerConnection {
   private socket?: WebSocket;
+  private stopped = false;
   private connecting?: Promise<void>;
   private sequence = 0;
   private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -13,7 +15,10 @@ export class PairedWorkerConnection {
 
   constructor(private setting = getPairedWorkerTarget) {}
 
+  stop(): void { this.stopped = true; if (this.retry) clearTimeout(this.retry); this.retry = undefined; this.socket?.close(); }
+
   async connect(): Promise<void> {
+    this.stopped = false;
     if (this.socket?.readyState === WebSocket.OPEN && !this.connecting) return;
     if (this.connecting) return this.connecting;
     const target = this.setting();
@@ -57,7 +62,7 @@ export class PairedWorkerConnection {
           pending.reject(new Error('Paired connection lost; admission may be unknown'));
         }
         this.pending.clear();
-        if (this.setting() && !this.retry) {
+        if (!this.stopped && this.setting() && !this.retry) {
           this.retry = setTimeout(() => {
             this.retry = undefined;
             void this.connect().catch(() => {});
@@ -84,3 +89,8 @@ export class PairedWorkerConnection {
 }
 
 export const pairedWorkerConnection = new PairedWorkerConnection();
+
+export function pairedDestinationKey(): string {
+  const target = getPairedWorkerTarget();
+  return target ? `paired-${createHash('sha256').update(target.busUrl).update('\0').update(target.token).digest('hex')}` : '';
+}

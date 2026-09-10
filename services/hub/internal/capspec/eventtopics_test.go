@@ -93,21 +93,22 @@ var (
 // CONSTRUCTS the envelope, or be a client-supplied type that mayPublish already
 // governs. Anything else is a hole with a comment on it.
 var passthroughSites = map[string]string{
-	"internal/bus/bus.go:s.broker.Publish(*f.Event)":            "a client-supplied envelope: its type is whatever the client sent. mayPublish is the guard — a non-trusted connection may not publish a CLASSIFIED topic at all (host state is not forgeable), and an unclassified one is bounded by the manifest emits list.",
-	"internal/claudemon/bridge.go:b.pub.Publish(ev)":            "re-publishes the envelope mapEvent built in the same file, whose literal (agent.state_changed) is scanned at that site.",
-	"internal/supervisor/supervisor.go:Publish(event.Envelope)": "the Publisher interface method declaration, not a call.",
-	"internal/plugin/manager.go:Publish(event.Envelope)":        "the Publisher interface method declaration, not a call.",
-	"internal/claudemon/bridge.go:Publish(event.Envelope)":      "the Publisher interface method declaration, not a call.",
-	"internal/broker/broker.go:func (b *Broker) Publish(":       "the broker's own fan-out entry point.",
-	"cmd/brain/bus.go:func (b *busClient) publish(":             "brain's publish helper. Every caller passes a literal, and those are scanned at their call sites.",
-	"cmd/mcp/ui.go:b.c.Publish(ctx, ev(in))":                    "the facade's UI-tool publish forwarder. Every tool builds its envelope with a topic literal at an event.New site in addUiTools (same file), and those are scanned there.",
-	"internal/nodes/supervisor.go:s.publish(*c)":                "the node registry's INJECTED publish callback: internal/nodes constructs no envelope at all, it hands a nodes.Change to whatever the hub supplied. The envelope — and its node.state_changed literal — is built in cmd/hub/nodes.go, and is scanned at that event.New site.",
-	"internal/nodes/supervisor.go:Publish func(Change)":         "the Options field declaration, not a call.",
-	"internal/federation/federation.go:l.pub.Publish(ev)":       "the federation republish path: a PEER's envelope forwarded verbatim with the Hub field stamped. Its type is whatever the peer published, bounded by ForwardTopics (an allowlist of already-classified fleet topics) — classifying the family here would duplicate the rows that already govern those topics locally.",
-	"cmd/brain/events.go:publish(u.SessionID, u.StatusLine)":    "invokes the injected callback whose topic literal (agent.statusline) is at cmd/brain/main.go, scanned there. The parameter is a func, not a topic.",
-	"cmd/brain/library.go:workspacer.publish(type, data)":       "a line of DOCUMENTATION inside a generated skill file describing the plugin API to an agent — text, not a call.",
-	"main/ipc.ts:publishToHub(ev);":                             "IPC.HUB_PUBLISH — the renderer publishing over the desktop's own TRUSTED host connection. Same trust domain and same process tree as main; the hub cannot distinguish them, and the topic is whatever the renderer chose.",
-	"main/services/hubClient.ts:export function publishToHub(":  "the publish helper itself, not a call.",
+	"internal/bus/remotedispatch.go:func (rt *router) publishDispatchEvent(": "Router helper declaration. Its call sites use topic constants resolved by the same scanner; it never accepts a topic from an external caller.",
+	"internal/bus/bus.go:s.broker.Publish(*f.Event)":                         "a client-supplied envelope: its type is whatever the client sent. mayPublish is the guard — a non-trusted connection may not publish a CLASSIFIED topic at all (host state is not forgeable), and an unclassified one is bounded by the manifest emits list.",
+	"internal/claudemon/bridge.go:b.pub.Publish(ev)":                         "re-publishes the envelope mapEvent built in the same file, whose literal (agent.state_changed) is scanned at that site.",
+	"internal/supervisor/supervisor.go:Publish(event.Envelope)":              "the Publisher interface method declaration, not a call.",
+	"internal/plugin/manager.go:Publish(event.Envelope)":                     "the Publisher interface method declaration, not a call.",
+	"internal/claudemon/bridge.go:Publish(event.Envelope)":                   "the Publisher interface method declaration, not a call.",
+	"internal/broker/broker.go:func (b *Broker) Publish(":                    "the broker's own fan-out entry point.",
+	"cmd/brain/bus.go:func (b *busClient) publish(":                          "brain's publish helper. Every caller passes a literal, and those are scanned at their call sites.",
+	"cmd/mcp/ui.go:b.c.Publish(ctx, ev(in))":                                 "the facade's UI-tool publish forwarder. Every tool builds its envelope with a topic literal at an event.New site in addUiTools (same file), and those are scanned there.",
+	"internal/nodes/supervisor.go:s.publish(*c)":                             "the node registry's INJECTED publish callback: internal/nodes constructs no envelope at all, it hands a nodes.Change to whatever the hub supplied. The envelope — and its node.state_changed literal — is built in cmd/hub/nodes.go, and is scanned at that event.New site.",
+	"internal/nodes/supervisor.go:Publish func(Change)":                      "the Options field declaration, not a call.",
+	"internal/federation/federation.go:l.pub.Publish(ev)":                    "the federation republish path: a PEER's envelope forwarded verbatim with the Hub field stamped. Its type is whatever the peer published, bounded by ForwardTopics (an allowlist of already-classified fleet topics) — classifying the family here would duplicate the rows that already govern those topics locally.",
+	"cmd/brain/events.go:publish(u.SessionID, u.StatusLine)":                 "invokes the injected callback whose topic literal (agent.statusline) is at cmd/brain/main.go, scanned there. The parameter is a func, not a topic.",
+	"cmd/brain/library.go:workspacer.publish(type, data)":                    "a line of DOCUMENTATION inside a generated skill file describing the plugin API to an agent — text, not a call.",
+	"main/ipc.ts:publishToHub(ev);":                                          "IPC.HUB_PUBLISH — the renderer publishing over the desktop's own TRUSTED host connection. Same trust domain and same process tree as main; the hub cannot distinguish them, and the topic is whatever the renderer chose.",
+	"main/services/hubClient.ts:export function publishToHub(":               "the publish helper itself, not a call.",
 }
 
 // TestEveryPublishedTopicIsClassified is the forcing function.

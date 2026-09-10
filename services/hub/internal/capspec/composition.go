@@ -533,6 +533,15 @@ func brainGitCwdGuard(method, handler string) Witness {
 // compositionInert is the written record of "considered, and it cannot be half
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
+	"agents.dispatchPrepare": {
+		Reason:    "Allocates a remote worktree but executes no agent or repository setup hook. Its canonical cwd and nonce are validated before allocation; agents.spawn separately requires the same credential and consumes the durable single-use lease. No local workflow identifier or permission grant is accepted from the origin.",
+		Witnesses: []Witness{paramsClassified("cwd", "remoteOrigin")},
+	},
+	"fleet.selectDispatchModel": {
+		Reason:    "Forwards only a model-selection request to the explicitly paired host. The response is a routing decision, not a spawn; the remote spawn gate separately applies credential and routing ceilings and validates actual provider readiness and cwd. No local path is opened and no worker is launched here.",
+		Witnesses: []Witness{paramsClassified("cwd")},
+	},
+
 	"routing.preferences.validate": {Reason: "WRITE-THEN-INTERPRET: sparse typed policy only, composed by routing.Service, never host YAML. WIDEN-THEN-USE: host model classification and freshness floors are retained, no ranks, ceilings or tool scope are accepted. routingPreferencesTrusted requires authenticated host operator authority, excludes scoped operator and peer-link callers. CAS validates before atomic install.", Witnesses: []Witness{guarded(argBearing("routingPreferencesTrusted", "routing.preferences.validate", []string{"services", "hub", "cmd", "hub", "routingpreferences.go"}))}},
 	"routing.preferences.save":     {Reason: "WRITE-THEN-INTERPRET: sparse typed policy only, composed by routing.Service, never host YAML. WIDEN-THEN-USE: host model classification and freshness floors are retained, no ranks, ceilings or tool scope are accepted. routingPreferencesTrusted requires authenticated host operator authority, excludes scoped operator and peer-link callers. CAS validates before atomic install.", Witnesses: []Witness{guarded(argBearing("routingPreferencesTrusted", "routing.preferences.save", []string{"services", "hub", "cmd", "hub", "routingpreferences.go"}))}},
 	"routing.preferences.reset":    {Reason: "WRITE-THEN-INTERPRET: sparse typed policy only, composed by routing.Service, never host YAML. WIDEN-THEN-USE: host model classification and freshness floors are retained, no ranks, ceilings or tool scope are accepted. routingPreferencesTrusted requires authenticated host operator authority, excludes scoped operator and peer-link callers. CAS validates before atomic install.", Witnesses: []Witness{guarded(argBearing("routingPreferencesTrusted", "routing.preferences.reset", []string{"services", "hub", "cmd", "hub", "routingpreferences.go"}))}},
