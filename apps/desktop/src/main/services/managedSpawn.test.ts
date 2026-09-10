@@ -760,7 +760,10 @@ describe('spawnManagedAgent — fleet-worker terminal escalation contract', () =
       toolScope: 'operator',
     });
     expect(lastManaged().instructions).toContain('FACADE');
-    expect(lastManaged().instructions).not.toContain('wks-escalation');
+    // Manager doctrine explains worker reports; it must not instruct the
+    // manager itself to emit the terminal worker contract.
+    expect(lastManaged().instructions).not.toContain('STRUCTURED WORKER ESCALATION CONTRACT');
+    expect(lastManaged().instructions).toContain('SELECTED FLEET POLICY');
   });
 });
 

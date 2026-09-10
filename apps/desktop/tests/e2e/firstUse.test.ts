@@ -1043,6 +1043,19 @@ for (const width of [360, 1440]) {
     await expect
       .poll(async () => (await calls(page)).filter((c: any) => c.method === 'spawnClaude').length)
       .toBe(1);
+    const composer = page.locator('textarea:visible').first();
+    await composer.fill('Keep this unsent draft');
+    await page
+      .locator('[data-session-chat-view]:visible')
+      .first()
+      .evaluate((root) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.setData('text/uri-list', 'file:///fixture/retained.txt');
+        root.dispatchEvent(
+          new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }),
+        );
+      });
+    await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
     await paletteAction(page, 'Open Overview');
     await expect(open).toBeVisible();
     await page.evaluate(() => {
@@ -1056,6 +1069,8 @@ for (const width of [360, 1440]) {
     await open.click();
     await expect(open).toHaveCount(0);
     await paletteAction(page, 'Fleet Manager');
+    await expect(composer).toHaveValue('Keep this unsent draft');
+    await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
     const history = await calls(page);
     const spawns = history.filter((c: any) => c.method === 'spawnClaude');
     expect(spawns).toHaveLength(1);
