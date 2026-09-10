@@ -148,6 +148,14 @@ test('save references, safe selectors, preserve conflict draft and deep-link act
   await expect(page.getByLabel('PR number', { exact: true })).toHaveValue('456');
   await page.getByRole('button', { name: 'Keep draft on current task' }).click();
   await page.getByRole('button', { name: 'Save references' }).click();
+  await expect(page.getByText('EXTERNAL-1', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).fixtureTask.links.pullRequest.number)).toBe(
+    '456',
+  );
+  expect(await page.evaluate(() => (window as any).fixtureTask.links.tickets)).toEqual([
+    { id: 'WKS-9' },
+    { id: 'EXTERNAL-1' },
+  ]);
   expect(await page.evaluate(() => (window as any).fixtureTask.ownerLabel)).toBe(
     'Replacement manager',
   );
@@ -181,6 +189,196 @@ test('failure evidence survives an explicit skip', async ({ page }) => {
   expect(await page.evaluate(() => (window as any).fixtureTask.workflow.steps[1].outcome)).toEqual({
     failure: 'Original failure evidence',
   });
+});
+
+test('repeated races retain the PR draft and every concurrent ticket, with actor history under Details', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 1000 });
+  await page.goto(`${base}?mode=links&width=360`);
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await page.getByLabel('PR number', { exact: true }).fill('123');
+  await page.evaluate(() => (window as any).fixtureChange());
+  await page.getByRole('button', { name: 'Save references' }).click();
+  await expect(page.getByText(/Your draft is preserved/)).toBeVisible();
+  await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+  await page.evaluate(() => {
+    const t = (window as any).fixtureTask;
+    t.revision++;
+    t.links.tickets.push({ id: 'EXTERNAL-2' });
+  });
+  await page.getByRole('button', { name: 'Save references' }).click();
+  await expect(page.getByText(/Your draft is preserved/)).toBeVisible();
+  await expect(page.getByLabel('PR number', { exact: true })).toHaveValue('123');
+  await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+  await page.getByRole('button', { name: 'Save references' }).click();
+  const links = await page.evaluate(() => (window as any).fixtureTask.links);
+  expect(links.pullRequest.number).toBe('123');
+  expect(links.tickets.map((t: any) => t.id)).toEqual([
+    'WKS-412',
+    'SUP-77',
+    'EXTERNAL-1',
+    'EXTERNAL-2',
+  ]);
+  const history = page.getByLabel('Reference edit history', { exact: true });
+  await expect(history).toBeHidden();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByText('Details', { exact: true }).click();
+  await expect(history).toContainText('References updated by manager');
+  await expect(history).toContainText('References updated by you');
+  await expect(history.locator('time').first()).toHaveAttribute('datetime', '2026-09-09T03:00:00Z');
+  await expect(history.locator('time').last()).toHaveAttribute('datetime', '2026-09-09T04:00:00Z');
+  await expect(history).toContainText('older edits outside this recorded history are unknown');
+  await page.screenshot({
+    path: path.resolve(__dirname, '../../test-results/task-inspector/history-360.png'),
+    fullPage: true,
+  });
+});
+
+test('deliberate removals survive rebase and untouched concurrent deletions stay deleted', async ({
+  page,
+}) => {
+  await page.goto(`${base}?mode=links`);
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await page.getByRole('button', { name: 'Remove ticket', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Remove reference', exact: true }).click();
+  await page.getByLabel('PR number', { exact: true }).fill('123');
+  await page.evaluate(() => {
+    const t = (window as any).fixtureTask;
+    t.revision++;
+    t.links.tickets = [t.links.tickets[0], { id: 'EXTERNAL-1' }];
+  });
+  await page.getByRole('button', { name: 'Save references' }).click();
+  await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+  await page.getByRole('button', { name: 'Save references' }).click();
+  expect(await page.evaluate(() => (window as any).fixtureTask.links)).toEqual({
+    pullRequest: {
+      number: '123',
+      url: 'https://dev.azure.test/org/project/_git/repo/pullrequest/9492',
+    },
+    tickets: [{ id: 'EXTERNAL-1' }],
+    references: [],
+  });
+});
+
+for (const [field, initial, mine, theirs] of [
+  ['PR number', '9492', '123', '456'],
+  [
+    'PR URL',
+    'https://dev.azure.test/org/project/_git/repo/pullrequest/9492',
+    'https://example.test/mine',
+    'https://example.test/theirs',
+  ],
+  [
+    'Ticket URL (optional)',
+    'https://jira.test/browse/WKS-412',
+    'https://example.test/mine',
+    'https://example.test/theirs',
+  ],
+  [
+    'Reference URL',
+    'https://example.test/design',
+    'https://example.test/mine',
+    'https://example.test/theirs',
+  ],
+] as const)
+  test(`incompatible ${field} edits block saving and preserve the draft until explicitly resolved`, async ({
+    page,
+  }) => {
+    await page.goto(`${base}?mode=links`);
+    await page.getByRole('button', { name: 'Links', exact: true }).click();
+    const input = page.getByLabel(field, { exact: true }).first();
+    await expect(input).toHaveValue(initial);
+    await input.fill(mine);
+    await page.evaluate(
+      ({ field, theirs }) => {
+        const t = (window as any).fixtureTask;
+        t.revision++;
+        if (field === 'PR number') t.links.pullRequest.number = theirs;
+        else if (field === 'PR URL') t.links.pullRequest.url = theirs;
+        else if (field === 'Reference URL') t.links.references[0].url = theirs;
+        else t.links.tickets[0].url = theirs;
+      },
+      { field, theirs },
+    );
+    await page.getByRole('button', { name: 'Save references' }).click();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'Both edits changed' })).toBeVisible();
+      await expect(input).toHaveValue(mine);
+      await expect(page.getByRole('button', { name: 'Save references' })).toBeDisabled();
+    }
+    expect(await page.evaluate(() => (window as any).taskCalls.length)).toBe(1);
+    await input.fill(theirs);
+    await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+    await page.getByRole('button', { name: 'Save references' }).click();
+    await expect(input).toHaveValue(theirs);
+  });
+
+test('ticket and named-reference renames retain concurrent URL edits across another race', async ({
+  page,
+}) => {
+  await page.goto(`${base}?mode=links`);
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await page.getByLabel('Ticket ID', { exact: true }).first().fill('RENAMED-1');
+  await page.getByLabel('Reference label', { exact: true }).fill('Renamed notes');
+  for (const suffix of ['first', 'second']) {
+    await page.evaluate((suffix) => {
+      const t = (window as any).fixtureTask;
+      t.revision++;
+      t.links.tickets[0].url = `https://example.test/ticket-${suffix}`;
+      t.links.references[0].url = `https://example.test/notes-${suffix}`;
+    }, suffix);
+    await page.getByRole('button', { name: 'Save references' }).click();
+    await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+  }
+  await page.getByRole('button', { name: 'Save references' }).click();
+  const links = await page.evaluate(() => (window as any).fixtureTask.links);
+  expect(links.tickets[0]).toEqual({ id: 'RENAMED-1', url: 'https://example.test/ticket-second' });
+  expect(links.references).toEqual([
+    { label: 'Renamed notes', url: 'https://example.test/notes-second' },
+  ]);
+});
+
+for (const field of ['Ticket ID', 'Reference label'] as const)
+  test(`conflicting ${field} renames require explicit reload`, async ({ page }) => {
+    await page.goto(`${base}?mode=links`);
+    await page.getByRole('button', { name: 'Links', exact: true }).click();
+    const input = page.getByLabel(field, { exact: true }).first();
+    await input.fill('My rename');
+    await page.evaluate((field) => {
+      const t = (window as any).fixtureTask;
+      t.revision++;
+      if (field === 'Ticket ID') t.links.tickets[0].id = 'Manager rename';
+      else t.links.references[0].label = 'Manager rename';
+    }, field);
+    await page.getByRole('button', { name: 'Save references' }).click();
+    await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Both edits changed' })).toContainText(
+      'removed from the current task',
+    );
+    await expect(input).toHaveValue('My rename');
+    await expect(page.getByRole('button', { name: 'Save references' })).toBeDisabled();
+    expect(await page.evaluate(() => (window as any).taskCalls.length)).toBe(1);
+    await page.getByRole('button', { name: 'Reload references' }).click();
+    await expect(input).toHaveValue('Manager rename');
+    await expect(page.getByRole('button', { name: 'Save references' })).toBeDisabled();
+  });
+
+test('clearing both PR fields removes the PR while retaining a concurrent ticket', async ({
+  page,
+}) => {
+  await page.goto(`${base}?mode=links`);
+  await page.getByRole('button', { name: 'Links', exact: true }).click();
+  await page.getByLabel('PR number', { exact: true }).fill('');
+  await page.getByLabel('PR URL', { exact: true }).fill('');
+  await page.evaluate(() => (window as any).fixtureChange());
+  await page.getByRole('button', { name: 'Save references' }).click();
+  await page.getByRole('button', { name: 'Keep draft on current task' }).click();
+  await page.getByRole('button', { name: 'Save references' }).click();
+  const links = await page.evaluate(() => (window as any).fixtureTask.links);
+  expect(links.pullRequest).toBeUndefined();
+  expect(links.tickets.map((t: any) => t.id)).toEqual(['WKS-412', 'SUP-77', 'EXTERNAL-1']);
 });
 for (const [mode, message] of [
   ['empty', 'No recorded tasks match this selection.'],

@@ -204,4 +204,57 @@ describe('compact default view', () => {
     fireEvent.click(screen.getByRole('button', { name: /Links/ }));
     expect(screen.getByLabelText('PR number')).toHaveValue('9492');
   });
+  it('shows only recorded link actors and timestamps under Details, with unknown older origins', async () => {
+    const task = workflowTask();
+    task.audit = [
+      {
+        id: 'm',
+        action: 'links',
+        actor: 'manager',
+        reason: 'Updated references',
+        createdAt: '2026-09-09T03:00:00Z',
+      },
+      {
+        id: 'h',
+        action: 'links',
+        actor: 'host-user',
+        reason: 'Updated references',
+        createdAt: '2026-09-09T04:00:00Z',
+      },
+      {
+        id: 'w',
+        action: 'waive',
+        actor: 'host-user',
+        reason: 'Not a links edit',
+        createdAt: '2026-09-09T05:00:00Z',
+      },
+    ];
+    await mount(task);
+    const history = screen.getByLabelText('Reference edit history');
+    expect(history).not.toBeVisible();
+    fireEvent.click(screen.getByText('Details', { exact: true }));
+    expect(history).toBeVisible();
+    expect(history).toHaveTextContent('References updated by manager');
+    expect(history).toHaveTextContent('References updated by you');
+    expect(Array.from(history.querySelectorAll('time'), (t) => t.dateTime)).toEqual([
+      '2026-09-09T03:00:00Z',
+      '2026-09-09T04:00:00Z',
+    ]);
+    expect(history).not.toHaveTextContent('Not a links edit');
+    expect(history).toHaveTextContent(
+      'Individual link origins and older edits outside this recorded history are unknown.',
+    );
+  });
+  it('does not attribute legacy references with no recorded audit to a manager or host user', async () => {
+    const task = workflowTask();
+    task.links = { tickets: [{ id: 'LEGACY' }] };
+    await mount(task);
+    const history = screen.getByLabelText('Reference edit history');
+    expect(history).not.toHaveTextContent('References updated by');
+    expect(history).toHaveTextContent('unknown');
+    expect(screen.getByText('LEGACY').closest('[title]')).toHaveAttribute(
+      'title',
+      'Recorded reference; edit history in Details. Not verified with the provider.',
+    );
+  });
 });

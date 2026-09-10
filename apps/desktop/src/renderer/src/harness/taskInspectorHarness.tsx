@@ -114,7 +114,17 @@ Object.assign(window, {
   fixtureChange: () => {
     task.revision!++;
     task.ownerLabel = 'Replacement manager';
-    task.links = { tickets: [{ id: 'EXTERNAL-1' }] };
+    task.links = { ...task.links, tickets: [...(task.links?.tickets ?? []), { id: 'EXTERNAL-1' }] };
+    task.audit = [
+      ...(task.audit ?? []),
+      {
+        id: `manager-links-${task.revision}`,
+        actor: 'manager',
+        action: 'links',
+        reason: 'Task references edited by manager',
+        createdAt: '2026-09-09T03:00:00Z',
+      },
+    ];
   },
 });
 const ipc = {
@@ -154,7 +164,19 @@ const ipc = {
             run.state = 'waived';
             run.waiverId = audit.id;
             task.audit = [...(task.audit ?? []), audit];
-          } else task.links = validateTaskLinks(request.links);
+          } else {
+            task.links = validateTaskLinks(request.links);
+            task.audit = [
+              ...(task.audit ?? []),
+              {
+                id: `host-links-${task.revision}`,
+                actor: 'host-user',
+                action: 'links',
+                reason: 'Task references edited by you',
+                createdAt: '2026-09-09T04:00:00Z',
+              },
+            ];
+          }
           task.revision!++;
           return { ok: true, task: structuredClone(task) };
         },

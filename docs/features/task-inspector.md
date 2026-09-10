@@ -31,9 +31,24 @@ sizes, duplicate labels/URLs, URL schemes and credentials are validated at the h
 Changes use the task revision; conflicts retain the user's draft and require an
 explicit reload or reapplication to the current task.
 
+**Keep draft on current task** reapplies only the user's changed fields against the
+fresh links. Concurrent additions, changes and deletions of untouched entries survive;
+explicit user removals remain removals. Editor-only row origins retain the original
+ticket ID/reference label through a rename, allowing an unrelated concurrent URL edit
+to survive even repeated conflicts. Incompatible edits to the same field, including
+delete-versus-edit, leave the draft and its revision unchanged and block Save with a
+plain message. Choose the current field value (or restore its original value to drop
+that draft edit), then reapply; **Reload references** discards the draft explicitly.
+Every subsequent Save still uses the existing host revision CAS and validation.
+
 References appear as compact chips near the top, beside the recorded branch and an
 open-worktree action. The form is a lightweight toggle behind **Links**, not a
 permanent panel.
+
+**Details → Reference edit history** displays the existing links audit's actor
+(manager/you) and timestamp. It excludes waiver audits and makes unknown individual
+link origins and older history explicit. This is set-level edit history, not per-chip
+attribution; no per-reference metadata or provider verification is introduced.
 
 A manager may also record references over MCP; see "Manager task references" below.
 Everything else on a task, including the step waiver, remains host-user only.
@@ -199,3 +214,25 @@ this worktree makes unrelated Git-confinement fixtures inherit a repository, mak
 home-confinement fixtures fall inside the allowed home, and puts the literal
 `worktree` in a path-sensitive Go library assertion. The dispatch-chain harness
 already owns its isolated state, binaries, caches and ports.
+
+## Concurrent-reference correction verification (2026-09-09)
+
+Baseline ancestry is exactly `55729beadfa3c1eaf9a077723b3a03d15ca60984`.
+The strengthened production-component Playwright reproduction opens Links, edits
+the PR, adds `EXTERNAL-1` externally, saves into a conflict, keeps the draft and
+saves again. Running it against the baseline component failed because `EXTERNAL-1`
+disappeared. With the correction, the saved PR edit and ticket both survive.
+
+Verified with private worktree dependencies, Node 22.22.2 and Chromium
+148.0.7778.96: both typechecks; 69 main/store/service tests; 26 renderer tests;
+34 Task Inspector Playwright cases plus four final targeted cases (37 distinct
+cases total); changed TypeScript Prettier check and `git diff --check`.
+Coverage includes repeated races, explicit PR/ticket/reference removals, concurrent
+deletion of untouched entries, identity/URL edits and incompatible field collisions.
+
+Visually reviewed the 360px default and history views in Everforest, the light
+360px default and dark 480px default. Screenshot artifacts remain in
+`apps/desktop/test-results/task-inspector/`, including `history-360.png`.
+The harness uses production components with synthetic IPC, isolated Vite caches
+and ephemeral ports. No production outputs, live fleet, app/daemon restart,
+provider lookup, metadata migration or host authority change was involved.

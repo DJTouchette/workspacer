@@ -4,10 +4,14 @@ import { Surface } from './Surface';
 import { inputStyle, SmallButton } from './settings/primitives';
 import { openTaskWorkflowSettings } from '../lib/settingsBus';
 import {
+  createTaskLinksDraft,
+  normalizedDraftLinks,
+  rebaseTaskLinksDraft,
+} from '../lib/taskLinksDraft';
+import {
   TASK_INSPECTOR_UNAVAILABLE,
   taskIsActive,
   taskSkipDisabledReason,
-  validateTaskLinks,
   type DispatchAttempt,
   type DispatchTask,
   type DispatchHistoryResponse,
@@ -629,6 +633,26 @@ function TaskDetails({
         <IdRow label="Task" value={task.taskId} />
         <IdRow label="Manager" value={task.ownerSessionId} />
         <IdRow label="Project" value={task.projectCwd} />
+        <div aria-label="Reference edit history" style={{ ...meta, marginTop: 6 }}>
+          <div style={overline}>Reference edit history</div>
+          {(task.audit ?? [])
+            .filter((entry) => entry.action === 'links')
+            .map((entry) => (
+              <div key={entry.id} style={{ marginTop: 4 }}>
+                References updated by{' '}
+                {entry.actor === 'host-user'
+                  ? 'you'
+                  : entry.actor === 'manager'
+                    ? 'manager'
+                    : 'unknown actor'}{' '}
+                ·{' '}
+                <time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time>
+              </div>
+            ))}
+          <p style={{ margin: '4px 0 0' }}>
+            Individual link origins and older edits outside this recorded history are unknown.
+          </p>
+        </div>
         {task.workflow && (
           <>
             <IdRow
@@ -706,20 +730,37 @@ function TaskReferences({
   open: (r: TaskOpenRequest) => Promise<void>;
   busy: boolean;
 }) {
-  const [links, setLinks] = useState<TaskLinks>(task.links ?? {});
+  const [draft, setDraft] = useState(() => createTaskLinksDraft(task.links));
+  const links = draft.links;
   const [revision, setRevision] = useState(task.revision ?? 0);
   const [dirty, setDirty] = useState(false);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     if (!dirty) {
-      setLinks(task.links ?? {});
+      setDraft(createTaskLinksDraft(task.links));
       setRevision(task.revision ?? 0);
     }
   }, [task, dirty]);
-  const change = (next: TaskLinks) => {
+  const change = (
+    next: TaskLinks,
+    removed?: { kind: 'ticketOrigins' | 'referenceOrigins'; index: number },
+  ) => {
     setDirty(true);
-    setLinks(next);
+    setError('');
+    setDraft((d) => ({
+      ...d,
+      links: next,
+      ticketOrigins: Array.from(
+        { length: next.tickets?.length ?? 0 },
+        (_, i) => d.ticketOrigins[i],
+      ),
+      referenceOrigins: Array.from(
+        { length: next.references?.length ?? 0 },
+        (_, i) => d.referenceOrigins[i],
+      ),
+      ...(removed ? { [removed.kind]: d[removed.kind].filter((_, i) => i !== removed.index) } : {}),
+    }));
   };
   const conflict = dirty && revision !== (task.revision ?? 0);
   const worktree = openableWorktree(task);
@@ -734,7 +775,7 @@ function TaskReferences({
           <Chip
             label={`PR ${task.links.pullRequest.number ?? 'link'}`}
             icon={task.links.pullRequest.url ? external : undefined}
-            title="Recorded by you or your manager; not verified with the provider"
+            title="Recorded reference; edit history in Details. Not verified with the provider."
             onClick={
               task.links.pullRequest.url
                 ? () => void open({ taskId: task.taskId, kind: 'url', reference: 'pullRequest' })
@@ -747,7 +788,7 @@ function TaskReferences({
             key={`ticket-${index}`}
             label={t.id}
             icon={t.url ? external : undefined}
-            title="Recorded by you or your manager; not verified with the provider"
+            title="Recorded reference; edit history in Details. Not verified with the provider."
             onClick={
               t.url
                 ? () => void open({ taskId: task.taskId, kind: 'url', reference: 'tickets', index })
@@ -760,7 +801,7 @@ function TaskReferences({
             key={`reference-${index}`}
             label={r.label}
             icon={external}
-            title="Recorded by you or your manager; not verified with the provider"
+            title="Recorded reference; edit history in Details. Not verified with the provider."
             onClick={() =>
               void open({ taskId: task.taskId, kind: 'url', reference: 'references', index })
             }
@@ -858,7 +899,10 @@ function TaskReferences({
                 <SmallButton
                   label="Remove ticket"
                   onClick={() =>
-                    change({ ...links, tickets: links.tickets!.filter((_, i) => i !== index) })
+                    change(
+                      { ...links, tickets: links.tickets!.filter((_, i) => i !== index) },
+                      { kind: 'ticketOrigins', index },
+                    )
                   }
                 />
               </div>
@@ -902,10 +946,13 @@ function TaskReferences({
                 <SmallButton
                   label="Remove reference"
                   onClick={() =>
-                    change({
-                      ...links,
-                      references: links.references!.filter((_, i) => i !== index),
-                    })
+                    change(
+                      {
+                        ...links,
+                        references: links.references!.filter((_, i) => i !== index),
+                      },
+                      { kind: 'referenceOrigins', index },
+                    )
                   }
                 />
               </div>
@@ -938,7 +985,17 @@ function TaskReferences({
               This task changed. Your draft is preserved.{' '}
               <SmallButton
                 label="Keep draft on current task"
-                onClick={() => setRevision(task.revision ?? 0)}
+                disabled={busy}
+                onClick={() => {
+                  try {
+                    const rebased = rebaseTaskLinksDraft(draft, task.links);
+                    setDraft(rebased);
+                    setRevision(task.revision ?? 0);
+                    setError('');
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
               />
             </p>
           )}
@@ -949,10 +1006,7 @@ function TaskReferences({
               disabled={busy || !dirty || conflict}
               onClick={() => {
                 try {
-                  const normalized = { ...links };
-                  if (!normalized.pullRequest?.number && !normalized.pullRequest?.url)
-                    delete normalized.pullRequest;
-                  const valid = validateTaskLinks(normalized);
+                  const valid = normalizedDraftLinks(links);
                   setError('');
                   void edit({
                     taskId: task.taskId,
@@ -971,7 +1025,7 @@ function TaskReferences({
               label="Reload references"
               disabled={busy}
               onClick={() => {
-                setLinks(task.links ?? {});
+                setDraft(createTaskLinksDraft(task.links));
                 setRevision(task.revision ?? 0);
                 setDirty(false);
                 setError('');
