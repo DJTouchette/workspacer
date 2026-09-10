@@ -64,6 +64,7 @@ export const LOCAL_TERMINAL = [
  */
 export const HOST_ONLY = [
   'managerReplacement', // host-owned local transaction; remote/web explicitly unavailable
+  'managerRequestPrepare', // immutable request identity is minted by the local host
   // Captured Fleet review evidence is local main-process state.  It remains
   // owner/selector-validated by the IPC store and deliberately has no bus or
   // remote fallback.
@@ -186,6 +187,20 @@ export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: st
       );
     }
   }
+
+  // Ordinary chat still exercises the bus. A request-tagged send must reach
+  // the same host ledger as preparation; the generic bus method has no request
+  // identity contract. Never fall back after an IPC rejection or unknown ack.
+  const requestCapable =
+    typeof ipc.managerRequestPrepare === 'function' && typeof ipc.claudeMessage === 'function';
+  if (!requestCapable) api.managerRequestPrepare = bus.managerRequestPrepare;
+  api.claudeMessage = (sessionId, text, requestId) => {
+    if (requestId === undefined) return bus.claudeMessage(sessionId, text);
+    if (!requestCapable) return bus.claudeMessage(sessionId, text, requestId);
+    if (typeof requestId !== 'string' || !requestId)
+      return Promise.resolve({ ok: false, mode: 'Invalid manager request ID' });
+    return ipc.claudeMessage(sessionId, text, requestId);
+  };
 
   // The web backend can read provider-native child threads through the hub bus,
   // but Claude workflow-run drill-in still resolves local artifact files through

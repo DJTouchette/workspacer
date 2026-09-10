@@ -51,7 +51,7 @@ jobs:
       - name: Renderer capture, Inspector and chat regressions
         if: ${{ !cancelled() }}
         working-directory: apps/desktop/src/renderer
-        run: npx vitest run tests/components/TaskInspector.test.tsx tests/components/ClaudePane.test.tsx tests/components/ClaudePaneAttachmentRestore.test.tsx tests/components/ClaudePaneOptimisticLoading.test.tsx tests/fleetManager.test.tsx tests/firstUseSpawn.test.tsx tests/reconcileRespawn.test.tsx
+        run: npx vitest run tests/components/TaskInspector.test.tsx tests/components/ClaudePane.test.tsx tests/components/ClaudePaneAttachmentRestore.test.tsx tests/components/ClaudePaneOptimisticLoading.test.tsx tests/fleetManager.test.tsx tests/firstUseSpawn.test.tsx tests/reconcileRespawn.test.tsx tests/backend/backendParity.test.ts
       - name: MCP tool and headless compatibility tests
         if: ${{ !cancelled() }}
         working-directory: services/hub

@@ -1,5 +1,6 @@
 import { MANAGER_REPLACEMENT_UNAVAILABLE } from '../../../main/shared/managerReplacement';
 import { TASK_INSPECTOR_UNAVAILABLE } from '../../../main/shared/dispatchHistory';
+import { REQUEST_CAPTURE_UNAVAILABLE } from '../../../main/shared/managerRequests';
 import { routingAPI } from '../../../main/shared/routingPreferences';
 import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/shared/usageReport';
 /**
@@ -858,11 +859,16 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       available: false as const,
       reason: 'Automatic request capture is unavailable on remote/headless connections.',
     }),
-    claudeMessage: (sessionId, text) =>
-      client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
+    claudeMessage: (sessionId, text, requestId) => {
+      // No remote inbox authority exists. Do not silently strip a supplied
+      // request identity and send its text as an ordinary bus message.
+      if (requestId !== undefined)
+        return Promise.resolve({ ok: false, requestId, mode: REQUEST_CAPTURE_UNAVAILABLE });
+      return client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,
         text,
-      }),
+      });
+    },
     claudeSetPermissionMode: (sessionId, mode) =>
       client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', {
         sessionId,

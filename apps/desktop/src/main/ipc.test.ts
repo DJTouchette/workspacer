@@ -52,8 +52,41 @@ const {
 }));
 
 const cardMocks = vi.hoisted(() => ({ owner: vi.fn(), read: vi.fn() }));
+const bridgeMocks = vi.hoisted(() => ({
+  preload: undefined as unknown,
+  busCall: vi.fn(async (_method: string, _params: unknown, _url?: string) => ({ ok: true })),
+}));
+
+vi.mock('../renderer/src/backend/hubBusClient', () => ({
+  HubBusClient: class {
+    constructor(readonly token: string, readonly busUrl?: string) {}
+    start() {}
+    isConnected() { return false; }
+    onStatus() { return () => {}; }
+    onReconnect() { return () => {}; }
+    subscribe() { return () => {}; }
+    can() { return true; }
+    call(method: string, params: unknown) {
+      return bridgeMocks.busCall(method, params, this.busUrl);
+    }
+  },
+}));
 
 vi.mock('electron', () => ({
+  contextBridge: {
+    exposeInMainWorld: (_name: string, api: unknown) => { bridgeMocks.preload = api; },
+  },
+  ipcRenderer: {
+    invoke: vi.fn(async (channel: string, ...args: unknown[]) => {
+      const handler = handlers.get(channel);
+      if (!handler) throw new Error(`No host handler for ${channel}`);
+      return handler(null, ...args);
+    }),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+    send: vi.fn(),
+  },
+  webUtils: { getPathForFile: vi.fn(() => '') },
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
       handlers.set(channel, handler);
@@ -744,5 +777,135 @@ it('mints a manager request before IPC delivery and binds the send to its stored
   } finally {
     snap.mockRestore();
     send.mockRestore();
+  }
+});
+
+it('installs the default production bridge and carries preparation and tagged sends through real preload/IPC into a private host ledger', async () => {
+  const { IPC } = await import('./shared/ipcChannels');
+  const { ipcRenderer } = await import('electron');
+  const { claudeSessionStore } = await import('./services/claudeSessionStore');
+  const { claudemonSessionClient } = await import('./services/claudemonSessionClient');
+  const requests = await import('./services/managerRequestService');
+  const { DispatchHistoryStore } = await import('./services/dispatchHistoryStore');
+  const { installBackend } = await import('../renderer/src/backend/install');
+  await import('./preload');
+  type API = import('../renderer/src/types/electron').ElectronAPI;
+  const preload = bridgeMocks.preload as API;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-request-ledger-'));
+  const filename = path.join(dir, 'history.json');
+  const store = new DispatchHistoryStore(() => filename);
+  const snapshot = vi.spyOn(claudeSessionStore, 'getSnapshot').mockImplementation((sessionId) => ({
+    sessionId, cwd: dir, status: 'active', isWakeTarget: true,
+  }) as never);
+  const service = new requests.ManagerRequestService(store,
+    (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+    () => { throw new Error('This transport fixture never selects policy or starts a worker'); });
+  const runtime = vi.spyOn(requests, 'managerRequests').mockReturnValue(service);
+  const daemon = vi.spyOn(claudemonSessionClient, 'message').mockReset();
+  const oldInfo = handlers.get(IPC.HUB_GET_REMOTE_INFO)!;
+  handlers.set(IPC.HUB_GET_REMOTE_INFO, () => ({ token: 'fixture', busUrl: 'ws://local-fixture/bus' }));
+  vi.stubGlobal('window', { electronAPI: preload });
+  const body = '[File: /project/spec.md] Original user request';
+  try {
+    await installBackend();
+    const api = window.electronAPI;
+    expect(api).not.toBe(preload);
+    expect(api.platform).toBe(preload.platform);
+    bridgeMocks.busCall.mockClear();
+    const prepared = await api.managerRequestPrepare!('bridge-owner', body);
+    if (!prepared.available) throw new Error('Default desktop did not reach local request preparation');
+    expect(service.request('bridge-owner', prepared.requestId)).toMatchObject({
+      requestId: prepared.requestId, ownerSessionId: 'bridge-owner', delivery: 'pending', userContent: body,
+    });
+    expect(daemon).not.toHaveBeenCalled();
+    let finish!: () => void;
+    daemon.mockImplementation((_id, content, _signatures, source) => new Promise((resolve) => {
+      expect(content).toBe(body);
+      expect(source!.requestId).toBe(prepared.requestId);
+      finish = () => {
+        service.finishDelivery(source!.requestId, source!.deliveryId, 'accepted');
+        resolve({ ok: true });
+      };
+    }));
+    const sending = api.claudeMessage('bridge-owner', 'Cannot overwrite the registered user content', prepared.requestId);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    expect(service.request('bridge-owner', prepared.requestId).delivery).toBe('unknown');
+    expect(bridgeMocks.busCall).not.toHaveBeenCalled();
+    finish();
+    expect(await sending).toMatchObject({ ok: true, requestId: prepared.requestId, delivery: 'accepted' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(IPC.CLAUDE_MESSAGE, 'bridge-owner', 'Cannot overwrite the registered user content', prepared.requestId);
+    expect(new DispatchHistoryStore(() => filename).listRequests('bridge-owner')[0]).toMatchObject({
+      requestId: prepared.requestId, delivery: 'accepted', attempts: [{ deliveryId: expect.any(String), status: 'accepted' }],
+    });
+    await api.claudeMessage('bridge-owner', body, prepared.requestId);
+    expect(daemon).toHaveBeenCalledOnce();
+    await expect(api.claudeMessage('foreign-owner', body, prepared.requestId)).rejects.toThrow(/unavailable/);
+    expect(daemon).toHaveBeenCalledOnce();
+    expect(bridgeMocks.busCall).not.toHaveBeenCalled();
+
+    const rejected = await api.managerRequestPrepare!('bridge-owner', body);
+    if (!rejected.available) throw new Error('Preparation unavailable');
+    expect(rejected.requestId).not.toBe(prepared.requestId);
+    daemon.mockImplementation(async (_id, _content, _signatures, source) => {
+      service.finishDelivery(source!.requestId, source!.deliveryId, 'rejected');
+      return { ok: false };
+    });
+    expect(await api.claudeMessage('bridge-owner', body, rejected.requestId)).toMatchObject({ ok: false, delivery: 'rejected', requestId: rejected.requestId });
+    daemon.mockImplementation(async (_id, _content, _signatures, source) => {
+      service.finishDelivery(source!.requestId, source!.deliveryId, 'accepted');
+      return { ok: true };
+    });
+    expect(await api.claudeMessage('bridge-owner', body, rejected.requestId)).toMatchObject({ ok: true, delivery: 'accepted', requestId: rejected.requestId });
+    const attempts = service.request('bridge-owner', rejected.requestId).attempts;
+    expect(attempts.map((a) => a.status)).toEqual(['rejected', 'accepted']);
+    expect(attempts[0].deliveryId).not.toBe(attempts[1].deliveryId);
+
+    const uncertain = await api.managerRequestPrepare!('bridge-owner', body);
+    if (!uncertain.available) throw new Error('Preparation unavailable');
+    daemon.mockRejectedValue(new Error('Lost acknowledgement'));
+    expect(await api.claudeMessage('bridge-owner', body, uncertain.requestId)).toMatchObject({ ok: false, delivery: 'unknown', requestId: uncertain.requestId });
+    const sends = daemon.mock.calls.length;
+    expect(await api.claudeMessage('bridge-owner', body, uncertain.requestId)).toMatchObject({ delivery: 'unknown' });
+    expect(daemon).toHaveBeenCalledTimes(sends);
+    expect(bridgeMocks.busCall).not.toHaveBeenCalled();
+
+    const held = await api.managerRequestPrepare!('bridge-owner', body);
+    if (!held.available) throw new Error('Preparation unavailable');
+    daemon.mockImplementation(async (_id, _content, _signatures, source) => {
+      service.finishDelivery(source!.requestId, source!.deliveryId, 'pending');
+      return { ok: true, mode: 'handoff-queued' };
+    });
+    expect(await api.claudeMessage('bridge-owner', body, held.requestId)).toMatchObject({ ok: true, delivery: 'pending' });
+    store.adoptWorkflowTasks('bridge-owner', 'successor');
+    const queued = service.request('successor', held.requestId);
+    service.finishDelivery(held.requestId, queued.attempts[0].deliveryId, 'accepted');
+    const count = daemon.mock.calls.length;
+    expect(await api.claudeMessage('successor', body, held.requestId)).toMatchObject({ ok: true, requestId: held.requestId, delivery: 'accepted' });
+    expect(service.request('successor', held.requestId).sourceSessionId).toBe('bridge-owner');
+    expect(daemon).toHaveBeenCalledTimes(count);
+    await api.claudeMessage('successor', 'ordinary message');
+    expect(daemon).toHaveBeenCalledTimes(count);
+    expect(bridgeMocks.busCall).toHaveBeenCalledExactlyOnceWith('agents.sendMessage', { sessionId: 'successor', text: 'ordinary message' }, 'ws://local-fixture/bus');
+
+    handlers.set(IPC.HUB_GET_REMOTE_INFO, () => ({ remoteClient: { token: 'remote-fixture', busUrl: 'ws://remote-fixture/bus' } }));
+    window.electronAPI = preload;
+    await installBackend();
+    const remote = window.electronAPI;
+    vi.mocked(ipcRenderer.invoke).mockClear();
+    bridgeMocks.busCall.mockClear();
+    expect(await remote.managerRequestPrepare!('remote-owner', body)).toMatchObject({ available: false });
+    expect(await remote.claudeMessage('remote-owner', body, held.requestId)).toMatchObject({ ok: false, requestId: held.requestId });
+    expect(ipcRenderer.invoke).not.toHaveBeenCalled();
+    expect(bridgeMocks.busCall).not.toHaveBeenCalled();
+    expect(store.listRequests('successor')).toHaveLength(4);
+    await remote.claudeMessage('remote-owner', 'ordinary remote message');
+    expect(bridgeMocks.busCall).toHaveBeenCalledExactlyOnceWith('agents.sendMessage', { sessionId: 'remote-owner', text: 'ordinary remote message' }, 'ws://remote-fixture/bus');
+  } finally {
+    handlers.set(IPC.HUB_GET_REMOTE_INFO, oldInfo);
+    snapshot.mockRestore();
+    runtime.mockRestore();
+    daemon.mockRestore();
+    vi.unstubAllGlobals();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
