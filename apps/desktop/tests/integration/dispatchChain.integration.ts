@@ -951,7 +951,10 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
     intents,
   };
   const before = launch.mock.calls.length;
-  const beforeTasks = history.list();
+  // list() projects a moving wallMs clock for live attempts. Compare the
+  // complete persisted records instead, including links, lineage and revisions.
+  const persistedTasks = () => history.requestTransaction((_requests, tasks) => tasks);
+  const beforeTasks = persistedTasks();
   const invalid = await call('resolve_manager_request', {
     ...args,
     intents: [{ ...intents[0], references: [{ kind: 'pullRequest', number: '999' }] }, intents[1]],
@@ -960,7 +963,7 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
     ok: false,
     error: expect.stringMatching(/PR number must match/),
   });
-  expect(history.list()).toEqual(beforeTasks);
+  expect(persistedTasks()).toEqual(beforeTasks);
   expect(
     (await call('get_manager_request', { requestId: capture.requestId })).value.userContent,
   ).toEqual(fetched.value.userContent);
