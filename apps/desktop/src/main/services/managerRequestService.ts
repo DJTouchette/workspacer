@@ -11,7 +11,7 @@ import {
   type RequestContext,
   type RequestIntent,
 } from '../shared/managerRequests';
-import { DispatchHistoryStore, dispatchHistoryStore } from './dispatchHistoryStore';
+import { DispatchHistoryStore } from './dispatchHistoryStore';
 
 type Owner = {
   sessionId: string;
@@ -61,6 +61,12 @@ function audit(task: DispatchTask, action: 'request' | 'outcome', reason: string
     ...(task.audit ?? []),
     { id: randomUUID(), actor: 'manager', action, reason, createdAt: new Date().toISOString() },
   ];
+}
+function resolvedTasks(request: ManagerRequest, tasks: DispatchTask[]): DispatchTask[] {
+  return (request.intents ?? []).flatMap((intent) => {
+    const task = tasks.find((t) => t.taskId === intent.taskId && t.ownerSessionId === request.ownerSessionId);
+    return task ? [task] : [];
+  });
 }
 
 /** Desktop-only authority. No provider calls, transcript matching, or authority grants. */
@@ -172,18 +178,15 @@ export class ManagerRequestService {
       if (input.op === 'acceptTaskOutcome') return this.acceptOutcome(input, caller);
       if (input.op !== 'resolveRequest') throw new Error('Unknown request operation');
       const intents = this.validateIntents(input.intents);
-      const fingerprint = digest(canonical(intents));
+      const fingerprint = digest(canonical(intents.map((i) => ({ ...i,
+        dependsOn: i.dependsOn?.slice().sort(), dependsOnKeys: i.dependsOnKeys?.slice().sort(),
+      })).sort((a, b) => a.key.localeCompare(b.key))));
       const previous = this.request(caller, input.requestId!);
       if (previous.resolutionDigest === fingerprint)
         return {
           ok: true,
           request: requestContext(previous),
-          tasks: this.store
-            .list()
-            .filter(
-              (t) =>
-                t.ownerSessionId === caller && previous.intents?.some((i) => i.taskId === t.taskId),
-            ),
+          tasks: resolvedTasks(previous, this.store.list()),
         };
       if (previous.intents || previous.revision !== input.expectedRevision)
         return { ok: false, code: 'conflict', request: requestContext(previous) };
@@ -201,7 +204,7 @@ export class ManagerRequestService {
           return {
             ok: true,
             request: requestContext(r),
-            tasks: tasks.filter((t) => r.intents?.some((i) => i.taskId === t.taskId)),
+            tasks: resolvedTasks(r, tasks),
           };
         if (r.intents || r.revision !== input.expectedRevision)
           return { ok: false, code: 'conflict', request: requestContext(r) };
@@ -241,9 +244,15 @@ export class ManagerRequestService {
             };
             tasks.push(task);
           }
-          if (i.dependsOn) {
-            for (const id of i.dependsOn) ownedTask(tasks, caller, task.projectCwd, id);
-            task.dependsOn = [...i.dependsOn];
+          if (i.dependsOn || i.dependsOnKeys) {
+            const dependencies = [...(i.dependsOn ?? []), ...(i.dependsOnKeys ?? []).map((key) => {
+              const earlier = resolved.find((intent) => intent.key === key);
+              if (!earlier?.taskId) throw new Error('Dependency intent key must name earlier work in this resolution');
+              return earlier.taskId;
+            })];
+            if (dependencies.length > 8 || new Set(dependencies).size !== dependencies.length) throw new Error('Use at most eight distinct task dependencies');
+            for (const id of dependencies) ownedTask(tasks, caller, task.projectCwd, id);
+            task.dependsOn = dependencies;
           }
           const visiting = new Set<string>();
           const check = (id: string): void => {
@@ -265,7 +274,7 @@ export class ManagerRequestService {
         return {
           ok: true,
           request: requestContext(r),
-          tasks: tasks.filter((t) => resolved.some((i) => i.taskId === t.taskId)),
+          tasks: resolvedTasks(r, tasks),
         };
       });
     } catch (e) {
@@ -293,6 +302,7 @@ export class ManagerRequestService {
               'taskId',
               'expectedTaskRevision',
               'dependsOn',
+              'dependsOnKeys',
               'cancel',
             ].includes(k),
         )
@@ -333,7 +343,7 @@ export class ManagerRequestService {
         )
           throw new Error('New task requires provenance and a host-minted task id');
       }
-      if (i.kind === 'followUp' && !i.dependsOn?.length)
+      if (i.kind === 'followUp' && !i.dependsOn?.length && !i.dependsOnKeys?.length)
         throw new Error('Followup needs concrete task dependencies');
       if (
         i.dependsOn !== undefined &&
@@ -343,6 +353,8 @@ export class ManagerRequestService {
           i.dependsOn.some((id: unknown) => typeof id !== 'string'))
       )
         throw new Error('Use at most eight distinct dependency task IDs');
+      if (i.dependsOnKeys !== undefined && (!Array.isArray(i.dependsOnKeys) || i.dependsOnKeys.length > 8 || i.dependsOnKeys.some((key: unknown) => typeof key !== 'string' || !key)))
+        throw new Error('Dependency intent keys must be nonempty strings');
     }
     return structuredClone(value);
   }
@@ -399,30 +411,15 @@ export class ManagerRequestService {
   }
 }
 
-// Wiring stays lazy to avoid the existing session-store/workflow import cycle.
+// The workflow runtime supplies lazy closures after module initialization. No
+// CommonJS require of source TS, and no eager session-store/library cycle.
 let singleton: ManagerRequestService | undefined;
+let factory: (() => ManagerRequestService) | undefined;
+export function configureManagerRequests(create: () => ManagerRequestService): void {
+  factory = create;
+}
 export function managerRequests(): ManagerRequestService {
-  if (!singleton) {
-    const { claudeSessionStore } =
-      require('./claudeSessionStore') as typeof import('./claudeSessionStore');
-    const { fleetWorkflowStore } =
-      require('./fleetWorkflowService') as typeof import('./fleetWorkflowService');
-    const { configService } = require('./configService') as typeof import('./configService');
-    const { workflowSelections } =
-      require('../shared/fleetWorkflowSelection') as typeof import('../shared/fleetWorkflowSelection');
-    const { configuredWorkflowProjectKey } =
-      require('./fleetWorkflowRuntime') as typeof import('./fleetWorkflowRuntime');
-    singleton = new ManagerRequestService(
-      dispatchHistoryStore,
-      (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
-      (cwd) => {
-        const selections = workflowSelections(configService.getConfig());
-        return fleetWorkflowStore.withDefinition(
-          selections.projects[configuredWorkflowProjectKey(cwd)] ?? selections.defaultId,
-          (d) => fleetWorkflowStore.pin(d),
-        );
-      },
-    );
-  }
+  if (!factory) throw new Error(REQUEST_CAPTURE_UNAVAILABLE);
+  singleton ??= factory();
   return singleton;
 }

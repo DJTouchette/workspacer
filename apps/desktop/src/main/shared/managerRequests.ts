@@ -31,6 +31,8 @@ export type RequestIntent = {
   taskId?: string;
   expectedTaskRevision?: number;
   dependsOn?: string[];
+  /** Earlier work intent keys in this atomic resolution, converted to task IDs. */
+  dependsOnKeys?: string[];
   cancel?: boolean;
 };
 export type TaskSource = { requestId: string; intentKey: string; label: string; delivery?: ManagerRequest['delivery'] };

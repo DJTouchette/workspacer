@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.4'
+      - name: Install fixture search dependency
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Private dependency installations
         run: |
           cd apps/desktop

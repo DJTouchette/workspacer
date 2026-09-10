@@ -38,7 +38,7 @@ export function ownerTask(
   return task;
 }
 export function workflowInstructions(task: DispatchTask): string {
-  const state = taskDependencyState(task, dispatchHistoryStore.list());
+  const state = taskDependencyState(task, task.dependsOn?.length ? dispatchHistoryStore.list() : []);
   if (state !== 'ready')
     return `Task ${task.taskId} is ${state}. Await explicit accepted dependency evidence; do not dispatch or bypass its pinned workflow. Check list_manager_requests once on your next wake for current task state.`;
   const pin = task.workflow!;

@@ -614,7 +614,7 @@ it('history read derives the current manager from live host state, ignoring call
   try {
     expect(
       await handlers.get('dispatch-history:read')!(null, { ownerSessionId: 'forged' }),
-    ).toEqual({ available: true, currentOwnerSessionId: 'manager', tasks: [] });
+    ).toEqual({ available: true, currentOwnerSessionId: 'manager', tasks: [], requests: [] });
   } finally {
     snaps.mockRestore();
     list.mockRestore();
@@ -694,4 +694,34 @@ it('routes provider readiness reads separately from explicit paid checks', async
     checkedAt: 1,
   });
   expect(readinessMocks.check).toHaveBeenCalledWith('claude');
+});
+
+it('mints a manager request before IPC delivery and binds the send to its stored content and exact owner', async () => {
+  const { claudeSessionStore } = await import('./services/claudeSessionStore');
+  const { managerRequests } = await import('./services/managerRequestService');
+  const { claudemonSessionClient } = await import('./services/claudemonSessionClient');
+  const snap = vi.spyOn(claudeSessionStore, 'getSnapshot').mockImplementation((id) => ({
+    sessionId: id, cwd: '/project', status: 'active', isWakeTarget: id !== 'plain-chat',
+  }) as never);
+  const service = managerRequests();
+  const send = vi.spyOn(claudemonSessionClient, 'message').mockImplementation(async (_id, content, _signatures, source) => {
+    expect(content).toBe('Original request');
+    expect(source?.requestId).toBeTruthy();
+    service.finishDelivery(source!.requestId, source!.deliveryId, 'accepted');
+    return { ok: true };
+  });
+  try {
+    const prepared = await handlers.get('manager-request:prepare')!(null, 'request-manager', 'Original request');
+    expect(prepared).toMatchObject({ available: true, delivery: 'pending' });
+    expect(send).not.toHaveBeenCalled();
+    const result = await handlers.get('claude:message')!(null, 'request-manager', 'Caller cannot replace the stored content', prepared.requestId);
+    expect(result).toMatchObject({ ok: true, requestId: prepared.requestId, delivery: 'accepted' });
+    await handlers.get('claude:message')!(null, 'request-manager', 'retry', prepared.requestId);
+    expect(send).toHaveBeenCalledOnce();
+    await expect(handlers.get('claude:message')!(null, 'foreign-manager', 'steal', prepared.requestId)).rejects.toThrow(/unavailable/);
+    expect(await handlers.get('manager-request:prepare')!(null, 'plain-chat', 'Ordinary conversation')).toMatchObject({ available: false });
+  } finally {
+    snap.mockRestore();
+    send.mockRestore();
+  }
 });

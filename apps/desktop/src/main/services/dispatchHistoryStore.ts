@@ -130,6 +130,18 @@ export class DispatchHistoryStore {
       )
         throw new Error('Invalid manager request history');
       this.requests = state.requests ?? [];
+      const requestIds = new Set<string>();
+      for (const r of this.requests) {
+        if (requestIds.has(r.requestId) || !Array.isArray(r.attempts) || r.attempts.length > 8 ||
+            typeof r.sourceCwd !== 'string' || typeof r.createdAt !== 'string' ||
+            typeof r.digest !== 'string' || !/^[0-9a-f]{64}$/.test(r.digest) || r.revision < 0 ||
+            (r.userContent !== undefined && (typeof r.userContent !== 'string' || r.userContent.length > 64 * 1024)) ||
+            (r.intents !== undefined && (!Array.isArray(r.intents) || !r.intents.length || r.intents.length > 8)) ||
+            new Set(r.attempts.map((a) => a.deliveryId)).size !== r.attempts.length ||
+            r.attempts.some((a) => !a.deliveryId || !['pending', 'accepted', 'rejected', 'unknown'].includes(a.status)))
+          throw new Error('Invalid manager request envelope');
+        requestIds.add(r.requestId);
+      }
       while (
         this.tasks!.length > this.limits.tasks ||
         this.tasks!.reduce((n, t) => n + t.attempts.length, 0) > this.limits.attempts
@@ -162,6 +174,8 @@ export class DispatchHistoryStore {
     );
   }
   validate(input: Admission): void {
+    if (!this.writing) this.tasks = undefined;
+    this.load();
     const { owner, taskId, stage, afterDispatchId } = input;
     if (
       stage !== undefined &&
@@ -771,7 +785,7 @@ export class DispatchHistoryStore {
   private pruneOne(tasks: DispatchTask[]): void {
     const index = tasks.findIndex(
       (t) =>
-        !t.attempts.some((a) => a.live) &&
+        (!t.sources?.length || !t.attempts.some((a) => a.live)) &&
         !tasks.some((other) => other.dependsOn?.includes(t.taskId)) &&
         !this.requests.some((r) => !r.intents && r.ownerSessionId === t.ownerSessionId) &&
         (!t.workflow ||
@@ -809,7 +823,7 @@ export class DispatchHistoryStore {
       this.pruneOne(tasks);
     this.index();
     fs.mkdirSync(path.dirname(this.filename()), { recursive: true, mode: 0o700 });
-    const json = JSON.stringify({ version: 1, tasks, requests: this.requests });
+    const json = JSON.stringify({ version: 1, tasks, ...(this.requests.length ? { requests: this.requests } : {}) });
     if (Buffer.byteLength(json) > this.limits.bytes)
       throw new Error('Request history capacity reached');
     atomicWriteFileSync(this.filename(), json, { mode: 0o600 });

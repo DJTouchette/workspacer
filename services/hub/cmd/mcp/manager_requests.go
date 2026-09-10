@@ -13,7 +13,7 @@ import (
 type managerRequestIn struct {
 	RequestID            string           `json:"requestId,omitempty" jsonschema:"host request ID returned by list_manager_requests; never derive from chat text"`
 	ExpectedRevision     *int             `json:"expectedRevision,omitempty" jsonschema:"current host request revision for atomic resolution"`
-	Intents              []map[string]any `json:"intents,omitempty" jsonschema:"1-8 independent actions with stable key, kind(create/followUp/update/question/none), reason; work adds cwd, title, provenance(explicit/inferred); update requires taskId and expectedTaskRevision; followUp requires dependsOn task IDs; cancel is optional on update"`
+	Intents              []map[string]any `json:"intents,omitempty" jsonschema:"1-8 independent actions with stable key, kind(create/followUp/update/question/none), reason; work adds cwd, title, provenance(explicit/inferred); update requires taskId and expectedTaskRevision; followUp requires dependsOn task IDs or dependsOnKeys naming earlier work intents in this same resolution; cancel is optional on update"`
 	TaskID               string           `json:"taskId,omitempty"`
 	Cwd                  string           `json:"cwd,omitempty"`
 	ExpectedTaskRevision *int             `json:"expectedTaskRevision,omitempty"`
