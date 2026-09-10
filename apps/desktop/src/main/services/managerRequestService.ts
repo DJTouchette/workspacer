@@ -289,7 +289,12 @@ export class ManagerRequestService {
           check(task.taskId);
           const references = referenceMapping.get(i.key) ?? [];
           task.links = attachRequestReferences(task.links, references, i.replacePullRequest);
-          if (references.length) audit(task, 'request', `References mapped from submitted request ${r.requestId}, intent ${i.key}`);
+          if (references.length)
+            audit(
+              task,
+              'request',
+              `References mapped from submitted request ${r.requestId}, intent ${i.key}`,
+            );
           task.sources = [
             ...(task.sources ?? []),
             {
@@ -358,7 +363,11 @@ export class ManagerRequestService {
       }
       if (i.references !== undefined && (!Array.isArray(i.references) || i.references.length > 20))
         throw new Error('Use at most 20 mapped references per intent');
-      if (i.replacePullRequest !== undefined && (typeof i.replacePullRequest !== 'boolean' || !i.references?.some((r: { kind?: string }) => r.kind === 'pullRequest')))
+      if (
+        i.replacePullRequest !== undefined &&
+        (typeof i.replacePullRequest !== 'boolean' ||
+          !i.references?.some((r: { kind?: string }) => r.kind === 'pullRequest'))
+      )
         throw new Error('PR replacement requires an explicit PR mapping');
       if (typeof i.cwd !== 'string' || !path.isAbsolute(i.cwd))
         throw new Error('Task requires an absolute project cwd');

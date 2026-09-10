@@ -990,12 +990,16 @@ for (const capture of ['legacy', 'missing', 'remote']) {
   });
 }
 
-test('manager request receipt fits 360px and disappears without a routine composer banner', async ({ page }, info) => {
+test('manager request receipt fits 360px and disappears without a routine composer banner', async ({
+  page,
+}, info) => {
   await page.setViewportSize({ width: 360, height: 900 });
   await page.goto(`${base}?spawn=success&runtime=ready`);
   await page.getByLabel('Ask the Fleet Manager').fill('Initial request');
   await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
-  await expect.poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length).toBe(1);
+  await expect
+    .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)
+    .toBe(1);
   const composer = page.locator('textarea:visible').first();
   await composer.fill('Please review https://github.com/owner/repo/pull/9492');
   await composer.press('Enter');

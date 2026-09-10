@@ -1270,7 +1270,11 @@ export const useClaudePaneModel = ({
     'requestCaptureStatus',
     '',
   );
-  const notifiedRequests = useSessionChatRef<Set<string>>(uiSessionKey, 'notifiedRequests', new Set());
+  const notifiedRequests = useSessionChatRef<Set<string>>(
+    uiSessionKey,
+    'notifiedRequests',
+    new Set(),
+  );
   const composerRevision = useSessionChatRef(uiSessionKey, 'requestComposerRevision', 0);
   const setComposerInput = useCallback(
     (value: Parameters<typeof setInputValue>[0]) => {

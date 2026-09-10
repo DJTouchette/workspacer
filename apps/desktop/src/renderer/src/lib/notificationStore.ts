@@ -200,7 +200,9 @@ export function shouldEscalate(
   windowFocused: boolean,
 ): boolean {
   // Routine request receipts are in-app only, even when the window is unfocused.
-  return origin === 'renderer' && !windowFocused && n.silent !== true && n.source !== 'manager-request';
+  return (
+    origin === 'renderer' && !windowFocused && n.silent !== true && n.source !== 'manager-request'
+  );
 }
 
 /** Compact relative timestamp for center rows ("now", "5m", "2h", "3d"). */

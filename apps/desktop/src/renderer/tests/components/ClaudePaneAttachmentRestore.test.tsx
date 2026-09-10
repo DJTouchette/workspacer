@@ -363,35 +363,55 @@ it('posts one in-app receipt per request ID and clears durable error text on acc
   const { SessionChatView } = await import('../../src/panes/SessionChatView');
   let model!: ReturnType<typeof useClaudePaneModel>;
   function Chat() {
-    model = useClaudePaneModel({ paneId: 'receipt', title: 'Manager', isActive: true, cwd: '/repo' });
+    model = useClaudePaneModel({
+      paneId: 'receipt',
+      title: 'Manager',
+      isActive: true,
+      cwd: '/repo',
+    });
     return <SessionChatView {...model} />;
   }
   mockSession = makeSnapshot({ isWakeTarget: true });
   const received = vi.fn();
   window.addEventListener('wks:notify-post', received);
-  window.electronAPI.managerRequestPrepare = vi.fn()
+  window.electronAPI.managerRequestPrepare = vi
+    .fn()
     .mockResolvedValueOnce({ available: true, requestId: 'one', delivery: 'pending' })
     .mockResolvedValueOnce({ available: true, requestId: 'one', delivery: 'pending' })
     .mockResolvedValueOnce({ available: true, requestId: 'two', delivery: 'pending' });
-  window.electronAPI.claudeMessage = vi.fn()
+  window.electronAPI.claudeMessage = vi
+    .fn()
     .mockResolvedValueOnce({ ok: false, requestId: 'one', delivery: 'rejected' })
     .mockResolvedValueOnce({ ok: true, requestId: 'one', delivery: 'accepted' })
     .mockResolvedValueOnce({ ok: true, requestId: 'one', delivery: 'accepted' })
     .mockResolvedValueOnce({ ok: true, requestId: 'two', delivery: 'accepted' });
   const view = render(<Chat />);
   try {
-    await act(async () => { await model.handleSend('Same text'); });
+    await act(async () => {
+      await model.handleSend('Same text');
+    });
     expect(screen.getByText(/Chat delivery rejected/)).toBeTruthy();
     expect(received).not.toHaveBeenCalled();
-    await act(async () => { await model.handleSend('Same text'); });
-    expect(screen.queryByText(/Chat delivery rejected|capture is pending|Request saved/)).toBeNull();
+    await act(async () => {
+      await model.handleSend('Same text');
+    });
+    expect(
+      screen.queryByText(/Chat delivery rejected|capture is pending|Request saved/),
+    ).toBeNull();
     expect(received).toHaveBeenCalledTimes(1);
     view.rerender(<Chat />);
-    await act(async () => { await model.handleSend('Same text'); });
+    await act(async () => {
+      await model.handleSend('Same text');
+    });
     expect(received).toHaveBeenCalledTimes(1);
-    await act(async () => { await model.handleSend('Same text'); });
+    await act(async () => {
+      await model.handleSend('Same text');
+    });
     expect(received).toHaveBeenCalledTimes(2);
-    expect(received.mock.calls[1][0].detail).toMatchObject({ title: 'Request received', id: 'request-received:two' });
+    expect(received.mock.calls[1][0].detail).toMatchObject({
+      title: 'Request received',
+      id: 'request-received:two',
+    });
   } finally {
     window.removeEventListener('wks:notify-post', received);
     delete window.electronAPI.managerRequestPrepare;
