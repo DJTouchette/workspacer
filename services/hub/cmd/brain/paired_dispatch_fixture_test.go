@@ -44,7 +44,7 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	}
 	gitInit(t, repo)
 	cli := filepath.Join(root, "claude-fixture")
-	_ = os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\n' '{\"loggedIn\":true}'\n"), 0700)
+	_ = os.WriteFile(cli, []byte("#!/bin/sh\n[ \"$*\" = \"auth status\" ] || exit 2\nprintf '%s\\n' '{\"loggedIn\":true}'\n"), 0700)
 	config, _ := json.Marshal(map[string]any{"agents": map[string]any{"binaries": map[string]string{"claude": cli, "codex": filepath.Join(root, "missing-codex")}}, "projects": map[string]any{repo: map[string]any{}, nonRepo: map[string]any{}}})
 	_ = os.WriteFile(configPath(), config, 0600)
 	var mu sync.Mutex

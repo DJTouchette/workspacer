@@ -65,7 +65,9 @@ func probeProviderLogin(ctx context.Context, binary, provider string) *bool {
 	var args []string
 	switch provider {
 	case "claude":
-		args = []string{"auth", "status", "--json"}
+		// auth status emits JSON by default; --text is the documented alternate.
+		// https://code.claude.com/docs/en/cli-reference
+		args = []string{"auth", "status"}
 	case "codex":
 		args = []string{"login", "status"}
 	default:
