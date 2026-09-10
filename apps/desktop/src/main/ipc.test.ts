@@ -1104,7 +1104,14 @@ it('installs the default production bridge and carries preparation and tagged se
     });
     expect(ipcRenderer.invoke).not.toHaveBeenCalled();
     expect(bridgeMocks.busCall).not.toHaveBeenCalled();
-    expect(store.listRequests('successor')).toHaveLength(4);
+    expect(
+      store
+        .listRequests('successor')
+        .map((request) => request.requestId)
+        .sort(),
+    ).toEqual(
+      [prepared, rejected, generic, uncertain, held].map((request) => request.requestId).sort(),
+    );
     await remote.claudeMessage('remote-owner', 'ordinary remote message');
     expect(bridgeMocks.busCall).toHaveBeenCalledExactlyOnceWith(
       'agents.sendMessage',
