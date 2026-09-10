@@ -301,6 +301,9 @@ func (b *blockWatcher) forget(sessionID string) {
 // anyWakeTargetBesides is the cheap gate: is there any live manager at all that
 // is not the blocked session itself?
 func (b *blockWatcher) anyWakeTargetBesides(ctx context.Context, sessionID string) bool {
+	if b.reg.remoteDispatchID(sessionID) != "" {
+		return true
+	}
 	for _, s := range b.reg.fleetSessions(ctx) {
 		if s.IsWakeTarget && !s.ended() && s.SessionID != sessionID {
 			return true

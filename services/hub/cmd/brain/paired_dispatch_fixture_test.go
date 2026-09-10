@@ -96,6 +96,8 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 			cwd, _ = p["cwd"].(string)
 			id := sid
 			mu.Unlock()
+			snap, _ := json.Marshal(map[string]any{"sessionId": id, "cwd": p["cwd"], "status": "active", "ambientState": "streaming", "provider": "claude"})
+			reg.store.set(id, snap)
 			_ = json.NewEncoder(w).Encode(map[string]any{"session_id": id, "first_message_queued": true})
 			return
 		}
@@ -132,8 +134,12 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 		method := method
 		srv.RegisterLocal(method, func(raw json.RawMessage) (any, error) { return reg.handle(context.Background(), method, raw) })
 	}
+	oldServer := bus.NewServer(broker.New())
+	oldServer.SetToken("paired-fixture-operator")
+	oldHost := httptest.NewServer(oldServer.Handler())
+	defer oldHost.Close()
 	host := httptest.NewServer(srv.Handler())
 	defer host.Close()
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": host.URL, "repo": repo, "control": daemon.URL})
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": host.URL, "oldURL": oldHost.URL, "repo": repo, "control": daemon.URL})
 	_, _ = io.Copy(io.Discard, os.Stdin)
 }

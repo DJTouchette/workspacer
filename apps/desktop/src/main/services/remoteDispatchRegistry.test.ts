@@ -44,3 +44,16 @@ it('rejects fractional sequence numbers and inconsistent terminal markers', () =
   for (const invalid of [{...update,seq:1.5},{...update,final:false},{...update,kind:'progress'}])
     expect(registry.accept('paired-credential-a',invalid)).toEqual({ok:false,reason:'malformed'});
 });
+
+it('an interrupted wake stays unknown across restart rather than sending twice', () => {
+  const {registry,file,update} = fixture();
+  registry.beginDelivery(update.dispatchId,update.seq);
+  const restored = new RemoteDispatchRegistry(); restored.start(file,() => 'manager');
+  expect(restored.accept('paired-credential-a',update)).toEqual({ok:false,reason:'delivery-unknown'});
+  expect(restored.list()[0].state).toBe('open');
+});
+it('corrupt durable state refuses new admission without overwriting it', () => {
+  const {file} = fixture(); fs.writeFileSync(file,'not-json');
+  expect(() => new RemoteDispatchRegistry().start(file,() => 'manager')).toThrow(/invalid/);
+  expect(fs.readFileSync(file,'utf8')).toBe('not-json');
+});

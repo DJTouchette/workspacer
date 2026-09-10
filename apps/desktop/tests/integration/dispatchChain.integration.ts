@@ -1017,12 +1017,27 @@ it('dispatches through the real paired host and brain, returns a local task resu
   const {claudemonSessionClient} = await import('../../src/main/services/claudemonSessionClient');
   const delivery = vi.spyOn(claudemonSessionClient,'message').mockResolvedValue({ok:true});
   try {
+    setRemoteServer({url:ready.oldURL,token:'paired-fixture-operator',mode:'workers'});
+    const oldPeer = await mcpTool('session:manager-current','list_dispatch_targets',{});
+    expect(oldPeer.value.targets.find((t:{name:string}) => t.name === 'paired').ready).toBe(false);
+    pairedWorkerConnection.stop();
     setRemoteServer({url:ready.url,token:'paired-fixture-operator',mode:'workers'});
     expect(getRemoteServer()).toBeNull();
     const discovery = await mcpTool('session:manager-current','list_dispatch_targets',{});
     expect(discovery.isError,discovery.text).toBe(false);
     expect(discovery.value.targets).toEqual(expect.arrayContaining([expect.objectContaining({name:'paired',ready:true,cwds:expect.arrayContaining([expect.objectContaining({path:ready.repo})])})]));
     const localLaunches = launch.mock.calls.length;
+    for (const override of [{remoteCwd:project},{provider:'codex'},{parentSessionId:'manager-other'}]) {
+      const rejected = await mcpSpawn('session:manager-current',{provider:'claude',model:'sonnet',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',message:'Do not launch',...override});
+      expect(rejected.isError,rejected.text).toBe(true);
+    }
+    const {PairedWorkerConnection} = await import('../../src/main/services/pairedWorkerConnection');
+    const view = new PairedWorkerConnection(() => ({httpUrl:ready.url,busUrl:ready.url.replace('http:','ws:')+'/bus',token:'paired-fixture-view'}));
+    try {
+      await expect(view.call('agents.spawn',{cwd:ready.repo,provider:'claude',skipPermissions:true})).rejects.toThrow(/authoriz|scope/);
+      await expect(view.call('agents.dispatchPrepare',{cwd:ready.repo,provider:'claude'})).rejects.toThrow(/authoriz|scope/);
+    } finally {view.stop();}
+
     const result = await mcpSpawn('session:manager-current',{provider:'claude',model:'sonnet',executionTarget:'paired',remoteCwd:ready.repo,parentSessionId:'manager-current',worktree:true,message:'Read the remote fixture and return the result contract.',resultSchema:{type:'object',required:['commit'],properties:{commit:{type:'string'}}}});
     expect(result.isError,result.text).toBe(false);
     expect(launch.mock.calls.length).toBe(localLaunches);
@@ -1038,10 +1053,16 @@ it('dispatches through the real paired host and brain, returns a local task resu
     expect(JSON.stringify(evidence)).not.toContain('manager-current');
     await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'progress'})});
     await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('remote fixture progress'))).toBe(true),{timeout:10_000});
+    await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'block'})});
+    await vi.waitFor(() => expect(delivery.mock.calls.some(([id,text]) => id === 'manager-current' && text.includes('blocked on a decision'))).toBe(true),{timeout:10_000});
+    sessions.reparentChildren('manager-current','manager-other');
+    pairedWorkerConnection.stop();
     const reply = 'Remote task complete.\n```wks-result\n{"commit":"fixture-commit"}\n```';
     await fetch(ready.control+'/control',{method:'POST',body:JSON.stringify({kind:'finish',reply})});
+    await new Promise((resolve) => setTimeout(resolve,100));
+    await pairedWorkerConnection.connect();
     await vi.waitFor(() => expect(persisted().flatMap((t) => t.attempts).find((a) => a.sessionId === result.value.sessionId)?.resultContract).toBe('valid'),{timeout:10_000});
-    const wakes = () => delivery.mock.calls.filter(([id,text]) => id === 'manager-current' && text.includes('fixture-commit'));
+    const wakes = () => delivery.mock.calls.filter(([id,text]) => id === 'manager-other' && text.includes('fixture-commit'));
     await vi.waitFor(() => expect(wakes()).toHaveLength(1));
     expect(wakes()[0][1]).toContain('not a new user request');
     const {remoteDispatchRegistry} = await import('../../src/main/services/remoteDispatchRegistry');

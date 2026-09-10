@@ -41,8 +41,7 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
-import { spawnPairedWorker } from './pairedDispatch';
-import { pairedWorkerConnection } from './pairedWorkerConnection';
+import { spawnPairedWorker, selectPairedModel } from './pairedDispatch';
 import { listDispatchTargets } from './dispatchTargets';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
@@ -2446,7 +2445,7 @@ export function registerHubCapabilities(): void {
   // out of peers.json on every read (federationPeersConfig) and never touches
   // this path.
   registerCapability('fleet.dispatchTargets', () => listDispatchTargets());
-  registerCapability('fleet.selectDispatchModel', (params: unknown) => pairedWorkerConnection.call('routing.select', params));
+  registerCapability('fleet.selectDispatchModel', (params: unknown) => selectPairedModel(params));
 
   // The operator's record of what has been sent where. It answers the question
   // a cross-machine dispatch makes possible and nothing else could: "what did I
@@ -2458,7 +2457,7 @@ export function registerHubCapabilities(): void {
     return {
       dispatches: records,
       note: open.length
-        ? `${open.length} dispatch(es) are still running on a linked machine. You do not need to poll them — their progress, blocks and final result arrive as ordinary fleet wakes.`
+        ? `${open.length} unresolved remote dispatch(es). Inspect admission/delivery notes; offline or unknown is not completed. Results arrive as fleet wakes.`
         : 'Nothing is currently running on a linked machine.',
     };
   });

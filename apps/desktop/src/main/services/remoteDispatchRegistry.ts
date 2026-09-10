@@ -125,6 +125,7 @@ export class RemoteDispatchRegistry {
   start(stateFile: string, resolveManager: ManagerResolver): void {
     this.file = stateFile;
     this.resolveManager = resolveManager;
+    this.records.clear();
     this.load();
     this.ready = true;
   }
@@ -155,11 +156,11 @@ export class RemoteDispatchRegistry {
     if (!Array.isArray(parsed)) throw new Error('Remote dispatch journal has invalid shape');
     const now = Date.now();
     for (const item of parsed) {
-      if (!isRecord(item)) continue;
+      if (!isRecord(item)) throw new Error('Invalid remote dispatch record');
       const r = item as Partial<RemoteDispatchRecord>;
-      if (typeof r.dispatchId !== 'string' || !DISPATCH_ID_RE.test(r.dispatchId)) continue;
-      if (typeof r.peer !== 'string' || !r.peer) continue;
-      if (typeof r.ownerSessionId !== 'string' || !r.ownerSessionId) continue;
+      if (typeof r.dispatchId !== 'string' || !DISPATCH_ID_RE.test(r.dispatchId)) throw new Error('Invalid remote dispatch id');
+      if (typeof r.peer !== 'string' || !r.peer) throw new Error('Invalid remote destination');
+      if (typeof r.ownerSessionId !== 'string' || !r.ownerSessionId) throw new Error('Invalid remote dispatch owner');
       const openedAt = typeof r.openedAt === 'number' ? r.openedAt : now;
       this.records.set(r.dispatchId, {
         dispatchId: r.dispatchId,
@@ -218,6 +219,7 @@ export class RemoteDispatchRegistry {
     if (!DISPATCH_ID_RE.test(dispatchId) || !peer || !ownerSessionId) return null;
     const existing = this.records.get(dispatchId);
     if (existing) return existing; // a re-published open is not a second dispatch
+    if ([...this.records.values()].filter((r) => r.state === 'open').length >= MAX_RECORDS) throw new Error('Unresolved remote dispatch limit reached; no worker started');
     const str = (v: unknown): string | undefined =>
       typeof v === 'string' && v.trim() ? v : undefined;
     const record: RemoteDispatchRecord = {

@@ -6,6 +6,7 @@ import { getPairedWorkerTarget } from './remoteServer';
 export class PairedWorkerConnection {
   private socket?: WebSocket;
   private stopped = false;
+  private identity = '';
   private connecting?: Promise<void>;
   private sequence = 0;
   private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -16,14 +17,17 @@ export class PairedWorkerConnection {
 
   constructor(private setting = getPairedWorkerTarget) {}
 
-  stop(): void { this.stopped = true; if (this.retry) clearTimeout(this.retry); this.retry = undefined; this.socket?.close(); }
+  stop(): void { this.stopped = true; if (this.retry) clearTimeout(this.retry); this.retry = undefined; const socket = this.socket; this.socket = undefined; this.identity = ''; socket?.close(); this.onDisconnected(); for (const p of this.pending.values()) {clearTimeout(p.timer); p.reject(new Error('Paired connection closed; admission may be unknown'));} this.pending.clear(); }
 
   async connect(): Promise<void> {
     this.stopped = false;
-    if (this.socket?.readyState === WebSocket.OPEN && !this.connecting) return;
-    if (this.connecting) return this.connecting;
     const target = this.setting();
     if (!target?.token) throw new Error('No paired worker target is configured');
+    const identity = createHash('sha256').update(target.busUrl).update('\0').update(target.token).digest('hex');
+    if (this.socket && this.identity !== identity) throw new Error('Pairing changed; reconnect before dispatching');
+    this.identity = identity;
+    if (this.socket?.readyState === WebSocket.OPEN && !this.connecting) return;
+    if (this.connecting) return this.connecting;
     this.connecting = new Promise<void>((resolve, reject) => {
       const url = new URL(target.busUrl);
       url.searchParams.set('peer', '1');

@@ -110,7 +110,7 @@ export async function spawnPairedWorker(
   if (resultSchema) message = `${message ?? ''}\n\n${buildResultContract(resultSchema)}`;
   // Allowlist supported execution metadata. All origin workflow/request and
   // grant fields stay local. The remote token and remote routing ceiling win.
-  const wire: Record<string,unknown> = { remoteOrigin, cwd:prepared.cwd, provider:p.provider, transport:'stream', message, skipPermissions:false, toolScope:p.toolScope, label:p.label, model:p.model, effort:p.effort, role:p.role, capability:p.capability };
+  const wire: Record<string,unknown> = { remoteOrigin, cwd:prepared.cwd, provider:p.provider, transport:'stream', message, skipPermissions:false, toolScope:p.toolScope, label:p.label, model:p.model, effort:p.effort, role:p.role, capability:p.capability, decisionId:p.decisionId };
   try {
     const result = await connection.call<{sessionId?:string;messageQueued?:boolean}>('agents.spawn',wire);
     if (!result.sessionId || result.messageQueued !== true) throw new Error('Remote admission or initial delivery is uncertain; do not repeat spawn or send the initial message');
@@ -122,4 +122,15 @@ export async function spawnPairedWorker(
     registry.fail(dispatchId,'Remote admission unknown; reconcile this dispatch, never blindly repeat it');
     throw err;
   }
+}
+
+export async function selectPairedModel(raw: unknown): Promise<unknown> {
+  const p = (raw ?? {}) as Record<string,unknown>;
+  if (!getPairedWorkerTarget()) throw new Error('Paired worker target is not enabled');
+  const caps = await connection.call<{protocol:number;executes:boolean;cwds:Array<{path:string}>;providers:Array<{provider:string;authenticated:boolean|null;found:boolean}>}>('fleet.dispatchCapabilities');
+  if (caps.protocol !== DISPATCH_PROTOCOL || !caps.executes) throw new Error('Paired dispatch unsupported; upgrade the older endpoint');
+  if (!caps.cwds.some((c) => c.path === p.cwd)) throw new Error('Select a remote repository returned by list_dispatch_targets');
+  if (!caps.providers.some((v) => v.provider === p.provider && v.found && v.authenticated === true)) throw new Error('Explicitly choose a provider authenticated on the remote host');
+  const {role,provider,cwd,difficulty,risk,decisionDensity} = p;
+  return connection.call('routing.select',{role,provider,cwd,difficulty,risk,decisionDensity});
 }

@@ -86,6 +86,18 @@ func twoHubs(t *testing.T, ctx context.Context, linkYolo bool) spawnHubs {
 	prov := dial(t, ctx, peerURL+"?token=peer-host-token")
 	t.Cleanup(func() { _ = prov.CloseNow() })
 	send(t, ctx, prov, wsFrame{Op: "register", Methods: []string{"agents.spawn"}})
+	// Wait for actual provider admission before the independent federation
+	// connection can issue a spawn. A socket write alone is not registration.
+	for {
+		_, raw, err := prov.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame wsFrame
+		if json.Unmarshal(raw, &frame) == nil && frame.Op == "registered" {
+			break
+		}
+	}
 	go func() {
 		for {
 			_, data, err := prov.Read(ctx)

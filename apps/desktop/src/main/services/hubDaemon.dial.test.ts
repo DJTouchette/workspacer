@@ -77,7 +77,7 @@ vi.mock('./brainDelegation', () => ({
   DELEGATE_CATALOG_TO_BRAIN: true,
   DESKTOP_RENDERER_USES_BUS: true,
 }));
-vi.mock('./remoteServer', () => ({ getRemoteServer: () => null }));
+vi.mock('./remoteServer', () => ({ getRemoteServer: () => null, getPairedWorkerInfo: () => null }));
 
 async function loadModule(remoteAddr?: string) {
   vi.resetModules();
