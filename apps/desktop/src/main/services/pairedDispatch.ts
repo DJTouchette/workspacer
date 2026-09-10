@@ -311,7 +311,7 @@ export async function spawnPairedWorker(
         requestedModel: typeof p.model === 'string' ? p.model : undefined,
         worktree: { requested: true, allocated: false, fallback: false },
         executionTarget: 'paired',
-        executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
+        executionHost: getPairedWorkerTarget()!.displayName || new URL(getPairedWorkerTarget()!.httpUrl).host,
       })
     : undefined;
   let handoff: { binding: string; digest: string } | undefined;
@@ -373,7 +373,7 @@ export async function spawnPairedWorker(
       requestedModel: typeof p.model === 'string' ? p.model : undefined,
       worktree,
       executionTarget: 'paired',
-      executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
+      executionHost: getPairedWorkerTarget()!.displayName || new URL(getPairedWorkerTarget()!.httpUrl).host,
     });
   let message = templateBody
     ? renderDispatchTemplate(templateBody, (p.templateParams ?? {}) as Record<string, string>, {

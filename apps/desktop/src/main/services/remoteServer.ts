@@ -22,6 +22,7 @@ import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 /** What the user enters + persists. */
 export interface RemoteServerSetting {
+  displayName?: string;
   mode?: 'client' | 'workers';
   /** Server address in any reasonable form (host, host:port, http(s)://…, ws(s)://…/bus). */
   url: string;
@@ -31,6 +32,7 @@ export interface RemoteServerSetting {
 
 /** Normalized, ready-to-dial form of the setting. */
 export interface ResolvedRemoteServer {
+  displayName?: string;
   /** The hub's HTTP origin, e.g. http://100.64.1.2:7895 */
   httpUrl: string;
   /** The hub's bus WebSocket URL, e.g. ws://100.64.1.2:7895/bus */
@@ -104,7 +106,7 @@ export function getPairedWorkerTarget(): ResolvedRemoteServer | null {
     const setting = JSON.parse(fs.readFileSync(settingFile(), 'utf-8')) as RemoteServerSetting;
     const normalized = normalizeRemoteServerUrl(setting.url);
     return setting.mode === 'workers' && normalized && typeof setting.token === 'string'
-      ? { ...normalized, token: setting.token }
+      ? { ...normalized, token: setting.token, displayName: typeof setting.displayName === 'string' ? setting.displayName.trim().slice(0, 80) : undefined }
       : null;
   } catch {
     return null;
@@ -157,7 +159,7 @@ export function setRemoteServer(setting: RemoteServerSetting | null): void {
   }
   atomicWriteFileSync(
     file,
-    JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client' }, null, 2),
+    JSON.stringify({ url: setting.url, token, mode: setting.mode ?? 'client', displayName: setting.displayName?.trim().slice(0, 80) }, null, 2),
     {
       mode: 0o600,
     },

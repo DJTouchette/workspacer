@@ -1093,7 +1093,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       false,
     );
     pairedWorkerConnection.stop();
-    setRemoteServer({ url: ready.url, token: 'paired-fixture-operator', mode: 'workers' });
+    setRemoteServer({ url: ready.url, token: 'paired-fixture-operator', mode: 'workers', displayName: 'Paired fixture workspace' });
     expect(getRemoteServer()).toBeNull();
     const discovery = await mcpTool('session:manager-current', 'list_dispatch_targets', {});
     expect(discovery.isError, discovery.text).toBe(false);
@@ -1524,6 +1524,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .attempts.find((a) => a.sessionId === exact.value.sessionId)!;
     expect(imported.handoff?.head).not.toBe(ready.sourceCommit);
     expect(imported.handoff?.base).toBe(ready.sourceCommit);
+    expect(imported.executionHost).toBe('Paired fixture workspace');
     expect(imported.reviewEvidenceId).toEqual(expect.any(String));
     expect(
       history.openTarget({

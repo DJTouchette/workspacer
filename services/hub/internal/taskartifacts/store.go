@@ -53,7 +53,7 @@ func (s *Store) Write(index int, offset int64, b []byte) error {
 	}
 	defer f.Close()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() {
+	if err != nil || !st.Mode().IsRegular() || !singleLink(f, st) {
 		return fmt.Errorf("invalid staging file")
 	}
 	if offset < st.Size() {
