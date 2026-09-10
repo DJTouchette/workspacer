@@ -13,14 +13,15 @@ import (
 // Preparation allocates only on this host. A lease is scoped to the authenticated
 // origin credential and its unguessable dispatch id; claiming it is irreversible.
 type dispatchLease struct {
-	Owner    string `json:"owner"`
-	Repo     string `json:"repo"`
-	Cwd      string `json:"cwd"`
-	Provider string `json:"provider"`
-	Worktree bool   `json:"worktree"`
-	Branch   string `json:"branch,omitempty"`
-	Expires  int64  `json:"expires"`
-	Claimed  bool   `json:"claimed"`
+	Handoff  *handoffReceiptSelector `json:"handoff,omitempty"`
+	Owner    string                  `json:"owner"`
+	Repo     string                  `json:"repo"`
+	Cwd      string                  `json:"cwd"`
+	Provider string                  `json:"provider"`
+	Worktree bool                    `json:"worktree"`
+	Branch   string                  `json:"branch,omitempty"`
+	Expires  int64                   `json:"expires"`
+	Claimed  bool                    `json:"claimed"`
 }
 
 type persistedRemoteDispatch struct {
@@ -66,7 +67,7 @@ func (s *remoteDispatchStore) load(file string) error {
 		if !bus.ValidDispatchID(row.ID) || s.m[row.ID] != nil {
 			return fmt.Errorf("invalid remote dispatch journal identity")
 		}
-		if row.Lease != nil && (row.Lease.Owner == "" || (row.Lease.Worktree && row.Lease.Cwd != filepath.Join(configDir(), "dispatch-worktrees", row.ID))) {
+		if row.Lease != nil && (row.Lease.Owner == "" || (row.Lease.Handoff == nil && row.Lease.Worktree && row.Lease.Cwd != filepath.Join(configDir(), "dispatch-worktrees", row.ID))) {
 			return fmt.Errorf("invalid remote dispatch journal destination")
 		}
 		s.m[row.ID] = &remoteDispatch{dispatchID: row.ID, sessionID: row.Session, seq: row.Seq, last: row.Last, lease: row.Lease, acknowledgedAt: row.AckedAt}
@@ -79,10 +80,11 @@ func (s *remoteDispatchStore) load(file string) error {
 
 func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
-		RemoteOrigin *remoteOriginParam `json:"remoteOrigin"`
-		Cwd          string             `json:"cwd"`
-		Provider     string             `json:"provider"`
-		Worktree     bool               `json:"worktree"`
+		Handoff      *handoffReceiptSelector `json:"handoff,omitempty"`
+		RemoteOrigin *remoteOriginParam      `json:"remoteOrigin"`
+		Cwd          string                  `json:"cwd"`
+		Provider     string                  `json:"provider"`
+		Worktree     bool                    `json:"worktree"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -102,6 +104,34 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 	}
 	if !ready {
 		return nil, fmt.Errorf("provider is not authenticated on this execution host")
+	}
+	if p.Handoff != nil {
+		rec, err := preparedHandoff(p.RemoteOrigin.OwnerKey, id, p.Handoff)
+		if err != nil {
+			return nil, err
+		}
+		if p.Provider != rec.Plan.Provider || !p.Worktree {
+			return nil, fmt.Errorf("handoff requires its bound provider and isolated worktree")
+		}
+		s := r.remote
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if prior := s.m[id]; prior != nil {
+			if prior.lease == nil || prior.lease.Handoff == nil || *prior.lease.Handoff != *p.Handoff || prior.lease.Owner != p.RemoteOrigin.OwnerKey || prior.lease.Claimed {
+				return nil, fmt.Errorf("handoff admission already claimed or mismatched; do not repeat spawn")
+			}
+			return jsonResult(map[string]any{"cwd": prior.lease.Cwd, "repo": prior.lease.Repo, "worktree": true, "branch": prior.lease.Branch, "handoff": prior.lease.Handoff})
+		}
+		if len(s.m) >= 1024 {
+			return nil, fmt.Errorf("dispatch journal capacity reached")
+		}
+		lease := &dispatchLease{Handoff: p.Handoff, Owner: p.RemoteOrigin.OwnerKey, Repo: rec.Allocation, Cwd: rec.Allocation, Provider: p.Provider, Worktree: true, Branch: "wks/handoff-" + id + "-input", Expires: time.Now().Add(5 * time.Minute).UnixMilli()}
+		s.m[id] = &remoteDispatch{dispatchID: id, lease: lease}
+		if err := s.persistLocked(); err != nil {
+			delete(s.m, id)
+			return nil, err
+		}
+		return jsonResult(map[string]any{"cwd": lease.Cwd, "repo": lease.Repo, "worktree": true, "branch": lease.Branch, "handoff": lease.Handoff})
 	}
 	known := false
 	repositoryRoot := false
@@ -140,7 +170,7 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		oldestID := ""
 		var oldest int64
 		for key, row := range s.m {
-			if row.acknowledgedAt > 0 && (oldestID == "" || row.acknowledgedAt < oldest) {
+			if row.acknowledgedAt > 0 && (row.lease == nil || row.lease.Handoff == nil) && (oldestID == "" || row.acknowledgedAt < oldest) {
 				oldestID, oldest = key, row.acknowledgedAt
 			}
 		}
@@ -191,7 +221,7 @@ func (r *registry) expireDispatchLease(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.m[id]
-	if d == nil || d.lease == nil || d.lease.Claimed || d.lease.Expires > time.Now().UnixMilli() {
+	if d == nil || d.lease == nil || d.lease.Handoff != nil || d.lease.Claimed || d.lease.Expires > time.Now().UnixMilli() {
 		return
 	}
 	if d.lease.Worktree {
@@ -223,6 +253,14 @@ func (r *registry) claimDispatch(p spawnParams) error {
 	d := s.m[p.RemoteOrigin.DispatchID]
 	if d == nil || d.lease == nil || d.lease.Owner != p.RemoteOrigin.OwnerKey || d.lease.Cwd != p.Cwd || d.lease.Provider != p.Provider || d.lease.Claimed || d.lease.Expires <= time.Now().UnixMilli() {
 		return fmt.Errorf("remote dispatch requires a matching unused lease; do not retry an uncertain spawn")
+	}
+	if (d.lease.Handoff == nil) != (p.Handoff == nil) || (p.Handoff != nil && *p.Handoff != *d.lease.Handoff) {
+		return fmt.Errorf("spawn must consume the exact verified handoff receipt")
+	}
+	if p.Handoff != nil {
+		if _, err := preparedHandoff(p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
+			return err
+		}
 	}
 	d.lease.Claimed = true
 	return s.persistLocked()

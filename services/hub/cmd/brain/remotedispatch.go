@@ -374,6 +374,7 @@ func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.
 func (r *registry) dispatchCapabilities(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 	out := map[string]any{
 		"protocol": bus.DispatchProtocol,
+		"handoff":  map[string]any{"version": 1, "transport": "git-remote", "objectFormats": []string{"sha1", "sha256"}, "chunkBytes": 256 << 10, "fileBytes": 16 << 20, "taskBytes": 64 << 20, "files": 128},
 		// executes is the honest single bit a client should gate its UI on: can
 		// this node run dispatched work AND report back? Catalog scope is the
 		// case that answers false while everything else looks healthy.

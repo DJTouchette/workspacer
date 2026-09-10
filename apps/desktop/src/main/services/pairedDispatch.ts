@@ -20,6 +20,7 @@ import { buildFleetMessage } from '../shared/fleetMessages';
 import { workflowWakeInstructions } from './fleetWorkflowRuntime';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { renderDispatchTemplate } from '../lib/dispatchTemplate';
+import { prepareTaskHandoff, importTaskHandoffResult, type TaskSource } from './taskHandoff';
 
 function projectPairedSnapshot(
   record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
@@ -126,6 +127,20 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   registry.retainEvidence(record.dispatchId, update);
   const entry = sanitizeRemoteEntry(update.entry);
   entry.sessionId = record.localSessionId;
+  if (update.final && record.handoff) {
+    const result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
+    registry.setHandoff(record.dispatchId, {
+      ...record.handoff,
+      state: result.state,
+      reviewCwd: result.state === 'received' ? result.allocation : undefined,
+    });
+    if (result.state === 'needs-checkpoint') {
+      entry.needsDecision = true;
+      entry.failed = 'Checkpoint required: execution workspace has uncommitted changes; output is retained.';
+    } else {
+      entry.note = 'Code and required artifacts verified locally. Reported test results remain worker claims.';
+    }
+  }
   // No remote snapshot or parent id is trusted to select a local recipient.
   const reply = entry.fullReply ?? entry.lastReply ?? '';
   if (update.final) {
@@ -212,6 +227,7 @@ export async function spawnPairedWorker(
       'Paired workers require a fresh session without local profile or process configuration',
     );
   const capabilities = await connection.call<{
+    handoff?: { version: number; transport: string; chunkBytes: number };
     protocol: number;
     executes: boolean;
     cwds: Array<{ path: string }>;
@@ -219,6 +235,9 @@ export async function spawnPairedWorker(
   }>('fleet.dispatchCapabilities');
   if (capabilities.protocol !== DISPATCH_PROTOCOL || !capabilities.executes)
     throw new Error('Paired worker dispatch unsupported; upgrade the older endpoint');
+  const taskSource = p.taskSource as TaskSource | undefined;
+  if (taskSource && (capabilities.handoff?.version !== 1 || capabilities.handoff.transport !== 'git-remote' || capabilities.handoff.chunkBytes !== 256 * 1024))
+    throw new Error('Exact workspace handoff is unsupported by this target; upgrade before dispatch');
   if (!capabilities.cwds?.some((c) => c.path === p.remoteCwd))
     throw new Error('Choose an actual remote cwd from list_dispatch_targets');
   if (
@@ -242,6 +261,13 @@ export async function spawnPairedWorker(
     label: p.label,
   });
   if (!record) throw new Error('Could not persist paired dispatch admission');
+  let handoff: { binding: string; digest: string } | undefined;
+  if (taskSource) {
+    registry.setHandoff(dispatchId, { binding: taskSource.binding, state: 'preparing' });
+    const prepared = await prepareTaskHandoff(dispatchId, taskSource, String(p.provider), String(p.cwd));
+    handoff = { binding: taskSource.binding, digest: prepared.digest };
+    registry.setHandoff(dispatchId, { ...handoff, state: 'prepared' });
+  }
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };
   const prepared = await connection.call<{
     cwd: string;
@@ -250,9 +276,10 @@ export async function spawnPairedWorker(
     branch?: string;
   }>('agents.dispatchPrepare', {
     remoteOrigin,
+    ...(handoff ? { handoff } : {}),
     cwd: p.remoteCwd,
     provider: p.provider,
-    worktree: p.worktree === true,
+    worktree: handoff ? true : p.worktree === true,
   });
   const worktree = {
     requested: p.worktree === true,
@@ -285,6 +312,7 @@ export async function spawnPairedWorker(
   // grant fields stay local. The remote token and remote routing ceiling win.
   const wire: Record<string, unknown> = {
     remoteOrigin,
+    ...(handoff ? { handoff } : {}),
     cwd: prepared.cwd,
     provider: p.provider,
     transport: 'stream',

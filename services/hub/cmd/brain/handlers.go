@@ -85,6 +85,7 @@ func newRegistry(cm *claudemonClient) *registry {
 func (r *registry) methods() []string {
 	return []string{
 		brainProbeMethod,
+		"agents.taskHandoff",
 		// agents + sessions (claudemon-backed)
 		"agents.list",
 		"fleetWorkflows.request",
@@ -204,6 +205,7 @@ func (r *registry) methods() []string {
 func (r *registry) catalogMethods() []string {
 	return []string{
 		brainProbeMethod,
+		"agents.taskHandoff",
 		"config.get", "config.reload", "config.getPath", "config.save",
 		"claude.listModels",
 		"claude.profiles.list", "claude.profiles.add", "claude.profiles.update", "claude.profiles.remove",
@@ -309,6 +311,8 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.orphans(ctx, params)
 	case "agents.reparent":
 		return r.reparent(ctx, params)
+	case "agents.taskHandoff":
+		return r.taskHandoff(ctx, params)
 	case "agents.dispatchPrepare":
 		return r.dispatchPrepare(ctx, params)
 	case "agents.dispatchReplay":
@@ -551,6 +555,7 @@ func analyticsRecentStub() (json.RawMessage, error) {
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
+	Handoff *handoffReceiptSelector `json:"handoff,omitempty"`
 	// Provider backend: claude (default) | codex | copilot | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.

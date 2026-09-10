@@ -1092,6 +1092,28 @@ var methodSanitizers = map[string]paramSanitizer{
 // sanitizeCallParams applies method's sanitizer, if any, against the VERIFIED
 // caller. Methods with no entry in [methodSanitizers] pass through untouched.
 func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMessage) (json.RawMessage, error) {
+	if method == "agents.taskHandoff" {
+		// This is task-scoped transfer authority, not the generic image-upload
+		// grant. Identity comes from this connection on every operation.
+		if caller.pluginID != "" || (!caller.trusted && !caller.viaScopedToken) {
+			return nil, fmt.Errorf("authenticated handoff operator required")
+		}
+		var p map[string]json.RawMessage
+		if json.Unmarshal(raw, &p) != nil || p == nil {
+			return nil, fmt.Errorf("invalid handoff request")
+		}
+		for key := range p {
+			if strings.EqualFold(key, "originKey") {
+				delete(p, key)
+			}
+		}
+		owner := caller.tokenID
+		if caller.trusted && !caller.viaScopedToken && !caller.federated {
+			owner = "local-host"
+		}
+		p["originKey"], _ = json.Marshal(owner)
+		return json.Marshal(p)
+	}
 	if method == "agents.dispatchReplay" {
 		var p map[string]json.RawMessage
 		if json.Unmarshal(raw, &p) != nil || p == nil {

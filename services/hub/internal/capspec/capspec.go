@@ -89,6 +89,7 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
+	"agents.taskHandoff":           "Operator-only bounded task transfer. Router stamps originKey; fixed host-owned repository bindings resolve all repository paths and remote URLs. Task IDs select only generated, owner-scoped allocations. No generic filesystem grant, peer URL, executable, destination path or credential is accepted. Prepared receipts are separately bound to single-use dispatch admission.",
 	"agents.dispatchPrepare":       "Operator-only remote admission: cwd must exactly match this host discovery and canonical filesystem, provider must be authenticated here. Allocates a fresh isolated worktree under this host config root with no repository clone or setup hook. The authenticated origin credential and nonce bind its expiring, single-use lease.",
 	"fleet.selectDispatchModel":    "Operator-only explicit paired routing. The host forwards a routing request over its stored pairing connection and the remote host applies its own provider readiness and routing policy. No local credential or local full-access grant is forwarded.",
 	"routing.preferences.validate": "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
@@ -915,6 +916,7 @@ const (
 // detector until that param is classified here, scoped in PathParam, or
 // refused.
 var unscopedParams = map[string]map[string]ParamDecision{
+	"agents.taskHandoff":        {"cwd": {KindPath, "source-only exact match against operator-installed repository binding; remote callers cannot invoke source freeze and all destination paths are host generated"}},
 	"fleet.selectDispatchModel": {"cwd": {KindPath, "remote routing input sent only to the explicitly paired host; no desktop filesystem operation or credential propagation"}},
 	"agents.dispatchPrepare": {
 		"cwd":          {KindPath, "exact canonical remote repository selected from this host discovery; worktree allocation is remote and never falls back"},

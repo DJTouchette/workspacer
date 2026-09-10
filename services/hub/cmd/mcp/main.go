@@ -1572,13 +1572,25 @@ type recentIn struct {
 	Limit int `json:"limit,omitempty" jsonschema:"max number of recent sessions to return"`
 }
 
+type taskSourceArtifactIn struct {
+	Name string `json:"name" jsonschema:"portable name relative to the selected task report folder"`
+	Kind string `json:"kind" jsonschema:"report, criteria, image, or log"`
+}
+
+type taskSourceIn struct {
+	Binding   string                 `json:"binding" jsonschema:"operator-approved repository binding ID shared by source and execution workspace"`
+	Artifacts []taskSourceArtifactIn `json:"artifacts" jsonschema:"explicit selected files from the source workspace report folder"`
+	Outputs   []taskSourceArtifactIn `json:"outputs" jsonschema:"required output files in the allocated task handoff folder"`
+}
+
 type spawnAgentIn struct {
-	ExecutionTarget string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
-	RemoteCwd       string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
-	WorkflowStepID  string `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
-	TaskID          string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
-	Stage           string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
-	AfterDispatchID string `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`
+	TaskSource      *taskSourceIn `json:"taskSource,omitempty" jsonschema:"exact workspace handoff through an operator-approved repository binding; selected report artifacts are transferred by the host before launch and required output artifacts are imported before review"`
+	ExecutionTarget string        `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
+	RemoteCwd       string        `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
+	WorkflowStepID  string        `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
+	TaskID          string        `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
+	Stage           string        `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
+	AfterDispatchID string        `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`
 	// Private to respawn_with. Never decoded from the public spawn tool input.
 	RetrySourceSessionID string `json:"-"`
 

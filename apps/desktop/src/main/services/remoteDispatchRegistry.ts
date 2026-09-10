@@ -39,6 +39,8 @@ export interface RemoteDispatchUpdate {
 }
 
 export interface RemoteDispatchRecord {
+	/** Stable task transfer binding, independent of manager succession. */
+  handoff?: { binding: string; digest?: string; state: string; reviewCwd?: string };
   dispatchId: string;
   localSessionId?: string;
   resultSchema?: Record<string, unknown>;
@@ -166,6 +168,7 @@ export class RemoteDispatchRegistry {
         dispatchId: r.dispatchId,
         localSessionId: r.localSessionId,
         resultSchema: r.resultSchema,
+        handoff: r.handoff,
         peer: r.peer,
         ownerSessionId: r.ownerSessionId,
         sessionId: typeof r.sessionId === 'string' ? r.sessionId : undefined,
@@ -188,7 +191,7 @@ export class RemoteDispatchRegistry {
     if (!this.file || !this.ready) return;
     // Never evict active/uncertain work to make room for history.
     const terminal = [...this.records.values()]
-      .filter((r) => r.state === 'done' || r.state === 'failed')
+      .filter((r) => !r.handoff && (r.state === 'done' || r.state === 'failed'))
       .sort((a, b) => a.openedAt - b.openedAt);
     for (const r of terminal.slice(0, Math.max(0, this.records.size - MAX_RECORDS)))
       this.records.delete(r.dispatchId);
@@ -382,6 +385,13 @@ export class RemoteDispatchRegistry {
     const record = this.records.get(dispatchId);
     if (!record) throw new Error('Unknown dispatch');
     record.lastUpdate = { ...update, entry: sanitizeRemoteEntry(update.entry) };
+    this.persist();
+  }
+
+  setHandoff(dispatchId: string, handoff: NonNullable<RemoteDispatchRecord['handoff']>): void {
+    const record = this.records.get(dispatchId);
+    if (!record) throw new Error('Unknown dispatch');
+    record.handoff = handoff;
     this.persist();
   }
 

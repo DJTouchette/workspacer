@@ -1,0 +1,50 @@
+name: workspace-handoff
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop-and-hub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install hosted dependencies
+        run: |
+          cd apps/desktop
+          npm ci --ignore-scripts
+          cd src/renderer
+          npm ci --ignore-scripts
+      - name: Produce formatting patch
+        working-directory: apps/desktop
+        run: |
+          git diff --name-only 10b7ebe2 HEAD -- '*.ts' '*.tsx' | sed 's#^apps/desktop/##' | xargs -r npx prettier --write
+          git diff --binary > ../../handoff-format.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handoff-format
+          path: handoff-format.patch
+      - name: Typecheck
+        working-directory: apps/desktop
+        run: npm run typecheck
+      - name: Full desktop regression suites
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npm test
+      - name: Full hub regression suites
+        if: ${{ !cancelled() }}
+        working-directory: services/hub
+        run: go test -race -count=1 ./...
+      - name: Real MCP and paired workspace fixtures
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop
+        run: npm run test:dispatch-chain

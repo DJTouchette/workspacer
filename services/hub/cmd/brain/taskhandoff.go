@@ -21,6 +21,30 @@ type handoffSelection struct {
 	Kind string `json:"kind"`
 }
 
+type handoffReceiptSelector struct {
+	Binding string `json:"binding"`
+	Digest  string `json:"digest"`
+}
+
+func preparedHandoff(owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
+	if selector == nil {
+		return nil, fmt.Errorf("exact handoff receipt required")
+	}
+	binding, err := handoffBinding(selector.Binding, owner)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(filepath.Join(handoffDir(binding, task), "receipt.json"))
+	if err != nil {
+		return nil, fmt.Errorf("handoff preparation required")
+	}
+	var rec handoffRecord
+	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(handoffDir(binding, task), "input-worktree") {
+		return nil, fmt.Errorf("handoff receipt does not match this admission")
+	}
+	return &rec, nil
+}
+
 type handoffPlan struct {
 	Version  int                    `json:"version"`
 	Binding  string                 `json:"binding"`
@@ -43,6 +67,7 @@ type handoffRecord struct {
 }
 
 type handoffRequest struct {
+	Cwd        string                  `json:"cwd,omitempty"`
 	Operation  string                  `json:"operation"`
 	OriginKey  string                  `json:"originKey"`
 	Binding    string                  `json:"binding"`
@@ -114,7 +139,7 @@ func planDigest(p handoffPlan) (string, error) {
 
 func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p handoffRequest
-	if err := unmarshal(raw, &p); err != nil {
+	if err := taskartifacts.Decode(raw, &p); err != nil {
 		return nil, err
 	}
 	if !taskartifacts.ID.MatchString(p.Task) || p.OriginKey == "" {
@@ -165,6 +190,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			if p.OriginKey != "local-host" || !binding.Export {
 				return nil, fmt.Errorf("local task export authority required")
 			}
+			if filepath.Clean(p.Cwd) != binding.Repository {
+				return nil, fmt.Errorf("selected source workspace does not match the approved repository binding")
+			}
 			commit, format, err := taskartifacts.CheckSource(ctx, binding.Repository)
 			if err != nil {
 				return nil, err
@@ -212,7 +240,8 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err != nil {
 			// A lost successful push is accepted only at the exact expected ID.
 			got, e := taskartifacts.Git(ctx, binding.Repository, binding.CredentialHelper, "ls-remote", "--refs", "--", binding.Remote, ref)
-			if e != nil || strings.Fields(string(got))[0] != rec.Plan.Input.Commit {
+			fields := strings.Fields(string(got))
+			if e != nil || len(fields) != 2 || fields[0] != rec.Plan.Input.Commit || fields[1] != ref {
 				return nil, err
 			}
 		}
@@ -278,9 +307,161 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		return jsonResult(rec)
 	case "status":
 		return jsonResult(rec)
+	case "sealResult":
+		if !binding.Export || rec.Allocation == "" {
+			return nil, fmt.Errorf("result export is not authorized")
+		}
+		if rec.State == "result-sealed" {
+			return jsonResult(rec)
+		}
+		if r.remote == nil {
+			return nil, fmt.Errorf("execution journal unavailable")
+		}
+		r.remote.mu.Lock()
+		dispatch := r.remote.m[p.Task]
+		finished := dispatch != nil && dispatch.lease != nil && dispatch.lease.Owner == p.OriginKey && dispatch.lease.Claimed && dispatch.last != nil && dispatch.last.Final
+		r.remote.mu.Unlock()
+		if !finished {
+			return nil, fmt.Errorf("worker outcome unresolved; result retained without sealing")
+		}
+		commit, format, err := taskartifacts.CheckSource(ctx, rec.Allocation)
+		if err != nil {
+			rec.State = "needs-checkpoint"
+			if e := saveHandoff(dir, &rec); e != nil {
+				return nil, e
+			}
+			return jsonResult(rec)
+		}
+		if _, err := taskartifacts.Git(ctx, rec.Allocation, "", "merge-base", "--is-ancestor", rec.Plan.Input.Commit, commit); err != nil {
+			return nil, fmt.Errorf("result is not a descendant of the selected input checkpoint")
+		}
+		if err := taskartifacts.VerifyTree(ctx, rec.Allocation, commit); err != nil {
+			return nil, err
+		}
+		manifest, err := freezeHandoffArtifacts(binding, p.Task, commit, format, rec.Plan.Outputs, filepath.Join(rec.Allocation, ".workspacer", "handoffs", p.Task), filepath.Join(dir, "result"))
+		if err != nil {
+			return nil, err
+		}
+		rec.Result = &manifest
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		ref, _ := binding.Ref(p.Task, "result")
+		if err := publishHandoffRef(ctx, binding, rec.Allocation, commit, ref); err != nil {
+			return nil, err
+		}
+		rec.State = "result-sealed"
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
+	case "receiveResult":
+		if p.OriginKey != "local-host" || !binding.Import || p.Manifest == nil {
+			return nil, fmt.Errorf("local result import authority required")
+		}
+		m := *p.Manifest
+		if err := m.Validate(); err != nil {
+			return nil, err
+		}
+		if m.Task != p.Task || m.Origin != rec.Plan.Input.Origin || m.ObjectFormat != rec.Plan.Input.ObjectFormat {
+			return nil, fmt.Errorf("result ownership or Git object format mismatch")
+		}
+		if len(m.Entries) != len(rec.Plan.Outputs) {
+			return nil, fmt.Errorf("required result artifacts missing")
+		}
+		for i, out := range rec.Plan.Outputs {
+			if m.Entries[i].Name != out.Name || m.Entries[i].Kind != out.Kind {
+				return nil, fmt.Errorf("result artifact selection mismatch")
+			}
+		}
+		if rec.Result != nil {
+			a, _ := rec.Result.Seal()
+			b, _ := m.Seal()
+			if a != b {
+				return nil, fmt.Errorf("conflicting sealed result")
+			}
+			return jsonResult(rec)
+		}
+		rec.Result, rec.State = &m, "receiving-result"
+		if err := os.MkdirAll(filepath.Join(dir, "result"), 0700); err != nil {
+			return nil, err
+		}
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
+	case "importResult":
+		if p.OriginKey != "local-host" || !binding.Import || rec.Result == nil {
+			return nil, fmt.Errorf("local result import authority required")
+		}
+		if rec.State == "received" {
+			return jsonResult(rec)
+		}
+		store, err := taskartifacts.Open(filepath.Join(dir, "result"), *rec.Result)
+		if err != nil {
+			return nil, err
+		}
+		defer store.Close()
+		if err := store.Verify(); err != nil {
+			return nil, err
+		}
+		allocation, err := importHandoffCode(ctx, binding, dir, p.Task, "result", *rec.Result)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := taskartifacts.Git(ctx, allocation, "", "merge-base", "--is-ancestor", rec.Plan.Input.Commit, rec.Result.Commit); err != nil {
+			return nil, fmt.Errorf("returned checkpoint does not descend from selected source")
+		}
+		if err := store.Materialize(filepath.Join(allocation, ".workspacer", "handoffs", p.Task)); err != nil {
+			return nil, err
+		}
+		rec.Allocation, rec.State = allocation, "received"
+		rec.Custody, _ = rec.Result.Seal()
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
+	case "custody":
+		if rec.Result == nil || rec.State != "result-sealed" {
+			return nil, fmt.Errorf("result custody cannot acknowledge unsealed outputs")
+		}
+		digest, _ := rec.Result.Seal()
+		if p.Digest != digest {
+			return nil, fmt.Errorf("custody must acknowledge the exact result manifest")
+		}
+		rec.Custody = digest
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
+	case "disposition":
+		if rec.Result == nil || rec.Custody == "" || p.Digest != rec.Custody {
+			return nil, fmt.Errorf("accepted disposition requires durable custody of this exact result")
+		}
+		rec.Keep = p.Keep
+		if !p.Keep && rec.AcceptedAt == 0 {
+			rec.AcceptedAt = time.Now().UnixMilli()
+		}
+		if err := saveHandoff(dir, &rec); err != nil {
+			return nil, err
+		}
+		return jsonResult(rec)
 	default:
 		return nil, fmt.Errorf("unsupported handoff operation")
 	}
+}
+
+func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, commit, ref string) error {
+	_, err := taskartifacts.Git(ctx, repo, binding.CredentialHelper, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, commit+":"+ref)
+	if err == nil {
+		return nil
+	}
+	got, checkErr := taskartifacts.Git(ctx, repo, binding.CredentialHelper, "ls-remote", "--refs", "--", binding.Remote, ref)
+	fields := strings.Fields(string(got))
+	if checkErr != nil || len(fields) != 2 || fields[0] != commit || fields[1] != ref {
+		return err
+	}
+	return nil
 }
 
 func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commit, format string, selections []handoffSelection, source, dest string) (taskartifacts.Manifest, error) {
