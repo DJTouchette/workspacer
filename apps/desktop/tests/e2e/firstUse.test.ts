@@ -224,7 +224,7 @@ for (const theme of ['light', 'dracula']) {
         await page.getByLabel('Working directory').fill('/fixture/project');
         await expect(dialog(page)).toContainText(
           provider === 'claude'
-            ? 'An isolated provider check is unavailable'
+            ? 'Optional provider check unavailable.'
             : 'Provider has not been checked. Authentication is unknown.',
         );
         await launch(page).focus();
