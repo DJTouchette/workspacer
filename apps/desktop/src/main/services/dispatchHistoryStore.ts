@@ -209,8 +209,11 @@ export class DispatchHistoryStore {
       throw new Error('Task has no committed source request for this owner/project');
     // Additive rollout: historical tasks/continuations remain eligible. Only
     // owners that resolved an inbox request require a committed task for new work.
-    if (!taskId && !this.retrySource(input) && this.requests.some((r) =>
-        r.ownerSessionId === owner.sessionId && r.intents))
+    if (
+      !taskId &&
+      !this.retrySource(input) &&
+      this.requests.some((r) => r.ownerSessionId === owner.sessionId && r.intents)
+    )
       throw new Error('Resolve the source request and use its taskId before dispatch');
     if (
       taskId &&

@@ -167,9 +167,12 @@ describe('ClaudePane rejected-send attachment restore', () => {
 
 it('captures before manager send, preserves a rejected draft request ID, and never falls back on unknown acknowledgement', async () => {
   mockSession = makeSnapshot({ isWakeTarget: true });
-  const prepare = vi.fn().mockResolvedValue({ available: true, requestId: 'host-request', delivery: 'pending' });
+  const prepare = vi
+    .fn()
+    .mockResolvedValue({ available: true, requestId: 'host-request', delivery: 'pending' });
   window.electronAPI.managerRequestPrepare = prepare;
-  const send = vi.fn()
+  const send = vi
+    .fn()
     .mockResolvedValueOnce({ ok: false, requestId: 'host-request', delivery: 'rejected' })
     .mockResolvedValueOnce({ ok: false, requestId: 'host-request', delivery: 'unknown' });
   window.electronAPI.claudeMessage = send;
@@ -177,7 +180,9 @@ it('captures before manager send, preserves a rejected draft request ID, and nev
   const composer = screen.getByRole('textbox');
   fireEvent.change(composer, { target: { value: 'Publish after fixes' } });
   fireEvent.keyDown(composer, { key: 'Enter' });
-  await waitFor(() => expect(send).toHaveBeenCalledWith('sess-1', 'Publish after fixes', 'host-request'));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith('sess-1', 'Publish after fixes', 'host-request'),
+  );
   expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]);
   await waitFor(() => expect(composer).toHaveValue('Publish after fixes'));
   fireEvent.keyDown(composer, { key: 'Enter' });

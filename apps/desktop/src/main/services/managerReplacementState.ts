@@ -376,7 +376,13 @@ export class ManagerReplacementState {
     this.change(o.operationId, (op) => {
       if (op.deliveries.length >= 256)
         throw new Error('Handoff message capacity reached; message was not accepted');
-      op.deliveries.push({ id: randomUUID(), kind: 'message', text: sourceRequest ? '' : text, status: 'pending', sourceRequest });
+      op.deliveries.push({
+        id: randomUUID(),
+        kind: 'message',
+        text: sourceRequest ? '' : text,
+        status: 'pending',
+        sourceRequest,
+      });
       for (const [worker, signature] of signatures) {
         op.signatures[worker] = signature;
         delete op.finishes[worker];

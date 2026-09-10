@@ -30,9 +30,7 @@ export interface ReplacementHost {
   projects?(id: string): string[];
   readyForTransfer(id: string): boolean;
   signatures(ids: string[]): Record<string, string>;
-  inFlightMessages?(
-    id: string,
-  ): Array<{
+  inFlightMessages?(id: string): Array<{
     id: string;
     text: string;
     signatures?: Array<[string, string]>;

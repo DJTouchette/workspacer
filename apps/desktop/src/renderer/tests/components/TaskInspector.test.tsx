@@ -261,9 +261,26 @@ describe('compact default view', () => {
 
 it('shows a linked task before dispatch and selects its concrete dependency without exposing IDs', async () => {
   const fixes = { ...makeTask('fix-id'), title: 'Current fixes' };
-  const nightly = { ...makeTask('nightly-id'), title: 'Publish nightly', dependsOn: ['fix-id'], sources: [{ requestId: 'private-request-id', intentKey: 'nightly', label: 'Request today' }] };
+  const nightly = {
+    ...makeTask('nightly-id'),
+    title: 'Publish nightly',
+    dependsOn: ['fix-id'],
+    sources: [{ requestId: 'private-request-id', intentKey: 'nightly', label: 'Request today' }],
+  };
   window.electronAPI = {
-    dispatchHistoryRead: async () => ({ available: true, currentOwnerSessionId: 'manager', tasks: [nightly, fixes], requests: [{ requestId: 'unresolved', ownerSessionId: 'manager', resolved: false, delivery: 'unknown' }] }),
+    dispatchHistoryRead: async () => ({
+      available: true,
+      currentOwnerSessionId: 'manager',
+      tasks: [nightly, fixes],
+      requests: [
+        {
+          requestId: 'unresolved',
+          ownerSessionId: 'manager',
+          resolved: false,
+          delivery: 'unknown',
+        },
+      ],
+    }),
   } as unknown as ElectronAPI;
   render(<TaskInspector taskId="nightly-id" sessionId="manager" manager />);
   await screen.findByRole('heading', { name: 'Publish nightly' });

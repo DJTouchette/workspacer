@@ -610,9 +610,7 @@ class ClaudemonSessionClient {
     return frame.promise;
   }
 
-  inFlightMessages(
-    sessionId: string,
-  ): Array<{
+  inFlightMessages(sessionId: string): Array<{
     id: string;
     text: string;
     signatures?: Array<[string, string]>;
@@ -651,9 +649,15 @@ class ClaudemonSessionClient {
       // The handoff journal stores references only, so resolving an inbox
       // request does not leave another private copy of its original content.
       if (!text) {
-        text = r.bootstrap ? buildManagerKickoff(r.userContent, !!configService.getConfig().agents?.fleetFullAccess) : r.userContent;
+        text = r.bootstrap
+          ? buildManagerKickoff(r.userContent, !!configService.getConfig().agents?.fleetFullAccess)
+          : r.userContent;
       }
-      managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'unknown');
+      managerRequests().finishDelivery(
+        sourceRequest.requestId,
+        sourceRequest.deliveryId,
+        'unknown',
+      );
     }
     try {
       const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/message`, {

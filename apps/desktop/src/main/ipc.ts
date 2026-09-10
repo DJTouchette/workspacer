@@ -1513,14 +1513,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         .getAllSnapshots()
         .filter((s) => s.isWakeTarget && !s.hub)
         .flatMap((s) =>
-          dispatchHistoryStore
-            .listRequests(s.sessionId)
-            .map((r) => ({
-              ownerSessionId: r.ownerSessionId,
-              requestId: r.requestId,
-              delivery: r.delivery,
-              resolved: !!r.intents,
-            })),
+          dispatchHistoryStore.listRequests(s.sessionId).map((r) => ({
+            ownerSessionId: r.ownerSessionId,
+            requestId: r.requestId,
+            delivery: r.delivery,
+            resolved: !!r.intents,
+          })),
         ),
       tasks: dispatchHistoryStore.listForHostUser(
         (id) => claudeSessionStore.getSnapshot(id) ?? undefined,

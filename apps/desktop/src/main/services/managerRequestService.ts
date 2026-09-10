@@ -130,7 +130,11 @@ export class ManagerRequestService {
       return { deliveryId, text: r.userContent, bootstrap: r.bootstrap };
     });
   }
-  finishDelivery(requestId: string, deliveryId: string, status: 'pending' | 'accepted' | 'rejected' | 'unknown'): void {
+  finishDelivery(
+    requestId: string,
+    deliveryId: string,
+    status: 'pending' | 'accepted' | 'rejected' | 'unknown',
+  ): void {
     this.store.requestTransaction((requests, tasks) => {
       const r = requests.find((r) => r.requestId === requestId);
       const attempt = r?.attempts.find((a) => a.deliveryId === deliveryId);
@@ -139,8 +143,9 @@ export class ManagerRequestService {
       attempt.status = status;
       r.delivery = status;
       r.revision++;
-      for (const task of tasks) for (const source of task.sources ?? [])
-        if (source.requestId === requestId) source.delivery = status;
+      for (const task of tasks)
+        for (const source of task.sources ?? [])
+          if (source.requestId === requestId) source.delivery = status;
     });
   }
   request(owner: string, id: string): ManagerRequest {
@@ -263,7 +268,15 @@ export class ManagerRequestService {
             visiting.delete(id);
           };
           check(task.taskId);
-          task.sources = [...(task.sources ?? []), { requestId: r.requestId, intentKey: i.key, delivery: r.delivery, label: `Request ${r.createdAt.slice(0, 16).replace('T', ' ')}` }];
+          task.sources = [
+            ...(task.sources ?? []),
+            {
+              requestId: r.requestId,
+              intentKey: i.key,
+              delivery: r.delivery,
+              label: `Request ${r.createdAt.slice(0, 16).replace('T', ' ')}`,
+            },
+          ];
           audit(task, 'request', i.reason);
           resolved.push({ ...i, taskId: task.taskId });
         }
