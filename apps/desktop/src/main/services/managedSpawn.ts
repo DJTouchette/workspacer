@@ -1,3 +1,4 @@
+import { buildManagerInstructions } from '../shared/managerDoctrine';
 import { managerReplacementState } from './managerReplacementState';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
 import { sessionFacadeGrantFingerprint } from './remoteTokens';
@@ -527,6 +528,11 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     },
   });
   const instructions = [
+    // An empty open starts no turn. Keep doctrine in the daemon's deferred
+    // instructions so the first real composer request still has the role.
+    opts.manager && !opts.resumeSessionId && !opts.firstMessage
+      ? buildManagerInstructions(configService.getConfig().agents?.fleetFullAccess === true)
+      : '',
     wantsFacade
       ? managedFacadeInstructions({
           scope: facadeScope,

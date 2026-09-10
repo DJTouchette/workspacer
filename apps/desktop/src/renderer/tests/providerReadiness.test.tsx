@@ -203,3 +203,63 @@ it('Codex success reads and refreshes only the selected Codex provider', async (
     true,
   );
 });
+
+it('empty open is enabled during optional checks and does not invent a request', async () => {
+  api.providerReadiness.mockImplementation(() => new Promise(() => {}));
+  render(<FleetManagerHero />);
+  const received: any[] = [];
+  const listener = (event: Event) => received.push((event as CustomEvent).detail);
+  window.addEventListener('fleet-manager:ask', listener);
+  try {
+    const open = screen.getByRole('button', { name: 'Open Fleet Manager' });
+    fireEvent.click(open);
+    fireEvent.click(open);
+    expect(received).toHaveLength(1);
+    expect(received[0].ask).toBe('');
+    act(() => received[0].onSettled());
+    expect(open).toBeEnabled();
+  } finally {
+    window.removeEventListener('fleet-manager:ask', listener);
+  }
+});
+
+it('keeps the exact typed draft after failure and submits it only once', async () => {
+  api.providerReadiness.mockResolvedValue({ state: 'unsupported' });
+  render(<FleetManagerHero />);
+  await screen.findByText('Fleet Manager runtime is ready.');
+  const received: any[] = [];
+  const listener = (event: Event) => received.push((event as CustomEvent).detail);
+  window.addEventListener('fleet-manager:ask', listener);
+  try {
+    const input = screen.getByRole('textbox', { name: 'Ask the Fleet Manager' });
+    fireEvent.change(input, { target: { value: '  Exact request  ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(received).toHaveLength(1);
+    expect(received[0].ask).toBe('  Exact request  ');
+    act(() => received[0].onSettled('Launch failed'));
+    expect(input).toHaveValue('  Exact request  ');
+    expect(screen.getByRole('button', { name: 'Ask Fleet Manager' })).toBeEnabled();
+  } finally {
+    window.removeEventListener('fleet-manager:ask', listener);
+  }
+});
+
+it('suggestions remain send actions while the optional probe is still pending', async () => {
+  api.providerReadiness.mockImplementation(() => new Promise(() => {}));
+  render(<FleetManagerHero />);
+  await screen.findByText('Fleet Manager runtime is ready.');
+  const received: any[] = [];
+  const listener = (event: Event) => received.push((event as CustomEvent).detail);
+  window.addEventListener('fleet-manager:ask', listener);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Status of dispatched work' }));
+    expect(received).toHaveLength(1);
+    expect(received[0].ask).toBe(
+      'Report on every worker you have dispatched: which finished (and their outcomes), which are still running, which are blocked on me.',
+    );
+    act(() => received[0].onSettled());
+  } finally {
+    window.removeEventListener('fleet-manager:ask', listener);
+  }
+});

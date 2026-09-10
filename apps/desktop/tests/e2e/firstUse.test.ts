@@ -419,7 +419,7 @@ test('Fleet Manager failure retains the ask and succeeds on retry', async ({ pag
   await expect(ask).toBeFocused();
   await assertNoAgentWrites(page);
   await page.evaluate(() => (window as any).firstUse.spawnMode('success'));
-  await page.getByRole('button', { name: 'Retry Fleet Manager' }).click();
+  await page.getByRole('button', { name: 'Ask Fleet Manager' }).click();
   const spawns = (await calls(page)).filter((c: any) => c.method === 'spawnClaude');
   expect(spawns).toHaveLength(2);
   expect(spawns[1].args[0]).toMatchObject({
@@ -908,7 +908,7 @@ for (const state of ['responding', 'unauthenticated', 'unsupported', 'error']) {
     const expected = {
       responding: 'Provider responded to a small test request.',
       unauthenticated: 'Provider reported an authentication failure.',
-      unsupported: 'An isolated provider check is unavailable',
+      unsupported: 'Optional provider check unavailable.',
       error: 'Provider check failed; authentication is unknown.',
     }[state]!;
     await expect(page.locator('#fleet-provider-status')).toContainText(expected);
@@ -1013,4 +1013,130 @@ test('manager request receipt fits 360px and disappears without a routine compos
   await page.screenshot({ path: info.outputPath('request-received-360.png') });
   await expect(toast).toHaveCount(0, { timeout: 9000 });
   await page.screenshot({ path: info.outputPath('request-cleared-360.png') });
+});
+
+const paletteAction = async (page: any, name: string) => {
+  await page.keyboard.press('Control+k');
+  const input = page.getByPlaceholder('Search actions and apps…');
+  await input.fill(name);
+  await page
+    .locator('[data-palette-row]')
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
+  await expect(input).toHaveCount(0);
+};
+
+for (const width of [360, 1440]) {
+  test(`Overview empty open and palette reuse preserve a silent manager at ${width}px`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${base}?spawn=success&runtime=ready&providerReadiness=unsupported`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    const open = page.getByRole('button', { name: 'Open Fleet Manager', exact: true });
+    await expect(open).toBeEnabled();
+    await expect(page.locator('#fleet-provider-status')).toContainText(
+      'Optional provider check unavailable.',
+    );
+    await page.screenshot({ path: info.outputPath(`overview-empty-${width}.png`), fullPage: true });
+    await open.click();
+    await expect
+      .poll(async () => (await calls(page)).filter((c: any) => c.method === 'spawnClaude').length)
+      .toBe(1);
+    await paletteAction(page, 'Open Overview');
+    await expect(open).toBeVisible();
+    await page.evaluate(() => {
+      (window as any).firstUse.readiness('down');
+      (window as any).firstUse.providers('missing');
+    });
+    await page.getByRole('button', { name: 'Check runtime again' }).click();
+    await page.getByRole('button', { name: 'Check again', exact: true }).click();
+    await expect(page.locator('#fleet-runtime-status')).toContainText('unavailable');
+    await expect(page.locator('#fleet-provider-status')).toContainText('not installed');
+    await open.click();
+    await expect(open).toHaveCount(0);
+    await paletteAction(page, 'Fleet Manager');
+    const history = await calls(page);
+    const spawns = history.filter((c: any) => c.method === 'spawnClaude');
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0].args[0]).toMatchObject({
+      manager: true,
+      toolScope: 'operator',
+      transport: 'stream',
+      cwd: '/fixture',
+    });
+    expect(spawns[0].args[0].message).toBeUndefined();
+    expect(
+      history.filter((c: any) => ['managerRequestPrepare', 'claudeMessage'].includes(c.method)),
+    ).toEqual([]);
+    expect(await page.evaluate(() => (window as any).firstUse.requests())).toEqual([]);
+  });
+}
+
+for (const readiness of ['unsupported', 'checking', 'unchecked', 'error']) {
+  test(`production Overview sends exactly one request with ${readiness} optional probe`, async ({
+    page,
+  }) => {
+    await page.goto(
+      `${base}?spawn=success&runtime=${readiness === 'unsupported' ? 'ready' : 'unknown'}&providerReadiness=${readiness}`,
+    );
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    const ask = '  Preserve this exact request  ';
+    await page.getByLabel('Ask the Fleet Manager').fill(ask);
+    await expect(
+      page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }),
+    ).toBeEnabled();
+    await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)
+      .toBe(1);
+    const history = await calls(page);
+    expect(history.filter((c: any) => c.method === 'spawnClaude')).toHaveLength(1);
+    const captures = history.filter((c: any) => c.method === 'managerRequestPrepare');
+    expect(captures).toHaveLength(1);
+    expect(captures[0].args[1]).toBe(ask);
+    expect(
+      history.filter((c: any) => c.method === 'providerReadiness' && c.args[1] === true),
+    ).toEqual([]);
+  });
+}
+
+for (const runtime of ['starting', 'down', 'degraded']) {
+  test(`empty open retains actionable ${runtime} launch failure`, async ({ page }) => {
+    await page.goto(`${base}?spawn=success&runtime=${runtime}`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    await expect(page.locator('#fleet-runtime-status')).toContainText(
+      runtime === 'starting' ? 'starting' : 'unavailable',
+    );
+    await page.getByRole('button', { name: 'Open Fleet Manager', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText(
+      runtime === 'starting' ? 'starting' : 'unavailable',
+    );
+    expect((await calls(page)).filter((c: any) => c.method === 'spawnClaude')).toEqual([]);
+  });
+}
+
+test('empty open with a missing binary creates no manager or request', async ({ page }) => {
+  await page.goto(`${base}?spawn=success&runtime=ready&providers=missing`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await expect(page.locator('#fleet-provider-status')).toContainText('not installed');
+  await page.getByRole('button', { name: 'Open Fleet Manager', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('could not start');
+  expect((await calls(page)).filter((c: any) => c.method === 'spawnClaude')).toEqual([]);
+  expect(await page.evaluate(() => (window as any).firstUse.requests())).toEqual([]);
+});
+
+test('Overview and palette events share the guard before asynchronous root resolution', async ({
+  page,
+}) => {
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent('fleet-manager:ask', { detail: { ask: '' } }));
+    window.dispatchEvent(new CustomEvent('fleet-manager:ask', { detail: { ask: '' } }));
+  });
+  await expect
+    .poll(async () => (await calls(page)).filter((c: any) => c.method === 'spawnClaude').length)
+    .toBe(1);
+  expect(await page.evaluate(() => (window as any).firstUse.requests())).toEqual([]);
 });

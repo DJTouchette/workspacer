@@ -446,8 +446,8 @@ export function useAgentManager() {
         ...prev.filter((a) => a.id !== agent.id && (!sessionId || a.sessionId !== sessionId)),
         agent,
       ]);
-      setActiveAgentId(agent.id);
       await opts.onSessionReady?.(sessionId);
+      setActiveAgentId(agent.id);
       return agent.id;
     },
     [],
@@ -763,6 +763,7 @@ export function useAgentManager() {
   const managerAskRetry = useRef<{ sessionId: string; ask: string; requestId: string } | null>(
     null,
   );
+  const managerOpening = useRef(false);
   const spawnFleetManager = useCallback(
     async (
       ask: string,
@@ -774,116 +775,130 @@ export function useAgentManager() {
       contextWindow?: number | null,
       effort?: string,
     ): Promise<string | undefined> => {
-      const sendAsk = async (id: string, bootstrap = false) => {
-        const previous = managerAskRetry.current;
-        const capture =
-          previous?.sessionId === id && previous.ask === ask
-            ? { available: true as const, requestId: previous.requestId }
-            : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
-        if (capture?.available)
-          managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
-        const message = bootstrap
-          ? buildManagerKickoff(ask, fullAccess)
-          : buildManagerWorkflowAsk(ask);
-        const result = capture?.available
-          ? await window.electronAPI.claudeMessage(id, message, capture.requestId)
-          : await window.electronAPI.claudeMessage(id, message);
-        if (result?.ok === false)
-          throw new Error(
-            result.delivery === 'unknown'
-              ? 'Request saved in inbox; chat delivery unknown. Do not resend.'
-              : spawnFailureMessage(provider),
-          );
-        managerAskRetry.current = null;
-      };
-      const live = agentsRef.current.find(
-        (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
-      );
-      if (live?.sessionId) {
-        setActiveAgentId(live.id);
-        // Reusing a running manager: re-align its facade token's full-access
-        // grant with CURRENT config before handing it the ask — the grant was
-        // minted at its original spawn and the flag may have flipped since
-        // (either direction). Main resolves the desired value from config; the
-        // config-change sync covers flips while it keeps running.
-        try {
-          await window.electronAPI.sessionGrantReconcile?.(live.sessionId, 'manager');
-        } catch (err) {
-          console.warn('[fleet-manager] token grant reconcile failed:', err);
-        }
-        await sendAsk(live.sessionId);
-        return live.sessionId;
-      }
-      // A stopped manager card respawns (resuming its conversation) before
-      // taking the ask, so its dispatch history survives an app restart — but
-      // only one on the REQUESTED harness. A conversation cannot move between
-      // harnesses (a codex thread has no claude transcript and vice versa), so
-      // after switching agents.managerProvider the old card is left alone and a
-      // fresh manager starts on the new one; otherwise flipping the setting
-      // would silently keep resurrecting the old provider's manager.
-      const stopped = agentsRef.current.find(
-        (a) =>
-          !a.global &&
-          a.name === FLEET_MANAGER_NAME &&
-          a.lastSessionId &&
-          (a.provider ?? 'claude') === provider,
-      );
-      if (stopped) {
-        // Heal a record from before the role flags were persisted: it IS the
-        // manager (found by its fixed name), so respawn it as one — else the
-        // revived session re-mints a bare facade token with no manager grants.
-        const record: AgentWorkspace = stopped.manager
-          ? stopped
-          : { ...stopped, manager: true, toolScope: 'operator' };
-        const sessionId = await respawnFromRecord(
-          record,
-          stopped.lastSessionId,
-          window.electronAPI.managerRequestPrepare ? undefined : buildManagerWorkflowAsk(ask),
+      if (managerOpening.current) throw new Error('Fleet Manager is already opening.');
+      managerOpening.current = true;
+      try {
+        const sendAsk = async (id: string, bootstrap = false) => {
+          if (!ask.trim()) return;
+          const previous = managerAskRetry.current;
+          const capture =
+            previous?.sessionId === id && previous.ask === ask
+              ? { available: true as const, requestId: previous.requestId }
+              : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
+          if (capture?.available)
+            managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
+          const message = bootstrap
+            ? buildManagerKickoff(ask, fullAccess)
+            : buildManagerWorkflowAsk(ask);
+          const result = capture?.available
+            ? await window.electronAPI.claudeMessage(id, message, capture.requestId)
+            : await window.electronAPI.claudeMessage(id, message);
+          if (result?.ok === false)
+            throw new Error(
+              result.delivery === 'unknown'
+                ? 'Request saved in inbox; chat delivery unknown. Do not resend.'
+                : spawnFailureMessage(provider),
+            );
+          managerAskRetry.current = null;
+        };
+        const live = agentsRef.current.find(
+          (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
         );
-        if (!sessionId) throw new Error(spawnFailureMessage(provider));
-        if (window.electronAPI.managerRequestPrepare) await sendAsk(sessionId);
-        if (!stopped.manager) {
-          mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
+        if (live?.sessionId) {
+          if (!ask.trim()) {
+            setActiveAgentId(live.id);
+            return live.sessionId;
+          }
+          // Reusing a running manager: re-align its facade token's full-access
+          // grant with CURRENT config before handing it the ask — the grant was
+          // minted at its original spawn and the flag may have flipped since
+          // (either direction). Main resolves the desired value from config; the
+          // config-change sync covers flips while it keeps running.
+          try {
+            await window.electronAPI.sessionGrantReconcile?.(live.sessionId, 'manager');
+          } catch (err) {
+            console.warn('[fleet-manager] token grant reconcile failed:', err);
+          }
+          await sendAsk(live.sessionId);
+          setActiveAgentId(live.id);
+          return live.sessionId;
         }
-        setActiveAgentId(stopped.id);
-        return sessionId;
+        // A stopped manager card respawns (resuming its conversation) before
+        // taking the ask, so its dispatch history survives an app restart — but
+        // only one on the REQUESTED harness. A conversation cannot move between
+        // harnesses (a codex thread has no claude transcript and vice versa), so
+        // after switching agents.managerProvider the old card is left alone and a
+        // fresh manager starts on the new one; otherwise flipping the setting
+        // would silently keep resurrecting the old provider's manager.
+        const stopped = agentsRef.current.find(
+          (a) =>
+            !a.global &&
+            a.name === FLEET_MANAGER_NAME &&
+            a.lastSessionId &&
+            (a.provider ?? 'claude') === provider,
+        );
+        if (stopped) {
+          // Heal a record from before the role flags were persisted: it IS the
+          // manager (found by its fixed name), so respawn it as one — else the
+          // revived session re-mints a bare facade token with no manager grants.
+          const record: AgentWorkspace = stopped.manager
+            ? stopped
+            : { ...stopped, manager: true, toolScope: 'operator' };
+          const sessionId = await respawnFromRecord(
+            record,
+            stopped.lastSessionId,
+            window.electronAPI.managerRequestPrepare || !ask.trim()
+              ? undefined
+              : buildManagerWorkflowAsk(ask),
+          );
+          if (!sessionId) throw new Error(spawnFailureMessage(provider));
+          if (window.electronAPI.managerRequestPrepare) await sendAsk(sessionId);
+          if (!stopped.manager) {
+            mutateAgent(stopped.id, (a) => ({ ...a, manager: true, toolScope: 'operator' }));
+          }
+          setActiveAgentId(stopped.id);
+          return sessionId;
+        }
+        return await spawnAgent({
+          cwd: root,
+          name: FLEET_MANAGER_NAME,
+          // The harness the manager itself runs on (config agents.managerProvider).
+          // Everything the role needs below this line is provider-blind: the MCP
+          // facade attaches at the operator tier for managed providers too, the
+          // grant chain knows codex's 'yolo' spelling, and the worker-finished
+          // wake routes on the isWakeTarget flag `manager: true` sets.
+          provider,
+          // The manager's own coordinator model for THIS harness
+          // (agents.managerModels). Passed explicitly so the model lands on the
+          // agent record — the card, the pill and every later restart read it
+          // there. Main resolves the same value from live config when this is
+          // blank (lib/roleModels), which is what covers the entry points that
+          // never come through here: a respawn of a stopped manager card, a
+          // headless bus spawn. Blank = the harness's own default.
+          ...(model?.trim() && { model: model.trim() }),
+          contextWindow,
+          ...(effort?.trim() && { effort: effort.trim() }),
+          // Chat-first: the manager is a bubbles experience, like the Guide.
+          // Claude and Codex both have a headless stream transport; the others
+          // ignore it (and spawnManagedAgent says so out loud).
+          transport: 'stream',
+          toolScope: 'operator',
+          manager: true,
+          // The token's yolo grant is minted when EITHER global full-access is on
+          // OR any project is flagged yolo (per-project autonomy) — that is what
+          // lets the manager dispatch a bypassed worker at all. But the manager's
+          // OWN bypass and the full-access doctrine note ride only global
+          // full-access; per-project yolo is applied per dispatch by doctrine.
+          fleetFullAccess: grantYolo,
+          ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
+          ...(ask.trim() &&
+            (window.electronAPI.managerRequestPrepare
+              ? { onSessionReady: (id: string) => sendAsk(id, true) }
+              : { kickoffMessage: buildManagerKickoff(ask, fullAccess) })),
+        }).then((id) => id ?? undefined);
+      } finally {
+        managerOpening.current = false;
       }
-      return spawnAgent({
-        cwd: root,
-        name: FLEET_MANAGER_NAME,
-        // The harness the manager itself runs on (config agents.managerProvider).
-        // Everything the role needs below this line is provider-blind: the MCP
-        // facade attaches at the operator tier for managed providers too, the
-        // grant chain knows codex's 'yolo' spelling, and the worker-finished
-        // wake routes on the isWakeTarget flag `manager: true` sets.
-        provider,
-        // The manager's own coordinator model for THIS harness
-        // (agents.managerModels). Passed explicitly so the model lands on the
-        // agent record — the card, the pill and every later restart read it
-        // there. Main resolves the same value from live config when this is
-        // blank (lib/roleModels), which is what covers the entry points that
-        // never come through here: a respawn of a stopped manager card, a
-        // headless bus spawn. Blank = the harness's own default.
-        ...(model?.trim() && { model: model.trim() }),
-        contextWindow,
-        ...(effort?.trim() && { effort: effort.trim() }),
-        // Chat-first: the manager is a bubbles experience, like the Guide.
-        // Claude and Codex both have a headless stream transport; the others
-        // ignore it (and spawnManagedAgent says so out loud).
-        transport: 'stream',
-        toolScope: 'operator',
-        manager: true,
-        // The token's yolo grant is minted when EITHER global full-access is on
-        // OR any project is flagged yolo (per-project autonomy) — that is what
-        // lets the manager dispatch a bypassed worker at all. But the manager's
-        // OWN bypass and the full-access doctrine note ride only global
-        // full-access; per-project yolo is applied per dispatch by doctrine.
-        fleetFullAccess: grantYolo,
-        ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
-        ...(window.electronAPI.managerRequestPrepare
-          ? { onSessionReady: (id: string) => sendAsk(id, true) }
-          : { kickoffMessage: buildManagerKickoff(ask, fullAccess) }),
-      }).then((id) => id ?? undefined);
     },
     [spawnAgent, respawnFromRecord, mutateAgent],
   );

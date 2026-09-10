@@ -32,15 +32,15 @@ const FleetManagerHero: React.FC = () => {
   const missing = providerAvailability(detection, provider) === 'missing';
   const submit = (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || pending.current || missing || runtimeStatus.blocked) return;
-    setAsk(trimmed);
+    if (pending.current || (trimmed && (missing || runtimeStatus.blocked))) return;
+    setAsk(text);
     setError('');
     setBusy(true);
     pending.current = true;
     window.dispatchEvent(
       new CustomEvent('fleet-manager:ask', {
         detail: {
-          ask: trimmed,
+          ask: text,
           onSettled: (failure?: string) => {
             pending.current = false;
             setBusy(false);
@@ -129,14 +129,15 @@ const FleetManagerHero: React.FC = () => {
           color: 'var(--wks-accent-text)',
           fontFamily: 'inherit',
           fontSize: '0.8rem',
-          cursor: busy || missing || runtimeStatus.blocked || !ask.trim() ? 'default' : 'pointer',
-          opacity: busy || missing || runtimeStatus.blocked || !ask.trim() ? 0.5 : 1,
+          cursor:
+            busy || (!!ask.trim() && (missing || runtimeStatus.blocked)) ? 'default' : 'pointer',
+          opacity: busy || (!!ask.trim() && (missing || runtimeStatus.blocked)) ? 0.5 : 1,
         }}
         onClick={() => submit(ask)}
-        disabled={busy || missing || runtimeStatus.blocked || !ask.trim()}
+        disabled={busy || (!!ask.trim() && (missing || runtimeStatus.blocked))}
         aria-describedby="fleet-provider-status fleet-runtime-status"
       >
-        {busy ? 'Starting…' : error ? 'Retry Fleet Manager' : 'Ask Fleet Manager'}
+        {busy ? 'Starting…' : ask.trim() ? 'Ask Fleet Manager' : 'Open Fleet Manager'}
       </button>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
         {MANAGER_PRESETS.map((p) => (

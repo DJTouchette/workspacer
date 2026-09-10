@@ -579,3 +579,82 @@ it('prepares a modern manager bootstrap request before sending the first user as
     hook.unmount();
   }
 });
+
+it('opens a new manager without a task, then focuses it without changing its workspace', async () => {
+  const prepare = vi.fn();
+  window.electronAPI.managerRequestPrepare = prepare;
+  const spawn = window.electronAPI.spawnClaude as Mock;
+  const message = window.electronAPI.claudeMessage as Mock;
+  spawn.mockReset().mockResolvedValue('empty-manager');
+  message.mockReset();
+  const hook = renderHook(() => useAgentManager());
+  try {
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('', '/original', false, true, 'codex');
+    });
+    const before = hook.result.current.agents.find((a) => a.sessionId === 'empty-manager');
+    expect(before).toMatchObject({ cwd: '/original', manager: true, provider: 'codex' });
+    expect(spawn.mock.calls[0][0].message).toBeUndefined();
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('', '/different', true, false, 'claude');
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(message).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(hook.result.current.agents.find((a) => a.sessionId === 'empty-manager')).toBe(before);
+  } finally {
+    delete window.electronAPI.managerRequestPrepare;
+  }
+});
+
+it('shares an in-flight guard across empty opening and a concurrent ask', async () => {
+  let finish!: (id: string) => void;
+  const spawn = window.electronAPI.spawnClaude as Mock;
+  spawn.mockReset().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const hook = renderHook(() => useAgentManager());
+  await act(async () => {
+    const opening = hook.result.current.spawnFleetManager('', '/project');
+    await expect(
+      hook.result.current.spawnFleetManager('keep my draft', '/project'),
+    ).rejects.toThrow('already opening');
+    finish('one-manager');
+    await opening;
+  });
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it('keeps Overview selected when request delivery fails and retries the captured identity', async () => {
+  const spawn = window.electronAPI.spawnClaude as Mock;
+  const message = window.electronAPI.claudeMessage as Mock;
+  spawn.mockReset().mockResolvedValue('retry-manager');
+  message.mockReset().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true });
+  const prepare = vi.fn(async () => ({
+    available: true as const,
+    requestId: 'stable-request',
+    delivery: 'pending' as const,
+  }));
+  window.electronAPI.managerRequestPrepare = prepare;
+  const hook = renderHook(() => useAgentManager());
+  const initialSelection = hook.result.current.activeAgentId;
+  try {
+    await act(async () => {
+      await expect(hook.result.current.spawnFleetManager('exact task', '/project')).rejects.toThrow(
+        'could not start',
+      );
+    });
+    expect(hook.result.current.activeAgentId).toBe(initialSelection);
+    await act(async () => {
+      await hook.result.current.spawnFleetManager('exact task', '/project');
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(message.mock.calls.map((call) => call[2])).toEqual(['stable-request', 'stable-request']);
+  } finally {
+    delete window.electronAPI.managerRequestPrepare;
+  }
+});

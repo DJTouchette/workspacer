@@ -328,8 +328,12 @@ const FULL_ACCESS_NOTE =
   'anything destructive, external, cross-repo, credential-touching, or otherwise unauthorized so ' +
   'they are never surprised.';
 
-/** Compose the manager's first (auto-sent) message from a user ask. */
-export function buildManagerKickoff(ask: string, fullAccess = false): string {
+/** Role instructions alone never initiate a user turn. */
+export function buildManagerInstructions(fullAccess = false): string {
   const mode = fullAccess ? `\n\n${FULL_ACCESS_NOTE}` : '';
-  return `${MANAGER_PREAMBLE}${mode}\n\nSELECTED FLEET POLICY (takes precedence over generic dispatch examples): ${WORKFLOW_DISCOVERY}\n\nThe user says:\n\n${ask.trim()}`;
+  return `${MANAGER_PREAMBLE}${mode}\n\nSELECTED FLEET POLICY (takes precedence over generic dispatch examples): ${WORKFLOW_DISCOVERY}`;
+}
+
+export function buildManagerKickoff(ask: string, fullAccess = false): string {
+  return `${buildManagerInstructions(fullAccess)}\n\nThe user says:\n\n${ask.trim()}`;
 }

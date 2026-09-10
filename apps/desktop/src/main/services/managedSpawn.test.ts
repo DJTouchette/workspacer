@@ -1420,3 +1420,21 @@ describe('launch integration transport', () => {
     expect(setSpawnMeta).not.toHaveBeenCalled();
   });
 });
+
+it.each(['claude', 'codex'] as const)(
+  'empty %s manager defers doctrine without a phantom turn',
+  async (provider) => {
+    await spawnManagedAgent({
+      provider,
+      transport: 'stream',
+      cwd: '/project',
+      manager: true,
+      toolScope: 'operator',
+    });
+    expect(lastManaged().firstMessage).toBeUndefined();
+    expect(lastManaged().instructions).toContain('SELECTED FLEET POLICY');
+    expect(lastManaged().instructions).not.toContain('The user says:');
+    expect(lastManaged().instructions).not.toContain('FULL-ACCESS MODE IS ON');
+    expect(lastMeta()).toMatchObject({ isWakeTarget: true, provider });
+  },
+);

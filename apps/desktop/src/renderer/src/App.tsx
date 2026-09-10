@@ -13,7 +13,8 @@ import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
 import { ACTION_REGISTRY, LAYER_ACTIONS, resolveLeader } from './lib/shortcuts';
-import { deriveFleetRoot } from './lib/fleetManager';
+import { useAgentRuntimeStatus } from './hooks/useAgentRuntimeStatus';
+import { deriveFleetRoot, FLEET_MANAGER_NAME } from './lib/fleetManager';
 import { requestChatScroll } from './lib/chatScrollBus';
 import { postNotification } from './lib/notificationBus';
 import { resolveApproval } from './lib/resolveAttention';
@@ -1753,6 +1754,9 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configLoaded, sessionPhase, firstRunWelcome, showWelcome, showSpawnDialog]);
 
+  const managerLaunchPending = useRef(false);
+  const managerRuntime = useAgentRuntimeStatus(true);
+
   // Fleet Manager entry (Overview hero + palette dispatch here): resolve the
   // manager's home — explicit agents.fleetRoot, else the common parent of the
   // configured projects, else $HOME (derived from the supervisor home's
@@ -1760,9 +1764,21 @@ function App() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      const ask = (detail?.ask ?? '').toString().trim();
-      if (!ask) return;
+      const ask = (detail?.ask ?? '').toString();
+      if (managerLaunchPending.current) {
+        detail?.onSettled?.('Fleet Manager is already opening. Try again shortly.');
+        return;
+      }
+      managerLaunchPending.current = true;
       void (async () => {
+        const live = agentsRef.current.find(
+          (a) => !a.global && a.name === FLEET_MANAGER_NAME && a.sessionId,
+        );
+        if (!ask.trim() && live) {
+          handleSelectAgent(live.id);
+          return;
+        }
+        if (managerRuntime.blocked) throw new Error(managerRuntime.detail);
         let home = '';
         try {
           home = ((await window.electronAPI.getSupervisorHome()) ?? '').replace(
@@ -1808,10 +1824,20 @@ function App() {
           contextWindow,
           effort,
         );
+        setViewLevel('piloting');
       })().then(
-        () => detail?.onSettled?.(),
         () => {
-          const error = spawnFailureMessage(config.agents?.managerProvider ?? 'claude');
+          managerLaunchPending.current = false;
+          detail?.onSettled?.();
+        },
+        (failure) => {
+          managerLaunchPending.current = false;
+          const error =
+            failure instanceof Error &&
+            (failure.message === managerRuntime.detail ||
+              failure.message === 'Request saved in inbox; chat delivery unknown. Do not resend.')
+              ? failure.message
+              : spawnFailureMessage(config.agents?.managerProvider ?? 'claude');
           if (detail?.onSettled) detail.onSettled(error);
           else
             postNotification({
@@ -1835,6 +1861,10 @@ function App() {
     config.projects,
     spawnFleetManager,
     launchDetection,
+    managerRuntime.blocked,
+    managerRuntime.detail,
+    handleSelectAgent,
+    setViewLevel,
   ]);
 
   // A facade agent (an operator worker or the Fleet Manager) asked to open a

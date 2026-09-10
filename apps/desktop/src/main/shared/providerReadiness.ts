@@ -54,7 +54,7 @@ export function providerReadinessDetail(result: ProviderReadiness): string {
     case 'error':
       return 'Provider check failed; authentication is unknown. You can still try launching.';
     case 'unsupported':
-      return 'An isolated provider check is unavailable for this provider, account or host.';
+      return 'Optional provider check unavailable.';
     case 'checking':
       return 'Checking provider with a small test request…';
     default:

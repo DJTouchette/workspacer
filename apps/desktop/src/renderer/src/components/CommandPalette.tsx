@@ -352,7 +352,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         window.dispatchEvent(
           new CustomEvent('fleet-manager:ask', {
             detail: {
-              ask: 'Inventory the projects under your directory: read every brief, then give me a tight per-project status — what is in flight, what landed recently, and what you would dispatch next.',
+              ask: '',
             },
           }),
         ),
