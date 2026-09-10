@@ -27,6 +27,16 @@ function sameIdentity(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
   // the 64-bit Windows file index into a false match.
   return a.ino > 0n && b.ino > 0n && a.dev === b.dev && a.ino === b.ino;
 }
+function reservedWindowsComponent(part: string): boolean {
+  // DOS devices are reserved in every directory, also with extensions. Include
+  // Microsoft's recognized superscript digits and spaces before the extension.
+  // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]) *(?:\.|$)/i.test(part)) return true;
+  // CreateFileW also documents these exact console names. Do not infer DOS
+  // extension aliases for them; trailing spaces/dots are rejected separately.
+  // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#consoles
+  return /^(?:CONIN\$|CONOUT\$)$/i.test(part);
+}
 function plainAbsolutePath(value: string): boolean {
   if (!path.isAbsolute(value)) return false;
   // Win32 isAbsolute also accepts UNC, device and root-relative paths. Reject
@@ -37,7 +47,10 @@ function plainAbsolutePath(value: string): boolean {
   const parts = value.slice(volume.length).split(path.sep === '\\' ? /[\\/]/ : /\//);
   return parts.every(
     (part) =>
-      part !== '' && part !== '.' && part !== '..' && (path.sep !== '\\' || !/[ .]$|:/.test(part)),
+      part !== '' &&
+      part !== '.' &&
+      part !== '..' &&
+      (path.sep !== '\\' || (!/[ .]$|:/.test(part) && !reservedWindowsComponent(part))),
   );
 }
 /** Walk before realpath: realpath alone cannot distinguish harmless case
@@ -60,14 +73,17 @@ function verifyPath(value: string): VerifiedPath {
     throw new Error('path changed');
   return { spelling: value, volume, canonical, stat };
 }
-function sameLocation(a: VerifiedPath, b: VerifiedPath): boolean {
+function sameCandidateSpelling(a: string, b: string): boolean {
   // Case folding only limits which spellings can be candidates; the filesystem
   // IDs below are the authority, including inside case-sensitive directories.
   // Identity alone would also expand short-name aliases, outside this contract.
   const candidate = (p: string) => (path.sep === '\\' ? p.replaceAll('/', '\\').toLowerCase() : p);
+  return candidate(a) === candidate(b);
+}
+function sameLocation(a: VerifiedPath, b: VerifiedPath): boolean {
   return (
     samePath(a.volume, b.volume) &&
-    candidate(a.spelling) === candidate(b.spelling) &&
+    sameCandidateSpelling(a.spelling, b.spelling) &&
     (path.sep === '\\' || samePath(a.canonical, b.canonical)) &&
     sameIdentity(a.stat, b.stat)
   );
@@ -197,10 +213,15 @@ export function validateManagerArtifact(
       invalid('path is not an allowed brief pointer');
     if (typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256))
       invalid('sha256 must be 64 lowercase hexadecimal characters');
+    const rootSpelling = path.dirname(path.dirname(f.path));
+    // Bound candidate traversal by the host-known lexical roots first. This is
+    // only a rejection filter; sameLocation still requires filesystem identity.
+    if (!roots.some((root) => plainAbsolutePath(root) && sameCandidateSpelling(rootSpelling, root)))
+      invalid('path is not an allowed brief pointer');
     let pointer: VerifiedPath;
     let pointerRoot: VerifiedPath;
     try {
-      pointerRoot = verifyPath(path.dirname(path.dirname(f.path)));
+      pointerRoot = verifyPath(rootSpelling);
     } catch {
       return invalid('path is not an allowed brief pointer');
     }

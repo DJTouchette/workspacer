@@ -15,6 +15,17 @@ vi.mock('path', async (original) => {
 afterEach(() => vi.restoreAllMocks());
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 
+function expectOnlyProposalAccess(op: ReplacementRecord) {
+  for (const spy of [fs.lstatSync, fs.statSync, fs.realpathSync, fs.openSync, fs.readFileSync]) {
+    for (const [arg] of vi.mocked(spy).mock.calls) {
+      expect([op.launch.options.cwd, op.artifactPath, 122]).toContain(arg);
+    }
+  }
+  expect(fs.statSync).not.toHaveBeenCalled();
+  expect(fs.fstatSync).toHaveBeenCalledExactlyOnceWith(122, { bigint: true });
+  expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(122);
+}
+
 function fixture(cwd = 'c:\\Users\\Manager', pointerRoot = cwd, sameIdentity = false) {
   const operationId = '12345678-1234-1234-1234-123456789abc';
   const canonicalRoot = 'C:\\Users\\Manager';
@@ -126,6 +137,101 @@ it('accepts differently cased Windows components only when filesystem identities
   );
 });
 
+// Microsoft naming-a-file: all DOS device names, including the three recognized
+// superscript digits. Every probe uses mocked fs, including on native Windows CI.
+const dosDevices = [
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  ...['COM', 'LPT'].flatMap((prefix) =>
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9', '¹', '²', '³'].map((n) => prefix + n),
+  ),
+];
+it.each(
+  dosDevices.flatMap((name) => [
+    name,
+    name.toLowerCase(),
+    `${name}.txt`,
+    `${name.toLowerCase()}.tar.gz`,
+    `${name}.`,
+    `${name} `,
+    `${name} .txt`,
+    `${name}.txt. `,
+  ]),
+)('rejects reserved component %s at every depth before candidate I/O', (name) => {
+  for (const root of [`C:\\${name}`, `C:\\Users\\${name}`, `C:\\${name}\\Users\\Name`]) {
+    for (const separator of ['\\', '/']) {
+      vi.restoreAllMocks();
+      const f = fixture();
+      // A host-known spelling must not bypass the reserved-name gate.
+      f.op.projectCwds = [root];
+      f.artifact.checkpoint.files[0].path = `${root}\\.workspacer\\brief.md`.replaceAll(
+        '\\',
+        separator,
+      );
+      f.write();
+      expect(f.validate).toThrow('Checkpoint files[0] path is not an allowed brief pointer');
+      expectOnlyProposalAccess(f.op);
+    }
+  }
+});
+
+it.each(['CONIN$', 'conin$', 'CONOUT$', 'conout$', 'CONIN$.', 'CONOUT$ '])(
+  'rejects console component %s before candidate I/O',
+  (name) => {
+    for (const root of [`C:\\${name}`, `C:\\Users\\${name}`, `C:\\${name}\\Users\\Name`]) {
+      vi.restoreAllMocks();
+      const f = fixture();
+      f.op.projectCwds = [root];
+      f.artifact.checkpoint.files[0].path = `${root}\\.workspacer\\brief.md`;
+      f.write();
+      expect(f.validate).toThrow('path is not an allowed brief pointer');
+      expectOnlyProposalAccess(f.op);
+    }
+  },
+);
+
+it.each([
+  'Console',
+  'NULled',
+  'NUL-file.txt',
+  'COM0',
+  'COM10',
+  'COM01',
+  'COM⁴',
+  'LPT0',
+  'LPT10',
+  'LPT09',
+  'LPT⁴',
+  'CONIN$-notes',
+  'CONOUT$-notes',
+  'CONIN$.txt',
+  'CONOUT$.txt',
+  'Users\\Name',
+])('accepts ordinary Windows component %s with matching case-variant identities', (name) => {
+  const f = fixture('C:\\Users\\Manager', 'C:\\Users\\Manager', true);
+  const root = `C:\\Projects\\${name}`;
+  f.op.projectCwds = [root];
+  f.artifact.checkpoint.files.push({
+    path: `${root.toLowerCase()}\\.workspacer\\brief.md`,
+    sha256: hash(f.brief),
+  });
+  f.write();
+  expect(f.validate().hash).toBeTruthy();
+});
+
+it.each([
+  'D:\\Users\\Manager',
+  'C:\\Users\\Manager-other',
+  'C:\\Users\\MANAGE~1',
+  'C:\\unrelated\\deep\\candidate\\root',
+])('rejects unrelated lexical root %s before candidate I/O', (root) => {
+  const f = fixture('C:\\Users\\Manager', root);
+  expect(f.validate).toThrow('path is not an allowed brief pointer');
+  expectOnlyProposalAccess(f.op);
+});
+
 it.each(['metadata', 'projectCwds'] as const)(
   'verifies differently spelled %s roots as well as the fleet root',
   (source) => {
@@ -234,12 +340,7 @@ it.each([
   expect(f.validate).toThrow('path is not an allowed brief pointer');
   // Only the trusted launch root and proposal may be inspected/read. This also
   // catches a stat of the candidate volume or any candidate parent, not just leaf I/O.
-  for (const spy of [fs.lstatSync, fs.statSync, fs.realpathSync, fs.openSync, fs.readFileSync]) {
-    for (const [arg] of vi.mocked(spy).mock.calls) {
-      expect([f.op.launch.options.cwd, f.op.artifactPath, 122]).toContain(arg);
-    }
-  }
-  expect(fs.statSync).not.toHaveBeenCalled();
+  expectOnlyProposalAccess(f.op);
 });
 
 it.each([

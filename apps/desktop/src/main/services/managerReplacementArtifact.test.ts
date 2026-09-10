@@ -185,6 +185,33 @@ it('rejects an outside root without exposing its path', () => {
   expect(f.validate).toThrow('Checkpoint files[1] path is not an allowed brief pointer');
 });
 
+it
+  .runIf(process.platform !== 'win32')
+  .each([
+    'NUL',
+    'NUL.txt',
+    'CON',
+    'PRN',
+    'AUX',
+    'COM1',
+    'COM¹',
+    'LPT9',
+    'LPT³',
+    'CONIN$',
+    'CONOUT$',
+    'NUL .txt',
+    'NUL ',
+  ])('keeps ordinary POSIX directory %s usable as a known brief root', (name) => {
+  const f = fixture();
+  const root = path.join(f.cwd, name);
+  const brief = path.join(root, '.workspacer', 'brief.md');
+  fs.mkdirSync(path.dirname(brief), { recursive: true });
+  fs.copyFileSync(f.brief, brief);
+  f.op.projectCwds = [root];
+  f.artifact.checkpoint.files.push({ path: brief, sha256: hash(fs.readFileSync(brief)) });
+  expect(f.validate().hash).toBeTruthy();
+});
+
 it('rejects a brief symlink and a linked parent directory', () => {
   const f = fixture();
   const target = path.join(f.cwd, 'target.md');
