@@ -130,3 +130,16 @@ it('records verified unknown once without closing the dispatch or rewriting term
   registry.markLost(update.dispatchId, 'Verified unknown; reconcile before retrying');
   expect(registry.list()[0]).toEqual(terminal);
 });
+
+it('retries a verified unknown note after a failed journal write', () => {
+  const { registry, file, update } = fixture();
+  const original = fs.readFileSync(file, 'utf8');
+  fs.rmSync(file);
+  fs.mkdirSync(file);
+  expect(() => registry.markLost(update.dispatchId, 'Verified unknown')).toThrow();
+  expect(registry.list()[0].note).toBeUndefined();
+  fs.rmdirSync(file);
+  fs.writeFileSync(file, original);
+  registry.markLost(update.dispatchId, 'Verified unknown');
+  expect(JSON.parse(fs.readFileSync(file, 'utf8'))[0].note).toBe('Verified unknown');
+});

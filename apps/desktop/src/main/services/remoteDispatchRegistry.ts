@@ -276,8 +276,16 @@ export class RemoteDispatchRegistry {
     const record = this.records.get(dispatchId);
     if (!record || record.state !== 'open' || record.note === note) return;
     // Peer ignorance is not proof a worker ended. Keep the origin record open.
+    const previous = record.note;
     record.note = note;
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      // A failed write must not suppress a later reconnect's persistence retry.
+      if (previous === undefined) delete record.note;
+      else record.note = previous;
+      throw error;
+    }
   }
 
   /**
