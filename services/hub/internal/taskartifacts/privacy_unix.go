@@ -37,4 +37,5 @@ func CommitFile(from, to string) error {
 
 func VerifyPrivateTree(dir string) error { return VerifyPrivateDirectory(dir) }
 
-func SamePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
+func SamePath(a, b string) bool            { return filepath.Clean(a) == filepath.Clean(b) }
+func SameSourceDirectory(a, b string) bool { return SamePath(a, b) }

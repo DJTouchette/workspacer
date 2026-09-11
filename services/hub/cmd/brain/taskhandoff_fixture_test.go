@@ -32,14 +32,23 @@ func handoffFixtureGit(t *testing.T, cwd string, args ...string) string {
 // No personal repository, live pairing or deployment credential is used.
 func handoffFixtureRemote(t *testing.T, seed string) (string, string) {
 	t.Helper()
-	root := t.TempDir()
+	return handoffFixtureRemoteAt(t, t.TempDir(), seed)
+}
+
+func handoffFixtureRemoteAt(t *testing.T, root, seed string) (string, string) {
+	t.Helper()
 	remote := filepath.Join(root, "approved.git")
-	if err := os.Mkdir(remote, 0700); err != nil {
+	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	handoffFixtureGit(t, remote, "init", "--bare", "--initial-branch=main")
-	handoffFixtureGit(t, remote, "config", "http.receivepack", "true")
-	handoffFixtureGit(t, seed, "push", remote, "HEAD:refs/heads/main")
+	if _, err := os.Stat(remote); os.IsNotExist(err) {
+		if err := os.Mkdir(remote, 0700); err != nil {
+			t.Fatal(err)
+		}
+		handoffFixtureGit(t, remote, "init", "--bare", "--initial-branch=main")
+		handoffFixtureGit(t, remote, "config", "http.receivepack", "true")
+		handoffFixtureGit(t, seed, "push", remote, "HEAD:refs/heads/main")
+	}
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)

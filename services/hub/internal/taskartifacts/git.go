@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -97,6 +98,19 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 		base = append(base, "-c", "credential.helper="+helper)
 	}
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
+	storageDir, _ := ctx.Value(storageContextKey{}).(string)
+	for _, arg := range args {
+		if (arg == "fetch" || arg == "worktree" || arg == "init") && storageDir != "" {
+			exe, err := os.Executable()
+			if err != nil {
+				return nil, err
+			}
+			cmd = exec.CommandContext(ctx, exe, append([]string{gitChildFlag}, append(base, args...)...)...)
+			cmd.Cancel = func() error { return cancelStorageCommand(cmd) }
+			cmd.WaitDelay = time.Second
+			break
+		}
+	}
 	cmd.Dir = cwd
 	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP"} {
 		if v, ok := os.LookupEnv(key); ok {
@@ -104,6 +118,14 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 		}
 	}
 	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
+	if len(cmd.Args) > 1 && cmd.Args[1] == gitChildFlag {
+		cmd.Env = append(cmd.Env, "WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()), "WORKSPACER_TASK_STORAGE="+storageDir)
+		pipe, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, err
+		}
+		defer pipe.Close()
+	}
 	out := &boundedOutput{limit: 32 << 20}
 	cmd.Stdout = out
 	// Git stderr can include credential-bearing URLs from host configuration.
@@ -122,11 +144,11 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 		return "", "", err
 	}
 	canonical, err := filepath.EvalSymlinks(repo)
-	if err != nil || !SamePath(canonical, repo) {
+	if err != nil || !SameSourceDirectory(canonical, repo) {
 		return "", "", fmt.Errorf("checkpoint source must be a canonical repository root")
 	}
 	root, err := Git(ctx, repo, "", "rev-parse", "--show-toplevel")
-	if err != nil || !SamePath(strings.TrimSpace(string(root)), canonical) {
+	if err != nil || !SameSourceDirectory(strings.TrimSpace(string(root)), canonical) {
 		return "", "", fmt.Errorf("checkpoint source must name the whole approved repository, not a subdirectory")
 	}
 	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")

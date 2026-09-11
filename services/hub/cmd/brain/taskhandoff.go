@@ -85,18 +85,19 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
-	AllocationId string                  `json:"allocationId,omitempty"`
-	Predecessor  string                  `json:"predecessor,omitempty"`
-	Owner        string                  `json:"owner"`
-	Plan         handoffPlan             `json:"plan"`
-	Digest       string                  `json:"digest"`
-	State        string                  `json:"state"`
-	Allocation   string                  `json:"allocation,omitempty"`
-	Result       *taskartifacts.Manifest `json:"result,omitempty"`
-	Custody      string                  `json:"custody,omitempty"`
-	AcceptedAt   int64                   `json:"acceptedAt,omitempty"`
-	Keep         bool                    `json:"keep,omitempty"`
-	Cleaning     bool                    `json:"cleaning,omitempty"`
+	Storage      *taskartifacts.StorageStatus `json:"storage,omitempty"`
+	AllocationId string                       `json:"allocationId,omitempty"`
+	Predecessor  string                       `json:"predecessor,omitempty"`
+	Owner        string                       `json:"owner"`
+	Plan         handoffPlan                  `json:"plan"`
+	Digest       string                       `json:"digest"`
+	State        string                       `json:"state"`
+	Allocation   string                       `json:"allocation,omitempty"`
+	Result       *taskartifacts.Manifest      `json:"result,omitempty"`
+	Custody      string                       `json:"custody,omitempty"`
+	AcceptedAt   int64                        `json:"acceptedAt,omitempty"`
+	Keep         bool                         `json:"keep,omitempty"`
+	Cleaning     bool                         `json:"cleaning,omitempty"`
 }
 
 type handoffRequest struct {
@@ -270,6 +271,11 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err := taskartifacts.MakePrivateDirectory(dir); err != nil {
 			return nil, err
 		}
+		release, err := taskartifacts.ReserveStorage(filepath.Dir(filepath.Dir(dir)), dir)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		if p.Operation == "freeze" {
 			if p.OriginKey != "local-host" || !binding.Export {
 				return nil, fmt.Errorf("local task export authority required")
@@ -395,6 +401,11 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		defer store.Close()
 		if p.Operation == "write" {
+			release, err := taskartifacts.ReserveStorage(filepath.Dir(filepath.Dir(dir)), dir)
+			if err != nil {
+				return nil, err
+			}
+			defer release()
 			if (p.Direction == "input" && rec.State != "transferring") || (p.Direction == "result" && rec.State != "receiving-result") {
 				return nil, fmt.Errorf("sealed task bytes cannot be changed")
 			}
@@ -463,6 +474,11 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		return jsonResult(rec)
 	case "status":
+		status, err := taskartifacts.InspectStorage(filepath.Dir(filepath.Dir(dir)))
+		if err != nil {
+			return nil, err
+		}
+		rec.Storage = &status
 		return jsonResult(rec)
 	case "sealResult":
 		if !binding.Export || rec.Allocation == "" {
@@ -711,6 +727,12 @@ func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commi
 }
 
 func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBinding, dir, task, direction string, m taskartifacts.Manifest, localSource string) (string, error) {
+	release, err := taskartifacts.ReserveStorage(filepath.Dir(filepath.Dir(dir)), dir)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	ctx = taskartifacts.WithStorageLimit(ctx, dir)
 	// A fresh private Git repository quarantines remote objects/config. It is
 	// never the receiver's active checkout or the source's index/worktree.
 	repo := filepath.Join(dir, direction+"-git")
@@ -949,6 +971,9 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 
 func (r *registry) handoffConfigDir() string {
 	if r.handoffRoot != "" {
+		if canonical, err := filepath.EvalSymlinks(r.handoffRoot); err == nil {
+			return canonical
+		}
 		return r.handoffRoot
 	}
 	return configDir()

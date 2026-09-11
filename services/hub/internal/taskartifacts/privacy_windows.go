@@ -122,3 +122,27 @@ func CommitFile(from, to string) error {
 }
 
 func SamePath(a, b string) bool { return strings.EqualFold(filepath.Clean(a), filepath.Clean(b)) }
+
+func SameSourceDirectory(a, b string) bool {
+	for _, name := range []string{a, b} {
+		for current := filepath.Clean(name); ; current = filepath.Dir(current) {
+			p, err := windows.UTF16PtrFromString(current)
+			if err != nil {
+				return false
+			}
+			attrs, err := windows.GetFileAttributes(p)
+			if err != nil || attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+				return false
+			}
+			if filepath.Dir(current) == current {
+				break
+			}
+		}
+	}
+	left, err := DirectoryIdentity(a)
+	if err != nil {
+		return false
+	}
+	right, err := DirectoryIdentity(b)
+	return err == nil && left == right
+}
