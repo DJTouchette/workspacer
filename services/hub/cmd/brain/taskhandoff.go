@@ -262,7 +262,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 				}
 				b, err := os.ReadFile(filepath.Join(r.handoffDir(binding, p.FromTask), "receipt.json"))
 				var previous handoffRecord
-				if err != nil || taskartifacts.Decode(b, &previous) != nil || previous.Owner != "local-host" || previous.Plan.Binding != binding.ID || previous.State != "received" || previous.Custody == "" || previous.Result == nil {
+				if err != nil || taskartifacts.Decode(b, &previous) != nil || previous.Owner != "local-host" || previous.Plan.Binding != binding.ID || previous.Plan.Revision != binding.Revision || previous.Plan.Input.Origin != binding.Origin || previous.State != "received" || previous.Custody == "" || previous.Result == nil {
 					return nil, fmt.Errorf("predecessor output is not in verified local custody")
 				}
 				source, folder = previous.Allocation, ".workspacer/handoffs/"+p.FromTask

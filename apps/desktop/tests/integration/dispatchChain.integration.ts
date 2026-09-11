@@ -1085,6 +1085,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
   const { pairedWorkerConnection } = await import('../../src/main/services/pairedWorkerConnection');
   const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
   const delivery = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
+  const directPairedCall = pairedWorkerConnection.call.bind(pairedWorkerConnection);
   const pairedCalls = vi.spyOn(pairedWorkerConnection, 'call');
   try {
     setRemoteServer({ url: ready.oldURL, token: 'paired-fixture-operator', mode: 'workers' });
@@ -1516,7 +1517,31 @@ it('handles unknown paired replay idempotently and returns a local task result o
       false,
     );
     const sourceBefore = execFileSync('git', ['-C', project, 'status', '--porcelain=v1']);
-    const exact = await mcpSpawn('session:manager-other', {
+    let losePreparationACK = true;
+    let loseCustodyACK = true;
+    pairedCalls.mockImplementation(async <T>(method: string, params: unknown = {}) => {
+      const answer = await directPairedCall<T>(method, params);
+      if (
+        losePreparationACK &&
+        method === 'agents.taskHandoff' &&
+        (params as { operation?: string }).operation === 'prepare'
+      ) {
+        losePreparationACK = false;
+        pairedWorkerConnection.stop();
+        throw new Error('fixture: connection lost after verified preparation');
+      }
+      if (
+        loseCustodyACK &&
+        method === 'agents.taskHandoff' &&
+        (params as { operation?: string }).operation === 'custody'
+      ) {
+        loseCustodyACK = false;
+        pairedWorkerConnection.stop();
+        throw new Error('fixture: connection lost after result custody ACK');
+      }
+      return answer;
+    });
+    const interrupted = await mcpSpawn('session:manager-other', {
       provider: 'claude',
       model: route.value.model,
       capability: route.value.capability,
@@ -1545,10 +1570,26 @@ it('handles unknown paired replay idempotently and returns a local task result o
         ],
       },
     });
-    expect(exact.isError, exact.text).toBe(false);
+    expect(interrupted.isError, interrupted.text).toBe(true);
+    expect(interrupted.text).toContain('connection lost after verified preparation');
+    expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
+    const preparingTask = history.task(exactTask.taskId)!;
+    const preparingAttempt = preparingTask.attempts.at(-1)!;
+    const exactIDs = {
+      taskId: exactTask.taskId,
+      dispatchId: preparingAttempt.dispatchId,
+      sessionId: preparingAttempt.sessionId,
+    };
+    const { resumePairedHandoff } = await import('../../src/main/services/pairedDispatch');
+    const resumed = await resumePairedHandoff({
+      taskId: exactIDs.taskId,
+      dispatchId: exactIDs.dispatchId,
+      expectedTaskRevision: preparingTask.revision ?? 0,
+    });
+    expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
     const exactRecord = remoteDispatchRegistry
       .list()
-      .find((r) => r.localSessionId === exact.value.sessionId)!;
+      .find((r) => r.localSessionId === exactIDs.sessionId)!;
     expect(exactRecord.handoff?.state).toBe('running');
     const actualLaunches = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
       cwd: string;
@@ -1570,10 +1611,25 @@ it('handles unknown paired replay idempotently and returns a local task result o
         reply: 'Reported test claim: passed.\n```wks-result\n{"commit":"worker-claimed-C"}\n```',
       }),
     });
+    await vi.waitFor(
+      () => expect(history.task(exactIDs.taskId)!.attempts.at(-1)!.handoff?.canRefresh).toBe(true),
+      { timeout: 20000 },
+    );
+    const { refreshPairedHandoff } = await import('../../src/main/services/pairedDispatch');
+    const refreshTask = history.task(exactIDs.taskId)!;
+    const refreshed = await refreshPairedHandoff({
+      taskId: exactIDs.taskId,
+      dispatchId: exactIDs.dispatchId,
+      expectedTaskRevision: refreshTask.revision ?? 0,
+    });
+    expect(refreshed.ok, JSON.stringify(refreshed)).toBe(true);
     await vi.waitFor(() => expect(exactRecord.handoff?.state).toBe('received'), { timeout: 20000 });
+    expect(
+      delivery.mock.calls.filter(([, text]) => text.includes('worker-claimed-C')),
+    ).toHaveLength(1);
     const imported = history
-      .task(exact.value.taskId)!
-      .attempts.find((a) => a.sessionId === exact.value.sessionId)!;
+      .task(exactIDs.taskId)!
+      .attempts.find((a) => a.sessionId === exactIDs.sessionId)!;
     expect(imported.handoff?.head).not.toBe(ready.sourceCommit);
     expect(imported.handoff?.base).toBe(ready.sourceCommit);
     expect(imported.reviewEvidenceId).toEqual(expect.any(String));
@@ -1584,14 +1640,14 @@ it('handles unknown paired replay idempotently and returns a local task result o
     ).toBe(imported.handoff!.head);
     expect(
       history.openTarget({
-        taskId: exact.value.taskId,
+        taskId: exactIDs.taskId,
         kind: 'handoff',
         dispatchId: imported.dispatchId,
         artifact: 0,
       }).target,
     ).toContain('implementation.md');
     const imageTarget = history.openTarget({
-      taskId: exact.value.taskId,
+      taskId: exactIDs.taskId,
       kind: 'handoff',
       dispatchId: imported.dispatchId,
       artifact: 1,
@@ -1665,6 +1721,44 @@ it('handles unknown paired replay idempotently and returns a local task result o
       'implementation.md',
     );
     expect(fs.readFileSync(localEvidence, 'utf8')).toContain('Synthetic provider claim');
+    const dirtyTask = await makeHandoffTask('Retain an unfinished remote checkpoint', false);
+    const dirty = await mcpSpawn('session:manager-other', {
+      provider: 'claude',
+      model: route.value.model,
+      role: 'implementer',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      parentSessionId: 'manager-other',
+      taskId: dirtyTask.taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      template: 'ship-task',
+      templateParams: { task: 'Return an explicitly unfinished checkpoint.' },
+      taskSource: { binding: ready.handoffBinding, artifacts: [], outputs: [] },
+    });
+    expect(dirty.isError, dirty.text).toBe(false);
+    const dirtyRecord = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === dirty.value.sessionId)!;
+    await fetch(ready.control + '/control', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'handoff-dirty',
+        reply: 'Claimed complete.\n```wks-result\n{"commit":"unverified-claim"}\n```',
+      }),
+    });
+    await vi.waitFor(() => expect(dirtyRecord.handoff?.state).toBe('needs-checkpoint'), {
+      timeout: 20000,
+    });
+    const unfinished = history.task(dirtyTask.taskId)!.attempts.at(-1)!;
+    expect(unfinished.handoff?.reviewCwd).toBeUndefined();
+    expect(unfinished.resultContract).toBe('invalid');
+    const dirtyLaunches = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
+      cwd: string;
+    }>;
+    expect(
+      fs.readFileSync(path.join(dirtyLaunches.at(-1)!.cwd, 'uncommitted.txt'), 'utf8'),
+    ).toContain('unfinished task work');
     expect(execFileSync('git', ['-C', project, 'status', '--porcelain=v1'])).toEqual(sourceBefore);
     expect(
       execFileSync('git', ['-C', project, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

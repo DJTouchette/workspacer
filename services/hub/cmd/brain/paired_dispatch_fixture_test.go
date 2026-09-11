@@ -83,6 +83,11 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 			id, dir := sid, cwd
 			reply = command.Reply
 			mu.Unlock()
+			if command.Kind == "handoff-dirty" {
+				if err := os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("unfinished task work\n"), 0600); err != nil {
+					t.Error(err)
+				}
+			}
 			if command.Kind == "handoff-result" || command.Kind == "handoff-scout" {
 				if command.Kind == "handoff-result" {
 					if err := os.WriteFile(filepath.Join(dir, "implementation.txt"), []byte("result C\n"), 0600); err != nil {

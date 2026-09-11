@@ -126,7 +126,20 @@ export function startPairedDispatch(): void {
   if (getPairedWorkerTarget()) void connection.connect().catch(() => {});
 }
 
-async function capturePairedHandoff(
+const custodyImports = new Map<string, Promise<void>>();
+function capturePairedHandoff(
+  record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
+): Promise<void> {
+  const existing = custodyImports.get(record.dispatchId);
+  if (existing) return existing;
+  const importing = capturePairedHandoffNow(record).finally(() =>
+    custodyImports.delete(record.dispatchId),
+  );
+  custodyImports.set(record.dispatchId, importing);
+  return importing;
+}
+
+async function capturePairedHandoffNow(
   record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
 ): Promise<void> {
   if (!record.handoff || !record.localSessionId) throw new Error('Handoff task unavailable');

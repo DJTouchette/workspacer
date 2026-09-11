@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: workspace-handoff-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   portable-hub:
     strategy:
