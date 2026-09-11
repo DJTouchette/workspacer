@@ -76,6 +76,9 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
+	CleanupPhase     string                  `json:"cleanupPhase,omitempty"`
+	CleanupNote      string                  `json:"cleanupNote,omitempty"`
+	ReviewRef        string                  `json:"reviewRef,omitempty"`
 	ExecutionSession string                  `json:"executionSession,omitempty"`
 	SourceRepo       string                  `json:"sourceRepo,omitempty"`
 	InputPin         string                  `json:"inputPin,omitempty"`
@@ -570,6 +573,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err := store.Materialize(filepath.Join(allocation, ".workspacer", "handoffs", p.Task)); err != nil {
 			return nil, err
 		}
+		rec.ReviewRef, err = promoteHandoffResult(ctx, binding, filepath.Join(dir, "result-git"), p.Task, rec.Result.Commit)
+		if err != nil {
+			return nil, err
+		}
 		rec.Allocation, rec.State = allocation, "received"
 		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
 		if err != nil {
@@ -609,7 +616,14 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		return jsonResult(rec)
 	case "cleanup":
+		if rec.State == "cleaned" {
+			return jsonResult(rec)
+		}
 		if err := r.cleanupHandoff(ctx, binding, &rec, time.Now()); err != nil {
+			rec.CleanupNote = err.Error()
+			if saveErr := saveHandoff(dir, &rec); saveErr != nil {
+				return nil, saveErr
+			}
 			return nil, err
 		}
 		return jsonResult(rec)
@@ -631,6 +645,33 @@ func finishHandoffPin(ctx context.Context, rec *handoffRecord, dir string) error
 	}
 	rec.State = "frozen"
 	return saveHandoff(dir, rec)
+}
+
+// Promote verified objects into the original repository without checking out,
+// writing FETCH_HEAD, touching the index, or moving any user branch. The
+// source is this host's quarantine, not another peer path or network endpoint.
+func promoteHandoffResult(ctx context.Context, binding taskartifacts.RepositoryBinding, quarantine, task, commit string) (string, error) {
+	if err := taskartifacts.CheckConfiguration(ctx, binding.Repository); err != nil {
+		return "", err
+	}
+	if _, err := taskartifacts.Git(ctx, binding.Repository, "", "-c", "protocol.file.allow=always", "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--refmap=", "--", quarantine, "refs/handoff/verified"); err != nil {
+		return "", err
+	}
+	typ, err := taskartifacts.Git(ctx, binding.Repository, "", "cat-file", "-t", commit)
+	if err != nil || strings.TrimSpace(string(typ)) != "commit" {
+		return "", fmt.Errorf("verified result commit could not be promoted")
+	}
+	ref, err := binding.Ref(task, "result")
+	if err != nil {
+		return "", err
+	}
+	if _, err := taskartifacts.Git(ctx, binding.Repository, "", "update-ref", ref, commit, strings.Repeat("0", len(commit))); err != nil {
+		got, checkErr := taskartifacts.Git(ctx, binding.Repository, "", "rev-parse", "--verify", ref)
+		if checkErr != nil || strings.TrimSpace(string(got)) != commit {
+			return "", fmt.Errorf("origin review ref changed; import refused")
+		}
+	}
+	return ref, nil
 }
 
 func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, commit, ref string) error {
@@ -682,6 +723,14 @@ func freezeHandoffArtifacts(binding taskartifacts.RepositoryBinding, task, commi
 		if err := writeFileAtomic0600(filepath.Join(dest, fmt.Sprintf("%d.bytes", i)), b); err != nil {
 			return m, err
 		}
+	}
+	store, err := taskartifacts.Open(dest, m)
+	if err != nil {
+		return m, err
+	}
+	defer store.Close()
+	if err := store.Verify(); err != nil {
+		return m, err
 	}
 	return m, nil
 }
@@ -794,9 +843,16 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 	if rec.Allocation != filepath.Join(dir, "input-worktree") || r.remote == nil {
 		return fmt.Errorf("cleanup allocation identity mismatch")
 	}
-	identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
-	if err != nil || identity != rec.AllocationId {
-		return fmt.Errorf("cleanup blocked: allocation was replaced")
+	_, allocationErr := os.Lstat(rec.Allocation)
+	removed := os.IsNotExist(allocationErr) && (rec.CleanupPhase == "removing" || rec.CleanupPhase == "worktree-removed")
+	if !removed {
+		if rec.CleanupPhase == "worktree-removed" {
+			return fmt.Errorf("cleanup blocked: allocation path was reused")
+		}
+		identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
+		if err != nil || identity != rec.AllocationId {
+			return fmt.Errorf("cleanup blocked: allocation was replaced")
+		}
 	}
 	r.remote.mu.Lock()
 	d := r.remote.m[task]
@@ -808,9 +864,17 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 	if sessionID == "" {
 		return fmt.Errorf("cleanup blocked: admission or worker outcome unknown")
 	}
-	worker, found := findFleetSession(r.fleetSessions(ctx), sessionID)
-	if !found || worker.Status != "ended" {
-		return fmt.Errorf("cleanup blocked: worker has not been verified stopped")
+	if err := r.handoffCleanupLiveness(ctx, sessionID, rec.Allocation); err != nil {
+		return err
+	}
+	if removed {
+		for direction, commit := range map[string]string{"input": rec.Plan.Input.Commit, "result": rec.Result.Commit} {
+			ref, _ := binding.Ref(task, direction)
+			if err := deleteHandoffRef(ctx, binding, filepath.Join(dir, "input-git"), ref, commit); err != nil {
+				return err
+			}
+		}
+		return finishHandoffSpools(dir, rec)
 	}
 	head, _, err := taskartifacts.CheckSource(ctx, rec.Allocation)
 	if err != nil || head != rec.Result.Commit {
@@ -842,27 +906,59 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 	}
 	// Compare-delete only this binding's exact generated refs. A moved ref is
 	// never force-deleted. Receiver custody survives every failure below.
+	rec.CleanupPhase = "removing"
+	if err := saveHandoff(dir, rec); err != nil {
+		return err
+	}
 	for direction, commit := range map[string]string{"input": rec.Plan.Input.Commit, "result": rec.Result.Commit} {
 		ref, _ := binding.Ref(task, direction)
-		if _, err := binding.GitRemote(ctx, rec.Allocation, "push", "--porcelain", "--force-with-lease="+ref+":"+commit, "--", binding.Remote, ":"+ref); err != nil {
+		if err := deleteHandoffRef(ctx, binding, rec.Allocation, ref, commit); err != nil {
 			return fmt.Errorf("cleanup blocked: ref changed or approved remote unavailable")
 		}
 	}
 	if _, err := taskartifacts.Git(ctx, filepath.Join(dir, "input-git"), "", "worktree", "remove", "--", rec.Allocation); err != nil {
 		return fmt.Errorf("cleanup blocked: worktree removal refused")
 	}
+	rec.CleanupPhase = "worktree-removed"
+	if err := saveHandoff(dir, rec); err != nil {
+		return err
+	}
+	return finishHandoffSpools(dir, rec)
+}
+
+func finishHandoffSpools(dir string, rec *handoffRecord) error {
 	// These directories contain only generated numeric files. Unexpected
 	// entries block deletion instead of broad RemoveAll on a task root.
 	for direction, m := range map[string]taskartifacts.Manifest{"input": rec.Plan.Input, "result": *rec.Result} {
 		files, err := os.ReadDir(filepath.Join(dir, direction))
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		if len(files) != len(m.Entries) {
-			return fmt.Errorf("cleanup blocked: unexpected staging files")
-		}
+		known := map[string]int{}
 		for i := range m.Entries {
-			if err := os.Remove(filepath.Join(dir, direction, fmt.Sprintf("%d.bytes", i))); err != nil {
+			known[fmt.Sprintf("%d.bytes", i)] = i
+		}
+		store, err := taskartifacts.Open(filepath.Join(dir, direction), m)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			index, ok := known[file.Name()]
+			if !ok {
+				store.Close()
+				return fmt.Errorf("cleanup blocked: unexpected staging files")
+			}
+			if err := store.VerifyEntry(index); err != nil {
+				store.Close()
+				return fmt.Errorf("cleanup blocked: sealed staging bytes changed")
+			}
+		}
+		store.Close()
+		for _, file := range files {
+			if err := os.Remove(filepath.Join(dir, direction, file.Name())); err != nil {
 				return err
 			}
 		}
@@ -871,7 +967,72 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 		}
 	}
 	rec.State = "cleaned"
+	rec.CleanupPhase, rec.CleanupNote = "cleaned", ""
 	return saveHandoff(dir, rec)
+}
+
+func deleteHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, ref, expected string) error {
+	got, err := binding.GitRemote(ctx, repo, "ls-remote", "--refs", "--", binding.Remote, ref)
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(got))
+	if len(fields) == 0 {
+		return nil
+	}
+	if len(fields) != 2 || fields[0] != expected || fields[1] != ref {
+		return fmt.Errorf("handoff ref changed; compare-delete refused")
+	}
+	if _, err := binding.GitRemote(ctx, repo, "push", "--porcelain", "--force-with-lease="+ref+":"+expected, "--", binding.Remote, ":"+ref); err != nil {
+		got, checkErr := binding.GitRemote(ctx, repo, "ls-remote", "--refs", "--", binding.Remote, ref)
+		if checkErr != nil || len(strings.Fields(string(got))) != 0 {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *registry) handoffCleanupLiveness(ctx context.Context, sessionID, allocation string) error {
+	if r.cm == nil {
+		return fmt.Errorf("cleanup blocked: execution status unavailable")
+	}
+	raw, err := r.cm.getSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("cleanup blocked: worker stop could not be verified")
+	}
+	var worker struct {
+		SessionID       string `json:"sessionId"`
+		Status          string `json:"status"`
+		BackgroundTasks int    `json:"backgroundTasks"`
+	}
+	if json.Unmarshal(compatSnapshot(raw), &worker) != nil || worker.SessionID != sessionID || worker.Status != "ended" || worker.BackgroundTasks != 0 {
+		return fmt.Errorf("cleanup blocked: worker or background work is still active or unknown")
+	}
+	raw, err = r.cm.listSessions(ctx)
+	var sessions []json.RawMessage
+	if err != nil || len(raw) > 4<<20 || json.Unmarshal(raw, &sessions) != nil {
+		return fmt.Errorf("cleanup blocked: current workspace readers could not be checked")
+	}
+	for _, raw := range sessions {
+		var s fleetSession
+		if json.Unmarshal(compatSnapshot(raw), &s) != nil {
+			return fmt.Errorf("cleanup blocked: unknown execution state")
+		}
+		if s.Status == "ended" {
+			continue
+		}
+		if s.Cwd == "" {
+			return fmt.Errorf("cleanup blocked: active workspace is unknown")
+		}
+		cwd := filepath.Clean(s.Cwd)
+		if canonical, err := filepath.EvalSymlinks(cwd); err == nil {
+			cwd = canonical
+		}
+		if cwd == allocation || strings.HasPrefix(cwd, allocation+string(filepath.Separator)) {
+			return fmt.Errorf("cleanup blocked: another worker is using the allocation")
+		}
+	}
+	return nil
 }
 
 func (r *registry) handoffConfigDir() string {

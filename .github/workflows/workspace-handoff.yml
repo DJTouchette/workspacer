@@ -18,6 +18,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.4'
+      - name: macOS test prerequisites and canonical temporary root
+        if: runner.os == 'macOS'
+        run: |
+          brew install ripgrep
+          mkdir -p "$RUNNER_TEMP/handoff-tests"
+          cd "$RUNNER_TEMP/handoff-tests"
+          echo "TMPDIR=$(pwd -P)" >> "$GITHUB_ENV"
+      - name: Windows test prerequisites
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ripgrep -y --no-progress
+          New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -Value 1 -Type DWord
       - name: Full portable hub suites and private Git handoff fixtures
         working-directory: services/hub
         run: go test -count=1 ./...

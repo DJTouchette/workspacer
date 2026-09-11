@@ -30,6 +30,7 @@ export interface DispatchAttempt extends DispatchLink {
     note?: string;
     base?: string;
     head?: string;
+    reviewRef?: string;
     reviewCwd?: string;
     directoryIdentity?: { dev: number; ino: number };
     artifacts?: Array<{ name: string; kind: string; sha256: string }>;

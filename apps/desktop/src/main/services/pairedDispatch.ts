@@ -173,6 +173,7 @@ async function capturePairedHandoff(
         state: checkpointRequired ? 'needs-checkpoint' : 'received',
         base: result.plan.input.commit,
         head: result.result?.commit,
+        reviewRef: result.reviewRef,
         reviewCwd: result.state === 'received' ? result.allocation : undefined,
         artifacts: result.result?.entries,
         artifactTask: record.dispatchId,

@@ -1549,7 +1549,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
     const exactRecord = remoteDispatchRegistry
       .list()
       .find((r) => r.localSessionId === exact.value.sessionId)!;
-    expect(exactRecord.handoff?.state).toBe('prepared');
+    expect(exactRecord.handoff?.state).toBe('running');
     const actualLaunches = (await (await fetch(ready.control + '/evidence')).json()) as Array<{
       cwd: string;
     }>;
@@ -1577,6 +1577,11 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(imported.handoff?.head).not.toBe(ready.sourceCommit);
     expect(imported.handoff?.base).toBe(ready.sourceCommit);
     expect(imported.reviewEvidenceId).toEqual(expect.any(String));
+    expect(
+      execFileSync('git', ['-C', project, 'rev-parse', imported.handoff!.reviewRef!], {
+        encoding: 'utf8',
+      }).trim(),
+    ).toBe(imported.handoff!.head);
     expect(
       history.openTarget({
         taskId: exact.value.taskId,

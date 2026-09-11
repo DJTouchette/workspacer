@@ -134,16 +134,30 @@ func (s *Store) Read(index int, offset int64) ([]byte, error) {
 }
 
 func (s *Store) Verify() error {
-	for i, e := range s.manifest.Entries {
-		f, err := s.openFile(i, false)
-		if err != nil {
-			return fmt.Errorf("required artifact missing: %s", e.Name)
+	for i := range s.manifest.Entries {
+		if err := s.VerifyEntry(i); err != nil {
+			return err
 		}
-		b, err := io.ReadAll(io.LimitReader(f, e.Size+1))
-		f.Close()
-		if err != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
-			return fmt.Errorf("required artifact checksum mismatch: %s", e.Name)
-		}
+	}
+	return nil
+}
+
+func (s *Store) VerifyEntry(index int) error {
+	e, err := s.entry(index)
+	if err != nil {
+		return err
+	}
+	f, err := s.openFile(index, false)
+	if err != nil {
+		return fmt.Errorf("required artifact missing: %s", e.Name)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, e.Size+1))
+	f.Close()
+	if err != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
+		return fmt.Errorf("required artifact checksum mismatch: %s", e.Name)
+	}
+	if err := validateReportImages(e.Name, b, s.manifest.Entries); err != nil {
+		return err
 	}
 	return nil
 }

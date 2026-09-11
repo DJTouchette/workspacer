@@ -89,11 +89,12 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	base := []string{"--no-replace-objects", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.attributesFile=" + os.DevNull, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.sshCommand=ssh -F none -oBatchMode=yes", "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-c", "gc.auto=0"}
+	base := []string{"--no-replace-objects", "-c", "core.longpaths=true", "-c", "core.alternateRefsCommand=", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.attributesFile=" + os.DevNull, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.sshCommand=ssh -F none -oBatchMode=yes", "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-c", "gc.auto=0"}
 	if helper != "" {
 		base = append(base, "-c", "credential.helper="+helper)
 	}
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
+	cmd.WaitDelay = time.Second
 	cmd.Dir = cwd
 	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP"} {
 		if v, ok := os.LookupEnv(key); ok {
@@ -107,22 +108,51 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 	// Never return it to RPC callers or workers.
 	cmd.Stderr = &boundedOutput{limit: 8192}
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("handoff Git operation failed or timed out; check approved repository access and checkpoint")
+		operation := "operation"
+		for _, arg := range args {
+			if strings.Contains("|init|config|status|rev-parse|cat-file|ls-tree|fetch|push|worktree|update-ref|merge-base|ls-remote|ls-files|", "|"+arg+"|") {
+				operation = arg
+				break
+			}
+		}
+		return nil, fmt.Errorf("handoff Git %s failed or timed out; check approved repository access and checkpoint", operation)
 	}
 	return out.Bytes(), nil
 }
 
 // CheckSource refuses execution-valued local config before status can invoke
 // clean filters. It never stages, commits, stashes or modifies the user index.
-func CheckSource(ctx context.Context, repo string, selectedArtifacts ...string) (string, string, error) {
+func CheckConfiguration(ctx context.Context, repo string) error {
 	config, err := Git(ctx, repo, "", "config", "--local", "--name-only", "--list")
 	if err != nil {
-		return "", "", err
+		return err
 	}
 	for _, key := range strings.Fields(strings.ToLower(string(config))) {
-		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasPrefix(key, "url.") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "core.sparsecheckout" {
-			return "", "", fmt.Errorf("unsupported checkpoint configuration: %s", key)
+		if strings.HasPrefix(key, "filter.") || strings.HasPrefix(key, "include") || strings.HasPrefix(key, "url.") || strings.HasPrefix(key, "http.") || strings.HasPrefix(key, "credential.") || strings.HasPrefix(key, "remote.") && strings.ContainsAny(key, ":/\\") || strings.HasSuffix(key, ".promisor") || key == "extensions.partialclone" || key == "extensions.worktreeconfig" || key == "core.sparsecheckout" {
+			return fmt.Errorf("unsupported checkpoint configuration: %s; use the approved host credential adapter", key)
 		}
+	}
+	attributes, err := Git(ctx, repo, "", "rev-parse", "--path-format=absolute", "--git-path", "info/attributes")
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(strings.TrimSpace(string(attributes))); err == nil {
+		if !info.Mode().IsRegular() || info.Size() != 0 {
+			return fmt.Errorf("unsupported repository info/attributes materialization policy")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("repository attributes policy could not be checked")
+	}
+	return nil
+}
+
+func CheckSource(ctx context.Context, repo string, selectedArtifacts ...string) (string, string, error) {
+	if err := CheckConfiguration(ctx, repo); err != nil {
+		return "", "", err
+	}
+	shallow, err := Git(ctx, repo, "", "rev-parse", "--is-shallow-repository")
+	if err != nil || strings.TrimSpace(string(shallow)) != "false" {
+		return "", "", fmt.Errorf("unsupported shallow or incomplete source repository")
 	}
 	statusArgs := []string{"status", "--porcelain=v1", "--untracked-files=all"}
 	if len(selectedArtifacts) > 0 {

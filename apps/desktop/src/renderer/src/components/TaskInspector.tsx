@@ -842,6 +842,12 @@ function TaskDetails({
             <div key={a.dispatchId} style={{ ...meta, overflowWrap: 'anywhere' }}>
               <IdRow label="Verified source" value={a.handoff?.base ?? 'Not yet verified'} />
               <IdRow label="Review head" value={a.handoff?.head ?? 'Not yet received'} />
+              {a.handoff?.reviewRef && (
+                <IdRow
+                  label="Origin review branch"
+                  value={a.handoff.reviewRef.replace(/^refs\/heads\//, '')}
+                />
+              )}
             </div>
           ))}
         <IdRow label="Task" value={task.taskId} />

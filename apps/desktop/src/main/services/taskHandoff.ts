@@ -67,6 +67,7 @@ interface ArtifactManifest {
   entries: Array<HandoffSelection & { size: number; sha256: string }>;
 }
 export interface HandoffRecord {
+  reviewRef?: string;
   executionSession?: string;
   allocationId?: string;
   plan: {
