@@ -20,7 +20,7 @@ jobs:
     runs-on: windows-latest
     env:
       WKS_HANDOFF_STAGE: source
-      WKS_HANDOFF_TRANSPORT: ${{ runner.temp }}/handoff-transport
+      WKS_HANDOFF_TRANSPORT: ${{ github.workspace }}/.handoff-fixture-transport
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-source-wire
-          path: ${{ runner.temp }}/handoff-transport
+          path: ${{ github.workspace }}/.handoff-fixture-transport
           include-hidden-files: true
           retention-days: 3
   linux-execution:
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WKS_HANDOFF_STAGE: worker
-      WKS_HANDOFF_TRANSPORT: ${{ runner.temp }}/handoff-transport
+      WKS_HANDOFF_TRANSPORT: ${{ github.workspace }}/.handoff-fixture-transport
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
@@ -49,14 +49,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: windows-source-wire
-          path: ${{ runner.temp }}/handoff-transport
+          path: ${{ github.workspace }}/.handoff-fixture-transport
       - name: Linux worker consumes B and returns exact C with report bytes
         working-directory: services/hub
         run: go test -v -count=1 ./cmd/brain -run '^TestCrossPlatformHandoffStage$'
       - uses: actions/upload-artifact@v4
         with:
           name: linux-result-wire
-          path: ${{ runner.temp }}/handoff-transport
+          path: ${{ github.workspace }}/.handoff-fixture-transport
           include-hidden-files: true
           retention-days: 3
   windows-custody:
@@ -64,7 +64,7 @@ jobs:
     runs-on: windows-latest
     env:
       WKS_HANDOFF_STAGE: receive
-      WKS_HANDOFF_TRANSPORT: ${{ runner.temp }}/handoff-transport
+      WKS_HANDOFF_TRANSPORT: ${{ github.workspace }}/.handoff-fixture-transport
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: linux-result-wire
-          path: ${{ runner.temp }}/handoff-transport
+          path: ${{ github.workspace }}/.handoff-fixture-transport
       - name: Windows verifies C, report digests, native ACLs and local implementation D
         working-directory: services/hub
         run: go test -v -count=1 ./cmd/brain -run '^TestCrossPlatformHandoffStage$'
