@@ -17,6 +17,8 @@ export interface TaskSource {
   outputs: HandoffSelection[];
 }
 export interface HandoffReceiptSelector {
+  version: 1;
+  allocationId: string;
   binding: string;
   digest: string;
 }
@@ -30,6 +32,7 @@ interface ArtifactManifest {
   entries: Array<HandoffSelection & { size: number; sha256: string }>;
 }
 export interface HandoffRecord {
+  allocationId?: string;
   plan: {
     version: number;
     binding: string;

@@ -70,13 +70,3 @@ func TestCheckpointPreflightDoesNotExecuteRepositoryFilters(t *testing.T) {
 		t.Fatal("remote rewrite admitted")
 	}
 }
-
-func TestWindowsCustodyIsExplicitlyUnsupported(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows preflight contract")
-	}
-	err := (RepositoryBinding{}).Validate()
-	if err == nil || !strings.Contains(err.Error(), "Windows ACL") {
-		t.Fatal("Windows must fail before transfer", err)
-	}
-}

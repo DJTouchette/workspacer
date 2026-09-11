@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ import (
 
 func handoffFixtureGit(t *testing.T, cwd string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "user.name=Workspace fixture", "-c", "user.email=fixture@example.test", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
+	cmd := exec.Command("git", append([]string{"-c", "user.name=Workspace fixture", "-c", "user.email=fixture@example.test", "-c", "core.autocrlf=false", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
 	cmd.Dir = cwd
 	b, err := cmd.CombinedOutput()
 	if err != nil {
@@ -124,9 +123,6 @@ func TestHandoffCleanupRequiresCustodyAcceptanceAndGrace(t *testing.T) {
 // Production handlers and a temporary HTTPS Git server; only provider outcome
 // is synthetic. Both orientations have independently owned on-disk custody.
 func TestHandoffHTTPSRoundTripAndRestart(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("v1 explicitly refuses Windows ACL custody")
-	}
 	for _, orientation := range []string{"desktop-to-paired", "paired-to-desktop"} {
 		t.Run(orientation, func(t *testing.T) {
 			ctx := context.Background()

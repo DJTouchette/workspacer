@@ -324,7 +324,7 @@ export async function spawnPairedWorker(
           getPairedWorkerTarget()!.displayName || new URL(getPairedWorkerTarget()!.httpUrl).host,
       })
     : undefined;
-  let handoff: { binding: string; digest: string } | undefined;
+  let handoff: import('./taskHandoff').HandoffReceiptSelector | undefined;
   if (taskSource) {
     dispatchHistoryStore.observeHandoff(localSessionId, { state: 'preparing' });
     registry.setHandoff(dispatchId, {
@@ -347,7 +347,7 @@ export async function spawnPairedWorker(
       });
       throw error;
     }
-    handoff = { binding: taskSource.binding, digest: prepared.digest };
+    handoff = { version: 1, binding: taskSource.binding, digest: prepared.digest, allocationId: prepared.allocationId! };
     registry.setHandoff(dispatchId, { ...handoff, state: 'prepared', sourceCwd: String(p.cwd) });
   }
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };

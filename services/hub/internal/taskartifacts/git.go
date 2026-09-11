@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -34,9 +33,6 @@ type RepositoryBinding struct {
 }
 
 func (b RepositoryBinding) Validate() error {
-	if runtime.GOOS == "windows" {
-		return fmt.Errorf("workspace handoff requires POSIX custody permissions; Windows ACL custody is not supported in v1")
-	}
 	if !ID.MatchString(b.ID) || !ID.MatchString(b.Origin) || b.Revision == "" || b.Owner == "" || !filepath.IsAbs(b.Repository) {
 		return fmt.Errorf("repository binding setup required")
 	}
@@ -126,11 +122,11 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 		return "", "", err
 	}
 	canonical, err := filepath.EvalSymlinks(repo)
-	if err != nil || canonical != filepath.Clean(repo) {
+	if err != nil || !SamePath(canonical, repo) {
 		return "", "", fmt.Errorf("checkpoint source must be a canonical repository root")
 	}
 	root, err := Git(ctx, repo, "", "rev-parse", "--show-toplevel")
-	if err != nil || filepath.Clean(strings.TrimSpace(string(root))) != canonical {
+	if err != nil || !SamePath(strings.TrimSpace(string(root)), canonical) {
 		return "", "", fmt.Errorf("checkpoint source must name the whole approved repository, not a subdirectory")
 	}
 	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")

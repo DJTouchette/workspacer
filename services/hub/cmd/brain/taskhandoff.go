@@ -22,12 +22,14 @@ type handoffSelection struct {
 }
 
 type handoffReceiptSelector struct {
-	Binding string `json:"binding"`
-	Digest  string `json:"digest"`
+	Version      int    `json:"version"`
+	AllocationId string `json:"allocationId"`
+	Binding      string `json:"binding"`
+	Digest       string `json:"digest"`
 }
 
-func (r *registry) preparedHandoff(owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
-	if selector == nil {
+func (r *registry) preparedHandoff(ctx context.Context, owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
+	if selector == nil || selector.Version != 1 {
 		return nil, fmt.Errorf("exact handoff receipt required")
 	}
 	binding, err := r.handoffBinding(selector.Binding, owner)
@@ -42,7 +44,11 @@ func (r *registry) preparedHandoff(owner, task string, selector *handoffReceiptS
 	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(r.handoffDir(binding, task), "input-worktree") {
 		return nil, fmt.Errorf("handoff receipt does not match this admission")
 	}
-	if err := verifyHandoffAllocation(context.Background(), rec.Allocation, filepath.Join(r.handoffDir(binding, task), "input-git"), task, "input", rec.Plan.Input); err != nil {
+	identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
+	if err != nil || identity != rec.AllocationId || identity != selector.AllocationId {
+		return nil, fmt.Errorf("prepared allocation identity changed")
+	}
+	if err := verifyHandoffAllocation(ctx, rec.Allocation, filepath.Join(r.handoffDir(binding, task), "input-git"), task, "input", rec.Plan.Input); err != nil {
 		return nil, err
 	}
 	if err := verifyHandoffEvidence(rec.Allocation, task, rec.Plan.Input); err != nil {
@@ -52,6 +58,9 @@ func (r *registry) preparedHandoff(owner, task string, selector *handoffReceiptS
 }
 
 func verifyHandoffEvidence(allocation, task string, m taskartifacts.Manifest) error {
+	if err := taskartifacts.VerifyPrivateTree(allocation); err != nil {
+		return err
+	}
 	root, err := taskartifacts.OpenSelectedRoot(allocation, ".workspacer/handoffs/"+task)
 	if err != nil {
 		return err
@@ -76,17 +85,18 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
-	Predecessor string                  `json:"predecessor,omitempty"`
-	Owner       string                  `json:"owner"`
-	Plan        handoffPlan             `json:"plan"`
-	Digest      string                  `json:"digest"`
-	State       string                  `json:"state"`
-	Allocation  string                  `json:"allocation,omitempty"`
-	Result      *taskartifacts.Manifest `json:"result,omitempty"`
-	Custody     string                  `json:"custody,omitempty"`
-	AcceptedAt  int64                   `json:"acceptedAt,omitempty"`
-	Keep        bool                    `json:"keep,omitempty"`
-	Cleaning    bool                    `json:"cleaning,omitempty"`
+	AllocationId string                  `json:"allocationId,omitempty"`
+	Predecessor  string                  `json:"predecessor,omitempty"`
+	Owner        string                  `json:"owner"`
+	Plan         handoffPlan             `json:"plan"`
+	Digest       string                  `json:"digest"`
+	State        string                  `json:"state"`
+	Allocation   string                  `json:"allocation,omitempty"`
+	Result       *taskartifacts.Manifest `json:"result,omitempty"`
+	Custody      string                  `json:"custody,omitempty"`
+	AcceptedAt   int64                   `json:"acceptedAt,omitempty"`
+	Keep         bool                    `json:"keep,omitempty"`
+	Cleaning     bool                    `json:"cleaning,omitempty"`
 }
 
 type handoffRequest struct {
@@ -162,15 +172,7 @@ func writeHandoffAtomic(name string, b []byte) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Rename(tmp, name); err != nil {
-		return err
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return taskartifacts.CommitFile(tmp, name)
 }
 
 func planDigest(p handoffPlan) (string, error) {
@@ -220,6 +222,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	var rec handoffRecord
 	stored, readErr := os.ReadFile(filepath.Join(dir, "receipt.json"))
 	if readErr == nil {
+		if err := taskartifacts.VerifyPrivateDirectory(dir); err != nil {
+			return nil, err
+		}
 		if json.Unmarshal(stored, &rec) != nil || rec.Owner != p.OriginKey || rec.Plan.Input.Task != p.Task || rec.Plan.Binding != binding.ID || rec.Plan.Revision != binding.Revision || rec.Plan.Input.Origin != binding.Origin {
 			return nil, fmt.Errorf("handoff receipt identity or binding revision mismatch")
 		}
@@ -262,7 +267,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if len(entries) >= 32 {
 			return nil, fmt.Errorf("handoff capacity reached: accept and clean retained work before admitting more")
 		}
-		if err := os.MkdirAll(dir, 0700); err != nil {
+		if err := taskartifacts.MakePrivateDirectory(dir); err != nil {
 			return nil, err
 		}
 		if p.Operation == "freeze" {
@@ -434,6 +439,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		rec.Allocation, rec.State = allocation, "prepared"
+		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
+		if err != nil {
+			return nil, err
+		}
 		if err := saveHandoff(dir, &rec); err != nil {
 			return nil, err
 		}
@@ -585,6 +594,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		rec.Allocation, rec.State = allocation, "received"
+		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
+		if err != nil {
+			return nil, err
+		}
 		rec.Custody, _ = rec.Result.Seal()
 		if err := saveHandoff(dir, &rec); err != nil {
 			return nil, err
@@ -713,6 +726,9 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 	if err := os.MkdirAll(repo, 0700); err != nil {
 		return "", err
 	}
+	if err := taskartifacts.VerifyPrivateDirectory(repo); err != nil {
+		return "", err
+	}
 	if _, err := taskartifacts.Git(ctx, repo, "", "init", "--bare", "--template=", "--object-format="+m.ObjectFormat); err != nil {
 		return "", err
 	}
@@ -742,6 +758,12 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 		return "", err
 	}
 	if _, err := taskartifacts.Git(ctx, repo, "", "worktree", "add", "-b", "wks/handoff-"+task+"-"+direction, "--", allocation, m.Commit); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(allocation, 0700); err != nil {
+		return "", err
+	}
+	if err := taskartifacts.VerifyPrivateTree(allocation); err != nil {
 		return "", err
 	}
 	status, err := taskartifacts.Git(ctx, allocation, "", "status", "--porcelain=v1", "--untracked-files=all")

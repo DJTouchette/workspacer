@@ -786,7 +786,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if admitErr != nil {
 		return nil, admitErr
 	}
-	if err := r.claimDispatch(p); err != nil {
+	if err := r.claimDispatch(ctx, p); err != nil {
 		return nil, err
 	}
 

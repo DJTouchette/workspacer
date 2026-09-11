@@ -106,7 +106,7 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		return nil, fmt.Errorf("provider is not authenticated on this execution host")
 	}
 	if p.Handoff != nil {
-		rec, err := r.preparedHandoff(p.RemoteOrigin.OwnerKey, id, p.Handoff)
+		rec, err := r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, id, p.Handoff)
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +243,7 @@ func (r *registry) expireDispatchLease(id string) {
 	_ = s.persistLocked()
 }
 
-func (r *registry) claimDispatch(p spawnParams) error {
+func (r *registry) claimDispatch(ctx context.Context, p spawnParams) error {
 	if p.RemoteOrigin == nil {
 		return nil
 	}
@@ -258,7 +258,7 @@ func (r *registry) claimDispatch(p spawnParams) error {
 		return fmt.Errorf("spawn must consume the exact verified handoff receipt")
 	}
 	if p.Handoff != nil {
-		if _, err := r.preparedHandoff(p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
+		if _, err := r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
 			return err
 		}
 	}
