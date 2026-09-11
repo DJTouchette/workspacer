@@ -679,14 +679,13 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
     const { DispatchHistoryStore } = await import('../../src/main/services/dispatchHistoryStore');
     const reopened = new DispatchHistoryStore(() => path.join(configDir, 'dispatch-history.json'));
     expect(reopened.task(taskId)!.workflow).toEqual(history.task(taskId)!.workflow);
-    expect(
-      (
-        await call('next_workflow_step', {
-          taskId: history.list().find((t) => !t.workflow)!.taskId,
-          cwd: project,
-        })
-      ).ok,
-    ).toBe(false);
+    const freeform = await call('next_workflow_step', {
+      taskId: history.list().find((t) => !t.workflow)!.taskId,
+      cwd: project,
+    });
+    expect(freeform.ok).toBe(true);
+    expect(freeform.task.workflow).toBeUndefined();
+    expect(freeform.instructions).toContain('no pinned workflow');
   } finally {
     delivery.mockRestore();
   }
@@ -1209,6 +1208,161 @@ it('composes local workflow dispatch with ownership, revision and duplicate-admi
   expect(launch.mock.calls.length).toBe(afterUncertain);
 });
 
+it('honors explicit models and no-task requests after inbox capture, retaining worker wakes', async () => {
+  const manager = 'session:manager-current';
+  const { managerRequests } = await import('../../src/main/services/managerRequestService');
+  const inbox = managerRequests();
+  const captured = inbox.prepare(
+    'manager-current',
+    'Use Luna to inspect https://example.com/spec without creating a task.',
+  );
+  if (!captured.available) throw new Error('capture unavailable');
+  const delivered = inbox.beginDelivery('manager-current', captured.requestId)!;
+  inbox.finishDelivery(captured.requestId, delivered.deliveryId, 'accepted');
+  const before = history.list().length;
+  const resolved = await mcpTool(manager, 'resolve_manager_request', {
+    requestId: captured.requestId,
+    expectedRevision: inbox.request('manager-current', captured.requestId).revision,
+    intents: [{ key: 'one-off', kind: 'untracked', reason: 'User explicitly requested no task' }],
+  });
+  expect(resolved.isError, resolved.text).toBe(false);
+  expect(resolved.value.tasks).toEqual([]);
+  const adhoc = await mcpSpawn(manager, {
+    trackTask: false,
+    parentSessionId: 'manager-current',
+    model: 'gpt-6-luna',
+    exactModel: true,
+    role: 'mechanical',
+    toolScope: 'view',
+    message: 'Inspect only, no source edits.',
+  });
+  expect(adhoc.isError, adhoc.text).toBe(false);
+  expect(adhoc.value.taskTracking).toBe(false);
+  expect(adhoc.value.taskId).toBeUndefined();
+  expect(history.list()).toHaveLength(before);
+  expect(launch.mock.calls.at(-1)![0]).toMatchObject({
+    modelIdentity: 'gpt-6-luna',
+    parentSessionId: 'manager-current',
+    skipPermissions: false,
+  });
+  const { claudemonSessionClient } = await import('../../src/main/services/claudemonSessionClient');
+  const { supervisorNudge } = await import('../../src/main/services/supervisorNudge');
+  const delivery = vi.spyOn(claudemonSessionClient, 'message').mockResolvedValue({ ok: true });
+  try {
+    const reply = 'One-off inspection finished; no changes.';
+    supervisorNudge.onFinished(
+      {
+        ...sessions.getSnapshot(adhoc.value.sessionId)!,
+        status: 'active',
+        ambientState: 'idle',
+        conversation: [
+          { role: 'user', content: 'Inspect only' },
+          { role: 'assistant', content: reply },
+        ],
+      },
+      'manager-current',
+      reply,
+    );
+    await vi.waitFor(
+      () =>
+        expect(delivery).toHaveBeenCalledWith(
+          'manager-current',
+          expect.stringContaining(reply),
+          expect.any(Array),
+        ),
+      { timeout: 8000 },
+    );
+    expect(history.list()).toHaveLength(before);
+  } finally {
+    delivery.mockRestore();
+  }
+
+  const trackedRequest = inbox.prepare(
+    'manager-current',
+    'Implement the fixture change using Luna.',
+  );
+  if (!trackedRequest.available) throw new Error('capture unavailable');
+  const trackedDelivery = inbox.beginDelivery('manager-current', trackedRequest.requestId)!;
+  inbox.finishDelivery(trackedRequest.requestId, trackedDelivery.deliveryId, 'accepted');
+  const tracked = await mcpTool(manager, 'resolve_manager_request', {
+    requestId: trackedRequest.requestId,
+    expectedRevision: inbox.request('manager-current', trackedRequest.requestId).revision,
+    intents: [
+      {
+        key: 'implementation',
+        kind: 'create',
+        cwd: project,
+        title: 'Explicit low-cost implementation',
+        provenance: 'explicit',
+        reason: 'User requested implementation with a chosen model',
+        workflowId: 'implement-review',
+      },
+    ],
+  });
+  expect(tracked.isError, tracked.text).toBe(false);
+  expect(tracked.value.ok, tracked.text).toBe(true);
+  const pinned = tracked.value.tasks[0];
+  const worker = await mcpTool(manager, 'dispatch_workflow_step', {
+    cwd: project,
+    taskId: pinned.taskId,
+    stepId: 'implement',
+    expectedTaskRevision: pinned.revision,
+    templateParams: { task: 'Implement the bounded fixture change.' },
+    modelSelection: { provider: 'codex', model: 'gpt-6-luna', effort: 'low' },
+  });
+  expect(worker.isError, worker.text).toBe(false);
+  expect(worker.value.selection).toMatchObject({ source: 'explicit', model: 'gpt-6-luna' });
+  expect(worker.value.selection.decisionId).toBeUndefined();
+  expect(launch.mock.calls.at(-1)![0]).toMatchObject({
+    modelIdentity: 'gpt-6-luna',
+    effort: 'low',
+    parentSessionId: 'manager-current',
+  });
+  const task = history.task(pinned.taskId)!;
+  expect(task.workflow!.steps.map((step) => step.state)).toEqual(['dispatched', 'planned']);
+  expect(task.attempts[0].requestedModel).toBe('gpt-6-luna');
+  const freeformRequest = inbox.prepare(
+    'manager-current',
+    'Track the audit but do not impose a workflow.',
+  );
+  if (!freeformRequest.available) throw new Error('capture unavailable');
+  const freeformDelivery = inbox.beginDelivery('manager-current', freeformRequest.requestId)!;
+  inbox.finishDelivery(freeformRequest.requestId, freeformDelivery.deliveryId, 'accepted');
+  const freeform = await mcpTool(manager, 'resolve_manager_request', {
+    requestId: freeformRequest.requestId,
+    expectedRevision: inbox.request('manager-current', freeformRequest.requestId).revision,
+    intents: [
+      {
+        key: 'audit',
+        kind: 'create',
+        cwd: project,
+        title: 'Freeform audit',
+        workflowId: null,
+        provenance: 'explicit',
+        reason: 'User requested tracking without workflow',
+      },
+    ],
+  });
+  expect(freeform.value.ok, freeform.text).toBe(true);
+  expect(freeform.value.tasks[0].workflow).toBeUndefined();
+  expect(freeform.value.nextActions[0].instructions).toContain('no pinned workflow');
+  const manual = await mcpSpawn(manager, {
+    taskId: freeform.value.tasks[0].taskId,
+    parentSessionId: 'manager-current',
+    model: 'gpt-6-luna',
+    exactModel: true,
+    role: 'mechanical',
+    stage: 'other',
+    message: 'Read-only audit.',
+  });
+  expect(manual.isError, manual.text).toBe(false);
+  const context = await mcpTool(manager, 'manager_context', {
+    tasks: [{ taskId: freeform.value.tasks[0].taskId, cwd: project }],
+  });
+  expect(context.value.tasks[0].ok).toBe(true);
+  expect(context.value.tasks[0].attempts[0].sessionId).toBe(manual.value.sessionId);
+});
+
 it('handles unknown paired replay idempotently and returns a local task result once', async () => {
   const binary = path.join(scratch, 'paired-brain-fixture');
   const build = spawn('go', ['test', '-c', '-o', binary, './cmd/brain'], {
@@ -1633,6 +1787,22 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(launch.mock.calls).toHaveLength(localLaunches);
     expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
     expect(record).toEqual(completed);
+    const taskCount = history.list().length;
+    const adhoc = await mcpSpawn('session:manager-other', {
+      trackTask: false,
+      parentSessionId: 'manager-other',
+      executionTarget: 'paired',
+      remoteCwd: ready.repo,
+      provider: 'claude',
+      model: 'sonnet',
+      exactModel: true,
+      toolScope: 'view',
+      message: 'One-off remote inspection without a task.',
+    });
+    expect(adhoc.isError, adhoc.text).toBe(false);
+    expect(adhoc.value.taskTracking).toBe(false);
+    expect(adhoc.value.taskId).toBeUndefined();
+    expect(history.list()).toHaveLength(taskCount);
   } finally {
     setRemoteServer(null);
     pairedWorkerConnection.stop();

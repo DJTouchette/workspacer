@@ -65,6 +65,7 @@ import (
 //   - apps/desktop/src/main/services/hubCapabilities.ts  the desktop provider
 //   - services/hub/cmd/mcp/main.go         spawnAgentIn (the facade's caller side)
 var spawnParamKeys = []string{
+	"trackTask", "exactModel",
 	"expectedTaskRevision",
 	"workflowStepId", "taskId", "stage", "afterDispatchId", "dispatchOwnerSessionId", "retrySourceSessionId",
 	// Router-stamped remote-dispatch provenance (remotedispatch.go). Listed

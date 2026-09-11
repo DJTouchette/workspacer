@@ -111,6 +111,16 @@ func managerTaskContext(raw json.RawMessage, request managerContextTask) json.Ra
 			}
 		}
 	}
+	if len(workflow) == 0 {
+		var attempts []json.RawMessage
+		if json.Unmarshal(task["attempts"], &attempts) == nil {
+			if len(attempts) > 4 {
+				result["attemptsRemaining"] = len(attempts) - 4
+				attempts = attempts[len(attempts)-4:]
+			}
+			result["attempts"] = attempts
+		}
+	}
 	for _, key := range []string{"instructions", "dispatch"} {
 		if value, ok := response[key]; ok {
 			result[key] = value

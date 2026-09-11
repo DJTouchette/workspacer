@@ -239,3 +239,23 @@ it('flushes an empty bounded store so eviction persists instead of resurrecting 
   expect(JSON.parse(fs.readFileSync(filename, 'utf8'))).toEqual({ version: 1, tasks: [] });
   expect(new DispatchHistoryStore(() => filename).list()).toEqual([]);
 });
+
+it('untracked dispatch needs no task store and cannot hide conflicting task links', () => {
+  const { store, filename } = fixture();
+  fs.writeFileSync(filename, 'unavailable history');
+  expect(store.accept({ ...admission, sessionId: 'adhoc', trackTask: false })).toBeUndefined();
+  expect(fs.readFileSync(filename, 'utf8')).toBe('unavailable history');
+  for (const link of [
+    { taskId: 'foreign' },
+    { workflowStepId: 'review' },
+    { afterDispatchId: 'old' },
+    { retrySourceSessionId: 'old' },
+  ]) {
+    expect(() => store.validate({ ...admission, ...link, trackTask: false })).toThrow(
+      'Untracked dispatch must omit',
+    );
+  }
+  expect(() => store.validate({ ...admission, trackTask: 'false' as any })).toThrow(
+    'trackTask must be boolean',
+  );
+});

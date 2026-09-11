@@ -163,9 +163,12 @@ select_model is the ask-before-you-dispatch tool. You name the ROLE the work is
 (scout, mechanical, implementer, reviewer, deep_reviewer, fixer, complex_fixer,
 validator, diagnostician, judge) and the project directory as cwd, and the hub
 resolves that role through its routing matrix and the live subscription capacity
-into a concrete provider, model and effort. You never name a model yourself: the
-matrix is the only place model names live, so a vendor rename is one file rather
-than every dispatch site.
+into a concrete provider, model and effort when the user has not named a model.
+An explicit user model choice overrides this default: use provider/model and
+exactModel:true on spawn_agent without stale capability/decisionId, or pass
+modelSelection:{provider,model,effort?} to dispatch_workflow_step instead of routing.
+Configured model ceilings and permission grants still apply; an exact choice is
+refused rather than replaced if a ceiling prevents it.
 What comes back, and what to do with it:
 - provider, model, effort: pass them to spawn_agent exactly as named.
 - capability (the tier chosen) and baseCapability (what the role asks for before
@@ -229,9 +232,9 @@ What comes back, and what to do with it:
   not know". And the check runs only inside the fallover walk, so it is not
   applied when you PIN a provider, when the capability has no alternatives, or
   to the provider a mode shift lands on.
-Plain spawn_agent does not select a model: ask select_model first and pass its
-decision through. dispatch_workflow_step already performs that routing call for
-its pinned step, so do not route separately or spawn a duplicate worker.
+Plain spawn_agent accepts an explicit provider/model. Otherwise ask select_model
+and pass its decision through. dispatch_workflow_step already performs automatic routing for its pinned step
+unless modelSelection names the explicit user choice, so do not route separately or spawn a duplicate worker.
 The composed receipt includes the selection and its decisionId for inspection.
 Two rules DO bind on every spawn the host receives, asked or not, because they
 live in the spawn sanitizer rather than in routing:
@@ -495,10 +498,21 @@ resolve_manager_request returns nextActions; accept_task_outcome does likewise
 for ready followups. These bounded projections grant no dispatch/publish authority.
 Use manager_context for remaining task IDs when nextActionsRemaining is nonzero.
 start_workflow {cwd,title} is only for legacy work without inbox capture.
+For explicit no-task requests resolve kind:"untracked" (key/kind/reason only),
+then spawn_agent with trackTask:false and parentSessionId, without task/workflow
+links. Worker nesting and wakes remain; no Task is created. Do not manufacture a
+task to work around this choice. respawn_with also accepts trackTask:false.
+For tracked audits/chores without prescribed steps, use workflowId:null on the
+create/followUp intent. A workflow id selects that policy for this task, while
+omitting it keeps the default. An update may change workflowId before the first
+worker starts; in-flight policy cannot be rewritten. next_workflow_step and
+manager_context also inspect freeform tasks without pretending a workflow ran.
 
 For a known pinned step, dispatch_workflow_step {taskId,cwd,stepId,
-expectedTaskRevision,templateParams} prepares, routes and spawns through existing
-gates. An explicit conditional run/reason can ride that call; run:false records
+expectedTaskRevision,templateParams} prepares and spawns through existing gates.
+Use modelSelection:{provider,model,effort?} for a user-named model (no automatic
+routing and no fabricated decisionId); otherwise routing chooses. The explicit
+choice can be cheaper than the default implementer/reviewer model. An explicit conditional run/reason can ride that call; run:false records
 only that skip and stops. Required review cannot be skipped here; host-user
 waivers in Task Inspector never constitute passing evidence. Optional local
 watchContextUsedPct arms a one-shot watch; if it fails, retry only notify_when.

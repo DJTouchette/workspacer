@@ -960,6 +960,18 @@ func addSpawnTool(b *build, name, desc, method string) {
 // original's recorded permission mode and forward it without the grant check
 // this function performs.
 func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+	if in.TrackTask != nil && !*in.TrackTask && (in.TaskID != "" || in.WorkflowStepID != "" || in.AfterDispatchID != "" || in.RetrySourceSessionID != "") {
+		return toolError("trackTask:false must omit task, workflow and retry links")
+	}
+	if in.ExactModel && strings.TrimSpace(in.Hub) != "" {
+		raw, err := b.call(ctx, "hub:"+strings.TrimSpace(in.Hub)+"/fleet.dispatchCapabilities", nil)
+		var capabilities struct {
+			ExactModel bool `json:"exactModel"`
+		}
+		if err != nil || json.Unmarshal(raw, &capabilities) != nil || !capabilities.ExactModel {
+			return toolError("Update the peer stack to honor an exact model choice; no substitute was launched")
+		}
+	}
 	// Bound workflows ask the router to judge their maximum scope BEFORE desktop narrows by kind.
 	if in.WorkflowStepID != "" && in.ToolScope == "" {
 		in.ToolScope = "operator"
@@ -1110,6 +1122,15 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	res, aux, err := b.forward(ctx, m, wire)
 	if err != nil || res == nil || res.IsError {
 		return res, aux, err
+	}
+	if in.TrackTask != nil && !*in.TrackTask {
+		var tracked struct {
+			TaskID      string `json:"taskId"`
+			Unavailable bool   `json:"dispatchHistoryUnavailable"`
+		}
+		if json.Unmarshal([]byte(resultText(res)), &tracked) == nil && (tracked.TaskID != "" || tracked.Unavailable) {
+			return toolError("Host did not confirm the requested no-task dispatch; a worker may already exist. Do not repeat the spawn. Receipt: " + resultText(res))
+		}
 	}
 	if in.ExecutionTarget != "" {
 		return res, aux, nil
@@ -1575,6 +1596,8 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
+	TrackTask            *bool  `json:"trackTask,omitempty" jsonschema:"false for an explicitly requested one-off without a Task; omit all task/workflow/retry links. Parent nesting and completion wakes remain. Omit for normal tracking."`
+	ExactModel           bool   `json:"exactModel,omitempty" jsonschema:"honor the named model or refuse before launch if a configured model ceiling would replace it; never bypasses permissions"`
 	ExpectedTaskRevision *int   `json:"expectedTaskRevision,omitempty" jsonschema:"optional pinned-task revision; refuses a workflow spawn if the task changed"`
 	ExecutionTarget      string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
 	RemoteCwd            string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
@@ -1592,7 +1615,7 @@ type spawnAgentIn struct {
 	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, copilot, opencode, or pi"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (structured GUI only, no terminal view), 'pty' runs the terminal UI (claude: the classic TUI; codex: the hybrid TUI+GUI). Omit for the workspacer config default for that harness — codex defaults to 'stream'"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
-	Model           string   `json:"model,omitempty" jsonschema:"model id to use (optional; provider-specific). For a CLAUDE spawn, omit to inherit the workspacer config default (claude.defaultModel), the SAME model — including any 1M-context '[1m]' variant, e.g. 'opus[1m]' — this session itself is likely running on; a bare id with no '[1m]' suffix (e.g. claude-opus-4-8) gets the STANDARD 200K context window even if this session has a 1M one, so append '[1m]' to request the larger window explicitly. For codex/opencode/pi, omit to get THAT provider's own configured default — the claude config default is never applied to them, since a Claude model id is not a model those providers can run"`
+	Model           string   `json:"model,omitempty" jsonschema:"provider model ID; honor an explicit user choice with provider and exactModel:true, without stale capability/decisionId. Omit for the configured/provider default. Claude legacy context markers such as opus[1m] remain supported."`
 	ModelIdentity   string   `json:"modelIdentity,omitempty" jsonschema:"canonical provider model identity without a Claude [1m] marker. Pair with contextWindow. During mixed-version rollout model is also sent as the legacy executable companion; omit both to use the configured/provider default"`
 	ContextWindow   *uint64  `json:"contextWindow,omitempty" jsonschema:"spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, defaults to the shared contract’s fresh-Codex request). Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`

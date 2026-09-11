@@ -610,3 +610,23 @@ func TestSpawnTaskLinksAndOwnerStampReachProvider(t *testing.T) {
 		t.Fatal("result lost IDs")
 	}
 }
+
+func TestRespawnKeepsUntrackedChoiceAndDoesNotInheritOldModelCapability(t *testing.T) {
+	hub := newRespawnHub()
+	hub.noDispatchIDs = true
+	hub.snapshot = `{"cwd":"/w/repo","provider":"codex","parentSessionId":"manager","settings":{"model":"gpt-6-astra","effort":"high"},"routing":{"role":"mechanical","capability":"frontier"}}`
+	result, h := callRespawn(t, hub, false, map[string]any{"sessionId": "old", "amendment": "Use the user-requested smaller model", "trackTask": false, "model": "gpt-6-luna", "effort": "low"})
+	if result.IsError {
+		t.Fatal(resultText(result))
+	}
+	p := h.call("agents.spawn").params
+	if p["trackTask"] != false || p["exactModel"] != true || p["modelIdentity"] != "gpt-6-luna" || p["parentSessionId"] != "manager" {
+		t.Fatal(p)
+	}
+	if p["capability"] != nil || p["retrySourceSessionId"] != nil {
+		t.Fatalf("old task/model classification leaked: %v", p)
+	}
+	if !strings.Contains(resultText(result), `"taskTracking":false`) {
+		t.Fatal(resultText(result))
+	}
+}

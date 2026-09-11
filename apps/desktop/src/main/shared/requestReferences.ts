@@ -62,7 +62,7 @@ export function mapRequestReferences(
   intents: RequestIntent[],
 ): Map<string, TaskReferenceUpsert[]> {
   const urls = requestUrls(content);
-  const work = intents.filter((i) => i.kind !== 'none' && i.kind !== 'question');
+  const work = intents.filter((i) => ['create', 'followUp', 'update'].includes(i.kind));
   const result = new Map<string, TaskReferenceUpsert[]>();
   if (!work.length) return result;
   const sourceNumbers = explicitPrNumbers(content);

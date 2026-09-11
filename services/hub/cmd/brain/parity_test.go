@@ -405,6 +405,7 @@ func jsonStr(s string) string {
 // is neither in spawnParams' JSON tags nor here fails the drift guard below —
 // mirror it or decline it explicitly.
 var spawnParamsDeclined = map[string]string{
+	"trackTask":              "Headless has no desktop task projection; session/remote transport tracking remains independent",
 	"executionTarget":        "Origin desktop selection: resolves existing host-only pairing while retaining the local manager and task workflow.",
 	"remoteCwd":              "Origin desktop selection: remote preparation consumes cwd on the selected host; local project identity never crosses as execution cwd.",
 	"workflowStepId":         "Fleet workflows are explicitly desktop-only v1",

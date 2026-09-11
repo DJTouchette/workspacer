@@ -494,3 +494,30 @@ func TestWithNoRoutedReplacementTheModelIsStillDropped(t *testing.T) {
 		t.Errorf("effort survived with no replacement tuple: %v", m)
 	}
 }
+
+func TestExactModelRefusesSubstitutionButKeepsAuditAndOrdinaryClamping(t *testing.T) {
+	url, got, audits := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
+		return SpawnCeilingVerdict{Key: "default", CapabilityRefused: true, Capability: "cheap", Model: "replacement", Because: []string{"model exceeds configured ceiling"}}
+	})
+	caller := dialClientToken(t, url, "tok-operator")
+	caller.send(Frame{Op: "call", ID: "exact", Method: "agents.spawn", Params: json.RawMessage(`{"cwd":"/tmp","provider":"codex","model":"requested","exactModel":true}`)})
+	refused := caller.readUntil("error")
+	if !strings.Contains(refused.Error, "no substitute was launched") {
+		t.Fatal(refused.Error)
+	}
+	select {
+	case raw := <-got:
+		t.Fatalf("wrong model launched: %s", raw)
+	default:
+	}
+	if len(*audits) != 1 || !(*audits)[0].Ceiling.Denied {
+		t.Fatal("missing exact-model refusal audit")
+	}
+	caller.send(Frame{Op: "call", ID: "ordinary", Method: "agents.spawn", Params: json.RawMessage(`{"cwd":"/tmp","provider":"codex","model":"requested"}`)})
+	caller.readUntil("result")
+	var forwarded map[string]any
+	_ = json.Unmarshal(<-got, &forwarded)
+	if forwarded["model"] != "replacement" {
+		t.Fatal(forwarded)
+	}
+}

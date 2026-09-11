@@ -174,7 +174,7 @@ func TestHelpRoutingTopic(t *testing.T) {
 			t.Errorf("the routing topic never mentions %q:\n%s", want, routing)
 		}
 	}
-	if !strings.Contains(routing, "Plain spawn_agent does not select a model") || !strings.Contains(routing, "dispatch_workflow_step already performs") {
+	if !strings.Contains(routing, "Plain spawn_agent accepts an explicit provider/model") || !strings.Contains(routing, "dispatch_workflow_step already performs") {
 		t.Errorf("the routing topic must say routing is not consulted on a spawn:\n%s", routing)
 	}
 

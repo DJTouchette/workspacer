@@ -7,27 +7,36 @@ import (
 	"math"
 	"strings"
 
+	"github.com/djtouchette/workspacer-hub/internal/modelselection"
 	"github.com/djtouchette/workspacer-hub/internal/routing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// No model, role, parent, template or arbitrary spawn arguments: those are
-// derived from the owned pinned step, then passed through spawnWithGrants.
+// Role, parent and template come from the owned pinned step. Model selection
+// defaults to routing but may be explicitly requested; both use spawnWithGrants.
+type explicitWorkflowModel struct {
+	Provider      string  `json:"provider" jsonschema:"the explicitly requested coding-agent provider"`
+	Model         string  `json:"model" jsonschema:"the explicitly requested provider model ID; never replaced by automatic role routing"`
+	Effort        string  `json:"effort,omitempty"`
+	ContextWindow *uint64 `json:"contextWindow,omitempty"`
+}
+
 type dispatchWorkflowIn struct {
-	TaskID               string             `json:"taskId" jsonschema:"the pinned task you own"`
-	Cwd                  string             `json:"cwd" jsonschema:"that task's local project directory"`
-	StepID               string             `json:"stepId" jsonschema:"exact intended step; a retry never advances to a different step"`
-	ExpectedTaskRevision int                `json:"expectedTaskRevision" jsonschema:"current task revision; stale calls are refused before dispatch"`
-	TemplateParams       map[string]string  `json:"templateParams,omitempty" jsonschema:"task-specific inputs named by the pinned step; no host cwd/projectCwd overrides"`
-	Label                string             `json:"label,omitempty" jsonschema:"short worker label"`
-	Run                  *bool              `json:"run,omitempty" jsonschema:"optional explicit conditional-step decision; false records a skip and stops without dispatching the next step"`
-	Reason               string             `json:"reason,omitempty" jsonschema:"required with run"`
-	ExecutionTarget      string             `json:"executionTarget,omitempty" jsonschema:"paired for an explicitly selected paired worker; omit for local"`
-	RemoteCwd            string             `json:"remoteCwd,omitempty" jsonschema:"exact remote path from list_dispatch_targets; required with paired"`
-	ProfileID            string             `json:"profileId,omitempty" jsonschema:"optional granted Claude profile"`
-	SkipPermissions      *bool              `json:"skipPermissions,omitempty" jsonschema:"optional permission request; existing token grants still bind"`
-	Routing              *workflowRoutingIn `json:"routing,omitempty" jsonschema:"optional routing constraints; role/cwd/previousProvider are host-derived"`
-	WatchContextUsedPct  *float64           `json:"watchContextUsedPct,omitempty" jsonschema:"optionally arm one local active-context wake after spawning (0–100]; a watch failure never retries the spawn"`
+	ModelSelection       *explicitWorkflowModel `json:"modelSelection,omitempty" jsonschema:"explicit user model choice instead of automatic routing; mutually exclusive with routing. Workspace/model ceilings and permission grants still apply."`
+	TaskID               string                 `json:"taskId" jsonschema:"the pinned task you own"`
+	Cwd                  string                 `json:"cwd" jsonschema:"that task's local project directory"`
+	StepID               string                 `json:"stepId" jsonschema:"exact intended step; a retry never advances to a different step"`
+	ExpectedTaskRevision int                    `json:"expectedTaskRevision" jsonschema:"current task revision; stale calls are refused before dispatch"`
+	TemplateParams       map[string]string      `json:"templateParams,omitempty" jsonschema:"task-specific inputs named by the pinned step; no host cwd/projectCwd overrides"`
+	Label                string                 `json:"label,omitempty" jsonschema:"short worker label"`
+	Run                  *bool                  `json:"run,omitempty" jsonschema:"optional explicit conditional-step decision; false records a skip and stops without dispatching the next step"`
+	Reason               string                 `json:"reason,omitempty" jsonschema:"required with run"`
+	ExecutionTarget      string                 `json:"executionTarget,omitempty" jsonschema:"paired for an explicitly selected paired worker; omit for local"`
+	RemoteCwd            string                 `json:"remoteCwd,omitempty" jsonschema:"exact remote path from list_dispatch_targets; required with paired"`
+	ProfileID            string                 `json:"profileId,omitempty" jsonschema:"optional granted Claude profile"`
+	SkipPermissions      *bool                  `json:"skipPermissions,omitempty" jsonschema:"optional permission request; existing token grants still bind"`
+	Routing              *workflowRoutingIn     `json:"routing,omitempty" jsonschema:"optional routing constraints; role/cwd/previousProvider are host-derived"`
+	WatchContextUsedPct  *float64               `json:"watchContextUsedPct,omitempty" jsonschema:"optionally arm one local active-context wake after spawning (0–100]; a watch failure never retries the spawn"`
 }
 
 type workflowRoutingIn struct {
@@ -91,6 +100,17 @@ func dispatchWorkflow(ctx context.Context, b *build, in dispatchWorkflowIn) (*mc
 			return toolError("watchContextUsedPct must be in (0,100] and is local-only")
 		}
 	}
+	if choice := in.ModelSelection; choice != nil {
+		if in.Routing != nil {
+			return toolError("Use modelSelection for an explicit model or routing for automatic selection, not both")
+		}
+		if strings.TrimSpace(choice.Provider) == "" || strings.TrimSpace(choice.Model) == "" {
+			return toolError("Explicit model selection requires provider and model")
+		}
+		if _, err := modelselection.ResolveInput(choice.Provider, choice.Model, "", choice.ContextWindow); err != nil {
+			return toolError("Invalid explicit model selection: " + modelselection.ErrorCode(err))
+		}
+	}
 	// Fail granted-profile requests before recording a conditional decision.
 	if in.ProfileID != "" {
 		found := false
@@ -129,41 +149,45 @@ func dispatchWorkflow(ctx context.Context, b *build, in dispatchWorkflowIn) (*mc
 	if plan == nil || plan.TaskID != in.TaskID || strings.TrimSpace(plan.Cwd) == "" || plan.StepID != in.StepID || plan.ExpectedTaskRevision < in.ExpectedTaskRevision || plan.Role == "" || plan.Stage == "" || plan.Template == "" || (plan.ToolScope != "view" && plan.ToolScope != "operator") {
 		return fleetComposeError("prepare", "Host returned an incomplete or mismatched dispatch plan", false)
 	}
-	route := routingSelectIn{Role: plan.Role, Cwd: plan.Cwd, PreviousProvider: plan.PreviousProvider, ProfileID: in.ProfileID, TicketID: plan.TaskID + ":" + plan.StepID}
-	if r := in.Routing; r != nil {
-		route.Provider = r.Provider
-		route.Profile = r.Profile
-		route.Difficulty = r.Difficulty
-		route.Risk = r.Risk
-		route.DecisionDensity = r.DecisionDensity
-		route.RequireIndependentFamily = r.RequireIndependentFamily
-		route.ForecastDemandBeforeResetPct = r.ForecastDemandBeforeResetPct
-		route.ExpectedWork = r.ExpectedWork
-	}
-	method := "routing.select"
-	if in.ExecutionTarget == "paired" {
-		method = "fleet.selectDispatchModel"
-		route.Cwd = in.RemoteCwd
-	}
-	raw, err = b.call(ctx, method, route)
-	if err != nil {
-		return fleetComposeError("routing", err.Error(), false)
-	}
 	var decision routing.Decision
-	var eligibility struct {
-		Eligible *bool `json:"eligible"`
-	}
-	if json.Unmarshal(raw, &eligibility) != nil || eligibility.Eligible == nil {
-		return fleetComposeError("routing", "Router returned no eligibility decision: "+string(raw), false)
-	}
-	if json.Unmarshal(raw, &decision) != nil {
-		return fleetComposeError("routing", "Router returned an unreadable decision", false)
-	}
-	if !decision.Eligible {
-		return fleetValueResult(map[string]any{"ok": false, "phase": "routing", "admitted": false, "routing": routeReceipt(decision)}, true)
-	}
-	if decision.Provider == "" || decision.Model == "" || decision.Capability == "" || decision.DecisionID == "" || decision.Role != plan.Role || (route.RequireIndependentFamily && !decision.IndependentFamily) {
-		return fleetComposeError("routing", "Router returned an incomplete or mismatched eligible decision", false)
+	if choice := in.ModelSelection; choice != nil {
+		decision.Provider, decision.Model, decision.Effort = choice.Provider, choice.Model, choice.Effort
+	} else {
+		route := routingSelectIn{Role: plan.Role, Cwd: plan.Cwd, PreviousProvider: plan.PreviousProvider, ProfileID: in.ProfileID, TicketID: plan.TaskID + ":" + plan.StepID}
+		if r := in.Routing; r != nil {
+			route.Provider = r.Provider
+			route.Profile = r.Profile
+			route.Difficulty = r.Difficulty
+			route.Risk = r.Risk
+			route.DecisionDensity = r.DecisionDensity
+			route.RequireIndependentFamily = r.RequireIndependentFamily
+			route.ForecastDemandBeforeResetPct = r.ForecastDemandBeforeResetPct
+			route.ExpectedWork = r.ExpectedWork
+		}
+		method := "routing.select"
+		if in.ExecutionTarget == "paired" {
+			method = "fleet.selectDispatchModel"
+			route.Cwd = in.RemoteCwd
+		}
+		raw, err = b.call(ctx, method, route)
+		if err != nil {
+			return fleetComposeError("routing", err.Error(), false)
+		}
+		var eligibility struct {
+			Eligible *bool `json:"eligible"`
+		}
+		if json.Unmarshal(raw, &eligibility) != nil || eligibility.Eligible == nil {
+			return fleetComposeError("routing", "Router returned no eligibility decision: "+string(raw), false)
+		}
+		if json.Unmarshal(raw, &decision) != nil {
+			return fleetComposeError("routing", "Router returned an unreadable decision", false)
+		}
+		if !decision.Eligible {
+			return fleetValueResult(map[string]any{"ok": false, "phase": "routing", "admitted": false, "routing": routeReceipt(decision)}, true)
+		}
+		if decision.Provider == "" || decision.Model == "" || decision.Capability == "" || decision.DecisionID == "" || decision.Role != plan.Role || (route.RequireIndependentFamily && !decision.IndependentFamily) {
+			return fleetComposeError("routing", "Router returned an incomplete or mismatched eligible decision", false)
+		}
 	}
 	spawn := spawnAgentIn{
 		Cwd: plan.Cwd, TaskID: plan.TaskID, WorkflowStepID: plan.StepID, ExpectedTaskRevision: &plan.ExpectedTaskRevision,
@@ -171,6 +195,10 @@ func dispatchWorkflow(ctx context.Context, b *build, in dispatchWorkflowIn) (*mc
 		Template: plan.Template, TemplateParams: in.TemplateParams, ToolScope: plan.ToolScope,
 		Provider: decision.Provider, Model: decision.Model, Effort: decision.Effort, Capability: decision.Capability, DecisionID: decision.DecisionID,
 		Label: in.Label, ProfileID: in.ProfileID, SkipPermissions: in.SkipPermissions, ExecutionTarget: in.ExecutionTarget, RemoteCwd: in.RemoteCwd,
+	}
+	if choice := in.ModelSelection; choice != nil {
+		spawn.ContextWindow = choice.ContextWindow
+		spawn.ExactModel = true
 	}
 	result, _, err := spawnWithGrants(ctx, b, "agents.spawn", spawn)
 	if err != nil {
@@ -195,7 +223,11 @@ func dispatchWorkflow(ctx context.Context, b *build, in dispatchWorkflowIn) (*mc
 		delete(receipt, "renderedMessage")
 		receipt["renderedMessageOmitted"] = json.RawMessage("true")
 	}
-	receipt["selection"], _ = json.Marshal(routeReceipt(decision))
+	if choice := in.ModelSelection; choice != nil {
+		receipt["selection"], _ = json.Marshal(map[string]any{"source": "explicit", "provider": choice.Provider, "model": choice.Model, "effort": choice.Effort, "contextWindow": choice.ContextWindow})
+	} else {
+		receipt["selection"], _ = json.Marshal(routeReceipt(decision))
+	}
 	if in.WatchContextUsedPct != nil {
 		id := sessionIDFrom(result)
 		if id == "" {

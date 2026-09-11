@@ -65,7 +65,7 @@ export function workflowInstructions(task: DispatchTask): string {
   const missing = missingWorkflowEvidence(task, i);
   if (missing) return `${header}\n${missing}. Do not dispatch this step or invent artifacts.`;
   const t = pin.templates[step.template];
-  return `${header}\nNext: ${step.label}. Call dispatch_workflow_step with taskId=${task.taskId}, cwd=${task.projectCwd}, stepId=${step.id}, expectedTaskRevision=${task.revision ?? 0}, and templateParams filling ${JSON.stringify(t.params)}. It resolves routing and pinned spawn metadata; do not also call select_model or spawn_agent. The host preserves ceilings, grants, isolation and delivery policy. ${step.kind === 'review' ? 'Give the fresh reviewer criteria, diff and closing handoff only; never implementer reasoning/transcript.' : ''}\nStep instructions: ${step.instructions}\nAfter dispatch end your turn; the host wakes you. No polling or automatic launches.`;
+  return `${header}\nNext: ${step.label}. Call dispatch_workflow_step with taskId=${task.taskId}, cwd=${task.projectCwd}, stepId=${step.id}, expectedTaskRevision=${task.revision ?? 0}, and templateParams filling ${JSON.stringify(t.params)}. It uses optional modelSelection:{provider,model,effort} for an explicit user choice, otherwise automatic routing, and binds pinned spawn metadata; do not also call select_model or spawn_agent. The host preserves ceilings, grants, isolation and delivery policy. ${step.kind === 'review' ? 'Give the fresh reviewer criteria, diff and closing handoff only; never implementer reasoning/transcript.' : ''}\nStep instructions: ${step.instructions}\nAfter dispatch end your turn; the host wakes you. No polling or automatic launches.`;
 }
 
 /** The machine-readable counterpart of the next-step instructions. Never grants authority. */
@@ -156,12 +156,12 @@ export function workflowSpawn<T>(
       p.template !== step.template ||
       p.afterDispatchId !== previous?.dispatchId ||
       !p.provider ||
-      !p.decisionId ||
+      (!p.decisionId && !p.model && !p.modelIdentity) ||
       p.message ||
       p.resultSchema
     )
       throw new Error(
-        'Workflow dispatch requires exact next-step metadata, routing decision and fresh session; message/schema overrides are not accepted',
+        'Workflow dispatch requires exact next-step metadata, a routed or explicitly named model, and a fresh session; message/schema overrides are not accepted',
       );
     const t = task.workflow!.templates[step.template];
     const params = { ...((p.templateParams as Record<string, string>) ?? {}) };

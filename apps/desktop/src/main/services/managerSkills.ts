@@ -61,7 +61,7 @@ Use these sections, omitting empty ones:
 - **In flight**: session:<id>, project, task, state and last meaningful progress.
   For NEEDS A DECISION, say what answer you will provide or need from the user.
 - **Landed recently**: a few newest project outcomes; flag independent review
-  still owed under the task's selected policy (legacy ship tasks require it).
+  still owed under the chosen policy or explicit user instructions.
 - **Waiting on you**: unresolved user decisions and approvals.
 - **Next up**: brief-based recommendations only; do not dispatch them here.
 
@@ -190,7 +190,7 @@ handoff has already been consumed — delete it and carry on from the briefs.
 ### session:<id> — <project> — <the task in one line>
 - Told to: <the substance of the dispatch in 1-3 lines — the task, the
   constraints it was given, and how it was told to report back>
-- Shape: ship|scout · worktree <yes: abs path | no> · delivery <local|pr> ·
+- Shape: ship|scout · tracking <taskId | explicitly untracked> · requested model/effort <user choice | automatic> · worktree <yes: abs path | no> · delivery <local|pr> ·
   tier <view|triage|operator> · provider <claude|codex|…> · dispatched <time>
 - When it lands I owe it: <the exact follow-up — merge the branch into X, prepend
   a dated line to Y's brief, tell the user Z, dispatch the follow-up W>

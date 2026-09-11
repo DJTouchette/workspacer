@@ -269,3 +269,61 @@ func TestComposedDispatchUsesHostCanonicalProjectPath(t *testing.T) {
 		t.Fatal(h.calls)
 	}
 }
+
+func TestComposedDispatchHonorsExplicitModelWithoutRouting(t *testing.T) {
+	h := &workflowDispatchHub{}
+	ctx, cs := workflowClient(t, h, false)
+	args := dispatchArgs()
+	args["modelSelection"] = map[string]any{"provider": "codex", "model": "gpt-6-luna", "effort": "low"}
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "dispatch_workflow_step", Arguments: args})
+	if err != nil || result.IsError {
+		t.Fatalf("%v %v", result, err)
+	}
+	var spawned map[string]any
+	for _, call := range h.calls {
+		if call.method == "routing.select" || call.method == "fleet.selectDispatchModel" {
+			t.Fatal("explicit model was rerouted")
+		}
+		if call.method == "agents.spawn" {
+			spawned = call.params
+		}
+	}
+	for key, want := range map[string]any{"provider": "codex", "modelIdentity": "gpt-6-luna", "effort": "low", "exactModel": true, "role": "reviewer", "skipPermissions": false} {
+		if spawned[key] != want {
+			t.Fatalf("%s: %v != %v", key, spawned[key], want)
+		}
+	}
+	if spawned["decisionId"] != nil || spawned["capability"] != nil {
+		t.Fatal("fabricated routing provenance")
+	}
+	if !strings.Contains(resultText(result), `"source":"explicit"`) {
+		t.Fatal(resultText(result))
+	}
+}
+
+func TestExplicitModelChoiceRejectsAmbiguousOrIncompleteInputsBeforePreparing(t *testing.T) {
+	for _, choice := range []map[string]any{
+		{"modelSelection": map[string]any{"provider": "codex", "model": ""}},
+		{"modelSelection": map[string]any{"provider": "", "model": "gpt-6-luna"}},
+		{"modelSelection": map[string]any{"provider": "codex", "model": "gpt-6-luna"}, "routing": map[string]any{"provider": "claude"}},
+	} {
+		h := &workflowDispatchHub{}
+		ctx, cs := workflowClient(t, h, false)
+		args := dispatchArgs()
+		for key, value := range choice {
+			args[key] = value
+		}
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "dispatch_workflow_step", Arguments: args})
+		if err != nil || !result.IsError || len(h.calls) != 0 {
+			t.Fatalf("invalid explicit choice reached host: %v %v", result, err)
+		}
+	}
+}
+
+func TestManagerContextIncludesBoundedFreeformAttempts(t *testing.T) {
+	raw := json.RawMessage(`{"ok":true,"task":{"taskId":"manual","attempts":[{"sessionId":"old"},{"sessionId":"one"},{"sessionId":"two"},{"sessionId":"three"},{"sessionId":"current"}]},"instructions":"No pinned workflow"}`)
+	result := string(managerTaskContext(raw, managerContextTask{TaskID: "manual", Cwd: "/repo"}))
+	if strings.Contains(result, `"old"`) || !strings.Contains(result, `"current"`) || !strings.Contains(result, `"attemptsRemaining":1`) {
+		t.Fatal(result)
+	}
+}

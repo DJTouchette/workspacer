@@ -31,6 +31,7 @@ type Owner = {
   label?: string;
 };
 type Admission = DispatchLink & {
+  trackTask?: boolean;
   owner?: Owner | null;
   projectCwd: string;
   retrySourceSessionId?: string;
@@ -186,6 +187,18 @@ export class DispatchHistoryStore {
     );
   }
   validate(input: Admission): void {
+    if (input.trackTask !== undefined && typeof input.trackTask !== 'boolean')
+      throw new Error('trackTask must be boolean');
+    if (input.trackTask === false) {
+      if (
+        input.taskId ||
+        input.workflowStepId ||
+        input.afterDispatchId ||
+        input.retrySourceSessionId
+      )
+        throw new Error('Untracked dispatch must omit task, workflow and retry links');
+      return;
+    }
     if (!this.writing) this.tasks = undefined;
     this.load();
     const { owner, taskId, stage, afterDispatchId } = input;
@@ -226,7 +239,9 @@ export class DispatchHistoryStore {
       !this.retrySource(input) &&
       this.requests.some((r) => r.ownerSessionId === owner.sessionId && r.intents)
     )
-      throw new Error('Resolve the source request and use its taskId before dispatch');
+      throw new Error(
+        'Resolve the source request and use its taskId before dispatch. For an explicitly untracked request, instead use trackTask:false without task/workflow links.',
+      );
     if (
       taskId &&
       (!task ||
@@ -267,6 +282,10 @@ export class DispatchHistoryStore {
       worktree?: DispatchAttempt['worktree'];
     },
   ): { taskId: string; dispatchId: string } | undefined {
+    if (input.trackTask === false) {
+      this.validate(input);
+      return;
+    }
     if (!this.writing) return this.transaction(() => this.accept(input));
     this.validate(input);
     if (!input.owner?.isWakeTarget || input.owner.status === 'ended' || input.owner.hub) return;

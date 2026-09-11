@@ -680,6 +680,7 @@ export function registerHubCapabilities(): void {
       role,
       capability,
       decisionId,
+      trackTask,
       taskId,
       stage,
       afterDispatchId,
@@ -692,6 +693,7 @@ export function registerHubCapabilities(): void {
       executionTarget?: 'paired';
       remoteCwd?: string;
       workflowStepId?: string;
+      trackTask?: boolean;
       taskId?: string;
       stage?: import('../shared/dispatchHistory').TaskStage;
       afterDispatchId?: string;
@@ -855,6 +857,7 @@ export function registerHubCapabilities(): void {
         : null;
     const dispatchAdmission = {
       owner: dispatchOwner,
+      trackTask,
       projectCwd: requestedExecutionCwd,
       taskId,
       stage,
@@ -1088,6 +1091,7 @@ export function registerHubCapabilities(): void {
     }
     const recordDispatch = (sessionId: string) => {
       // Resumes are observations of the original attempt, never new dispatches.
+      if (trackTask === false) return { taskTracking: false };
       if (resumeSessionId) return {};
       try {
         const ids = dispatchHistoryStore.accept({

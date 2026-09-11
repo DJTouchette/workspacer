@@ -23,8 +23,10 @@ export interface ManagerRequest {
 }
 export type RequestIntent = {
   key: string;
-  kind: 'create' | 'followUp' | 'update' | 'question' | 'none';
+  kind: 'create' | 'followUp' | 'update' | 'question' | 'none' | 'untracked';
   reason: string;
+  /** New work or an undispatched task update: null omits workflow; an id chooses a policy. Omit to keep defaults/current policy. */
+  workflowId?: string | null;
   provenance?: 'explicit' | 'inferred';
   cwd?: string;
   title?: string;

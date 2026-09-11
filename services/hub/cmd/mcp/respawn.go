@@ -36,6 +36,7 @@ import (
 // respawnWithIn is respawn_with's input. Everything except sessionId and
 // amendment is an OVERRIDE of what the original session recorded.
 type respawnWithIn struct {
+	TrackTask *bool `json:"trackTask,omitempty" jsonschema:"false to keep an explicitly untracked retry out of task history; parent/wakes remain"`
 	hubArg
 	SessionID     string  `json:"sessionId" jsonschema:"the session to clone — usually one you have just stopped"`
 	Amendment     string  `json:"amendment" jsonschema:"the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again"`
@@ -250,6 +251,16 @@ func addRespawnTool(b *build) {
 				// provider does not confirm it took the prompt.
 				Message: task + respawnHeading + in.Amendment,
 			}
+			spawn.TrackTask = in.TrackTask
+			if in.TrackTask != nil && !*in.TrackTask {
+				spawn.RetrySourceSessionID = ""
+			}
+			if in.Model != "" || in.ModelIdentity != "" {
+				spawn.ExactModel = true
+				if in.Capability == "" {
+					spawn.Capability = ""
+				}
+			}
 			// The original's permission mode is REQUESTED, not granted: it goes
 			// through spawnWithGrants exactly as a hand-typed skipPermissions
 			// would, so an ungranted caller's clone starts with approvals on
@@ -309,6 +320,9 @@ func addRespawnTool(b *build) {
 			}
 			if dispatchIDs.DispatchID != "" {
 				outcome["dispatchId"] = dispatchIDs.DispatchID
+			}
+			if in.TrackTask != nil && !*in.TrackTask {
+				outcome["taskTracking"] = false
 			}
 			out, merr := json.Marshal(outcome)
 			if merr != nil {

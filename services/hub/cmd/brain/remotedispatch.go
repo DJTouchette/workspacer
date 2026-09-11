@@ -373,7 +373,8 @@ func (r *registry) dispatchReplay(_ context.Context, raw json.RawMessage) (json.
 // and directories that are already on every agents.list row's `cwd`.
 func (r *registry) dispatchCapabilities(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 	out := map[string]any{
-		"protocol": bus.DispatchProtocol,
+		"protocol":   bus.DispatchProtocol,
+		"exactModel": true,
 		// executes is the honest single bit a client should gate its UI on: can
 		// this node run dispatched work AND report back? Catalog scope is the
 		// case that answers false while everything else looks healthy.

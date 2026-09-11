@@ -915,7 +915,11 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 	}
 
 	// ---- capability: the directory's ceiling, and the model that went with it -
-	if verdict.CapabilityRefused {
+	if verdict.CapabilityRefused && boolAt("exactModel") {
+		verdict.Denied = true
+		verdict.Because = append(verdict.Because, "explicit model conflicts with the configured directory model ceiling; no substitute was launched")
+	}
+	if verdict.CapabilityRefused && !boolAt("exactModel") {
 		if _, had := m["capability"]; had {
 			scrubbed = append(scrubbed, "capability")
 		}

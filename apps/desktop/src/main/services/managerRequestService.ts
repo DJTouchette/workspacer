@@ -77,7 +77,7 @@ export class ManagerRequestService {
   constructor(
     private store: DispatchHistoryStore,
     private owner: (id: string) => Owner | undefined,
-    private pin: (cwd: string) => WorkflowPin,
+    private pin: (cwd: string, workflowId?: string) => WorkflowPin,
   ) {}
 
   private manager(id: string): Owner {
@@ -239,7 +239,13 @@ export class ManagerRequestService {
       const pins = new Map<string, WorkflowPin>();
       // Resolve policy before taking the task lock. Pins are immutable snapshots.
       for (const i of intents)
-        if (i.kind === 'create' || i.kind === 'followUp') pins.set(i.key, this.pin(i.cwd!));
+        if (
+          (i.kind === 'create' ||
+            i.kind === 'followUp' ||
+            (i.kind === 'update' && i.workflowId !== undefined)) &&
+          i.workflowId !== null
+        )
+          pins.set(i.key, this.pin(i.cwd!, i.workflowId));
       return this.store.requestTransaction((requests, tasks) => {
         const owner = this.manager(caller);
         const r = requests.find(
@@ -269,7 +275,7 @@ export class ManagerRequestService {
         // before creating/updating any task or deleting source content.
         const referenceLinks = new Map<string, DispatchTask['links']>();
         for (const i of intents) {
-          if (i.kind === 'none' || i.kind === 'question') continue;
+          if (i.kind === 'none' || i.kind === 'question' || i.kind === 'untracked') continue;
           const current =
             i.kind === 'update' ? ownedTask(tasks, caller, i.cwd, i.taskId).links : undefined;
           referenceLinks.set(
@@ -283,7 +289,7 @@ export class ManagerRequestService {
         }
         const resolved: RequestIntent[] = [];
         for (const i of intents) {
-          if (i.kind === 'none' || i.kind === 'question') {
+          if (i.kind === 'none' || i.kind === 'question' || i.kind === 'untracked') {
             resolved.push(i);
             continue;
           }
@@ -291,6 +297,15 @@ export class ManagerRequestService {
           if (i.kind === 'update') {
             task = ownedTask(tasks, caller, i.cwd, i.taskId);
             if (task.dispatchReservation) throw new Error('Task dispatch is in progress');
+            if (i.workflowId !== undefined) {
+              if (task.attempts.length)
+                throw new Error(
+                  'Cannot replace a workflow after a worker has started; use a separate one-off instead',
+                );
+              if (i.workflowId === null) delete task.workflow;
+              else task.workflow = structuredClone(pins.get(i.key)!);
+            }
+
             if (i.title) task.title = i.title;
             if (i.cancel !== undefined) task.cancelled = i.cancel;
             delete task.acceptedOutcome;
@@ -303,7 +318,7 @@ export class ManagerRequestService {
               title: i.title!,
               createdAt: new Date().toISOString(),
               attempts: [],
-              workflow: structuredClone(pins.get(i.key)!),
+              ...(pins.has(i.key) ? { workflow: structuredClone(pins.get(i.key)!) } : {}),
             };
             tasks.push(task);
           }
@@ -383,6 +398,7 @@ export class ManagerRequestService {
               'kind',
               'reason',
               'provenance',
+              'workflowId',
               'cwd',
               'title',
               'taskId',
@@ -400,13 +416,19 @@ export class ManagerRequestService {
       text(i.reason, 2000);
       if (keys.has(i.key)) throw new Error('Duplicate intent key');
       keys.add(i.key);
-      if (!['create', 'followUp', 'update', 'none', 'question'].includes(i.kind))
+      if (!['create', 'followUp', 'update', 'none', 'question', 'untracked'].includes(i.kind))
         throw new Error('Unknown intent kind');
-      if (['none', 'question'].includes(i.kind)) {
+      if (['none', 'question', 'untracked'].includes(i.kind)) {
         if (Object.keys(i).some((k) => !['key', 'kind', 'reason'].includes(k)))
           throw new Error('Conversational resolutions cannot mutate tasks');
         continue;
       }
+      if (
+        i.workflowId !== undefined &&
+        i.workflowId !== null &&
+        (typeof i.workflowId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(i.workflowId))
+      )
+        throw new Error('workflowId must name an enabled workflow, be null, or be omitted');
       if (i.references !== undefined && (!Array.isArray(i.references) || i.references.length > 20))
         throw new Error('Use at most 20 mapped references per intent');
       if (

@@ -60,15 +60,20 @@ configureManagerRequests(
     new ManagerRequestService(
       dispatchHistoryStore,
       (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
-      (cwd) => {
+      (cwd, workflowId) => {
         const selections = workflowSelections(configService.getConfig());
         return fleetWorkflowStore.withDefinition(
-          selections.projects[configuredWorkflowProjectKey(cwd)] ?? selections.defaultId,
+          workflowId ??
+            selections.projects[configuredWorkflowProjectKey(cwd)] ??
+            selections.defaultId,
           (definition) => fleetWorkflowStore.pin(definition),
         );
       },
     ),
 );
+function freeformTaskInstructions(task: import('../shared/dispatchHistory').DispatchTask): string {
+  return `Task ${task.taskId} has no pinned workflow. Dispatch with spawn_agent using taskId=${task.taskId}, cwd=${task.projectCwd}, parentSessionId=${task.ownerSessionId} and the task-specific message/role. Honor explicit provider/model choices; otherwise use select_model. Do not invent workflow steps or mandatory review for this freeform task.`;
+}
 export function fleetWorkflowRequest(
   request: WorkflowRequest,
   callerSessionId?: string,
@@ -98,8 +103,15 @@ export function fleetWorkflowRequest(
         response.nextActions = ids.slice(0, 4).map((taskId) => {
           try {
             const task = dispatchHistoryStore.task(taskId);
-            if (!task || task.ownerSessionId !== callerSessionId || !task.workflow)
+            if (!task || task.ownerSessionId !== callerSessionId)
               return { taskId, unavailable: true };
+            if (!task.workflow)
+              return {
+                taskId,
+                cwd: task.projectCwd,
+                revision: task.revision ?? 0,
+                instructions: freeformTaskInstructions(task),
+              };
             return {
               taskId,
               cwd: task.projectCwd,
@@ -292,7 +304,8 @@ export function fleetWorkflowRequest(
       };
     }
     if (op === 'next' || op === 'decide') {
-      let task = ownerTask(request.taskId, callerSessionId, request.cwd);
+      let task = ownerTask(request.taskId, callerSessionId, request.cwd, op === 'decide');
+      if (!task.workflow) return { ok: true, task, instructions: freeformTaskInstructions(task) };
       if (op === 'decide') {
         if (workflowBusy.has(task.taskId)) throw new Error('Step dispatch in progress');
         if (

@@ -213,12 +213,17 @@ export async function spawnPairedWorker(
     );
   const capabilities = await connection.call<{
     protocol: number;
+    exactModel?: boolean;
     executes: boolean;
     cwds: Array<{ path: string }>;
     providers: Array<{ provider: string; found: boolean; authenticated: boolean | null }>;
   }>('fleet.dispatchCapabilities');
   if (capabilities.protocol !== DISPATCH_PROTOCOL || !capabilities.executes)
     throw new Error('Paired worker dispatch unsupported; upgrade the older endpoint');
+  if (p.exactModel === true && capabilities.exactModel !== true)
+    throw new Error(
+      'Update the paired server to honor an exact model choice; no substitute was launched',
+    );
   if (!capabilities.cwds?.some((c) => c.path === p.remoteCwd))
     throw new Error('Choose an actual remote cwd from list_dispatch_targets');
   if (
@@ -299,6 +304,7 @@ export async function spawnPairedWorker(
     role: p.role,
     capability: p.capability,
     decisionId: p.decisionId,
+    exactModel: p.exactModel,
   };
   try {
     const result = await connection.call<{ sessionId?: string; messageQueued?: boolean }>(
@@ -323,6 +329,7 @@ export async function spawnPairedWorker(
     });
     return {
       ...ids,
+      ...(admission.trackTask === false ? { taskTracking: false } : {}),
       sessionId: localSessionId,
       remoteSessionId: result.sessionId,
       executionTarget: 'paired',

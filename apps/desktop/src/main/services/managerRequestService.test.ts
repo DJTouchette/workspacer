@@ -930,3 +930,90 @@ it('keeps idle wake checks independent of retained history and bounds UTF-8 cont
   const unicode = f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager') as any;
   expect(unicode.requests[0]).toMatchObject({ contentDeferred: true, host: { requestId: id } });
 });
+
+it('resolves explicit untracked work without creating a task or forcing URL bookkeeping', () => {
+  const f = fixture();
+  const id = f.admitted('accepted', 'Audit https://example.com/spec with Luna, without a task');
+  const result = f.resolve(id, [
+    { key: 'one-off', kind: 'untracked', reason: 'User explicitly requested no task' },
+  ]);
+  expect(result).toMatchObject({ ok: true, tasks: [] });
+  expect(f.store.list()).toEqual([]);
+  expect(f.service.request('manager', id).intents?.[0].kind).toBe('untracked');
+  expect(() => f.store.validate({ owner, projectCwd: '/project', trackTask: false })).not.toThrow();
+  expect(
+    f.store.accept({
+      owner,
+      projectCwd: '/project',
+      executionCwd: '/project',
+      sessionId: 'one-off',
+      trackTask: false,
+    }),
+  ).toBeUndefined();
+  expect(f.store.list()).toEqual([]);
+  expect(
+    f.resolve(id, [
+      { key: 'one-off', kind: 'untracked', reason: 'User explicitly requested no task' },
+    ]),
+  ).toMatchObject({ ok: true, tasks: [] });
+});
+
+it('allows a tracked request without prescribing a workflow while retaining default behavior', () => {
+  const f = fixture();
+  const freeform = f.resolve(f.admitted(), [{ ...create(), workflowId: null }]) as any;
+  expect(freeform.ok).toBe(true);
+  const task = f.store.task(freeform.tasks[0].taskId)!;
+  expect(task.workflow).toBeUndefined();
+  expect(() =>
+    f.store.validate({ owner, projectCwd: '/project', taskId: task.taskId, stage: 'other' }),
+  ).not.toThrow();
+  const usual = f.resolve(f.admitted(), [create()]) as any;
+  expect(usual.tasks[0].workflow.hash).toBe('pinned');
+  expect(
+    f.resolve(f.admitted(), [{ key: 'bad', kind: 'untracked', reason: 'No task', cwd: '/project' }])
+      .ok,
+  ).toBe(false);
+});
+
+it('can remove a mistaken workflow before dispatch while preserving task identity and refusing changes after launch', () => {
+  const f = fixture();
+  const created = f.resolve(f.admitted(), [create()]) as any;
+  const task = f.store.task(created.tasks[0].taskId)!;
+  const changed = f.resolve(f.admitted('accepted', 'Keep the task but do not use a workflow'), [
+    {
+      key: 'choice',
+      kind: 'update',
+      cwd: '/project',
+      taskId: task.taskId,
+      expectedTaskRevision: task.revision,
+      workflowId: null,
+      reason: 'User requested a freeform audit',
+    },
+  ]) as any;
+  expect(changed.ok).toBe(true);
+  expect(f.store.task(task.taskId)!.workflow).toBeUndefined();
+  f.store.accept({
+    owner,
+    projectCwd: '/project',
+    executionCwd: '/project',
+    taskId: task.taskId,
+    sessionId: 'running',
+    role: 'mechanical',
+  });
+  const live = f.store.task(task.taskId)!;
+  expect(
+    f.resolve(f.admitted(), [
+      {
+        key: 'late',
+        kind: 'update',
+        cwd: '/project',
+        taskId: task.taskId,
+        expectedTaskRevision: live.revision,
+        workflowId: 'selected',
+        reason: 'Too late',
+      },
+    ]).ok,
+  ).toBe(false);
+  expect(f.store.task(task.taskId)!.workflow).toBeUndefined();
+  expect(f.store.task(task.taskId)!.attempts).toHaveLength(1);
+});
