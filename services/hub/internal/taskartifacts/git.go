@@ -97,6 +97,7 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 	if helper != "" {
 		base = append(base, "-c", "credential.helper="+helper)
 	}
+	base = append(base, "-c", "core.longpaths=true", "-c", "fetch.unpackLimit=1")
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
 	storageDir, _ := ctx.Value(storageContextKey{}).(string)
 	for _, arg := range args {
@@ -139,7 +140,7 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 
 // CheckSource refuses execution-valued local config before status can invoke
 // clean filters. It never stages, commits, stashes or modifies the user index.
-func CheckSource(ctx context.Context, repo string) (string, string, error) {
+func CheckSource(ctx context.Context, repo string, selectedArtifacts ...string) (string, string, error) {
 	if err := checkTransferConfig(ctx, repo); err != nil {
 		return "", "", err
 	}
@@ -151,11 +152,24 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 	if err != nil || !SameSourceDirectory(strings.TrimSpace(string(root)), canonical) {
 		return "", "", fmt.Errorf("checkpoint source must name the whole approved repository, not a subdirectory")
 	}
-	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")
+	selected := map[string]bool{}
+	for _, name := range selectedArtifacts {
+		if !strings.HasPrefix(name, ".workspacer/reports/") && !strings.HasPrefix(name, ".workspacer/handoffs/") {
+			return "", "", fmt.Errorf("invalid selected report folder")
+		}
+		if filepath.ToSlash(filepath.Clean(name)) != name {
+			return "", "", fmt.Errorf("invalid selected report path")
+		}
+		selected[name] = true
+	}
+	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return "", "", err
 	}
-	if len(status) != 0 {
+	for _, entry := range strings.Split(string(status), "\x00") {
+		if entry == "" || strings.HasPrefix(entry, "?? ") && selected[entry[3:]] {
+			continue
+		}
 		return "", "", fmt.Errorf("checkpoint required: selected source has dirty or untracked files; commit authorized task changes explicitly")
 	}
 	head, err := Git(ctx, repo, "", "rev-parse", "--verify", "HEAD^{commit}")

@@ -269,7 +269,7 @@ export async function spawnPairedWorker(
       'Paired workers require a fresh session without local profile or process configuration',
     );
   const capabilities = await connection.call<{
-    handoff?: { version: number; transport: string; chunkBytes: number };
+    handoff?: { version: number; receiptVersion: number; transport: string; chunkBytes: number };
     protocol: number;
     executes: boolean;
     cwds: Array<{ path: string }>;
@@ -281,6 +281,7 @@ export async function spawnPairedWorker(
   if (
     taskSource &&
     (capabilities.handoff?.version !== 1 ||
+      capabilities.handoff.receiptVersion !== 1 ||
       capabilities.handoff.transport !== 'git-remote' ||
       capabilities.handoff.chunkBytes !== 256 * 1024)
   )
@@ -370,6 +371,8 @@ export async function spawnPairedWorker(
     branch: prepared.branch,
   };
   if (p.worktree && !prepared.worktree) throw new Error('Remote isolated worktree required');
+  if (taskSource)
+    dispatchHistoryStore.preparePairedHandoff(localSessionId, prepared.cwd, prepared.branch ?? '');
   // Book the local workflow attempt before starting the remote process. A lost
   // reply leaves this attempt pending and prevents blindly repeating the step.
   const ids =

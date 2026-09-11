@@ -247,6 +247,11 @@ func (r *registry) claimDispatch(ctx context.Context, p spawnParams) error {
 	if p.RemoteOrigin == nil {
 		return nil
 	}
+	if p.Handoff != nil {
+		if _, err := r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
+			return err
+		}
+	}
 	s := r.remote
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,11 +261,6 @@ func (r *registry) claimDispatch(ctx context.Context, p spawnParams) error {
 	}
 	if (d.lease.Handoff == nil) != (p.Handoff == nil) || (p.Handoff != nil && *p.Handoff != *d.lease.Handoff) {
 		return fmt.Errorf("spawn must consume the exact verified handoff receipt")
-	}
-	if p.Handoff != nil {
-		if _, err := r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
-			return err
-		}
 	}
 	d.lease.Claimed = true
 	return s.persistLocked()

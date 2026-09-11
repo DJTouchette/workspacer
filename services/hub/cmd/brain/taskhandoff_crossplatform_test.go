@@ -85,9 +85,6 @@ func TestCrossPlatformHandoffStage(t *testing.T) {
 	switch stage {
 	case "source":
 		handoffFixtureGit(t, source, "commit", "--allow-empty", "-m", "intended B, remote remains A")
-		if err := os.WriteFile(filepath.Join(source, ".git/info/exclude"), []byte(".workspacer/\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
 		reports := filepath.Join(source, ".workspacer/reports")
 		if err := os.MkdirAll(reports, 0700); err != nil {
 			t.Fatal(err)
@@ -126,7 +123,9 @@ func TestCrossPlatformHandoffStage(t *testing.T) {
 		wire.Result = call("sealResult", nil).Result
 	case "receive":
 		ref, _ := binding.Ref(task, "input")
-		handoffFixtureGit(t, source, "-c", "http.sslCAInfo="+ca, "fetch", remote, ref)
+		if _, err := binding.GitRemote(ctx, source, "fetch", remote, ref); err != nil {
+			t.Fatal(err)
+		}
 		handoffFixtureGit(t, source, "checkout", "-B", "main", wire.Frozen.Plan.Input.Commit)
 		dir := reg.handoffDir(binding, task)
 		if err := taskartifacts.MakePrivateDirectory(dir); err != nil {

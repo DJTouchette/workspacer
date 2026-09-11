@@ -225,7 +225,7 @@ export async function prepareTaskHandoff(
     binding: source.binding,
     task,
   });
-  if (prepared.state !== 'prepared' || prepared.digest !== frozen.digest || !prepared.allocation)
+  if (prepared.state !== 'prepared' || prepared.digest !== frozen.digest || !prepared.allocation || !prepared.allocationId)
     throw new Error('Target did not verify the selected checkpoint and required artifacts');
   return prepared;
 }

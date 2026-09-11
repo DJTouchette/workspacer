@@ -530,6 +530,17 @@ export class DispatchHistoryStore {
     found.attempt.handoff = handoff;
     this.flush();
   }
+  preparePairedHandoff(sessionId: string, cwd: string, branch: string): void {
+    if (!this.writing)
+      return this.transaction(() => this.preparePairedHandoff(sessionId, cwd, branch));
+    const attempt = this.find(sessionId)?.attempt;
+    if (!attempt?.handoff || attempt.executionTarget !== 'paired')
+      throw new Error('No preparing paired handoff');
+    attempt.executionCwd = cwd;
+    attempt.worktree = { requested: true, allocated: true, fallback: false, branch };
+    this.flush();
+  }
+
   startWorkflow(
     owner: Owner,
     projectCwd: string,

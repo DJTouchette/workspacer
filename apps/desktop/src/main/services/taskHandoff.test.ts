@@ -16,6 +16,7 @@ const manifest = {
   entries: [{ name: 'brief.md', kind: 'report' as const, size: 5, sha256: 'd'.repeat(64) }],
 };
 const record: HandoffRecord = {
+  allocationId: 'fixture-native-identity',
   plan: {
     version: 1,
     binding: 'binding-fixture-1',

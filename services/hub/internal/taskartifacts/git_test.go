@@ -54,6 +54,28 @@ func TestCheckpointPreflightDoesNotExecuteRepositoryFilters(t *testing.T) {
 		t.Fatal("mutable source alias admitted")
 	}
 	marker := filepath.Join(repo, "filter-ran")
+	report := ".workspacer/reports/scout.md"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, report)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, report), []byte("selected report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CheckSource(ctx, repo); err == nil {
+		t.Fatal("unselected report hidden")
+	}
+	if _, _, err := CheckSource(ctx, repo, report); err != nil {
+		t.Fatal("explicit selected report requires no ignore configuration", err)
+	}
+	git("add", report)
+	git("commit", "-m", "tracked report fixture")
+	if err := os.WriteFile(filepath.Join(repo, report), []byte("dirty tracked report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CheckSource(ctx, repo, report); err == nil {
+		t.Fatal("selection hid tracked WIP")
+	}
+	git("checkout", "--", report)
 	git("config", "filter.untrusted.clean", "touch "+marker)
 	if err := os.WriteFile(filepath.Join(repo, ".git/info/attributes"), []byte("* filter=untrusted\n"), 0600); err != nil {
 		t.Fatal(err)

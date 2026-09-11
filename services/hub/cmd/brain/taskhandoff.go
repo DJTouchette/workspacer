@@ -85,6 +85,8 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
+	SourceRepo   string                       `json:"sourceRepo,omitempty"`
+	InputPin     string                       `json:"inputPin,omitempty"`
 	Storage      *taskartifacts.StorageStatus `json:"storage,omitempty"`
 	AllocationId string                       `json:"allocationId,omitempty"`
 	Predecessor  string                       `json:"predecessor,omitempty"`
@@ -253,6 +255,11 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 						return nil, fmt.Errorf("conflicting required output retry")
 					}
 				}
+				if rec.State == "pinning" {
+					if err := finishHandoffPin(ctx, &rec, dir); err != nil {
+						return nil, err
+					}
+				}
 			}
 			if p.Plan != nil {
 				digest, err := planDigest(*p.Plan)
@@ -295,6 +302,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 				if err != nil || taskartifacts.Decode(b, &previous) != nil || previous.Owner != "local-host" || previous.Plan.Binding != binding.ID || previous.State != "received" || previous.Custody == "" || previous.Result == nil {
 					return nil, fmt.Errorf("predecessor output is not in verified local custody")
 				}
+				if err := verifyRecordedAllocation(&previous); err != nil {
+					return nil, err
+				}
 				source, folder = previous.Allocation, ".workspacer/handoffs/"+p.FromTask
 				expectedCommit = previous.Result.Commit
 				for _, entry := range previous.Result.Entries {
@@ -312,7 +322,14 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 					}
 				}
 			}
-			commit, format, err := taskartifacts.CheckSource(ctx, source)
+			selectedPaths := make([]string, 0, len(p.Selections))
+			for _, selection := range p.Selections {
+				if err := taskartifacts.ValidName(selection.Name); err != nil {
+					return nil, err
+				}
+				selectedPaths = append(selectedPaths, folder+"/"+selection.Name)
+			}
+			commit, format, err := taskartifacts.CheckSource(ctx, source, selectedPaths...)
 			if err != nil {
 				return nil, err
 			}
@@ -334,19 +351,32 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 					}
 				}
 			}
-			after, afterFormat, err := taskartifacts.CheckSource(ctx, source)
+			after, afterFormat, err := taskartifacts.CheckSource(ctx, source, selectedPaths...)
 			if err != nil || after != commit || afterFormat != format {
 				return nil, fmt.Errorf("source checkpoint changed during freeze")
 			}
 			rec = handoffRecord{Owner: p.OriginKey, Plan: handoffPlan{1, binding.ID, binding.Revision, p.Provider, m, p.Outputs}, State: "frozen"}
 			rec.Predecessor = p.FromTask
+			common, err := taskartifacts.Git(ctx, source, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
+			if err != nil {
+				return nil, err
+			}
+			rec.SourceRepo = filepath.Clean(strings.TrimSpace(string(common)))
+			rec.InputPin, err = binding.Ref(p.Task, "input")
+			if err != nil {
+				return nil, err
+			}
 			rec.Digest, err = planDigest(rec.Plan)
 			if err != nil {
 				return nil, err
 			}
 			// Retain the immutable plan before publication. Lost push replies
 			// resume the same generated ref; no alternative remote is selected.
+			rec.State = "pinning"
 			if err := saveHandoff(dir, &rec); err != nil {
+				return nil, err
+			}
+			if err := finishHandoffPin(ctx, &rec, dir); err != nil {
 				return nil, err
 			}
 		} else {
@@ -371,6 +401,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, fmt.Errorf("source publication requires local export authority")
 		}
 		source := binding.Repository
+		if rec.SourceRepo != "" {
+			source = rec.SourceRepo
+		}
 		if rec.Predecessor != "" {
 			source = filepath.Join(r.handoffDir(binding, rec.Predecessor), "result-git")
 		}
@@ -459,6 +492,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		return jsonResult(rec)
 	case "claimLocal":
+		if err := verifyRecordedAllocation(&rec); err != nil {
+			return nil, err
+		}
 		if p.OriginKey != "local-host" || rec.Predecessor == "" || rec.State != "prepared" || rec.Digest != p.Digest {
 			return nil, fmt.Errorf("local admission already claimed or receipt mismatched; do not repeat an uncertain spawn")
 		}
@@ -589,6 +625,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, fmt.Errorf("local result import authority required")
 		}
 		if rec.State == "received" {
+			if err := verifyRecordedAllocation(&rec); err != nil {
+				return nil, err
+			}
 			return jsonResult(rec)
 		}
 		store, err := taskartifacts.Open(filepath.Join(dir, "result"), *rec.Result)
@@ -872,6 +911,9 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 		return fmt.Errorf("cleanup allocation missing before durable cleanup intent")
 	}
 	if allocationExists {
+		if err := verifyRecordedAllocation(rec); err != nil {
+			return err
+		}
 		head, _, err := taskartifacts.CheckSource(ctx, rec.Allocation)
 		if err != nil || head != rec.Result.Commit {
 			return fmt.Errorf("cleanup blocked: checkpoint changed or worktree dirty")
@@ -977,4 +1019,27 @@ func (r *registry) handoffConfigDir() string {
 		return r.handoffRoot
 	}
 	return configDir()
+}
+
+func verifyRecordedAllocation(rec *handoffRecord) error {
+	identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
+	if err != nil || identity != rec.AllocationId || identity == "" {
+		return fmt.Errorf("custody allocation identity changed")
+	}
+	return taskartifacts.VerifyPrivateTree(rec.Allocation)
+}
+
+func finishHandoffPin(ctx context.Context, rec *handoffRecord, dir string) error {
+	if rec.Owner != "local-host" || rec.State != "pinning" || rec.SourceRepo == "" || rec.InputPin == "" {
+		return fmt.Errorf("invalid source pin intent")
+	}
+	commit := rec.Plan.Input.Commit
+	if _, err := taskartifacts.Git(ctx, rec.SourceRepo, "", "update-ref", rec.InputPin, commit, strings.Repeat("0", len(commit))); err != nil {
+		got, checkErr := taskartifacts.Git(ctx, rec.SourceRepo, "", "rev-parse", "--verify", rec.InputPin)
+		if checkErr != nil || strings.TrimSpace(string(got)) != commit {
+			return fmt.Errorf("source pin changed or could not be retained")
+		}
+	}
+	rec.State = "frozen"
+	return saveHandoff(dir, rec)
 }
