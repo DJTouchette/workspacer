@@ -63,6 +63,30 @@ it('persists acknowledgement and deduplicates reconnect replay', () => {
   restored.start(file, () => 'manager');
   expect(restored.accept('paired-credential-a', update)).toEqual({ ok: false, reason: 'closed' });
 });
+
+it('keeps byte custody independent from a live manager or unknown wake delivery', () => {
+  const { registry, file, update } = fixture();
+  registry.setHandoff(update.dispatchId, {
+    binding: 'fixture-repository-binding',
+    state: 'running',
+  });
+  registry.beginDelivery(update.dispatchId, update.seq);
+  const restored = new RemoteDispatchRegistry();
+  restored.start(file, () => null);
+  expect(restored.accept('paired-credential-a', update).ok).toBe(false);
+  expect(restored.acceptHandoffUpdate('paired-credential-a', update)?.record.dispatchId).toBe(
+    update.dispatchId,
+  );
+  expect(restored.acceptHandoffUpdate('paired-credential-b', update)).toBeUndefined();
+  expect(
+    restored.acceptHandoffUpdate('paired-credential-a', {
+      ...update,
+      sessionId: 'other',
+      entry: { ...update.entry, sessionId: 'other' },
+    }),
+  ).toBeUndefined();
+  expect(restored.list()[0].ackedSeq).toBe(0);
+});
 it('keeps uncertain admission open and transfers origin ownership on adoption', () => {
   const { registry, update } = fixture();
   registry.fail(update.dispatchId, 'timeout');

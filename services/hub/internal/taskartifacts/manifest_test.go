@@ -158,3 +158,15 @@ func TestStagingRejectsLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestReportImagesStayInsideSelectedManifest(t *testing.T) {
+	entries := []Entry{{Name: "images/diagram.png", Kind: "image"}}
+	if err := validateReportImages("notes/scout.md", []byte("![diagram](../images/diagram.png)\r\n"), entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"![x](https://example.test/x.png)", "![x](/producer/absolute.png)", "![x](../../outside.png)", "![x](missing.png)", "![x][reference]", "<img src=\"https://example.test/x.png\">"} {
+		if validateReportImages("scout.md", []byte(content), entries) == nil {
+			t.Fatalf("accepted nonportable image: %s", content)
+		}
+	}
+}

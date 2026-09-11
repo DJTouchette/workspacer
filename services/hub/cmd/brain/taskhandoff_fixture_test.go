@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
@@ -237,6 +238,72 @@ func TestHandoffGitRemoteExactCheckpoint(t *testing.T) {
 			}
 			if handoffFixtureGit(t, sourceRoot, "rev-parse", "HEAD") != base || handoffFixtureGit(t, source, "symbolic-ref", "--short", "HEAD") != "Task-Source" {
 				t.Fatal("user branches changed")
+			}
+			// Exercise cleanup with a fake clock and a synthetic stopped provider.
+			// The directories and Git refs below are all fixture-owned.
+			cm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path == "/sessions" {
+					_, _ = w.Write([]byte("[]"))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "fixture-worker", "mode": "stopped", "cwd": prepared.Allocation})
+			}))
+			defer cm.Close()
+			receiver.cm = newClaudemonClient(cm.URL)
+			receiver.remote = newRemoteDispatchStore()
+			receiver.remote.m[task] = &remoteDispatch{dispatchID: task, sessionID: "fixture-worker", lease: &dispatchLease{Owner: binding.Owner, Repo: prepared.Allocation, Cwd: prepared.Allocation, Worktree: true, Claimed: true, Handoff: &handoffReceiptSelector{Version: 1, Binding: binding.ID, Digest: prepared.Digest, AllocationId: prepared.AllocationId}}, last: &dispatchUpdate{Final: true}}
+			result := prepared.Plan.Input
+			result.Entries = []taskartifacts.Entry{}
+			prepared.Result, prepared.State = &result, "result-sealed"
+			prepared.Custody, _ = result.Seal()
+			now := time.Now()
+			prepared.AcceptedAt = now.UnixMilli()
+			if err := os.MkdirAll(filepath.Join(receiver.handoffDir(binding, task), "result"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			resultRef, _ := binding.Ref(task, "result")
+			if err := publishHandoffRef(ctx, binding, sourceRoot, commit, resultRef); err != nil {
+				t.Fatal(err)
+			}
+			manualRef := "refs/heads/wks-transfer/manual-user-branch"
+			if err := publishHandoffRef(ctx, binding, sourceRoot, base, manualRef); err != nil {
+				t.Fatal(err)
+			}
+			if receiver.cleanupHandoff(ctx, binding, &prepared, now) == nil {
+				t.Fatal("cleanup ignored grace")
+			}
+			now = now.Add(handoffCleanupGrace + time.Second)
+			unexpected := filepath.Join(prepared.Allocation, ".workspacer", "handoffs", task, "unexpected.txt")
+			if err := os.WriteFile(unexpected, []byte("retain me"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if receiver.cleanupHandoff(ctx, binding, &prepared, now) == nil {
+				t.Fatal("cleanup removed unexpected files")
+			}
+			if err := os.Remove(unexpected); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := binding.GitRemote(ctx, sourceRoot, "push", "--force-with-lease="+resultRef+":"+commit, "--", remote, base+":"+resultRef); err != nil {
+				t.Fatal(err)
+			}
+			if receiver.cleanupHandoff(ctx, binding, &prepared, now) == nil {
+				t.Fatal("cleanup deleted moved result ref")
+			}
+			if _, err := binding.GitRemote(ctx, sourceRoot, "push", "--force-with-lease="+resultRef+":"+base, "--", remote, commit+":"+resultRef); err != nil {
+				t.Fatal(err)
+			}
+			if err := receiver.cleanupHandoff(ctx, binding, &prepared, now); err != nil {
+				t.Fatal("eligible cleanup", err)
+			}
+			if prepared.State != "cleaned" {
+				t.Fatal("cleanup receipt missing")
+			}
+			if _, err := os.Lstat(prepared.Allocation); !os.IsNotExist(err) {
+				t.Fatal("owned worktree was not removed")
+			}
+			manual, err := binding.GitRemote(ctx, sourceRoot, "ls-remote", "--refs", "--", remote, manualRef)
+			if err != nil || !strings.HasPrefix(string(manual), base) {
+				t.Fatal("user branch was changed")
 			}
 		})
 	}
