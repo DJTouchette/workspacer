@@ -8,7 +8,9 @@ import type { WorkflowResponse } from '../shared/fleetWorkflow';
 const fixture = vi.hoisted(() => ({ root: '' }));
 vi.mock('./configService', () => ({
   getConfigDir: () => fixture.root,
-  configService: { getConfig: () => ({ agents: {}, projects: {} }) },
+  configService: {
+    getConfig: () => ({ agents: { defaultWorkflowId: 'scout-implement-review' }, projects: {} }),
+  },
 }));
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {

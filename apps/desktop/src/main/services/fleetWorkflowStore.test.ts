@@ -44,7 +44,7 @@ const custom = () => ({
 describe('Fleet definition store and pinned history', () => {
   it('seeds immutable starters additively, rejects stale CAS without touching bytes, preserves edits on reopen', () => {
     const { store, filename, templates } = setup();
-    expect(store.list()).toHaveLength(2);
+    expect(store.list()).toHaveLength(WORKFLOW_STARTERS.length);
     store.mutate('create', undefined, undefined, custom());
     const d = store.mutate('update', 'custom', 1, { ...custom(), name: 'Edited' })!;
     expect(d.revision).toBe(2);

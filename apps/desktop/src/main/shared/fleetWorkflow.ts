@@ -145,7 +145,7 @@ export type WorkflowResponse =
       currentRevision?: number;
       references?: import('./dispatchHistory').TaskLinks;
     };
-export const DEFAULT_WORKFLOW_ID = 'scout-implement-review';
+export const DEFAULT_WORKFLOW_ID = 'implement-review';
 export const reviewPolicy = (d: WorkflowDefinition): string =>
   d.steps.some((s) => s.kind === 'review')
     ? 'Independent review required'
@@ -250,7 +250,7 @@ const step = (
 });
 export const WORKFLOW_STARTERS: WorkflowDefinition[] = [
   {
-    id: DEFAULT_WORKFLOW_ID,
+    id: 'scout-implement-review',
     revision: 1,
     name: 'Scout → implement → independent review',
     description: 'Scout when material architecture, security or compatibility risk warrants it.',
@@ -271,6 +271,24 @@ export const WORKFLOW_STARTERS: WorkflowDefinition[] = [
     description: 'Explicit policy: implementation without independent review.',
     enabled: true,
     steps: [step('implement', 'implement', 'implement', 'implementer', 'ship-task')],
+  },
+  {
+    id: DEFAULT_WORKFLOW_ID,
+    revision: 1,
+    name: 'Implement → independent review',
+    description: 'Default: the implementer investigates and builds, then a fresh worker reviews.',
+    enabled: true,
+    steps: [
+      {
+        ...step('implement', 'implement', 'implement', 'implementer', 'ship-task'),
+        instructions:
+          'Do the brief discovery needed to understand the task, then implement and run the relevant checks. Reuse verified findings already provided. Surface consequential unresolved architecture, security or compatibility decisions before committing to an approach.',
+      },
+      {
+        ...step('review', 'review', 'review', 'reviewer', 'review-task'),
+        independentOf: 'implement',
+      },
+    ],
   },
 ];
 export const WORKFLOW_DISCOVERY =

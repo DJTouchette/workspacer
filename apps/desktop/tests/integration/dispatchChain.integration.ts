@@ -525,7 +525,13 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
   };
   try {
     let listed = await call('list_workflows');
-    expect(listed.catalog.definitions).toHaveLength(2);
+    expect(listed.catalog.defaultId).toBe('implement-review');
+    expect(
+      listed.catalog.definitions
+        .find((d: { id: string }) => d.id === 'implement-review')
+        .steps.map((s: { id: string }) => s.id),
+    ).toEqual(['implement', 'review']);
+    expect(listed.catalog.definitions).toHaveLength(3);
     const clone = await call('clone_workflow', {
       id: 'scout-implement-review',
       expectedRevision: 1,
