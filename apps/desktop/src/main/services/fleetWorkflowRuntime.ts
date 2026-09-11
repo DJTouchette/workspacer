@@ -6,7 +6,11 @@ import { configService } from './configService';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { claudeSessionStore } from './claudeSessionStore';
 import { validateDispatchTemplateParams } from '../lib/dispatchTemplate';
-import { reviewPolicy, type WorkflowTemplate } from '../shared/fleetWorkflow';
+import {
+  reviewPolicy,
+  type WorkflowTemplate,
+  type WorkflowDispatchPlan,
+} from '../shared/fleetWorkflow';
 import type { DispatchTask } from '../shared/dispatchHistory';
 import { taskDependencyState } from '../shared/managerRequests';
 export const workflowBusy = new Set<string>();
@@ -43,7 +47,7 @@ export function workflowInstructions(task: DispatchTask): string {
     task.dependsOn?.length ? dispatchHistoryStore.list() : [],
   );
   if (state !== 'ready')
-    return `Task ${task.taskId} is ${state}. Await explicit accepted dependency evidence; do not dispatch or bypass its pinned workflow. Check list_manager_requests once on your next wake for current task state.`;
+    return `Task ${task.taskId} is ${state}. Await explicit accepted dependency evidence; do not dispatch or bypass its pinned workflow. Use manager_context on your next wake for current task state.`;
   const pin = task.workflow!;
   const i = pin.steps.findIndex((s) => !['completed', 'skipped', 'waived'].includes(s.state));
   const run = pin.steps[i];
@@ -57,15 +61,55 @@ export function workflowInstructions(task: DispatchTask): string {
   if (run.state !== 'planned')
     return `${header}\nStep ${step.id} is ${run.state}. Do not launch another step or infer completion from idle/ended. ${run.reason ?? 'Wait for the host result wake.'} Reported outcome: ${JSON.stringify(run.outcome ?? null)}. Escalate failed/blocked steps; v1 does not auto-retry.`;
   if ((step.when === 'material_risk' || step.repairOf) && run.decision === undefined)
-    return `${header}\nCall decide_workflow_step with taskId, cwd, stepId=${step.id}, run=true/false and a concrete reason. ${step.repairOf ? 'This is the sole bounded repair linked to review ' + step.repairOf + '. Inspect that reported outcome first.' : 'Decide whether material architecture, security or compatibility risk warrants this step.'}`;
+    return `${header}\nConditional decision required. Call dispatch_workflow_step with taskId=${task.taskId}, cwd=${task.projectCwd}, stepId=${step.id}, expectedTaskRevision=${task.revision ?? 0}, run=true/false and a concrete reason. For run=true fill templateParams ${JSON.stringify(pin.templates[step.template].params)}; run=false records only this skip and stops. decide_workflow_step is available for a separate decision. ${step.repairOf ? 'This is the sole bounded repair linked to review ' + step.repairOf + '. Inspect that reported outcome first.' : 'Decide whether material architecture, security or compatibility risk warrants this step.'}`;
   const missing = missingWorkflowEvidence(task, i);
   if (missing) return `${header}\n${missing}. Do not dispatch this step or invent artifacts.`;
   const t = pin.templates[step.template];
+  return `${header}\nNext: ${step.label}. Call dispatch_workflow_step with taskId=${task.taskId}, cwd=${task.projectCwd}, stepId=${step.id}, expectedTaskRevision=${task.revision ?? 0}, and templateParams filling ${JSON.stringify(t.params)}. It resolves routing and pinned spawn metadata; do not also call select_model or spawn_agent. The host preserves ceilings, grants, isolation and delivery policy. ${step.kind === 'review' ? 'Give the fresh reviewer criteria, diff and closing handoff only; never implementer reasoning/transcript.' : ''}\nStep instructions: ${step.instructions}\nAfter dispatch end your turn; the host wakes you. No polling or automatic launches.`;
+}
+
+/** The machine-readable counterpart of the next-step instructions. Never grants authority. */
+export function workflowDispatchPlan(task: DispatchTask): WorkflowDispatchPlan | undefined {
+  if (!task.workflow || task.dispatchReservation || workflowBusy.has(task.taskId)) return;
+  if (
+    taskDependencyState(task, task.dependsOn?.length ? dispatchHistoryStore.list() : []) !== 'ready'
+  )
+    return;
+  const pin = task.workflow;
+  const index = pin.steps.findIndex((s) => !['completed', 'skipped', 'waived'].includes(s.state));
+  const run = pin.steps[index];
+  const step = pin.definition.steps[index];
+  if (
+    !step ||
+    run.state !== 'planned' ||
+    ((step.when === 'material_risk' || step.repairOf) && run.decision !== true) ||
+    missingWorkflowEvidence(task, index)
+  )
+    return;
   const previous = pin.steps
-    .slice(0, i)
+    .slice(0, index)
     .reverse()
     .find((s) => s.dispatchId);
-  return `${header}\nNext: ${step.label}. Call select_model with role=${step.role} and cwd=${task.projectCwd}; then spawn_agent with its explicit provider/model/effort/capability/decisionId, role=${step.role}, taskId=${task.taskId}, workflowStepId=${step.id}, stage=${step.stage}, parentSessionId=${task.ownerSessionId}, cwd=${task.projectCwd}${previous ? ', afterDispatchId=' + previous.dispatchId : ''}, template=${step.template}, toolScope=${['research', 'review', 'validate'].includes(step.kind) ? 'view' : 'operator'}, and templateParams filling ${JSON.stringify(t.params)}. The host uses the PINNED template/result contract, derives ${['research', 'review', 'validate'].includes(step.kind) ? 'view scope' : 'operator scope with an isolated worktree'}, and preserves routing ceilings, grants and delivery policy. Always a fresh worker: no resume or retry reuse. ${step.kind === 'review' ? 'Give the reviewer the acceptance criteria, diff and closing handoff only; never the implementer reasoning/transcript.' : ''}\nStep instructions: ${step.instructions}\nAfter dispatch end your turn; the host wakes you. No polling or automatic launches.`;
+  const independent = step.independentOf
+    ? pin.steps.find((s) => s.id === step.independentOf)
+    : step.kind === 'review'
+      ? previous
+      : undefined;
+  const provider =
+    independent && task.attempts.find((a) => a.dispatchId === independent.dispatchId)?.provider;
+  return {
+    taskId: task.taskId,
+    cwd: task.projectCwd,
+    stepId: step.id,
+    expectedTaskRevision: task.revision ?? 0,
+    role: step.role,
+    stage: step.stage,
+    template: step.template,
+    params: structuredClone(pin.templates[step.template].params),
+    toolScope: ['research', 'review', 'validate'].includes(step.kind) ? 'view' : 'operator',
+    ...(previous?.dispatchId ? { afterDispatchId: previous.dispatchId } : {}),
+    ...(provider ? { previousProvider: provider } : {}),
+  };
 }
 /** Explicit binding only. A wrapper keeps the admission lock across asynchronous allocation. */
 export function workflowSpawn<T>(
@@ -75,6 +119,12 @@ export function workflowSpawn<T>(
     const p = { ...(raw as Record<string, unknown>) };
     if (!p.workflowStepId) return spawn(p);
     const task = ownerTask(p.taskId as string, p.dispatchOwnerSessionId as string, p.cwd as string);
+    if (
+      p.expectedTaskRevision !== undefined &&
+      (!Number.isSafeInteger(p.expectedTaskRevision) ||
+        p.expectedTaskRevision !== (task.revision ?? 0))
+    )
+      throw new Error('Task changed before dispatch; reload next step');
     if (workflowBusy.has(task.taskId))
       throw new Error('Workflow step dispatch already in progress');
     const i = task.workflow!.steps.findIndex(
@@ -163,7 +213,7 @@ export function workflowWakeInstructions(sessionIds: string[]): string {
     .filter((t) => t.workflow && t.attempts.some((a) => sessionIds.includes(a.sessionId)));
   return (
     (tasks.length ? '\n\n' + tasks.map(workflowInstructions).join('\n\n') : '') +
-    '\n\nFleet event, not a new user request. Check list_manager_requests once for unresolved inbox requests and linked task readiness. Preserve existing request/task lineage.'
+    '\n\nFleet event, not a new user request. Use manager_context once for pending requests and the tasks in this wake; it returns current evidence and next dispatch inputs. Preserve existing request/task lineage.'
   );
 }
 

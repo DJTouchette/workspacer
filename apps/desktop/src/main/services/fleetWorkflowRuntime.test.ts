@@ -113,3 +113,20 @@ it('reports a reserved dispatch without advertising another launch', () => {
   expect(workflowInstructions(t)).toContain('Its host must finish or recover');
   expect(workflowInstructions(t)).not.toContain('Next:');
 });
+
+it('refuses a composed spawn when the task changes during routing', async () => {
+  const t = task();
+  t.revision = 9;
+  fixture.task = t;
+  const spawn = vi.fn();
+  await expect(
+    workflowSpawn(spawn)({
+      taskId: t.taskId,
+      cwd: t.projectCwd,
+      dispatchOwnerSessionId: 'manager',
+      workflowStepId: 'implement',
+      expectedTaskRevision: 8,
+    }),
+  ).rejects.toThrow('Task changed before dispatch');
+  expect(spawn).not.toHaveBeenCalled();
+});

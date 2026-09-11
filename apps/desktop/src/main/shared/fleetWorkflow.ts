@@ -76,6 +76,7 @@ export type WorkflowRequest = {
     | 'select'
     | 'start'
     | 'next'
+    | 'prepareDispatch'
     | 'decide'
     | 'taskReferences'
     | 'setTaskReferences'
@@ -101,7 +102,22 @@ export type WorkflowRequest = {
   stepId?: string;
   run?: boolean;
   reason?: string;
+  templateParams?: Record<string, string>;
 };
+/** Host-derived recipe. The facade routes it, then uses the ordinary spawn gate. */
+export interface WorkflowDispatchPlan {
+  taskId: string;
+  cwd: string;
+  stepId: string;
+  expectedTaskRevision: number;
+  role: string;
+  stage: TaskStage;
+  template: string;
+  params: WorkflowTemplate['params'];
+  toolScope: 'view' | 'operator';
+  afterDispatchId?: string;
+  previousProvider?: string;
+}
 export type WorkflowCatalog = {
   available: true;
   definitions: WorkflowDefinition[];
@@ -119,6 +135,8 @@ export type WorkflowResponse =
       instructions?: string;
       references?: import('./dispatchHistory').TaskLinks;
       taskRevision?: number;
+      dispatch?: WorkflowDispatchPlan;
+      skipped?: boolean;
     }
   | {
       ok: false;
@@ -256,4 +274,4 @@ export const WORKFLOW_STARTERS: WorkflowDefinition[] = [
   },
 ];
 export const WORKFLOW_DISCOVERY =
-  'Resolve inbox requests to pin new tasks; start_workflow({cwd,title,compact:true}) is for legacy uncaptured requests only. Follow returned pinned steps; record conditional decisions with decide_workflow_step. If unavailable on a headless/older host, report that; never claim a workflow ran or retrofit historical IDs. For user-supplied or trusted worker PR/ticket/link references, get_task_references for taskRevision then update_task_references on the exact task. Store as unverified, preserve unmentioned references/human edits, and ask if task attribution is unclear. Do not fetch URLs, invent identifiers or scrape transcripts for references.';
+  'Resolve inbox requests to pin new tasks; start_workflow({cwd,title,compact:true}) is for legacy uncaptured requests only. Use returned nextActions and dispatch_workflow_step for each exact pinned step/revision; it routes and spawns. Supply an explicit conditional run/reason there or use decide_workflow_step. manager_context batches pending inbox and relevant task reads. If unavailable on a headless/older host, report that; never claim a workflow ran or retrofit historical IDs. For user-supplied or trusted worker PR/ticket/link references, get_task_references for taskRevision then update_task_references on the exact task. Store as unverified, preserve unmentioned references/human edits, and ask if task attribution is unclear. Do not fetch URLs, invent identifiers or scrape transcripts for references.';

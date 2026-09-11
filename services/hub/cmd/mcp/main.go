@@ -722,6 +722,8 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Config ─────────────────────────────────────────────────────────────
 	addWorkflowTools(b)
+	addWorkflowDispatchTool(b)
+	addManagerContextTool(b)
 	addTaskReferenceTools(b)
 	addManagerRequestTools(b)
 	b.group = "config"
@@ -1573,12 +1575,13 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
-	ExecutionTarget string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
-	RemoteCwd       string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
-	WorkflowStepID  string `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
-	TaskID          string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
-	Stage           string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
-	AfterDispatchID string `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`
+	ExpectedTaskRevision *int   `json:"expectedTaskRevision,omitempty" jsonschema:"optional pinned-task revision; refuses a workflow spawn if the task changed"`
+	ExecutionTarget      string `json:"executionTarget,omitempty" jsonschema:"paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project"`
+	RemoteCwd            string `json:"remoteCwd,omitempty" jsonschema:"exact remote repository path returned by list_dispatch_targets; never guess or translate a local path"`
+	WorkflowStepID       string `json:"workflowStepId,omitempty" jsonschema:"explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only"`
+	TaskID               string `json:"taskId,omitempty" jsonschema:"reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task"`
+	Stage                string `json:"stage,omitempty" jsonschema:"explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped"`
+	AfterDispatchID      string `json:"afterDispatchId,omitempty" jsonschema:"dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations"`
 	// Private to respawn_with. Never decoded from the public spawn tool input.
 	RetrySourceSessionID string `json:"-"`
 

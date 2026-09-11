@@ -1069,6 +1069,140 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   expect(transferred.value.userContent).toBeUndefined();
 });
 
+it('composes local workflow dispatch with ownership, revision and duplicate-admission guards', async () => {
+  const catalog = await mcpTool('session:manager-current', 'list_workflows', {});
+  await mcpTool('session:manager-current', 'select_project_workflow', {
+    cwd: project,
+    workflowId: 'scout-implement-review',
+    expectedRevision: catalog.value.catalog.selectionRevision,
+  });
+  const started = await mcpTool('session:manager-current', 'start_workflow', {
+    cwd: project,
+    title: 'Composed dispatch',
+    compact: true,
+  });
+  const task = started.value.task;
+  const args = {
+    taskId: task.taskId,
+    cwd: project,
+    stepId: 'scout',
+    expectedTaskRevision: task.revision,
+    run: true,
+    reason: 'Verify the interface before implementation',
+    templateParams: { task: 'Inspect only; report verified findings.' },
+    skipPermissions: true,
+  };
+  const before = launch.mock.calls.length;
+  expect((await mcpTool('session:manager-other', 'dispatch_workflow_step', args)).isError).toBe(
+    true,
+  );
+  expect(launch.mock.calls.length).toBe(before);
+  const result = await mcpTool('session:manager-current', 'dispatch_workflow_step', args);
+  expect(result.isError, result.text).toBe(false);
+  expect(result.value).toMatchObject({
+    taskId: task.taskId,
+    dispatchId: expect.any(String),
+    sessionId: expect.any(String),
+    renderedMessageOmitted: true,
+    selection: { eligible: true, provider: 'codex', decisionId: expect.any(String) },
+  });
+  expect(result.value.renderedMessage).toBeUndefined();
+  expect(launch.mock.calls.length).toBe(before + 1);
+  expect(launch.mock.calls.at(-1)![0]).toMatchObject({
+    parentSessionId: 'manager-current',
+    toolScope: 'view',
+    skipPermissions: false,
+    firstMessage: expect.stringContaining('Inspect only; report verified findings.'),
+  });
+  expect((await mcpTool('session:manager-current', 'dispatch_workflow_step', args)).isError).toBe(
+    true,
+  );
+  expect(launch.mock.calls.length).toBe(before + 1);
+  const context = await mcpTool('session:manager-current', 'manager_context', {
+    tasks: [{ taskId: task.taskId, cwd: project }],
+  });
+  expect(context.value.inbox.view).toBe('pending');
+  expect(context.value.tasks[0]).toMatchObject({
+    taskId: task.taskId,
+    steps: expect.arrayContaining([
+      expect.objectContaining({
+        id: 'scout',
+        state: 'dispatched',
+        sessionId: result.value.sessionId,
+      }),
+    ]),
+  });
+  expect(context.value.tasks[0].attempts).toBeUndefined();
+  expect(context.value.tasks[0].templates).toBeUndefined();
+  expect(
+    (
+      await mcpTool('session:manager-other', 'manager_context', {
+        tasks: [{ taskId: task.taskId, cwd: project }],
+      })
+    ).value.tasks[0].ok,
+  ).toBe(false);
+
+  const racing = await mcpTool('session:manager-current', 'start_workflow', {
+    cwd: project,
+    title: 'Concurrent dispatch',
+  });
+  const decided = await mcpTool('session:manager-current', 'decide_workflow_step', {
+    cwd: project,
+    taskId: racing.value.task.taskId,
+    stepId: 'scout',
+    run: true,
+    reason: 'Inspect first',
+  });
+  const raceArgs = {
+    ...args,
+    taskId: racing.value.task.taskId,
+    expectedTaskRevision: decided.value.task.revision,
+    run: undefined,
+    reason: undefined,
+  };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const normalLaunch = launch.getMockImplementation()!;
+  launch.mockImplementationOnce(async (opts) => {
+    await gate;
+    return normalLaunch(opts);
+  });
+  const beforeRace = launch.mock.calls.length;
+  const first = mcpTool('session:manager-current', 'dispatch_workflow_step', raceArgs);
+  try {
+    await vi.waitFor(() => expect(launch.mock.calls.length).toBe(beforeRace + 1));
+    const duplicate = await mcpTool('session:manager-current', 'dispatch_workflow_step', raceArgs);
+    expect(duplicate.isError).toBe(true);
+    expect(launch.mock.calls.length).toBe(beforeRace + 1);
+  } finally {
+    release();
+  }
+  expect((await first).isError).toBe(false);
+
+  const lost = await mcpTool('session:manager-current', 'start_workflow', {
+    cwd: project,
+    title: 'Uncertain acknowledgement',
+  });
+  const lostArgs = {
+    ...args,
+    taskId: lost.value.task.taskId,
+    expectedTaskRevision: lost.value.task.revision,
+  };
+  launch.mockImplementationOnce(async () => {
+    throw new Error('Provider acknowledgement lost after admission');
+  });
+  const uncertain = await mcpTool('session:manager-current', 'dispatch_workflow_step', lostArgs);
+  expect(uncertain.isError).toBe(true);
+  expect(JSON.parse(uncertain.text)).toMatchObject({ phase: 'spawn', admissionUncertain: true });
+  const afterUncertain = launch.mock.calls.length;
+  expect(
+    (await mcpTool('session:manager-current', 'dispatch_workflow_step', lostArgs)).isError,
+  ).toBe(true);
+  expect(launch.mock.calls.length).toBe(afterUncertain);
+});
+
 it('handles unknown paired replay idempotently and returns a local task result once', async () => {
   const binary = path.join(scratch, 'paired-brain-fixture');
   const build = spawn('go', ['test', '-c', '-o', binary, './cmd/brain'], {
@@ -1198,34 +1332,25 @@ it('handles unknown paired replay idempotently and returns a local task result o
     });
     expect(resolved.isError, resolved.text).toBe(false);
     const task = resolved.value.tasks[0] as DispatchTask;
-    await mcpTool('session:manager-current', 'decide_workflow_step', {
+    const skipped = await mcpTool('session:manager-current', 'dispatch_workflow_step', {
       cwd: project,
       taskId: task.taskId,
       stepId: 'scout',
+      expectedTaskRevision: task.revision,
       run: false,
       reason: 'Fixture scope is established',
     });
-    const route = await mcpTool('session:manager-current', 'select_dispatch_model', {
-      cwd: ready.repo,
-      provider: 'claude',
-      role: 'implementer',
-    });
-    expect(route.isError, route.text).toBe(false);
-    const result = await mcpSpawn('session:manager-current', {
-      provider: 'claude',
-      model: route.value.model,
-      capability: route.value.capability,
-      decisionId: route.value.decisionId,
-      role: 'implementer',
+    expect(skipped.isError, skipped.text).toBe(false);
+    expect(skipped.value.skipped).toBe(true);
+    const result = await mcpTool('session:manager-current', 'dispatch_workflow_step', {
+      cwd: project,
+      taskId: task.taskId,
+      stepId: 'implement',
+      expectedTaskRevision: skipped.value.taskRevision,
       executionTarget: 'paired',
       remoteCwd: ready.repo,
-      parentSessionId: 'manager-current',
-      taskId: task.taskId,
-      workflowStepId: 'implement',
-      stage: 'implement',
-      template: 'ship-task',
+      routing: { provider: 'claude' },
       templateParams: { task: 'Read the remote fixture and return the result contract.' },
-      toolScope: 'view',
     });
     expect(result.isError, result.text).toBe(false);
     expect(launch.mock.calls.length).toBe(localLaunches);
@@ -1405,6 +1530,11 @@ it('handles unknown paired replay idempotently and returns a local task result o
       stepId: 'scout',
       run: false,
       reason: 'Exercise the existing paired result receipt',
+    });
+    const route = await mcpTool('session:manager-other', 'select_dispatch_model', {
+      cwd: ready.repo,
+      provider: 'claude',
+      role: 'implementer',
     });
     const uncertain = await mcpSpawn('session:manager-other', {
       provider: 'claude',

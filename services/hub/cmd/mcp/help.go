@@ -58,7 +58,7 @@ Reading another agent's activity:
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
 	"spawn": strings.TrimSpace(`
-Use list_manager_requests({view:"pending"}) once per turn to combine unresolved identities and original content; fetch get_manager_request only for contentDeferred. Omit view for full history/task state. Use compact:true on resolve_manager_request and workflow step calls to omit repeated template bodies. Reuse returned step instructions instead of immediately calling next_workflow_step again.
+Prefer manager_context to combine pending inbox plus up to four owned task inspections. dispatch_workflow_step validates/decides, routes and spawns one exact pinned step/revision; optional watchContextUsedPct arms a local watch. Do not also select_model/spawn_agent. run:false stops after the skip; uncertain admission never triggers an automatic retry. Reuse nextActions on resolve_manager_request/accept_task_outcome instead of extra next-step reads. Use list_manager_requests({view:"pending"}) for a standalone inbox check to combine unresolved identities and original content; fetch get_manager_request only for contentDeferred. Omit view for full history/task state. Use compact:true on resolve_manager_request and workflow step calls to omit repeated template bodies. Reuse returned step instructions instead of immediately calling next_workflow_step again.
 
 Task loops (local desktop): stage=scout|implement|review|fix|validate|land|other is optional descriptive history metadata. To attribute or continue a task, parentSessionId must name your live local manager; save the returned taskId and dispatchId, then pass taskId and afterDispatchId under that same manager and project. Without valid manager attribution, stage and automatic respawn provenance may launch but are not recorded or linked. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
 
@@ -229,11 +229,10 @@ What comes back, and what to do with it:
   not know". And the check runs only inside the fallover walk, so it is not
   applied when you PIN a provider, when the capability has no alternatives, or
   to the provider a mode shift lands on.
-ROUTING IS NOT AUTOMATIC, AND ASKING IS YOUR JOB. select_model is a read-only
-question and nothing asks it for you: the host does not consult routing when it
-spawns, so a dispatch that never asked carries no decision and appears nowhere in
-the decision log. Believing your spawn was routed when you never asked is the way
-to misread its result.
+Plain spawn_agent does not select a model: ask select_model first and pass its
+decision through. dispatch_workflow_step already performs that routing call for
+its pinned step, so do not route separately or spawn a duplicate worker.
+The composed receipt includes the selection and its decisionId for inspection.
 Two rules DO bind on every spawn the host receives, asked or not, because they
 live in the spawn sanitizer rather than in routing:
 - THE CEILING is per directory (longest matching ancestor wins, default
@@ -480,25 +479,37 @@ so one bad path never costs you the other rows. "unpushed" is ABSENT (not 0)
 when a branch has no upstream — that is "nowhere to push", not "nothing to
 push".`),
 	"workflows": strings.TrimSpace(`
-Manager request inbox: call list_manager_requests once at the start of each user
-or wake turn, then get_manager_request for exact original user content. Trusted
-host identity/status is separate from that user content. Resolve all independent
-intents together with resolve_manager_request and its revision CAS before work.
-Unknown delivery can be resolved here without replaying provider input. Rejected
-requests cannot be resolved. Corrections keep taskId; independent followups create
-linked visible tasks immediately. accept_task_outcome records explicit acceptance
-of concrete evidence, never permission to dispatch/publish. Ready tasks require
-normal manager decisions. Synthetic fleet events are not new user requests.
+Use manager_context once per user/wake turn to read the pending inbox and up to
+four relevant owned tasks together. It preserves outcome evidence and per-task
+errors, omits templates/history, and marks oversized evidence contentDeferred.
+Fetch a deferred task with next_workflow_step before accepting its outcome.
+Standalone inbox reads remain list_manager_requests {view:"pending"}; only
+contentDeferred originals need get_manager_request. Host identities are separate
+from userContent, which remains user input. Resolve independent intents together
+with resolve_manager_request and revision CAS before work. Unknown delivery is
+not proof of consumption and must never be replayed; rejected requests are
+ineligible. Corrections keep taskId, followups name dependencies, and synthetic
+fleet events never become new user requests.
 
-Fleet workflows are LOCAL DESKTOP only. On a headless or older host these tools
-return unavailable — report that plainly, never claim a workflow ran.
+resolve_manager_request returns nextActions; accept_task_outcome does likewise
+for ready followups. These bounded projections grant no dispatch/publish authority.
+Use manager_context for remaining task IDs when nextActionsRemaining is nonzero.
+start_workflow {cwd,title} is only for legacy work without inbox capture.
 
-Per task: start_workflow {cwd,title} BEFORE the first worker, then
-next_workflow_step {taskId,cwd} for instructions, and decide_workflow_step for
-conditional or bounded-repair steps. Copy the returned step metadata verbatim
-into select_model and spawn_agent. Never infer a pass from an idle worker or a
-merely well-formed result. A required review step cannot be skipped by any tool
-here; only the human can waive a step, from the desktop Task Inspector.
+For a known pinned step, dispatch_workflow_step {taskId,cwd,stepId,
+expectedTaskRevision,templateParams} prepares, routes and spawns through existing
+gates. An explicit conditional run/reason can ride that call; run:false records
+only that skip and stops. Required review cannot be skipped here; host-user
+waivers in Task Inspector never constitute passing evidence. Optional local
+watchContextUsedPct arms a one-shot watch; if it fails, retry only notify_when.
+Never repeat an uncertain admission; inspect task/worker/dispatch state first.
+Keep select_model/spawn_agent for manual dispatch, not an extra phase after the
+composition. Concrete outcomes still require explicit accept_task_outcome;
+idle and well-formed schemas alone are not success.
+
+Fleet workflows require a compatible LOCAL DESKTOP. A paired worker may execute
+remotely while that desktop owns the task. Headless/older hosts return unavailable;
+report that plainly, never claim a workflow ran.
 
 Task references (get_task_references / update_task_references) are where a task
 records the PR, ticket and links that belong to it:

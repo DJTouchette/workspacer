@@ -2,13 +2,14 @@ import {
   workflowBusy,
   ownerTask,
   workflowInstructions,
+  workflowDispatchPlan,
   configuredWorkflowProjectKey,
 } from './fleetWorkflowRuntime';
 import path from 'path';
 import fs from 'fs';
 import { configService, getConfigDir } from './configService';
 import { libraryService } from './libraryService';
-import { dispatchTemplateParams } from '../lib/dispatchTemplate';
+import { dispatchTemplateParams, validateDispatchTemplateParams } from '../lib/dispatchTemplate';
 import { dispatchHistoryStore, TaskConflict } from './dispatchHistoryStore';
 import { claudeSessionStore } from './claudeSessionStore';
 import { FleetWorkflowStore, WorkflowConflict } from './fleetWorkflowStore';
@@ -18,6 +19,7 @@ import {
   type WorkflowTemplate,
 } from '../shared/fleetWorkflow';
 import { workflowSelections } from '../shared/fleetWorkflowSelection';
+import { taskDependencyState } from '../shared/managerRequests';
 import { managerReplacementState } from './managerReplacementState';
 import {
   configureManagerRequests,
@@ -83,11 +85,37 @@ export function fleetWorkflowRequest(
       managerReplacementState.activeCount(callerSessionId)
     )
       throw new Error('A dispatch is being admitted; resolve the inbox request after it settles');
-    if (['requestInbox', 'requestContent', 'resolveRequest', 'acceptTaskOutcome'].includes(op))
-      return managerRequests().handle(
+    if (['requestInbox', 'requestContent', 'resolveRequest', 'acceptTaskOutcome'].includes(op)) {
+      const response = managerRequests().handle(
         request as import('../shared/managerRequests').ManagerRequestOperation,
         callerSessionId ?? '',
-      ) as WorkflowResponse;
+      );
+      if (response.ok && (op === 'resolveRequest' || op === 'acceptTaskOutcome')) {
+        const tasks = (op === 'resolveRequest' ? response.tasks : response.readyTasks) as
+          Array<{ taskId: string }> | undefined;
+        const ids = [...new Set((tasks ?? []).map((t) => t.taskId))];
+        response.nextActionsRemaining = Math.max(0, ids.length - 4);
+        response.nextActions = ids.slice(0, 4).map((taskId) => {
+          try {
+            const task = dispatchHistoryStore.task(taskId);
+            if (!task || task.ownerSessionId !== callerSessionId || !task.workflow)
+              return { taskId, unavailable: true };
+            return {
+              taskId,
+              cwd: task.projectCwd,
+              revision: task.revision ?? 0,
+              instructions: workflowInstructions(task),
+              dispatch: workflowDispatchPlan(task),
+            };
+          } catch {
+            // An optional projection must never disguise a committed resolution
+            // or evidence acceptance as a failed mutation.
+            return { taskId, unavailable: true };
+          }
+        });
+      }
+      return response as WorkflowResponse;
+    }
     if (op === 'select' && request.cwd)
       request = { ...request, cwd: configuredWorkflowProjectKey(request.cwd) };
     if (op === 'list')
@@ -181,7 +209,12 @@ export function fleetWorkflowRequest(
             request.title!,
             fleetWorkflowStore.pin(d),
           );
-          return { ok: true, task, instructions: workflowInstructions(task) };
+          return {
+            ok: true,
+            task,
+            instructions: workflowInstructions(task),
+            dispatch: workflowDispatchPlan(task),
+          };
         },
       );
     }
@@ -211,6 +244,53 @@ export function fleetWorkflowRequest(
         taskRevision: task.revision ?? 0,
       };
     }
+    if (op === 'prepareDispatch') {
+      // No provider/network IO or routing inside this transaction. Check ownership/revision and
+      // an optional conditional decision against the same locked task row.
+      dispatchHistoryStore.requestTransaction(() => {
+        const task = ownerTask(request.taskId, callerSessionId, request.cwd);
+        if (
+          !Number.isSafeInteger(request.expectedTaskRevision) ||
+          request.expectedTaskRevision! < 0
+        )
+          throw new Error('Dispatch requires expectedTaskRevision');
+        if ((task.revision ?? 0) !== request.expectedTaskRevision) throw new TaskConflict();
+        if (taskDependencyState(task, dispatchHistoryStore.list()) !== 'ready')
+          throw new Error('Task dependencies or cancellation prevent dispatch');
+        const index = task.workflow!.steps.findIndex(
+          (s) => !['completed', 'skipped', 'waived'].includes(s.state),
+        );
+        const step = task.workflow!.definition.steps[index];
+        if (
+          !step ||
+          step.id !== request.stepId ||
+          task.workflow!.steps[index].state !== 'planned' ||
+          task.dispatchReservation ||
+          workflowBusy.has(task.taskId)
+        )
+          throw new Error('Requested workflow step is not available for dispatch');
+        if (request.run !== false)
+          validateDispatchTemplateParams(
+            task.workflow!.templates[step.template].body,
+            request.templateParams ?? {},
+          );
+        if (request.run !== undefined) {
+          if (typeof request.run !== 'boolean' || typeof request.reason !== 'string')
+            throw new Error('Conditional decision requires run and reason');
+          dispatchHistoryStore.workflowDecision(task.taskId, step.id, request.run, request.reason);
+        }
+      });
+      const task = ownerTask(request.taskId, callerSessionId, request.cwd);
+      const dispatch = request.run === false ? undefined : workflowDispatchPlan(task);
+      if (!dispatch && request.run !== false)
+        return { ok: false, code: 'ineligible', error: workflowInstructions(task) };
+      return {
+        ok: true,
+        ...(dispatch ? { dispatch } : { skipped: true }),
+        taskRevision: task.revision ?? 0,
+        instructions: workflowInstructions(task),
+      };
+    }
     if (op === 'next' || op === 'decide') {
       let task = ownerTask(request.taskId, callerSessionId, request.cwd);
       if (op === 'decide') {
@@ -231,7 +311,12 @@ export function fleetWorkflowRequest(
         // Return that committed revision and derive instructions from it.
         task = ownerTask(task.taskId, callerSessionId, request.cwd);
       }
-      return { ok: true, task: structuredClone(task), instructions: workflowInstructions(task) };
+      return {
+        ok: true,
+        task: structuredClone(task),
+        instructions: workflowInstructions(task),
+        dispatch: workflowDispatchPlan(task),
+      };
     }
     throw new Error('Unknown workflow operation');
   } catch (e) {
