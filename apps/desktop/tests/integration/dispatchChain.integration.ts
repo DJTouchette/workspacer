@@ -1661,6 +1661,9 @@ it('handles unknown paired replay idempotently and returns a local task result o
     const scout = await mcpSpawn('session:manager-other', {
       provider: 'claude',
       model: route.value.model,
+      capability: route.value.capability,
+      decisionId: route.value.decisionId,
+      toolScope: 'view',
       role: 'scout',
       executionTarget: 'paired',
       remoteCwd: ready.repo,
@@ -1693,7 +1696,17 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .task(scout.value.taskId)!
       .attempts.find((a) => a.sessionId === scout.value.sessionId)!;
     expect(scoutAttempt.handoff?.head).toBe(ready.sourceCommit);
+    const localRoute = await mcpTool('session:manager-other', 'select_model', {
+      cwd: project,
+      provider: 'codex',
+      role: 'implementer',
+    });
+    expect(localRoute.isError, localRoute.text).toBe(false);
     const local = await mcpSpawn('session:manager-other', {
+      model: localRoute.value.model,
+      capability: localRoute.value.capability,
+      decisionId: localRoute.value.decisionId,
+      toolScope: 'operator',
       parentSessionId: 'manager-other',
       taskId: scout.value.taskId,
       afterDispatchId: scout.value.dispatchId,
@@ -1723,6 +1736,9 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(fs.readFileSync(localEvidence, 'utf8')).toContain('Synthetic provider claim');
     const dirtyTask = await makeHandoffTask('Retain an unfinished remote checkpoint', false);
     const dirty = await mcpSpawn('session:manager-other', {
+      capability: route.value.capability,
+      decisionId: route.value.decisionId,
+      toolScope: 'view',
       provider: 'claude',
       model: route.value.model,
       role: 'implementer',

@@ -60,13 +60,26 @@ func TestARefusedSidecarIsSaidOutLoud(t *testing.T) {
 
 // Control: the best-effort branch on the same host stays loud too, so the two
 // outcomes are distinguishable in the log.
-func TestBestEffortWithoutAMechanismStaysLoud(t *testing.T) {
+func TestBestEffortReportsActualMechanismState(t *testing.T) {
 	t.Setenv("PATH", "")
 	m := &Manager{pub: &refusePub{}, sandboxMode: sandbox.ModeBestEffort}
 	mf := Manifest{ID: "p", Dir: t.TempDir(), Server: &ServerSpec{Command: "/bin/true"}}
 
 	buf := captureLogTo(t)
 	_, _, run := m.sandboxSidecar(mf)
+	// macOS resolves its system sandbox by absolute path, so clearing PATH
+	// does not remove the mechanism. Check that real branch as well, rather
+	// than demanding an unsandboxed warning for a sandboxed launch.
+	if sandbox.Wrap(mf.Server.Command, nil, sandbox.Policy{WriteRoots: []string{mf.Dir}}).Available {
+		if !run || strings.Contains(buf.String(), "WITHOUT sandboxing") {
+			t.Fatalf("available sandbox was misreported: %q", buf.String())
+		}
+		events := m.pub.(*refusePub).events
+		if len(events) != 1 || events[0].Type != "plugin.sandboxed" {
+			t.Fatalf("sandboxed event missing: %+v", events)
+		}
+		return
+	}
 	if !run {
 		t.Skip("best-effort refused on this host")
 	}
