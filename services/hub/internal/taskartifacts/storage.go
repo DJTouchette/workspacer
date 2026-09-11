@@ -19,6 +19,10 @@ const GitPackLimit uint64 = 512 << 20
 var storageMu sync.Mutex
 
 type storageContextKey struct{}
+type storageGuard struct {
+	dir   string
+	limit int64
+}
 type StorageStatus struct {
 	Used      int64  `json:"usedBytes"`
 	Reserved  int64  `json:"reservedBytes"`
@@ -58,7 +62,7 @@ func directoryBytes(dir string) (int64, error) {
 }
 
 func InspectStorage(root string) (StorageStatus, error) {
-	status := StorageStatus{Limit: StorageBudget, TaskLimit: TaskStorageBudget, Retention: "accepted worktrees/spools are cleaned; Git quarantines retained and counted until explicit maintenance"}
+	status := StorageStatus{Limit: StorageBudget, TaskLimit: TaskStorageBudget, Retention: "Git history stays retained and counts against the storage limit. Automatic cleanup removes accepted execution worktrees and report copies after the grace period."}
 	used, err := directoryBytes(root)
 	if os.IsNotExist(err) {
 		return status, nil
@@ -143,5 +147,5 @@ func ReserveStorage(root, dir string) (func(), error) {
 }
 
 func WithStorageLimit(ctx context.Context, dir string) context.Context {
-	return context.WithValue(ctx, storageContextKey{}, dir)
+	return context.WithValue(ctx, storageContextKey{}, storageGuard{dir, TaskStorageBudget - 2*TaskBytes})
 }

@@ -32,6 +32,7 @@ interface ArtifactManifest {
   entries: Array<HandoffSelection & { size: number; sha256: string }>;
 }
 export interface HandoffRecord {
+  storage?: { usedBytes: number; reservedBytes: number; limitBytes: number; taskLimitBytes: number; retention: string };
   allocationId?: string;
   plan: {
     version: number;
@@ -145,11 +146,14 @@ export async function setTaskHandoffDisposition(
       digest: receipt.custody,
       keep: request.keep,
     };
-    await remote('agents.taskHandoff', disposition);
+    const target = await remote<HandoffRecord>('agents.taskHandoff', disposition);
     await callHub('agents.taskHandoff', disposition);
     dispatchHistoryStore.observeHandoff(attempt.sessionId, {
       ...attempt.handoff,
       disposition: request.keep ? 'keep' : 'accepted',
+      note: target.state === 'cleaned'
+        ? 'The execution copy has been cleaned. Local review custody is retained.'
+        : receipt.storage?.retention,
     });
     return { ok: true, task: dispatchHistoryStore.task(request.taskId)! };
   } catch (error) {

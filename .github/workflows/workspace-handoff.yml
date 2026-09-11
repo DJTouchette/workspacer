@@ -91,7 +91,7 @@ jobs:
           go-version: '1.25.4'
       - name: Native handoff custody and filesystem fixtures
         working-directory: services/hub
-        run: go test -count=1 ./internal/taskartifacts ./cmd/brain -run 'Test(Handoff|TaskHandoff|Windows|Chunk|Portable|Manifest|Checkpoint)'
+        run: go test -count=1 ./internal/taskartifacts ./cmd/brain -run 'Test(Handoff|TaskHandoff|Windows|Chunk|Portable|Manifest|Checkpoint|Storage)'
   desktop-and-hub:
     runs-on: ubuntu-latest
     timeout-minutes: 40

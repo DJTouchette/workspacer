@@ -99,7 +99,8 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 	}
 	base = append(base, "-c", "core.longpaths=true", "-c", "fetch.unpackLimit=1")
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
-	storageDir, _ := ctx.Value(storageContextKey{}).(string)
+	guard, _ := ctx.Value(storageContextKey{}).(storageGuard)
+	storageDir := guard.dir
 	for _, arg := range args {
 		if (arg == "fetch" || arg == "worktree" || arg == "init") && storageDir != "" {
 			exe, err := os.Executable()
@@ -120,7 +121,7 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 	}
 	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
 	if len(cmd.Args) > 1 && cmd.Args[1] == gitChildFlag {
-		cmd.Env = append(cmd.Env, "WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()), "WORKSPACER_TASK_STORAGE="+storageDir)
+		cmd.Env = append(cmd.Env, "WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()), "WORKSPACER_TASK_STORAGE="+storageDir, "WORKSPACER_TASK_STORAGE_LIMIT="+strconv.FormatInt(guard.limit, 10))
 		pipe, err := cmd.StdinPipe()
 		if err != nil {
 			return nil, err
@@ -131,8 +132,12 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 	cmd.Stdout = out
 	// Git stderr can include credential-bearing URLs from host configuration.
 	// Never return it to RPC callers or workers.
-	cmd.Stderr = &boundedOutput{limit: 8192}
+	stderr := &boundedOutput{limit: 8192}
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "HANDOFF_STORAGE_LIMIT") {
+			return nil, fmt.Errorf("quarantine storage limit reached; partial Git data retained and charged, no worker admitted")
+		}
 		return nil, fmt.Errorf("handoff Git operation failed or timed out; check approved repository access and checkpoint")
 	}
 	return out.Bytes(), nil

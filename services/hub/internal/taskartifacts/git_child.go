@@ -1,9 +1,11 @@
 package taskartifacts
 
 import (
+	"fmt"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 )
 
@@ -21,7 +23,8 @@ func init() {
 	}
 	parentwatch.Watch(stopGitChild)
 	dir := os.Getenv("WORKSPACER_TASK_STORAGE")
-	if dir == "" {
+	limit, limitErr := strconv.ParseInt(os.Getenv("WORKSPACER_TASK_STORAGE_LIMIT"), 10, 64)
+	if dir == "" || limitErr != nil || limit <= 0 || limit > TaskStorageBudget {
 		os.Exit(1)
 	}
 	go func() {
@@ -36,7 +39,8 @@ func init() {
 			case <-tick.C:
 				size, err := directoryBytes(dir)
 				free, freeErr := freeStorageBytes(dir)
-				if err != nil || freeErr != nil || size > TaskStorageBudget-2*TaskBytes || free < StorageFreeFloor {
+				if err != nil || freeErr != nil || size > limit || free < StorageFreeFloor {
+					fmt.Fprintln(os.Stderr, "HANDOFF_STORAGE_LIMIT")
 					stopGitChild()
 				}
 			}
@@ -49,7 +53,8 @@ func init() {
 		os.Exit(1)
 	}
 	size, err := directoryBytes(dir)
-	if err != nil || size > TaskStorageBudget-2*TaskBytes {
+	if err != nil || size > limit {
+		fmt.Fprintln(os.Stderr, "HANDOFF_STORAGE_LIMIT")
 		stopGitChild()
 	}
 	os.Exit(0)
