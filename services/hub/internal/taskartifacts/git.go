@@ -158,7 +158,11 @@ func CheckSource(ctx context.Context, repo string, selectedArtifacts ...string) 
 		}
 		selected[name] = true
 	}
-	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	crlf, err := sourceCRLF(ctx, repo)
+	if err != nil {
+		return "", "", err
+	}
+	status, err := Git(ctx, repo, "", "-c", "core.autocrlf="+crlf, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return "", "", err
 	}
@@ -268,12 +272,41 @@ func gitBaseArgs(helper string) []string {
 }
 
 func gitEnvironment() []string {
+	env := gitHostEnvironment()
+	env = append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
+	return env
+}
+
+func gitHostEnvironment() []string {
 	var env []string
-	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP"} {
+	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "XDG_CONFIG_HOME"} {
 		if v, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+v)
 		}
 	}
-	env = append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
 	return env
+}
+
+// Read only this inert scalar from the user's effective configuration. No
+// status/filter/checkout command executes with inherited Git configuration.
+func sourceCRLF(ctx context.Context, repo string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "--no-pager", "--no-replace-objects", "config", "--get", "core.autocrlf")
+	cmd.Dir = repo
+	cmd.Env = gitHostEnvironment()
+	out := &boundedOutput{limit: 32}
+	cmd.Stdout = out
+	cmd.Stderr = &boundedOutput{limit: 128}
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+			return "false", nil
+		}
+		return "", fmt.Errorf("source line-ending policy could not be read")
+	}
+	value := strings.ToLower(strings.TrimSpace(out.String()))
+	if value != "true" && value != "false" && value != "input" {
+		return "", fmt.Errorf("unsupported source line-ending policy")
+	}
+	return value, nil
 }

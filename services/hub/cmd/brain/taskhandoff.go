@@ -802,6 +802,14 @@ func importHandoffCode(ctx context.Context, binding taskartifacts.RepositoryBind
 	if _, err := taskartifacts.Git(ctx, repo, "", "init", "--bare", "--template=", "--object-format="+m.ObjectFormat); err != nil {
 		return "", err
 	}
+	// These are generated repositories, not the user's active Git config.
+	// Ordinary worker/review Git commands must see the same checkout semantics
+	// and long-path support as the host import adapter.
+	for key, value := range map[string]string{"core.longpaths": "true", "core.autocrlf": "false", "core.eol": "lf", "core.hooksPath": os.DevNull, "core.attributesFile": os.DevNull, "core.fsmonitor": "false"} {
+		if _, err := taskartifacts.Git(ctx, repo, "", "config", "--local", key, value); err != nil {
+			return "", err
+		}
+	}
 	ref, _ := binding.Ref(task, direction)
 	if localSource != "" {
 		// This path is derived only from an origin-owned verified custody

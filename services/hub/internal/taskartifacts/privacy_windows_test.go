@@ -1,9 +1,11 @@
 package taskartifacts
 
 import (
+	"context"
 	"golang.org/x/sys/windows"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +51,41 @@ func TestWindowsPrivateCustodyUsesNativeACLAndIdentity(t *testing.T) {
 	}
 	if before == after {
 		t.Fatal("replacement allocation reused native identity")
+	}
+}
+
+func TestWindowsCRLFSourceUsesCommittedCheckpointSemantics(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		if _, err := Git(ctx, repo, "", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init")
+	git("config", "--local", "core.autocrlf", "true")
+	file := filepath.Join(repo, "code.txt")
+	if err := os.WriteFile(file, []byte("line one\nline two\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "code.txt")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "LF checkpoint")
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	git("-c", "core.autocrlf=true", "checkout", "--", "code.txt")
+	data, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(data), "\r\n") {
+		t.Fatal("fixture did not produce Windows CRLF checkout", err)
+	}
+	if _, _, err := CheckSource(ctx, repo); err != nil {
+		t.Fatal("ordinary CRLF source refused", err)
+	}
+	if err := os.WriteFile(file, []byte("actual uncommitted edit\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CheckSource(ctx, repo); err == nil {
+		t.Fatal("tracked WIP was hidden")
 	}
 }
