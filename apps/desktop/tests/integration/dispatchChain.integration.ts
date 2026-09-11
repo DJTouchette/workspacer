@@ -1480,6 +1480,41 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(launch.mock.calls).toHaveLength(localLaunches);
     expect(await (await fetch(ready.control + '/evidence')).json()).toHaveLength(2);
     expect(record).toEqual(completed);
+    const makeHandoffTask = async (title: string, scout: boolean) => {
+      const request = inbox.prepare('manager-other', title);
+      if (!request.available) throw new Error('Request capture unavailable');
+      const send = inbox.beginDelivery('manager-other', request.requestId)!;
+      inbox.finishDelivery(request.requestId, send.deliveryId, 'accepted');
+      const answer = await mcpTool('session:manager-other', 'resolve_manager_request', {
+        requestId: request.requestId,
+        expectedRevision: inbox.request('manager-other', request.requestId).revision,
+        intents: [
+          {
+            key: 'workspace-handoff',
+            kind: 'create',
+            cwd: project,
+            title,
+            provenance: 'explicit',
+            reason: 'User selected exact workspace handoff',
+          },
+        ],
+      });
+      expect(answer.isError, answer.text).toBe(false);
+      const task = answer.value.tasks[0] as DispatchTask;
+      const decide = await mcpTool('session:manager-other', 'decide_workflow_step', {
+        cwd: project,
+        taskId: task.taskId,
+        stepId: 'scout',
+        run: scout,
+        reason: 'Exercise selected workspace stage order',
+      });
+      expect(decide.isError, decide.text).toBe(false);
+      return task;
+    };
+    const exactTask = await makeHandoffTask(
+      'Implement from exact source checkpoint and scout evidence',
+      false,
+    );
     const sourceBefore = execFileSync('git', ['-C', project, 'status', '--porcelain=v1']);
     const exact = await mcpSpawn('session:manager-other', {
       provider: 'claude',
@@ -1491,7 +1526,13 @@ it('handles unknown paired replay idempotently and returns a local task result o
       remoteCwd: ready.repo,
       parentSessionId: 'manager-other',
       worktree: true,
-      message: 'Implement using the verified scout evidence. Return the required report.',
+      taskId: exactTask.taskId,
+      workflowStepId: 'implement',
+      stage: 'implement',
+      template: 'ship-task',
+      templateParams: {
+        task: 'Implement using the verified scout evidence. Return the required report.',
+      },
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [
@@ -1524,7 +1565,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
     ).toContain('Task evidence');
     await fetch(ready.control + '/control', {
       method: 'POST',
-      body: JSON.stringify({ kind: 'handoff-result', reply: 'Reported test claim: passed.' }),
+      body: JSON.stringify({
+        kind: 'handoff-result',
+        reply: 'Reported test claim: passed.\n```wks-result\n{"commit":"worker-claimed-C"}\n```',
+      }),
     });
     await vi.waitFor(() => expect(exactRecord.handoff?.state).toBe('received'), { timeout: 20000 });
     const imported = history
@@ -1552,6 +1596,7 @@ it('handles unknown paired replay idempotently and returns a local task result o
     );
     // Report-only execution return, followed by local implementation under
     // the same original owner/task, uses the production local spawn route.
+    const scoutTask = await makeHandoffTask('Scout remotely, then implement locally', true);
     const scout = await mcpSpawn('session:manager-other', {
       provider: 'claude',
       model: route.value.model,
@@ -1560,7 +1605,11 @@ it('handles unknown paired replay idempotently and returns a local task result o
       remoteCwd: ready.repo,
       parentSessionId: 'manager-other',
       worktree: true,
-      message: 'Return a scout report without modifying code.',
+      taskId: scoutTask.taskId,
+      workflowStepId: 'scout',
+      stage: 'scout',
+      template: 'scout-task',
+      templateParams: { task: 'Return a scout report without modifying code.' },
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [],
@@ -1573,7 +1622,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
       .find((r) => r.localSessionId === scout.value.sessionId)!;
     await fetch(ready.control + '/control', {
       method: 'POST',
-      body: JSON.stringify({ kind: 'handoff-scout', reply: 'Scout report ready.' }),
+      body: JSON.stringify({
+        kind: 'handoff-scout',
+        reply: 'Scout report ready.\n```wks-result\n{"findings":"Synthetic scout evidence"}\n```',
+      }),
     });
     await vi.waitFor(() => expect(scoutRecord.handoff?.state).toBe('received'), { timeout: 20000 });
     const scoutAttempt = history
@@ -1586,7 +1638,10 @@ it('handles unknown paired replay idempotently and returns a local task result o
       afterDispatchId: scout.value.dispatchId,
       stage: 'implement',
       worktree: true,
-      message: 'Implement using the returned scout evidence.',
+      workflowStepId: 'implement',
+      role: 'implementer',
+      template: 'ship-task',
+      templateParams: { task: 'Implement using the returned scout evidence.' },
       taskSource: {
         binding: ready.handoffBinding,
         artifacts: [{ name: 'implementation.md', kind: 'report' }],

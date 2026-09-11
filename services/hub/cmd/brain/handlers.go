@@ -557,7 +557,8 @@ func analyticsRecentStub() (json.RawMessage, error) {
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
-	Handoff *handoffReceiptSelector `json:"handoff,omitempty"`
+	TaskSource json.RawMessage         `json:"taskSource,omitempty"`
+	Handoff    *handoffReceiptSelector `json:"handoff,omitempty"`
 	// Provider backend: claude (default) | codex | copilot | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.

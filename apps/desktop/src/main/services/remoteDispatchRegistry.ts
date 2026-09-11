@@ -39,6 +39,13 @@ export interface RemoteDispatchUpdate {
 }
 
 export interface RemoteDispatchRecord {
+  preparation?: {
+    params: Record<string, unknown>;
+    templateBody?: string;
+    taskId: string;
+    attemptId: string;
+    selection?: { fromTask?: string; cwd?: string; producer?: string };
+  };
   /** Stable task transfer binding, independent of manager succession. */
   handoff?: {
     binding: string;
@@ -46,6 +53,7 @@ export interface RemoteDispatchRecord {
     state: string;
     reviewCwd?: string;
     sourceCwd?: string;
+    reviewEvidenceId?: string;
   };
   dispatchId: string;
   localSessionId?: string;
@@ -175,6 +183,7 @@ export class RemoteDispatchRegistry {
         localSessionId: r.localSessionId,
         resultSchema: r.resultSchema,
         handoff: r.handoff,
+        preparation: r.preparation,
         peer: r.peer,
         ownerSessionId: r.ownerSessionId,
         sessionId: typeof r.sessionId === 'string' ? r.sessionId : undefined,
@@ -394,10 +403,45 @@ export class RemoteDispatchRegistry {
     this.persist();
   }
 
+  /** Byte custody survives manager retirement and uncertain message delivery.
+   * This gate grants no wake; accept() still owns that separate decision. */
+  acceptHandoffUpdate(
+    peer: string,
+    payload: unknown,
+  ): { record: RemoteDispatchRecord; update: RemoteDispatchUpdate } | undefined {
+    const update = this.parseUpdate(payload);
+    if (!update || update.protocol !== DISPATCH_PROTOCOL || !update.final) return;
+    const record = this.records.get(update.dispatchId);
+    if (
+      !record?.handoff ||
+      record.peer !== peer ||
+      record.state !== 'open' ||
+      (record.sessionId && record.sessionId !== update.sessionId) ||
+      update.seq <= record.ackedSeq ||
+      (record.lastUpdate && record.lastUpdate.seq > update.seq)
+    )
+      return;
+    return { record, update };
+  }
+
   setHandoff(dispatchId: string, handoff: NonNullable<RemoteDispatchRecord['handoff']>): void {
     const record = this.records.get(dispatchId);
     if (!record) throw new Error('Unknown dispatch');
     record.handoff = handoff;
+    this.persist();
+  }
+
+  setPreparation(
+    dispatchId: string,
+    preparation: NonNullable<RemoteDispatchRecord['preparation']>,
+  ): void {
+    if (Buffer.byteLength(JSON.stringify(preparation)) > 64 * 1024)
+      throw new Error(
+        'Handoff task summary exceeds 64 KiB; attach long reports as selected artifacts',
+      );
+    const record = this.records.get(dispatchId);
+    if (!record) throw new Error('Unknown dispatch');
+    record.preparation = preparation;
     this.persist();
   }
 

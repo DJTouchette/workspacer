@@ -114,7 +114,7 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 
 // CheckSource refuses execution-valued local config before status can invoke
 // clean filters. It never stages, commits, stashes or modifies the user index.
-func CheckSource(ctx context.Context, repo string) (string, string, error) {
+func CheckSource(ctx context.Context, repo string, selectedArtifacts ...string) (string, string, error) {
 	config, err := Git(ctx, repo, "", "config", "--local", "--name-only", "--list")
 	if err != nil {
 		return "", "", err
@@ -124,7 +124,14 @@ func CheckSource(ctx context.Context, repo string) (string, string, error) {
 			return "", "", fmt.Errorf("unsupported checkpoint configuration: %s", key)
 		}
 	}
-	status, err := Git(ctx, repo, "", "status", "--porcelain=v1", "--untracked-files=all")
+	statusArgs := []string{"status", "--porcelain=v1", "--untracked-files=all"}
+	if len(selectedArtifacts) > 0 {
+		statusArgs = append(statusArgs, "--", ".")
+		for _, name := range selectedArtifacts {
+			statusArgs = append(statusArgs, ":(exclude,literal)"+name)
+		}
+	}
+	status, err := Git(ctx, repo, "", statusArgs...)
 	if err != nil {
 		return "", "", err
 	}

@@ -38,7 +38,8 @@ func handoffFixtureRemote(t *testing.T, seed string) (string, string) {
 	if err := os.Mkdir(remote, 0700); err != nil {
 		t.Fatal(err)
 	}
-	handoffFixtureGit(t, remote, "init", "--bare", "--initial-branch=main")
+	format := handoffFixtureGit(t, seed, "rev-parse", "--show-object-format")
+	handoffFixtureGit(t, remote, "init", "--bare", "--initial-branch=main", "--object-format="+format)
 	handoffFixtureGit(t, remote, "config", "http.receivepack", "true")
 	handoffFixtureGit(t, seed, "push", remote, "HEAD:refs/heads/main")
 	git, err := exec.LookPath("git")
@@ -125,5 +126,118 @@ func TestHandoffCleanupRequiresCustodyAcceptanceAndGrace(t *testing.T) {
 		if handoffCleanupAllowed(binding, &copy, now) == nil {
 			t.Fatal("unsafe cleanup admitted")
 		}
+	}
+}
+
+func TestHandoffGitRemoteExactCheckpoint(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			ctx := context.Background()
+			sourceRoot := t.TempDir()
+			handoffFixtureGit(t, sourceRoot, "init", "--initial-branch=main", "--object-format="+format)
+			if err := os.WriteFile(filepath.Join(sourceRoot, "marker.txt"), []byte("A\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			handoffFixtureGit(t, sourceRoot, "add", "marker.txt")
+			handoffFixtureGit(t, sourceRoot, "commit", "-m", "remote checkpoint A")
+			base := handoffFixtureGit(t, sourceRoot, "rev-parse", "HEAD")
+			remote, ca := handoffFixtureRemote(t, sourceRoot)
+			source := filepath.Join(t.TempDir(), "selected-source")
+			handoffFixtureGit(t, sourceRoot, "worktree", "add", "-b", "Task-Source", source, "HEAD")
+			if err := os.WriteFile(filepath.Join(source, "marker.txt"), []byte("B\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			handoffFixtureGit(t, source, "add", "marker.txt")
+			handoffFixtureGit(t, source, "commit", "-m", "selected checkpoint B")
+			commit := handoffFixtureGit(t, source, "rev-parse", "HEAD")
+			reports := filepath.Join(source, ".workspacer", "reports")
+			if err := os.MkdirAll(reports, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(reports, "brief.md"), []byte("scout bytes\r\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			indexPath := handoffFixtureGit(t, source, "rev-parse", "--path-format=absolute", "--git-path", "index")
+			beforeIndex, err := os.ReadFile(indexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			origin, receiver := &registry{handoffRoot: t.TempDir()}, &registry{handoffRoot: t.TempDir()}
+			binding := taskartifacts.RepositoryBinding{ID: "fixture-repository-binding", Revision: "1", Repository: sourceRoot, Remote: remote, RefPrefix: "refs/heads/wks-transfer", Owner: "receiver-owner", Origin: "fixture-desktop-origin", Export: true, Import: true, Cleanup: true, TLSCAFile: ca}
+			fixtureWriteBindings(t, origin.handoffRoot, binding)
+			fixtureWriteBindings(t, receiver.handoffRoot, binding)
+			call := func(r *registry, p handoffRequest) (handoffRecord, error) {
+				raw, err := json.Marshal(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				answer, err := r.handle(ctx, "agents.taskHandoff", raw)
+				if err != nil {
+					return handoffRecord{}, err
+				}
+				var rec handoffRecord
+				if err := json.Unmarshal(answer, &rec); err != nil {
+					t.Fatal(err)
+				}
+				return rec, nil
+			}
+			prepare := func(task string, move bool) (handoffRecord, error) {
+				frozen, err := call(origin, handoffRequest{Operation: "freeze", OriginKey: "local-host", Binding: binding.ID, Task: task, Provider: "synthetic", Cwd: source, Selections: []handoffSelection{{Name: "brief.md", Kind: "report"}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if frozen.Plan.Input.Commit != commit || frozen.Plan.Input.ObjectFormat != format {
+					t.Fatal("source checkpoint identity lost")
+				}
+				if _, err := call(receiver, handoffRequest{Operation: "reserve", OriginKey: binding.Owner, Binding: binding.ID, Task: task, Plan: &frozen.Plan}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := call(receiver, handoffRequest{Operation: "prepare", OriginKey: binding.Owner, Binding: binding.ID, Task: task}); err == nil {
+					t.Fatal("required bytes missing but prepared")
+				}
+				if _, err := call(origin, handoffRequest{Operation: "publish", OriginKey: "local-host", Binding: binding.ID, Task: task}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := call(receiver, handoffRequest{Operation: "write", OriginKey: binding.Owner, Binding: binding.ID, Task: task, Direction: "input", Data: []byte("scout bytes\r\n")}); err != nil {
+					t.Fatal(err)
+				}
+				if move {
+					ref, _ := binding.Ref(task, "input")
+					if _, err := binding.GitRemote(ctx, sourceRoot, "push", "--force-with-lease="+ref+":"+commit, "--", remote, base+":"+ref); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return call(receiver, handoffRequest{Operation: "prepare", OriginKey: binding.Owner, Binding: binding.ID, Task: task})
+			}
+			task := strings.Repeat("a", 32)
+			prepared, err := prepare(task, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := handoffFixtureGit(t, prepared.Allocation, "rev-parse", "HEAD"); got != commit {
+				t.Fatal("receiver used HEAD A instead of selected B")
+			}
+			copied, err := os.ReadFile(filepath.Join(prepared.Allocation, ".workspacer", "handoffs", task, "brief.md"))
+			if err != nil || string(copied) != "scout bytes\r\n" {
+				t.Fatal("artifact bytes changed", err)
+			}
+			if _, err := receiver.preparedHandoff(ctx, binding.Owner, task, &handoffReceiptSelector{Version: 1, Binding: binding.ID, Digest: prepared.Digest, AllocationId: prepared.AllocationId}); err != nil {
+				t.Fatal(err)
+			}
+			restarted := &registry{handoffRoot: receiver.handoffRoot}
+			if _, err := call(restarted, handoffRequest{Operation: "prepare", OriginKey: binding.Owner, Binding: binding.ID, Task: task}); err != nil {
+				t.Fatal("prepared receipt did not survive restart", err)
+			}
+			if _, err := prepare(strings.Repeat("b", 32), true); err == nil {
+				t.Fatal("moved input ref admitted")
+			}
+			afterIndex, err := os.ReadFile(indexPath)
+			if err != nil || string(beforeIndex) != string(afterIndex) {
+				t.Fatal("source index changed")
+			}
+			if handoffFixtureGit(t, sourceRoot, "rev-parse", "HEAD") != base || handoffFixtureGit(t, source, "symbolic-ref", "--short", "HEAD") != "Task-Source" {
+				t.Fatal("user branches changed")
+			}
+		})
 	}
 }

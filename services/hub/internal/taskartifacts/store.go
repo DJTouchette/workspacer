@@ -21,14 +21,49 @@ func Open(dir string, m Manifest) (*Store, error) {
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
+	before, err := os.Lstat(dir)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("invalid task staging directory")
+	}
 	r, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
+	}
+	after, err := r.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		r.Close()
+		return nil, fmt.Errorf("task staging directory changed")
 	}
 	return &Store{r, m}, nil
 }
 
 func (s *Store) Close() error { return s.root.Close() }
+
+func (s *Store) openFile(index int, write bool) (*os.File, error) {
+	name := fmt.Sprintf("%d.bytes", index)
+	before, err := s.root.Lstat(name)
+	flags := os.O_RDONLY
+	if write {
+		flags = os.O_RDWR
+	}
+	if os.IsNotExist(err) && write {
+		flags |= os.O_CREATE | os.O_EXCL
+	} else if err != nil {
+		return nil, err
+	} else if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("artifact staging links or special files refused")
+	}
+	f, err := s.root.OpenFile(name, flags, 0600)
+	if err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
+	if err != nil || !after.Mode().IsRegular() || !singleLink(f, after) || before != nil && !os.SameFile(before, after) {
+		f.Close()
+		return nil, fmt.Errorf("artifact staging identity changed")
+	}
+	return f, nil
+}
 
 func (s *Store) entry(index int) (Entry, error) {
 	if index < 0 || index >= len(s.manifest.Entries) {
@@ -47,8 +82,7 @@ func (s *Store) Write(index int, offset int64, b []byte) error {
 	if offset < 0 || len(b) > ChunkBytes || offset > e.Size || int64(len(b)) > e.Size-offset {
 		return fmt.Errorf("chunk exceeds selected artifact bounds")
 	}
-	name := fmt.Sprintf("%d.bytes", index)
-	f, err := s.root.OpenFile(name, os.O_CREATE|os.O_RDWR, 0600)
+	f, err := s.openFile(index, true)
 	if err != nil {
 		return err
 	}
@@ -88,7 +122,7 @@ func (s *Store) Read(index int, offset int64) ([]byte, error) {
 	if offset < 0 || offset > e.Size {
 		return nil, fmt.Errorf("invalid artifact offset")
 	}
-	f, err := s.root.Open(fmt.Sprintf("%d.bytes", index))
+	f, err := s.openFile(index, false)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +135,7 @@ func (s *Store) Read(index int, offset int64) ([]byte, error) {
 
 func (s *Store) Verify() error {
 	for i, e := range s.manifest.Entries {
-		f, err := s.root.Open(fmt.Sprintf("%d.bytes", i))
+		f, err := s.openFile(i, false)
 		if err != nil {
 			return fmt.Errorf("required artifact missing: %s", e.Name)
 		}
@@ -132,11 +166,17 @@ func (s *Store) Materialize(dir string) error {
 		if err := dest.MkdirAll(filepath.Dir(e.Name), 0700); err != nil {
 			return err
 		}
+		if info, err := dest.Lstat(e.Name); err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("materialized artifact links or special files refused")
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		if existing, err := dest.Open(e.Name); err == nil {
 			info, statErr := existing.Stat()
 			b, readErr := io.ReadAll(io.LimitReader(existing, e.Size+1))
+			linksOK := statErr == nil && singleLink(existing, info)
 			existing.Close()
-			if statErr != nil || !info.Mode().IsRegular() || readErr != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
+			if statErr != nil || !linksOK || !info.Mode().IsRegular() || readErr != nil || int64(len(b)) != e.Size || Digest(b) != e.SHA256 {
 				return fmt.Errorf("materialized artifact changed: %s", e.Name)
 			}
 			continue
@@ -158,7 +198,7 @@ func (s *Store) Materialize(dir string) error {
 		if err != nil {
 			return err
 		}
-		in, err := s.root.Open(fmt.Sprintf("%d.bytes", i))
+		in, err := s.openFile(i, false)
 		if err != nil {
 			out.Close()
 			return err

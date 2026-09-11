@@ -35,6 +35,8 @@ export interface DispatchAttempt extends DispatchLink {
     artifacts?: Array<{ name: string; kind: string; sha256: string }>;
     artifactTask?: string;
     disposition?: 'accepted' | 'keep';
+    canResume?: boolean;
+    canRefresh?: boolean;
   };
   dispatchId: string;
   sessionId: string;
@@ -118,6 +120,8 @@ export type TaskEditRequest = { taskId: string; expectedTaskRevision: number } &
   | { action: 'waive'; stepId: string; reason?: string }
   | { action: 'links'; links: TaskLinks }
   | { action: 'handoff-disposition'; dispatchId: string; keep: boolean }
+  | { action: 'handoff-resume'; dispatchId: string }
+  | { action: 'handoff-refresh'; dispatchId: string }
 );
 export type TaskEditResponse =
   | { ok: true; task: DispatchTask }

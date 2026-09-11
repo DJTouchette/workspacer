@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   importTaskHandoffResult,
   prepareTaskHandoff,
+  validateTaskSource,
   type HandoffCall,
   type HandoffRecord,
 } from './taskHandoff';
@@ -16,6 +17,7 @@ const manifest = {
   entries: [{ name: 'brief.md', kind: 'report' as const, size: 5, sha256: 'd'.repeat(64) }],
 };
 const record: HandoffRecord = {
+  allocationId: 'fixture-allocation',
   plan: {
     version: 1,
     binding: 'binding-fixture-1',
@@ -38,7 +40,17 @@ describe('workspace handoff host orchestration', () => {
         const p = raw as { operation: string };
         calls.push(`${side}:${p.operation}`);
         return (
-          p.operation === 'read' ? { data: Buffer.from('hello').toString('base64') } : record
+          p.operation === 'read'
+            ? { data: Buffer.from('hello').toString('base64') }
+            : {
+                ...record,
+                state:
+                  p.operation === 'freeze'
+                    ? 'frozen'
+                    : p.operation === 'reserve'
+                      ? 'transferring'
+                      : record.state,
+              }
         ) as T;
       };
     await prepareTaskHandoff(
@@ -74,12 +86,12 @@ describe('workspace handoff host orchestration', () => {
     const local: HandoffCall = async <T>(_method: string, raw: unknown) =>
       ((raw as { operation: string }).operation === 'read'
         ? { data: Buffer.from('hello').toString('base64') }
-        : record) as T;
+        : { ...record, state: 'frozen' }) as T;
     const peer: HandoffCall = async <T>(_method: string, raw: unknown) => {
       const p = raw as { operation: string };
       calls.push(p.operation);
       if (p.operation === 'write') throw new Error('link interrupted');
-      return record as T;
+      return { ...record, state: 'transferring' } as T;
     };
     await expect(
       prepareTaskHandoff(
@@ -92,5 +104,42 @@ describe('workspace handoff host orchestration', () => {
       ),
     ).rejects.toThrow('link interrupted');
     expect(calls).toEqual(['reserve', 'write']);
+  });
+
+  it('resumes a lost preparation ACK without writing sealed files again', async () => {
+    const calls: string[] = [];
+    const local: HandoffCall = async <T>(_method: string, raw: unknown) => {
+      calls.push((raw as { operation: string }).operation);
+      return { ...record, state: 'frozen' } as T;
+    };
+    const peer: HandoffCall = async <T>(_method: string, raw: unknown) => {
+      calls.push((raw as { operation: string }).operation);
+      return record as T;
+    };
+    await prepareTaskHandoff(
+      manifest.task,
+      { binding: record.plan.binding, artifacts: [], outputs: [] },
+      'claude',
+      '/source',
+      local,
+      peer,
+    );
+    expect(calls).toEqual(['freeze', 'reserve']);
+  });
+
+  it('refuses unsupported dirty or optional-input fields instead of dropping them', () => {
+    const source = { binding: record.plan.binding, artifacts: [], outputs: [] };
+    expect(() => validateTaskSource({ ...source, mode: 'dirty' })).toThrow(
+      'Unsupported taskSource field',
+    );
+    expect(() => validateTaskSource({ binding: source.binding })).toThrow(
+      'Explicit artifact selections',
+    );
+    expect(() =>
+      validateTaskSource({
+        ...source,
+        artifacts: [{ name: 'brief.md', kind: 'report', required: false }],
+      }),
+    ).toThrow('Unsupported artifact selection');
   });
 });

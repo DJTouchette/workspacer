@@ -73,12 +73,21 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("artifact count exceeds %d", MaxFiles)
 	}
 	seen := map[string]bool{}
+	directories := map[string]string{}
 	var total int64
 	for _, e := range m.Entries {
 		if err := ValidName(e.Name); err != nil {
 			return err
 		}
 		key := strings.ToLower(e.Name)
+		parts := strings.Split(e.Name, "/")
+		for i := 1; i < len(parts); i++ {
+			dir := strings.Join(parts[:i], "/")
+			if prior, ok := directories[strings.ToLower(dir)]; ok && prior != dir {
+				return fmt.Errorf("artifact directory case collision")
+			}
+			directories[strings.ToLower(dir)] = dir
+		}
 		if seen[key] {
 			return fmt.Errorf("artifact path collision: %s", e.Name)
 		}

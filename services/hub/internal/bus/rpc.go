@@ -1118,9 +1118,11 @@ func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMe
 		p["originKey"], _ = json.Marshal(owner)
 		return json.Marshal(p)
 	}
-	if method == "agents.dispatchReplay" {
+	if method == "agents.dispatchReplay" || method == "fleet.dispatchCapabilities" {
 		var p map[string]json.RawMessage
-		if json.Unmarshal(raw, &p) != nil || p == nil {
+		if method == "fleet.dispatchCapabilities" && (len(raw) == 0 || string(raw) == "null") {
+			p = map[string]json.RawMessage{}
+		} else if json.Unmarshal(raw, &p) != nil || p == nil {
 			return nil, fmt.Errorf("invalid replay")
 		}
 		for key := range p {

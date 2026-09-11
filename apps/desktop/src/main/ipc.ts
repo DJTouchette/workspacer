@@ -1481,11 +1481,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         ? { ok: false, code: 'unavailable', error: TASK_INSPECTOR_UNAVAILABLE }
         : request.action === 'handoff-disposition'
           ? (await import('./services/taskHandoff')).setTaskHandoffDisposition(request)
-          : dispatchHistoryStore.editByHostUser(
-              request,
-              (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
-              (id) => workflowBusy.has(id),
-            ),
+          : request.action === 'handoff-resume'
+            ? (await import('./services/pairedDispatch')).resumePairedHandoff(request)
+            : request.action === 'handoff-refresh'
+              ? (await import('./services/pairedDispatch')).refreshPairedHandoff(request)
+              : dispatchHistoryStore.editByHostUser(
+                  request,
+                  (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+                  (id) => workflowBusy.has(id),
+                ),
   );
   ipcMain.handle(
     IPC.TASK_INSPECTOR_OPEN,

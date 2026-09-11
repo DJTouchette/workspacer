@@ -6,6 +6,8 @@ import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { pairedDestinationKey } from './pairedWorkerConnection';
 import { randomBytes } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 export interface HandoffSelection {
   name: string;
@@ -16,9 +18,44 @@ export interface TaskSource {
   artifacts: HandoffSelection[];
   outputs: HandoffSelection[];
 }
+
+export function validateTaskSource(raw: unknown): TaskSource {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw new Error('taskSource must be an explicit repository and artifact selection');
+  const value = raw as Record<string, unknown>;
+  for (const key of Object.keys(value))
+    if (!['binding', 'artifacts', 'outputs'].includes(key))
+      throw new Error(`Unsupported taskSource field: ${key}`);
+  if (typeof value.binding !== 'string' || !/^[a-z0-9][a-z0-9_-]{15,127}$/.test(value.binding))
+    throw new Error('Select an approved repository binding');
+  const selections = (raw: unknown): HandoffSelection[] => {
+    if (!Array.isArray(raw) || raw.length > 128)
+      throw new Error('Explicit artifact selections must be arrays of at most 128 files');
+    return raw.map((entry) => {
+      if (
+        !entry ||
+        typeof entry !== 'object' ||
+        Object.keys(entry).some((key) => !['name', 'kind'].includes(key)) ||
+        typeof entry.name !== 'string' ||
+        entry.name.length < 1 ||
+        entry.name.length > 200 ||
+        !['report', 'criteria', 'image', 'log'].includes(entry.kind)
+      )
+        throw new Error('Unsupported artifact selection; select its logical name and kind');
+      return { name: entry.name, kind: entry.kind } as HandoffSelection;
+    });
+  };
+  return {
+    binding: value.binding,
+    artifacts: selections(value.artifacts),
+    outputs: selections(value.outputs),
+  };
+}
 export interface HandoffReceiptSelector {
+  version: 1;
   binding: string;
   digest: string;
+  allocationId: string;
 }
 interface ArtifactManifest {
   version: number;
@@ -30,6 +67,8 @@ interface ArtifactManifest {
   entries: Array<HandoffSelection & { size: number; sha256: string }>;
 }
 export interface HandoffRecord {
+  executionSession?: string;
+  allocationId?: string;
   plan: {
     version: number;
     binding: string;
@@ -47,6 +86,42 @@ export interface HandoffRecord {
 export type HandoffCall = <T>(method: string, params: unknown) => Promise<T>;
 const remote: HandoffCall = (method, params) => pairedWorkerConnection.call(method, params);
 const CHUNK_BYTES = 256 * 1024;
+
+export function taskHandoffSourceSelection(
+  source: TaskSource,
+  taskId: unknown,
+  predecessor: unknown,
+  owner: string,
+): { fromTask?: string; cwd?: string; producer?: string } {
+  if (predecessor === undefined) return {};
+  const task = typeof taskId === 'string' ? dispatchHistoryStore.task(taskId) : undefined;
+  const attempt = task?.attempts.find((a) => a.dispatchId === predecessor);
+  if (!task || task.ownerSessionId !== owner || !attempt)
+    throw new Error('Source predecessor must belong to this same owned task');
+  if (attempt.executionTarget === 'paired') {
+    const record = remoteDispatchRegistry
+      .list()
+      .find((r) => r.localSessionId === attempt.sessionId);
+    if (
+      !record?.handoff ||
+      record.handoff.binding !== source.binding ||
+      record.handoff.state !== 'received' ||
+      record.peer !== pairedDestinationKey()
+    )
+      throw new Error('Predecessor code and reports are not in verified local custody');
+    return { fromTask: record.dispatchId, producer: record.dispatchId };
+  }
+  const canonical = fs.realpathSync(attempt.executionCwd);
+  const info = fs.statSync(canonical);
+  const identity = attempt.worktree?.directoryIdentity;
+  if (
+    !info.isDirectory() ||
+    canonical !== path.resolve(attempt.executionCwd) ||
+    (identity && (info.dev !== identity.dev || info.ino !== identity.ino))
+  )
+    throw new Error('Source predecessor workspace identity changed');
+  return { cwd: canonical, producer: attempt.dispatchId };
+}
 
 export async function prepareLocalTaskHandoff(
   source: TaskSource,
@@ -189,6 +264,7 @@ export async function prepareTaskHandoff(
   cwd: string,
   local: HandoffCall = callHub,
   peer: HandoffCall = remote,
+  selection: { fromTask?: string; cwd?: string; producer?: string } = {},
 ): Promise<HandoffRecord> {
   const frozen = await local<HandoffRecord>('agents.taskHandoff', {
     operation: 'freeze',
@@ -196,15 +272,24 @@ export async function prepareTaskHandoff(
     task,
     provider,
     cwd,
+    ...selection,
     selections: source.artifacts,
     outputs: source.outputs,
   });
-  await peer('agents.taskHandoff', {
+  if (frozen.state !== 'frozen')
+    throw new Error('This source task has already advanced; do not redispatch it');
+  const reservation = await peer<HandoffRecord>('agents.taskHandoff', {
     operation: 'reserve',
     binding: source.binding,
     task,
     plan: frozen.plan,
   });
+  if (reservation.digest !== frozen.digest)
+    throw new Error('Receiver reserved a different handoff plan');
+  if (reservation.state === 'prepared' && reservation.allocation && reservation.allocationId)
+    return reservation;
+  if (reservation.state !== 'transferring')
+    throw new Error('Handoff admission is already advanced; reconcile it before retrying');
   await local('agents.taskHandoff', { operation: 'publish', binding: source.binding, task });
   await copyArtifacts(local, peer, source.binding, task, 'input', frozen.plan.input);
   const prepared = await peer<HandoffRecord>('agents.taskHandoff', {
@@ -212,7 +297,12 @@ export async function prepareTaskHandoff(
     binding: source.binding,
     task,
   });
-  if (prepared.state !== 'prepared' || prepared.digest !== frozen.digest || !prepared.allocation)
+  if (
+    prepared.state !== 'prepared' ||
+    prepared.digest !== frozen.digest ||
+    !prepared.allocation ||
+    !prepared.allocationId
+  )
     throw new Error('Target did not verify the selected checkpoint and required artifacts');
   return prepared;
 }
@@ -252,5 +342,5 @@ export async function importTaskHandoffResult(
     task,
     digest: received.custody,
   });
-  return received;
+  return { ...received, executionSession: sealed.executionSession };
 }

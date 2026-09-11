@@ -88,6 +88,24 @@ if (mode === 'links') {
   task.workflow!.steps[1].outcome = { commit: 'abc1234' };
   task.workflow!.steps[2].state = 'planned';
 }
+if (mode === 'handoff-ready' || mode === 'handoff-preparing') {
+  const attempt = task.attempts[0];
+  attempt.executionTarget = 'paired';
+  attempt.executionHost = 'Home workspace';
+  attempt.worktree!.directoryIdentity = undefined;
+  attempt.handoff = {
+    state: mode === 'handoff-ready' ? 'received' : 'preparing',
+    base: 'a'.repeat(40),
+    head: 'b'.repeat(40),
+    reviewCwd: '/private/review/worktree',
+    artifactTask: 'fixture-transfer',
+    directoryIdentity: { dev: 1, ino: 2 },
+    artifacts: [
+      { name: 'scout.md', kind: 'report', sha256: 'c'.repeat(64) },
+      { name: 'diagram.png', kind: 'image', sha256: 'd'.repeat(64) },
+    ],
+  };
+}
 if (mode === 'failed' || mode === 'stale') {
   task.workflow!.steps[1].state = 'failed';
   task.workflow!.steps[1].outcome = { failure: 'Original failure evidence' };
@@ -164,6 +182,16 @@ const ipc = {
             run.state = 'waived';
             run.waiverId = audit.id;
             task.audit = [...(task.audit ?? []), audit];
+          } else if (request.action === 'handoff-refresh') {
+            const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
+            if (!attempt?.handoff)
+              return { ok: false, code: 'ineligible', error: 'No handoff result' };
+            attempt.handoff.state = 'received';
+          } else if (request.action === 'handoff-resume') {
+            const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
+            if (!attempt?.handoff)
+              return { ok: false, code: 'ineligible', error: 'No handoff preparation' };
+            attempt.handoff.state = 'preparing';
           } else if (request.action === 'handoff-disposition') {
             const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
             if (!attempt?.handoff)

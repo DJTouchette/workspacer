@@ -42,7 +42,7 @@ import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { spawnPairedWorker, selectPairedModel } from './pairedDispatch';
-import { prepareLocalTaskHandoff, type TaskSource } from './taskHandoff';
+import { prepareLocalTaskHandoff, validateTaskSource, type TaskSource } from './taskHandoff';
 import { listDispatchTargets } from './dispatchTargets';
 import { remoteDispatchRegistry } from './remoteDispatchRegistry';
 import { createAgentStatusSummaryService } from './agentStatusSummaryRuntime';
@@ -690,7 +690,7 @@ export function registerHubCapabilities(): void {
       executionTarget,
       remoteCwd,
       handoff,
-      taskSource,
+      taskSource: requestedTaskSource,
     } = (params ?? {}) as {
       taskSource?: TaskSource;
       handoff?: import('./taskHandoff').HandoffReceiptSelector;
@@ -844,6 +844,7 @@ export function registerHubCapabilities(): void {
     // finished-looking text, so a dispatch missing its task slot must fail
     // loudly instead of dispatching without the reasoning only the caller can
     // write (lib/dispatchTemplate.ts carries the rule).
+    const taskSource = requestedTaskSource === undefined ? undefined : validateTaskSource(requestedTaskSource);
     if (handoff)
       throw new Error('Exact handoff receipt admission requires the workspace execution backend; no worker started');
     let message = reqMessage;

@@ -30,6 +30,7 @@ export interface DispatchCwdChoice {
 }
 
 export interface DispatchTarget {
+  handoff?: { version: number; transport: string; ownerKey?: string };
   /** The peers.json name. This is the string a dispatch passes as `target`, and
    *  the string our federation link stamps on the callbacks that come home. */
   name: string;
@@ -66,6 +67,7 @@ export interface DispatchTargetsAnswer {
 
 /** The shape fleet.dispatchCapabilities answers with (cmd/brain/remotedispatch.go). */
 interface CapabilitiesReply {
+  handoff?: { version: number; transport: string; ownerKey?: string };
   protocol?: number;
   executes?: boolean;
   scope?: string;
@@ -199,6 +201,18 @@ export async function listDispatchTargets(
       return {
         ...base,
         protocol,
+        ...(reply.handoff?.version === 1 && reply.handoff.transport === 'git-remote'
+          ? {
+              handoff: {
+                version: 1,
+                transport: 'git-remote',
+                ...(typeof reply.handoff.ownerKey === 'string' &&
+                reply.handoff.ownerKey.length <= 128
+                  ? { ownerKey: reply.handoff.ownerKey }
+                  : {}),
+              },
+            }
+          : {}),
         providers: Array.isArray(reply.providers) ? reply.providers : [],
         cwds: Array.isArray(reply.cwds) ? reply.cwds : [],
         ready: executes && base.connected,
@@ -217,7 +231,7 @@ export async function listDispatchTargets(
     targets,
     linkedButNotEnabled,
     note: targets.length
-      ? 'For the ready paired target, use spawn_agent with executionTarget="paired", cwd=the LOCAL task project, remoteCwd=one returned REMOTE cwd, and your own parentSessionId. Use select_dispatch_model with that remote cwd and an authenticated remote provider. Unknown authentication is unavailable. Do not use hub="paired"; this route is owned by the local desktop.'
+      ? 'For exact workspace handoff, use spawn_agent with executionTarget="paired", cwd=the LOCAL task project, taskSource=the approved repository binding and selected artifacts/outputs, and your own parentSessionId. The host prepares the checkpoint and bytes before launch. Missing repository policy or handoff support refuses before any worker starts. Use select_dispatch_model with a returned remote cwd and an authenticated provider. A legacy spawn without taskSource uses the receiver checkout; it does not transfer local code or reports. This route is owned by the local desktop, not hub="paired".'
       : linkedButNotEnabled.length
         ? 'Federation links are present, but no paired worker target is enabled. Use Connect to Server → Workers only to keep this manager local.'
         : 'No paired worker target is enabled. Use Connect to Server → Workers only; ordinary spawns continue to run locally.',

@@ -92,3 +92,69 @@ func TestManifestSealBindsOwnershipAndCommit(t *testing.T) {
 		t.Fatal("commit not bound")
 	}
 }
+
+func TestInterruptedChunkAndMaterializationRetry(t *testing.T) {
+	m := fixtureManifest()
+	dir := t.TempDir()
+	// Simulate a process dying midway through an append, before its ACK.
+	if err := os.WriteFile(filepath.Join(dir, "0.bytes"), []byte("he"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Write(0, 0, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	if err := s.Materialize(dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Materialize(dest); err != nil {
+		t.Fatal("lost finalize ACK was not idempotent", err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "report.md"), []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if s.Materialize(dest) == nil {
+		t.Fatal("overwrote unexpected materialized bytes")
+	}
+}
+
+func TestStagingRejectsLinks(t *testing.T) {
+	m := fixtureManifest()
+	for _, hard := range []bool{false, true} {
+		dir := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "private.md")
+		if err := os.WriteFile(outside, []byte("hello"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if hard {
+			err = os.Link(outside, filepath.Join(dir, "0.bytes"))
+		} else {
+			err = os.Symlink(outside, filepath.Join(dir, "0.bytes"))
+		}
+		if err != nil {
+			t.Log("filesystem does not support fixture link", err)
+			continue
+		}
+		s, err := Open(dir, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Verify() == nil {
+			t.Fatal("linked bytes admitted")
+		}
+		if s.Write(0, 0, []byte("wrong")) == nil {
+			t.Fatal("linked bytes overwritten")
+		}
+		s.Close()
+		got, _ := os.ReadFile(outside)
+		if string(got) != "hello" {
+			t.Fatal("outside bytes changed")
+		}
+	}
+}

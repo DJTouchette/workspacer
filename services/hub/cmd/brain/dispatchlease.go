@@ -117,8 +117,12 @@ func (r *registry) dispatchPrepare(ctx context.Context, raw json.RawMessage) (js
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if prior := s.m[id]; prior != nil {
-			if prior.lease == nil || prior.lease.Handoff == nil || *prior.lease.Handoff != *p.Handoff || prior.lease.Owner != p.RemoteOrigin.OwnerKey || prior.lease.Claimed {
+			if prior.lease == nil || prior.lease.Handoff == nil || *prior.lease.Handoff != *p.Handoff || prior.lease.Owner != p.RemoteOrigin.OwnerKey || prior.lease.Claimed || prior.lease.Cwd != rec.Allocation || prior.lease.Repo != rec.Allocation || prior.lease.Provider != p.Provider || !prior.lease.Worktree {
 				return nil, fmt.Errorf("handoff admission already claimed or mismatched; do not repeat spawn")
+			}
+			prior.lease.Expires = time.Now().Add(5 * time.Minute).UnixMilli()
+			if err := s.persistLocked(); err != nil {
+				return nil, err
 			}
 			return jsonResult(map[string]any{"cwd": prior.lease.Cwd, "repo": prior.lease.Repo, "worktree": true, "branch": prior.lease.Branch, "handoff": prior.lease.Handoff})
 		}
@@ -244,11 +248,20 @@ func (r *registry) expireDispatchLease(id string) {
 }
 
 func (r *registry) claimDispatch(ctx context.Context, p spawnParams) error {
+	if len(p.TaskSource) != 0 {
+		return fmt.Errorf("taskSource requires the origin workspace manager backend; no fallback worker started")
+	}
 	if p.RemoteOrigin == nil {
+		if p.Handoff != nil {
+			return fmt.Errorf("exact handoff admission requires an authenticated paired origin")
+		}
 		return nil
 	}
+	var prepared *handoffRecord
 	if p.Handoff != nil {
-		if _, err := r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff); err != nil {
+		var err error
+		prepared, err = r.preparedHandoff(ctx, p.RemoteOrigin.OwnerKey, p.RemoteOrigin.DispatchID, p.Handoff)
+		if err != nil {
 			return err
 		}
 	}
@@ -261,6 +274,9 @@ func (r *registry) claimDispatch(ctx context.Context, p spawnParams) error {
 	}
 	if (d.lease.Handoff == nil) != (p.Handoff == nil) || (p.Handoff != nil && *p.Handoff != *d.lease.Handoff) {
 		return fmt.Errorf("spawn must consume the exact verified handoff receipt")
+	}
+	if prepared != nil && (p.Cwd != prepared.Allocation || d.lease.Repo != prepared.Allocation || !d.lease.Worktree) {
+		return fmt.Errorf("lease allocation differs from verified handoff")
 	}
 	d.lease.Claimed = true
 	return s.persistLocked()

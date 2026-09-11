@@ -735,6 +735,34 @@ function TaskDetails({
                       : `Preparing on ${a.executionHost ?? 'destination workspace'}`}
             </div>
             {a.handoff?.note && <p style={meta}>{a.handoff.note}</p>}
+            {a.handoff?.canRefresh && (
+              <SmallButton
+                label="Refresh result"
+                disabled={busy}
+                onClick={() =>
+                  void edit({
+                    taskId: task.taskId,
+                    expectedTaskRevision: task.revision ?? 0,
+                    action: 'handoff-refresh',
+                    dispatchId: a.dispatchId,
+                  })
+                }
+              />
+            )}
+            {a.handoff?.canResume && (
+              <SmallButton
+                label="Resume preparation"
+                disabled={busy}
+                onClick={() =>
+                  void edit({
+                    taskId: task.taskId,
+                    expectedTaskRevision: task.revision ?? 0,
+                    action: 'handoff-resume',
+                    dispatchId: a.dispatchId,
+                  })
+                }
+              />
+            )}
             {a.handoff?.disposition && (
               <p style={meta}>
                 {a.handoff.disposition === 'keep'
@@ -753,7 +781,20 @@ function TaskDetails({
                 {a.handoff.artifacts?.map((artifact, index) => (
                   <SmallButton
                     key={artifact.name}
-                    label={artifact.name}
+                    label={
+                      <span
+                        title={artifact.name}
+                        style={{
+                          display: 'block',
+                          maxWidth: '16rem',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {artifact.name}
+                      </span>
+                    }
                     onClick={() =>
                       void open({
                         taskId: task.taskId,

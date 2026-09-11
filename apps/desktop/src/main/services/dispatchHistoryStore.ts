@@ -515,8 +515,13 @@ export class DispatchHistoryStore {
     this.flush();
   }
 
-  observeHandoff(sessionId: string, handoff: NonNullable<DispatchAttempt['handoff']>): void {
-    if (!this.writing) return this.transaction(() => this.observeHandoff(sessionId, handoff));
+  observeHandoff(
+    sessionId: string,
+    handoff: NonNullable<DispatchAttempt['handoff']>,
+    evidenceId?: string,
+  ): void {
+    if (!this.writing)
+      return this.transaction(() => this.observeHandoff(sessionId, handoff, evidenceId));
     const found = this.find(sessionId);
     if (!found || found.attempt.executionTarget !== 'paired')
       throw new Error('No admitted paired task');
@@ -528,6 +533,18 @@ export class DispatchHistoryStore {
       handoff = { ...handoff, directoryIdentity: { dev: stat.dev, ino: stat.ino } };
     }
     found.attempt.handoff = handoff;
+    if (evidenceId) found.attempt.reviewEvidenceId = evidenceId;
+    this.flush();
+  }
+
+  preparePairedHandoff(sessionId: string, cwd: string, branch: string): void {
+    if (!this.writing)
+      return this.transaction(() => this.preparePairedHandoff(sessionId, cwd, branch));
+    const attempt = this.find(sessionId)?.attempt;
+    if (!attempt?.handoff || attempt.executionTarget !== 'paired')
+      throw new Error('No preparing paired handoff');
+    attempt.executionCwd = cwd;
+    attempt.worktree = { requested: true, allocated: true, fallback: false, branch };
     this.flush();
   }
   startWorkflow(
@@ -782,7 +799,11 @@ export class DispatchHistoryStore {
         throw new Error('Artifact not selected for this task');
       const root = path.join(canonical, '.workspacer', 'handoffs', handoff.artifactTask);
       const target = fs.realpathSync(path.join(root, artifact.name));
-      if (!target.startsWith(root + path.sep) || !fs.statSync(target).isFile())
+      if (
+        target !== path.resolve(root, artifact.name) ||
+        !target.startsWith(root + path.sep) ||
+        !fs.statSync(target).isFile()
+      )
         throw new Error('Artifact left its verified task allocation');
       if (
         fs.statSync(target).size > 16 * 1024 * 1024 ||

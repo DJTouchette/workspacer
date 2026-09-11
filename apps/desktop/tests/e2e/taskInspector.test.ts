@@ -73,6 +73,28 @@ test.beforeEach(async ({ page }) => {
     });
   });
 });
+
+test('workspace handoff progress, artifact open and disposition at 360px', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 1000 });
+  await page.goto(`${base}?mode=handoff-preparing&width=360`);
+  await expect(page.getByText('Preparing on Home workspace', { exact: true })).toBeVisible();
+  await expect(page.getByText('a'.repeat(40), { exact: true })).toBeHidden();
+  await page.goto(`${base}?mode=handoff-ready&width=360`);
+  await expect(page.getByText('Ready for review', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'scout.md', exact: true }).click();
+  expect(
+    await page.evaluate(() => (window as unknown as { taskCalls: unknown[] }).taskCalls),
+  ).toContainEqual({ taskId: 'task-current', kind: 'handoff', dispatchId: 'attempt', artifact: 0 });
+  await page.getByRole('button', { name: 'diagram.png', exact: true }).click();
+  expect(
+    await page.evaluate(() => (window as unknown as { taskCalls: unknown[] }).taskCalls),
+  ).toContainEqual({ taskId: 'task-current', kind: 'handoff', dispatchId: 'attempt', artifact: 1 });
+  await page.getByRole('button', { name: 'Keep', exact: true }).click();
+  await expect(page.getByText('Kept for this task', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Accept outputs', exact: true }).click();
+  await expect(page.getByText('Outputs accepted.', { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+});
 for (const width of [360, 1280])
   test(`future required review skip and recorded work at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });

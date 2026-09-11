@@ -22,12 +22,14 @@ type handoffSelection struct {
 }
 
 type handoffReceiptSelector struct {
-	Binding string `json:"binding"`
-	Digest  string `json:"digest"`
+	Version      int    `json:"version"`
+	Binding      string `json:"binding"`
+	Digest       string `json:"digest"`
+	AllocationId string `json:"allocationId"`
 }
 
 func (r *registry) preparedHandoff(ctx context.Context, owner, task string, selector *handoffReceiptSelector) (*handoffRecord, error) {
-	if selector == nil {
+	if selector == nil || selector.Version != 1 {
 		return nil, fmt.Errorf("exact handoff receipt required")
 	}
 	binding, err := r.handoffBinding(selector.Binding, owner)
@@ -41,6 +43,10 @@ func (r *registry) preparedHandoff(ctx context.Context, owner, task string, sele
 	var rec handoffRecord
 	if taskartifacts.Decode(b, &rec) != nil || rec.Owner != owner || rec.State != "prepared" || rec.Plan.Input.Task != task || rec.Plan.Input.Origin != binding.Origin || rec.Plan.Revision != binding.Revision || rec.Digest != selector.Digest || rec.Allocation != filepath.Join(r.handoffDir(binding, task), "input-worktree") {
 		return nil, fmt.Errorf("handoff receipt does not match this admission")
+	}
+	identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
+	if err != nil || identity != rec.AllocationId || identity != selector.AllocationId {
+		return nil, fmt.Errorf("prepared allocation identity changed")
 	}
 	head, format, err := taskartifacts.CheckSource(ctx, rec.Allocation)
 	if err != nil || head != rec.Plan.Input.Commit || format != rec.Plan.Input.ObjectFormat {
@@ -70,19 +76,25 @@ type handoffPlan struct {
 }
 
 type handoffRecord struct {
-	Predecessor string                  `json:"predecessor,omitempty"`
-	Owner       string                  `json:"owner"`
-	Plan        handoffPlan             `json:"plan"`
-	Digest      string                  `json:"digest"`
-	State       string                  `json:"state"`
-	Allocation  string                  `json:"allocation,omitempty"`
-	Result      *taskartifacts.Manifest `json:"result,omitempty"`
-	Custody     string                  `json:"custody,omitempty"`
-	AcceptedAt  int64                   `json:"acceptedAt,omitempty"`
-	Keep        bool                    `json:"keep,omitempty"`
+	ExecutionSession string                  `json:"executionSession,omitempty"`
+	SourceRepo       string                  `json:"sourceRepo,omitempty"`
+	InputPin         string                  `json:"inputPin,omitempty"`
+	AllocationId     string                  `json:"allocationId,omitempty"`
+	SourceCwd        string                  `json:"sourceCwd,omitempty"`
+	Predecessor      string                  `json:"predecessor,omitempty"`
+	Owner            string                  `json:"owner"`
+	Plan             handoffPlan             `json:"plan"`
+	Digest           string                  `json:"digest"`
+	State            string                  `json:"state"`
+	Allocation       string                  `json:"allocation,omitempty"`
+	Result           *taskartifacts.Manifest `json:"result,omitempty"`
+	Custody          string                  `json:"custody,omitempty"`
+	AcceptedAt       int64                   `json:"acceptedAt,omitempty"`
+	Keep             bool                    `json:"keep,omitempty"`
 }
 
 type handoffRequest struct {
+	Producer   string                  `json:"producer,omitempty"`
 	FromTask   string                  `json:"fromTask,omitempty"`
 	Cwd        string                  `json:"cwd,omitempty"`
 	Operation  string                  `json:"operation"`
@@ -194,6 +206,26 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	switch p.Operation {
 	case "freeze", "reserve":
 		if readErr == nil {
+			if p.Operation == "freeze" {
+				if p.Provider != rec.Plan.Provider || p.FromTask != rec.Predecessor || len(p.Selections) != len(rec.Plan.Input.Entries) || len(p.Outputs) != len(rec.Plan.Outputs) {
+					return nil, fmt.Errorf("source freeze retry differs from the immutable selection")
+				}
+				for i, selected := range p.Selections {
+					if selected.Name != rec.Plan.Input.Entries[i].Name || selected.Kind != rec.Plan.Input.Entries[i].Kind {
+						return nil, fmt.Errorf("source artifact selection changed")
+					}
+				}
+				for i, out := range p.Outputs {
+					if out != rec.Plan.Outputs[i] {
+						return nil, fmt.Errorf("required output selection changed")
+					}
+				}
+				if rec.State == "pinning" {
+					if err := finishHandoffPin(ctx, &rec, dir); err != nil {
+						return nil, err
+					}
+				}
+			}
 			if p.Plan != nil {
 				digest, err := planDigest(*p.Plan)
 				if err != nil || digest != rec.Digest {
@@ -208,17 +240,17 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if len(entries) >= 32 {
 			return nil, fmt.Errorf("handoff capacity reached: accept and clean retained work before admitting more")
 		}
-		if err := os.MkdirAll(dir, 0700); err != nil {
+		if err := taskartifacts.MakePrivateDirectory(dir); err != nil {
 			return nil, err
 		}
 		if p.Operation == "freeze" {
 			if p.OriginKey != "local-host" || !binding.Export {
 				return nil, fmt.Errorf("local task export authority required")
 			}
-			if filepath.Clean(p.Cwd) != binding.Repository {
-				return nil, fmt.Errorf("selected source workspace does not match the approved repository binding")
+			if !filepath.IsAbs(p.Cwd) {
+				return nil, fmt.Errorf("selected source workspace must be absolute")
 			}
-			source, folder := binding.Repository, ".workspacer/reports"
+			source, folder := p.Cwd, ".workspacer/reports"
 			expectedCommit := ""
 			expectedArtifacts := map[string]string{}
 			if p.FromTask != "" {
@@ -246,8 +278,26 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 						return nil, fmt.Errorf("artifact was not returned by the selected predecessor")
 					}
 				}
+			} else {
+				approved, err := taskartifacts.Git(ctx, binding.Repository, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
+				if err != nil {
+					return nil, err
+				}
+				selected, err := taskartifacts.Git(ctx, source, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
+				if err != nil {
+					return nil, err
+				}
+				a, aErr := os.Stat(strings.TrimSpace(string(approved)))
+				b, bErr := os.Stat(strings.TrimSpace(string(selected)))
+				if aErr != nil || bErr != nil || !os.SameFile(a, b) {
+					return nil, fmt.Errorf("source checkpoint is outside the approved repository binding")
+				}
 			}
-			commit, format, err := taskartifacts.CheckSource(ctx, source)
+			artifactPaths := make([]string, 0, len(p.Selections))
+			for _, selected := range p.Selections {
+				artifactPaths = append(artifactPaths, folder+"/"+selected.Name)
+			}
+			commit, format, err := taskartifacts.CheckSource(ctx, source, artifactPaths...)
 			if err != nil {
 				return nil, err
 			}
@@ -268,20 +318,39 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 						return nil, fmt.Errorf("predecessor artifact changed since custody verification")
 					}
 				}
+			} else if p.Producer != "" {
+				if !taskartifacts.ID.MatchString(p.Producer) {
+					return nil, fmt.Errorf("invalid producer task identity")
+				}
+				m.Producer = p.Producer
 			}
-			after, afterFormat, err := taskartifacts.CheckSource(ctx, source)
+			after, afterFormat, err := taskartifacts.CheckSource(ctx, source, artifactPaths...)
 			if err != nil || after != commit || afterFormat != format {
 				return nil, fmt.Errorf("source checkpoint changed during freeze")
 			}
 			rec = handoffRecord{Owner: p.OriginKey, Plan: handoffPlan{1, binding.ID, binding.Revision, p.Provider, m, p.Outputs}, State: "frozen"}
 			rec.Predecessor = p.FromTask
+			rec.SourceCwd = source
+			common, err := taskartifacts.Git(ctx, source, "", "rev-parse", "--path-format=absolute", "--git-common-dir")
+			if err != nil {
+				return nil, err
+			}
+			rec.SourceRepo = filepath.Clean(strings.TrimSpace(string(common)))
+			rec.InputPin, err = binding.Ref(p.Task, "input")
+			if err != nil {
+				return nil, err
+			}
 			rec.Digest, err = planDigest(rec.Plan)
 			if err != nil {
 				return nil, err
 			}
 			// Retain the immutable plan before publication. Lost push replies
 			// resume the same generated ref; no alternative remote is selected.
+			rec.State = "pinning"
 			if err := saveHandoff(dir, &rec); err != nil {
+				return nil, err
+			}
+			if err := finishHandoffPin(ctx, &rec, dir); err != nil {
 				return nil, err
 			}
 		} else {
@@ -302,18 +371,16 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		}
 		return jsonResult(rec)
 	case "publish":
-		if !binding.Export || p.OriginKey != "local-host" {
+		if !binding.Export || p.OriginKey != "local-host" || rec.State != "frozen" {
 			return nil, fmt.Errorf("source publication requires local export authority")
 		}
 		ref, _ := binding.Ref(p.Task, "input")
-		_, err := binding.GitRemote(ctx, binding.Repository, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, rec.Plan.Input.Commit+":"+ref)
-		if err != nil {
-			// A lost successful push is accepted only at the exact expected ID.
-			got, e := binding.GitRemote(ctx, binding.Repository, "ls-remote", "--refs", "--", binding.Remote, ref)
-			fields := strings.Fields(string(got))
-			if e != nil || len(fields) != 2 || fields[0] != rec.Plan.Input.Commit || fields[1] != ref {
-				return nil, err
-			}
+		source := rec.SourceRepo
+		if source == "" {
+			source = binding.Repository
+		}
+		if err := publishHandoffRef(ctx, binding, source, rec.Plan.Input.Commit, ref); err != nil {
+			return nil, err
 		}
 		return jsonResult(rec)
 	case "write", "read":
@@ -339,6 +406,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 				return nil, err
 			}
 			return jsonResult(map[string]any{"offset": p.Offset + int64(len(p.Data))})
+		}
+		if p.Direction == "input" && rec.State == "transferring" || p.Direction == "result" && rec.State != "result-sealed" && rec.State != "received" {
+			return nil, fmt.Errorf("artifact custody is not yet verified")
 		}
 		b, err := store.Read(p.Index, p.Offset)
 		if err != nil {
@@ -373,6 +443,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		rec.Allocation, rec.State = allocation, "prepared"
+		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
+		if err != nil {
+			return nil, err
+		}
 		if err := saveHandoff(dir, &rec); err != nil {
 			return nil, err
 		}
@@ -392,10 +466,19 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		r.remote.mu.Lock()
 		dispatch := r.remote.m[p.Task]
 		finished := dispatch != nil && dispatch.lease != nil && dispatch.lease.Owner == p.OriginKey && dispatch.lease.Claimed && dispatch.last != nil && dispatch.last.Final
+		sessionID := ""
+		if finished {
+			sessionID = dispatch.sessionID
+		}
 		r.remote.mu.Unlock()
 		if !finished {
 			return nil, fmt.Errorf("worker outcome unresolved; result retained without sealing")
 		}
+		worker, found := findFleetSession(r.fleetSessions(ctx), sessionID)
+		if !found || worker.Status != "ended" && worker.AmbientState != "idle" {
+			return nil, fmt.Errorf("worker is active or its final status is unavailable; outputs retained")
+		}
+		rec.ExecutionSession = sessionID
 		commit, format, err := taskartifacts.CheckSource(ctx, rec.Allocation)
 		if err != nil {
 			rec.State = "needs-checkpoint"
@@ -488,6 +571,10 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, err
 		}
 		rec.Allocation, rec.State = allocation, "received"
+		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
+		if err != nil {
+			return nil, err
+		}
 		rec.Custody, _ = rec.Result.Seal()
 		if err := saveHandoff(dir, &rec); err != nil {
 			return nil, err
@@ -531,6 +618,21 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	}
 }
 
+func finishHandoffPin(ctx context.Context, rec *handoffRecord, dir string) error {
+	if rec.Owner != "local-host" || rec.State != "pinning" || rec.SourceRepo == "" || rec.InputPin == "" {
+		return fmt.Errorf("invalid source pin intent")
+	}
+	commit := rec.Plan.Input.Commit
+	if _, err := taskartifacts.Git(ctx, rec.SourceRepo, "", "update-ref", rec.InputPin, commit, strings.Repeat("0", len(commit))); err != nil {
+		got, checkErr := taskartifacts.Git(ctx, rec.SourceRepo, "", "rev-parse", "--verify", rec.InputPin)
+		if checkErr != nil || strings.TrimSpace(string(got)) != commit {
+			return fmt.Errorf("source pin changed or could not be retained")
+		}
+	}
+	rec.State = "frozen"
+	return saveHandoff(dir, rec)
+}
+
 func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBinding, repo, commit, ref string) error {
 	_, err := binding.GitRemote(ctx, repo, "push", "--porcelain", "--force-with-lease="+ref+":", "--", binding.Remote, commit+":"+ref)
 	if err == nil {
@@ -538,7 +640,10 @@ func publishHandoffRef(ctx context.Context, binding taskartifacts.RepositoryBind
 	}
 	got, checkErr := binding.GitRemote(ctx, repo, "ls-remote", "--refs", "--", binding.Remote, ref)
 	fields := strings.Fields(string(got))
-	if checkErr != nil || len(fields) != 2 || fields[0] != commit || fields[1] != ref {
+	if checkErr == nil && len(fields) == 2 && (fields[0] != commit || fields[1] != ref) {
+		return fmt.Errorf("handoff ref moved away from the selected checkpoint; retained task must be reconciled")
+	}
+	if checkErr != nil || len(fields) != 2 {
 		return err
 	}
 	return nil
@@ -689,6 +794,10 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 	if rec.Allocation != filepath.Join(dir, "input-worktree") || r.remote == nil {
 		return fmt.Errorf("cleanup allocation identity mismatch")
 	}
+	identity, err := taskartifacts.DirectoryIdentity(rec.Allocation)
+	if err != nil || identity != rec.AllocationId {
+		return fmt.Errorf("cleanup blocked: allocation was replaced")
+	}
 	r.remote.mu.Lock()
 	d := r.remote.m[task]
 	var sessionID string
@@ -767,6 +876,9 @@ func (r *registry) cleanupHandoff(ctx context.Context, binding taskartifacts.Rep
 
 func (r *registry) handoffConfigDir() string {
 	if r.handoffRoot != "" {
+		if canonical, err := filepath.EvalSymlinks(r.handoffRoot); err == nil {
+			return canonical
+		}
 		return r.handoffRoot
 	}
 	return configDir()

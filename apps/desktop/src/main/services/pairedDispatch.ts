@@ -20,7 +20,13 @@ import { buildFleetMessage } from '../shared/fleetMessages';
 import { workflowWakeInstructions } from './fleetWorkflowRuntime';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { renderDispatchTemplate } from '../lib/dispatchTemplate';
-import { prepareTaskHandoff, importTaskHandoffResult, type TaskSource } from './taskHandoff';
+import {
+  prepareTaskHandoff,
+  importTaskHandoffResult,
+  taskHandoffSourceSelection,
+  validateTaskSource,
+  type TaskSource,
+} from './taskHandoff';
 import { fleetReviewStore, reviewAllocation } from './fleetReviewStore';
 
 function projectPairedSnapshot(
@@ -120,7 +126,76 @@ export function startPairedDispatch(): void {
   if (getPairedWorkerTarget()) void connection.connect().catch(() => {});
 }
 
+async function capturePairedHandoff(
+  record: import('./remoteDispatchRegistry').RemoteDispatchRecord,
+): Promise<void> {
+  if (!record.handoff || !record.localSessionId) throw new Error('Handoff task unavailable');
+  try {
+    const result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
+    if (
+      !result.executionSession ||
+      (record.sessionId && record.sessionId !== result.executionSession)
+    )
+      throw new Error('Result custody does not match the admitted execution session');
+    registry.attachSession(record.dispatchId, result.executionSession);
+    const checkpointRequired = result.state === 'needs-checkpoint';
+    let evidenceId = record.handoff.reviewEvidenceId;
+    if (
+      !checkpointRequired &&
+      !evidenceId &&
+      result.allocation &&
+      result.result &&
+      record.handoff.sourceCwd
+    ) {
+      const owner = managerReplacementState.automaticWakeTarget(record.ownerSessionId);
+      const branch = `wks/handoff-${record.dispatchId}-result`;
+      const allocation = await reviewAllocation(
+        path.join(path.dirname(result.allocation), 'result-git'),
+        result.allocation,
+        branch,
+      );
+      fleetReviewStore.register(owner, record.localSessionId, {
+        ...allocation,
+        projectRoot: record.handoff.sourceCwd,
+        baseCommit: result.plan.input.commit,
+      });
+      evidenceId = await fleetReviewStore.capture(owner, record.localSessionId, 'turn-ended');
+    }
+    registry.setHandoff(record.dispatchId, {
+      ...record.handoff,
+      state: result.state,
+      reviewCwd: result.state === 'received' ? result.allocation : undefined,
+      reviewEvidenceId: evidenceId,
+    });
+    dispatchHistoryStore.observeHandoff(
+      record.localSessionId,
+      {
+        state: checkpointRequired ? 'needs-checkpoint' : 'received',
+        base: result.plan.input.commit,
+        head: result.result?.commit,
+        reviewCwd: result.state === 'received' ? result.allocation : undefined,
+        artifacts: result.result?.entries,
+        artifactTask: record.dispatchId,
+        canRefresh: checkpointRequired,
+      },
+      evidenceId,
+    );
+  } catch (error) {
+    dispatchHistoryStore.observeHandoff(record.localSessionId, {
+      state: 'blocked',
+      canRefresh: true,
+      note: `Output custody is incomplete: ${String(error)}`,
+    });
+    throw error;
+  }
+}
+
 async function deliverPairedUpdate(data: unknown): Promise<void> {
+  const custody = registry.acceptHandoffUpdate(pairedDestinationKey(), data);
+  if (custody) {
+    registry.retainEvidence(custody.record.dispatchId, custody.update);
+    await capturePairedHandoff(custody.record);
+  }
   const accepted = registry.accept(pairedDestinationKey(), data);
   if (!accepted.ok) return;
   const { record, update, parentSessionId } = accepted;
@@ -128,49 +203,17 @@ async function deliverPairedUpdate(data: unknown): Promise<void> {
   registry.retainEvidence(record.dispatchId, update);
   const entry = sanitizeRemoteEntry(update.entry);
   entry.sessionId = record.localSessionId;
-  let checkpointRequired = false;
+  const checkpointRequired = record.handoff?.state === 'needs-checkpoint';
   if (update.final && record.handoff) {
-    const result = await importTaskHandoffResult(record.dispatchId, record.handoff.binding);
-    registry.setHandoff(record.dispatchId, {
-      ...record.handoff,
-      state: result.state,
-      reviewCwd: result.state === 'received' ? result.allocation : undefined,
-    });
-    if (result.state === 'needs-checkpoint') {
-      checkpointRequired = true;
+    entry.reviewEvidenceId = record.handoff.reviewEvidenceId;
+    if (checkpointRequired) {
       entry.needsDecision = true;
       entry.failed =
         'Checkpoint required: execution workspace has uncommitted changes; output is retained.';
     } else {
       entry.note =
         'Code and required artifacts verified locally. Reported test results remain worker claims.';
-      if (result.allocation && result.result && record.handoff.sourceCwd) {
-        const branch = `wks/handoff-${record.dispatchId}-result`;
-        const allocation = await reviewAllocation(
-          path.join(path.dirname(result.allocation), 'result-git'),
-          result.allocation,
-          branch,
-        );
-        fleetReviewStore.register(parentSessionId, entry.sessionId, {
-          ...allocation,
-          projectRoot: record.handoff.sourceCwd,
-          baseCommit: result.plan.input.commit,
-        });
-        entry.reviewEvidenceId = await fleetReviewStore.capture(
-          parentSessionId,
-          entry.sessionId,
-          'turn-ended',
-        );
-      }
     }
-    dispatchHistoryStore.observeHandoff(entry.sessionId, {
-      state: checkpointRequired ? 'needs-checkpoint' : 'received',
-      base: result.plan.input.commit,
-      head: result.result?.commit,
-      reviewCwd: result.state === 'received' ? result.allocation : undefined,
-      artifacts: result.result?.entries,
-      artifactTask: record.dispatchId,
-    });
   }
   // No remote snapshot or parent id is trusted to select a local recipient.
   const reply = entry.fullReply ?? entry.lastReply ?? '';
@@ -235,6 +278,7 @@ export async function spawnPairedWorker(
   admission: Omit<Admission, 'sessionId' | 'executionCwd'>,
   templateBody?: string,
   resultSchema?: Record<string, unknown>,
+  resume?: import('./remoteDispatchRegistry').RemoteDispatchRecord,
 ): Promise<Record<string, unknown>> {
   startPairedDispatch();
   if (p.executionTarget !== 'paired' || !getPairedWorkerTarget())
@@ -268,7 +312,7 @@ export async function spawnPairedWorker(
   }>('fleet.dispatchCapabilities');
   if (capabilities.protocol !== DISPATCH_PROTOCOL || !capabilities.executes)
     throw new Error('Paired worker dispatch unsupported; upgrade the older endpoint');
-  const taskSource = p.taskSource as TaskSource | undefined;
+  const taskSource = p.taskSource === undefined ? undefined : validateTaskSource(p.taskSource);
   if (
     taskSource &&
     (capabilities.handoff?.version !== 1 ||
@@ -278,7 +322,7 @@ export async function spawnPairedWorker(
     throw new Error(
       'Exact workspace handoff is unsupported by this target; upgrade before dispatch',
     );
-  if (!capabilities.cwds?.some((c) => c.path === p.remoteCwd))
+  if (!taskSource && !capabilities.cwds?.some((c) => c.path === p.remoteCwd))
     throw new Error('Choose an actual remote cwd from list_dispatch_targets');
   if (
     !capabilities.providers?.some(
@@ -287,34 +331,46 @@ export async function spawnPairedWorker(
     )
   )
     throw new Error('Selected provider is not authenticated on the remote host');
-  const dispatchId = randomBytes(32).toString('hex');
-  const localSessionId = `paired:${randomUUID()}`;
-  const record = registry.open({
-    dispatchId,
-    peer: pairedDestinationKey(),
-    ownerSessionId: owner.sessionId,
-    localSessionId,
-    resultSchema,
-    cwd: p.remoteCwd,
-    provider: p.provider,
-    model: p.model,
-    label: p.label,
-  });
+  if (
+    resume &&
+    (!resume.preparation ||
+      resume.sessionId ||
+      resume.peer !== pairedDestinationKey() ||
+      !['preparing', 'prepared'].includes(resume.handoff?.state ?? ''))
+  )
+    throw new Error('Admission may have reached the worker; reconcile it without repeating spawn');
+  const dispatchId = resume?.dispatchId ?? randomBytes(32).toString('hex');
+  const localSessionId = resume?.localSessionId ?? `paired:${randomUUID()}`;
+  const record =
+    resume ??
+    registry.open({
+      dispatchId,
+      peer: pairedDestinationKey(),
+      ownerSessionId: owner.sessionId,
+      localSessionId,
+      resultSchema,
+      cwd: p.remoteCwd,
+      provider: p.provider,
+      model: p.model,
+      label: p.label,
+    });
   if (!record) throw new Error('Could not persist paired dispatch admission');
-  const preAdmission = taskSource
-    ? dispatchHistoryStore.accept({
-        ...admission,
-        sessionId: localSessionId,
-        executionCwd: String(p.remoteCwd),
-        provider: String(p.provider),
-        requestedProvider: String(p.provider),
-        requestedModel: typeof p.model === 'string' ? p.model : undefined,
-        worktree: { requested: true, allocated: false, fallback: false },
-        executionTarget: 'paired',
-        executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
-      })
-    : undefined;
-  let handoff: { binding: string; digest: string } | undefined;
+  const preAdmission = resume?.preparation
+    ? { taskId: resume.preparation.taskId, dispatchId: resume.preparation.attemptId }
+    : taskSource
+      ? dispatchHistoryStore.accept({
+          ...admission,
+          sessionId: localSessionId,
+          executionCwd: typeof p.remoteCwd === 'string' ? p.remoteCwd : '',
+          provider: String(p.provider),
+          requestedProvider: String(p.provider),
+          requestedModel: typeof p.model === 'string' ? p.model : undefined,
+          worktree: { requested: true, allocated: false, fallback: false },
+          executionTarget: 'paired',
+          executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
+        })
+      : undefined;
+  let handoff: import('./taskHandoff').HandoffReceiptSelector | undefined;
   if (taskSource) {
     dispatchHistoryStore.observeHandoff(localSessionId, { state: 'preparing' });
     registry.setHandoff(dispatchId, {
@@ -324,35 +380,93 @@ export async function spawnPairedWorker(
     });
     let prepared;
     try {
+      const selection =
+        resume?.preparation?.selection ??
+        taskHandoffSourceSelection(taskSource, p.taskId, p.afterDispatchId, owner.sessionId);
+      if (!preAdmission) throw new Error('Handoff task admission is unavailable');
+      if (!resume) {
+        const allowed = [
+          'executionTarget',
+          'remoteCwd',
+          'cwd',
+          'provider',
+          'model',
+          'modelIdentity',
+          'contextWindow',
+          'effort',
+          'role',
+          'capability',
+          'decisionId',
+          'toolScope',
+          'label',
+          'message',
+          'templateParams',
+          'taskId',
+          'workflowStepId',
+          'stage',
+          'afterDispatchId',
+          'worktree',
+          'taskSource',
+        ];
+        const params = Object.fromEntries(
+          allowed.filter((key) => p[key] !== undefined).map((key) => [key, p[key]]),
+        );
+        registry.setPreparation(dispatchId, {
+          params,
+          templateBody,
+          taskId: preAdmission.taskId,
+          attemptId: preAdmission.dispatchId,
+          selection,
+        });
+      }
       prepared = await prepareTaskHandoff(
         dispatchId,
         taskSource,
         String(p.provider),
         String(p.cwd),
+        undefined,
+        undefined,
+        selection,
       );
     } catch (error) {
       dispatchHistoryStore.observeHandoff(localSessionId, {
         state: 'blocked',
         note: String(error),
+        canResume: true,
       });
       throw error;
     }
-    handoff = { binding: taskSource.binding, digest: prepared.digest };
+    handoff = {
+      version: 1,
+      binding: taskSource.binding,
+      digest: prepared.digest,
+      allocationId: prepared.allocationId!,
+    };
     registry.setHandoff(dispatchId, { ...handoff, state: 'prepared', sourceCwd: String(p.cwd) });
   }
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };
-  const prepared = await connection.call<{
-    cwd: string;
-    repo: string;
-    worktree: boolean;
-    branch?: string;
-  }>('agents.dispatchPrepare', {
-    remoteOrigin,
-    ...(handoff ? { handoff } : {}),
-    cwd: p.remoteCwd,
-    provider: p.provider,
-    worktree: handoff ? true : p.worktree === true,
-  });
+  const prepared = await connection
+    .call<{
+      cwd: string;
+      repo: string;
+      worktree: boolean;
+      branch?: string;
+    }>('agents.dispatchPrepare', {
+      remoteOrigin,
+      ...(handoff ? { handoff } : {}),
+      cwd: p.remoteCwd,
+      provider: p.provider,
+      worktree: handoff ? true : p.worktree === true,
+    })
+    .catch((error) => {
+      if (taskSource)
+        dispatchHistoryStore.observeHandoff(localSessionId, {
+          state: 'blocked',
+          canResume: true,
+          note: String(error),
+        });
+      throw error;
+    });
   const worktree = {
     requested: p.worktree === true,
     allocated: prepared.worktree,
@@ -360,6 +474,8 @@ export async function spawnPairedWorker(
     branch: prepared.branch,
   };
   if (p.worktree && !prepared.worktree) throw new Error('Remote isolated worktree required');
+  if (taskSource)
+    dispatchHistoryStore.preparePairedHandoff(localSessionId, prepared.cwd, prepared.branch ?? '');
   // Book the local workflow attempt before starting the remote process. A lost
   // reply leaves this attempt pending and prevents blindly repeating the step.
   const ids =
@@ -375,8 +491,12 @@ export async function spawnPairedWorker(
       executionTarget: 'paired',
       executionHost: new URL(getPairedWorkerTarget()!.httpUrl).host,
     });
+  const taskTemplateParams = { ...((p.templateParams ?? {}) as Record<string, string>) };
+  const outputReport = taskSource?.outputs.find((a) => a.kind === 'report');
+  if (outputReport && templateBody?.includes('{{reportPath'))
+    taskTemplateParams.reportPath = `.workspacer/handoffs/${dispatchId}/${outputReport.name}`;
   let message = templateBody
-    ? renderDispatchTemplate(templateBody, (p.templateParams ?? {}) as Record<string, string>, {
+    ? renderDispatchTemplate(templateBody, taskTemplateParams, {
         cwd: prepared.cwd,
         projectCwd: prepared.repo,
       })
@@ -408,6 +528,10 @@ export async function spawnPairedWorker(
     decisionId: p.decisionId,
   };
   try {
+    if (taskSource) {
+      dispatchHistoryStore.validate(admission);
+      registry.setHandoff(dispatchId, { ...record.handoff!, state: 'admission-unknown' });
+    }
     const result = await connection.call<{ sessionId?: string; messageQueued?: boolean }>(
       'agents.spawn',
       wire,
@@ -417,6 +541,7 @@ export async function spawnPairedWorker(
         'Remote admission or initial delivery is uncertain; do not repeat spawn or send the initial message',
       );
     registry.attachSession(dispatchId, result.sessionId);
+    if (taskSource) registry.setHandoff(dispatchId, { ...record.handoff!, state: 'running' });
     const snapshot = await connection
       .call<import('./claudeSessionStore').RemoteSnapshotWire>('sessions.snapshot', {
         sessionId: result.sessionId,
@@ -438,11 +563,110 @@ export async function spawnPairedWorker(
       messageQueued: true,
     };
   } catch (err) {
+    if (taskSource)
+      dispatchHistoryStore.observeHandoff(localSessionId, {
+        state: 'blocked',
+        note: 'Admission unknown; reconcile the existing dispatch without repeating spawn.',
+      });
     registry.fail(
       dispatchId,
       'Remote admission unknown; reconcile this dispatch, never blindly repeat it',
     );
     throw err;
+  }
+}
+
+const resumedPreparations = new Set<string>();
+export async function refreshPairedHandoff(request: {
+  taskId: string;
+  dispatchId: string;
+  expectedTaskRevision: number;
+}): Promise<import('../shared/dispatchHistory').TaskEditResponse> {
+  const task = dispatchHistoryStore.task(request.taskId);
+  if (!task || (task.revision ?? 0) !== request.expectedTaskRevision)
+    return {
+      ok: false,
+      code: 'conflict',
+      error: 'Task changed; refresh before importing outputs',
+      task,
+    };
+  const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
+  const record = registry.list().find((r) => r.localSessionId === attempt?.sessionId);
+  if (!record?.handoff || record.peer !== pairedDestinationKey())
+    return { ok: false, code: 'unavailable', error: 'Handoff pairing or task is unavailable' };
+  try {
+    await capturePairedHandoff(record);
+    // A previously acknowledged terminal wake stays acknowledged. Refresh
+    // imports custody; it does not manufacture a second manager message.
+    if (record.state === 'open' && record.lastUpdate && record.deliveringSeq === undefined)
+      await deliverPairedUpdate(record.lastUpdate);
+    return { ok: true, task: dispatchHistoryStore.task(task.taskId)! };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'unavailable',
+      error: String(error),
+      task: dispatchHistoryStore.task(task.taskId),
+    };
+  }
+}
+
+export async function resumePairedHandoff(request: {
+  taskId: string;
+  dispatchId: string;
+  expectedTaskRevision: number;
+}): Promise<import('../shared/dispatchHistory').TaskEditResponse> {
+  const task = dispatchHistoryStore.task(request.taskId);
+  if (!task || (task.revision ?? 0) !== request.expectedTaskRevision)
+    return { ok: false, code: 'conflict', error: 'Task changed; refresh before resuming', task };
+  const attempt = task.attempts.find((a) => a.dispatchId === request.dispatchId);
+  const record = registry.list().find((r) => r.localSessionId === attempt?.sessionId);
+  const owner = claudeSessionStore.getSnapshot(task.ownerSessionId);
+  if (!record?.preparation || !attempt || resumedPreparations.has(record.dispatchId))
+    return {
+      ok: false,
+      code: 'unavailable',
+      error: 'Preparation is unavailable or already in progress',
+    };
+  if (
+    task.attempts.at(-1)?.sessionId !== attempt.sessionId ||
+    (attempt.workflowStepId &&
+      task.workflow?.steps.find((s) => s.id === attempt.workflowStepId)?.sessionId !==
+        attempt.sessionId)
+  )
+    return {
+      ok: false,
+      code: 'ineligible',
+      error: 'A newer task attempt superseded this preparation',
+    };
+  resumedPreparations.add(record.dispatchId);
+  try {
+    const admission = {
+      owner,
+      projectCwd: task.projectCwd,
+      taskId: task.taskId,
+      workflowStepId: attempt.workflowStepId,
+      stage: attempt.stage,
+      afterDispatchId: attempt.afterDispatchId,
+    };
+    dispatchHistoryStore.validate(admission);
+    await spawnPairedWorker(
+      { ...record.preparation.params, parentSessionId: task.ownerSessionId },
+      admission,
+      record.preparation.templateBody,
+      record.resultSchema,
+      record,
+    );
+    return { ok: true, task: dispatchHistoryStore.task(task.taskId)! };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'unavailable',
+      error: String(error),
+      task: dispatchHistoryStore.task(task.taskId),
+    };
+  } finally {
+    resumedPreparations.delete(record.dispatchId);
   }
 }
 
