@@ -81,7 +81,7 @@ describe('first-use spawn outcome', () => {
     });
     expect(api.spawnClaude.mock.calls.at(-1)[0]).toMatchObject({
       resumeSessionId: 'real-session',
-      message: expect.stringContaining('next\n\nOn a local desktop with request inbox support'),
+      message: expect.stringContaining('next\n\nResolve inbox requests to pin new tasks'),
     });
     expect(api.claudeMessage).not.toHaveBeenCalled();
   });

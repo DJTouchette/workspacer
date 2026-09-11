@@ -573,14 +573,14 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Observe ────────────────────────────────────────────────────────────
 	b.group = "observe"
 	addFleetTool[listAgentsIn](b, "list_agents",
-		"List running Claude Code agent sessions with their state, model, context usage, and any pending approval or question. The lightweight fleet overview, spanning federated peer hubs (remote rows carry a hub field); use get_snapshot for full detail on one session.",
+		"List live agent state and attention needs across local and federated hubs. Preserve remote rows' hub on subsequent calls.",
 		"agents.list")
 	addHubTool[transcriptIn](b, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
 	addStatusSummaryTool(b)
 	addConversationTool(b, "get_conversation",
-		"Fetch a session's parsed conversation items plus the latest sequence number; pass sinceSeq to get only items after that sequence (cheap incremental polling). Reductions: lastMessage:true returns just the final assistant message (a finished worker's report); textOnly:true returns only user/assistant text turns, stripping tool calls/results and usage. Both compose with sinceSeq.",
+		"Read one conversation; prefer lastMessage for final reports or textOnly plus sinceSeq for dialogue gaps. Never poll.",
 		"sessions.conversation")
 	addHubTool[sessionIn](b, "get_snapshot",
 		"Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
@@ -625,7 +625,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
 		"terminals.create")
 	addTool[openTerminalIn](b, "open_terminal",
-		"Open a VISIBLE terminal pane in workspacer and optionally run a command in it — the way to bring up a long-running process the USER should watch (a dev server, a file watcher). Unlike create_terminal (a headless PTY you drive with terminal_input), this surfaces a pane on the user's screen and returns immediately; the process keeps running there. Pass cwd (the project dir), command (e.g. \"npm run dev\"), a short label, and parentSessionId (your own session id) so it nests under you.",
+		"Open a visible terminal and optionally run a command; returns immediately. Use cwd/label/parentSessionId to place it.",
 		"terminals.open")
 
 	// ── Routing ────────────────────────────────────────────────────────────
@@ -645,7 +645,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// mechanism.
 	b.group = "routing"
 	addTool[routingSelectIn](b, "select_model",
-		"Ask the hub which provider/model/effort a piece of work should get, BEFORE spawning it. You name a ROLE (scout, implementer, reviewer, deep_reviewer, fixer, complex_fixer, validator, diagnostician, mechanical, judge) and it resolves that role through the routing matrix and the live subscription limits into a concrete (provider, model, effort) plus a routing mode (normal | conserve | spend_down) and a list of reasons. Pass cwd (the project dir) and, when you know them, difficulty/risk/decisionDensity, previousProvider (so a reviewer is PREFERRED to land on a different model family from the implementer — the matrix tries candidates in that order where capacity allows, and requireIndependentFamily makes it required rather than merely preferred, with the answer saying plainly if it could not be arranged), and the demand ahead — either forecastDemandBeforeResetPct (a share of the allowance, and the only form the mode rules can act on) or expectedWork (phase counts, weighted by the matrix and reported with the arithmetic). When the matrix's primary pairing for the capability could not be used — its allowance is red, its provider is conserving, or the host asked that provider's CLI what it can launch and the CLI answered with no launchable model — the answer falls over to the next candidate on its own `alternatives:` list and names the primary it passed over in fellOverFrom. That live check detects only the CLI-ran-and-listed-nothing case: a probe that FAILED (a CLI that is not installed makes the host's spawn fail and the daemon answer 502, or the daemon is down) is unknown and is used as normal, claude is never reported unavailable because its model list comes from aliases and past transcripts rather than from a running CLI, and the check runs only inside the fallover walk, so it is not applied to a provider you PIN, to a capability with no alternatives, or to the provider a mode shift lands on. A routing mode may also step the EFFORT one notch along the provider's own ladder without changing the model at all, reported as effortStep (from, to, why), and under conserve the tier shift and the effort step can both fire on one decision: pass the `provider`, `model` and `effort` the answer gives you rather than the ones you expected. The answer also carries capacity.pace when the host has pacing on: the same allowance judged against the CLOCK (consumed vs expected-by-now on the running window), which can make a decision CONSERVE that the used-percentage alone would call normal, and which never promotes anything. Read-only: it decides nothing on its own — pass provider/model/effort from the answer to spawn_agent. See help topic 'routing'.",
+		"Resolve role/cwd to provider, model, effort, capability and decisionId using live capacity and routing ceilings. Pass the decision to spawn_agent; eligible:false forbids substitution. See help topic routing.",
 		"routing.select")
 	addTool[listAgentsIn](b, "list_dispatches", "Read origin dispatch records, including uncertain admission and delivery. Do not repeat a spawn whose admission is unknown.", "fleet.dispatches")
 	addTool[listAgentsIn](b, "list_dispatch_targets", "Discover explicitly enabled worker targets, protocol support and actual remote provider authentication and repository choices. The manager remains local.", "fleet.dispatchTargets")
@@ -699,7 +699,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// caller picks, because guessing which dead manager was yours re-points a
 	// live worker's wakes silently and wrongly.
 	addTool[listAgentsIn](b, "list_orphans",
-		"Find the workers left behind by a manager that is gone. Returns each DEAD parent that still has live children, with what it was called, its directory, when it died, whether it was confirmed to be a manager, and the workers still pointing at it. Use it when you are replacing a manager that crashed without leaving a handoff file: pick the candidate that matches what you were told to take over, then pass its sessionId as fromSessionId to adopt_workers. It never adopts anything by itself.",
+		"Find dead parents with live workers for standalone recovery. Adopt only the intended confirmed manager; never guess from dangling parent IDs.",
 		"agents.orphans")
 
 	// ── Filesystem (on the workspacer host) ────────────────────────────────
@@ -842,7 +842,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 
 	// ── Threshold alerts (operator only; see the capability's own note) ────
 	addTool[notifyWhenIn](b, "notify_when",
-		"Ask to be woken ONCE when a session crosses a threshold without polling. Prefer contextUsedPct for runtime-confirmed active-context health when the target provider supports it (currently not OpenCode or Pi); tokens is cache-inclusive cumulative throughput/cadence, not context health. Claude refreshes confirmed context at result frames, so a long turn may wait once its prior sample ages stale. usd and idleSeconds retain their existing meanings. Watches are one-shot and in-memory.",
+		"Arm a one-shot wake: contextUsedPct for confirmed active-context health OR tokens/usd/idleSeconds for cumulative/idle thresholds. Never poll.",
 		"agents.notifyWhen")
 
 	// ── Project briefs (operator only — brief.* matches no scoped tier) ────
@@ -857,20 +857,20 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// the user's declared projects.
 	b.group = "brief"
 	addTool[briefAppendIn](b, "brief_append",
-		"Append ONE line to a section of a project's .workspacer/brief.md, atomically. This is the way to update a brief. It is inspect-then-edit under a lock, so it cannot clobber a line a worker (or the user) wrote in the meantime, and it is strictly additive: it never rewrites, reorders or reformats what is already there. 'Recently' PREPENDS (that section is a dated log, newest first); the others append. Creates the brief, with its four standard sections, if the project has none. A line longer than 4000 characters is REFUSED with nothing written, rather than cut: split it and append each part. The result reports the section's entry count and byte size after the write, so you can see a brief going over budget without reading it. To log a FINISHED WORKER, add sessionId and its parsed wks-result and write only your one sentence of significance in 'line': the host composes the date, the mechanical facts and a validated session:<id> reference, so you never retype or mistype them.",
+		"Atomically add a brief line (Recently prepends). With sessionId/result, line is your significance sentence; host adds date, facts and reference. Returns section size; overlong lines are refused.",
 		"brief.append")
 
 	// The read-only third verb. See the capability's own note: a Now line does
 	// not remove itself when its worker dies, and this is the only brief tool
 	// that is allowed to have an opinion about that — by REPORTING.
 	addTool[briefCheckIn](b, "brief_check",
-		"Report which '## Now' lines in a project's brief have outlived their dispatch: entries naming a session:<id> this host no longer knows about (a finished or closed worker counts as gone — that IS the case that leaves lines behind), entries carrying a malformed reference that links to nothing, and entries that read like a dispatch but name no session at all. READ-ONLY: it never deletes, edits, moves or rewrites a line, because the user's own brief edits are authoritative — it hands you a list and you decide, entry by entry. Run it when you take over a fleet, before a standup, or as part of a checkpoint.",
+		"Report stale or malformed Now references in one project brief. Read-only: you decide which lines to remove.",
 		"brief.check")
 
 	// The trim half of the same document. See the capability's own note: this is
 	// the Board's archive move, exposed so /checkpoint stops doing it in shell.
 	addTool[briefArchiveIn](b, "brief_archive",
-		"Move the OLDEST entries of ONE brief section out to .workspacer/brief.archive.md, in a single call. This is how you trim a brief: the entries leave the brief and arrive in the archive byte for byte, under the same lock brief_append takes, so nothing is rewritten and nothing is lost. Give keep (leave this many of the newest and archive the rest, which is idempotent) or count (archive exactly this many of the oldest), not both. Remember that 'Recently' is newest-first, so its oldest entries are its last. Returns how many entries moved, plus the section's entry count and byte size afterwards.",
+		"Archive a section's oldest entries under the brief lock. Give keep or count; history is preserved in brief.archive.md. See help topic brief.",
 		"brief.archive")
 
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────

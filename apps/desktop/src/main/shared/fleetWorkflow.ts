@@ -84,6 +84,7 @@ export type WorkflowRequest = {
     | 'resolveRequest'
     | 'acceptTaskOutcome';
   requestId?: string;
+  view?: 'pending';
   intents?: import('./managerRequests').RequestIntent[];
   id?: string;
   expectedRevision?: number;
@@ -255,4 +256,4 @@ export const WORKFLOW_STARTERS: WorkflowDefinition[] = [
   },
 ];
 export const WORKFLOW_DISCOVERY =
-  'On a local desktop with request inbox support, check list_manager_requests once, fetch exact original content with get_manager_request, then resolve_manager_request BEFORE new work. Use start_workflow with cwd and title only for legacy requests without inbox capture. The host resolves the current selected policy and pins its revision/templates. Call next_workflow_step for its instructions; decide_workflow_step records conditional decisions with reasons. Copy its step metadata into select_model and spawn_agent. Existing tasks keep their pinned policy. If these tools are unavailable, report Fleet workflows unavailable on this headless/older host; never claim a workflow ran. Do not retrofit historical task IDs. When the user gives you a pull request, ticket or link for work you own (in any provider: GitHub, Azure DevOps, GitLab, Jira, or a bare ticket id), or a worker reports one in a result you trust, record it with update_task_references on that exact task, after get_task_references for its taskRevision. Store what you were given as an unverified reference; never fetch the URL, call an external API, or invent a PR number. Preserve unmentioned references and human edits. Do not scrape transcripts for links. If it is unclear which task a link belongs to, ask.';
+  'Resolve inbox requests to pin new tasks; start_workflow({cwd,title,compact:true}) is for legacy uncaptured requests only. Follow returned pinned steps; record conditional decisions with decide_workflow_step. If unavailable on a headless/older host, report that; never claim a workflow ran or retrofit historical IDs. For user-supplied or trusted worker PR/ticket/link references, get_task_references for taskRevision then update_task_references on the exact task. Store as unverified, preserve unmentioned references/human edits, and ask if task attribution is unclear. Do not fetch URLs, invent identifiers or scrape transcripts for references.';

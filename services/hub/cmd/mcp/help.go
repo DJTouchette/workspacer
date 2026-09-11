@@ -25,7 +25,8 @@ type helpIn struct {
 // descriptions carry only the "what". Written for the model.
 var groupGuidance = map[string]string{
 	"observe": strings.TrimSpace(`
-Start with list_agents (cheap fleet overview), then go deeper on ONE session.
+Use evidence already supplied in a fleet wake first; do not reread its report.
+For an explicit status request, list_agents is the cheap overview; inspect only the needed session.
 The fleet may span machines: when hubs are federated, list_agents and
 list_snapshots include every connected peer hub's sessions, and each remote
 row carries a "hub" field naming its machine (local rows have none). That hub
@@ -57,6 +58,8 @@ Reading another agent's activity:
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
 	"spawn": strings.TrimSpace(`
+Use list_manager_requests({view:"pending"}) once per turn to combine unresolved identities and original content; fetch get_manager_request only for contentDeferred. Omit view for full history/task state. Use compact:true on resolve_manager_request and workflow step calls to omit repeated template bodies. Reuse returned step instructions instead of immediately calling next_workflow_step again.
+
 Task loops (local desktop): stage=scout|implement|review|fix|validate|land|other is optional descriptive history metadata. To attribute or continue a task, parentSessionId must name your live local manager; save the returned taskId and dispatchId, then pass taskId and afterDispatchId under that same manager and project. Without valid manager attribution, stage and automatic respawn provenance may launch but are not recorded or linked. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.
 
 spawn_agent starts a new coding-agent session and returns its sessionId.
@@ -610,7 +613,7 @@ func addHelpTool(b *build) {
 	scope := string(b.scope)
 	mcp.AddTool(b.s, &mcp.Tool{
 		Name:        "help",
-		Description: "Usage guide for the workspacer tools: call with no arguments for the grouped overview, or with a topic (group name) for detailed guidance. Call this before first using the other workspacer tools.",
+		Description: "Usage guide for the workspacer tools: call with no arguments for the grouped overview, or with a topic (group name) for detailed guidance. Request only the topic you need; no mandatory overview call.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in helpIn) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: renderHelp(scope, tools, in.Topic)}},
@@ -618,50 +621,13 @@ func addHelpTool(b *build) {
 	})
 }
 
-// renderHelp renders the overview (topic == "") or one group's detail.
-// commonTools is the working set a fleet manager reaches for every session, in
-// the order it needs them. It exists for ONE reason: an MCP client that DEFERS
-// tool schemas (Claude Code does, when a server contributes many) makes the
-// agent fetch each schema before first use — measured at ~6 separate round
-// trips in a single manager session, before any work happened. The overview
-// below renders these as a single batch query, so the tax is paid once.
-//
-// A hand-picked list rather than "every tool this tier holds": batching all ~50
-// operator schemas would load ~10k tokens of context the tier system exists to
-// avoid spending. It is filtered against the tier's actual registry, so a tier
-// is never told to fetch a tool it does not hold, and an entry deleted from the
-// registry simply drops out.
-var commonTools = []string{
-	"list_agents", "get_conversation", "spawn_agent", "send_message",
-	"approve", "answer", "signal", "close_session", "respawn_with",
-	"notify_when", "brief_append", "project_status", "notify",
-}
-
-// batchLoadHint renders the one-call schema fetch, or "" when the client
-// clearly is not deferring (nothing to batch). Written as guidance rather than
-// a command because the tool NAMES are the client's to spell: an MCP tool is
-// usually exposed prefixed (mcp__workspacer__list_agents), and which prefix is
-// the runtime's business, not ours.
+// Schema deferral is runtime-specific. Fetch only the current action's tools;
+// a fixed working set eagerly loaded thirteen schemas, including rare controls.
 func batchLoadHint(tools []toolInfo) string {
-	held := map[string]bool{}
-	for _, t := range tools {
-		held[t.Name] = true
-	}
-	var picked []string
-	for _, name := range commonTools {
-		if held[name] {
-			picked = append(picked, name)
-		}
-	}
-	if len(picked) < 2 {
+	if len(tools) < 2 {
 		return ""
 	}
-	return "\nIf your runtime DEFERS these tools' schemas (they are listed by name but not " +
-		"callable until fetched), load the whole working set in ONE call rather than one per " +
-		"tool — that round trip is otherwise paid several times a session, before any work " +
-		"happens. The set, in the order you will want it:\n  " + strings.Join(picked, ", ") +
-		"\nYour runtime prefixes MCP tool names (e.g. mcp__workspacer__list_agents); use the " +
-		"spelling it lists, and fetch them together."
+	return "\nIf your runtime defers schemas, batch-fetch only the tools needed for this turn using its exposed names. Do not preload the whole catalog."
 }
 
 func renderHelp(scope string, tools []toolInfo, topic string) string {

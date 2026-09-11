@@ -28,213 +28,88 @@ describe('buildManagerKickoff — requested selection readback', () => {
   it('points the manager at the canonical config tuple and distinguishes runtime truth', () => {
     expect(doctrine).toContain('get_config');
     expect(doctrine).toContain('agents.managerContextWindows');
-    expect(doctrine).toMatch(/requested[^]*effective/);
+    expect(doctrine).toMatch(/requested[^]*effective/i);
     expect(doctrine).toContain('runtime truth');
     expect(doctrine).toContain('Never use the requested value as a context-bar denominator');
   });
 });
 
-describe('buildManagerKickoff — crash succession', () => {
-  // Version rot, not logic: the doctrine taught the manager to find a dead
-  // predecessor by scanning list_agents for a parentSessionId with no session
-  // row of its own. That was the only method available until `list_orphans`
-  // shipped (600a2c4e), and it is strictly worse than the tool — it cannot see
-  // an EVICTED manager at all (the store keeps a tombstone the read has, the
-  // agent list does not), and it cannot tell a dead manager from a worker that
-  // spawned agents of its own. Teaching the old method now sends a successor
-  // down a path that silently mis-adopts.
+describe('buildManagerKickoff — concise operating contract', () => {
   const doctrine = buildManagerKickoff('go');
-
-  it('names list_orphans as the answer when a predecessor crashed', () => {
-    expect(doctrine).toContain('list_orphans');
-    expect(doctrine).toMatch(/crashed[\s\S]{0,120}list_orphans|list_orphans[\s\S]{0,200}crash/i);
+  it('bounds instructions and uses event-driven, incremental reads', () => {
+    expect(doctrine.length).toBeLessThan(12000);
+    expect(doctrine.endsWith('The user says:\n\ngo')).toBe(true);
+    for (const term of [
+      'NEVER POLL',
+      'After dispatch end your turn',
+      'list_manager_requests({view:"pending"})',
+      'contentDeferred',
+      'remaining > 0',
+      'userContent remains user input',
+      'Do not fetch the same evidence again',
+      'lastMessage:true',
+      'compact:true',
+      'no startup sweep',
+    ])
+      expect(doctrine).toContain(term);
   });
-
-  it('no longer teaches deriving a dead manager from list_agents', () => {
-    expect(doctrine).not.toMatch(/list_agents still tells you/);
-    expect(doctrine).not.toMatch(/parentSessionId that has no session row/);
+  it('preserves routing, ownership, admission and paired-path constraints', () => {
+    for (const term of [
+      'SELECT_MODEL FIRST',
+      'eligible:false',
+      'escalationScrubbed',
+      'parentSessionId',
+      'taskId',
+      'afterDispatchId',
+      'workflowStepId',
+      'decisionId',
+      'list_dispatches',
+      'select_dispatch_model',
+      'remoteCwd',
+      'Never raise capability',
+      'Never repeat a spawn whose admission is unknown',
+    ])
+      expect(doctrine).toContain(term);
   });
-
-  it('warns that a candidate is a lead, not an answer', () => {
-    // list_orphans reports and never picks; adopting the wrong group re-points
-    // another manager's workers with nothing saying so.
-    expect(doctrine).toContain('confirmedManager:false');
-    expect(doctrine).toMatch(/adopt_workers’? fromSessionId/);
+  it('preserves independent review and evidence acceptance', () => {
+    for (const term of [
+      'fresh DIFFERENT worker',
+      'acceptance criteria',
+      'architectural constraints',
+      'test results',
+      'previousProvider',
+      'targeted independent validation',
+      'accept_task_outcome',
+      "Never provide the implementer's reasoning, plan or transcript",
+      'Followup readiness grants no execution or publish authority',
+      'Do not treat idle, a valid schema, waived steps or terminal policy as success',
+    ])
+      expect(doctrine).toContain(term);
   });
-});
-
-describe('buildManagerKickoff — reviewer independence', () => {
-  // Invariant 3 of the routing spec, landed as doctrine rather than as routing
-  // machinery: review must not inherit the implementer's reasoning. The habit
-  // only exists here, so each half of it is pinned — a separate worker, what
-  // the reviewer is given, what it is deliberately NOT given, and the model
-  // guidance that keeps a reviewer-per-ship-task affordable.
-  const doctrine = buildManagerKickoff('go');
-
-  it('names REVIEW as a task shape alongside ship and scout', () => {
-    expect(doctrine).toMatch(/SHIP task, a SCOUT task, or a REVIEW task/);
-    expect(doctrine).toMatch(/A REVIEW task follows every ship task that lands/);
+  it('preserves standalone versus host-owned recovery', () => {
+    for (const term of [
+      'HOST-OWNED MANAGER HANDOFF takes precedence',
+      'Do not adopt, read/delete shared handoff.md',
+      'list_orphans',
+      'confirmedManager:false is not proof',
+      'adopt_workers fromSessionId',
+    ])
+      expect(doctrine).toContain(term);
   });
-
-  it('forbids asking the implementer to grade its own work', () => {
-    expect(doctrine).toMatch(/Never ask the implementer whether its own work is right/);
-    expect(doctrine).toMatch(/reasoning that wrote the code cannot grade it/);
-  });
-
-  it('says a fresh session makes independence the default, and naming the one way to lose it', () => {
-    expect(doctrine).toMatch(/spawn_agent always starts a FRESH session/);
-    expect(doctrine).toMatch(/paste the implementer’s reasoning into the reviewer’s first message/);
-  });
-
-  it('lists what the reviewer is given, and what it is withheld', () => {
-    // The spec's list: ticket, acceptance criteria, architectural constraints,
-    // final diff, relevant files, test results.
-    expect(doctrine).toMatch(/acceptance criteria/);
-    expect(doctrine).toMatch(/architectural constraints/);
-    expect(doctrine).toMatch(/branch or commit and its diff/);
-    expect(doctrine).toMatch(/test results/);
-    expect(doctrine).toMatch(
-      /Do NOT give it the implementer’s plan, its reasoning, or its transcript/,
-    );
-  });
-
-  it('routes the reviewer through select_model instead of hand-picking its model', () => {
-    // The family-diversity argument survives; what changed is who acts on it.
-    // previousProvider is the field that lets the matrix answer with a family
-    // the implementer did not run on, so the manager states it rather than
-    // shopping list_models itself.
-    expect(doctrine).toMatch(/role "reviewer"/);
-    expect(doctrine).toMatch(/deep_reviewer/);
-    expect(doctrine).toMatch(/previousProvider/);
-    expect(doctrine).toMatch(/different model[\s\S]{0,20}family/i);
-    expect(doctrine).not.toMatch(/list_models/);
-  });
-
-  it('names review as the shape routing marks fresh, and what that refuses', () => {
-    expect(doctrine).toMatch(/marks fresh/);
-    expect(doctrine).toMatch(/dispatched with a resume/);
-    expect(doctrine).toMatch(/refuses such a call/);
-    // and is honest that the manager's own wire cannot trip it, so the rule
-    // does not read as a threat to a dispatch the manager is able to make.
-    expect(doctrine).toMatch(/always starts a[\s\S]{0,10}new session/);
-  });
-});
-
-describe('buildManagerKickoff — routing', () => {
-  // The loop this closes: routing.select is a read-only RPC nothing calls on a
-  // spawn, so the matrix decides a dispatch only when the manager asks it to.
-  // Before this, the doctrine picked models by hand and never named the tool,
-  // which made limit-aware routing inert for the whole fleet.
-  const doctrine = buildManagerKickoff('go');
-
-  it('tells the manager to consult select_model before every dispatch', () => {
-    expect(doctrine).toContain('SELECT_MODEL FIRST');
-    expect(doctrine).toMatch(/never pick a model, an effort or a harness by hand/);
-    expect(doctrine).toMatch(/call select_model with the ROLE/);
-  });
-
-  it('names the role vocabulary the matrix answers to', () => {
-    for (const role of [
-      'scout',
-      'implementer',
-      'reviewer',
-      'deep_reviewer',
-      'fixer',
-      'complex_fixer',
-      'validator',
-      'diagnostician',
-      'mechanical',
-      'judge',
-    ]) {
-      expect(doctrine).toContain(`"${role}"`);
-    }
-  });
-
-  it('carries the answer onto the spawn call: role, capability, decisionId', () => {
-    expect(doctrine).toMatch(/plus role, capability and decisionId/);
-    expect(doctrine).toContain('"decisionId"');
-    expect(doctrine).toMatch(/Copy the capability, never raise it/);
-    // A dispatch that declares no role gets no decision and no freshness.
-    expect(doctrine).toMatch(/declares no role/);
-  });
-
-  it('names no model family at all, which is what the matrix exists to remove', () => {
-    // The doctrine used to say "haiku-class" and "claude is the default", while
-    // the shipped mixed profile puts cheap on codex and the implementer on
-    // codex. A model noun in the doctrine is the second file a rename has to
-    // find.
-    expect(doctrine).not.toMatch(/haiku/i);
-    expect(doctrine).not.toMatch(/Never burn a frontier model on a chore/);
-    expect(doctrine).not.toMatch(/claude is the default/);
-  });
-
-  it('handles the two answers that are not a model', () => {
-    expect(doctrine).toMatch(/eligible:false/);
-    expect(doctrine).toMatch(/If select_model is not available/);
-  });
-
-  it('makes the manager read escalationScrubbed off the spawn result', () => {
-    expect(doctrine).toContain('escalationScrubbed');
-    expect(doctrine).toMatch(/routing ceiling caps that directory/);
-    expect(doctrine).toMatch(/only a person with a text editor can[\s\S]{0,20}raise a ceiling/);
-  });
-
-  it('does not promise an operator tier a ceiling may take away', () => {
-    // fleetManager's server-runner sentence promised operator outright. A
-    // per-directory max_tool_scope can clamp it to triage, and the only signal
-    // is toolScope appearing in escalationScrubbed.
-    expect(doctrine).toMatch(/ASK for that tier/);
-    expect(doctrine).toMatch(/can lower the tier/);
-    expect(doctrine).toMatch(/"toolScope" appearing in the spawn answer’s escalationScrubbed/);
-  });
-});
-
-describe('buildManagerKickoff — dispatch templates', () => {
-  // The doctrine is the only place a manager learns templates exist; the text
-  // is paid for in every manager session, so it is short — but the three
-  // load-bearing pieces must stay: the kind and how to invoke it, the default
-  // resultSchema behaviour, and the hard rule that the task slot is the
-  // manager's own writing (an unfilled required placeholder REFUSES the spawn,
-  // it never silently defaults).
-  const doctrine = buildManagerKickoff('go');
-
-  it('teaches the dispatch-template invocation shape on spawn_agent', () => {
-    expect(doctrine).toContain('DISPATCH TEMPLATES');
-    expect(doctrine).toContain('"template":"<item id>"');
-    expect(doctrine).toContain('"templateParams"');
-    // Discovery: templates are ordinary library items.
-    expect(doctrine).toMatch(/kind "dispatch"[\s\S]{0,80}list_library/);
-  });
-
-  it('says the default resultSchema applies unless the call passes its own', () => {
-    expect(doctrine).toMatch(/default resultSchema unless you pass your own/);
-  });
-
-  it('lists review-task among the starters and says the role rides the call', () => {
-    // A dispatch item is text-only by construction, so a template can never
-    // carry a role; the starter descriptions name it and the manager passes it.
-    expect(doctrine).toContain('review-task');
-    expect(doctrine).toMatch(/A template carries no spawn arguments at all/);
-    expect(doctrine).toMatch(/each starter’s description[\s\S]{0,40}names the role/);
-  });
-
-  it('states the hard rule: unfilled required placeholder refuses the spawn, the task slot is the manager’s', () => {
-    expect(doctrine).toMatch(/unfilled required placeholder REFUSES the spawn/i);
-    expect(doctrine).toMatch(/task slot is yours to write/);
-  });
-
-  it('teaches worker-escalated as a terminal alternative without weakening malformed result handling', () => {
-    expect(doctrine).toContain('wks-escalation');
-    expect(doctrine).toContain('worker-escalated');
-    expect(doctrine).toMatch(/suppresses the contradictory missing-result error/);
-    expect(doctrine).toMatch(/Malformed escalation blocks remain ordinary prose/);
-    expect(doctrine).toMatch(/exactly six keys/);
-    expect(doctrine).toMatch(
-      /Resolve authority and decisions that are in your dispatched scope yourself/,
-    );
-    expect(doctrine).toMatch(
-      /destructive, external, credential, cross-repo, or otherwise unauthorized/,
-    );
+  it('preserves templates, escalation validation and existing authorization', () => {
+    for (const term of [
+      'DISPATCH TEMPLATES',
+      'templateParams',
+      'default resultSchema',
+      'Required placeholders must be filled',
+      'wks-escalation',
+      'worker-escalated',
+      'type,status,reason,requiredAuthorityOrDecision,changed,nextAction',
+      'Malformed escalation blocks remain ordinary prose',
+      'never waive requested result validation',
+      'Existing explicit authorization persists',
+    ])
+      expect(doctrine).toContain(term);
   });
 });
 
@@ -328,13 +203,9 @@ describe('spawnFleetManager', () => {
     expect(kickoff).toContain('YOUR OWN fleet brief');
     expect(kickoff).toContain('memory across restarts');
     expect(kickoff).toContain('ONLY cross-project state');
-    // First-run managers looped guessing MCP argument names — the kickoff now
-    // carries exact call shapes (arg names must stay in lockstep with the
-    // facade's input structs in services/hub/cmd/mcp/main.go).
-    expect(kickoff).toContain('TOOL SYNTAX');
-    expect(kickoff).toContain('"parentSessionId"');
-    expect(kickoff).toContain('"sinceSeq"');
-    expect(kickoff).toContain('"decision":"yes"');
+    // Argument details live in schemas; keep the operating rules in the role.
+    expect(kickoff).toContain('parentSessionId');
+    expect(kickoff).toContain('sinceSeq');
     // …and model economics, which is now a routing call rather than a habit:
     // the matrix answers which model a role is worth, and the manager copies it.
     expect(kickoff).toContain('select_model');
@@ -344,38 +215,24 @@ describe('spawnFleetManager', () => {
     // monitoring loop hangs the manager and locks the user out (the reported bug).
     expect(kickoff).toContain('NEVER POLL');
     expect(kickoff).toContain('end your turn');
-    // The visible-terminal path: bring up a dev server the user can watch.
-    expect(kickoff).toContain('open_terminal');
-    expect(kickoff).toContain('does NOT block your turn');
-    // Harness pool: dispatch on codex/opencode/pi, not just claude.
-    expect(kickoff).toContain('list_providers');
-    expect(kickoff).toContain('codex');
-    // Point workers at the project's own code-intel tools when it has them.
-    expect(kickoff).toContain('rivet');
-    expect(kickoff).toContain('witness.select');
-    // Workers report BY FINISHING — the manager must tell them so (a plain
-    // worker has no channel back).
-    expect(kickoff).toContain('end your turn with a short summary');
-    expect(kickoff).toContain('delivered to me automatically');
-    // Ship vs scout task shapes + worktree isolation + per-project delivery.
-    expect(kickoff).toContain('SHIP task');
-    expect(kickoff).toContain('SCOUT task');
-    expect(kickoff).toContain('worktree":true');
-    expect(kickoff).toContain('DELIVERY MODE');
-    expect(kickoff).toContain('projects[<dir>].delivery');
-    // Per-project yolo autonomy.
-    expect(kickoff).toContain('projects[<dir>].yolo');
-    // The invocable skills the manager is told it has.
-    expect(kickoff).toContain('/standup');
-    expect(kickoff).toContain('/checkpoint');
-    expect(kickoff).toContain('/handoff');
-    // A successor manager must find a predecessor's handoff on its FIRST turn
-    // without being told — the doctrine points at it beside the fleet brief.
-    expect(kickoff).toContain('.workspacer/handoff.md');
-    // Briefs prune by cold archival, not deletion; the fleet brief has a ## User
-    // prefs section the manager honors.
-    expect(kickoff).toContain('brief.archive.md');
-    expect(kickoff).toContain('## User');
+    for (const term of [
+      'open_terminal',
+      'list_providers',
+      'code-intelligence tools',
+      'the host delivers that automatically',
+      'SHIP changes',
+      'SCOUT/REVIEW',
+      'worktree:true',
+      'projects[<dir>].delivery',
+      'yolo:true',
+      '/standup',
+      '/checkpoint',
+      '/handoff',
+      '.workspacer/handoff.md',
+      'archiving Recently overflow',
+      'User=fleet preferences',
+    ])
+      expect(kickoff).toContain(term);
     hook.unmount();
   });
 
@@ -543,7 +400,7 @@ describe('spawnFleetManager', () => {
     await waitFor(() =>
       expect(claudeMessage).toHaveBeenCalledWith(
         'mgr-live',
-        expect.stringContaining('and now?\n\nOn a local desktop with request inbox support'),
+        expect.stringContaining('and now?\n\nResolve inbox requests to pin new tasks'),
       ),
     );
     hook.unmount();

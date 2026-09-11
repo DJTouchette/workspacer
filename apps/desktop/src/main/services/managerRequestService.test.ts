@@ -842,3 +842,91 @@ for (const url of [
     }
   }
 }
+
+it('combines eligible unresolved content in a bounded pending view without history or task scans', () => {
+  const f = fixture();
+  const resolved = f.admitted();
+  f.resolve(resolved, [create()]);
+  f.admitted('rejected');
+  f.service.prepare('manager', 'not yet delivered');
+  const ids = Array.from({ length: 10 }, (_, i) =>
+    f.admitted(i % 2 ? 'unknown' : 'accepted', `request ${i}`),
+  );
+  const inbox = f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager') as any;
+  expect(inbox).toMatchObject({ ok: true, view: 'pending', remaining: 2 });
+  expect(inbox.tasks).toBeUndefined();
+  expect(inbox.requests).toHaveLength(8);
+  for (const r of inbox.requests) {
+    expect(ids).toContain(r.host.requestId);
+    expect(r.host.userContent).toBeUndefined();
+    expect(r.userContent).toEqual({
+      trust: 'user',
+      text: f.service.request('manager', r.host.requestId).userContent,
+    });
+    expect(
+      f.service.handle(
+        {
+          op: 'resolveRequest',
+          requestId: r.host.requestId,
+          expectedRevision: r.host.revision,
+          intents: [{ key: 'ack', kind: 'none', reason: 'acknowledged' }],
+        },
+        'manager',
+      ).ok,
+    ).toBe(true);
+  }
+  expect(f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager')).toMatchObject({
+    remaining: 0,
+    requests: expect.any(Array),
+  });
+  expect(
+    (f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager') as any).requests,
+  ).toHaveLength(2);
+  expect((f.service.handle({ op: 'requestInbox' }, 'manager') as any).tasks).toHaveLength(1);
+  expect(
+    (f.service.handle({ op: 'requestInbox', view: 'pending' }, 'foreign') as any).requests,
+  ).toEqual([]);
+  expect(f.service.handle({ op: 'requestInbox', view: 'pending' }, 'worker').ok).toBe(false);
+});
+
+it('defers oversized originals without truncation or losing CAS identity', () => {
+  const f = fixture();
+  const original = 'x'.repeat(17 * 1024);
+  const id = f.admitted('unknown', original);
+  f.admitted('accepted', 'small');
+  const inbox = f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager') as any;
+  const deferred = inbox.requests.find((r: any) => r.host.requestId === id);
+  expect(deferred).toMatchObject({ contentDeferred: true, host: { requestId: id, revision: 2 } });
+  expect(deferred.userContent).toBeUndefined();
+  expect(f.service.handle({ op: 'requestContent', requestId: id }, 'manager')).toMatchObject({
+    userContent: { text: original, trust: 'user' },
+  });
+  expect(inbox.requests.some((r: any) => r.userContent?.text === 'small')).toBe(true);
+  expect(f.service.handle({ op: 'requestInbox', view: 'invalid' as any }, 'manager').ok).toBe(
+    false,
+  );
+});
+
+it('keeps idle wake checks independent of retained history and bounds UTF-8 content', () => {
+  const f = fixture();
+  for (let i = 0; i < 24; i++) {
+    f.resolve(f.admitted(), [{ key: 'ack', kind: 'none', reason: 'status only' }]);
+  }
+  const pending = f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager');
+  expect(pending).toEqual({
+    ok: true,
+    available: true,
+    view: 'pending',
+    requests: [],
+    remaining: 0,
+  });
+  const compactBytes = Buffer.byteLength(JSON.stringify(pending));
+  const historyBytes = Buffer.byteLength(
+    JSON.stringify(f.service.handle({ op: 'requestInbox' }, 'manager')),
+  );
+  expect(compactBytes).toBeLessThan(100);
+  expect(compactBytes / historyBytes).toBeLessThan(0.01);
+  const id = f.admitted('accepted', '界'.repeat(6000));
+  const unicode = f.service.handle({ op: 'requestInbox', view: 'pending' }, 'manager') as any;
+  expect(unicode.requests[0]).toMatchObject({ contentDeferred: true, host: { requestId: id } });
+});

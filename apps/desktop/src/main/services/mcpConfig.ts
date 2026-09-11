@@ -42,12 +42,12 @@ function workerRoleNote(scope: RemoteTokenScope): string {
     case 'triage':
       return (
         'You have workspacer tools (mcp__workspacer__*) to observe the agent fleet and act on its attention needs: read transcripts/snapshots, approve or deny permission prompts, send messages, and interrupt. ' +
-        'Call the workspacer "help" tool before first use. Do not attempt to spawn agents or modify host files/config — your tier does not include those tools.'
+        'Use workspacer help by topic only when needed. Do not attempt to spawn agents or modify host files/config — your tier does not include those tools.'
       );
     default:
       return (
         'You have the full workspacer tool set (mcp__workspacer__*) to observe and drive the agent fleet. ' +
-        'Call the workspacer "help" tool before first using the others.'
+        'Use existing schemas directly; request workspacer help by topic only when needed.'
       );
   }
 }

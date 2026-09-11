@@ -921,7 +921,14 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
   inbox.finishDelivery(capture.requestId, delivery.deliveryId, 'unknown');
   const call = (name: string, args: Record<string, unknown>, label = 'session:manager-current') =>
     mcpTool(label, name, args);
+  const pending = await call('list_manager_requests', { view: 'pending' });
+  expect(pending.value).toMatchObject({ ok: true, view: 'pending' });
+  expect(pending.value.tasks).toBeUndefined();
+  const combined = pending.value.requests.find((r: any) => r.host.requestId === capture.requestId);
+  expect(combined.userContent.trust).toBe('user');
   const fetched = await call('get_manager_request', { requestId: capture.requestId });
+  expect(combined.userContent).toEqual(fetched.value.userContent);
+  expect(combined.host.revision).toBe(fetched.value.host.revision);
   expect(fetched.value.userContent).toEqual({
     text: 'Fix https://business.visualstudio.com/Project/_git/Repo/pullrequest/9492 and document https://example.com/spec.',
     trust: 'user',
@@ -993,6 +1000,22 @@ it('resolves authoritative multi-intent inbox requests through real authenticate
     ),
   ).toBe(true);
   expect(launch.mock.calls).toHaveLength(before);
+  const compact = await call('resolve_manager_request', { ...args, compact: true });
+  expect(compact.value.tasks.map((t: DispatchTask) => t.taskId)).toEqual(
+    resolved.value.tasks.map((t: DispatchTask) => t.taskId),
+  );
+  for (const task of compact.value.tasks) {
+    for (const template of Object.values(task.workflow.templates) as any[]) {
+      expect(template.body).toBeUndefined();
+      expect(template.params).toBeDefined();
+      expect(template.resultSchema).toBeDefined();
+    }
+  }
+  expect(
+    (await call('list_manager_requests', { view: 'pending' })).value.requests.some(
+      (r: any) => r.host.requestId === capture.requestId,
+    ),
+  ).toBe(false);
   const retry = await call('resolve_manager_request', args);
   expect(retry.value.tasks.map((t: DispatchTask) => t.taskId)).toEqual(
     resolved.value.tasks.map((t: DispatchTask) => t.taskId),

@@ -40,39 +40,34 @@ describe('installManagerSkills', () => {
     const checkpoint = fs.readFileSync(skillFile('checkpoint'), 'utf8');
     expect(standup).toMatch(/^---\nname: standup\n/);
     expect(checkpoint).toMatch(/^---\nname: checkpoint\n/);
-    // Load-bearing content: standup is a read-only digest; checkpoint routes + trims.
-    expect(standup).toContain('In flight');
-    expect(standup).toContain('must not change any brief');
-    // A worker's mid-task report arrives as a [fleet] wake in this very
-    // conversation — the digest reads it there instead of re-asking the worker.
-    expect(standup).toContain('report_progress');
-    expect(standup).toContain('NEEDS A DECISION');
-    // Landed code that nobody independent has looked at is an outstanding
-    // dispatch, so the digest has to surface it (routing spec Invariant 3).
-    expect(standup).toContain('have not been reviewed yet');
-    expect(standup).toMatch(/implementer's own sign-off does not count/);
-    expect(checkpoint).toContain('most specific home');
-    expect(checkpoint).toContain('.workspacer/brief.md');
-    expect(checkpoint).toContain('inspect-then-edit');
-    expect(checkpoint).toContain('## User');
-    // Pruning is COLD ARCHIVAL, not deletion — the overflow moves to the
-    // archive so the brief stays short but the history survives.
-    expect(checkpoint).toContain('20 newest');
-    expect(checkpoint).toContain('.workspacer/brief.archive.md');
-    // And it goes through the CAPABILITY, not a shell. A skill body that only
-    // describes the destination is what produced three differently worded
-    // archive headings and four .bak files in one morning.
-    expect(checkpoint).toContain('brief_archive({project, section: "Recently", keep: 20})');
-    expect(checkpoint).toContain('do not do this with');
-    // The judgement stays with the model: which lines are stale is the part a
-    // schema is bad at, and it was right when a model did it by hand.
-    expect(checkpoint).toContain('judgement only you can make');
-    // The two things brief_append reports back, so an over-budget section and a
-    // refused line are both acted on rather than discovered by failing.
-    expect(checkpoint).toContain('entriesInSection');
-    expect(checkpoint).toContain('REFUSED');
-    // A durable project finding routes to rivet.learn when the project uses it.
-    expect(checkpoint).toContain('rivet.learn');
+    // The installed skills remain bounded and preserve operational rules.
+    expect(standup.length).toBeLessThan(2000);
+    expect(checkpoint.length).toBeLessThan(3000);
+    for (const term of [
+      'In flight',
+      'No spawning, polling or brief edits',
+      'NEEDS A DECISION',
+      'independent review',
+      'lastMessage:true',
+    ])
+      expect(standup).toContain(term);
+    for (const term of [
+      'most specific home',
+      '.workspacer/brief.md',
+      'preserve',
+      'User',
+      'brief_archive',
+      'keep:20',
+      'brief.archive.md',
+      'Do not delete history',
+      'decide which are actually finished',
+      'entriesInSection',
+      'refuses lines over 4000',
+      'rivet.learn',
+      'atomic',
+      'never a whole-file rewrite',
+    ])
+      expect(checkpoint).toContain(term);
   });
 
   it('writes /handoff with the succession contract a fresh manager needs', () => {

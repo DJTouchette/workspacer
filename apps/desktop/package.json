@@ -33,6 +33,7 @@
     "typecheck:renderer": "cd src/renderer && tsc -p tsconfig.json --noEmit",
     "test": "npm run test:main && npm run test:renderer && npm run test:headroom",
     "test:main": "vitest run",
+    "audit:fleet-context": "python3 scripts/fleet-context-audit.py",
     "test:dispatch-chain": "tsc -p tsconfig.dispatch-chain.json && vitest run --config vitest.dispatch-chain.config.ts",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",

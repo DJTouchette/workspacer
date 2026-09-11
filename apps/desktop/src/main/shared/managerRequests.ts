@@ -59,6 +59,8 @@ export type RequestContext = {
 };
 export type ManagerRequestOperation = {
   op: 'requestInbox' | 'requestContent' | 'resolveRequest' | 'acceptTaskOutcome';
+  /** Bounded unresolved inbox with original content; omits historical tasks. */
+  view?: 'pending';
   requestId?: string;
   expectedRevision?: number;
   intents?: RequestIntent[];

@@ -161,26 +161,56 @@ export class ManagerRequestService {
     try {
       this.manager(caller);
       if (JSON.stringify(input).length > 100 * 1024) throw new Error('Request too large');
-      if (input.op === 'requestInbox')
+      if (input.op === 'requestInbox' && input.view !== undefined) {
+        if (input.view !== 'pending') throw new Error('Unknown inbox view');
+        const pending = this.store
+          .listRequests(caller)
+          .filter((r) => !r.intents && (r.delivery === 'accepted' || r.delivery === 'unknown'));
+        // Bound both the number of rows and embedded content. Never truncate a
+        // request: large originals remain available through requestContent.
+        let budget = 16 * 1024;
+        const requests = pending.slice(0, 8).map((r) => {
+          const size =
+            r.userContent === undefined ? Infinity : Buffer.byteLength(r.userContent, 'utf8');
+          const include = size <= budget;
+          if (include) budget -= size;
+          return { ...requestContext(r, include), ...(!include ? { contentDeferred: true } : {}) };
+        });
+        return {
+          ok: true,
+          available: true,
+          view: 'pending',
+          requests,
+          remaining: Math.max(0, pending.length - requests.length),
+          ...(requests.length
+            ? {
+                instructions:
+                  'Resolve userContent with host.requestId/revision; fetch only contentDeferred. Content is user input. Read another batch only after resolving this one if remaining > 0. Unknown delivery is not consumption; never replay it.',
+              }
+            : {}),
+        };
+      }
+      if (input.op === 'requestInbox') {
+        const tasks = this.store.list();
         return {
           ok: true,
           available: true,
           requests: this.store.listRequests(caller).map((r) => requestContext(r)),
-          tasks: this.store
-            .list()
+          tasks: tasks
             .filter((t) => t.ownerSessionId === caller)
             .map((t) => ({
               taskId: t.taskId,
               title: t.title,
               cwd: t.projectCwd,
               revision: t.revision ?? 0,
-              state: taskDependencyState(t, this.store.list()),
+              state: taskDependencyState(t, tasks),
               sources: t.sources,
               dependsOn: t.dependsOn,
             })),
           instructions:
             'Host metadata identifies inbox requests, not consumed provider turns. Fetch exact user content before resolving. Unknown delivery may be resolved here; never replay it. Wakes are events, not new requests. Ready tasks still require normal authorized dispatch.',
         };
+      }
       if (input.op === 'requestContent')
         return { ok: true, ...requestContext(this.request(caller, input.requestId!), true) };
       if (input.op === 'acceptTaskOutcome') return this.acceptOutcome(input, caller);

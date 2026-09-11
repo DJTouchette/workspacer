@@ -46,38 +46,26 @@ name: standup
 description: Fleet status at a glance for the Workspacer Fleet Manager — a tight four-section digest of what your dispatched workers are doing. Only useful inside a Workspacer Fleet Manager session (requires the mcp__workspacer__* tools).
 ---
 
-# /standup — where the fleet stands
+# /standup — fleet status
 
-Produce ONE concise digest and stop. Do not spawn anything; do not poll. Read,
-compose, report. Sources, cheapest first: your own fleet brief
-(.workspacer/brief.md under your cwd), each project's brief, and \`list_agents\`
-for live state. The \`report_progress\` notes your workers sent you are already
-in THIS conversation as \`[fleet]\` wakes — read them there rather than asking a
-worker to repeat itself. Use \`get_conversation\` with \`sinceSeq\` only if you
-need a worker's latest outcome you have not already recorded.
+Give one concise digest, then stop. No spawning, polling or brief edits.
+Use the progress/results already in this conversation and your fleet brief.
+Call \`list_agents\` once for live state; read only relevant project briefs
+whose recent outcomes or priorities are missing. Use \`project_status\` for
+requested git state, with \`dirs\` to scope it. Fetch \`get_conversation\` with
+\`lastMessage:true\` only for a missing final report, or \`textOnly:true\` and
+\`sinceSeq\` for a specific dialogue gap. Do not repeat a worker's own report
+request or generate a model summary when its progress/result already answers.
 
-Emit exactly these four sections (drop a section only if it is genuinely empty):
+Use these sections, omitting empty ones:
+- **In flight**: session:<id>, project, task, state and last meaningful progress.
+  For NEEDS A DECISION, say what answer you will provide or need from the user.
+- **Landed recently**: a few newest project outcomes; flag independent review
+  still owed under the task's selected policy (legacy ship tasks require it).
+- **Waiting on you**: unresolved user decisions and approvals.
+- **Next up**: brief-based recommendations only; do not dispatch them here.
 
-**In flight** — each running dispatch: \`session:<id>\` — project — one-line task,
-and whether it is working, waiting on approval, or blocked. Include the last
-progress note it sent you, if any; a note marked NEEDS A DECISION means that
-worker is blocked on YOUR answer, so say what you are going to tell it.
-
-**Landed recently** — the newest entries across the project briefs' "## Recently"
-(a few lines, newest first), each with its project. Flag any that changed code
-and have not been reviewed yet: an independent reviewer is a dispatch you still
-owe them, and the implementer's own sign-off does not count as one.
-
-**Waiting on you** — every decision parked on the user: a worker blocked on an
-approval you escalated, a question, a merge awaiting the go-ahead.
-
-**Next up** — what you would dispatch next and why, in one line each, guided by
-each brief's "## Direction" and the fleet brief's "## User" preferences.
-Suggestions only — do not act on them here.
-
-Reference every agent as \`session:<id>\` so the user can click through. Prefer
-bullets over prose. This is a read; it must not change any brief or spawn a
-worker.
+Use exact session:<id> references for clickable agent links.
 `;
 
 const CHECKPOINT_BODY = `---
@@ -85,68 +73,43 @@ name: checkpoint
 description: Capture durable knowledge from this Fleet Manager session and file each finding to the most specific home (project brief, fleet brief, or a note for the user), then prune stale brief lines. Only useful inside a Workspacer Fleet Manager session (requires the mcp__workspacer__* tools).
 ---
 
-# /checkpoint — file what this session learned, then trim
+# /checkpoint — durable memory and brief maintenance
 
-A deliberate sweep of the CURRENT conversation for knowledge that only exists in
-chat and would be lost on a restart. Route each finding to the most specific
-home, then trim the briefs you touched. Never invent facts, and never rewrite a
-line the user wrote: inspect-then-edit (read the file, merge, write), never
-blind-append.
+File knowledge from this conversation that would otherwise be lost. Do not
+spawn workers or invent facts. Read only briefs you need to change; preserve
+user-authored lines. Add via atomic \`brief_append\`, never a whole-file rewrite;
+inspect before editing/removing existing lines.
 
-Every brief (project AND fleet) is a \`.workspacer/brief.md\` with the same shape:
-- **## Now** — in flight, one line each. A LIVE list, not a log — a line leaves
-  the moment its work lands or is abandoned.
-- **## Direction** — durable goals, priorities, sequencing.
-- **## Recently** — a DATED log, newest first: new entries go at the TOP as
-  \`- YYYY-MM-DD  <what happened>\`. This is the only section that grows.
-- **## User** (fleet brief only) — standing preferences the user has stated.
+Every brief is \`<project>/.workspacer/brief.md\`:
+- **Now**: live work/escalations; remove landed or abandoned items.
+- **Direction**: durable goals, priorities and sequencing.
+- **Recently**: newest-first dated outcomes, \`- YYYY-MM-DD  <what happened>\`.
+- **User** (fleet only): the user's standing preferences.
 
-Routing, most specific first:
+Route to the most specific home:
+1. Repo knowledge belongs in that project's brief or its existing context
+   system. For Rivet findings, use \`rivet.learn\` when available or leave the
+   owning worker a concise followup to record them. Without repo memory tools,
+   flag permanent CLAUDE.md/AGENTS.md additions for the user.
+2. Fleet-wide priorities, dispatch outcomes and escalations belong in your own
+   fleet brief. Do not copy project briefs into it.
+3. Stated user preferences go in the fleet brief's User section.
+4. A task-specific next action goes to its worker via \`send_message\` when
+   authorized, or into that project's Now section.
 
-1. **Project-intrinsic knowledge** (how a repo builds/tests, a gotcha, a
-   convention) → that project's brief, "## Direction" if durable or "## Now" if
-   in flight. If the project uses rivet, a durable finding's proper home is
-   \`rivet.learn\` (its context docs) — have the worker record it there. If it is
-   truly permanent repo memory with no rivet, tell the user it belongs in that
-   project's CLAUDE.md rather than writing it there yourself.
-2. **Cross-project / fleet state** (a dispatch outcome, a shifted priority, an
-   open escalation) → YOUR fleet brief (\`.workspacer/brief.md\` under your cwd):
-   outcomes to "## Recently", priorities/sequencing to "## Direction", open
-   dispatches and user-waiting items to "## Now".
-3. **A user preference** stated this session → the fleet brief's "## User"
-   heading, so it survives restarts — and honor it from then on.
-4. **A task-scoped next step** that belongs to one worker → send it to that
-   worker with \`send_message\`, or note it in that project's "## Now".
+Prune only touched briefs. \`brief_check({project})\` identifies potentially
+stale Now references; decide which are actually finished. Use
+\`brief_archive({project,section:"Recently",keep:20})\` for old outcomes,
+adjusting the count for activity. It preserves entries byte-for-byte in
+\`brief.archive.md\` under the brief lock. Do not delete history or hand-write
+archive headings. Archive other sections only when the oldest entries are
+finished/superseded; never archive active goals merely to meet a count.
 
-Then PRUNE each brief you touched. The JUDGEMENT is yours; the mechanics are a
-tool call, so do not do this with \`cp\`, \`sed\` or a rewritten file.
-
-- **## Now**: remove every item whose work has landed or been abandoned. That is
-  a judgement only you can make, so read each line and decide. Removing a line is
-  still a file edit (inspect-then-edit, never blind-write).
-- **## Recently**: keep roughly the 20 newest entries and archive the rest with
-  \`brief_archive({project, section: "Recently", keep: 20})\`. It moves the oldest
-  entries out to \`.workspacer/brief.archive.md\` in one call, byte for byte,
-  under the same lock \`brief_append\` takes. Pick the number yourself: keep more
-  when the last few days were busy, fewer when the log has gone stale. Running it
-  again with the same \`keep\` changes nothing, so it is safe to repeat.
-- **## Direction**: long, and mostly still true, so trim it only when an entry
-  is genuinely finished or superseded. When several are, archive them the same
-  way with a \`keep\` that leaves the live ones.
-
-The archive is cold storage: only ever appended to, never rewritten, so nothing
-you archive is lost. \`brief_archive\` writes one \`## <today's date>\` heading and
-adds to it, which is why hand-writing archive headings produces the mess it does.
-
-\`brief_append\` tells you two things worth acting on. A line over 4000 characters
-is REFUSED and nothing is written, so split it into separate entries rather than
-retrying it whole. And every result carries \`entriesInSection\` and
-\`bytesInSection\`, the state of that section after your write, so you can see one
-going over budget without reading it. Past ~20 entries, trim it.
-
-Finish with a one-paragraph report: what you filed and where, what you archived,
-and what you left for the user to decide. Do not spawn workers; this is
-bookkeeping.
+\`brief_append\` refuses lines over 4000 characters; split them. Its
+entriesInSection/bytesInSection report size without another read. For worker
+outcomes pass the validated result and sessionId; write only the significance
+in line. Preserve evidence caveats. Finish with a short report of what was
+filed, archived and left for the user.
 `;
 
 const HANDOFF_NAME = 'handoff';

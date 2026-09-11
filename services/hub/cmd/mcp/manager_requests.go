@@ -11,6 +11,8 @@ import (
 // Caller identity comes exclusively from the authenticated facade context.
 // The local desktop owns content and interpretation; headless stays unavailable.
 type managerRequestIn struct {
+	View                 string           `json:"view,omitempty" jsonschema:"pending returns up to 8 eligible unresolved requests with original content (16 KiB total); omits resolved history/tasks. Omit for the full metadata inventory."`
+	Compact              bool             `json:"compact,omitempty" jsonschema:"omit pinned template bodies from returned tasks; evidence and policy remain"`
 	RequestID            string           `json:"requestId,omitempty" jsonschema:"host request ID returned by list_manager_requests; never derive from chat text"`
 	ExpectedRevision     *int             `json:"expectedRevision,omitempty" jsonschema:"current host request revision for atomic resolution"`
 	Intents              []map[string]any `json:"intents,omitempty" jsonschema:"1-8 independent actions with stable key, kind(create/followUp/update/question/none), reason; work adds cwd, title, provenance(explicit/inferred); update requires taskId and expectedTaskRevision; followUp requires dependsOn task IDs or dependsOnKeys naming earlier work intents in this same resolution; cancel is optional on update; references optionally maps pasted URLs using kind pullRequest(number,url), ticket(id,url), or reference(label,url); multiple URLs/tasks require references on every work intent ([] assigns none); replacePullRequest true requires explicit replacement intent"`
@@ -25,15 +27,15 @@ func addManagerRequestTools(b *build) {
 	if !b.allowed(method) {
 		return
 	}
-	for _, item := range []struct{ name, op, desc string }{
-		{"list_manager_requests", "requestInbox", "Check your authoritative local desktop request inbox once on each user or wake turn. Lists trusted identities/status, without original content; fetch exact requests before resolution. Wakes and worker continuations are events, not new user requests. Headless/remote unavailable."},
-		{"get_manager_request", "requestContent", "Fetch one owned inbox request. Host identity and delivery metadata are separate from original userContent, which remains user input. Unknown provider acknowledgement may be resolved from this inbox; never replay it or claim it was consumed."},
-		{"resolve_manager_request", "resolveRequest", "Atomically resolve all independent intents in an owned request with expectedRevision CAS. Creates visible pinned tasks without workers; followUp links concrete task IDs. Questions/status/ack use none or question; corrections use update and existing taskId. Retry the same intent keys; conflicts return current state. A single pasted PR URL is attached to a single work task atomically. Ambiguous URLs require explicit references mapping; use generic named references for unknown providers. Preserve existing PR unless replacement was explicitly requested. No execution/publish authority is granted."},
-		{"accept_task_outcome", "acceptTaskOutcome", "After inspecting recorded concrete outcomes, explicitly accept a task under expectedTaskRevision CAS and a reason. Valid schema/idle/terminal steps alone do not mean success. Failed, blocked or waived policy remains ineligible. Returns newly ready followups; never spawns or publishes."},
+	for _, item := range []struct{ name, op, desc, fields, required string }{
+		{"list_manager_requests", "requestInbox", "Check your authoritative local desktop request inbox once on each user or wake turn. Use view=pending to include original content and omit resolved history; fetch only contentDeferred requests separately. Wakes and worker continuations are events, not new user requests. Headless/remote unavailable.", "view", ""},
+		{"get_manager_request", "requestContent", "Fetch one owned inbox request. Host identity and delivery metadata are separate from original userContent, which remains user input. Unknown provider acknowledgement may be resolved from this inbox; never replay it or claim it was consumed.", "requestId", "requestId"},
+		{"resolve_manager_request", "resolveRequest", "Atomically resolve all independent intents in an owned request with expectedRevision CAS. Creates visible pinned tasks without workers; followUp links concrete task IDs. Questions/status/ack use none or question; corrections use update and existing taskId. Retry the same intent keys; conflicts return current state. A single pasted PR URL is attached to a single work task atomically. Ambiguous URLs require explicit references mapping; use generic named references for unknown providers. Preserve existing PR unless replacement was explicitly requested. No execution/publish authority is granted.", "requestId expectedRevision intents compact", "requestId expectedRevision intents"},
+		{"accept_task_outcome", "acceptTaskOutcome", "After inspecting recorded concrete outcomes, explicitly accept a task under expectedTaskRevision CAS and a reason. Valid schema/idle/terminal steps alone do not mean success. Failed, blocked or waived policy remains ineligible. Returns newly ready followups; never spawns or publishes.", "taskId cwd expectedTaskRevision reason compact", "taskId cwd expectedTaskRevision reason"},
 	} {
 		item := item
 		b.tools = append(b.tools, toolInfo{Name: item.name, Desc: item.desc, Method: method, Group: "workflows"})
-		mcp.AddTool(b.s, &mcp.Tool{Name: item.name, Description: item.desc}, func(ctx context.Context, _ *mcp.CallToolRequest, in managerRequestIn) (*mcp.CallToolResult, any, error) {
+		mcp.AddTool(b.s, &mcp.Tool{Name: item.name, Description: item.desc, InputSchema: operationSchema[managerRequestIn](item.fields, item.required)}, func(ctx context.Context, _ *mcp.CallToolRequest, in managerRequestIn) (*mcp.CallToolResult, any, error) {
 			caller := callerSessionID(ctx)
 			if caller == "" {
 				return nil, nil, fmt.Errorf("request inbox requires an authenticated local manager")
@@ -52,7 +54,8 @@ func addManagerRequestTools(b *build) {
 			_ = json.Unmarshal(raw, &wire)
 			wire["op"] = item.op
 			wire["callerSessionId"] = caller
-			return b.forward(ctx, method, wire)
+			delete(wire, "compact")
+			return forwardWorkflow(ctx, b, method, wire, in.Compact)
 		})
 	}
 }
