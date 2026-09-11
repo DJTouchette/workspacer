@@ -5,7 +5,6 @@ import (
 	"golang.org/x/sys/windows"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 func freeStorageBytes(dir string) (uint64, error) {
@@ -22,7 +21,7 @@ func stopGitChild()                            { os.Exit(1) } // Kill-on-close j
 func cancelStorageCommand(cmd *exec.Cmd) error { return cmd.Process.Kill() }
 
 func lockStorage(root string) (func(), error) {
-	f, err := os.OpenFile(filepath.Join(root, "storage.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := openStorageFile(root, "storage.lock", true)
 	if err != nil {
 		return nil, err
 	}

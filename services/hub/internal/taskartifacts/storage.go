@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -42,9 +44,6 @@ func directoryBytes(dir string) (int64, error) {
 		if count > 200000 {
 			return fmt.Errorf("storage entry limit exceeded")
 		}
-		if e.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("quarantine storage link refused")
-		}
 		if e.IsDir() {
 			return nil
 		}
@@ -52,8 +51,15 @@ func directoryBytes(dir string) (int64, error) {
 		if err != nil {
 			return err
 		}
+		if e.Type()&os.ModeSymlink != 0 {
+			total += info.Size()
+			return nil
+		} // Count the link, never its target (e.g. ignored dependencies).
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("quarantine special file refused")
+		}
+		if info.Size() < 0 || total > (1<<60)-info.Size() {
+			return fmt.Errorf("storage accounting size limit exceeded")
 		}
 		total += info.Size()
 		return nil
@@ -78,7 +84,19 @@ func InspectStorage(root string) (StorageStatus, error) {
 		if e.Name() != "storage-reservation.json" || e.IsDir() {
 			return nil
 		}
-		raw, err := os.ReadFile(name)
+		rel, err := filepath.Rel(root, name)
+		if err != nil {
+			return err
+		}
+		if len(strings.Split(filepath.ToSlash(rel), "/")) != 3 {
+			return nil
+		}
+		f, err := openStorageFile(filepath.Dir(name), filepath.Base(name), false)
+		if err != nil {
+			return err
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, 65))
+		f.Close()
 		if err != nil {
 			return err
 		}
@@ -133,8 +151,12 @@ func ReserveStorage(root, dir string) (func(), error) {
 		return fail(fmt.Errorf("quarantine storage admission refused: preserve 2 GiB free disk reserve"))
 	}
 	raw, _ := json.Marshal(TaskStorageBudget)
-	f, err := os.OpenFile(marker, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	f, err := openStorageFile(dir, filepath.Base(marker), true)
 	if err != nil {
+		return fail(err)
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
 		return fail(err)
 	}
 	_, err = f.Write(raw)
@@ -153,4 +175,34 @@ func ReserveStorage(root, dir string) (func(), error) {
 
 func WithStorageLimit(ctx context.Context, dir string) context.Context {
 	return context.WithValue(ctx, storageContextKey{}, storageGuard{dir, TaskStorageBudget - 2*TaskBytes})
+}
+
+func openStorageFile(dir, name string, write bool) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	before, err := root.Lstat(name)
+	flags := os.O_RDONLY
+	if write {
+		flags = os.O_RDWR
+	}
+	if os.IsNotExist(err) && write {
+		flags |= os.O_CREATE | os.O_EXCL
+	} else if err != nil {
+		return nil, err
+	} else if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("unsafe storage metadata entry")
+	}
+	f, err := root.OpenFile(name, flags, 0600)
+	if err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
+	if err != nil || !after.Mode().IsRegular() || !singleLink(f, after) || before != nil && !os.SameFile(before, after) {
+		f.Close()
+		return nil, fmt.Errorf("storage metadata identity changed")
+	}
+	return f, nil
 }

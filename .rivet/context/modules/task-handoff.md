@@ -83,10 +83,13 @@ task's target label; it does not affect target identity or authorization.
   sparse/partial checkouts and execution-valued repository configuration fail
   preflight. Ordinary Windows source and return custody are supported: new
   storage gets an inheritable protected current-user/SYSTEM/Administrators DACL
-  at creation, actual DACLs are checked on materialized files, and native volume
+  at creation, actual DACLs are checked after all materialization, and native volume
   plus file IDs bind allocations to receipts. Reparse entries are refused.
-  Native extended paths handle production-length task IDs without depending on
-  the machine-wide long-path setting. POSIX mode bits are not Windows ACL proof.
+  Native extended paths and persisted private-repository `core.longpaths` handle
+  production-length task IDs without changing global Git/Windows settings.
+  Source status honors the safe effective `core.autocrlf` scalar; private result
+  repositories persist canonical checkout settings so ordinary worker/review
+  Git commands see the verified tree. POSIX mode bits are not Windows ACL proof.
 - Worker test-pass text remains a worker claim. Host-verified base/head and
   immutable local review capture do not certify those claims as test evidence.
 - Terminal message acknowledgment never authorizes deletion. Host-user
@@ -98,7 +101,10 @@ task's target label; it does not affect target identity or authorization.
   eviction is not custody or Git object GC. Retained Git data remains charged;
   automatic Git GC is deliberately absent. Status includes used/reserved/limit
   bytes and an explicit retention explanation, surfaced by the disposition UI.
-  The existing 32-retained-task limit is separate from byte admission.
+  The existing 32-retained-task limit is separate from byte admission and can
+  also require explicit retention maintenance; acceptance is not receipt eviction.
+  Storage inventory counts link metadata without traversing dependency links.
+  Only task-root reservation records are parsed, never same-named user files.
 
 ## Review and validation entry points
 

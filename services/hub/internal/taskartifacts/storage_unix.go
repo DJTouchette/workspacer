@@ -6,7 +6,6 @@ import (
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 )
 
@@ -28,7 +27,7 @@ func cancelStorageCommand(cmd *exec.Cmd) error {
 }
 
 func lockStorage(root string) (func(), error) {
-	f, err := os.OpenFile(filepath.Join(root, "storage.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := openStorageFile(root, "storage.lock", true)
 	if err != nil {
 		return nil, err
 	}

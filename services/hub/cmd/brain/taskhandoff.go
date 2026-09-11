@@ -276,7 +276,7 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		// see capacity failure and can accept/clean completed work explicitly.
 		entries, _ := os.ReadDir(filepath.Join(r.handoffConfigDir(), "task-handoffs", binding.Origin))
 		if len(entries) >= 32 {
-			return nil, fmt.Errorf("handoff capacity reached: accept and clean retained work before admitting more")
+			return nil, fmt.Errorf("handoff retained-task limit reached (32): explicit retention maintenance is required; unaccepted custody is never evicted")
 		}
 		if err := taskartifacts.MakePrivateDirectory(dir); err != nil {
 			return nil, err

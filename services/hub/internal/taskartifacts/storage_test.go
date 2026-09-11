@@ -14,7 +14,7 @@ func TestStorageReservationsSurviveInterruptedAdmission(t *testing.T) {
 	root := t.TempDir()
 	raw, _ := json.Marshal(TaskStorageBudget)
 	for _, name := range []string{"one", "two", "three"} {
-		dir := filepath.Join(root, name)
+		dir := filepath.Join(root, "origin", name)
 		if err := MakePrivateDirectory(dir); err != nil {
 			t.Fatal(err)
 		}
@@ -29,7 +29,7 @@ func TestStorageReservationsSurviveInterruptedAdmission(t *testing.T) {
 	if status.Used+status.Reserved != StorageBudget {
 		t.Fatal("crash reservations not counted", status)
 	}
-	fourth := filepath.Join(root, "four")
+	fourth := filepath.Join(root, "origin", "four")
 	if err := MakePrivateDirectory(fourth); err != nil {
 		t.Fatal(err)
 	}
@@ -37,13 +37,13 @@ func TestStorageReservationsSurviveInterruptedAdmission(t *testing.T) {
 		release()
 		t.Fatal("overbooked retained reservations")
 	}
-	release, err := ReserveStorage(root, filepath.Join(root, "one"))
+	release, err := ReserveStorage(root, filepath.Join(root, "origin", "one"))
 	if err != nil {
 		t.Fatal("same task could not resume", err)
 	}
 	release()
 	for _, name := range []string{"two", "three"} {
-		if _, err := os.Stat(filepath.Join(root, name, "storage-reservation.json")); err != nil {
+		if _, err := os.Stat(filepath.Join(root, "origin", name, "storage-reservation.json")); err != nil {
 			t.Fatal("sole-copy reservation evicted", err)
 		}
 	}
@@ -66,6 +66,22 @@ func TestStorageLockCannotBeDoubleBooked(t *testing.T) {
 		t.Fatal("native lock did not release", err)
 	}
 	next()
+}
+
+func TestStorageDoesNotInterpretUserFilesAsReservations(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "origin", "task", "input-worktree")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("ordinary user code, not reservation JSON")
+	if err := os.WriteFile(filepath.Join(dir, "storage-reservation.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	status, err := InspectStorage(root)
+	if err != nil || status.Reserved != 0 || status.Used != int64(len(data)) {
+		t.Fatal("user file borrowed reservation authority", status, err)
+	}
 }
 
 func TestStorageLimitStopsNativeGitAndRetainsChargedBytes(t *testing.T) {
