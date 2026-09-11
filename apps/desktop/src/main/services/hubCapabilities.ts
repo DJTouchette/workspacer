@@ -680,6 +680,7 @@ export function registerHubCapabilities(): void {
       role,
       capability,
       decisionId,
+      exactModel,
       trackTask,
       taskId,
       stage,
@@ -693,6 +694,7 @@ export function registerHubCapabilities(): void {
       executionTarget?: 'paired';
       remoteCwd?: string;
       workflowStepId?: string;
+      exactModel?: boolean;
       trackTask?: boolean;
       taskId?: string;
       stage?: import('../shared/dispatchHistory').TaskStage;
@@ -832,6 +834,11 @@ export function registerHubCapabilities(): void {
        *  routing.yaml). The hub writes both rows; this is the key. */
       decisionId?: string;
     };
+    // An adopted older hub may clamp rather than refuse an exact model.
+    // Its existing clamp receipt must still stop us before launching a substitute.
+    if (exactModel && hubScrubbed?.some((field) =>
+      ['model', 'modelIdentity', 'contextWindow', 'effort', 'capability'].includes(field)))
+      throw new Error('The hub changed the explicitly requested model; no substitute was launched');
     // ── Dispatch templates: resolve + validate BEFORE allocation ──────────
     // The rendered text becomes the first message, but final rendering waits
     // until worktree allocation has chosen its actual execution cwd. The

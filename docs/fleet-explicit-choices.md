@@ -19,7 +19,8 @@ this automatically for `modelSelection` and identifies the receipt as
 `selection.source:"explicit"`; it does not fabricate a routing decision.
 
 Directory model ceilings still apply. If a ceiling would substitute another
-model, an exact-model spawn is refused before launch and the refusal is audited.
+model, an exact-model spawn is refused before launch and the refusal is audited. Launch providers also reject model substitutions
+reported by an adopted older hub before starting a worker.
 Filesystem access, profile grants, permission bypass grants, task ownership and
 review-worker freshness remain enforced. Explicit model selection does not
 retroactively alter an already-running worker or erase recorded outcomes.

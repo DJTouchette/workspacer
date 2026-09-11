@@ -551,6 +551,7 @@ func analyticsRecentStub() (json.RawMessage, error) {
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
+	ExactModel bool `json:"exactModel"`
 	// Provider backend: claude (default) | codex | copilot | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.
@@ -755,6 +756,16 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	var p spawnParams
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
+	}
+	// New providers can be paired with an adopted older hub. Honor the pin
+	// even when that hub reports a clamp instead of refusing it itself.
+	if p.ExactModel {
+		for _, field := range p.EscalationScrubbed {
+			switch field {
+			case "model", "modelIdentity", "contextWindow", "effort", "capability":
+				return nil, fmt.Errorf("the hub changed the explicitly requested model; no substitute was launched")
+			}
+		}
 	}
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err == nil {

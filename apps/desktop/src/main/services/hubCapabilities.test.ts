@@ -2953,3 +2953,21 @@ describe('accepted manager task links through the actual spawn handler', () => {
     getSnapshot.mockImplementation(() => null);
   });
 });
+
+it.each(['model', 'modelIdentity', 'contextWindow', 'effort', 'capability'])(
+  'refuses an exact model changed by an older hub (%s) before launching',
+  async (field) => {
+    await expect(
+      call('agents.spawn', {
+        provider: 'codex',
+        cwd: process.cwd(),
+        model: 'replacement',
+        exactModel: true,
+        escalationScrubbed: [field],
+        message: 'Never run a substitute',
+      }),
+    ).rejects.toThrow('no substitute was launched');
+    expect(spawnManagedAgent).not.toHaveBeenCalled();
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+  },
+);
