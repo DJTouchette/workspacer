@@ -32,7 +32,13 @@ interface ArtifactManifest {
   entries: Array<HandoffSelection & { size: number; sha256: string }>;
 }
 export interface HandoffRecord {
-  storage?: { usedBytes: number; reservedBytes: number; limitBytes: number; taskLimitBytes: number; retention: string };
+  storage?: {
+    usedBytes: number;
+    reservedBytes: number;
+    limitBytes: number;
+    taskLimitBytes: number;
+    retention: string;
+  };
   allocationId?: string;
   plan: {
     version: number;
@@ -151,9 +157,10 @@ export async function setTaskHandoffDisposition(
     dispatchHistoryStore.observeHandoff(attempt.sessionId, {
       ...attempt.handoff,
       disposition: request.keep ? 'keep' : 'accepted',
-      note: target.state === 'cleaned'
-        ? 'The execution copy has been cleaned. Local review custody is retained.'
-        : receipt.storage?.retention,
+      note:
+        target.state === 'cleaned'
+          ? 'The execution copy has been cleaned. Local review custody is retained.'
+          : receipt.storage?.retention,
     });
     return { ok: true, task: dispatchHistoryStore.task(request.taskId)! };
   } catch (error) {
@@ -229,7 +236,12 @@ export async function prepareTaskHandoff(
     binding: source.binding,
     task,
   });
-  if (prepared.state !== 'prepared' || prepared.digest !== frozen.digest || !prepared.allocation || !prepared.allocationId)
+  if (
+    prepared.state !== 'prepared' ||
+    prepared.digest !== frozen.digest ||
+    !prepared.allocation ||
+    !prepared.allocationId
+  )
     throw new Error('Target did not verify the selected checkpoint and required artifacts');
   return prepared;
 }

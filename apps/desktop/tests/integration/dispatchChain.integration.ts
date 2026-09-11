@@ -1577,11 +1577,17 @@ it('handles unknown paired replay idempotently and returns a local task result o
     expect(imported.reviewEvidenceId).toEqual(expect.any(String));
     const { setTaskHandoffDisposition } = await import('../../src/main/services/taskHandoff');
     const kept = await setTaskHandoffDisposition({
-      action: 'handoff-disposition', taskId: exact.value.taskId, dispatchId: imported.dispatchId,
-      expectedTaskRevision: history.task(exact.value.taskId)!.revision ?? 0, keep: true,
+      action: 'handoff-disposition',
+      taskId: exact.value.taskId,
+      dispatchId: imported.dispatchId,
+      expectedTaskRevision: history.task(exact.value.taskId)!.revision ?? 0,
+      keep: true,
     });
     expect(kept.ok).toBe(true);
-    expect(history.task(exact.value.taskId)!.attempts.find((a) => a.sessionId === exact.value.sessionId)!.handoff?.note).toContain('counts against the storage limit');
+    expect(
+      history.task(exact.value.taskId)!.attempts.find((a) => a.sessionId === exact.value.sessionId)!
+        .handoff?.note,
+    ).toContain('counts against the storage limit');
     expect(
       history.openTarget({
         taskId: exact.value.taskId,

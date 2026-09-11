@@ -348,7 +348,12 @@ export async function spawnPairedWorker(
       });
       throw error;
     }
-    handoff = { version: 1, binding: taskSource.binding, digest: prepared.digest, allocationId: prepared.allocationId! };
+    handoff = {
+      version: 1,
+      binding: taskSource.binding,
+      digest: prepared.digest,
+      allocationId: prepared.allocationId!,
+    };
     registry.setHandoff(dispatchId, { ...handoff, state: 'prepared', sourceCwd: String(p.cwd) });
   }
   const remoteOrigin = { protocol: DISPATCH_PROTOCOL, dispatchId };
