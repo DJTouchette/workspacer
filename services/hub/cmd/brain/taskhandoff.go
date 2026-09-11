@@ -482,6 +482,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 		if err := store.Materialize(filepath.Join(allocation, ".workspacer", "handoffs", p.Task)); err != nil {
 			return nil, err
 		}
+		if err := taskartifacts.VerifyPrivateTree(allocation); err != nil {
+			return nil, err
+		}
 		rec.Allocation, rec.State = allocation, "prepared"
 		rec.AllocationId, err = taskartifacts.DirectoryIdentity(allocation)
 		if err != nil {
@@ -646,6 +649,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 			return nil, fmt.Errorf("returned checkpoint does not descend from selected source")
 		}
 		if err := store.Materialize(filepath.Join(allocation, ".workspacer", "handoffs", p.Task)); err != nil {
+			return nil, err
+		}
+		if err := taskartifacts.VerifyPrivateTree(allocation); err != nil {
 			return nil, err
 		}
 		rec.Allocation, rec.State = allocation, "received"

@@ -93,11 +93,7 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	base := []string{"--no-replace-objects", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.attributesFile=" + os.DevNull, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.sshCommand=ssh -F none -oBatchMode=yes", "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-c", "gc.auto=0"}
-	if helper != "" {
-		base = append(base, "-c", "credential.helper="+helper)
-	}
-	base = append(base, "-c", "core.longpaths=true", "-c", "fetch.unpackLimit=1")
+	base := gitBaseArgs(helper)
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
 	guard, _ := ctx.Value(storageContextKey{}).(storageGuard)
 	storageDir := guard.dir
@@ -114,12 +110,7 @@ func Git(ctx context.Context, cwd, helper string, args ...string) ([]byte, error
 		}
 	}
 	cmd.Dir = cwd
-	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP"} {
-		if v, ok := os.LookupEnv(key); ok {
-			cmd.Env = append(cmd.Env, key+"="+v)
-		}
-	}
-	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
+	cmd.Env = gitEnvironment()
 	if len(cmd.Args) > 1 && cmd.Args[1] == gitChildFlag {
 		cmd.Env = append(cmd.Env, "WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()), "WORKSPACER_TASK_STORAGE="+storageDir, "WORKSPACER_TASK_STORAGE_LIMIT="+strconv.FormatInt(guard.limit, 10))
 		pipe, err := cmd.StdinPipe()
@@ -201,11 +192,12 @@ func checkTransferConfig(ctx context.Context, repo string) error {
 // VerifyTree rejects unsupported materialization BEFORE worktree creation.
 // V1 requires ordinary Git blobs, no attributes, gitlinks, symlinks or LFS.
 func VerifyTree(ctx context.Context, repo, commit string) error {
-	listing, err := Git(ctx, repo, "", "ls-tree", "-rz", "--full-tree", commit)
+	listing, err := Git(ctx, repo, "", "ls-tree", "-rlz", "--full-tree", commit)
 	if err != nil {
 		return err
 	}
 	var total int64
+	var objects []treeObject
 	count := 0
 	seen := map[string]bool{}
 	spelling := map[string]string{}
@@ -219,7 +211,7 @@ func VerifyTree(ctx context.Context, repo, commit string) error {
 		}
 		header := strings.Fields(string(fields[0]))
 		name := string(fields[1])
-		if len(header) != 3 || (header[0] != "100644" && header[0] != "100755") || header[1] != "blob" {
+		if len(header) != 4 || (header[0] != "100644" && header[0] != "100755") || header[1] != "blob" {
 			return fmt.Errorf("unsupported code mode or submodule: %s", name)
 		}
 		// Dot files in code are supported except administrative/materialization
@@ -253,17 +245,35 @@ func VerifyTree(ctx context.Context, repo, commit string) error {
 		if count > 20000 {
 			return fmt.Errorf("code entry count exceeds 20000")
 		}
-		blob, err := Git(ctx, repo, "", "cat-file", "blob", header[2])
-		if err != nil {
-			return err
+		size, err := strconv.ParseInt(header[3], 10, 64)
+		if err != nil || size < 0 || size > 32<<20 {
+			return fmt.Errorf("code blob exceeds 32 MiB")
 		}
-		total += int64(len(blob))
+		total += size
 		if total > 512<<20 {
 			return fmt.Errorf("code tree exceeds 512 MiB")
 		}
-		if bytes.HasPrefix(blob, []byte("version https://git-lfs.github.com/spec/v1")) {
-			return fmt.Errorf("unsupported unresolved LFS input: %s", name)
+		objects = append(objects, treeObject{header[2], size})
+	}
+	return verifyBlobStream(ctx, repo, objects)
+}
+
+func gitBaseArgs(helper string) []string {
+	base := []string{"--no-replace-objects", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.attributesFile=" + os.DevNull, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.sshCommand=ssh -F none -oBatchMode=yes", "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-c", "gc.auto=0"}
+	if helper != "" {
+		base = append(base, "-c", "credential.helper="+helper)
+	}
+	base = append(base, "-c", "core.longpaths=true", "-c", "fetch.unpackLimit=1")
+	return base
+}
+
+func gitEnvironment() []string {
+	var env []string
+	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "SSH_AUTH_SOCK", "HOME", "USERPROFILE", "TMPDIR", "TEMP"} {
+		if v, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+v)
 		}
 	}
-	return nil
+	env = append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1")
+	return env
 }

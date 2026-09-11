@@ -73,6 +73,13 @@ func TestStorageLimitStopsNativeGitAndRetainsChargedBytes(t *testing.T) {
 	}
 	git(source, "add", "data.bin")
 	git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "quota fixture")
+	head, headErr := Git(ctx, source, "", "rev-parse", "HEAD")
+	if headErr != nil {
+		t.Fatal(headErr)
+	}
+	if err := VerifyTree(ctx, source, strings.TrimSpace(string(head))); err != nil {
+		t.Fatal("streamed binary tree verification failed", err)
+	}
 	git(dest, "init", "--bare")
 	bounded := context.WithValue(ctx, storageContextKey{}, storageGuard{dest, 512 << 10})
 	_, err := Git(bounded, dest, "", "-c", "protocol.file.allow=always", "fetch", "--keep", "--", source, "HEAD:refs/handoff/test")
