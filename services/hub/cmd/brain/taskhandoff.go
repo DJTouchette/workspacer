@@ -217,6 +217,9 @@ func (r *registry) taskHandoff(ctx context.Context, raw json.RawMessage) (json.R
 	if err != nil {
 		return nil, err
 	}
+	if err := taskartifacts.MakePrivateDirectory(filepath.Join(r.handoffConfigDir(), "task-handoffs")); err != nil {
+		return nil, err
+	}
 	dir := r.handoffDir(binding, p.Task)
 	key := taskartifacts.Digest([]byte(dir))
 	mu := &handoffLocks[int(key[0])%len(handoffLocks)]

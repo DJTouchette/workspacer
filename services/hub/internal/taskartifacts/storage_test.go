@@ -49,6 +49,25 @@ func TestStorageReservationsSurviveInterruptedAdmission(t *testing.T) {
 	}
 }
 
+func TestStorageLockCannotBeDoubleBooked(t *testing.T) {
+	root := t.TempDir()
+	release, err := lockStorage(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := lockStorage(root); err == nil {
+		second()
+		release()
+		t.Fatal("native admission lock double booked")
+	}
+	release()
+	next, err := lockStorage(root)
+	if err != nil {
+		t.Fatal("native lock did not release", err)
+	}
+	next()
+}
+
 func TestStorageLimitStopsNativeGitAndRetainsChargedBytes(t *testing.T) {
 	ctx := context.Background()
 	source := t.TempDir()

@@ -44,7 +44,7 @@ func TestCrossPlatformHandoffStage(t *testing.T) {
 	remote, ca := handoffFixtureRemoteAt(t, filepath.Join(transport, "git-server"), source)
 	binding := taskartifacts.RepositoryBinding{ID: "cross-platform-fixture", Revision: "1", Repository: source, Remote: remote, RefPrefix: "refs/heads/fixture-transfer", Owner: "local-host", Origin: "windows-fixture-origin", Import: true, Export: true, Cleanup: true, TLSCAFile: ca}
 	reg := &registry{handoffRoot: t.TempDir()}
-	task := strings.Repeat("c", 32)
+	task := strings.Repeat("c", 64)
 	owner := "local-host"
 	if stage == "worker" {
 		owner = "windows-origin-fixture-token"
@@ -148,7 +148,7 @@ func TestCrossPlatformHandoffStage(t *testing.T) {
 			t.Fatal("Linux report bytes changed on Windows")
 		}
 		predecessor := task
-		task = strings.Repeat("d", 32)
+		task = strings.Repeat("d", 64)
 		next := call("freeze", map[string]any{"cwd": source, "fromTask": predecessor, "provider": "codex", "selections": []handoffSelection{{"implementation.md", "report"}}})
 		local := call("prepareLocal", nil)
 		call("claimLocal", map[string]any{"digest": next.Digest})

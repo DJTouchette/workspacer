@@ -102,7 +102,12 @@ func InspectStorage(root string) (StorageStatus, error) {
 // release; a crash leaves the durable reservation charged until same-task retry.
 func ReserveStorage(root, dir string) (func(), error) {
 	storageMu.Lock()
-	fail := func(err error) (func(), error) { storageMu.Unlock(); return nil, err }
+	unlock, lockErr := lockStorage(root)
+	if lockErr != nil {
+		storageMu.Unlock()
+		return nil, fmt.Errorf("storage admission is busy or unavailable; retry the retained task: %w", lockErr)
+	}
+	fail := func(err error) (func(), error) { unlock(); storageMu.Unlock(); return nil, err }
 	status, err := InspectStorage(root)
 	if err != nil {
 		return fail(err)
@@ -143,7 +148,7 @@ func ReserveStorage(root, dir string) (func(), error) {
 	if closeErr != nil {
 		return fail(closeErr)
 	}
-	return func() { _ = os.Remove(marker); storageMu.Unlock() }, nil
+	return func() { _ = os.Remove(marker); unlock(); storageMu.Unlock() }, nil
 }
 
 func WithStorageLimit(ctx context.Context, dir string) context.Context {

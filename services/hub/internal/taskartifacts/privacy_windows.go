@@ -29,7 +29,7 @@ func MakePrivateDirectory(dir string) error {
 	if err != nil {
 		return err
 	}
-	p, err := windows.UTF16PtrFromString(dir)
+	p, err := windows.UTF16PtrFromString(nativePath(dir))
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func VerifyPrivateDirectory(dir string) error {
 }
 
 func verifyDACL(dir, sid string) error {
-	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(nativePath(dir), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("private task storage ACL could not be read")
 	}
@@ -97,7 +97,7 @@ func VerifyPrivateTree(dir string) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		p, err := windows.UTF16PtrFromString(name)
+		p, err := windows.UTF16PtrFromString(nativePath(name))
 		if err != nil {
 			return err
 		}
@@ -110,11 +110,11 @@ func VerifyPrivateTree(dir string) error {
 }
 
 func CommitFile(from, to string) error {
-	f, err := windows.UTF16PtrFromString(from)
+	f, err := windows.UTF16PtrFromString(nativePath(from))
 	if err != nil {
 		return err
 	}
-	t, err := windows.UTF16PtrFromString(to)
+	t, err := windows.UTF16PtrFromString(nativePath(to))
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func SamePath(a, b string) bool { return strings.EqualFold(filepath.Clean(a), fi
 func SameSourceDirectory(a, b string) bool {
 	for _, name := range []string{a, b} {
 		for current := filepath.Clean(name); ; current = filepath.Dir(current) {
-			p, err := windows.UTF16PtrFromString(current)
+			p, err := windows.UTF16PtrFromString(nativePath(current))
 			if err != nil {
 				return false
 			}
@@ -145,4 +145,21 @@ func SameSourceDirectory(a, b string) bool {
 	}
 	right, err := DirectoryIdentity(b)
 	return err == nil && left == right
+}
+
+// Native Win32 calls need the extended prefix independently of Go's os path
+// handling and the machine-wide long-path policy. Artifact names remain under
+// the portable validator; this converts only host-generated absolute paths.
+func nativePath(name string) string {
+	name = filepath.Clean(name)
+	if strings.HasPrefix(name, `\\?\`) {
+		return name
+	}
+	if strings.HasPrefix(name, `\\`) {
+		return `\\?\UNC\` + strings.TrimPrefix(name, `\\`)
+	}
+	if filepath.IsAbs(name) {
+		return `\\?\` + name
+	}
+	return name
 }

@@ -50,8 +50,9 @@ task's target label; it does not affect target identity or authorization.
 ## Contract and limits
 
 - Source must be a clean explicit commit. Required inputs are selected from
-  `.workspacer/reports`; those reports must already be outside Git status
-  (for example through the repository owner's ignore policy). Preparation
+  `.workspacer/reports`; explicitly selected untracked reports do not require
+  an ignore-file edit. Tracked modifications and other untracked WIP still
+  fail the checkpoint check. Preparation
   freezes only the selected files and materializes them beneath
   `.workspacer/handoffs/<transfer-id>` before admission.
 - Source and result use generated temporary Git refs with exact OID checks.
@@ -62,11 +63,30 @@ task's target label; it does not affect target identity or authorization.
   durably claims a deterministic continuation receipt before launch.
 - Artifacts: 128 files, 16 MiB each, 64 MiB total, 256 KiB chunks. Code tree:
   20,000 entries, 512 MiB aggregate; per-command output and time are bounded.
-  These are materialized-tree limits, not a total Git-history disk quota.
+  Git blobs are limited to 32 MiB and verified with one bounded streaming
+  cat-file process, rather than one process per file on Windows.
+- Git quarantine admission counts actual retained/failed bytes plus durable
+  reservations under a 6 GiB host budget, with a 2 GiB per-task reservation and
+  a 2 GiB free-disk floor. A native cross-process lock prevents overlapping
+  brains from double-booking. Interrupted reservations remain charged until
+  the same task resumes. No pending/sole copy is evicted to create capacity.
+- Fetch and worktree materialization run in a bounded helper: Windows uses a
+  kill-on-close Job Object; POSIX uses a process group and a 512 MiB per-file
+  kernel limit. Both monitor task bytes/free disk every 20 ms and check final
+  usage. 128 MiB of the task allowance is kept for artifact materialization.
+  Windows monitoring permits bounded scheduling/write overshoot; it is not an
+  NTFS volume quota. The free-disk floor is headroom, not permission to delete
+  unaccepted data. Provider-created files outside these Git operations are not
+  sandboxed by this mechanism.
 - V1 supports portable ASCII paths and ordinary blobs with literal CRLF/binary
   bytes. Unicode/Windows aliases, symlinks, submodules, attributes, LFS pointers,
   sparse/partial checkouts and execution-valued repository configuration fail
-  preflight. Windows hosts explicitly fail until ACL custody is implemented.
+  preflight. Ordinary Windows source and return custody are supported: new
+  storage gets an inheritable protected current-user/SYSTEM/Administrators DACL
+  at creation, actual DACLs are checked on materialized files, and native volume
+  plus file IDs bind allocations to receipts. Reparse entries are refused.
+  Native extended paths handle production-length task IDs without depending on
+  the machine-wide long-path setting. POSIX mode bits are not Windows ACL proof.
 - Worker test-pass text remains a worker claim. Host-verified base/head and
   immutable local review capture do not certify those claims as test evidence.
 - Terminal message acknowledgment never authorizes deletion. Host-user
@@ -75,7 +95,10 @@ task's target label; it does not affect target identity or authorization.
   changed refs, dirty trees and unexpected files retain the allocation.
   Cleanup removes the execution worktree and selected spools; receiver review
   custody and quarantine Git repositories remain retained. Ordinary journal
-  eviction is not custody or Git object GC.
+  eviction is not custody or Git object GC. Retained Git data remains charged;
+  automatic Git GC is deliberately absent. Status includes used/reserved/limit
+  bytes and an explicit retention explanation, surfaced by the disposition UI.
+  The existing 32-retained-task limit is separate from byte admission.
 
 ## Review and validation entry points
 
@@ -93,3 +116,19 @@ banked in `fbbc18ec`; two additional desktop working deltas observed in the
 old worktree were separately banked in `6781ac73`. Original files/dependencies
 were left untouched. Existing CI at the old HEAD failed; it is not evidence
 that this integrated feature was green before recovery.
+
+## Native hosted evidence and transport limits
+
+`workspace-handoff.yml` has native Linux/Windows custody, ACL, quota, and retry
+fixtures, plus Windows source → Linux execution → Windows receipt/local
+implementation jobs. The staged jobs carry frozen RPC envelopes and fixture Git
+server state through GitHub workflow artifacts; each OS uses the production
+handlers and a temporary HTTPS Git server. This is an explicit staged transport
+fixture, not a claim of simultaneous cross-runner WebSocket connectivity.
+The separate real MCP → desktop → paired backend integration covers live RPC
+orchestration and local request/workflow ownership with synthetic providers.
+No live Fly deployment or local application execution is part of validation.
+
+Native API references: [Windows file security](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights)
+and [handle-based file identity](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information).
+See `task-handoff-reconciliation.md` for the retained parallel-work comparison.
