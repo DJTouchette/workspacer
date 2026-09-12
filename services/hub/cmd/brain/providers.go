@@ -168,7 +168,7 @@ func (r *registry) providersListModels(ctx context.Context, raw json.RawMessage)
 	// requiring it is a model dropdown that stays free-text until a directory is
 	// chosen; the cost of not requiring it is a guard with a hole shaped exactly
 	// like the default.
-	cwd, err := assertPathAllowed("providers.listModels", p.Cwd, r.browseRoots(ctx))
+	cwd, err := assertPathAllowed("providers.listModels", p.Cwd, r.spawnSetupRoots(ctx))
 	if err != nil {
 		return nil, err
 	}

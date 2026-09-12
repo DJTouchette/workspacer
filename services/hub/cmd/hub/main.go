@@ -432,7 +432,7 @@ func main() {
 	// Capability-scoped user tokens (view / triage / operator / provider), persisted next to
 	// the host remote-token and minted with `workspacer token create`. The store
 	// re-reads the file when it changes, so minting/revoking takes effect on the
-	// next connection without restarting the hub — no minting endpoint needed.
+	// next connection without restarting the hub, including owner pairing RPCs.
 	// The host token itself never goes through this path: it stays trusted
 	// (implicit operator), which is what keeps every existing pairing working.
 	var tokenStore *authtoken.Store
@@ -726,6 +726,17 @@ func main() {
 		// silently indistinguishable from one that works.
 		log.Printf("usage pacing schedule: %v", err)
 	}
+	pairings := &remotePairings{path: *tokensFile}
+	srv.RegisterLocalIdent("remote.pairingInfo", remotePairingInfo(pairings))
+	srv.RegisterLocalIdent("remote.tokensList", remoteTokensList(pairings))
+	srv.RegisterLocalIdent("remote.tokenGetOrCreate", remoteTokenGetOrCreate(pairings))
+	srv.RegisterLocalIdent("remote.tokenRevoke", remoteTokenRevoke(pairings))
+
+	machinePower := configuredMachinePower(srv.DisconnectForMachineStop)
+	go machinePower.runIdle(ctx, watcher.read, machinePower.idleTimeout, quiescence.DefaultSampleInterval)
+	srv.RegisterLocalIdent("machine.power", machinePowerInfo(machinePower))
+	srv.RegisterLocalIdent("machine.stop", machineStop(machinePower))
+
 	srv.RegisterLocalIdent("usage.report", usageReport(routingSvc, usage, usagePrefs))
 	srv.RegisterLocalIdent("usage.pacingSchedule", usagePacingSchedule(usagePrefs))
 	srv.RegisterLocalIdent("usage.setPacingSchedule", usageSetPacingSchedule(usagePrefs))

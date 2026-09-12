@@ -24,6 +24,9 @@ func ParseSessions(peer string, raw json.RawMessage) ([]Session, error) {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, fmt.Errorf("unreadable session list: %w", err)
 	}
+	if rows == nil {
+		return nil, fmt.Errorf("null session list is not an empty fleet")
+	}
 	out := make([]Session, 0, len(rows))
 	for i, row := range rows {
 		out = append(out, parseSession(peer, i, row))

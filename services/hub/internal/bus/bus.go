@@ -62,9 +62,10 @@ const forwardQueueDepth = 256
 //	hub -> client:  hello | subscribed | unsubscribed | event | registered |
 //	                call | result | error | demand
 type Frame struct {
-	Op     string          `json:"op"`
-	Topics []string        `json:"topics,omitempty"`
-	Event  *event.Envelope `json:"event,omitempty"`
+	SpawnFullAccess bool            `json:"spawnFullAccess,omitempty"`
+	Op              string          `json:"op"`
+	Topics          []string        `json:"topics,omitempty"`
+	Event           *event.Envelope `json:"event,omitempty"`
 
 	// Demand signalling (see demand.go). On a client -> hub `demand` frame,
 	// Topics carries the topic PREFIXES this provider wants transitions for.
@@ -1018,6 +1019,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		internal:  s.isInternalDial(r),
 	}
 	cn.markActive(time.Now()) // a connection that just opened is in use
+	cn.markInteraction(time.Now())
 	s.router.addConn(cn)
 	if pluginID != "" {
 		// Tracked under the raw token so revocation can find it. The token itself
@@ -1101,8 +1103,13 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			deliver(s.demand.watch(cn, f.Topics))
+		case "activity":
+			cn.markActive(time.Now())
+			cn.markInteraction(time.Now())
+			cn.reportsInteraction.Store(true)
 		case "publish":
 			cn.markActive(time.Now())
+			cn.markInteraction(time.Now())
 			if f.Event == nil {
 				_ = cn.send(Frame{Op: "error", Error: "publish missing event"})
 				continue
@@ -1134,7 +1141,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			accepted := s.router.register(cn, f.Methods)
 			_ = cn.send(Frame{Op: "registered", Methods: accepted})
 		case "call":
-			cn.markActive(time.Now())
+			cn.markCall(time.Now(), f.Method)
 			s.router.call(cn, f)
 		case "result":
 			s.router.result(cn, f, false)
@@ -1287,7 +1294,9 @@ type conn struct {
 	// says on the way in, not something it is doing. So is a `result` frame —
 	// that is a provider answering somebody else's call, and the caller is
 	// already counted.
-	lastActiveMilli atomic.Int64
+	lastActiveMilli      atomic.Int64
+	lastInteractionMilli atomic.Int64
+	reportsInteraction   atomic.Bool
 
 	// activitySeq counts the same events as lastActiveMilli, one per call, but
 	// as a strictly increasing integer rather than a wall-clock millisecond. A
@@ -1400,7 +1409,7 @@ func (cn *conn) identity() CallerIdentity {
 // they are the same authority, and an operator record is promoted to trusted at
 // the handshake, so the tier name is not otherwise recoverable here.
 func (cn *conn) helloFrame() Frame {
-	f := Frame{Op: "hello"}
+	f := Frame{Op: "hello", SpawnFullAccess: cn.mayBypassPermissions() && cn.trusted}
 	switch {
 	case cn.trusted:
 		f.Scope, f.Methods = "operator", []string{"*"}

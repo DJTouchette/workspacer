@@ -553,6 +553,22 @@ func (r *registry) browseRoots(ctx context.Context) []string {
 	return append(r.workspaceRoots(ctx), home)
 }
 
+// spawnSetupRoots adds explicitly configured projects for directory browsing
+// and model discovery before a project's first agent starts. It does not grant
+// fs.read/fs.write or library access to inactive projects.
+func (r *registry) spawnSetupRoots(ctx context.Context) []string {
+	roots := r.browseRoots(ctx)
+	if r.cfg != nil {
+		projects, _ := r.cfg.get()["projects"].(map[string]any)
+		for path := range projects {
+			if filepath.IsAbs(path) {
+				roots = append(roots, path)
+			}
+		}
+	}
+	return roots
+}
+
 // secretBasenames are credential files by name, denied wherever they resolve.
 // The roots above already keep the config dir's plugin tree out of reach, but a
 // root is only as narrow as the cwds an agent runs in: spawn an agent in

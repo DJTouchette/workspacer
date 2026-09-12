@@ -727,8 +727,8 @@ test.describe('mobile client', () => {
     await expect(page.locator('.provbtn[data-prov="pi"]')).toHaveCount(0);
     await expect(page.locator('.provbtn[data-prov="codex"]')).toBeEnabled();
 
-    // Full access is refused for remote spawns, so it can't be selected.
-    await expect(page.locator('.permbtn', { hasText: 'Full access' })).toBeDisabled();
+    // The host operator token can request full access.
+    await expect(page.locator('.permbtn', { hasText: 'Full access' })).toBeEnabled();
     await page.locator('.permbtn', { hasText: 'Accept edits' }).click();
 
     // A library prompt rides along ON the spawn as its first message. It used

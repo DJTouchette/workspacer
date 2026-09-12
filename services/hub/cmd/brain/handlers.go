@@ -1899,7 +1899,7 @@ func (r *registry) fsListDir(ctx context.Context, raw json.RawMessage) (json.Raw
 	}
 	// Browsing is allowed across the home tree so a user can pick a project
 	// before an agent runs in it — but not /etc or another user's home.
-	canonical, err := assertPathAllowed("fs.listDir", target, r.browseRoots(ctx))
+	canonical, err := assertPathAllowed("fs.listDir", target, r.spawnSetupRoots(ctx))
 	if err != nil {
 		return nil, err
 	}

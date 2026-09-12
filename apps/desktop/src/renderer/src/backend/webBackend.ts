@@ -32,6 +32,7 @@ import type {
   InAppNotification,
   RecentAgentSession,
 } from '../../../main/shared/ipcTypes';
+import { installMachinePower } from './machinePower';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
 import { mergeSelectionSlice, readSelectionSlice } from '../../../main/shared/canonicalSelection';
@@ -373,6 +374,7 @@ export function createPtyStreams(client: HubBusClient) {
 export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const client = new HubBusClient(token, busUrl);
   client.start();
+  installMachinePower(client, busUrl);
 
   // Base for the hub's HTTP routes (e.g. /plugins/settings). The web build is
   // served by the hub, so an empty base resolves relative to the page origin;
@@ -1292,28 +1294,30 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         ),
       ),
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
-    getRemoteInfo: () =>
-      Promise.resolve({
+    getRemoteInfo: async () => {
+      const permissions = await client
+        .call<{ scope?: string; canManageTokens?: boolean }>('remote.pairingInfo')
+        .catch(() => null);
+      const scope = permissions?.scope;
+      const pairingScope =
+        scope === 'operator' || scope === 'triage' || scope === 'view' ? scope : undefined;
+      const base = hubOrigin;
+      return {
         enabled: true,
         token,
-        remoteUrl: location.href,
-        appUrl: location.href,
-        busUrl: '',
+        remoteUrl: `${base}/m`,
+        appUrl: `${base}/app/`,
+        busUrl: base.replace(/^http/, 'ws') + '/bus',
         desktopBus: false,
-      }),
-    // A web/remote client exists only because the host already enabled sharing,
-    // and it can't restart the host's hub — so this is a no-op that reports on.
-    setRemoteShare: () => {
-      warnOnce('setRemoteShare');
-      return Promise.resolve({
-        enabled: true,
-        token,
-        remoteUrl: location.href,
-        appUrl: location.href,
-        busUrl: '',
-        desktopBus: false,
-      });
+        pairingScope,
+        canManageTokens: permissions?.canManageTokens === true,
+        canToggleSharing: false,
+      };
     },
+    remoteTokensList: () => client.call('remote.tokensList'),
+    remoteTokenGetOrCreate: (scope, label) =>
+      client.call('remote.tokenGetOrCreate', { scope, label }),
+    remoteTokenRevoke: (token) => client.call('remote.tokenRevoke', { token }),
     // No host PATH to scan from a browser — report nothing so tool gates
     // never show a false "missing" notice on the web mirror.
     toolsStatus: () => Promise.resolve([]),

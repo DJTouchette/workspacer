@@ -510,6 +510,9 @@ export interface ElectronAPI extends RoutingAPI {
     url: string,
   ) => Promise<{ allowed: boolean; reason?: string; canonicalPath?: string }>;
   getRemoteInfo: () => Promise<{
+    pairingScope?: 'view' | 'triage' | 'operator';
+    canManageTokens?: boolean;
+    canToggleSharing?: boolean;
     enabled: boolean;
     token: string;
     remoteUrl: string;

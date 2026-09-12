@@ -418,7 +418,7 @@ describe('fixture-driven guard coverage — path capabilities main owns in produ
       fs.symlinkSync(agentCwd, link);
       replayOpenCalls.length = 0;
       const msg = await attempt('replay.open', { cwd: link, sessionId: 's1' });
-      fs.rmSync(link, { force: true });
+      fs.unlinkSync(link);
       expect(msg).toBe('');
       expect(
         replayOpenCalls,

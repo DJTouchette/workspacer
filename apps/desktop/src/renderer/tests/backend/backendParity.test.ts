@@ -552,6 +552,10 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
       'nodes.list',
       'nodes.wake',
       'nodes.sleep',
+      'remote.pairingInfo',
+      'remote.tokensList',
+      'remote.tokenGetOrCreate',
+      'remote.tokenRevoke',
       // Hub-owned job system (services/hub/internal/jobs), trusted-only RPCs.
       'jobs.list',
       'jobs.upsert',

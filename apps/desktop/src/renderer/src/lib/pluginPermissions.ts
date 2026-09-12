@@ -176,6 +176,12 @@ export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> 
   // destructive, and "it only turns things off" earns it nothing. Trusted-only
   // at call time (nodesTrusted in cmd/hub), so a plugin that declares it gets an
   // honest consent line and then a refusal.
+  'remote.pairingInfo': { label: 'See current pairing permissions' },
+  'remote.tokensList': { label: 'List phone pairing credentials', sensitive: true },
+  'remote.tokenGetOrCreate': { label: 'Create phone pairing credentials', sensitive: true },
+  'remote.tokenRevoke': { label: 'Revoke phone pairing credentials', sensitive: true },
+  'machine.power': { label: 'See server power capabilities' },
+  'machine.stop': { label: 'Stop the server and all running work', sensitive: true },
   'nodes.sleep': {
     label: 'Shut down a remote node (stops whatever is running on it)',
     sensitive: true,

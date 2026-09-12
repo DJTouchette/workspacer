@@ -206,7 +206,7 @@ func (w *fleetWatcher) clients() []quiescence.Client {
 		if asked, ok := w.askedSeq[c.ConnID]; ok && asked == c.ActivitySeq {
 			continue
 		}
-		out = append(out, quiescence.Client{Label: c.Label, LastActive: c.LastActive})
+		out = append(out, quiescence.Client{Label: c.Label, LastActive: c.IdleActive})
 	}
 	// Forget connections that have gone away, so the map cannot grow without
 	// bound across a long uptime of reconnecting clients.

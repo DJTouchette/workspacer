@@ -48,11 +48,48 @@ describe('HubBusClient reconnect handling', () => {
   beforeEach(() => {
     FakeWS.instances = [];
     vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket);
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    });
     vi.useFakeTimers();
   });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('stays disconnected after a machine stop across timers and restart, then wakes explicitly', async () => {
+    const client = new HubBusClient('tok', 'wss://power-test.example/bus');
+    client.start();
+    const ws = FakeWS.instances[0];
+    ws.open();
+    const pending = client
+      .call('agents.sendMessage', { message: 'queued' })
+      .catch((e: Error) => e.message);
+    ws.die(4001);
+    expect(await pending).toContain('stop request');
+    expect(client.isPowerPaused()).toBe(true);
+    vi.advanceTimersByTime(120000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('online'));
+    expect(FakeWS.instances).toHaveLength(1);
+    const reloaded = new HubBusClient('tok', 'wss://power-test.example/bus');
+    reloaded.start();
+    expect(FakeWS.instances).toHaveLength(1);
+    await expect(reloaded.call('agents.sendMessage')).rejects.toThrow('stop request');
+    reloaded.resumeMachine();
+    expect(FakeWS.instances).toHaveLength(2);
+    FakeWS.instances[1].open();
+    expect(FakeWS.instances[1].sent.some((frame) => frame.includes('queued'))).toBe(false);
+    reloaded.stop();
+    client.stop();
   });
 
   it('fires onReconnect on a reconnect but never on the first connect', () => {
@@ -150,6 +187,16 @@ describe('HubBusClient send queue', () => {
   beforeEach(() => {
     FakeWS.instances = [];
     vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket);
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    });
     vi.useFakeTimers();
   });
   afterEach(() => {

@@ -79,6 +79,7 @@
      When iOS scrolls the window to reveal a focused input, applyViewport
      translates #app down by the same offset so the shell tracks the visible
      area instead of leaving a void. dvh stays only as the pre-script fallback. */
+  #app[hidden], #machineStop[hidden], #machineIdle[hidden], #machinePower[hidden] { display:none; }
   #app { height:var(--vh, 100dvh); display:flex; flex-direction:column; overflow:hidden; }
 
   /* ── header ───────────────────────────────────────────────────────────── */
@@ -676,7 +677,7 @@
     padding:8px 14px calc(16px + var(--safe-b)); max-height:72vh; overflow-y:auto; display:none; }
   #sheet.show { display:block; }
   #sheet .grip { width:36px; height:4px; border-radius:2px; background:var(--line5); margin:6px auto 12px; }
-  #sheet .st { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; color:var(--dim);
+  #sheet .st { overflow-wrap:anywhere; font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; color:var(--dim);
     margin-bottom:10px; }
   #sheet .rows { display:flex; flex-direction:column; gap:7px; }
 
@@ -688,6 +689,7 @@
 </style>
 </head>
 <body>
+<div id="machinePower" hidden></div>
 <div id="app">
   <header id="hdr">
     <div class="hrow">
@@ -696,6 +698,8 @@
         <div class="tline"><h1 id="title">Fleet</h1><span class="tmeta" id="titleMeta"></span></div>
         <div class="sub rtl" id="sub"></div>
       </div>
+      <button id="machineIdle" class="gear" hidden>Idle</button>
+      <button id="machineStop" class="gear" hidden>Stop</button>
       <button id="statusPill"><span class="dot" id="statusDot"></span><span class="lbl" id="statusLabel">—</span></button>
       <button class="gear" id="gearBtn" aria-label="Notification settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="15" cy="7" r="2.1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="2.1" fill="currentColor" stroke="none"/><circle cx="13" cy="17" r="2.1" fill="currentColor" stroke="none"/></svg></button>
     </div>
@@ -854,7 +858,7 @@
     openFleet: new Set(),     // expanded fleet-wake sub-disclosures (by key, see fleetEntryHtml)
     picks: new Map(),         // sessionId:questionSetHash:index -> 1-based option
     briefOpen: new Set(),     // expanded project briefs (by brief key)
-    spawn: { cwd: '', provider: '', permissionMode: '', prompt: '', label: '' },
+    spawn: { cwd: '', provider: '', permissionMode: '', prompt: '', label: '', message: '', model: '', effort: '' },
     attach: [],               // pending image attachments: {id, name, path, thumb, uploading}
   };
 
@@ -990,6 +994,67 @@
   let ws = null, callSeq = 0, backoff = 500, reconnectTimer = null, reconcileTimer = null;
   let watchdog = null, lastActivity = 0;
   const calls = new Map();
+  const machinePauseKey = 'wks.machine.paused:' + `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
+  let machinePaused = localStorage.getItem(machinePauseKey) === '1';
+  let machineCanStop = false;
+  let machinePowerInfo = null;
+  const machineWakeKey = machinePauseKey.replace('paused:', 'wake:');
+  function safeMachineWakeURL(raw) {
+    try { const u = new URL(raw); return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash ? u.href : ''; } catch { return ''; }
+  }
+  let machineWakeURL = safeMachineWakeURL(localStorage.getItem(machineWakeKey));
+  document.getElementById('machineIdle').onclick = async () => {
+    try {
+      const info = await call('machine.power');
+      const idle = info.idle;
+      alert('Idle mode: ' + info.idleMode + '\n' + Math.floor((idle?.calmSeconds || 0)/60) + ' / ' + Math.ceil((idle?.dwellSeconds || 0)/60) + ' minutes quiet\n\n' + (idle?.quiescent ? 'Ready to stop.' : (idle?.blockers || []).map(b => b.detail).join('\n')));
+    } catch (err) { alert(errText(err)); }
+  };
+  function renderMachinePower() {
+    document.getElementById('app').hidden = machinePaused;
+    const panel = document.getElementById('machinePower');
+    panel.hidden = !machinePaused;
+    panel.className = 'gate';
+    if (machinePaused) {
+      panel.innerHTML = '<h2>Server disconnected</h2><p>Stop was requested. Automatic reconnect is paused.</p><p>Allow the machine to finish shutting down before waking it.</p><button id="machineWake">Wake server</button><p>Starting may take a minute.</p>';
+      document.getElementById('machineWake').onclick = async () => {
+        const button = document.getElementById('machineWake'); button.disabled = true; button.textContent = 'Waking…';
+        try {
+          if (machineWakeURL) await fetch(machineWakeURL, {mode:'no-cors', credentials:'omit', cache:'no-store', redirect:'error', signal:AbortSignal.timeout(60000)});
+        machinePaused = false; localStorage.removeItem(machinePauseKey);
+        renderMachinePower(); backoff = 500; attempt = 0; connect();
+        } catch { alert('Could not reach the wake endpoint. Try again.'); button.disabled = false; button.textContent = 'Wake server'; }
+      };
+    }
+    document.getElementById('machineIdle').hidden = !machinePowerInfo?.idleMode || machinePowerInfo.idleMode === 'off';
+    document.getElementById('machineStop').hidden = !machineCanStop || machinePaused;
+  }
+  function pauseForMachineStop() {
+    machinePaused = true; localStorage.setItem(machinePauseKey, '1');
+    clearTimeout(reconnectTimer); reconnectTimer = null;
+    clearTimeout(watchdog); clearInterval(reconcileTimer);
+    killSocket(ws); ws = null; connected = false;
+    for (const c of calls.values()) c.reject(new Error('Machine disconnected after stop request'));
+    calls.clear(); renderMachinePower();
+  }
+  document.getElementById('machineStop').onclick = async () => {
+    if (!machineCanStop || !connected || !confirm('Stop this server? This ends running work and disconnects everyone. Storage charges continue.')) return;
+    const button = document.getElementById('machineStop'); button.disabled = true;
+    try { await call('machine.stop'); pauseForMachineStop(); }
+    catch (err) { if (!machinePaused) alert(errText(err)); }
+    finally { button.disabled = false; }
+  };
+  renderMachinePower();
+
+  let lastInteractionSent = 0;
+  function reportInteraction(force = false) {
+    if (machinePaused || !connected || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!force && Date.now() - lastInteractionSent < 30000) return;
+    lastInteractionSent = Date.now(); ws.send(JSON.stringify({op:'activity'}));
+  }
+  for (const type of ['pointerdown', 'keydown', 'wheel', 'touchmove']) document.addEventListener(type, (event) => {
+    if (event.isTrusted && document.visibilityState === 'visible') reportInteraction();
+  }, {capture:true, passive:true});
   const STALE_MS = 30000;
   /** How long to let a handshake run, by consecutive failed attempt. Reset on
    *  any successful open and on wake() — see connect(). */
@@ -998,7 +1063,7 @@
 
   function call(method, params, timeoutMs) {
     return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
+      if (machinePaused || !ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
       const id = 'c' + (++callSeq);
       calls.set(id, { resolve, reject });
       ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
@@ -2258,6 +2323,7 @@
   const scrollMemo = new Map();
   let lastScreenKey = '';
   function render() {
+    if (machinePaused) return;
     const key = S.screen + ':' + (S.screen === 'chat' || S.screen === 'flows' ? S.sessionId : '') + ':' + S.seg;
     const chat = S.screen === 'chat';
     const atBottom = chat && (main.scrollHeight - main.scrollTop - main.clientHeight < 80);
@@ -3827,21 +3893,75 @@
 
   // ══ spawn ═════════════════════════════════════════════════════════════════
   let providerProbe = null;   // providers.checkAll result, when we may ask
+  let spawnSubmitting = false;
+  let spawnModels = [], spawnModelsKey = '', spawnModelsLoading = false, spawnModelsError = '', spawnModelsGeneration = 0;
+  async function loadSpawnModels() {
+    const provider = S.spawn.provider || 'claude', cwd = S.spawn.cwd || '';
+    const key = JSON.stringify([provider, cwd]);
+    if (spawnModelsKey === key || !can('agents.spawn')) return;
+    spawnModelsKey = key; const generation = ++spawnModelsGeneration;
+    spawnModels = []; spawnModelsLoading = true; spawnModelsError = '';
+    try {
+      let rows;
+      if (provider === 'claude') {
+        const catalog = await call('claude.listModels', {});
+        rows = [...(catalog?.aliases || []).map(a => ({ value: a.model || a.value, contextWindow: a.contextWindow, legacyValue: a.value, label: a.label || a.value })), ...(catalog?.seen || []).map(value => ({value}))]
+          .map(m => { let selection = claudeModelWire(m.value, m.contextWindow ?? null); if (selection && selection.contextWindow == null && m.legacyValue) { const compatible = claudeModelWire(m.legacyValue, null); if (compatible && compatible.id.toLowerCase() === selection.id.toLowerCase()) selection = compatible; } return selection ? {id:selection.id, contextWindow:selection.contextWindow, label:m.label || shortModel(selection.legacy) || selection.id} : null; }).filter(Boolean);
+      } else {
+        const catalog = await call('providers.listModels', {provider, cwd});
+        rows = (Array.isArray(catalog) ? catalog : []).filter(m => m && typeof m.id === 'string').map(m => ({id:m.id, label:m.label || m.id, contextWindow:m.contextWindow ?? null}));
+      }
+      if (generation !== spawnModelsGeneration) return;
+      const seen = new Set();
+      spawnModels = rows.map(m => ({...m, key:JSON.stringify([m.id,m.contextWindow ?? null])})).filter(m => !seen.has(m.key) && seen.add(m.key));
+    } catch (err) {
+      if (generation === spawnModelsGeneration) spawnModelsError = 'Could not load models: ' + errText(err);
+    } finally {
+      if (generation === spawnModelsGeneration) { spawnModelsLoading = false; if (S.screen === 'new') render(); }
+    }
+  }
+  function hostChildPath(path, name) {
+    const sep = path.includes('\\') && !path.includes('/') ? '\\' : '/';
+    return path.replace(/[\\/]$/, '') + sep + name;
+  }
+  async function openSpawnFolder(path) {
+    if (!can('fs.listDir')) { toast('Browsing server folders requires operator access'); return; }
+    showSheet('SERVER FOLDERS', [{label:'Loading…', disabled:true}]);
+    const generation = sheetGen;
+    try {
+      const result = await call('fs.listDir', {path});
+      if (generation !== sheetGen) return;
+      if (!result || typeof result.path !== 'string' || !Array.isArray(result.dirs)) throw new Error('The server did not return a folder listing');
+      showSheet(result.path, [
+        {label:'Use this folder', run:() => { S.spawn.cwd = result.path; S.spawn.model = ''; render(); }},
+        ...(result.parent && result.parent !== result.path ? [{label:'Up one level', run:() => openSpawnFolder(result.parent)}] : []),
+        ...(result.home && result.home !== result.path ? [{label:'Home', run:() => openSpawnFolder(result.home)}] : []),
+        ...result.dirs.map(name => ({label:name + '/', run:() => openSpawnFolder(hostChildPath(result.path, name))})),
+        ...(!result.dirs.length ? [{label:'No subfolders',disabled:true}] : []),
+      ]);
+    } catch (err) {
+      if (generation === sheetGen) showSheet('SERVER FOLDERS', [{label:errText(err),disabled:true},{label:'Browse home',run:() => openSpawnFolder('')}]);
+    }
+  }
+
   function renderSpawn() {
     const dirs = (cfg && cfg.directories) || {};
     const favs = dirs.favourites || dirs.favorites || [];
     const recent = (dirs.recent || []).filter((d) => !favs.includes(d));
-    const list = [...favs, ...recent].slice(0, 8);
+    const projects = Object.keys((cfg && cfg.projects) || {});
+    const list = [...new Set([...favs, ...projects, ...recent, S.spawn.cwd].filter(d => typeof d === 'string' && d))];
     if (!S.spawn.provider) S.spawn.provider = (cfg && cfg.agents && cfg.agents.defaultProvider) || 'claude';
     if (!S.spawn.cwd && list.length) S.spawn.cwd = list[0];
     const caps = capsFor(S.spawn.provider);
     if (!S.spawn.permissionMode) S.spawn.permissionMode = caps.modes[0].id;
-    const allowed = can('agents.spawn');
+    const installed = providerProbe?.find(p => p.provider === S.spawn.provider);
+    const allowed = can('agents.spawn') && !!S.spawn.cwd && !(installed && !installed.found) && !spawnSubmitting;
+    void loadSpawnModels();
 
     const dirRows = list.map((d, i) => `
       <button class="dirrow ${S.spawn.cwd === d ? 'on' : ''}" data-dir="${esc(d)}">
-        <span class="p rtl">${esc(lrm(d))}</span><span class="grow"></span>
-        <span class="star ${i < favs.length ? 'on' : ''}">★</span>
+        <span class="p rtl">${esc(cfg?.projects?.[d]?.name || cfg?.projects?.[d]?.label || lrm(d))}</span><span class="grow"></span>
+        <span class="star ${favs.includes(d) ? 'on' : ''}">★</span>
       </button>`).join('');
 
     // Only harnesses that are actually installed on the HOST get a button —
@@ -3863,10 +3983,9 @@
       </button>`;
     }).join('');
 
-    // agents.spawn deliberately refuses bypass/yolo over the bus, so offering it
-    // here would be a button that silently downgrades what you asked for.
+    // Read the router's grant; being remote is not a permission restriction.
     const permRows = caps.modes.map((m) => {
-      const blocked = m.id === 'bypassPermissions' || m.id === 'yolo';
+      const blocked = (m.id === 'bypassPermissions' || m.id === 'yolo') && !scope.fullAccess;
       return `<button class="permbtn ${S.spawn.permissionMode === m.id ? 'on' : ''}" data-perm="${esc(m.id)}"${blocked ? ' disabled' : ''}>${esc(m.label)}</button>`;
     }).join('');
 
@@ -3876,30 +3995,42 @@
     main.innerHTML = `<div class="body gap18">
       <div class="group">
         <div class="cap">PROJECT</div>
-        ${dirRows || '<div class="scopenote" style="text-align:left">No directories remembered yet.</div>'}
-        <button class="dirrow" data-otherdir><span class="p" style="color:var(--muted)">Other path…</span><span class="grow"></span><span class="star">+</span></button>
+        ${dirRows || '<div class="scopenote" style="text-align:left">No projects configured yet. Browse the server to choose one.</div>'}
+        <div class="scopenote rtl" style="text-align:left;overflow-wrap:anywhere">${esc(S.spawn.cwd || 'Choose a server folder')}</div>
+        <button class="dirrow" data-otherdir><span class="p" style="color:var(--muted)">Browse server folders…</span><span class="grow"></span><span class="star">+</span></button>
       </div>
       <div class="group">
         <div class="cap">TASK</div>
         <input id="spawnLabel" class="taskin" placeholder="e.g. fix the mobile viewport gap"
           autocomplete="off" autocapitalize="sentences" value="${esc(S.spawn.label)}" />
-        <div class="scopenote" style="text-align:left">The card's title, fixed for the life of the dispatch. Blank names it after the project directory.</div>
+        <div class="scopenote" style="text-align:left">Optional title. The instructions below are sent with the dispatch.</div>
+        <label class="cap" for="spawnMessage">INSTRUCTIONS</label>
+        <textarea id="spawnMessage" class="taskin" rows="5" placeholder="What should this agent do?">${esc(S.spawn.message)}</textarea>
       </div>
       <div class="group">
         <div class="cap">HARNESS</div>
         <div class="grid2">${provRows}</div>
       </div>
       <div class="group">
+        <label class="cap" for="spawnModel">MODEL</label>
+        <select id="spawnModel" class="taskin"${spawnModelsLoading ? ' disabled' : ''}>
+          <option value="">${spawnModelsLoading ? 'Loading models…' : 'Provider default'}</option>
+          ${spawnModels.map((m) => `<option value="${esc(m.key)}"${S.spawn.model === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}
+        </select>
+        ${spawnModelsError ? `<div class="scopenote">${esc(spawnModelsError)} <button id="retrySpawnModels">Retry</button></div>` : ''}
+        ${caps.effort ? `<label class="cap" for="spawnEffort">REASONING EFFORT</label><select id="spawnEffort" class="taskin"><option value="">Provider default</option>${caps.effort.map(e => `<option value="${e}"${S.spawn.effort === e ? ' selected' : ''}>${e}</option>`).join('')}</select>` : ''}
+      </div>
+      <div class="group">
         <div class="cap">PERMISSIONS</div>
         <div class="segrow">${permRows}</div>
         ${caps.modes.some((m) => m.id === 'bypassPermissions' || m.id === 'yolo')
-          ? '<div class="scopenote" style="text-align:left">Full access is refused for remote dispatches — the hub strips it.</div>' : ''}
+          ? `<div class="scopenote" style="text-align:left">${scope.fullAccess ? 'Full access runs tools without asking for approval. Choose it only for work you trust.' : 'Full access requires an operator pairing. This token cannot request it.'}</div>` : ''}
       </div>
       ${promptChips ? `<div class="group">
         <div class="cap">SEND FIRST · FROM LIBRARY</div>
         <div class="tagchips">${promptChips}</div>
       </div>` : ''}
-      <button class="cta" id="spawnGo"${allowed ? '' : ' disabled'}>Dispatch worker<span class="s">${esc(S.spawn.provider)}</span></button>
+      <button class="cta" id="spawnGo"${allowed ? '' : ' disabled'}>${spawnSubmitting ? 'Dispatching…' : 'Dispatch worker'}<span class="s">${esc(S.spawn.provider)}</span></button>
       <div class="scopenote">${allowed
         ? `dispatches as <b>${esc(modeLabel(caps, S.spawn.permissionMode))}</b> in stream mode — chat, no terminal`
         : `this device holds a <b>${esc(scope.name || 'scoped')}</b> token — dispatching needs operator scope`}</div>
@@ -3912,22 +4043,25 @@
       labelIn.oninput = () => { S.spawn.label = labelIn.value; };
       labelIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); labelIn.blur(); } };
     }
-    for (const b of main.querySelectorAll('[data-dir]')) b.onclick = () => { S.spawn.cwd = b.dataset.dir; render(); };
-    for (const b of main.querySelectorAll('[data-prov]')) b.onclick = () => { S.spawn.provider = b.dataset.prov; S.spawn.permissionMode = ''; render(); };
+    $('spawnMessage').oninput = () => { S.spawn.message = $('spawnMessage').value; };
+    $('spawnModel').onchange = () => { S.spawn.model = $('spawnModel').value; };
+    if ($('spawnEffort')) $('spawnEffort').onchange = () => { S.spawn.effort = $('spawnEffort').value; };
+    if ($('retrySpawnModels')) $('retrySpawnModels').onclick = () => { spawnModelsKey = ''; render(); };
+    for (const b of main.querySelectorAll('[data-dir]')) b.onclick = () => { S.spawn.cwd = b.dataset.dir; S.spawn.model = ''; render(); };
+    for (const b of main.querySelectorAll('[data-prov]')) b.onclick = () => { S.spawn.provider = b.dataset.prov; S.spawn.permissionMode = ''; S.spawn.model = ''; S.spawn.effort = ''; render(); };
     for (const b of main.querySelectorAll('[data-perm]')) b.onclick = () => { S.spawn.permissionMode = b.dataset.perm; render(); };
     for (const b of main.querySelectorAll('[data-prompt]')) {
-      b.onclick = () => { S.spawn.prompt = S.spawn.prompt === b.dataset.prompt ? '' : b.dataset.prompt; render(); };
+      b.onclick = () => { S.spawn.prompt = b.dataset.prompt; const p = spawnPrompts.find(p => p.id === b.dataset.prompt); if (p) S.spawn.message = p.body || p.title || ''; render(); };
     }
     const od = main.querySelector('[data-otherdir]');
-    if (od) od.onclick = () => {
-      const v = prompt('Project directory', S.spawn.cwd || '');
-      if (v && v.trim()) { S.spawn.cwd = v.trim(); render(); }
-    };
+    if (od) od.onclick = () => openSpawnFolder(S.spawn.cwd || '');
     $('spawnGo').onclick = doSpawn;
   }
 
   let spawnPrompts = [];
   async function loadSpawnExtras() {
+    spawnModelsKey = "";
+    S.spawn.model = "";
     if (can('providers.checkAll')) {
       try { providerProbe = await call('providers.checkAll', {}); } catch { providerProbe = null; }
     }
@@ -3941,11 +4075,20 @@
   }
 
   async function doSpawn() {
+    if (spawnSubmitting || !can('agents.spawn')) return;
+    if ((S.spawn.permissionMode === 'yolo' || S.spawn.permissionMode === 'bypassPermissions') && !scope.fullAccess) { toast('Full access requires an operator pairing'); return; }
     const cwd = (S.spawn.cwd || '').trim();
     if (!cwd) { toast('Pick a project directory'); return; }
+    if (providerProbe?.some(p => p.provider === S.spawn.provider && !p.found)) { toast('This provider is not installed on the server'); return; }
+    if (S.spawn.model && !spawnModels.some(m => m.key === S.spawn.model)) { toast('Choose an available model'); return; }
+    spawnSubmitting = true;
     const btn = $('spawnGo'); btn.disabled = true; btn.textContent = 'Dispatching…';
     const opts = { cwd, provider: S.spawn.provider, transport: 'stream' };
     if (S.spawn.permissionMode) opts.permissionMode = S.spawn.permissionMode;
+    if (S.spawn.permissionMode === 'yolo' || S.spawn.permissionMode === 'bypassPermissions') opts.skipPermissions = true;
+    const model = spawnModels.find(m => m.key === S.spawn.model);
+    if (model) { opts.model = model.id; if (model.contextWindow != null) opts.contextWindow = model.contextWindow; }
+    if (S.spawn.effort && capsFor(S.spawn.provider).effort?.includes(S.spawn.effort)) opts.effort = S.spawn.effort;
     // The task label IS the card's title from here on (agentName reads
     // `label`), so a dispatch started from the phone gets a real task name
     // instead of a directory basename.
@@ -3957,8 +4100,7 @@
     // entirely and silently, and even when it did land, a phone dispatch is
     // transport:'stream' (a managed row registered before its prompt channel
     // exists), which refuses a message in that window with a 404.
-    const first = spawnPrompts.find((p) => p.id === S.spawn.prompt);
-    const firstText = first ? (first.body || first.title) : '';
+    const firstText = (S.spawn.message || '').trim();
     if (firstText) opts.message = firstText;
     try {
       const r = await call('agents.spawn', opts);
@@ -3966,6 +4108,7 @@
       toast('Dispatched');
       S.spawn.label = '';
       S.spawn.prompt = '';
+      S.spawn.message = '';
       await seed();
       // messageQueued is the host's acknowledgement that it took the prompt. An
       // older provider answers without it, so fall back to the old second call
@@ -3980,7 +4123,7 @@
     } catch (e) {
       toast('Dispatch failed: ' + errText(e));
       btn.disabled = false; btn.textContent = 'Dispatch worker';
-    }
+    } finally { spawnSubmitting = false; if (S.screen === 'new') render(); }
   }
 
   async function resume(sessionId) {
@@ -4388,6 +4531,7 @@
     try { sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null; sock.close(); } catch {}
   }
   function connect() {
+    if (machinePaused) return;
     if (!token) { connected = false; renderChrome(); render(); return; }
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     clearTimeout(watchdog);
@@ -4415,6 +4559,7 @@
     sock.onopen = () => {
       clearTimeout(watchdog);
       backoff = 500; attempt = 0; lastActivity = Date.now(); connected = true;
+      reportInteraction(true);
       sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot', 'workflow.*', 'hub.peer.*', 'node.state_changed'] }));
       // Everything else waits for `hello` — see onDiscover. Firing the optional
       // lookups here would run their can() guards before we know our scope,
@@ -4425,11 +4570,18 @@
       // Reconcile every 25s so the fleet self-heals if an event was missed while
       // the socket blipped; doubles as the heartbeat wake() checks.
       clearInterval(reconcileTimer);
-      reconcileTimer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) seed(); }, 25000);
+      reconcileTimer = setInterval(() => { if (document.visibilityState === 'visible' && ws && ws.readyState === WebSocket.OPEN) seed(); }, 25000);
       renderChrome(); render();
     };
     // The optional, scope-dependent lookups, run once the tier is known.
     const onDiscover = () => {
+      if (can('machine.power')) call('machine.power').then((info) => {
+        machineCanStop = info.canStop === true; machinePowerInfo = info;
+        machineWakeURL = safeMachineWakeURL(info.wakeUrl);
+        if (machineWakeURL) localStorage.setItem(machineWakeKey, machineWakeURL); else localStorage.removeItem(machineWakeKey);
+        renderMachinePower();
+        if (info.error) alert(info.error);
+      }).catch(() => { machineCanStop = false; renderMachinePower(); });
       // Config feeds the spawn screen's defaults AND every project mark, which
       // is on the screen you land on — so its arrival re-renders whatever is
       // showing, not just the spawn tab. Failure is survivable: resolveProject
@@ -4449,7 +4601,7 @@
       lastActivity = Date.now();
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.op === 'hello') {
-        scope = { name: f.scope || '', methods: Array.isArray(f.methods) ? f.methods : [] };
+        scope = { name: f.scope || '', methods: Array.isArray(f.methods) ? f.methods : [], fullAccess: f.spawnFullAccess === true };
         switchUnsupported = false;   // a new connection may have a new provider
         onDiscover();
         renderChrome();
@@ -4493,6 +4645,7 @@
       }
     };
     sock.onclose = (ev) => {
+      if (ev.code === 4001) { pauseForMachineStop(); return; }
       clearTimeout(watchdog);
       if (ws === sock) ws = null;
       connected = false; renderChrome();
@@ -4506,6 +4659,7 @@
     sock.onerror = () => { try { sock.close(); } catch {} };
   }
   function scheduleReconnect() {
+    if (machinePaused) return;
     if (reconnectTimer) return;
     reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
     backoff = Math.min(backoff * 2, 5000);
@@ -4514,7 +4668,7 @@
   // close), so on return we'd sit on a dead one. Reconnect on every signal that
   // we're foreground again, unless the socket is provably still live.
   function wake() {
-    if (!token || document.visibilityState === 'hidden') return;
+    if (machinePaused || !token || document.visibilityState === 'hidden') return;
     const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
     if (live) return;
     // Coming back to the foreground is a fresh start, not attempt N of a losing

@@ -1,0 +1,35 @@
+# Hub, brain and claudemon on ONE machine. Change app before provisioning.
+app = "workspacer-combined"
+primary_region = "ord"
+kill_signal = "SIGTERM"
+kill_timeout = 60
+
+[build]
+  dockerfile = "deploy/fly/combined/Dockerfile"
+
+[env]
+  WKS_MACHINE_POWER = "fly"
+  WKS_MACHINE_WAKE = "http"
+  # Continuous fleet quiet, after client activity has aged out. off disables it.
+  WKS_MACHINE_IDLE_TIMEOUT = "15m"
+  WKS_MACHINE_IDLE_MODE = "observe"
+
+[http_service]
+  internal_port = 7895
+  force_https = true
+  auto_start_machines = true
+  # Workspacer knows about agents and jobs; HTTP concurrency does not.
+  auto_stop_machines = "off"
+  min_machines_running = 0
+
+[[mounts]]
+  source = "wks_data"
+  destination = "/data"
+  initial_size = "10gb"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "4gb"
+
+[[restart]]
+  policy = "on-failure"

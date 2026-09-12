@@ -126,7 +126,9 @@ var viewMethods = []string{
 	//                     could already assemble one poll at a time from the
 	//                     snapshot feed this tier receives; nothing in the answer
 	//                     names a credential, an address, or a job's argv
-	"nodes.list", // the remote-node registry: which machines exist and whether
+	"remote.pairingInfo",
+	"machine.power", // this server power capabilities, never its credentials
+	"nodes.list",    // the remote-node registry: which machines exist and whether
 	//                each is available, waking, stopped or unreachable. Admitted
 	//                for the same reason federation.peers is — it is a TOMBSTONE
 	//                signal, and a client that cannot read it renders a node that

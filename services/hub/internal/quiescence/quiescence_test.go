@@ -456,3 +456,12 @@ func TestBlockerOrderIsStable(t *testing.T) {
 		}
 	}
 }
+
+func TestNullFleetIsNotQuiet(t *testing.T) {
+	if _, err := ParseSessions("", []byte("null")); err == nil {
+		t.Fatal("null was treated as an empty fleet")
+	}
+	if _, err := ParseSessions("", []byte("[]")); err != nil {
+		t.Fatal(err)
+	}
+}

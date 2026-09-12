@@ -280,6 +280,12 @@ function browseRoots(): string[] {
   return [os.homedir(), ...workspaceRoots()];
 }
 
+/** Only spawn setup may browse an explicitly configured inactive project.
+ * Content reads/writes retain workspaceRoots; config is not a file-access grant. */
+function spawnSetupRoots(): string[] {
+  return [...browseRoots(), ...Object.keys(configService.getConfig()?.projects ?? {}).filter((p) => path.isAbsolute(p))];
+}
+
 /**
  * Open a URL with the OS default handler, refusing any scheme but http(s).
  * `shell.openExternal` will happily launch a `file://` path or hand a custom
@@ -1911,7 +1917,7 @@ export function registerHubCapabilities(): void {
     // absolutizes to the process cwd. The web Spawn dialog already `.catch`es
     // into free-text model entry, so the cost is a dropdown that stays free-text
     // until a directory is chosen.
-    const canonicalCwd = assertPathAllowed('providers.listModels', cwd ?? '', browseRoots());
+    const canonicalCwd = assertPathAllowed('providers.listModels', cwd ?? '', spawnSetupRoots());
     const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
     return claudemonSessionClient.listProviderModels(
       provider,
@@ -2678,7 +2684,7 @@ export function registerHubCapabilities(): void {
     // Browsing is limited to the home tree + live agent cwds so a remote client
     // can pick a project dir but can't enumerate /etc, /root, or other users' homes.
     // readdir gets the CANONICAL path the guard validated, never the raw request.
-    const resolved = assertPathAllowed('fs.listDir', requested, browseRoots());
+    const resolved = assertPathAllowed('fs.listDir', requested, spawnSetupRoots());
     let dirs: string[] = [];
     try {
       dirs = fs

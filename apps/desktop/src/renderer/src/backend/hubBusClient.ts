@@ -53,6 +53,63 @@ export class HubBusClient {
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
+  private powerPaused = false;
+  private lastInteractionSent = 0;
+  private readonly onUserInteraction = (event: Event): void => {
+    if (!event.isTrusted || document.visibilityState === 'hidden') return;
+    this.reportInteraction();
+  };
+  private reportInteraction(force = false): void {
+    if (!this.connected || this.powerPaused || !this.ws) return;
+    if (!force && Date.now() - this.lastInteractionSent < 30000) return;
+    this.lastInteractionSent = Date.now();
+    this.ws.send(JSON.stringify({ op: 'activity' }));
+  }
+
+  private readonly powerHandlers = new Set<() => void>();
+
+  private powerKey(): string {
+    return (
+      'wks.machine.paused:' +
+      (this.baseUrl ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`)
+    );
+  }
+  isPowerPaused(): boolean {
+    return this.powerPaused;
+  }
+  onPowerPause(handler: () => void): () => void {
+    this.powerHandlers.add(handler);
+    return () => this.powerHandlers.delete(handler);
+  }
+  pauseForMachineStop(): void {
+    this.powerPaused = true;
+    try {
+      window.localStorage.setItem(this.powerKey(), '1');
+    } catch {
+      /* unavailable */
+    }
+    this.stop();
+    this.detachSocket();
+    this.setConnected(false);
+    this.sendQueue = [];
+    for (const call of this.calls.values()) {
+      clearTimeout(call.timer);
+      call.reject(new Error('Machine disconnected after stop request'));
+    }
+    this.calls.clear();
+    for (const handler of this.powerHandlers) handler();
+  }
+  resumeMachine(): void {
+    this.powerPaused = false;
+    try {
+      window.localStorage.removeItem(this.powerKey());
+    } catch {
+      /* unavailable */
+    }
+    this.start();
+    for (const handler of this.powerHandlers) handler();
+  }
+
   /** Set once the server closed us with an auth-rejection code (1008/4401).
    *  A bad/expired token won't succeed on retry, so wake() must not reopen. */
   private authRejected = false;
@@ -90,10 +147,20 @@ export class HubBusClient {
   // ── connection lifecycle ──────────────────────────────────────────────
 
   start(): void {
+    try {
+      this.powerPaused = window.localStorage.getItem(this.powerKey()) === '1';
+    } catch {
+      /* unavailable */
+    }
+    if (this.powerPaused) return;
     this.closedByUser = false;
     this.authRejected = false;
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onWake);
     if (typeof window !== 'undefined') window.addEventListener('online', this.onWake);
+    if (typeof document !== 'undefined') {
+      for (const type of ['pointerdown', 'keydown', 'wheel', 'touchmove'])
+        document.addEventListener(type, this.onUserInteraction, { capture: true, passive: true });
+    }
     this.open();
   }
 
@@ -168,6 +235,7 @@ export class HubBusClient {
       this.backoff = 500;
       this.lastActivity = Date.now();
       this.setConnected(true);
+      this.reportInteraction(true);
       // Re-assert every active topic subscription after a (re)connect.
       for (const topic of this.subscriptions.keys()) this.sendSubscribe(topic, true);
       // Flush calls that were queued before the socket finished connecting
@@ -185,6 +253,10 @@ export class HubBusClient {
     this.ws.onmessage = (ev) => this.onFrame(ev.data);
 
     this.ws.onclose = (ev) => {
+      if (ev.code === 4001) {
+        this.pauseForMachineStop();
+        return;
+      }
       this.setConnected(false);
       // 1008 / 4401 = auth rejected — no point reconnecting with a bad token.
       if (ev.code === 1008 || ev.code === 4401) {
@@ -215,6 +287,10 @@ export class HubBusClient {
 
   stop(): void {
     this.closedByUser = true;
+    if (typeof document !== 'undefined') {
+      for (const type of ['pointerdown', 'keydown', 'wheel', 'touchmove'])
+        document.removeEventListener(type, this.onUserInteraction, true);
+    }
     if (typeof document !== 'undefined')
       document.removeEventListener('visibilitychange', this.onWake);
     if (typeof window !== 'undefined') window.removeEventListener('online', this.onWake);
@@ -333,6 +409,8 @@ export class HubBusClient {
     params: unknown = {},
     timeoutMs: number = CALL_TIMEOUT_MS,
   ): Promise<T> {
+    if (this.powerPaused)
+      return Promise.reject(new Error('Machine disconnected after stop request'));
     return new Promise<T>((resolve, reject) => {
       const id = 'c' + ++this.callSeq;
       const timer = setTimeout(() => {

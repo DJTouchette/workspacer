@@ -12,8 +12,10 @@ package bus
 // provider are not use either, though both are permanently connected.
 
 import (
+	"github.com/coder/websocket"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -28,6 +30,8 @@ type ClientInfo struct {
 	// LastActive is when this connection last called a capability or published
 	// an event, or when it connected, whichever is later.
 	LastActive time.Time
+	// IdleActive separates user input and commands from passive reads on updated clients.
+	IdleActive time.Time
 	// ActivitySeq counts the same events as LastActive, one per act, as a
 	// strictly increasing integer. A caller that needs to tell "this exact act"
 	// from "anything since" needs this rather than LastActive: two acts on a
@@ -63,6 +67,7 @@ func (s *Server) Clients() []ClientInfo {
 			ConnID:      id,
 			Label:       cn.describe(),
 			LastActive:  time.UnixMilli(cn.lastActiveMilli.Load()),
+			IdleActive:  cn.idleActivity(),
 			ActivitySeq: cn.activitySeq.Load(),
 			Provider:    providers[id],
 			Plugin:      cn.pluginID != "",
@@ -217,4 +222,28 @@ func (s *Server) EvictConn(connID uint64) bool {
 	_ = cn.ws.CloseNow()
 	rt.dropConn(cn)
 	return true
+}
+
+// DisconnectForMachineStop tells interactive clients to stop reconnecting. A
+// reconnect is an HTTP request and can restart a stopped host via its proxy.
+// Infrastructure on this host exits with it; do not interrupt its drain.
+func (s *Server) DisconnectForMachineStop() {
+	providers := s.router.providerConns()
+	var sockets []*websocket.Conn
+	s.router.mu.Lock()
+	for _, cn := range s.router.conns {
+		if !cn.internal && cn.pluginID == "" && !providers[cn.id] {
+			sockets = append(sockets, cn.ws)
+		}
+	}
+	s.router.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, ws := range sockets {
+		wg.Add(1)
+		go func(ws *websocket.Conn) {
+			defer wg.Done()
+			_ = ws.Close(websocket.StatusCode(4001), "machine stopping; reconnect only to wake")
+		}(ws)
+	}
+	wg.Wait()
 }

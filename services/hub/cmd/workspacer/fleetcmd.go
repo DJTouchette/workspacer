@@ -31,6 +31,10 @@ const fleetUsage = `workspacer fleet — read the fleet's state
 
 Usage:
   workspacer fleet quiescence [--json] [--quiet]
+  workspacer fleet idle [--json] [--quiet]
+
+idle reports the actual machine auto-stop detector (mode, quiet period and
+blockers). Observation mode measures exactly the same predicate without stopping.
 
 quiescence answers whether this machine's fleet is genuinely at rest: every
 session ready for input, no background task running, nothing waiting on a
@@ -58,6 +62,8 @@ func runFleet(args []string) int {
 	switch args[0] {
 	case "quiescence":
 		return runFleetQuiescence(args[1:])
+	case "idle":
+		return runFleetProbe(args[1:], "machine.power")
 	case "help", "-h", "--help":
 		fmt.Print(fleetUsage)
 		return 0
@@ -82,7 +88,9 @@ type quiescenceAnswer struct {
 	CalmSeconds  int64 `json:"calmSeconds"`
 }
 
-func runFleetQuiescence(args []string) int {
+func runFleetQuiescence(args []string) int { return runFleetProbe(args, "fleet.quiescence") }
+
+func runFleetProbe(args []string, method string) int {
 	fs := flag.NewFlagSet("workspacer fleet quiescence", flag.ExitOnError)
 	host := fs.String("host", "127.0.0.1", "hub host")
 	hubPort := fs.Int("hub-port", 7895, "hub port")
@@ -105,7 +113,7 @@ func runFleetQuiescence(args []string) int {
 	cli := busclient.New(busURL, *token)
 	go cli.Run(ctx)
 
-	raw, err := cli.Call(ctx, "fleet.quiescence", map[string]any{})
+	raw, err := cli.Call(ctx, method, map[string]any{})
 	if err != nil {
 		if errors.Is(err, busclient.ErrNotConnected) {
 			err = fmt.Errorf("hub unreachable at %s:%d (is it running? wrong token?)", *host, *hubPort)
@@ -116,8 +124,23 @@ func runFleetQuiescence(args []string) int {
 		fmt.Fprintf(os.Stderr, "workspacer fleet: %v\n", err)
 		return 2
 	}
+	answerRaw := raw
+	if method == "machine.power" {
+		var power struct {
+			IdleMode string          `json:"idleMode"`
+			Idle     json.RawMessage `json:"idle"`
+		}
+		if err := json.Unmarshal(raw, &power); err != nil || power.IdleMode == "" || power.IdleMode == "off" {
+			fmt.Fprintln(os.Stderr, "machine idle detector is disabled or unavailable")
+			return 2
+		}
+		answerRaw = power.Idle
+		if !*jsonOut && !*quiet {
+			fmt.Printf("machine idle mode: %s\n", power.IdleMode)
+		}
+	}
 	var ans quiescenceAnswer
-	if err := json.Unmarshal(raw, &ans); err != nil {
+	if err := json.Unmarshal(answerRaw, &ans); err != nil {
 		fmt.Fprintf(os.Stderr, "workspacer fleet: unreadable answer: %v\n", err)
 		return 2
 	}

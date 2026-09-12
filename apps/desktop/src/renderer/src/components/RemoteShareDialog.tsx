@@ -5,6 +5,9 @@ import type { PairingScope, RemoteTokenRecord } from '../../../main/shared/ipcTy
 import LinkedMachinesSection from './LinkedMachinesSection';
 
 interface RemoteInfo {
+  pairingScope?: PairingScope;
+  canManageTokens?: boolean;
+  canToggleSharing?: boolean;
   pairedWorker?: { httpUrl: string } | null;
   enabled: boolean;
   token: string;
@@ -780,13 +783,13 @@ function EnabledState({
   const hasApp = !!info.appUrl;
   // Pair phones with a constrained token by default. Full-control is an
   // explicit scope choice and uses a revocable operator token from tokens.json.
-  const [scope, setScope] = useState<PairingScope>('triage');
+  const [scope, setScope] = useState<PairingScope>(info.pairingScope ?? 'triage');
   const [pairingToken, setPairingToken] = useState<RemoteTokenRecord | null>(null);
   const [pairingTokens, setPairingTokens] = useState<RemoteTokenRecord[]>([]);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [tokenNonce, setTokenNonce] = useState(0);
-  const canManageTokens = !!window.electronAPI.remoteTokenGetOrCreate;
+  const canManageTokens = info.canManageTokens ?? !!window.electronAPI.remoteTokenGetOrCreate;
 
   // Prefer the full app only for full-control pairings; triage/view tokens are
   // for the mobile client, whose HTML is public and whose bus calls are scoped.
@@ -809,11 +812,12 @@ function EnabledState({
   }, [refreshTs]);
 
   const refreshPairingTokens = useCallback(() => {
+    if (!canManageTokens) return;
     window.electronAPI
       .remoteTokensList?.()
       .then(setPairingTokens)
       .catch(() => {});
-  }, []);
+  }, [canManageTokens]);
   useEffect(() => {
     refreshPairingTokens();
   }, [refreshPairingTokens]);
@@ -821,10 +825,10 @@ function EnabledState({
   useEffect(() => {
     let cancelled = false;
     setTokenError(null);
-    if (!window.electronAPI.remoteTokenGetOrCreate) {
+    if (!canManageTokens || !window.electronAPI.remoteTokenGetOrCreate) {
       setPairingToken({
         token: info.token,
-        scope: 'operator',
+        scope: info.pairingScope ?? 'view',
         label: 'Current pairing token',
         created: '',
       });
@@ -833,6 +837,7 @@ function EnabledState({
       };
     }
     setTokenBusy(true);
+    setPairingToken(null);
     window.electronAPI
       .remoteTokenGetOrCreate(scope, `Remote Control: ${scope}`)
       .then((rec) => {
@@ -849,7 +854,7 @@ function EnabledState({
     return () => {
       cancelled = true;
     };
-  }, [scope, info.token, tokenNonce, refreshPairingTokens]);
+  }, [scope, info.token, info.pairingScope, canManageTokens, tokenNonce, refreshPairingTokens]);
 
   const httpsOn = !!(ts && ts.serveActive && ts.magicName);
   const activeToken = pairingToken?.token || (canManageTokens ? '' : info.token);
@@ -859,7 +864,11 @@ function EnabledState({
   // is no pairing to describe.
   const tokenScope = pairingToken?.scope;
   const activeScope: PairingScope =
-    tokenScope && tokenScope !== 'provider' ? tokenScope : canManageTokens ? scope : 'operator';
+    tokenScope && tokenScope !== 'provider'
+      ? tokenScope
+      : canManageTokens
+        ? scope
+        : (info.pairingScope ?? 'view');
   const hasPairingToken = !!activeToken;
   const fullAppAvailable = hasApp && activeScope === 'operator';
   const tokenQ = activeToken ? `?token=${encodeURIComponent(activeToken)}` : '';
@@ -1102,9 +1111,20 @@ function EnabledState({
 
       <TailscaleNote />
 
-      <button onClick={onStop} disabled={busy} style={dangerBtnStyle(busy)}>
-        {busy ? 'Stopping…' : 'Stop sharing'}
-      </button>
+      {info.canToggleSharing !== false && (
+        <button onClick={onStop} disabled={busy} style={dangerBtnStyle(busy)}>
+          {busy ? 'Stopping…' : 'Stop sharing'}
+        </button>
+      )}
+      {!canManageTokens && (
+        <p style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)' }}>
+          Current access:{' '}
+          {info.pairingScope === 'operator'
+            ? 'Full control (operator)'
+            : (info.pairingScope ?? 'Unknown')}
+          . Creating and revoking pairings requires the server owner's token.
+        </p>
+      )}
     </div>
   );
 }
@@ -1321,8 +1341,8 @@ function PairingTokenList({
           lineHeight: 1.5,
         }}
       >
-        Revocation blocks new connections. Already-open clients keep their scope until they
-        disconnect.
+        Revocation blocks new connections and disconnects existing scoped clients when the hub
+        revalidates their token.
       </div>
     </div>
   );
