@@ -36,57 +36,11 @@ var (
 // answers under `workspacer serve`, each with the degradation the user gets.
 // Adding one is a decision; the empty value is what this guard refuses.
 var headlessGaps = map[string]string{
-	// claude.setModel / setPermissionMode / setEffort / handoffBrief were here
-	// and are now PROVIDED (livecontrol.go): the mode pill, the model switcher,
-	// the effort control and cross-provider handoff work on a headless node.
-	// setPermissionMode carries the spawn path's escalation clamp with it — a
-	// bus caller can TIGHTEN a running agent's mode and cannot loosen it.
-	//
-	// The entries these replace were rewritten a moment earlier to describe the
-	// loud-failure work on the two clients (both now surface the rejection
-	// rather than swallowing it). That work is not wasted by this: it is what a
-	// user sees when the DAEMON refuses a live switch, which is still a real
-	// answer — ok:false with a reason, and the restart path behind it.
-	//
-	// claude.handoffAgentBrief stays a gap ON PURPOSE. It is not a relay like
-	// its sibling: main/services/agentHandoff.ts injects a write-this-brief
-	// instruction into the live agent, waits for the file to appear, and falls
-	// back to the mechanical brief on timeout. That orchestration has no
-	// claudemon endpoint behind it, so porting it means porting the whole
-	// service, not registering a method.
-	"claude.handoffAgentBrief": "the agent-AUTHORED handoff brief is unavailable; the deterministic one (claude.handoffBrief) works, so a handoff still succeeds with a mechanically composed brief",
 	// fs.readImage was here and is now PROVIDED (readimage.go), so chat
 	// thumbnails render on a headless node — with the twin's own inline-bytes
 	// fallback rather than a decoded thumbnail, since there is no image decoder
 	// in this daemon.
 	//
-	// fs.watch / fs.unwatch stay gaps. They are not a relay or a read: the
-	// desktop's pair drives a live host watcher whose emit sink mirrors every
-	// change onto the bus as `fs.changed`, so a headless counterpart is a
-	// filesystem-watcher subsystem (a new dependency, a new published topic,
-	// per-path lifecycle and teardown) rather than a handler. The degradation is
-	// narrow and additive — the editor pane shows what it read, it just does not
-	// notice an outside edit — which is why it did not outrank the agent-facing
-	// set in this pass.
-	"fs.watch":   "the editor pane does not live-reload; an outside edit is noticed on the next open, not live",
-	"fs.unwatch": "no-op counterpart of fs.watch",
-	// git.status / git.log / git.diff / git.numstat were here and are now
-	// PROVIDED (git.go): the READ-ONLY half of the git surface was ported into
-	// the brain so a remote node's branch chip, Review pane, rail widget,
-	// per-turn line counts and project_status work headless.
-	//
-	// The four below stay gaps ON PURPOSE, not for want of effort. This brain is
-	// the provider that runs on an internet-facing node; a read-only surface
-	// cannot mutate or publish a repository, so a bus token cannot commit or
-	// push from a machine the user is not sitting at. Agents on the node still
-	// commit through their own Bash tool, which is how work actually lands
-	// there — the UI buttons are convenience, not capability.
-	"git.commitDiff":    "no diff for a past commit",
-	"git.commitNumstat": "no stats for a past commit",
-	"git.stage":         "staging is unavailable; deliberately not ported — see above",
-	"git.unstage":       "unstaging is unavailable; deliberately not ported — see above",
-	"git.commit":        "committing is unavailable; deliberately not ported — see above",
-	"git.push":          "pushing is unavailable; deliberately not ported — see above",
 	// sessions.recent was here and is now PROVIDED (recent.go): the Sessions
 	// pane and the phone's resume list are answered from claudemon's own
 	// resumable-row list, so an empty list finally means "no sessions" rather

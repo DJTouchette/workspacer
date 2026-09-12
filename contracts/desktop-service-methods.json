@@ -1,0 +1,82 @@
+{
+  "ownerMethods": [
+    "desktop.worktreeInfo",
+    "desktop.worktreeCreate",
+    "desktop.worktreeRemove",
+    "desktop.pricingGetRates",
+    "desktop.pricingSaveOverrides",
+    "desktop.claudeProfilesAccounts",
+    "desktop.claudeProfilesLoginStatus",
+    "desktop.claudeProfilesAddAccount",
+    "desktop.toolsStatus",
+    "desktop.fleetReviewRead",
+    "desktop.fleetReviewForget",
+    "desktop.taskInspectorEdit",
+    "desktop.taskInspectorOpen",
+    "desktop.dispatchHistoryRead",
+    "desktop.htmlCardReadDiff",
+    "desktop.fleetWorkflowRequest",
+    "desktop.managerRequestPrepare",
+    "desktop.managerRequestSend",
+    "desktop.loadBriefBoard",
+    "desktop.moveBriefCard",
+    "desktop.claudeProfilesAdd",
+    "desktop.claudeProfilesUpdate",
+    "desktop.claudeProfilesRemove",
+    "desktop.saveConfig",
+    "desktop.agentSuggestTitle",
+    "desktop.providerReadiness",
+    "desktop.agentRuntimeStatus",
+    "desktop.keepWarmHeartbeats",
+    "desktop.workflowAgentTranscript",
+    "desktop.workflowAgentConversation",
+    "desktop.installUiFont",
+    "desktop.downloadProjectIcon",
+    "desktop.managerReplacement",
+    "desktop.sessionGrantReconcile",
+    "desktop.readFileBytes",
+    "desktop.filePickerList"
+  ],
+  "assetMethods": [
+    "ui.fonts",
+    "ui.asset"
+  ],
+  "authorityCases": [
+    {
+      "identity": "owner",
+      "owner": true,
+      "why": "Authenticated local owner can use desktop actions."
+    },
+    {
+      "identity": "operator",
+      "owner": false,
+      "why": "Ordinary scoped operator is not the server owner."
+    },
+    {
+      "identity": "facade",
+      "owner": false,
+      "why": "Session provenance delegation does not grant desktop owner authority."
+    },
+    {
+      "identity": "provider",
+      "owner": false,
+      "why": "A registered provider may answer but cannot invoke owner services."
+    }
+  ],
+  "vocabulary": {
+    "blocks": {
+      "authorityCases": {
+        "required": [
+          "identity",
+          "owner",
+          "why"
+        ],
+        "loaders": [
+          "services/hub/internal/bus/desktop_test.go::TestDesktopServiceManifest",
+          "apps/desktop/src/main/shared/desktopServices.test.ts::authorityCases"
+        ],
+        "why": "Desktop method authority is independent of scoped operator promotion and provider registration."
+      }
+    }
+  }
+}

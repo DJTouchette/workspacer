@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -102,5 +104,26 @@ func TestFilesUploadRefusals(t *testing.T) {
 	// Nothing may have been written by any refusal.
 	if entries, _ := os.ReadDir(filepath.Join(os.TempDir(), uploadDirName)); len(entries) != 0 {
 		t.Errorf("refused uploads left %d files behind", len(entries))
+	}
+}
+
+func TestWorkerUploadForwardingNeverFallsBackToHubDisk(t *testing.T) {
+	isolateTempDir(t)
+	calls := 0
+	upload := routedFilesUpload(func(_ context.Context, method string, params any) (json.RawMessage, error) {
+		calls++
+		if method != "files.receiveUpload" {
+			t.Fatalf("unexpected receiver %s", method)
+		}
+		return nil, errors.New("worker unavailable")
+	}, true)
+	if _, err := upload(json.RawMessage(`{"name":"photo.png","dataBase64":"aGVsbG8="}`)); err == nil {
+		t.Fatal("missing worker acknowledgement was hidden")
+	}
+	if calls != 1 {
+		t.Fatal("upload was not forwarded exactly once")
+	}
+	if _, err := os.Stat(filepath.Join(os.TempDir(), uploadDirName)); !os.IsNotExist(err) {
+		t.Fatal("failed worker upload created hub-owned bytes")
 	}
 }

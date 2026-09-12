@@ -33,9 +33,9 @@ func TestParseScopeAcceptsProvider(t *testing.T) {
 // The call surface. `provider` holds layout.get and NOTHING else: it is the one
 // method a headless node actually calls (cmd/brain/main.go, the
 // fleet-visibility read). Everything else it does is answering, not asking.
-func TestProviderCallSurfaceIsExactlyLayoutGet(t *testing.T) {
+func TestProviderCallSurfaceIsLayoutAndBoundLaunchCallback(t *testing.T) {
 	got := ScopeProvider.Methods()
-	if !slices.Equal(got, []string{"layout.get"}) {
+	if !slices.Equal(got, []string{"layout.get", "plugins.prepareLaunch"}) {
 		t.Fatalf("ScopeProvider.Methods() = %v, want exactly [layout.get]. Adding a method here needs a call site in cmd/brain to justify it — a provider that needs to CALL something is asking for the operator ladder, which is a different question from being allowed to ANSWER.", got)
 	}
 }
@@ -47,6 +47,11 @@ func TestProviderCallSurfaceIsExactlyLayoutGet(t *testing.T) {
 func TestProviderIsStrictlyBelowViewAndDisjointFromTriage(t *testing.T) {
 	view := ScopeView.Methods()
 	for _, m := range ScopeProvider.Methods() {
+		// This callback can only continue an already-authorized owner spawn;
+		// bus.TestLaunchPreparationBoundToActiveOwnerSpawn pins that proof.
+		if m == "plugins.prepareLaunch" {
+			continue
+		}
 		if !slices.Contains(view, m) {
 			t.Errorf("provider holds %q and view does not. The provider tier is defined as a strict subset of view on the CALL plane; a method here that view lacks means the tier grew an acting surface nobody priced.", m)
 		}

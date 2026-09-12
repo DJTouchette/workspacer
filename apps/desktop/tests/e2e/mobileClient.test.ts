@@ -54,6 +54,26 @@ test.describe('mobile client', () => {
     await page.context().clearCookies();
   });
 
+  test('Wake reaches the public doorbell and resumes a paused connection', async ({ page }) => {
+    let wakeRequests = 0;
+    await page.route('https://wake.example.test/health', async route => {
+      wakeRequests++;
+      await route.fulfill({ status: 200, body: 'awake' });
+    });
+    await page.addInitScript(() => {
+      const bus = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
+      localStorage.setItem('wks.machine.paused:' + bus, '1');
+      localStorage.setItem('wks.machine.wake:' + bus, 'https://wake.example.test/health');
+    });
+    await page.goto(`${hub.url}/m?token=${HOST_TOKEN}`);
+    await page.getByRole('button', { name: 'Wake server', exact: true }).click();
+    await expect(page.locator('#machinePower')).toBeHidden();
+    await expect(page.locator('.agent').first()).toBeVisible({ timeout: 10000 });
+    expect(wakeRequests).toBe(1);
+    expect(await page.evaluate(() => localStorage.getItem('wks.machine.paused:' +
+      `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`))).toBeNull();
+  });
+
   test('fleet ranks attention first and renders card telemetry', async ({ page }) => {
     await openClient(page);
 

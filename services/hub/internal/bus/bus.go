@@ -139,7 +139,8 @@ type ScopedIdent struct {
 	// connection may have its skipPermissions request honored. The router
 	// stamps hub-only `yoloGranted` for a granted caller — see
 	// sanitizeSpawnParams.
-	YoloAllowed bool
+	YoloAllowed     bool
+	FacadeAuthority bool
 	// Provides is the token record's REGISTER grant
 	// (authtoken.Record.ProvidesGrant): the capability-method patterns this
 	// connection may register as the provider of. Non-nil only for the
@@ -907,7 +908,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			// nothing that is currently answering — which is the one situation
 			// narrowing a register grant is for.
 			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) &&
-				si.YoloAllowed == cn.yoloAllowed && slices.Equal(si.Provides, cn.provides) {
+				si.YoloAllowed == cn.yoloAllowed && si.FacadeAuthority == cn.facadeAuthority && slices.Equal(si.Provides, cn.provides) {
 				continue
 			}
 			// Both halves, exactly as UnregisterPluginToken applies them: the
@@ -957,6 +958,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	var authScope string
 	var profilesAllowed []string
 	var yoloAllowed bool
+	var facadeAuthority bool
 	// provides is the REGISTER grant. Two sources, never merged: a plugin's
 	// manifest (below, via capspec.EventGrants) and — new — a provider-tier
 	// token record. Everything else about the two identities stays separate.
@@ -970,6 +972,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		viaScoped, authScope = true, si.Scope
 		profilesAllowed = si.ProfilesAllowed
 		yoloAllowed = si.YoloAllowed
+		facadeAuthority = si.FacadeAuthority
 		if si.operator() {
 			trusted = true
 		} else {
@@ -1011,6 +1014,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		emits:             events.Emits, consumes: events.Consumes, provides: provides,
 		scope: scope, scopeMethods: scopeMethods, tokenID: TokenFingerprint(tok),
 		viaScopedToken: viaScoped, profilesAllowed: profilesAllowed, yoloAllowed: yoloAllowed,
+		facadeAuthority: facadeAuthority,
 		// Self-asserted and downgrade-only — see [conn.federated]. Read as a
 		// plain query param rather than a header because a peer link dials the
 		// same WebSocket handshake every other client does, where the token
@@ -1141,7 +1145,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			accepted := s.router.register(cn, f.Methods)
 			_ = cn.send(Frame{Op: "registered", Methods: accepted})
 		case "call":
-			cn.markCall(time.Now(), f.Method)
+			cn.markCall(time.Now(), f.Method, f.Params)
 			s.router.call(cn, f)
 		case "result":
 			s.router.result(cn, f, false)
@@ -1249,6 +1253,9 @@ type conn struct {
 	// tokens.json anyway), so it may name any profile; a scoped record, even an
 	// operator one, may only name the ids in its own profilesAllowed grant.
 	viaScopedToken bool
+	// An owner-provisioned MCP multiplexer may assert local session identity;
+	// this is independent of authenticatedHost and all permission grants.
+	facadeAuthority bool
 	// profilesAllowed is the scoped record's profile-dispatch grant, snapshotted
 	// at handshake (revalidateScoped closes the socket if the record's grant
 	// changes, so the snapshot cannot go stale while live).
@@ -1641,6 +1648,12 @@ func (cn *conn) mayCall(method string) bool {
 	if cn.revoked.Load() {
 		return false
 	}
+	if method == "files.receiveUpload" {
+		return authenticatedUploadReceiver("files.receiveUpload", cn)
+	}
+	if strings.HasPrefix(method, "desktop.") {
+		return desktopServiceAllowed(method, cn)
+	}
 	if cn.trusted {
 		return true
 	}
@@ -1654,6 +1667,9 @@ func (cn *conn) mayCall(method string) bool {
 // callDenied renders the error for a call mayCall refused, naming what the
 // caller is (its scope or plugin identity) so the fix is obvious client-side.
 func (cn *conn) callDenied(method string) string {
+	if strings.HasPrefix(method, "desktop.") {
+		return "desktop services require the authenticated server owner's connection"
+	}
 	if cn.scopeMethods != nil {
 		return fmt.Sprintf("not authorized: method %q is outside this token's %q scope (mint a broader token with `workspacer token create`)", method, cn.scope)
 	}

@@ -187,11 +187,11 @@ export function reportAttachmentFailures(errors: readonly string[]): void {
  * over) — so a window refocus with nothing chosen is the fallback signal,
  * delayed so a real pick reports first.
  */
-export function openBrowserFilePicker(accept: string = UPLOAD_ACCEPT): Promise<UploadableFile[]> {
+export function openBrowserFilePicker(accept: string = UPLOAD_ACCEPT, multiple = true): Promise<UploadableFile[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.multiple = true;
+    input.multiple = multiple;
     input.accept = accept;
     input.style.position = 'fixed';
     input.style.left = '-9999px';

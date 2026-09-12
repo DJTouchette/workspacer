@@ -49,6 +49,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/djtouchette/workspacer-hub/internal/uploads"
 	"image"
 	_ "image/gif"  // registers the GIF header decoder for DecodeConfig
 	_ "image/jpeg" // …and JPEG
@@ -173,7 +174,7 @@ func (r *registry) readImage(ctx context.Context, raw json.RawMessage) (json.Raw
 	}
 	// The CANONICAL path the guard returned is the one opened — never the
 	// caller's string.
-	canonical, err := assertPathAllowed("fs.readImage", p.Path, r.workspaceRoots(ctx))
+	canonical, err := assertPathAllowed("fs.readImage", p.Path, append(r.workspaceRoots(ctx), uploads.Directory()))
 	if err != nil {
 		return nil, err
 	}

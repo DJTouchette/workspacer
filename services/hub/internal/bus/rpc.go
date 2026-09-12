@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"log"
 	"slices"
 	"sort"
@@ -141,11 +142,12 @@ func (rt *router) ceilingHooks() (SpawnCeilingFunc, SpawnAuditFunc) {
 }
 
 type pendingCall struct {
-	caller     *conn
-	corr       string // caller's original id
-	method     string
-	providerID uint64
-	timer      *time.Timer
+	caller              *conn
+	corr                string // caller's original id
+	method              string
+	providerID          uint64
+	launchIntegrationID string
+	timer               *time.Timer
 }
 
 func newRouter() *router {
@@ -711,9 +713,20 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 		log.Printf("SECURITY: %v (caller %s)", err, caller.tokenID)
 		return nil, err
 	}
-	// Only the local host control plane can stamp dispatch provenance. Scoped
-	// operator promotion is not host identity; federation never inherits it.
-	if !caller.trusted || caller.viaScopedToken || caller.pluginID != "" || caller.federated {
+	delete(m, "launchIntegrationGranted")
+	if selected, exists := m["launchIntegrationId"]; exists && string(selected) != "null" {
+		var id string
+		if json.Unmarshal(selected, &id) != nil || id == "" || len(id) > 200 || strings.TrimSpace(id) != id {
+			return nil, fmt.Errorf("invalid launch integration selection")
+		}
+		if !caller.authenticatedHost || caller.revoked.Load() || caller.federated || caller.pluginID != "" {
+			return nil, fmt.Errorf("launch integrations require the server owner")
+		}
+		m["launchIntegrationGranted"] = json.RawMessage("true")
+	}
+	// Local host or explicitly provisioned MCP multiplexer provenance only.
+	// Ordinary operator tokens and federation never inherit this authority.
+	if !caller.mayAssertLocalSession() {
 		delete(m, "dispatchOwnerSessionId")
 		delete(m, "retrySourceSessionId")
 	}
@@ -1110,7 +1123,7 @@ func (rt *router) sanitizeCallParams(caller *conn, method string, raw json.RawMe
 		return json.Marshal(p)
 	}
 	if method == "fleetWorkflows.request" {
-		if !caller.trusted || caller.viaScopedToken || caller.pluginID != "" || caller.federated {
+		if !caller.mayAssertLocalSession() {
 			return nil, fmt.Errorf("Fleet workflow management is local host only")
 		}
 		return raw, nil
@@ -1212,7 +1225,15 @@ func (rt *router) call(caller *conn, f Frame) {
 	rt.callSeq++
 	gid := rt.callSeq
 	p := &pendingCall{caller: caller, corr: f.ID, method: f.Method, providerID: provID}
-	p.timer = time.AfterFunc(rt.timeout, func() { rt.timeoutCall(gid) })
+	if f.Method == "agents.spawn" {
+		var selected struct {
+			ID string `json:"launchIntegrationId"`
+		}
+		if json.Unmarshal(f.Params, &selected) == nil {
+			p.launchIntegrationID = selected.ID
+		}
+	}
+	p.timer = time.AfterFunc(capspec.ProviderTimeout(f.Method, rt.timeout), func() { rt.timeoutCall(gid) })
 	rt.pending[gid] = p
 	rt.mu.Unlock()
 

@@ -302,7 +302,10 @@ func (b *busClient) call(ctx context.Context, method string, params any) (json.R
 
 // handleCall runs the handler and replies with result/error, echoing the
 // hub-assigned id.
+type inboundCallIDKey struct{}
+
 func (b *busClient) handleCall(ctx context.Context, f frame) {
+	ctx = context.WithValue(ctx, inboundCallIDKey{}, f.ID)
 	result, err := b.handler(ctx, f.Method, f.Params)
 	reply := frame{Op: "result", ID: f.ID, Result: result}
 	if err != nil {

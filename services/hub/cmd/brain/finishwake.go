@@ -416,6 +416,9 @@ func (w *finishWatcher) finishEntry(ctx context.Context, all []fleetSession, id 
 		e.Escalation = outcome.JSON
 		e.EscalationError = outcome.Error
 	}
+	if !w.reg.attachDesktopResult(ctx, &e, reply) {
+		return fleetEntry{}, "", false
+	}
 	escalationState := ""
 	if e.Escalation != "" {
 		escalationState = "escalated"
@@ -583,6 +586,9 @@ func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) 
 			if outcome := readWorkerEscalation(final.lastAssistant); outcome != nil {
 				e.Escalation = outcome.JSON
 				e.EscalationError = outcome.Error
+			}
+			if !w.reg.attachDesktopResult(ctx, &e, final.lastAssistant) {
+				continue
 			}
 			entries = append(entries, e)
 		}

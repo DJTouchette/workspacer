@@ -70,6 +70,7 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     }),
     // …and the full-access grant (only the true case is ever stored).
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
+    ...(r.facadeAuthority === true && { facadeAuthority: true as const }),
     // …and the session-role tag the grant reconciler keys on.
     ...(r.role === 'manager' && { role: r.role }),
     // …and the provider tier's REGISTER grant. Same preservation rule as the
@@ -129,7 +130,7 @@ export function listRemoteTokens(): RemoteTokenRecord[] {
   // Session facade tokens are lifecycle-managed plumbing, not user pairings —
   // keep them out of the Remote Control settings UI.
   return readTokens()
-    .filter((r) => !isSessionToken(r))
+    .filter((r) => !isSessionToken(r) && !r.facadeAuthority)
     .sort((a, b) => b.created.localeCompare(a.created));
 }
 
@@ -278,6 +279,7 @@ export function revokeRemoteToken(token: string): RemoteTokenRecord {
   const records = readTokens();
   const idx = records.findIndex((r) => r.token === ref);
   if (idx < 0) throw new Error('token not found');
+  if (records[idx].facadeAuthority) throw new Error('Infrastructure credentials cannot be revoked through pairing controls');
   const [removed] = records.splice(idx, 1);
   writeTokens(records);
   return removed;

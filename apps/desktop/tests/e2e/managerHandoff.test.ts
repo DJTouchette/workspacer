@@ -46,7 +46,7 @@ async function open(page: import('@playwright/test').Page, mode: string, fontPro
   await expect(
     page
       .getByTitle(
-        'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
+        'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
       )
       .filter({ visible: true }),
   ).toBeVisible();
@@ -62,7 +62,7 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
   await open(page, 'happy', true);
   const button = page
     .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
+      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
     )
     .filter({ visible: true });
   await button.click();
@@ -116,7 +116,7 @@ test('failed preparation retains old manager and shows retryable error', async (
   await open(page, 'fail');
   await page
     .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
+      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
     )
     .filter({ visible: true })
     .click();
@@ -136,7 +136,7 @@ test('uncertain acknowledgement remains visible without replay until explicit ri
   await open(page, 'ambiguous');
   await page
     .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
+      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
     )
     .filter({ visible: true })
     .click();
@@ -163,7 +163,7 @@ test('unavailable host is explicit and never opens ordinary handoff dialog', asy
   await open(page, 'unavailable');
   await page
     .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only',
+      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
     )
     .filter({ visible: true })
     .click();

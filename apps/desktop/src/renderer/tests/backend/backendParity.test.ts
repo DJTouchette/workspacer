@@ -1,6 +1,7 @@
+import desktopMethods from '../../../main/shared/desktopServices.generated';
 import type { ElectronAPI } from '../../src/types/electron';
 import { createRemoteBackend } from '../../src/backend/remoteBackend';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
@@ -14,11 +15,14 @@ function isBound(fn: unknown): boolean {
 
 // ─── Backend parity guard ────────────────────────────────────────────────────
 // The whole renderer talks to one seam, `window.electronAPI` (typed by
-// ElectronAPI). `createWebBackend` builds the FULL object for the browser/hub
-// transport, so its runtime keys ARE the seam's method surface. Every method
+// ElectronAPI). This guard classifies runtime transport selection; it is NOT a
+// complete browser-support inventory. Optional contract methods can be absent,
+// and HOST_ONLY includes working browser HTTP equivalents. Run `npm run audit:web
+// -- --check` for the contract-based inventory, including inherited methods.
+// Every method
 // must be triaged into exactly one bucket, or a new method silently inherits a
 // degraded stub (a hidden web-parity regression). Since ElectronAPI is a TS type
-// (not reflectable), we reflect over the web backend object instead.
+// (not reflectable at runtime), this routing test reflects over the backend.
 //
 //   (a) BUS_BACKED   — rides the hub bus (a registered capability, an event
 //                      subscription, or hub-core layout/publish plumbing).
@@ -30,6 +34,8 @@ function isBound(fn: unknown): boolean {
 const usageBusCall = vi.hoisted(() =>
   vi.fn(async (_method: string, _params: unknown, _url?: string) => ({})),
 );
+
+beforeEach(() => {usageBusCall.mockReset();usageBusCall.mockResolvedValue({});});
 
 // Keep createWebBackend from opening a real WebSocket — a no-op bus client is
 // all we need to reflect over the built object's keys.
@@ -64,6 +70,16 @@ vi.mock('../../src/backend/hubBusClient', () => ({
 // Methods that ride the hub bus. Registered-capability calls, event
 // subscriptions, and hub-core plumbing (layout doc, __publish) all count.
 const BUS_BACKED = [
+  'filePickerList',
+  'keepWarmHeartbeats',
+  'agentSuggestTitle',
+  'onConfigChanged',
+  'federationPeers',
+  'federationConversation',
+  'federationPeersConfig',
+  'federationSavePeersConfig',
+  'getUiAsset',
+
   'routingPreferencesGet',
   'routingPreferencesValidate',
   'routingPreferencesSave',
@@ -175,11 +191,8 @@ const BUS_BACKED = [
 // keeps the degraded surface visible and honest (the test fails if one is
 // promoted to a real bus method and left here, or removed and left here).
 const KNOWN_STUBS = [
-  'fileOpenExternal', // best-effort window.open(file://) on web only
-  'fileShowInFolder', // reveal-in-folder impossible remotely
   'notifyQuitSaved', // no quit handshake in the browser
   'listLiveClaudeSessionIds', // boot reconcile/auto-respawn is desktop-owned; null on web
-  'keepWarmHeartbeats', // keep-warm log lives in the desktop's claudemon; [] on web
   'onInAppNotification', // main-process notification mirror; web ingests notify.post bus events instead
   'onWebviewBlocked', // <webview> attach guard is desktop-only; the web build frames with <iframe>
   'checkPreviewFile', // the .md detour's roots check lives in main; on web the hub's fs.read guard confines the read instead
@@ -187,12 +200,6 @@ const KNOWN_STUBS = [
   'onNotificationActivate', // click-through for browser-API escalations (web-local, no bus RPC)
   'getPathForFile', // Electron webUtils; a browser file has no host path → ''
   'saveClipboardImage', // the host clipboard isn't the browser user's clipboard → null
-  'agentSuggestTitle', // one-shot completion on the agent's own provider CLI; null on web (the desktop titles the agent and the layout syncs)
-  'onConfigChanged', // main-process config watcher; the bus has no equivalent event yet
-  'federationPeers', // the web mirror talks to one hub directly; no peer link → [] (could ride hub.peer.* later)
-  'federationConversation', // IMPLEMENTED on web (qualified sessions.conversation); listed here because local sessions answer null by design
-  'federationPeersConfig', // peers.json lives on the hub machine; web answers null → settings render read-only
-  'federationSavePeersConfig', // same — refused with a reason string
 ] as const;
 
 function webBackendMethodKeys(): Set<string> {
@@ -276,72 +283,24 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     expect(usageBusCall).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps remote and web request capture unavailable without invoking local capture or dropping IDs onto the bus', async () => {
-    const prepare = vi.fn();
-    const send = vi.fn();
-    const ipc = {
-      platform: 'linux',
-      managerRequestPrepare: prepare,
-      claudeMessage: send,
-    } as unknown as ElectronAPI;
-    for (const api of [
-      createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus'),
-      createWebBackend('token', 'ws://remote-fixture/bus'),
-    ]) {
-      usageBusCall.mockClear();
-      expect(await api.managerRequestPrepare!('manager', 'remote request')).toMatchObject({
-        available: false,
-      });
-      expect(await api.claudeMessage('manager', 'tagged request', 'local-request')).toMatchObject({
-        ok: false,
-        requestId: 'local-request',
-      });
-      expect(prepare).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
-      expect(usageBusCall).not.toHaveBeenCalled();
-      await api.claudeMessage('manager', 'ordinary remote message');
-      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith(
-        'agents.sendMessage',
-        { sessionId: 'manager', text: 'ordinary remote message' },
-        'ws://remote-fixture/bus',
-      );
+  it('keeps capture and delivery on the selected server, including old native preloads', async () => {
+    const prepare=vi.fn(),send=vi.fn();
+    const ipc={platform:'linux',managerRequestPrepare:prepare,claudeMessage:send} as unknown as ElectronAPI;
+    const apis=[createRemoteBackend(ipc,'token','ws://remote-fixture/bus'),createWebBackend('token','ws://remote-fixture/bus'),createBridgedBackend({platform:'linux'} as ElectronAPI,'token','ws://remote-fixture/bus')];
+    for(const api of apis){
+      usageBusCall.mockClear();usageBusCall.mockResolvedValue({available:true,requestId:'server-request',ok:true});
+      expect(await api.managerRequestPrepare!('manager','captured text')).toMatchObject({requestId:'server-request'});
+      expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerRequestPrepare',{sessionId:'manager',text:'captured text',bootstrap:undefined},'ws://remote-fixture/bus');
+      expect(await api.claudeMessage('manager','not a second copy','server-request')).toMatchObject({ok:true});
+      expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerRequestSend',{sessionId:'manager',requestId:'server-request'},'ws://remote-fixture/bus');
+      usageBusCall.mockRejectedValueOnce(new Error('acknowledgement lost'));
+      await expect(api.claudeMessage('manager','must not replay','server-request')).rejects.toThrow('acknowledgement lost');
+      expect(usageBusCall.mock.calls.filter(([method])=>method==='agents.sendMessage')).toHaveLength(0);
     }
+    expect(prepare).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled();
   });
 
-  it('refuses request-tagged sends on old or incomplete preloads while ordinary bus messages remain available', async () => {
-    const oldSend = vi.fn(async (_sessionId: string, _text: string) => ({ ok: true }));
-    const orphanPrepare = vi.fn();
-    for (const ipc of [
-      { platform: 'linux', claudeMessage: oldSend },
-      { platform: 'linux', managerRequestPrepare: orphanPrepare },
-      { platform: 'linux' },
-    ]) {
-      const api = createBridgedBackend(
-        ipc as unknown as ElectronAPI,
-        'token',
-        'ws://local-fixture/bus',
-      );
-      usageBusCall.mockClear();
-      expect(await api.managerRequestPrepare!('manager', 'request')).toMatchObject({
-        available: false,
-      });
-      expect(await api.claudeMessage('manager', 'request', 'retained-request')).toMatchObject({
-        ok: false,
-        requestId: 'retained-request',
-      });
-      expect(oldSend).not.toHaveBeenCalled();
-      expect(orphanPrepare).not.toHaveBeenCalled();
-      expect(usageBusCall).not.toHaveBeenCalled();
-      await api.claudeMessage('manager', 'legacy message');
-      expect(usageBusCall).toHaveBeenCalledExactlyOnceWith(
-        'agents.sendMessage',
-        { sessionId: 'manager', text: 'legacy message' },
-        'ws://local-fixture/bus',
-      );
-    }
-  });
-
-  it('manager replacement reaches local preload in bridged mode and is explicitly unavailable remotely', async () => {
+  it('manager replacement uses the native controller locally and selected server remotely', async () => {
     const replace = vi.fn().mockResolvedValue({ available: true, operations: [] });
     const ipc = { platform: 'linux', managerReplacement: replace } as unknown as ElectronAPI;
     const local = createBridgedBackend(ipc, 'token', 'ws://fixture/bus');
@@ -351,10 +310,9 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     });
     expect(replace).toHaveBeenCalledExactlyOnceWith({ action: 'list' });
     const remote = createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus');
-    expect(await remote.managerReplacement?.({ action: 'list' })).toMatchObject({
-      available: false,
-      error: expect.stringContaining('local desktop'),
-    });
+    usageBusCall.mockResolvedValue({available:true,operations:[]});
+    expect(await remote.managerReplacement?.({action:'list'})).toMatchObject({available:true});
+    expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerReplacement',{request:{action:'list'},bindings:[]},'ws://remote-fixture/bus');
     expect(replace).toHaveBeenCalledTimes(1);
   });
   it('the buckets partition the web backend surface exactly (no untriaged method)', () => {
@@ -534,6 +492,9 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     for (const m of capSrc.matchAll(/(?:registerCapability|cat)\s*\(\s*'([^']+)'/g)) {
       registered.add(m[1]);
     }
+    for(const method of [...desktopMethods.ownerMethods,...desktopMethods.assetMethods]) registered.add(method);
+    const hubSource=readFileSync(repoFile('..','..','..','..','..','..','services','hub','cmd','hub','main.go'),'utf8');
+    for(const match of hubSource.matchAll(/RegisterLocal(?:Ident)?\(\s*"([^"]+)"/g)) registered.add(match[1]);
     // Hub-core surface the main process does NOT register (owned by the hub
     // daemon / bus itself), so a match against hubCapabilities.ts is not
     // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
@@ -671,10 +632,10 @@ describe('Recent agents stays on the local host path', () => {
       'fixture',
       'ws://fixture',
     );
-    expect(await absent.dispatchHistoryRead?.()).toMatchObject({ available: false });
-    expect(await createWebBackend('fixture', 'ws://fixture').dispatchHistoryRead?.()).toMatchObject(
-      { available: false },
-    );
+    usageBusCall.mockResolvedValue({available:true,tasks:[]});
+    expect(await absent.dispatchHistoryRead?.()).toMatchObject({available:true});
+    expect(await createWebBackend('fixture','ws://fixture').dispatchHistoryRead?.()).toMatchObject({available:true});
+    expect(usageBusCall).toHaveBeenLastCalledWith('desktop.dispatchHistoryRead',{},'ws://fixture');
   });
 });
 
@@ -725,27 +686,28 @@ it('routing preferences use the connected hub across desktop bus, remote and web
 });
 
 // Lifecycle and cwd facts always belong to the execution host.
-it('keeps old, web and remote runtime facts unknown; bridged uses local lifecycle', async () => {
+it('reads selected-server runtime facts; bridged preserves native lifecycle', async () => {
   const ipc = {
     agentRuntimeStatus: vi.fn(async () => ({ claudemon: 'failed', hub: 'ready', facade: 'ready' })),
   } as unknown as ElectronAPI;
   expect(
     (await createBridgedBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
   ).toBe('failed');
-  expect((await createWebBackend('token').agentRuntimeStatus!()).claudemon).toBe('unknown');
+  usageBusCall.mockResolvedValue({claudemon:'ready',hub:'ready',facade:'ready'});
+  expect((await createWebBackend('token').agentRuntimeStatus!()).claudemon).toBe('ready');
   expect(
     (await createRemoteBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
-  ).toBe('unknown');
+  ).toBe('ready');
   expect(
     (
       await createBridgedBackend({} as ElectronAPI, 'token', 'ws://fixture/bus')
         .agentRuntimeStatus!()
     ).claudemon,
-  ).toBe('unknown');
+  ).toBe('ready');
   expect(ipc.agentRuntimeStatus).toHaveBeenCalledTimes(1);
 });
 
-it('task edits are local host-only and unavailable on old, web and remote backends', async () => {
+it('task edits use native IPC locally and the selected owner service elsewhere', async () => {
   const edit = vi.fn(async () => ({ ok: true, task: { taskId: 'task' } }));
   const open = vi.fn(async () => ({ ok: true }));
   const ipc = {
@@ -763,14 +725,14 @@ it('task edits are local host-only and unavailable on old, web and remote backen
     await createBridgedBackend(ipc, 'fixture', 'ws://fixture').taskInspectorEdit?.(request),
   ).toMatchObject({ ok: true });
   expect(edit).toHaveBeenCalledWith(request);
+  usageBusCall.mockResolvedValue({ok:true,task:{taskId:'task'}});
   for (const api of [
     createBridgedBackend({ platform: 'linux' } as ElectronAPI, 'fixture', 'ws://fixture'),
     createWebBackend('fixture', 'ws://fixture'),
     createRemoteBackend(ipc, 'fixture', 'ws://fixture'),
   ]) {
     expect(await api.taskInspectorEdit?.(request)).toMatchObject({
-      ok: false,
-      code: 'unavailable',
+      ok: true,
     });
     expect(
       await api.taskInspectorOpen?.({ taskId: 'task', kind: 'worktree', dispatchId: 'd' }),
@@ -779,17 +741,18 @@ it('task edits are local host-only and unavailable on old, web and remote backen
   expect(open).not.toHaveBeenCalled();
 });
 
-it('provider ping is local-only, including the default bridge and old preload', async () => {
+it('provider ping follows the selected execution host', async () => {
   const read = vi.fn(async () => ({ state: 'responding' as const, checkedAt: 1 }));
   const ipc = { providerReadiness: read } as unknown as ElectronAPI;
   expect(
     await createBridgedBackend(ipc, 'token', 'ws://local').providerReadiness!('claude', true),
   ).toEqual({ state: 'responding', checkedAt: 1 });
+  usageBusCall.mockResolvedValue({state:'responding',checkedAt:2});
   for (const api of [
     createWebBackend('token'),
     createRemoteBackend(ipc, 'token', 'ws://remote'),
     createBridgedBackend({} as ElectronAPI, 'token', 'ws://old'),
   ])
-    expect(await api.providerReadiness!('claude', true)).toEqual({ state: 'unsupported' });
+    expect(await api.providerReadiness!('claude', true)).toEqual({state:'responding',checkedAt:2});
   expect(read).toHaveBeenCalledTimes(1);
 });

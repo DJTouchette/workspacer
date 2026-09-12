@@ -12,10 +12,11 @@
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
     "dev:main": "npm run build:hub && npm run build:mcp && npm run build:cli && npm run build:claudemon && npm run build:main && npm run ensure:web && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json && npm run bundle:preload",
+    "build:desktop-host": "node scripts/build-desktop-host.mjs",
     "gen:config-defaults": "node scripts/gen-config-defaults.mjs",
-    "prebuild:main": "node scripts/gen-response-card-skill.mjs && node scripts/gen-config-defaults.mjs && node scripts/gen-changelog.mjs",
+    "prebuild:main": "node scripts/gen-desktop-services.mjs && node scripts/gen-response-card-skill.mjs && node scripts/gen-config-defaults.mjs && node scripts/gen-changelog.mjs",
     "bundle:preload": "esbuild src/main/preload.ts --bundle --platform=node --format=cjs --external:electron --target=node18 --outfile=dist/main/preload.js",
-    "build:hub": "cd ../../services/hub && go build -o . ./cmd/hub && go build -o . ./cmd/brain",
+    "build:hub": "npm run build:desktop-host && cd ../../services/hub && go build -o . ./cmd/hub && go build -o . ./cmd/brain",
     "build:mcp": "cd ../../services/hub && go build -o . ./cmd/mcp",
     "build:cli": "cd ../../services/hub && go build -o . ./cmd/workspacer",
     "build:claudemon": "cd ../../services/claudemon && cargo build --release",
@@ -34,6 +35,7 @@
     "test": "npm run test:main && npm run test:renderer && npm run test:headroom",
     "test:main": "vitest run",
     "audit:fleet-context": "python3 scripts/fleet-context-audit.py",
+    "audit:web": "node scripts/web-capability-audit.mjs",
     "test:dispatch-chain": "tsc -p tsconfig.dispatch-chain.json && vitest run --config vitest.dispatch-chain.config.ts",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",
@@ -49,7 +51,8 @@
     "gen:changelog": "node scripts/gen-changelog.mjs",
     "check:response-card-assets": "node scripts/check-response-card-assets.mjs",
     "check:response-card-discovery": "python3 scripts/check-response-card-discovery.py",
-    "test:headroom": "node --test ../../services/hub/examples/headroom/adapter.test.mjs"
+    "test:headroom": "node --test ../../services/hub/examples/headroom/adapter.test.mjs",
+    "test:desktop-host": "npm run build:desktop-host && node scripts/test-desktop-services.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

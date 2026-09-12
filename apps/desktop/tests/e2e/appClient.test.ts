@@ -85,6 +85,23 @@ async function openApp(page: Page): Promise<string[]> {
 
 // ═══ boot ═══════════════════════════════════════════════════════════════════
 
+test('Wake reaches the public doorbell and resumes the app bus', async ({ page }) => {
+  let wakeRequests = 0;
+  await page.route('https://wake.example.test/health', async route => {
+    wakeRequests++;
+    await route.fulfill({ status: 200, body: 'awake' });
+  });
+  await page.addInitScript(() => {
+    const bus = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
+    localStorage.setItem('wks.machine.paused:' + bus, '1');
+    localStorage.setItem('wks.machine.wake:' + bus, 'https://wake.example.test/health');
+  });
+  await page.goto(hub.appUrl);
+  await page.getByRole('button', { name: 'Wake server', exact: true }).click();
+  await expect(page.getByText('Reading the current route')).toBeVisible({ timeout: 30_000 });
+  expect(wakeRequests).toBe(1);
+});
+
 test.describe('boot', () => {
   test('the full renderer comes up over the hub bus, not Electron IPC', async ({ page }) => {
     const errors = await openApp(page);

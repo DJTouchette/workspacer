@@ -89,6 +89,7 @@ var PathParam = map[string]string{
 // decision on the record, not an oversight; [MissingSpec] treats it as
 // classified rather than missing.
 var unscopedByDecision = map[string]string{
+	"plugins.prepareLaunch":        "provider callback, never ambient authority: AuthorizeLaunchPreparation binds caller.ConnID and callId to a live authenticated-owner agents.spawn with the exact selected plugin id; the hub exposes only that plugin's declared launch preparation and returns no configuration or credentials. Other provider calls, stale ids, peers and swapped plugins are refused",
 	"remote.tokensList":            "remotePairingTrusted requires authenticated host authority; lists only ordinary Remote Control pairings, excludes worker/provider/session credentials.",
 	"remote.tokenGetOrCreate":      "remotePairingTrusted requires authenticated host authority; scope is an enum of view/triage/operator. Label and path are host-owned. No caller privilege grants, provider scope or paths accepted.",
 	"remote.tokenRevoke":           "remotePairingTrusted requires authenticated host authority; exact token selects only a Remote Control pairing in the configured store. Host, provider and session credentials cannot be revoked here.",
@@ -527,6 +528,8 @@ func KnownKind(k ParamKind) bool { return knownKinds[k] }
 // already owns, carried by two dozen read/control methods, and adding it would
 // drown the signal rather than sharpen it.
 var dangerousParams = map[string]ParamKind{
+	"launchIntegrationGranted": KindPermission, // Hub-only owner stamp, stripped then restamped by sanitizeSpawnParams.
+
 	"remoteOrigin":           KindID,
 	"executionTarget":        KindID,
 	"remoteCwd":              KindPath,
@@ -927,12 +930,13 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"remoteOrigin": {KindID, "nonce and protocol with ownerKey replaced from the authenticated connection; single-use lease cannot be claimed by a different credential"},
 	},
 	"agents.spawn": {
-		"launchIntegrationId":    {KindID, "selects a trusted sidecar whose preparation changes child env/argv; supported only by local desktop IPC. Both bus providers reject any non-null selection, and boot-document writers strip the field from untrusted saved agents so it cannot be planted for a later local resume"},
-		"dispatchOwnerSessionId": {KindID, "private facade stamp from the session credential; bus strips non-host copies"},
-		"retrySourceSessionId":   {KindID, "private respawn_with stamp, excluded from spawn_agent schema; bus strips non-host copies and desktop validates known source owner/project"},
-		"cwd":                    {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},
-		"mcpItemIds":             {KindID, "each id resolves through libraryService -> toClaudeEntry -> buildSessionMcpConfig into a --mcp-config entry whose command/args/env come verbatim from a library item, pre-approved by --allowedTools mcp__<id>; the BUS path therefore forces it to nil (busMcpItemIds / spawn_bypass) and only a locally-initiated spawn honours a selection"},
-		"profileId":              {KindID, "resolves to a stored profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv, so it is the other way to smuggle a bypass; both bus providers scrub the RESOLVED profile before spawning (scrubProfileBypass in hubCapabilities.ts, scrubBypassProfile in the brain — see spawn_bypass_test.go). One verified exception: the hub router (internal/bus sanitizeSpawnParams) strips this field unless the caller's token record grants that exact id (authtoken profilesAllowed), stamping hub-only `profileGranted` beside a survivor — and a GRANTED spawn keeps the LOCAL profile's configDir (remoteSpawnProfile in the brain) while the bypass-flag/mcpItemIds scrub still applies, because bus-written profiles have configDir scrubbed at write time so an honored configDir was always typed in locally"},
+		"launchIntegrationId":      {KindID, "selects an installed, consented launch integration. Bus owner identity is required; native prepares locally and headless callbacks are bound to that same pending spawn and plugin id. Untrusted boot documents cannot plant it"},
+		"launchIntegrationGranted": {KindPermission, "hub-only stamp: sanitizeSpawnParams deletes incoming copies and adds true only for an authenticated local owner selecting an integration. Both providers refuse unstamped selections; headless preparation independently requires the active owner spawn callback"},
+		"dispatchOwnerSessionId":   {KindID, "private facade stamp from the session credential; bus strips non-host copies"},
+		"retrySourceSessionId":     {KindID, "private respawn_with stamp, excluded from spawn_agent schema; bus strips non-host copies and desktop validates known source owner/project"},
+		"cwd":                      {KindPath, "the working directory of a process the caller is already authorized to start; holding agents.spawn is the gate, and confining it needs the spawn paths to learn root containment first (TestSpawnStaysDeliberatelyUnscoped)"},
+		"mcpItemIds":               {KindID, "each id resolves through libraryService -> toClaudeEntry -> buildSessionMcpConfig into a --mcp-config entry whose command/args/env come verbatim from a library item, pre-approved by --allowedTools mcp__<id>; the BUS path therefore forces it to nil (busMcpItemIds / spawn_bypass) and only a locally-initiated spawn honours a selection"},
+		"profileId":                {KindID, "resolves to a stored profile whose configDir becomes CLAUDE_CONFIG_DIR and whose extraArgs become argv, so it is the other way to smuggle a bypass; both bus providers scrub the RESOLVED profile before spawning (scrubProfileBypass in hubCapabilities.ts, scrubBypassProfile in the brain — see spawn_bypass_test.go). One verified exception: the hub router (internal/bus sanitizeSpawnParams) strips this field unless the caller's token record grants that exact id (authtoken profilesAllowed), stamping hub-only `profileGranted` beside a survivor — and a GRANTED spawn keeps the LOCAL profile's configDir (remoteSpawnProfile in the brain) while the bypass-flag/mcpItemIds scrub still applies, because bus-written profiles have configDir scrubbed at write time so an honored configDir was always typed in locally"},
 		// The two fields the SECURITY comment in both spawn handlers is actually
 		// about. They were never in the vocabulary, so the clamp that is the
 		// whole argument for this method's exemption was pinned by behavioural

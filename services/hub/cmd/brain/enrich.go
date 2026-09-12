@@ -23,6 +23,7 @@ type spawnMeta struct {
 	Label           string
 	ParentSessionID string
 	IsWakeTarget    bool
+	ResultSchema    json.RawMessage `json:"resultSchema,omitempty"`
 
 	// What the ROUTING layer said this worker is, carried from agents.spawn's
 	// role/capability/decisionId. Recorded here because a headless node has no
@@ -123,6 +124,9 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 			}
 			if sm.IsWakeTarget {
 				m["isWakeTarget"] = true
+			}
+			if len(sm.ResultSchema) > 0 {
+				m["resultSchema"] = sm.ResultSchema
 			}
 			// What the routing layer said this worker is. Present only when the
 			// spawn carried it, so an unrouted row keeps its exact shape.

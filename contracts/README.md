@@ -36,3 +36,5 @@ consciously extend) the others.
 Rates are USD per **million** tokens. Add a case whenever a new model id or merge
 edge case ships; the cheapest place to catch drift is here, before it becomes a
 mispriced session or a clobbered config.
+
+| `desktop-service-methods.json` | `apps/desktop/src/main/shared/desktopServices.test.ts` (TS) · `services/hub/internal/bus/desktop_test.go` (Go) | Shared method manifest, fixed companion dispatch coverage, and owner authority independent of facade/provider credentials. |

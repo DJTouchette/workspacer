@@ -1,3 +1,4 @@
+import desktopMethods from '../../../src/main/shared/desktopServices.generated';
 /**
  * Test rig for `/app` — the FULL React renderer running in a browser against
  * the hub, which is the surface the user wants as their primary interface.
@@ -394,6 +395,8 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
       case 'config.get':
       case 'config.reload':
         return reply(f.id, liveConfig);
+      case 'desktop.saveConfig':
+        liveConfig=deepMerge(liveConfig,params.partial??{});return reply(f.id,liveConfig);
       case 'config.save':
         liveConfig = deepMerge(liveConfig, params ?? {});
         return reply(f.id, liveConfig);
@@ -545,6 +548,7 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
  * gap does, and some tests want that).
  */
 const METHODS = [
+  ...desktopMethods.ownerMethods, ...desktopMethods.assetMethods,
   'agents.sendMessage',
   'agents.spawn',
   'analytics.recent',

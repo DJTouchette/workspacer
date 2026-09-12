@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { resolveProject } from '../lib/projectIdentity';
 import type { ProjectIdentity } from '../hooks/useConfig';
 
@@ -40,9 +40,25 @@ export const ProjectMark: React.FC<{
 }> = ({ cwd, projects, size = 14, withLabel = false, title }) => {
   const [broken, setBroken] = useState(false);
   const p = resolveProject(cwd, projects);
+  const original = p?.iconSrc;
+  const [remoteSrc, setRemoteSrc] = useState<string>();
+  useEffect(() => {
+    let live = true;
+    setBroken(false); setRemoteSrc(undefined);
+    if (original?.startsWith('workspacer-icon://') && window.electronAPI?.getUiAsset) {
+      void Promise.resolve().then(() => {
+        const file = decodeURIComponent(original.slice('workspacer-icon://'.length));
+        return window.electronAPI.getUiAsset!('icon', file);
+      }).then((asset) => {
+        if (live) setRemoteSrc(`data:${asset.mime};base64,${asset.dataBase64}`);
+      }).catch(() => { if (live) setBroken(true); });
+    }
+    return () => { live = false; };
+  }, [original]);
   if (!p) return null;
 
-  const showFavicon = Boolean(p.iconSrc) && !broken;
+  const src = original?.startsWith('workspacer-icon://') && window.electronAPI?.getUiAsset ? remoteSrc : original;
+  const showFavicon = Boolean(src) && !broken;
   // An emoji carries its own colour and needs no tinted plate behind it; a
   // letter mark does. Detected by "not ASCII", which is what an emoji is here.
   const isEmoji = Boolean(p.icon) && !/^[\x20-\x7e]+$/.test(p.icon ?? '');
@@ -51,7 +67,7 @@ export const ProjectMark: React.FC<{
 
   const inner = showFavicon ? (
     <img
-      src={p.iconSrc}
+      src={src}
       width={box}
       height={box}
       onError={() => setBroken(true)}

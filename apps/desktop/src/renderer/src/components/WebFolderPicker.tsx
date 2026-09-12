@@ -1,15 +1,17 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Folder, ArrowUp, Home, Check, X } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { File, Folder, ArrowUp, Home, Check, X } from 'lucide-react';
 
 interface Listing {
   path: string;
   parent: string;
   home: string;
   dirs: string[];
+  files?: Array<{name:string;path:string}>;
 }
 
 interface PendingPick {
-  resolve: (path: string | null) => void;
+  resolve: (path: string | string[] | null) => void;
+  files?: boolean;
   defaultPath?: string;
 }
 
@@ -25,26 +27,36 @@ interface PendingPick {
 const WebFolderPicker: React.FC = () => {
   const [pending, setPending] = useState<PendingPick | null>(null);
   const [listing, setListing] = useState<Listing | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const active = useRef<PendingPick | null>(null);
+  const revision = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
-  const browse = useCallback((path?: string) => {
-    setError(null);
-    window.electronAPI
-      .fsListDir?.(path)
-      .then((l) => setListing(l))
-      .catch((e) => setError(e?.message || 'cannot read folder'));
+  const browse = useCallback(async (path?: string) => {
+    const version=++revision.current;
+    setError(null);setListing(null);setSelected([]);
+    try {
+      const files=active.current?.files && window.electronAPI.filePickerList;
+      const listing=files ? await files(path) : await window.electronAPI.fsListDir!(path);
+      const entries='entries' in listing ? listing.entries : undefined;
+      const result={...listing,dirs:entries ? entries.filter(e=>e.isDir).map(e=>e.name) : ('dirs' in listing ? listing.dirs : []),files:entries?.filter(e=>!e.isDir)};
+      if(version===revision.current&&active.current)setListing(result);
+    } catch(error) {if(version===revision.current)setError(error instanceof Error?error.message:'Cannot read folder');}
   }, []);
 
   // Open on event.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as PendingPick;
-      setPending(detail);
-      setListing(null);
-      browse(detail.defaultPath);
+      active.current?.resolve(null);
+      active.current={...detail,files:e.type==='web:pick-files'};
+      setPending(active.current);
+      setListing(null);setSelected([]);
+      void browse(detail.defaultPath);
     };
     window.addEventListener('web:pick-folder', handler);
-    return () => window.removeEventListener('web:pick-folder', handler);
+    window.addEventListener('web:pick-files', handler);
+    return () => {window.removeEventListener('web:pick-folder',handler);window.removeEventListener('web:pick-files',handler);active.current?.resolve(null);active.current=null;revision.current++;};
   }, [browse]);
 
   // Esc cancels.
@@ -58,8 +70,8 @@ const WebFolderPicker: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending]);
 
-  const finish = (path: string | null) => {
-    pending?.resolve(path);
+  const finish = (path: string | string[] | null) => {
+    active.current?.resolve(path);active.current=null;revision.current++;
     setPending(null);
     setListing(null);
     setError(null);
@@ -101,7 +113,7 @@ const WebFolderPicker: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <Folder size={15} color="var(--wks-text-primary)" />
           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--wks-text-primary)' }}>
-            Choose a working directory
+            {pending.files ? 'Choose files on the server' : 'Choose a working directory'}
           </div>
         </div>
 
@@ -156,9 +168,9 @@ const WebFolderPicker: React.FC = () => {
               {error}
             </div>
           )}
-          {!error && listing && listing.dirs.length === 0 && (
+          {!error && listing && listing.dirs.length === 0 && !listing.files?.length && (
             <div style={{ padding: 10, fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>
-              No subfolders here.
+              {pending.files ? 'No files or subfolders here.' : 'No subfolders here.'}
             </div>
           )}
           {!error &&
@@ -187,6 +199,12 @@ const WebFolderPicker: React.FC = () => {
                 <Folder size={13} color="var(--wks-accent)" /> {name}
               </button>
             ))}
+          {!error && listing?.files?.map(file => (
+            <label key={file.path} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',fontSize:'0.76rem',color:'var(--wks-text-secondary)',cursor:'pointer'}}>
+              <input type="checkbox" checked={selected.includes(file.path)} onChange={event=>setSelected(current=>event.target.checked?[...current,file.path]:current.filter(p=>p!==file.path))}/>
+              <File size={13}/>{file.name}
+            </label>
+          ))}
         </div>
 
         {/* Actions */}
@@ -195,11 +213,11 @@ const WebFolderPicker: React.FC = () => {
             <X size={13} /> Cancel
           </button>
           <button
-            onClick={() => finish(listing?.path || null)}
-            disabled={!listing}
-            style={primaryBtn(!listing)}
+            onClick={() => finish(pending.files ? selected : listing?.path || null)}
+            disabled={!listing || (pending.files && !selected.length)}
+            style={primaryBtn(!listing || (!!pending.files && !selected.length))}
           >
-            <Check size={13} /> Use this folder
+            <Check size={13} /> {pending.files ? 'Use selected files' : 'Use this folder'}
           </button>
         </div>
       </div>

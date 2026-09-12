@@ -5,6 +5,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { withConfigLock } from '../lib/configLock';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { getConfigDir } from './configService';
 import {
   clampProfileWeight,
@@ -274,6 +276,13 @@ export function normalizeProfile(p: ClaudeProfile): ClaudeProfile {
 
 class ClaudeProfileService {
   private profiles: ClaudeProfile[] = [];
+  private modifying = false;
+  private change<T>(action: () => T): T {
+    return withConfigLock(profilesFile, () => {
+      this.load(); this.modifying = true;
+      try { return action(); } finally { this.modifying = false; }
+    });
+  }
 
   constructor() {
     this.load();
@@ -284,21 +293,26 @@ class ClaudeProfileService {
     // file, made the brain list an id its own update refused, and made
     // claude.profiles.add mint isDefault:true on one provider and false on the
     // other for the same call. Pinned by contracts/claude-profiles-cases.json.
-    if (this.profiles.length === 0) {
-      this.profiles.push(DEFAULT_PROFILE());
-      this.save();
-    }
+    if (this.profiles.length === 0) this.change(() => {
+      if (this.profiles.length === 0) {
+        this.profiles.push(DEFAULT_PROFILE());
+        this.save();
+      }
+    });
   }
 
   getProfiles(): ClaudeProfile[] {
+    if (!this.modifying) this.load();
     return [...this.profiles];
   }
 
   getProfile(id: string): ClaudeProfile | undefined {
+    if (!this.modifying) this.load();
     return this.profiles.find((p) => p.id === id);
   }
 
   getDefaultProfile(): ClaudeProfile {
+    if (!this.modifying) this.load();
     return this.profiles.find((p) => p.isDefault) ?? this.profiles[0];
   }
 
@@ -321,6 +335,7 @@ class ClaudeProfileService {
       tokenEnvVar?: string;
     } = {},
   ): ClaudeProfile {
+    if (!this.modifying) return this.change(() => this.addProfile(name, configDir, extraArgs, mcpItemIds, init));
     const profile: ClaudeProfile = normalizeProfile({
       id: crypto.randomUUID(),
       name,
@@ -339,6 +354,7 @@ class ClaudeProfileService {
   }
 
   updateProfile(id: string, updates: Partial<Omit<ClaudeProfile, 'id'>>): ClaudeProfile | null {
+    if (!this.modifying) return this.change(() => this.updateProfile(id, updates));
     const index = this.profiles.findIndex((p) => p.id === id);
     if (index === -1) return null;
     const draft = { ...this.profiles[index] };
@@ -369,6 +385,7 @@ class ClaudeProfileService {
   }
 
   removeProfile(id: string): void {
+    if (!this.modifying) return this.change(() => this.removeProfile(id));
     if (id === 'default') return; // Can't remove default
     this.profiles = this.profiles.filter((p) => p.id !== id);
     // Ensure there's still a default
@@ -390,7 +407,7 @@ class ClaudeProfileService {
   private save(): void {
     const dir = getConfigDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(profilesFile, JSON.stringify({ profiles: this.profiles }, null, 2));
+    atomicWriteFileSync(profilesFile, JSON.stringify({ profiles: this.profiles }, null, 2), { mode: 0o600 });
   }
 }
 

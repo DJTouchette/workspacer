@@ -125,7 +125,8 @@ export async function wakeMachine(): Promise<void> {
         mode: 'no-cors',
         credentials: 'omit',
         cache: 'no-store',
-        redirect: 'error',
+        // Browsers reject no-cors requests unless redirects are followed.
+        redirect: 'follow',
         signal: AbortSignal.timeout(60000),
       });
     client?.resumeMachine();

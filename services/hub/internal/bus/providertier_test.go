@@ -94,7 +94,7 @@ func TestProviderTokenProvidesStarIsNotOperatorStar(t *testing.T) {
 	if slices.Contains(c.hello.Methods, "*") {
 		t.Fatalf("hello methods = %v — the register grant leaked into the call allowlist", c.hello.Methods)
 	}
-	if !slices.Equal(c.hello.Methods, []string{"layout.get"}) {
+	if !slices.Equal(c.hello.Methods, []string{"layout.get", "plugins.prepareLaunch"}) {
 		t.Fatalf("hello methods = %v, want [layout.get]", c.hello.Methods)
 	}
 
@@ -201,7 +201,7 @@ func TestProviderTokenPublishesOnlyTheOutputOfWhatItProvides(t *testing.T) {
 
 	node := dialClientToken(t, url, tok)
 	node.send(Frame{Op: "register", Methods: []string{
-		"sessions.snapshots", "sessions.snapshot", "sessions.attachTerminal", "terminals.open",
+		"sessions.snapshots", "sessions.snapshot", "sessions.attachTerminal", "terminals.open", "fs.watch",
 	}})
 	node.readUntil("registered")
 
@@ -213,6 +213,7 @@ func TestProviderTokenPublishesOnlyTheOutputOfWhatItProvides(t *testing.T) {
 		"agent.statusline",    // cmd/brain/events.go
 		"pty.bytes.sess-1",    // cmd/brain/terminal.go
 		"facade.openTerminal", // cmd/brain/visibleterm.go
+		"fs.changed",          // cmd/brain/filewatch.go
 	} {
 		node.send(Frame{Op: "publish", Event: &event.Envelope{
 			Type: typ, Data: json.RawMessage(`{"marker":"from-node"}`)}})
@@ -234,7 +235,6 @@ func TestProviderTokenPublishesOnlyTheOutputOfWhatItProvides(t *testing.T) {
 		"plugin.log",
 		"node.state_changed",
 		"agent.state_changed",
-		"fs.changed", // guarded by fs.watch, which this node did not register
 		"example.clock.tick",
 	} {
 		node.send(Frame{Op: "publish", Event: &event.Envelope{

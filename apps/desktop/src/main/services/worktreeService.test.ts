@@ -186,7 +186,7 @@ describe('node_modules linking', () => {
     const wt = await createWorktree({ repoCwd: nmRepo, name: 'occupied', rootOverride: wtRoot });
     expect(wt.ok).toBe(true);
     // Simulate something already at the path, then re-run the linker directly.
-    fs.rmSync(path.join(wt.path!, 'node_modules'));
+    fs.unlinkSync(path.join(wt.path!, 'node_modules'));
     fs.mkdirSync(path.join(wt.path!, 'node_modules', 'mine'), { recursive: true });
     const linked = await linkNodeModules(nmRepo, wt.path!);
     expect(linked).toEqual([]); // root occupied, apps/desktop already linked

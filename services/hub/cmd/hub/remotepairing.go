@@ -25,7 +25,7 @@ func remotePairingTrusted(method string, c bus.CallerIdentity) error {
 }
 func isRemotePairing(r authtoken.Record) bool {
 	return (r.Scope == authtoken.ScopeView || r.Scope == authtoken.ScopeTriage || r.Scope == authtoken.ScopeOperator) &&
-		strings.HasPrefix(r.Label, "Remote Control: ") && r.Role == "" && !r.YoloAllowed && len(r.ProfilesAllowed) == 0 && len(r.Plugins) == 0 && len(r.Provides) == 0
+		strings.HasPrefix(r.Label, "Remote Control: ") && r.Role == "" && !r.YoloAllowed && !r.FacadeAuthority && len(r.ProfilesAllowed) == 0 && len(r.Plugins) == 0 && len(r.Provides) == 0
 }
 func remotePairingInfo(p *remotePairings) bus.LocalIdentHandler {
 	return func(c bus.CallerIdentity, _ json.RawMessage) (any, error) {

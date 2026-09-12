@@ -296,7 +296,7 @@ func findFleetSession(all []fleetSession, id string) (fleetSession, bool) {
 // than swallowing it: a worker that believes it reported and did not is exactly
 // the failure report_progress exists to prevent.
 func (r *registry) deliverFleetWake(ctx context.Context, sessionID, text string) error {
-	ok, err := r.cm.submitMessage(ctx, sessionID, text)
+	ok, err := r.submitMessage(ctx, sessionID, text)
 	if err != nil {
 		return err
 	}

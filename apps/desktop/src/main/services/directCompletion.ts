@@ -44,7 +44,10 @@ import * as fs from 'fs';
 
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { servesModel as vocabularyServesModel } from '../shared/modelVocabulary';
-import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { PORTS } from '../lib/daemonUtils';
+let CLAUDEMON_API_URL = `http://127.0.0.1:${PORTS.claudemonApi}`;
+/** Set only by a host runtime, never by completion request content. */
+export function configureCompletionDaemonURL(url: string): void { CLAUDEMON_API_URL = url; }
 import { claudeBaseArgv } from './claudeResolver';
 import { configService } from './configService';
 

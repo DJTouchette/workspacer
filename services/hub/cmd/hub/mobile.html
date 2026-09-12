@@ -1020,7 +1020,7 @@
       document.getElementById('machineWake').onclick = async () => {
         const button = document.getElementById('machineWake'); button.disabled = true; button.textContent = 'Waking…';
         try {
-          if (machineWakeURL) await fetch(machineWakeURL, {mode:'no-cors', credentials:'omit', cache:'no-store', redirect:'error', signal:AbortSignal.timeout(60000)});
+          if (machineWakeURL) await fetch(machineWakeURL, {mode:'no-cors', credentials:'omit', cache:'no-store', redirect:'follow', signal:AbortSignal.timeout(60000)});
         machinePaused = false; localStorage.removeItem(machinePauseKey);
         renderMachinePower(); backoff = 500; attempt = 0; connect();
         } catch { alert('Could not reach the wake endpoint. Try again.'); button.disabled = false; button.textContent = 'Wake server'; }

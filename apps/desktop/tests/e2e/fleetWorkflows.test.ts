@@ -83,6 +83,6 @@ test('conflicts preserve draft and unavailable hosts say so', async ({ page }) =
   await expect(page.getByRole('alert')).toContainText('draft is preserved');
   await expect(page.getByLabel('Workflow name')).toHaveValue('Keep my draft');
   await page.goto(`${base}?unavailable`);
-  await expect(page.getByText(/Headless and older peers are unavailable/).first()).toBeVisible();
+  await expect(page.getByText(/selected host does not provide Fleet workflows/).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create workflow' })).toHaveCount(0);
 });

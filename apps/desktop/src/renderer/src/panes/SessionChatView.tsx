@@ -768,7 +768,7 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                   onClick={() => (isManager ? void handleManagerHandoff() : setHandoffOpen(true))}
                   title={
                     isManager
-                      ? 'Checkpoint and replace this Fleet Manager in the same pane — local desktop and local workers only'
+                      ? 'Checkpoint and replace this Fleet Manager in the same pane — local workers only'
                       : handoffBusy === 'agent'
                         ? 'Waiting for the agent to write its handoff brief…'
                         : 'Hand off this session to a new agent — pick provider, model, effort and permissions (summarized brief, new session)'

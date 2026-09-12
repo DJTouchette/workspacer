@@ -777,6 +777,12 @@ func (r *registry) reparent(ctx context.Context, raw json.RawMessage) (json.RawM
 	if r.meta == nil {
 		return nil, fmt.Errorf("agents.reparent: this brain holds no spawn metadata (catalog scope) — there is no parent link to move")
 	}
+	if r.desktopServices.available() {
+		check, _ := json.Marshal(map[string]string{"source": p.FromSessionID, "successor": p.ToSessionID})
+		if _, err := r.desktopInternalCall(ctx, "internal.assertReplacementAvailable", check); err != nil {
+			return nil, err
+		}
+	}
 	all := r.fleetSessions(ctx)
 	to, known := findFleetSession(all, p.ToSessionID)
 	if !known {

@@ -1,6 +1,6 @@
-/** Local desktop only. The web backend deliberately returns unavailable. */
+/** The selected host must verify this manager's reproducible local ownership. */
 export const MANAGER_REPLACEMENT_UNAVAILABLE =
-  'Automatic manager replacement requires an owned local desktop manager using stream transport with recorded launch settings and only local workers. Remote, headless and older hosts are unavailable.';
+  'Automatic manager replacement requires a stream manager with recorded launch settings, authenticated action tools, and local worker ownership. The selected host cannot verify this manager.';
 
 export type ReplacementPhase =
   | 'preparing'

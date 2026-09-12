@@ -11,6 +11,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
+	"github.com/djtouchette/workspacer-hub/internal/uploads"
 	"log"
 	"os"
 	"slices"
@@ -45,7 +47,10 @@ type registry struct {
 	// of remote worker dispatch (remotedispatch.go). Nil in catalog scope, which
 	// is why acceptRemoteOrigin refuses a dispatched spawn there instead of
 	// starting a worker whose report could never leave the machine.
-	remote *remoteDispatchStore
+	remote          *remoteDispatchStore
+	fileWatches     fileWatchState
+	desktopServices desktopHost
+	callHub         func(context.Context, string, any) (json.RawMessage, error)
 
 	// The agent-facing fleet verbs' own state: per-worker progress budgets and
 	// armed threshold watches (agentops.go). In-memory and per-process by
@@ -77,13 +82,17 @@ func (r *registry) visibleSnapshots(ctx context.Context) []json.RawMessage {
 const brainProbeMethod = "brain.info"
 
 func newRegistry(cm *claudemonClient) *registry {
-	return &registry{cm: cm, cfg: newConfigService()}
+	r := &registry{cm: cm, cfg: newConfigService()}
+	r.desktopServices.onEvent = r.desktopEvent
+	r.desktopServices.onHostCall = r.replacementHostCall
+	return r
 }
 
 // methods is the set of capabilities this provider registers on the bus. Names
 // match the app's hubCapabilities.ts so callers see one identical surface.
 func (r *registry) methods() []string {
-	return []string{
+	base := []string{
+		"files.receiveUpload",
 		brainProbeMethod,
 		// agents + sessions (claudemon-backed)
 		"agents.list",
@@ -102,6 +111,7 @@ func (r *registry) methods() []string {
 		"claude.setEffort",
 		"claude.setModel",
 		"claude.handoffBrief",
+		"claude.handoffAgentBrief",
 		"sessions.transcript",
 		"sessions.conversation",
 		"sessions.subagentConversation",
@@ -174,24 +184,27 @@ func (r *registry) methods() []string {
 		"fs.read",
 		"fs.readImage",
 		"fs.write",
+		"fs.watch",
+		"fs.unwatch",
 		"search.project",
-		// The READ-ONLY half of the desktop's git.* block (git.go). The write
-		// half — stage/unstage/commit/push — is deliberately NOT here: this
-		// provider is the one that runs on a remote, internet-facing node, and a
-		// read-only surface cannot mutate or publish a repository. They stay
-		// declared gaps in headless_completeness_test.go.
+		// The full review surface, under the same guards as desktop bus calls.
 		"git.status",
 		"git.log",
 		"git.diff",
 		"git.numstat",
+		"git.commitDiff",
+		"git.commitNumstat",
+		"git.stage",
+		"git.unstage",
+		"git.commit",
+		"git.push",
 		"notifications.post",
-		// analytics: the desktop owns the real data (a local SQLite session-history
-		// store fed by the app's hook accounting). Headless, there's no such store,
-		// so the brain registers explicit empty-result stubs — a web client asking
-		// for analytics degrades to an empty dashboard instead of "no provider".
+		// Headless analytics reuses the desktop history schema and usage fold
+		// through the private companion, fed by the daemon's persisted sessions.
 		"analytics.summary",
 		"analytics.recent",
 	}
+	return append(append(base, capspec.DesktopServices...), capspec.UIAssetServices...)
 }
 
 // catalogMethods is the file-backed "source of truth" subset: config, profiles,
@@ -261,7 +274,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		}
 		return r.cm.listSessions(ctx)
 	case "fleetWorkflows.request":
-		return jsonResult(map[string]any{"ok": false, "code": "unavailable", "error": "Fleet workflows and task references require a local desktop runtime; headless execution is unavailable"})
+		if !r.desktopServices.available() {
+			return jsonResult(map[string]any{"ok": false, "code": "unavailable", "error": "Shared desktop services are not installed on this server"})
+		}
+		return r.desktopInternalCall(ctx, "internal.workflowRequest", params)
 	case "agents.spawn":
 		return r.spawn(ctx, params)
 	case "agents.sendMessage":
@@ -284,6 +300,8 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.setModel(ctx, params)
 	case "claude.handoffBrief":
 		return r.handoffBrief(ctx, params)
+	case "claude.handoffAgentBrief":
+		return r.agentHandoffBrief(ctx, params)
 	case "sessions.transcript":
 		return r.transcript(ctx, params)
 	case "sessions.conversation":
@@ -500,6 +518,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.fsRead(ctx, params)
 	case "fs.write":
 		return r.fsWrite(ctx, params)
+	case "fs.watch":
+		return r.fsWatch(ctx, params)
+	case "fs.unwatch":
+		return r.fsUnwatch(ctx, params)
 	case "search.project":
 		return r.searchProject(ctx, params)
 	case "git.status":
@@ -510,48 +532,50 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.gitDiffCall(ctx, params)
 	case "git.numstat":
 		return r.gitNumstatCall(ctx, params)
+	case "git.commitDiff":
+		return r.gitCommitDiffCall(ctx, params)
+	case "git.commitNumstat":
+		return r.gitCommitNumstatCall(ctx, params)
+	case "git.stage":
+		return r.gitStageCall(ctx, params)
+	case "git.unstage":
+		return r.gitUnstageCall(ctx, params)
+	case "git.commit":
+		return r.gitCommitCall(ctx, params)
+	case "git.push":
+		return r.gitPushCall(ctx, params)
 	case "notifications.post":
 		return r.notify(params)
+	case "files.receiveUpload":
+		result, err := uploads.Store(params)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(result)
 	case "analytics.summary":
-		return analyticsSummaryStub()
+		return r.desktopInternalCall(ctx, "internal.analyticsSummary", params)
 	case "analytics.recent":
-		return analyticsRecentStub()
+		return r.desktopInternalCall(ctx, "internal.analyticsRecent", params)
 	default:
+		if capspec.IsUIAssetService(method) {
+			return r.desktopInternalCall(ctx, method, params)
+		}
+		if capspec.IsDesktopService(method) {
+			return r.desktopCall(ctx, method, params)
+		}
 		return nil, fmt.Errorf("unknown method %q", method)
 	}
-}
-
-// analyticsSummaryStub is the headless stand-in for the desktop's
-// analytics.summary. The real breakdown comes from the app's local SQLite
-// session-history store, which the brain has no access to — so it returns a
-// well-formed but empty AnalyticsSummary (matching the shape the renderer's
-// AnalyticsPane consumes) plus an "unavailable":"headless" marker. A web client
-// then shows an empty dashboard and, if it cares, can note analytics needs the
-// desktop, rather than erroring on a missing provider.
-func analyticsSummaryStub() (json.RawMessage, error) {
-	return jsonResult(map[string]any{
-		"totals": map[string]any{
-			"sessions": 0, "costUSD": 0, "inputTokens": 0, "outputTokens": 0,
-			"toolCalls": 0, "durationMs": 0, "workflowRuns": 0,
-		},
-		"byDay":       []any{},
-		"byProject":   []any{},
-		"byModel":     []any{},
-		"byProvider":  []any{},
-		"unavailable": "headless",
-	})
-}
-
-// analyticsRecentStub is the headless stand-in for analytics.recent: an empty
-// session list (the renderer expects an array and renders nothing for []).
-func analyticsRecentStub() (json.RawMessage, error) {
-	return jsonResult([]any{})
 }
 
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
-	ExactModel bool `json:"exactModel"`
+	LaunchIntegrationID      string `json:"launchIntegrationId,omitempty"`
+	LaunchIntegrationGranted bool   `json:"launchIntegrationGranted,omitempty"`
+	desktopContract          string
+	desktopResultSchema      json.RawMessage
+	desktopReplacementID     string
+	ExactModel               bool `json:"exactModel"`
 	// Provider backend: claude (default) | codex | copilot | opencode | pi. Non-claude
 	// providers — and claude on the 'stream' transport — go through claudemon's
 	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.
@@ -752,10 +776,21 @@ func (p spawnParams) isFleetWorker() bool {
 	return !p.Manager && (strings.TrimSpace(p.ParentSessionID) != "" || p.RemoteOrigin != nil)
 }
 
-func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+type desktopSpawnMetadata struct {
+	Contract      string
+	Schema        json.RawMessage
+	ReplacementID string
+}
+
+func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop ...desktopSpawnMetadata) (json.RawMessage, error) {
 	var p spawnParams
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
+	}
+	if len(desktop) > 0 {
+		p.desktopContract = desktop[0].Contract
+		p.desktopResultSchema = desktop[0].Schema
+		p.desktopReplacementID = desktop[0].ReplacementID
 	}
 	// New providers can be paired with an adopted older hub. Honor the pin
 	// even when that hub reports a clamp instead of refusing it itself.
@@ -771,9 +806,14 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if err := json.Unmarshal(raw, &present); err == nil {
 		_, p.contextWindowSet = present["contextWindow"]
 		if v, ok := present["launchIntegrationId"]; ok && string(v) != "null" {
-			return nil, fmt.Errorf("Launch integrations currently require a local desktop session")
+			if !p.LaunchIntegrationGranted || p.LaunchIntegrationID == "" {
+				return nil, fmt.Errorf("launch integrations require the server owner")
+			}
+			if !r.desktopServices.available() {
+				return nil, fmt.Errorf("launch integration runtime is not installed")
+			}
 		}
-		if v, ok := present["workflowStepId"]; ok && string(v) != "null" && string(v) != `""` {
+		if v, ok := present["workflowStepId"]; ok && string(v) != "null" && string(v) != `""` && !r.desktopServices.available() {
 			return nil, fmt.Errorf("Fleet workflow execution requires the local desktop runtime")
 		}
 	}
@@ -877,6 +917,9 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
 	prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted)
+	if prof != nil && prof.Provider != "" {
+		prof = nil
+	}
 	var profileArgs []string
 	if prof != nil {
 		profileArgs = prof.ExtraArgs
@@ -939,10 +982,11 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed()) {
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed() || p.desktopContract != "") {
 		r.meta.set(sessionID, spawnMeta{
 			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
 			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
+			ResultSchema: p.desktopResultSchema,
 		})
 	}
 	// Recorded BEFORE the session can register, for the reason the meta.set
@@ -988,14 +1032,26 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	// Profiles, facade instructions, and the fleet escalation contract are all
 	// additive system-prompt fragments. The PTY CLI accepts one deterministic
 	// flag, matching the desktop's buildClaudeArgv semantics.
+	if p.desktopContract != "" {
+		argv = append(argv, "--append-system-prompt", p.desktopContract)
+	}
 	argv = composeAppendSystemPrompt(argv)
 
+	launchEnv := buildEnv(prof)
+	if p.LaunchIntegrationID != "" {
+		var err error
+		launchEnv, argv, err = r.prepareIntegration(ctx, p, "claude", cwd, argv[0], launchEnv, argv[1:])
+		if err != nil {
+			return nil, err
+		}
+		argv = append([]string{r.resolveSpawnBin("claude")}, argv...)
+	}
 	id, queued, err := r.cm.spawn(ctx, spawnReq{
 		Argv:          argv,
 		Cwd:           cwd,
 		Cols:          cols,
 		Rows:          rows,
-		Env:           buildEnv(prof),
+		Env:           launchEnv,
 		SessionID:     sessionID,
 		Model:         p.Model,
 		ModelIdentity: p.ModelIdentity,
@@ -1005,7 +1061,8 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(spawnResult(id, p.Message, queued, p))
+	result := spawnResult(id, p.Message, queued, p)
+	return jsonResult(result)
 }
 
 // spawnResult is the agents.spawn answer both legs return. `messageQueued` is
@@ -1112,6 +1169,9 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	codexTransport := r.transportDefault("codex", p.Transport)
 
 	sessionID := p.ResumeSessionID
+	if p.desktopReplacementID != "" {
+		sessionID = p.desktopReplacementID
+	}
 	if sessionID == "" {
 		var err error
 		if sessionID, err = newSessionID(); err != nil {
@@ -1122,10 +1182,11 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	if err != nil {
 		return nil, err
 	}
-	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed()) {
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed() || p.desktopContract != "") {
 		r.meta.set(sessionID, spawnMeta{
 			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),
 			Role: p.Role, Capability: p.Capability, DecisionID: p.DecisionID,
+			ResultSchema: p.desktopResultSchema,
 		})
 	}
 	// Recorded BEFORE the session can register — same contract as the PTY leg.
@@ -1185,12 +1246,21 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		// SECURITY: same clamp as the PTY path — a profile's extraArgs must not
 		// smuggle a bypass flag onto the managed claude-stream argv (and
 		// configDir survives only a hub-verified profile grant).
-		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil {
+		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil && prof.Provider == "" {
 			if env := buildEnv(prof); len(env) > 0 {
 				req.Env = env
 			}
 			if len(prof.ExtraArgs) > 0 {
 				req.ExtraArgs = prof.ExtraArgs
+			}
+		}
+	}
+	if provider == "codex" || provider == "copilot" {
+		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil && prof.Provider == provider {
+			req.Env = buildEnv(prof)
+			req.ExtraArgs = append([]string{}, prof.ExtraArgs...)
+			if provider == "codex" && prof.Preset != "" {
+				req.ExtraArgs = append(req.ExtraArgs, "-p", prof.Preset)
 			}
 		}
 	}
@@ -1215,12 +1285,42 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		}
 		req.Instructions += workerEscalationContract
 	}
+	if p.desktopContract != "" {
+		req.Instructions += "\n\n" + p.desktopContract
+	}
+	if p.LaunchIntegrationID != "" {
+		env, args, err := r.prepareIntegration(ctx, p, provider, cwd, req.Bin, req.Env, req.ExtraArgs)
+		if err != nil {
+			return nil, err
+		}
+		req.Env = env
+		req.ExtraArgs = args
+	}
 	req.FirstMessage = p.Message
 	id, queued, err := r.cm.spawnManaged(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(spawnResult(id, p.Message, queued, p))
+	result := spawnResult(id, p.Message, queued, p)
+	if p.Manager && r.desktopServices.available() {
+		options, _ := json.Marshal(p)
+		var launch map[string]any
+		_ = json.Unmarshal(options, &launch)
+		launch["provider"] = provider
+		launch["cwd"] = cwd
+		launch["transport"] = "stream"
+		launch["permissionMode"] = launchPermissionMode(provider, p)
+		launch["skipPermissions"] = p.skip
+		launch["model"] = p.ModelIdentity
+		if p.ModelIdentity == "" {
+			launch["model"] = p.Model
+		}
+		remember, _ := json.Marshal(map[string]any{"sessionId": id, "options": launch})
+		if _, err := r.desktopInternalCall(ctx, "internal.rememberManager", remember); err != nil {
+			result["historyError"] = err.Error()
+		}
+	}
+	return jsonResult(result)
 }
 
 // transportFallback is what a harness runs on when neither the caller nor the
@@ -1375,7 +1475,7 @@ func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.R
 	// means the session has ended. The old "type into the PTY" fallback fired
 	// exactly then, silently dropping the text into a dead terminal (the
 	// classic stuck mobile send) — surface the failure instead.
-	ok, err := r.cm.submitMessage(ctx, p.SessionID, text)
+	ok, err := r.submitMessage(ctx, p.SessionID, text)
 	if err != nil {
 		return nil, err
 	}

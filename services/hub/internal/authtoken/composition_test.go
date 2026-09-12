@@ -210,12 +210,15 @@ func TestTriageDeliberateAbsencesAreStillAbsent(t *testing.T) {
 // (one no denylist names yet) is caught too.
 var tierActors = map[string]map[string]bool{
 	"view": {
-		// The ONLY acting method the read-only tier grants. capspec's
+		// A read selector the read-only tier grants. capspec's
 		// sessions.transcript decision: `cwd` selects which historical session to
 		// resolve under ~/.claude/projects and is never opened as a caller path — a
 		// READ selector. A method that writes a file or flips an approval mode is
 		// not a read selector and has no entry here.
 		"sessions.transcript": true,
+		// Fixed font/icon caches only: validated single filenames, confined reads,
+		// and byte limits. No arbitrary path access or writes are granted.
+		"ui.asset": true,
 		// The one WRITING actor a read-only tier holds, and the acknowledgement
 		// is the whole justification: its actor param (`callerSessionId`, KindID)
 		// selects the CALLER, not a target, and no caller on this tier may supply
@@ -236,6 +239,7 @@ var tierActors = map[string]map[string]bool{
 		// Triage's Methods() is viewMethods ++ triageMethods, so it inherits
 		// view's actors and must acknowledge them here too.
 		"sessions.transcript":   true,
+		"ui.asset":              true, // Inherits the same fixed-cache read as view.
 		"agents.reportProgress": true,
 		// The acting surface triage adds on top of view. Every one is already on
 		// capspec's composition record: claude.approve + agents.sendMessage as the

@@ -88,7 +88,7 @@ describe('bounded recovery UI and API boundary', () => {
     window.electronAPI.managerReplacement = undefined;
     expect(await managerReplacementRequest({ action: 'list' })).toMatchObject({
       available: false,
-      error: expect.stringContaining('local desktop'),
+      error: expect.stringContaining('selected host'),
     });
     window.electronAPI.managerReplacement = vi
       .fn()

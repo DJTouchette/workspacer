@@ -1,0 +1,452 @@
+{
+  "agentRuntimeStatus": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "agentSuggestTitle": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "appRelaunch": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion",
+    "web": "absent"
+  },
+  "attachClaude": {
+    "detail": "Viewer map and shared streamPty helper use sessions.attachTerminal/detachTerminal/terminalKeepalive and pty.bytes events.",
+    "status": "transport wired"
+  },
+  "checkPluginUpdates": {
+    "detail": "Now uses corresponding /plugins HTTP route with bearer auth; guarded operator authorization remains server-side. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "checkPreviewFile": {
+    "detail": "Returns ok locally; actual remote file reads remain confined by fs.read guards.",
+    "status": "browser equivalent"
+  },
+  "claudeGate": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeHandoffAgentBrief": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeHandoffBrief": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeMessage": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeProfilesAccounts": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "claudeProfilesAddAccount": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "claudeProfilesLoginStatus": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "claudeResize": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeSetEffort": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeSetPermissionMode": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "claudeWrite": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "detachClaude": {
+    "detail": "Viewer map and shared streamPty helper use sessions.attachTerminal/detachTerminal/terminalKeepalive and pty.bytes events.",
+    "status": "transport wired"
+  },
+  "dispatchHistoryRead": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "downloadProjectIcon": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "federationConversation": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "federationPeers": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "federationPeersConfig": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "federationSavePeersConfig": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "fileOpenExternal": {
+    "status": "browser equivalent",
+    "detail": "Downloads bounded server file bytes through an owner-only, workspace-confined read; never claims that file:// opened a path on the viewing device."
+  },
+  "fileShowInFolder": {
+    "status": "browser equivalent",
+    "detail": "Opens the server directory and selected file in the bundled sandboxed editor. Native desktop retains its OS file-manager action."
+  },
+  "fleetReviewForget": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "fleetReviewRead": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "fleetWorkflowRequest": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "getHubStatus": {
+    "detail": "Delegates to HubBusClient connection status and subscriptions.",
+    "status": "transport wired"
+  },
+  "getPathForFile": {
+    "detail": "Empty host path/null clipboard result deliberately selects browser byte upload fallback.",
+    "status": "browser equivalent"
+  },
+  "getPluginSettings": {
+    "detail": "Guarded /plugins/settings route; failed reads degrade to {}, writes to null.",
+    "status": "HTTP wired"
+  },
+  "gitCommit": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "gitCommitDiff": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "gitCommitNumstat": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "gitPush": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "gitStage": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "gitUnstage": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "htmlCardReadDiff": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "importChromeCookies": {
+    "detail": "Native host browser/filesystem/shell integration; no equivalent remote action in a browser.",
+    "status": "native exclusion"
+  },
+  "inspectPlugin": {
+    "detail": "Now uses corresponding /plugins HTTP route with bearer auth; guarded operator authorization remains server-side. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "installCli": {
+    "detail": "Native host browser/filesystem/shell integration; no equivalent remote action in a browser.",
+    "status": "native exclusion"
+  },
+  "installExamplePlugin": {
+    "detail": "Now uses /plugins/install or /plugins/examples/install. Host-owner authority required; scoped operators denied. URL install asks for exact argv consent before executing build. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "installPlugin": {
+    "detail": "Now uses /plugins/install or /plugins/examples/install. Host-owner authority required; scoped operators denied. URL install asks for exact argv consent before executing build. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "installUiFont": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "jobsHistory": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "jobsList": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "jobsRemove": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "jobsRun": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "jobsUpsert": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "keepWarmHeartbeats": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "listExamplePlugins": {
+    "detail": "Reads the bundled example catalog. The image includes the same editor and transcript-timeline first-run defaults as native; pre-existing plugin sets are preserved.",
+    "status": "HTTP wired"
+  },
+  "listHubPlugins": {
+    "detail": "GET /plugins plus /plugins/tokens; null means unavailable. Plugin sidecars use remote UI base; direct loopback sidecar URLs are local-only.",
+    "status": "HTTP wired"
+  },
+  "listLiveClaudeSessionIds": {
+    "detail": "Null intentionally prevents browser from duplicating desktop reconciliation/auto-respawn.",
+    "status": "native exclusion"
+  },
+  "listUiFonts": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "loadBriefBoard": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "managerReplacement": {
+    "detail": "Shared durable transaction with real daemon callbacks: checkpoint hashes, fresh successor, worker/task transfer, viewer binding, message receipts and explicit recovery. Stream transport, recorded launch and local ownership are required, as on native.",
+    "status": "implemented and deployed"
+  },
+  "managerRequestPrepare": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "moveBriefCard": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "nodesList": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "nodesSleep": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "nodesWake": {
+    "detail": "Hub-owned registry is available in the upgrade image. Empty registries return actual empty state; job administration requires the authenticated owner. Existing machine identity and node-registry restrictions are preserved.",
+    "status": "implemented and deployed"
+  },
+  "notifyEscalate": {
+    "detail": "Browser Notification API/click handling and window.open; browser permission/popup restrictions apply.",
+    "status": "browser equivalent"
+  },
+  "notifyQuitSaved": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "onBeforeQuit": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "onClaudeOutput": {
+    "detail": "Viewer map and shared streamPty helper use sessions.attachTerminal/detachTerminal/terminalKeepalive and pty.bytes events.",
+    "status": "transport wired"
+  },
+  "onConfigChanged": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "onFocusAgent": {
+    "detail": "Main-process ambient/guest events are not present in a browser; browser notifications and iframe handling use separate paths.",
+    "status": "native exclusion"
+  },
+  "onHubEvent": {
+    "detail": "Delegates to HubBusClient connection status and subscriptions.",
+    "status": "transport wired"
+  },
+  "onHubStatus": {
+    "detail": "Delegates to HubBusClient connection status and subscriptions.",
+    "status": "transport wired"
+  },
+  "onInAppNotification": {
+    "detail": "Main-process ambient/guest events are not present in a browser; browser notifications and iframe handling use separate paths.",
+    "status": "native exclusion"
+  },
+  "onNotificationActivate": {
+    "detail": "Browser Notification API/click handling and window.open; browser permission/popup restrictions apply.",
+    "status": "browser equivalent"
+  },
+  "onSystemNotice": {
+    "detail": "Main-process ambient/guest events are not present in a browser; browser notifications and iframe handling use separate paths.",
+    "status": "native exclusion"
+  },
+  "onTerminalOutput": {
+    "detail": "Viewer map and shared streamPty helper use sessions.attachTerminal/detachTerminal/terminalKeepalive and pty.bytes events.",
+    "status": "transport wired"
+  },
+  "onUpdateStatus": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "onWebviewBlocked": {
+    "detail": "Main-process ambient/guest events are not present in a browser; browser notifications and iframe handling use separate paths.",
+    "status": "native exclusion"
+  },
+  "openExternalUrl": {
+    "detail": "Browser Notification API/click handling and window.open; browser permission/popup restrictions apply.",
+    "status": "browser equivalent"
+  },
+  "openLogsFolder": {
+    "detail": "Native host browser/filesystem/shell integration; no equivalent remote action in a browser.",
+    "status": "native exclusion"
+  },
+  "pickFiles": {
+    "status": "browser equivalent",
+    "detail": "Attachments use browser upload. Other selections use an in-app server file chooser returning server paths; filename-only discovery is restricted to the authenticated owner and server user\u2019s filesystem rights."
+  },
+  "pickFolder": {
+    "detail": "In-app picker browses SERVER directories through fs.listDir.",
+    "status": "browser equivalent"
+  },
+  "pluginPaneToken": {
+    "detail": "Guarded /plugins/pane-token routes; mint/revoke for scoped plugin panes.",
+    "status": "HTTP wired"
+  },
+  "pricingGetRates": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "pricingSaveOverrides": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "providerReadiness": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "removePlugin": {
+    "detail": "Now uses corresponding /plugins HTTP route with bearer auth; guarded operator authorization remains server-side. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "revokePluginPaneToken": {
+    "detail": "Guarded /plugins/pane-token routes; mint/revoke for scoped plugin panes.",
+    "status": "HTTP wired"
+  },
+  "saveClipboardImage": {
+    "detail": "Empty host path/null clipboard result deliberately selects browser byte upload fallback.",
+    "status": "browser equivalent"
+  },
+  "sessionGrantReconcile": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "setActiveSession": {
+    "detail": "Main-process ambient/guest events are not present in a browser; browser notifications and iframe handling use separate paths.",
+    "status": "native exclusion"
+  },
+  "setPluginEnabled": {
+    "detail": "Now uses corresponding /plugins HTTP route with bearer auth; guarded operator authorization remains server-side. Locally tested; deployment status in audit report.",
+    "status": "HTTP wired"
+  },
+  "setPluginSettings": {
+    "detail": "Guarded /plugins/settings route; failed reads degrade to {}, writes to null.",
+    "status": "HTTP wired"
+  },
+  "setRemoteServer": {
+    "detail": "Desktop persists a remote target then relaunches; a browser selects the server by navigating to its URL.",
+    "status": "browser equivalent",
+    "web": "absent"
+  },
+  "setRemoteShare": {
+    "detail": "Uses the server launcher\u2019s network adapter. The combined Fly image includes a private root helper restricted to hub UID 10002 and the fixed Tailscale HTTPS proxy; arbitrary externally managed listeners expose canToggleSharing=false.",
+    "status": "implemented and deployed"
+  },
+  "setTitleBarOverlay": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "spawnClaude": {
+    "detail": "Launch integrations require the server owner. Native and headless share patch validation and Codex route probing; headless plugin callbacks are bound to the active owner spawn and exact selected integration. Peer selection is honored and immediate follow-up uses the same peer before its first snapshot.",
+    "status": "implemented and deployed"
+  },
+  "tailscaleGetInfo": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "tailscaleSetServe": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "taskInspectorEdit": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "taskInspectorOpen": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "toolsStatus": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "updatesCheck": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "updatesGetStatus": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "updatesInstall": {
+    "detail": "Electron window/lifecycle/updater operation; browser refresh loads server assets.",
+    "status": "native exclusion"
+  },
+  "uploadAttachment": {
+    "detail": "Uploads are routed to the execution user on full/isolated headless nodes, preserving the existing image/PDF and 24 MiB limits. Files are private to the worker UID; failed transfers never fall back to unreadable hub-owned bytes.",
+    "status": "transport wired"
+  },
+  "watchFile": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "workflowAgentConversation": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "workflowAgentTranscript": {
+    "detail": "Selected-server implementation with session-aware routing. Captured requests retain server receipts; Claude workflow artifacts use the shared watcher. Peer permissions remain independent and owner-only services do not inherit federation trust.",
+    "status": "implemented and deployed"
+  },
+  "worktreeCreate": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "worktreeInfo": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "worktreeRemove": {
+    "detail": "Implemented on the selected server; owner-only desktop services retain native host authority. Runtime verification is recorded in the parity implementation report.",
+    "status": "implemented and deployed"
+  },
+  "getUiAsset": {
+    "status": "browser equivalent",
+    "detail": "Reads only validated font/icon filenames from fixed caches, using bounded descriptor reads. Native keeps its local asset protocols."
+  },
+  "filePickerList": {
+    "status": "browser equivalent",
+    "detail": "Owner-only server directory metadata for the in-app file picker; no file contents, process launch or arbitrary IPC forwarding."
+  }
+}

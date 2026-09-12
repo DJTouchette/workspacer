@@ -465,3 +465,12 @@ func TestNullFleetIsNotQuiet(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSelfStoppingHostProtectsScheduledAndRunningShellJobs(t *testing.T) {
+	now := time.Now()
+	jobs := []Job{{ID: "future", Name: "Future", NextRun: now.Add(24 * time.Hour)}, {ID: "shell", ActionKind: "shell", Running: true}}
+	blockers := jobBlockers(now, jobs, Tunables{KeepJobsAwake: true}.withDefaults())
+	if len(blockers) != 2 || blockers[0].Kind != KindJobScheduled || blockers[1].Kind != KindJobRunning {
+		t.Fatalf("self-stop would strand work: %+v", blockers)
+	}
+}

@@ -75,7 +75,7 @@ var spawnParamKeys = []string{
 	"remoteOrigin", "executionTarget", "remoteCwd",
 	// ── identity / grant fields the router itself strips or stamps ──────────
 	"profileId",
-	"launchIntegrationId",
+	"launchIntegrationId", "launchIntegrationGranted",
 	"profileGranted",
 	"yoloGranted",
 	"escalationScrubbed",

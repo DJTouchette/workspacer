@@ -37,11 +37,11 @@ export interface ReplacementHost {
     sourceRequest?: import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'];
   }>;
   finishes(id: string): Record<string, { reply: string; stopped: boolean }>;
-  receipt(id: string): string;
+  receipt(id: string): string | Promise<string>;
   settled(id: string): boolean;
   spawn(id: string, launch: ManagerLaunch): Promise<void>;
   validateSuccessor(id: string, launch: ManagerLaunch): Promise<void>;
-  transfer(source: string, successor: string, operationId: string): void;
+  transfer(source: string, successor: string, operationId: string): void | Promise<void>;
   restore(metadata: ReplacementMetadata[]): Promise<void>;
   bound(paneId: string, id: string): boolean;
   send(
@@ -396,7 +396,7 @@ export class ManagerReplacementService {
     while (Date.now() < deadline) {
       o = this.state.get(id);
       if (o.phase !== 'preparing') return;
-      const receipt = this.host.receipt(o.sourceSessionId);
+      const receipt = await this.host.receipt(o.sourceSessionId);
       if (
         this.host.settled(o.sourceSessionId) &&
         receipt.includes('```wks-manager-handoff') &&
@@ -518,7 +518,7 @@ export class ManagerReplacementService {
       op.phase = 'transferring';
       op.transferIntent = true;
     });
-    this.host.transfer(o.sourceSessionId, o.successorSessionId, id);
+    await this.host.transfer(o.sourceSessionId, o.successorSessionId, id);
     this.state.change(id, (op) => {
       op.committed = true;
       op.phase = 'binding';
@@ -713,7 +713,7 @@ export class ManagerReplacementService {
         'verifying successor',
         this.host.validateSuccessor(o.successorSessionId, o.launch),
       );
-      this.host.transfer(o.sourceSessionId, o.successorSessionId, id);
+      await this.host.transfer(o.sourceSessionId, o.successorSessionId, id);
       this.host.recoverFinishes(this.state.get(id));
       this.state.change(id, (op) => {
         op.committed = true;

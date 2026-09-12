@@ -265,12 +265,25 @@ describe('web backend bus integration', () => {
     ]);
   });
 
-  it('keeps Claude workflow-run artifact drill-in local-only over the web bus', async () => {
+  it('reads Claude workflow-run artifacts from the selected server', async () => {
     const api = createWebBackend('token', 'ws://host.test/bus');
 
-    await expect(api.workflowAgentConversation('parent-1', 'run-1', 'child-1')).resolves.toBeNull();
-    await expect(api.workflowAgentTranscript('parent-1', 'run-1', 'child-1')).resolves.toBeNull();
+    await api.workflowAgentConversation('parent-1','run-1','child-1');
+    expect(call('desktop.workflowAgentConversation')).toHaveLength(1);
+    await api.workflowAgentTranscript('parent-1','run-1','child-1');
+    expect(call('desktop.workflowAgentTranscript')).toHaveLength(1);
     expect(call('sessions.subagentConversation')).toHaveLength(0);
+  });
+
+  it('dispatches to the selected peer and routes immediate follow-up before its first snapshot',async()=>{
+    const api=createWebBackend('token','ws://host.test/bus');
+    client().results.set('hub:work/agents.spawn',{sessionId:'new-peer-session',messageQueued:true});
+    expect(await api.spawnClaude({targetHub:'work',cwd:'/peer/project',provider:'claude',message:'Do the task',profileId:'local-account',toolScope:'operator'})).toBe('new-peer-session');
+    expect(call('agents.spawn')).toHaveLength(0);
+    const request=call('hub:work/agents.spawn')[0].params as Record<string,unknown>;
+    expect(request.cwd).toBe('/peer/project');expect(request.profileId).toBeUndefined();expect(request.toolScope).toBeUndefined();
+    await api.claudeMessage('new-peer-session','Follow up');
+    expect(call('hub:work/agents.sendMessage').at(-1)?.params).toEqual({sessionId:'new-peer-session',text:'Follow up'});
   });
 
   it('routes attention resolution over the bus and applies the resulting snapshot', async () => {

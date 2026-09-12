@@ -59,7 +59,7 @@ const SCOPE_OPTIONS: Array<{
   {
     scope: 'operator',
     label: 'Full control',
-    description: 'Everything, including spawn, git, plugins, settings, and the full web app.',
+    description: 'Agent control, including spawn, terminals, Git, and the full web app. Server administration requires the owner token.',
   },
 ];
 

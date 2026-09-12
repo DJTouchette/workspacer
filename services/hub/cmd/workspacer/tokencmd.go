@@ -25,6 +25,7 @@ Usage:
   workspacer token create --scope view|triage|operator|provider [--label <text>] [--full-access]
   workspacer token list
   workspacer token revoke <token-or-prefix>
+  workspacer token facade-authority --label <service-label> --enabled=true|false
 
 Scopes:
   view      read-only: fleet lists, session snapshots, transcripts, event streams
@@ -55,6 +56,8 @@ func runToken(args []string) int {
 		return runTokenList(args[1:])
 	case "revoke":
 		return runTokenRevoke(args[1:])
+	case "facade-authority":
+		return runTokenFacadeAuthority(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(tokenUsage)
 		return 0
@@ -225,4 +228,52 @@ func labelSuffix(label string) string {
 		return ""
 	}
 	return fmt.Sprintf(" %q", label)
+}
+
+// Configure the existing infrastructure credential by unique label, without
+// printing its bearer or placing it on argv. This command runs as the store's
+// owner; there is deliberately no bus method for a holder to self-grant it.
+func runTokenFacadeAuthority(args []string) int {
+	fs := flag.NewFlagSet("workspacer token facade-authority", flag.ContinueOnError)
+	label := fs.String("label", "", "exact unique infrastructure token label")
+	enabled := fs.String("enabled", "", "true to grant or false to revoke session identity delegation")
+	path := tokensPathFlag(fs)
+	if fs.Parse(args) != nil {
+		return 2
+	}
+	if *label == "" || (*enabled != "true" && *enabled != "false") || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "facade-authority requires --label and --enabled=true|false")
+		return 2
+	}
+	recs, err := authtoken.Load(*path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	index := -1
+	for i, r := range recs {
+		if r.Label == *label {
+			if index != -1 {
+				fmt.Fprintln(os.Stderr, "service label is ambiguous")
+				return 1
+			}
+			index = i
+		}
+	}
+	if index < 0 {
+		fmt.Fprintln(os.Stderr, "service label not found")
+		return 1
+	}
+	rec := recs[index]
+	if rec.Scope != authtoken.ScopeOperator || rec.Role != "" || strings.HasPrefix(rec.Label, "session:") || strings.HasPrefix(rec.Label, "Remote Control: ") {
+		fmt.Fprintln(os.Stderr, "facade authority requires a dedicated operator service token, not a session or pairing")
+		return 1
+	}
+	recs[index].FacadeAuthority = *enabled == "true"
+	if err := authtoken.Save(*path, recs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "MCP session identity delegation set to %s; connected credentials are revalidated automatically\n", *enabled)
+	return 0
 }

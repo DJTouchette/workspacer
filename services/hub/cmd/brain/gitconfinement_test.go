@@ -499,31 +499,26 @@ func TestGitOutsideAWorkTreeFailsWithItsOwnMessage(t *testing.T) {
 	}
 }
 
-// The write half must stay absent. This provider is the one that runs on an
-// internet-facing node, and "we only ported the reads" is a claim a test should
-// make rather than a comment.
-func TestTheBrainProvidesNoGitWriteCapabilities(t *testing.T) {
+// The full headless scope must retain the review actions. Catalog mode still
+// leaves execution with its local desktop provider.
+func TestHeadlessGitWriteCapabilitiesAreRegisteredAndConfined(t *testing.T) {
 	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
-	registered := map[string]bool{}
-	for _, set := range [][]string{reg.methods(), reg.catalogMethods()} {
-		for _, m := range set {
-			registered[m] = true
-		}
+	full := map[string]bool{}
+	for _, m := range reg.methods() {
+		full[m] = true
 	}
 	for _, m := range []string{"git.stage", "git.unstage", "git.commit", "git.push"} {
-		if registered[m] {
-			t.Errorf("the brain registers %q — the headless provider is deliberately READ-ONLY, so a bus token cannot mutate or publish a repository from a remote node", m)
+		if !full[m] {
+			t.Errorf("headless review lost %s", m)
 		}
-		if _, err := reg.handle(context.Background(), m, json.RawMessage(`{"cwd":"/tmp"}`)); err == nil ||
-			!strings.Contains(err.Error(), "unknown method") {
-			t.Errorf("the brain dispatches %q; it must not be reachable at all (err=%v)", m, err)
+		for _, catalog := range reg.catalogMethods() {
+			if catalog == m {
+				t.Errorf("catalog collides on %s", m)
+			}
 		}
 	}
-	// And the reads it DOES provide, so this test cannot pass by the registry
-	// having emptied itself.
-	for _, m := range []string{"git.status", "git.log", "git.diff", "git.numstat"} {
-		if !registered[m] {
-			t.Errorf("the brain no longer registers %q — the port has regressed", m)
-		}
+	fx := newGitFixture(t)
+	for _, m := range []string{"git.stage", "git.unstage", "git.commit", "git.push"} {
+		fx.mustRefuse(t, m, map[string]any{"cwd": fx.outside, "message": "must not commit"})
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"sync"
 	"time"
 
@@ -68,7 +69,11 @@ type fleetWatcher struct {
 
 	// jobsFn and peers are nil when those subsystems are off.
 	jobsFn func() []jobs.Scheduled
-	fed    *federation.Manager
+	fed    interface {
+		PeersInfo() []federation.PeerInfo
+		Peers() []string
+		Forward(context.Context, string, string, json.RawMessage) (json.RawMessage, error)
+	}
 
 	// askedSeq records, per connection, the bus activity sequence number ITS OWN
 	// call to this question produced (see bus.ClientInfo.ActivitySeq).
@@ -96,7 +101,7 @@ func newFleetWatcher(srv *bus.Server, self *busclient.Client) *fleetWatcher {
 	return &fleetWatcher{
 		srv:      srv,
 		self:     self,
-		mon:      quiescence.NewMonitor(quiescence.Tunables{}),
+		mon:      quiescence.NewMonitor(quiescence.Tunables{KeepJobsAwake: os.Getenv("WKS_MACHINE_IDLE_MODE") == "stop"}),
 		askedSeq: map[uint64]uint64{},
 	}
 }

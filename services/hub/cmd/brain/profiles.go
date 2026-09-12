@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -20,10 +21,13 @@ import (
 // profile mirrors a claude-profiles.json entry. configDir becomes
 // CLAUDE_CONFIG_DIR; extraArgs is where --model / skip-permissions may be pinned.
 type profile struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	ConfigDir string   `json:"configDir"`
-	ExtraArgs []string `json:"extraArgs"`
+	Provider    string   `json:"provider,omitempty"`
+	Preset      string   `json:"preset,omitempty"`
+	TokenEnvVar string   `json:"tokenEnvVar,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	ConfigDir   string   `json:"configDir"`
+	ExtraArgs   []string `json:"extraArgs"`
 	// mcpItemIds carries the Library MCP servers a spawn pre-selects. NOT
 	// omitempty: main's claude.profiles.add stores `mcpItemIds ?? []`, so the
 	// desktop copy always emits the key, and the brain is the DEFAULT answerer
@@ -148,7 +152,15 @@ func loadProfiles() []profile {
 	if len(out) == 0 {
 		out = []profile{defaultProfile()}
 		// Best effort: a read-only config dir must still yield a usable list.
-		_ = saveProfiles(out)
+		_ = withConfigLock(profilesPath(), func() error {
+			latest := readProfilesFile()
+			if len(latest) > 0 {
+				normalizeProfiles(latest)
+				out = latest
+				return nil
+			}
+			return saveProfiles(out)
+		})
 	}
 	return out
 }
@@ -173,6 +185,7 @@ func defaultProfile() profile {
 // bus reply nor the file on disk can carry a null where main writes [].
 func normalizeProfiles(ps []profile) {
 	for i := range ps {
+		normalizeHarnessProfile(&ps[i])
 		if ps[i].ExtraArgs == nil {
 			ps[i].ExtraArgs = []string{}
 		}
@@ -211,14 +224,14 @@ func saveProfiles(ps []profile) error {
 // addProfile appends a new profile and persists it, mirroring
 // claudeProfiles.addProfile: a fresh uuid id, trimmed configDir, and isDefault
 // only when it's the first profile on disk.
-func addProfile(name, configDirVal string, extraArgs, mcpItemIDs []string) (*profile, error) {
+func addProfileUnlocked(name, configDirVal string, extraArgs, mcpItemIDs []string) (*profile, error) {
 	if name == "" {
 		return nil, fmt.Errorf("claude.profiles.add requires { name }")
 	}
 	// loadProfiles, not readProfilesFile: the set a caller can see is the set a
 	// caller can extend, and it is the same set claudeProfiles.ts's constructor
 	// has already materialized on the desktop side.
-	ps := loadProfiles()
+	ps := profilesForMutation()
 	id, err := newSessionID()
 	if err != nil {
 		return nil, err
@@ -256,8 +269,8 @@ type profileUpdate struct {
 	Weight     *int     `json:"weight"`
 }
 
-func updateProfile(id string, u profileUpdate) (*profile, error) {
-	ps := loadProfiles() // every LISTED id must be updatable
+func updateProfileUnlocked(id string, u profileUpdate) (*profile, error) {
+	ps := profilesForMutation() // every LISTED id must be updatable
 	idx := -1
 	for i := range ps {
 		if ps[i].ID == id {
@@ -300,11 +313,11 @@ func updateProfile(id string, u profileUpdate) (*profile, error) {
 
 // removeProfile deletes a profile, refusing to remove the synthetic "default"
 // and keeping at least one default, mirroring claudeProfiles.removeProfile.
-func removeProfile(id string) error {
+func removeProfileUnlocked(id string) error {
 	if id == "default" {
 		return nil
 	}
-	ps := loadProfiles()
+	ps := profilesForMutation()
 	out := ps[:0]
 	for _, p := range ps {
 		if p.ID != id {
@@ -363,6 +376,8 @@ func remoteSpawnProfile(profileID string, granted bool) *profile {
 	}
 	cp := scrubBypassProfile(prof)
 	cp.ConfigDir = prof.ConfigDir
+	cp.Preset = prof.Preset
+	cp.TokenEnvVar = prof.TokenEnvVar
 	return cp
 }
 
@@ -386,6 +401,8 @@ func scrubBypassProfile(p *profile) *profile {
 	// also fill in. A remote spawn therefore runs against the host's default
 	// claude config dir.
 	cp.ConfigDir = ""
+	cp.Preset = ""
+	cp.TokenEnvVar = ""
 	// mcpItemIds goes with it, for the same reason and with a sharper edge. A
 	// library item of kind `mcp` carries `command`, `args` and `env` verbatim
 	// into a --mcp-config file, and the spawn passes `--allowedTools mcp__<id>`
@@ -578,10 +595,72 @@ func buildArgv(p *profile, model string, effort string, skipPermissions bool, pe
 // CLAUDE_CONFIG_DIR, with a leading ~ expanded.
 func buildEnv(p *profile) map[string]string {
 	env := map[string]string{}
-	if p != nil && p.ConfigDir != "" {
-		env["CLAUDE_CONFIG_DIR"] = expandTilde(p.ConfigDir)
+	if p == nil {
+		return env
+	}
+	if dir := strings.TrimSpace(p.ConfigDir); dir != "" {
+		key := "CLAUDE_CONFIG_DIR"
+		if p.Provider == "codex" {
+			key = "CODEX_HOME"
+		}
+		if p.Provider == "copilot" {
+			key = "COPILOT_HOME"
+		}
+		env[key] = expandTilde(dir)
+	}
+	if p.Provider == "copilot" && profileEnvName.MatchString(p.TokenEnvVar) {
+		if value := strings.TrimSpace(os.Getenv(p.TokenEnvVar)); value != "" {
+			env["COPILOT_GITHUB_TOKEN"] = value
+		}
 	}
 	return env
+}
+
+var profilePresetChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+var profilePresetStart = regexp.MustCompile(`^[A-Za-z0-9_]`)
+var profileEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func normalizeHarnessProfile(p *profile) {
+	if p.Provider != "codex" && p.Provider != "copilot" {
+		p.Provider = ""
+	}
+	if p.Provider != "" {
+		p.MCPItemIDs = []string{}
+	}
+	if p.Provider == "copilot" {
+		p.Weight = 0
+	}
+	if p.Provider == "codex" {
+		p.Preset = profilePresetChars.ReplaceAllString(strings.TrimSpace(p.Preset), "")
+		if !profilePresetStart.MatchString(p.Preset) {
+			p.Preset = ""
+		}
+	} else {
+		p.Preset = ""
+	}
+	p.TokenEnvVar = strings.TrimSpace(p.TokenEnvVar)
+	if p.Provider != "copilot" || !profileEnvName.MatchString(p.TokenEnvVar) {
+		p.TokenEnvVar = ""
+	}
+}
+func profilesForMutation() []profile {
+	ps := readProfilesFile()
+	normalizeProfiles(ps)
+	if len(ps) == 0 {
+		ps = []profile{defaultProfile()}
+	}
+	return ps
+}
+func addProfile(name, dir string, args, mcp []string) (out *profile, err error) {
+	err = withConfigLock(profilesPath(), func() error { var e error; out, e = addProfileUnlocked(name, dir, args, mcp); return e })
+	return
+}
+func updateProfile(id string, u profileUpdate) (out *profile, err error) {
+	err = withConfigLock(profilesPath(), func() error { var e error; out, e = updateProfileUnlocked(id, u); return e })
+	return
+}
+func removeProfile(id string) error {
+	return withConfigLock(profilesPath(), func() error { return removeProfileUnlocked(id) })
 }
 
 func expandTilde(p string) string {

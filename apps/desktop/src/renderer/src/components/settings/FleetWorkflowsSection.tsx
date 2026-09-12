@@ -28,7 +28,7 @@ function useWorkflows() {
       const res = await window.electronAPI?.fleetWorkflowRequest?.({ op: 'list' });
       if (!res)
         throw new Error(
-          'Fleet workflows require this host’s desktop app. Headless and older peers are unavailable.',
+          'The selected host does not provide Fleet workflows. Upgrade that host to manage workflow policy.',
         );
       if (!res.ok) throw new Error(res.error);
       setCatalog(res.catalog);

@@ -29,8 +29,6 @@ func backoffAfterConn(backoff, lived time.Duration) time.Duration {
 
 // runSessionStore blocks until ctx is cancelled, keeping `store` current.
 func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionStore) {
-	seedStore(ctx, cm, store)
-
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -53,6 +51,11 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 			if snap, err := cm.getSession(ctx, su.SessionID); err == nil {
 				store.set(su.SessionID, snap)
 			}
+		}, func() {
+			// Subscribe first, then seed. Updates during the HTTP snapshot are
+			// buffered on the SSE connection and re-read canonically below.
+			// Reconnecting must also recover sessions whose last edge was missed.
+			seedStore(ctx, cm, store)
 		})
 		if ctx.Err() != nil {
 			return

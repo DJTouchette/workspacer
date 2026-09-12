@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/sweepguard"
 )
@@ -388,6 +389,10 @@ func TestBriefCheckDeclaresTheStaleArmWhenItHasNoSessionStore(t *testing.T) {
 		t.Fatalf("warming brief.check: %v", err)
 	}
 	reg.store = nil
+	cwdCacheMu.Lock()
+	cwdCacheAt = time.Now()
+	cwdCacheVals = []string{fx.agentCwd}
+	cwdCacheMu.Unlock()
 	raw, err := reg.handle(context.Background(), "brief.check", mustJSON(t, map[string]any{"project": fx.agentCwd}))
 	if err != nil {
 		t.Fatalf("brief.check with no store: %v", err)

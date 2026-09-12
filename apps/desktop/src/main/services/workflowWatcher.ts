@@ -367,6 +367,11 @@ class WorkflowWatcher {
     watch.lastPoke = Date.now();
     this.ensureTimer(watch);
   }
+  /** Prime a newly attached headless reader before answering its first query. */
+  refresh(sessionId: string): void {
+    const watch = this.watches.get(sessionId);
+    if (watch) this.tick(watch);
+  }
 
   detach(sessionId: string): void {
     const watch = this.watches.get(sessionId);

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -342,8 +343,8 @@ func defaultUsagePrefsFile() string {
 // the capability's OWN literal name: capspec's composition bearings verify
 // this gate by grepping for exactly that call shape.
 func jobsTrusted(method string, c bus.CallerIdentity) error {
-	if !c.IsTrusted() {
-		return fmt.Errorf("%s requires host authority", method)
+	if !c.AuthenticatedHost || !c.IsTrusted() || c.Scope != "operator" {
+		return fmt.Errorf("%s requires the server owner", method)
 	}
 	return nil
 }
@@ -371,7 +372,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
 	claudemonEvents := flag.String("claudemon-events", "", "claudemon /events SSE URL to bridge onto the bus (e.g. http://127.0.0.1:7891/events)")
 	pluginsDir := flag.String("plugins-dir", "", "directory of plugin subdirs (each with a plugin.json) to load + supervise")
-	examplesDir := flag.String("examples-dir", "", "directory of bundled example plugins users can add from the UI (read-only catalog)")
+	examplesDir := flag.String("examples-dir", bundledExamplesDir(), "directory of bundled example plugins users can add from the UI (read-only catalog)")
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
 	tokensFile := flag.String("tokens-file", authtoken.DefaultPath(), "capability-scoped tokens file (tokens.json, minted by `workspacer token create`); empty = scoped tokens disabled")
@@ -454,6 +455,7 @@ func main() {
 				// full-access `yoloGranted` stamp).
 				ProfilesAllowed: rec.ProfilesAllowed,
 				YoloAllowed:     rec.YoloAllowed,
+				FacadeAuthority: rec.FacadeAuthority && rec.Scope == authtoken.ScopeOperator,
 				// The REGISTER grant, for the provider tier — a headless node
 				// that must answer capability calls without being promoted to
 				// trusted. ProvidesGrant, not the raw field: the tier is the
@@ -509,7 +511,7 @@ func main() {
 
 	// Photo/file landing pad for remote clients (/m attachments). Hub-local so
 	// hub:<peer>/files.upload writes on the peer that runs the agent.
-	srv.RegisterLocal("files.upload", rpcFilesUpload)
+	// Registered after the hub self-client is available below.
 
 	// guard wraps a mutating/sensitive route so it requires the bus token.
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -558,24 +560,20 @@ func main() {
 		}
 		peers = append(peers, p)
 	}
-	// Held beyond the block so the quiescence sampler can ask each peer
-	// whether IT is quiet. Nil when no peer is configured.
-	var fedManager *federation.Manager
-	if len(peers) > 0 {
-		fed, err := federation.New(b, peers)
-		if err != nil {
-			log.Fatalf("federation: %v", err)
-		}
-		fedManager = fed
-		srv.SetFederation(fed)
-		// Peer liveness for clients that can't read peers.json (the web
-		// renderer): name + connected + lastSeen, nothing else.
-		srv.RegisterLocal("federation.peers", func(json.RawMessage) (any, error) {
-			return fed.PeersInfo(), nil
-		})
-		go fed.Run(ctx)
-		log.Printf("federation: linking to %d peer(s): %s", len(peers), strings.Join(fed.Peers(), ", "))
+	fedManager, err := federation.NewController(ctx, b, peers)
+	if err != nil {
+		log.Fatalf("federation: %v", err)
 	}
+	srv.SetFederation(fedManager)
+	srv.RegisterLocal("federation.peers", func(json.RawMessage) (any, error) { return fedManager.PeersInfo(), nil })
+	fixedPeers := []federation.Peer{}
+	for _, value := range peerFlags {
+		peer, _ := federation.ParsePeerFlag(value)
+		fixedPeers = append(fixedPeers, peer)
+	}
+	peerSettings := &peerConfig{path: *peersFile, controller: fedManager, fixed: fixedPeers}
+	srv.RegisterLocalIdent("federation.peersConfig", peerConfigRead(peerSettings))
+	srv.RegisterLocalIdent("federation.savePeersConfig", peerConfigSave(peerSettings))
 
 	// Jobs: recurring/one-off tasks the hub runs on the user's behalf (spawn
 	// an agent with a prompt, call a capability, run a shell command). Spawn
@@ -595,6 +593,7 @@ func main() {
 	srv.SetInternalKey(internalKey)
 	self := busclient.New(bus.InternalDialURL(selfBusURL(*addr), internalKey), *token)
 	go self.Run(ctx)
+	srv.RegisterLocal("files.upload", routedFilesUpload(self.Call, *brainScope == "full" || os.Getenv("WKS_UPLOAD_PROVIDER") == "worker"))
 
 	// Fleet quiescence: a read-only signal saying whether this machine's fleet
 	// is genuinely at rest, with a named blocker per reason when it is not.
@@ -726,6 +725,16 @@ func main() {
 		// silently indistinguishable from one that works.
 		log.Printf("usage pacing schedule: %v", err)
 	}
+	_, networkPort, _ := net.SplitHostPort(*addr)
+	port, _ := strconv.Atoi(networkPort)
+	if port == 0 {
+		port = 7895
+	}
+	network := &networkAdmin{socket: os.Getenv("WKS_NETWORK_ADMIN_SOCKET"), tokenFile: os.Getenv("WKS_NETWORK_ADMIN_TOKEN_FILE"), port: port}
+	srv.RegisterLocalIdent("remote.tailscaleInfo", networkInfo(network))
+	srv.RegisterLocalIdent("remote.tailscaleServe", networkServe(network))
+	srv.RegisterLocalIdent("remote.sharingInfo", sharingInfo(network))
+	srv.RegisterLocalIdent("remote.setSharing", setSharing(network))
 	pairings := &remotePairings{path: *tokensFile}
 	srv.RegisterLocalIdent("remote.pairingInfo", remotePairingInfo(pairings))
 	srv.RegisterLocalIdent("remote.tokensList", remoteTokensList(pairings))
@@ -787,11 +796,13 @@ func main() {
 	// It is what closes the wake-only hole — a wake whose provider never
 	// registered used to leave the machine running and billing with nothing in
 	// the app able to switch it off.
-	if sup := startNodes(ctx, srv, b, self, *nodesFile, *brainScope, *nodesKeepFailedWakesRunning); sup != nil {
-		srv.RegisterLocal("nodes.list", nodesList(sup))
-		srv.RegisterLocalIdent("nodes.wake", nodesWake(ctx, sup))
-		srv.RegisterLocalIdent("nodes.sleep", nodesSleep(ctx, sup))
+	sup := startNodes(ctx, srv, b, self, *nodesFile, *brainScope, *nodesKeepFailedWakesRunning)
+	if sup == nil {
+		sup = nodes.New(nodes.Options{})
 	}
+	srv.RegisterLocal("nodes.list", nodesList(sup))
+	srv.RegisterLocalIdent("nodes.wake", nodesWake(ctx, sup))
+	srv.RegisterLocalIdent("nodes.sleep", nodesSleep(ctx, sup))
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
 	// manager registers per-plugin bus tokens with srv so capability calls are
@@ -815,6 +826,7 @@ func main() {
 	// contributions), because the same bytes' event twin, plugin.loaded, is
 	// classified TopicHostOnly and refused to every scoped tier.
 	srv.AddRoute("/plugins", manifestListHandler(mgr.List, srv.Authorized))
+	srv.RegisterLocalIdent("plugins.prepareLaunch", launchPreparation(srv, mgr.List, self.Call))
 	// The consented facade-tool surface (plugin id + tool defs), for the MCP
 	// facade to advertise as MCP tools. In-process RPC rather than a widening
 	// of the public /plugins projection: tool metadata names the plugins' bus
@@ -1211,6 +1223,9 @@ func main() {
 		log.Printf("added example plugin %s", m.ID)
 		_ = json.NewEncoder(w).Encode(m)
 	}))
+	if err := seedBundledPlugins(*pluginsDir, *examplesDir); err != nil {
+		log.Printf("bundled plugin setup failed: %v", err)
+	}
 	if *pluginsDir != "" {
 		manifests, errs := plugin.LoadDir(*pluginsDir)
 		for _, e := range errs {

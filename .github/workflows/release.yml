@@ -242,6 +242,8 @@ jobs:
           # The built web app: `workspacer serve` auto-serves a sibling web/
           # at /app (the full renderer), no flag needed.
           cp -r "apps/desktop/dist/web" "$dir/web"
+          cp "apps/desktop/dist/headless/desktop-host.cjs" "$dir/desktop-host.cjs"
+          cp -r "services/hub/examples" "$dir/examples"
           # The build stamp — the ONLY thing in this bundle that says what it is.
           # None of the four binaries has an honest --version (`workspacer`, `hub`
           # and `brain` have no such flag at all; `claudemon --version` prints the
@@ -274,7 +276,8 @@ jobs:
 
           1. Extract this directory anywhere (keep the binaries together —
              `workspacer` finds its daemons next to itself).
-          2. `./workspacer serve`
+          2. Install Node.js 22.13 or newer (required by shared desktop services).
+          3. `./workspacer serve`
 
           That starts and supervises claudemon (sessions) + the hub (bus, with a
           full-scope brain), and prints the client URLs + pairing token — for the

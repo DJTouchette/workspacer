@@ -36,6 +36,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/redact"
 )
@@ -320,7 +321,7 @@ func (m *Manager) Forward(ctx context.Context, peer, method string, params json.
 	if c == nil {
 		return nil, fmt.Errorf("unknown federation peer %q", peer)
 	}
-	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	ctx, cancel := context.WithTimeout(ctx, forwardingBudget(method))
 	defer cancel()
 	return c.Call(ctx, method, params)
 }
@@ -404,4 +405,14 @@ func (m *Manager) PeersInfo() []PeerInfo {
 		out = append(out, info)
 	}
 	return out
+}
+
+// Preserve the provider's long-running operation budget across a peer hop;
+// ordinary reads retain the original short federation timeout.
+func forwardingBudget(method string) time.Duration {
+	budget := capspec.ProviderTimeout(method, 30*time.Second)
+	if budget > 30*time.Second {
+		return budget - 5*time.Second
+	}
+	return forwardTimeout
 }

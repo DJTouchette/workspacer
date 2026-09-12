@@ -38,6 +38,7 @@ import * as fs from 'fs';
 const registered = new Map<string, (params: unknown) => unknown>();
 const emitToRenderer = vi.fn();
 vi.mock('./hubClient', () => ({
+  publishToHub: vi.fn(),
   registerCapability: (method: string, handler: (params: unknown) => unknown) => {
     registered.set(method, handler);
   },

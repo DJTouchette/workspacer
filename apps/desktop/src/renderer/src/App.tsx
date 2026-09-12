@@ -904,9 +904,9 @@ function App() {
   // runs the user's $EDITOR (e.g. nvim) in a PTY pane. Outside an agent with no
   // file we fall back to the OS file picker.
   const openFileInEditor = useCallback(
-    async (filePath?: string) => {
+    async (filePath?: string, directory?: string) => {
       let target = filePath;
-      if (!target && !activeAgent?.cwd) {
+      if (!target && !activeAgent?.cwd && !directory) {
         const picked = await window.electronAPI.pickFiles();
         target = picked?.[0];
         if (!target) return;
@@ -914,12 +914,12 @@ function App() {
       const agentCwd = activeAgent && !activeAgent.global ? activeAgent.cwd : undefined;
       // Scope/tree root: the project dir when the file is under it (or no file),
       // else the file's own directory.
-      const dir =
+      const dir = directory ?? (
         agentCwd && (!target || target.startsWith(agentCwd))
           ? agentCwd
           : target
             ? target.replace(/[\\/][^\\/]*$/, '')
-            : agentCwd;
+            : agentCwd);
       const title = target
         ? target.split(/[\\/]/).pop() || 'Editor'
         : dir
@@ -979,8 +979,8 @@ function App() {
   // Open-in-editor requests (e.g. right-click in the Review pane's file tree).
   useEffect(() => {
     const handler = (e: Event) => {
-      const target = (e as CustomEvent).detail as { path?: string } | undefined;
-      if (target?.path) void openFileInEditor(target.path);
+      const target = (e as CustomEvent).detail as { path?: string; directory?: string } | undefined;
+      if (target?.path || target?.directory) void openFileInEditor(target.path, target.directory);
     };
     window.addEventListener(EDITOR_OPEN_FILE_EVENT, handler);
     return () => window.removeEventListener(EDITOR_OPEN_FILE_EVENT, handler);

@@ -29,6 +29,15 @@ export interface PermissionGroup {
 // registerCapability registry, which is how terminals.create and claude.approve
 // came to display as ordinary.
 export const CAP_LABELS: Record<string, { label: string; sensitive?: boolean }> = {
+  'federation.peersConfig': {label:'View linked-machine settings',sensitive:true},
+  'federation.savePeersConfig': {label:'Change linked machines and dispatch targets',sensitive:true},
+  'remote.sharingInfo': {label:'View server sharing availability'},
+  'remote.tailscaleInfo': {label:'View server HTTPS sharing status'},
+  'remote.tailscaleServe': {label:'Change server HTTPS sharing',sensitive:true},
+  'remote.setSharing': {label:'Enable or disable server sharing',sensitive:true},
+  'plugins.prepareLaunch': {label:'Prepare an owner-authorized agent launch',sensitive:true},
+  'files.receiveUpload': {label:'Receive an attachment on the agent host',sensitive:true},
+
   'fs.read': { label: 'Read files' },
   'fs.listEntries': { label: 'List files' },
   'fs.listDir': { label: 'List files' },

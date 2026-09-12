@@ -10,12 +10,14 @@ package main
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 )
 
 type sessionStore struct {
-	mu sync.RWMutex
-	m  map[string]json.RawMessage // session_id -> snapshot JSON (claudemon's shape)
+	mu      sync.RWMutex
+	m       map[string]json.RawMessage // session_id -> snapshot JSON (claudemon's shape)
+	desktop map[string]json.RawMessage // workflow enrichment retained across daemon updates
 
 	// onChange is invoked (outside the lock) after a set, to publish the update.
 	onChange func(id string, snap json.RawMessage)
@@ -48,6 +50,14 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 		enriched[id] = s.applyEnrich(snap)
 	}
 	s.mu.Lock()
+	for id, snap := range enriched {
+		enriched[id] = s.mergeDesktopLocked(id, snap)
+	}
+	for id := range s.desktop {
+		if _, ok := enriched[id]; !ok {
+			delete(s.desktop, id)
+		}
+	}
 	s.m = enriched
 	cb := s.onSeed
 	s.mu.Unlock()
@@ -60,6 +70,7 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 func (s *sessionStore) set(id string, snap json.RawMessage) {
 	snap = s.applyEnrich(snap)
 	s.mu.Lock()
+	snap = s.mergeDesktopLocked(id, snap)
 	s.m[id] = snap
 	cb := s.onChange
 	s.mu.Unlock()
@@ -136,7 +147,85 @@ func snapshotID(snap json.RawMessage) string {
 func (s *sessionStore) remove(id string) {
 	s.mu.Lock()
 	delete(s.m, id)
+	delete(s.desktop, id)
 	s.mu.Unlock()
+}
+
+func (s *sessionStore) setDesktopWorkflow(id string, update json.RawMessage) {
+	s.mu.Lock()
+	snap, ok := s.m[id]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	if s.desktop == nil {
+		s.desktop = map[string]json.RawMessage{}
+	}
+	s.desktop[id] = append(json.RawMessage(nil), update...)
+	snap = s.mergeDesktopLocked(id, snap)
+	s.m[id] = snap
+	cb := s.onChange
+	s.mu.Unlock()
+	if cb != nil {
+		cb(id, snap)
+	}
+}
+
+func (s *sessionStore) mergeDesktopLocked(id string, raw json.RawMessage) json.RawMessage {
+	update, ok := s.desktop[id]
+	if !ok {
+		return raw
+	}
+	var fields map[string]json.RawMessage
+	var data struct {
+		Runs        json.RawMessage                       `json:"runs"`
+		Activity    map[string]map[string]json.RawMessage `json:"subagentActivity"`
+		WorkflowIDs []string                              `json:"workflowAgentIds"`
+	}
+	if json.Unmarshal(raw, &fields) != nil || json.Unmarshal(update, &data) != nil {
+		return raw
+	}
+	if len(data.Runs) > 0 {
+		fields["workflows"] = data.Runs
+	}
+	var subs []map[string]json.RawMessage
+	if json.Unmarshal(fields["subagents"], &subs) == nil {
+		kept := make([]map[string]json.RawMessage, 0, len(subs))
+		for _, sub := range subs {
+			var subID string
+			_ = json.Unmarshal(sub["id"], &subID)
+			subID = strings.TrimPrefix(subID, "agent-")
+			inWorkflow := false
+			for _, id := range data.WorkflowIDs {
+				if id == subID {
+					inWorkflow = true
+					break
+				}
+			}
+			if inWorkflow {
+				continue
+			}
+			activity := data.Activity[subID]
+			for _, key := range []string{"description", "toolUseId", "model", "lastToolName"} {
+				var value string
+				if json.Unmarshal(activity[key], &value) == nil && value != "" {
+					sub[key] = activity[key]
+				}
+			}
+			for _, key := range []string{"tokens", "costUSD", "toolCalls", "lastToolSummary"} {
+				if value, ok := activity[key]; ok {
+					sub[key] = value
+				}
+			}
+			kept = append(kept, sub)
+		}
+		fields["subagents"], _ = json.Marshal(kept)
+	}
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return merged
 }
 
 // restamp re-runs enrichment over a row already in the store, in place.

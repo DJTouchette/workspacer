@@ -81,18 +81,11 @@ beforeEach(() => {
 });
 
 describe('webBackend.pickFiles — a real browser picker, not a prompt for host paths', () => {
-  it('refuses a HOST-path pick out loud rather than accepting a typed lie', async () => {
-    const prompt = vi.fn().mockReturnValue('/usr/local/bin/claude');
-    vi.stubGlobal('prompt', prompt);
-    const posted: any[] = [];
-    window.addEventListener('wks:notify-post', (e) => posted.push((e as CustomEvent).detail));
-    const api = createWebBackend('t');
-    // No `attachment` — the editor fallback and the custom-binary browsers want
-    // a path on the machine running the agent, which a browser cannot produce.
-    await expect(api.pickFiles()).resolves.toEqual([]);
-    expect(prompt).not.toHaveBeenCalled();
-    expect(posted.length, 'a refusal the caller cannot see is the old bug').toBe(1);
-    expect(String(posted[0].title)).toMatch(/desktop app/i);
+  it('uses the server file chooser for a host-path pick',async()=>{
+    const handler=(event:Event)=>(event as CustomEvent).detail.resolve(['/server/source.ts']);
+    window.addEventListener('web:pick-files',handler);
+    try {expect(await createWebBackend('t').pickFiles('/server')).toEqual(['/server/source.ts']);}
+    finally{window.removeEventListener('web:pick-files',handler);}
   });
 
   it('never asks the user to type a path on the host', async () => {

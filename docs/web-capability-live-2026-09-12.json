@@ -1,0 +1,290 @@
+{
+  "http": {
+    "health": 200,
+    "app": 200,
+    "plugins": 200,
+    "pluginsCount": 2,
+    "examples": 200,
+    "examplesCount": 4
+  },
+  "probes": {
+    "machine.power": {
+      "status": "ok"
+    },
+    "remote.pairingInfo": {
+      "status": "ok"
+    },
+    "sessions.snapshots": {
+      "status": "ok",
+      "count": 0
+    },
+    "usage.pacingSchedule": {
+      "status": "ok"
+    },
+    "federation.peersConfig": {
+      "status": "ok",
+      "count": 0
+    },
+    "providers.checkAll": {
+      "status": "ok",
+      "count": 5
+    },
+    "app.supervisorHome": {
+      "status": "ok"
+    },
+    "config.get": {
+      "status": "ok"
+    },
+    "nodes.list": {
+      "status": "ok",
+      "count": 0
+    },
+    "federation.peers": {
+      "status": "ok",
+      "count": 0
+    },
+    "jobs.list": {
+      "status": "ok"
+    },
+    "sessions.recent": {
+      "status": "ok",
+      "count": 1
+    },
+    "claude.listModels": {
+      "status": "ok"
+    },
+    "routing.preferences.get": {
+      "status": "ok"
+    },
+    "usage.report": {
+      "status": "ok"
+    },
+    "desktop.agentRuntimeStatus": {
+      "status": "ok"
+    },
+    "remote.tailscaleInfo": {
+      "status": "ok"
+    },
+    "remote.sharingInfo": {
+      "status": "ok"
+    },
+    "ui.fonts": {
+      "status": "ok",
+      "count": 0
+    },
+    "desktop.pricingGetRates": {
+      "status": "ok"
+    },
+    "desktop.dispatchHistoryRead": {
+      "status": "ok"
+    },
+    "analytics.summary": {
+      "status": "ok"
+    },
+    "desktop.loadBriefBoard": {
+      "status": "ok"
+    }
+  },
+  "pluginAdminBundle": {
+    "status": 200,
+    "containsImplementation": true
+  },
+  "registeredMethods": [
+    "agents.close",
+    "agents.dispatchPrepare",
+    "agents.dispatchReplay",
+    "agents.list",
+    "agents.notifyWhen",
+    "agents.orphans",
+    "agents.reparent",
+    "agents.reportProgress",
+    "agents.sendMessage",
+    "agents.spawn",
+    "analytics.recent",
+    "analytics.summary",
+    "app.getCwd",
+    "app.supervisorHome",
+    "brain.info",
+    "brief.append",
+    "brief.archive",
+    "brief.check",
+    "claude.answer",
+    "claude.approve",
+    "claude.gate",
+    "claude.handoffAgentBrief",
+    "claude.handoffBrief",
+    "claude.listModels",
+    "claude.profiles.add",
+    "claude.profiles.list",
+    "claude.profiles.remove",
+    "claude.profiles.update",
+    "claude.sessionsForDir",
+    "claude.setEffort",
+    "claude.setModel",
+    "claude.setPermissionMode",
+    "claude.signal",
+    "config.get",
+    "config.getPath",
+    "config.reload",
+    "config.save",
+    "desktop.agentRuntimeStatus",
+    "desktop.agentSuggestTitle",
+    "desktop.claudeProfilesAccounts",
+    "desktop.claudeProfilesAdd",
+    "desktop.claudeProfilesAddAccount",
+    "desktop.claudeProfilesLoginStatus",
+    "desktop.claudeProfilesRemove",
+    "desktop.claudeProfilesUpdate",
+    "desktop.dispatchHistoryRead",
+    "desktop.downloadProjectIcon",
+    "desktop.filePickerList",
+    "desktop.fleetReviewForget",
+    "desktop.fleetReviewRead",
+    "desktop.fleetWorkflowRequest",
+    "desktop.htmlCardReadDiff",
+    "desktop.installUiFont",
+    "desktop.keepWarmHeartbeats",
+    "desktop.loadBriefBoard",
+    "desktop.managerReplacement",
+    "desktop.managerRequestPrepare",
+    "desktop.managerRequestSend",
+    "desktop.moveBriefCard",
+    "desktop.pricingGetRates",
+    "desktop.pricingSaveOverrides",
+    "desktop.providerReadiness",
+    "desktop.readFileBytes",
+    "desktop.saveConfig",
+    "desktop.sessionGrantReconcile",
+    "desktop.taskInspectorEdit",
+    "desktop.taskInspectorOpen",
+    "desktop.toolsStatus",
+    "desktop.workflowAgentConversation",
+    "desktop.workflowAgentTranscript",
+    "desktop.worktreeCreate",
+    "desktop.worktreeInfo",
+    "desktop.worktreeRemove",
+    "federation.peers",
+    "federation.peersConfig",
+    "federation.savePeersConfig",
+    "files.receiveUpload",
+    "files.upload",
+    "fleet.dispatchCapabilities",
+    "fleet.quiescence",
+    "fleetWorkflows.request",
+    "fs.listDir",
+    "fs.listEntries",
+    "fs.read",
+    "fs.readImage",
+    "fs.unwatch",
+    "fs.watch",
+    "fs.write",
+    "git.commit",
+    "git.commitDiff",
+    "git.commitNumstat",
+    "git.diff",
+    "git.log",
+    "git.numstat",
+    "git.push",
+    "git.stage",
+    "git.status",
+    "git.unstage",
+    "jobs.history",
+    "jobs.list",
+    "jobs.propose",
+    "jobs.remove",
+    "jobs.run",
+    "jobs.upsert",
+    "layout.get",
+    "layout.set",
+    "layouts.delete",
+    "layouts.list",
+    "layouts.save",
+    "library.list",
+    "library.remove",
+    "library.save",
+    "machine.power",
+    "machine.stop",
+    "nodes.list",
+    "nodes.sleep",
+    "nodes.wake",
+    "notifications.post",
+    "plugins.prepareLaunch",
+    "plugins.tools",
+    "providers.checkAll",
+    "providers.listModels",
+    "push.key",
+    "push.list",
+    "push.revoke",
+    "push.subscribe",
+    "push.test",
+    "push.unsubscribe",
+    "remote.pairingInfo",
+    "remote.setSharing",
+    "remote.sharingInfo",
+    "remote.tailscaleInfo",
+    "remote.tailscaleServe",
+    "remote.tokenGetOrCreate",
+    "remote.tokenRevoke",
+    "remote.tokensList",
+    "routing.preferences.get",
+    "routing.preferences.reset",
+    "routing.preferences.save",
+    "routing.preferences.validate",
+    "routing.preview",
+    "routing.select",
+    "search.project",
+    "sessions.attachTerminal",
+    "sessions.conversation",
+    "sessions.delete",
+    "sessions.detachTerminal",
+    "sessions.list",
+    "sessions.load",
+    "sessions.recent",
+    "sessions.save",
+    "sessions.snapshot",
+    "sessions.snapshots",
+    "sessions.subagentConversation",
+    "sessions.terminalInput",
+    "sessions.terminalKeepalive",
+    "sessions.terminalResize",
+    "sessions.transcript",
+    "terminals.create",
+    "terminals.open",
+    "ui.asset",
+    "ui.fonts",
+    "usage.pacingSchedule",
+    "usage.report",
+    "usage.setPacingSchedule"
+  ],
+  "registeredCount": 165,
+  "authority": {
+    "scope": "operator",
+    "patterns": [
+      "*"
+    ],
+    "fullAccess": true
+  },
+  "idle": {
+    "mode": "stop",
+    "timeoutSeconds": 900,
+    "quiescent": false,
+    "calmSeconds": 0,
+    "blockerKinds": [
+      "client-active"
+    ]
+  },
+  "runtime": {
+    "claudemon": "ready",
+    "facade": "ready",
+    "hub": "ready"
+  },
+  "network": {
+    "available": true,
+    "serveActive": true,
+    "canServe": true
+  },
+  "validation": {
+    "ok": true,
+    "failures": []
+  }
+}

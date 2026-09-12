@@ -244,7 +244,7 @@ func (c *claudemonClient) providerModels(ctx context.Context, provider, cwd, bin
 
 // streamSSE follows an SSE endpoint, calling emit per frame. Uses a no-timeout
 // client — SSE is long-lived (the shared client's 30s timeout would kill it).
-func (c *claudemonClient) streamSSE(ctx context.Context, path string, emit func(name string, data []byte)) error {
+func (c *claudemonClient) streamSSE(ctx context.Context, path string, emit func(name string, data []byte), ready ...func()) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return err
@@ -266,11 +266,14 @@ func (c *claudemonClient) streamSSE(ctx context.Context, path string, emit func(
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("claudemon %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	for _, callback := range ready {
+		callback()
+	}
 	return parseSSE(ctx, resp.Body, emit)
 }
 
-func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name string, data []byte)) error {
-	return c.streamSSE(ctx, "/events", emit)
+func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name string, data []byte), ready ...func()) error {
+	return c.streamSSE(ctx, "/events", emit, ready...)
 }
 
 func (c *claudemonClient) streamStatusLines(ctx context.Context, emit func(name string, data []byte)) error {
@@ -516,4 +519,9 @@ func (c *claudemonClient) handoff(ctx context.Context, id string) (handoffResult
 // intended, and it is why agents.close ALSO forgets the row locally.
 func (c *claudemonClient) closeSession(ctx context.Context, id string) error {
 	return c.signal(ctx, id, "SIGTERM")
+}
+
+// Includes parked unused managers as well as archived history.
+func (c *claudemonClient) listAllSessions(ctx context.Context) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/sessions?include_archived=true&include_empty=true")
 }

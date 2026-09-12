@@ -321,3 +321,40 @@ func configBool(cfg map[string]any, section string, key string) bool {
 	v, ok := rawSection[key].(bool)
 	return ok && v
 }
+
+// Same config policy as minting: changing settings updates future manager
+// dispatches, without restarting the manager or changing existing workers.
+func (r *registry) reconcileManagerGrants(sessionID string) (bool, error) {
+	desired := r.managerFullAccessFromConfig()
+	sessionFacadeTokenMu.Lock()
+	defer sessionFacadeTokenMu.Unlock()
+	file := authtoken.DefaultPath()
+	rows, err := authtoken.Load(file)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for i, rec := range rows {
+		if rec.Scope != authtoken.ScopeOperator || !strings.HasPrefix(rec.Label, sessionFacadeTokenLabelPrefix) {
+			continue
+		}
+		if sessionID != "" {
+			if rec.Label != sessionFacadeTokenLabelPrefix+sessionID {
+				continue
+			}
+		} else if rec.Role != "manager" {
+			continue
+		}
+		if rec.Role != "manager" || rec.YoloAllowed != desired {
+			rows[i].Role = "manager"
+			rows[i].YoloAllowed = desired
+			changed = true
+		}
+	}
+	if changed {
+		if err := authtoken.Save(file, rows); err != nil {
+			return false, err
+		}
+	}
+	return changed, nil
+}

@@ -1,3 +1,4 @@
+import desktopServiceMethods from '../shared/desktopServices.generated';
 import { managerDispatch, managerReplacementState } from './managerReplacementState';
 import { fleetWorkflowRequest } from './fleetWorkflowService';
 import { workflowSpawn, pinnedWorkflowTemplate } from './fleetWorkflowRuntime';
@@ -650,14 +651,16 @@ export function registerHubCapabilities(): void {
   // Keep the spawn handler at its existing indentation for shared seam changes.
   // prettier-ignore
   registerCapability('agents.spawn', managerDispatch(workflowSpawn(async (params: unknown) => {
-    if ((params as { launchIntegrationId?: unknown } | null)?.launchIntegrationId != null) {
-      throw new Error('Launch integrations currently require a local desktop session');
+    if ((params as { launchIntegrationId?: unknown } | null)?.launchIntegrationId != null && (params as {launchIntegrationGranted?:boolean}).launchIntegrationGranted !== true) {
+      throw new Error('Launch integrations require the server owner');
     }
     const {
       provider: reqProvider,
       transport: reqTransport,
       cwd,
       profileId,
+      launchIntegrationId,
+      launchIntegrationGranted,
       model,
       modelIdentity,
       contextWindow,
@@ -712,6 +715,8 @@ export function registerHubCapabilities(): void {
       transport?: 'pty' | 'stream';
       cwd?: string;
       profileId?: string;
+      launchIntegrationId?: string | null;
+      launchIntegrationGranted?: boolean;
       model?: string;
       /** Canonical suffix-free pair; model remains the old-peer companion. */
       modelIdentity?: string;
@@ -1174,6 +1179,7 @@ export function registerHubCapabilities(): void {
         );
       }
       const sessionId = await spawnManagedAgent({
+        launchIntegrationId,
         provider,
         cwd: spawnCwd,
         // Codex mirrors Claude's two transports: 'stream' spawns headless
@@ -1230,6 +1236,7 @@ export function registerHubCapabilities(): void {
     const transport = resolveTransport('claude', reqTransport, spawnCfg);
     if (transport === 'stream') {
       const sessionId = await spawnManagedAgent({
+        launchIntegrationId,
         provider: 'claude',
         transport: 'stream',
         cwd: spawnCwd,
@@ -1275,6 +1282,7 @@ export function registerHubCapabilities(): void {
       };
     }
     const sessionId = await spawnClaudeAgent({
+        launchIntegrationId,
       cwd: spawnCwd,
       profileId,
       scrubProfileBypass,
@@ -2737,15 +2745,18 @@ export function registerHubCapabilities(): void {
   // ipc.ts) mirrors every change onto the bus as a `fs.changed` event carrying
   // { path, eventType }, which webBackend subscribes to and filters by path.
   registerCapability('fs.watch', (params: unknown) => {
-    const { path: p } = (params ?? {}) as { path?: string };
+    const { path: p, watchId } = (params ?? {}) as { path?: string; watchId?: string };
     if (!p) throw new Error('fs.watch requires a path');
-    startWatch(assertPathAllowed('fs.watch', p, workspaceRoots()));
-    return { ok: true };
+    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128)) throw new Error('Invalid watchId');
+    const path = assertPathAllowed('fs.watch', p, workspaceRoots());
+    startWatch(path, undefined, watchId);
+    return { ok: true, path };
   });
   registerCapability('fs.unwatch', (params: unknown) => {
-    const { path: p } = (params ?? {}) as { path?: string };
+    const { path: p, watchId } = (params ?? {}) as { path?: string; watchId?: string };
     if (!p) throw new Error('fs.unwatch requires a path');
-    stopWatch(assertPathAllowed('fs.unwatch', p, workspaceRoots()));
+    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128)) throw new Error('Invalid watchId');
+    stopWatch(assertPathAllowed('fs.unwatch', p, workspaceRoots()), watchId);
     return { ok: true };
   });
 
@@ -2985,4 +2996,17 @@ export function registerHubCapabilities(): void {
     if (!cwd) throw new Error('git.push requires { cwd }');
     return git.push(guardGitCwd('git.push', cwd)).then((output) => ({ ok: true, output }));
   });
+  // New browser transports retain native service ownership when this desktop
+  // supplies the hub. Lazy import avoids the session-store startup cycle.
+  for (const method of [...desktopServiceMethods.ownerMethods, ...desktopServiceMethods.assetMethods]) {
+    registerCapability(method, async (params: unknown) => {
+      const { nativeDesktopService } = await import('./nativeDesktopServices');
+      return nativeDesktopService(method, params, {
+        workspaceRoots: workspaceRoots(),
+        setupRoots: spawnSetupRoots(),
+        snapshots: claudeSessionStore.getAllSnapshots(),
+      });
+    });
+  }
+
 }

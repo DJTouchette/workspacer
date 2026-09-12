@@ -62,6 +62,8 @@ type Tunables struct {
 	// that powers down ninety seconds before a nightly review fires has not
 	// saved anything; it has just made the review late.
 	JobLookahead time.Duration
+	// KeepJobsAwake protects all scheduled/running jobs when this process can stop its own host.
+	KeepJobsAwake bool
 	// MaxSampleGap is the longest interval between two observations that can
 	// still be treated as continuous. A longer gap means nobody was watching,
 	// and an unwatched stretch cannot be counted toward the dwell — so the
@@ -126,6 +128,7 @@ const (
 	KindFleetUnreadable   = "fleet-unreadable"
 	KindClientActive      = "client-active"
 	KindJobDueSoon        = "job-due-soon"
+	KindJobScheduled      = "job-scheduled"
 	KindJobRunning        = "job-running"
 	KindPeerUnreachable   = "peer-unreachable"
 	KindDwell             = "dwell"
@@ -433,7 +436,7 @@ func clientBlockers(now time.Time, clients []Client, t Tunables) []Blocker {
 func jobBlockers(now time.Time, jobs []Job, t Tunables) []Blocker {
 	var out []Blocker
 	for _, j := range jobs {
-		if j.ActionKind == "shell" {
+		if j.ActionKind == "shell" && !t.KeepJobsAwake {
 			continue
 		}
 		name := j.Name
@@ -446,6 +449,10 @@ func jobBlockers(now time.Time, jobs []Job, t Tunables) []Blocker {
 			continue
 		}
 		if j.NextRun.IsZero() {
+			continue
+		}
+		if t.KeepJobsAwake {
+			out = append(out, Blocker{Kind: KindJobScheduled, ID: j.ID, Detail: "job " + name + " is scheduled; this server must remain awake to run it"})
 			continue
 		}
 		if until := j.NextRun.Sub(now); until <= t.JobLookahead {

@@ -11,13 +11,7 @@ package main
 // changed-file counts and the MCP `project_status` tool all went blank on a
 // remote worker. Same methods, same wire shapes, second provider.
 //
-// WHAT IS DELIBERATELY ABSENT: git.stage, git.unstage, git.commit, git.push
-// (and git.commitDiff / git.commitNumstat, which are read-only but were not
-// asked for). This provider runs on an internet-facing box; a read-only surface
-// cannot mutate or publish a repository, and a bus token that reaches this
-// daemon must not be able to commit from infrastructure the user is not sitting
-// at. Those four stay declared gaps in headless_completeness_test.go so the
-// Review pane's buttons fail with a real message rather than silently.
+// Review mutations and commit-history reads are implemented in gitactions.go.
 //
 // The confinement is the point of the port, not a decoration on it. Every entry
 // point takes a caller-supplied `cwd`, and `git.diff` additionally takes a

@@ -47,3 +47,6 @@ apps/desktop/test-results/
 .recon/
 .rivet/embeddings/
 .rivet/recon/
+
+# Built shared headless desktop service companion
+/services/hub/desktop-host.cjs

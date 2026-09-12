@@ -111,6 +111,8 @@ export interface UpdateStatus {
 }
 
 export interface ElectronAPI extends RoutingAPI {
+  /** Browser/remote transport for cached display assets; native shells use their protocols. */
+  getUiAsset?: (kind: 'font' | 'icon', file: string) => Promise<{ dataBase64: string; mime: string; family?: string }>;
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
 
@@ -714,6 +716,7 @@ export interface ElectronAPI extends RoutingAPI {
    *  `brief.archive.md`. Resolves with the lane re-read from disk. */
   moveBriefCard?: (req: BoardMoveRequest) => Promise<BoardLane>;
   /** Open a file with the OS default handler via a file:// URL (browser for .html). */
+  filePickerList?: (path?: string) => Promise<{path:string;parent:string;home:string;entries:Array<{name:string;path:string;isDir:boolean}>}>;
   fileOpenExternal: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Reveal a file in the OS file manager. No-ops ({ok:false}) on web. */
   fileShowInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;

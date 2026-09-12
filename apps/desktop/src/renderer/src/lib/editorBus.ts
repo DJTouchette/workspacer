@@ -10,7 +10,9 @@ export const EDITOR_OPEN_FILE_EVENT = 'editor:open-file';
 
 export interface EditorOpenTarget {
   /** Absolute path of the file to edit. */
-  path: string;
+  path?: string;
+  /** Open a server directory in the editor without selecting a file. */
+  directory?: string;
   /** Repo/working directory the file belongs to (used as the pane's cwd). */
   cwd?: string;
 }

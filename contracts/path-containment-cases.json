@@ -3609,7 +3609,8 @@
       "params": {},
       "rootSet": "workspace",
       "providers": [
-        "main"
+        "main",
+        "brain"
       ]
     },
     {
@@ -3618,7 +3619,8 @@
       "params": {},
       "rootSet": "workspace",
       "providers": [
-        "main"
+        "main",
+        "brain"
       ]
     },
     {

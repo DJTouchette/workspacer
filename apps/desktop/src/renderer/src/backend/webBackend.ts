@@ -1,4 +1,4 @@
-import { MANAGER_REPLACEMENT_UNAVAILABLE } from '../../../main/shared/managerReplacement';
+import { requestOpenInEditor } from '../lib/editorBus';
 import { TASK_INSPECTOR_UNAVAILABLE } from '../../../main/shared/dispatchHistory';
 import { REQUEST_CAPTURE_UNAVAILABLE } from '../../../main/shared/managerRequests';
 import { routingAPI } from '../../../main/shared/routingPreferences';
@@ -17,9 +17,9 @@ import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/sha
  * provider model/detection discovery, terminal-exit + library-change events) are
  * wired; the remainder returns a safe default and warns once, to be filled in as
  * the hub RPC surface widens (Phase 3). Each remaining stub is marked `HUB-TODO`.
- * The still-stubbed surface is host-trusted/local-only work — plugin
- * install/inspect, pane-token minting, native OS dialogs/notifications, the quit
- * handshake — that a web/remote viewer can't perform against someone else's host.
+ * Plugin administration uses the hub's guarded HTTP routes. Remaining gaps
+ * include both native facilities and server workflows not yet exposed remotely;
+ * scripts/web-capability-audit.mjs inventories them against the complete type.
  */
 
 import type { ElectronAPI, SessionListEntry } from '../types/electron';
@@ -33,6 +33,9 @@ import type {
   RecentAgentSession,
 } from '../../../main/shared/ipcTypes';
 import { installMachinePower } from './machinePower';
+import { createWebPluginAdmin } from './webPluginAdmin';
+import { desktopServices } from './desktopServices';
+import { browserAssets } from './browserAssets';
 import { HubBusClient, type HubEventEnvelope } from './hubBusClient';
 import { mergeConversationWindow } from '../../../main/shared/mergeConversationWindow';
 import { mergeSelectionSlice, readSelectionSlice } from '../../../main/shared/canonicalSelection';
@@ -279,14 +282,14 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
   return { foldSparse, foldConversation, seedFull, noteLaunch };
 }
 
-export function createPtyStreams(client: HubBusClient) {
+export function createPtyStreams(client: HubBusClient, qualify: (sessionId: string, method: string) => string = (_id, method) => method) {
   const streams = new Map<string, PtyStream>();
 
   const ensure = (sessionId: string): PtyStream => {
     const existing = streams.get(sessionId);
     if (existing) return existing;
     // attachTerminal makes claudemon replay its ring buffer (the current screen).
-    const attach = () => client.call('sessions.attachTerminal', { sessionId }).catch(() => {});
+    const attach = () => client.call(qualify(sessionId, 'sessions.attachTerminal'), { sessionId }).catch(() => {});
     const entry: PtyStream = {
       viewers: 0,
       reprimers: new Set(),
@@ -294,7 +297,7 @@ export function createPtyStreams(client: HubBusClient) {
       // The hub lease expires after ~20s; refresh well inside that window.
       keepalive: setInterval(() => {
         client
-          .call<{ ok?: boolean }>('sessions.terminalKeepalive', { sessionId })
+          .call<{ ok?: boolean }>(qualify(sessionId, 'sessions.terminalKeepalive'), { sessionId })
           // ok:false means the hub already swept our lease — the forwarder is
           // gone and no bytes are coming, even though the socket is healthy and
           // nothing will fire onReconnect. Re-attach; the ring-buffer replay
@@ -356,7 +359,7 @@ export function createPtyStreams(client: HubBusClient) {
       if (entry.viewers > 0) return;
       clearInterval(entry.keepalive);
       streams.delete(sessionId);
-      client.call('sessions.detachTerminal', { sessionId }).catch(() => {});
+      client.call(qualify(sessionId, 'sessions.detachTerminal'), { sessionId }).catch(() => {});
     };
   };
 
@@ -371,10 +374,15 @@ export function createPtyStreams(client: HubBusClient) {
   return { stream, reprime, reprimeAll };
 }
 
-export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
+export function createWebBackend(token: string, busUrl?: string, options: { nativeAssets?: boolean } = {}): ElectronAPI {
   const client = new HubBusClient(token, busUrl);
   client.start();
   installMachinePower(client, busUrl);
+  const assets = browserAssets((method, params, timeout) => client.call(method, params, timeout), options.nativeAssets);
+  const applyAssets = (config: AppConfig): AppConfig => {
+    void assets.ensureFont(config.ui?.fontFamily).catch((error) => console.warn('Could not load the configured font:', error));
+    return config;
+  };
 
   // Base for the hub's HTTP routes (e.g. /plugins/settings). The web build is
   // served by the hub, so an empty base resolves relative to the page origin;
@@ -403,7 +411,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // Refcounted live PTY streams (see createPtyStreams). `reprime` fires the
   // debounced "re-attach + replay" hooks for a session so a freshly-shown pane
   // repaints; `reprimeAll` does it for every live stream.
-  const { stream: streamPty, reprime, reprimeAll } = createPtyStreams(client);
+  const { stream: streamPty, reprime, reprimeAll } = createPtyStreams(client, (id, method) => qualify(id, method));
 
   // Federation: which peer hub each remote session lives on, learned from
   // stamped agent.snapshot envelopes and peer-fleet seeds; plus the last
@@ -749,12 +757,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Worktree creation shells out on the HOST; the web mirror can't. The
     // spawn dialog hides the toggle when these report not-a-repo/unavailable.
     // No owner lifecycle/worktree capability on the bus, including old/headless hosts.
-    providerReadiness: async () => ({ state: 'unsupported' as const }),
-    agentRuntimeStatus: async () => ({ claudemon: 'unknown', hub: 'unknown', facade: 'unknown' }),
-    worktreeInfo: () => Promise.resolve({ isRepo: false }),
-    worktreeCreate: () =>
-      Promise.resolve({ ok: false, error: 'not available over the hub bridge' }),
-    worktreeRemove: () => Promise.resolve({ ok: false, skipped: true }),
+    ...desktopServices((method, params, timeout) => client.call(method, params, timeout)),
+    ...assets.api,
 
     // In-app updates are a desktop-shell concern; the web mirror has no feed.
     updatesGetStatus: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),
@@ -795,52 +799,60 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // that is about to mount already has the truth — the caller's signature is
     // unchanged and every other consumer reads it off the snapshot, where the
     // pills already look.
-    spawnClaude: (opts) =>
-      opts.launchIntegrationId != null
-        ? Promise.reject(new Error('Launch integrations currently require a local desktop session'))
-        : client
-            .call<{
-              sessionId: string;
-              fullAccess?: boolean;
-              escalationScrubbed?: string[];
-            }>('agents.spawn', opts)
-            .then((r) => {
-              // A hub that predates the stamp sends no `fullAccess`. Absent is NOT
-              // false — inventing "ask mode" there is the very bug this fixes — so
-              // record nothing and let the pill say Unknown.
-              if (typeof r.fullAccess === 'boolean') {
-                noteLaunch(r.sessionId, {
-                  permissionMode: launchPermissionMode(
-                    opts.provider,
-                    r.fullAccess,
-                    opts.permissionMode,
-                  ),
-                  fullAccess: r.fullAccess,
-                  escalationScrubbed: r.escalationScrubbed,
-                });
-              }
-              return r.sessionId;
-            }),
-    // The bus has no config-changed event yet, so the web mirror keeps the
-    // old behaviour: its snapshot refreshes on its own saves and on reload.
-    onConfigChanged: () => () => {},
+    spawnClaude: async (opts) => {
+      const target=opts.targetHub?.trim();
+      if(target&&!/^[A-Za-z0-9_-]+$/.test(target))throw new Error('Invalid peer name');
+      if(target&&opts.launchIntegrationId)throw new Error('Launch integrations must be selected on the execution host');
+      const {targetHub:_targetHub,...local}=opts;
+      // Match native peer dispatch: local profile/facade/worktree settings
+      // belong to this host and must not be applied to a different machine.
+      const payload=target ? {provider:opts.provider,transport:opts.transport,cwd:opts.cwd,model:opts.model,modelIdentity:opts.modelIdentity,contextWindow:opts.contextWindow,effort:opts.effort,permissionMode:opts.permissionMode,label:opts.label,cols:opts.cols,rows:opts.rows,message:opts.message} : local;
+      const result=await client.call<{sessionId:string;fullAccess?:boolean;escalationScrubbed?:string[];messageQueued?:boolean;messageError?:string}>(target?`hub:${target}/agents.spawn`:'agents.spawn',payload,6*60_000);
+      if(!result?.sessionId)throw new Error('Spawn returned no session identity');
+      if(target)sessionHub.set(result.sessionId,target);
+      if(typeof result.fullAccess==='boolean')noteLaunch(result.sessionId,{permissionMode:launchPermissionMode(opts.provider,result.fullAccess,opts.permissionMode),fullAccess:result.fullAccess,escalationScrubbed:result.escalationScrubbed});
+      if(target&&opts.message?.trim()&&result.messageQueued!==true&&!result.messageError){
+        await client.call(`hub:${target}/agents.sendMessage`,{sessionId:result.sessionId,text:opts.message});
+      }
+      return result.sessionId;
+    },
+    // Observe edits from another client or a local config writer, including
+    // older hubs. Reads are passive for the server's idle policy.
+    onConfigChanged: (callback) => {
+      let live = true, busy = false, previous = '';
+      const refresh = async () => {
+        if (!live || busy) return;
+        busy = true;
+        try {
+          const config = await client.call<AppConfig>('config.get', {});
+          const next = JSON.stringify(config);
+          if (live && next !== previous) { previous = next; callback(applyAssets(config)); }
+        } catch { /* Preserve the last document and retry after reconnection. */ }
+        finally { busy = false; }
+      };
+      const timer = setInterval(() => { void refresh(); }, 1000);
+      const off = client.onReconnect(() => { void refresh(); });
+      void refresh();
+      return () => { live = false; clearInterval(timer); off(); };
+    },
     claudeListModels: () => client.call('claude.listModels', {}),
     // Auto-titling runs a local headless `claude --print` in the desktop main
     // process; over the bus there is no such capability. Null = leave the name
     // alone — the desktop client titles the agent and the layout syncs it here.
-    agentSuggestTitle: async () => null,
     // Workflow-run transcripts still live in local Claude artifact files, but
     // plain provider-native subagent rows (runId null) can be read through
     // claudemon and folded client-side.
     workflowAgentTranscript: async (sessionId, runId, agentId) => {
+      if (runId !== null) return client.call(qualify(sessionId, 'desktop.workflowAgentTranscript'), { sessionId, runId, agentId });
       const conv = await readProviderSubagentConversation(sessionId, runId, agentId);
       if (!conv) return null;
       return conv
         .map((turn) => ({ role: turn.role, text: transcriptLineText(turn) }))
         .filter((turn) => turn.text.length > 0);
     },
-    workflowAgentConversation: (sessionId, runId, agentId) =>
-      readProviderSubagentConversation(sessionId, runId, agentId),
+    workflowAgentConversation: (sessionId, runId, agentId) => runId !== null
+      ? client.call(qualify(sessionId, 'desktop.workflowAgentConversation'), { sessionId, runId, agentId })
+      : readProviderSubagentConversation(sessionId, runId, agentId),
     // Live per-provider discovery over the bus (providers.* capabilities): the
     // managed provider's model catalog and PATH-detection status, so the web
     // Spawn dialog matches the desktop instead of falling back to free-text.
@@ -848,7 +860,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     providerCheckAll: () => client.call('providers.checkAll', {}),
     // Keep-warm heartbeats live in the desktop's claudemon; not exposed over
     // the hub bus (settings-only surface), so the web client shows none.
-    keepWarmHeartbeats: async () => [],
     // The client is connected to the selected hub; never use local IPC here.
     usageReport: () => client.call<UsageReportWire>('usage.report', {}).catch(() => null),
     // The pacing schedule is hub-owned state on the SELECTED hub, so the web
@@ -866,27 +877,21 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
           ok: false as const,
           error: err instanceof Error ? err.message : String(err),
         })),
-    managerRequestPrepare: async () => ({
-      available: false as const,
-      reason: 'Automatic request capture is unavailable on remote/headless connections.',
-    }),
     claudeMessage: (sessionId, text, requestId) => {
-      // No remote inbox authority exists. Do not silently strip a supplied
-      // request identity and send its text as an ordinary bus message.
       if (requestId !== undefined)
-        return Promise.resolve({ ok: false, requestId, mode: REQUEST_CAPTURE_UNAVAILABLE });
+        return client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'desktop.managerRequestSend'), { sessionId, requestId }, 60_000);
       return client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,
         text,
       });
     },
     claudeSetPermissionMode: (sessionId, mode) =>
-      client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', {
+      client.call<{ ok: boolean; mode?: string; error?: string }>(qualify(sessionId, 'claude.setPermissionMode'), {
         sessionId,
         mode,
       }),
     claudeSetEffort: (sessionId, effort) =>
-      client.call<{ ok: boolean; effort?: string; error?: string }>('claude.setEffort', {
+      client.call<{ ok: boolean; effort?: string; error?: string }>(qualify(sessionId, 'claude.setEffort'), {
         sessionId,
         effort,
       }),
@@ -905,20 +910,17 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         modelIdentity,
         contextWindow,
       }),
-    managerReplacement: async () => ({
-      available: false,
-      operations: [],
-      error: MANAGER_REPLACEMENT_UNAVAILABLE,
-    }),
+    managerReplacement: (request) => client.call('desktop.managerReplacement', {request, bindings:[...viewerSessions]}, 60_000),
     claudeHandoffBrief: (sessionId) =>
       client.call<{ ok: boolean; markdown?: string; path?: string; error?: string }>(
-        'claude.handoffBrief',
+        qualify(sessionId, 'claude.handoffBrief'),
         { sessionId },
       ),
     claudeHandoffAgentBrief: (sessionId) =>
       client.call<{ ok: boolean; path?: string; fallback?: boolean; error?: string }>(
-        'claude.handoffAgentBrief',
+        qualify(sessionId, 'claude.handoffAgentBrief'),
         { sessionId },
+        180_000,
       ),
     claudeApprove: (sessionId, decision, reason) =>
       client
@@ -930,7 +932,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         .then(() => {}),
     claudeResize: (sessionId, cols, rows) => {
       reprime(sessionId);
-      return client.call<void>('sessions.terminalResize', { sessionId, cols, rows }).then(() => {});
+      return client.call<void>(qualify(sessionId, 'sessions.terminalResize'), { sessionId, cols, rows }).then(() => {});
     },
     claudeSignal: (sessionId, signal) =>
       client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal }).then(() => {}),
@@ -958,10 +960,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       return Promise.resolve();
     }, // stream lifetime owned by onClaudeOutput's teardown
     claudeGate: (sessionId, on) =>
-      client.call<void>('claude.gate', { sessionId, on }).then(() => {}),
+      client.call<void>(qualify(sessionId, 'claude.gate'), { sessionId, on }).then(() => {}),
     claudeWrite: (viewerKey, data) => {
       client
-        .call('sessions.terminalInput', { sessionId: sessionFor(viewerKey), data })
+        .call(qualify(sessionFor(viewerKey), 'sessions.terminalInput'), { sessionId: sessionFor(viewerKey), data })
         .catch(() => {});
     },
     onClaudeOutput: (viewerKey, callback) => streamPty(sessionFor(viewerKey), callback),
@@ -981,31 +983,54 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         'fs.listEntries',
         { path: dirPath },
       ),
-    // Best effort on web: the file lives on the host, so a file:// URL only
-    // works when the browser runs on the same machine. Reveal-in-folder can't
-    // work at all remotely.
-    fileOpenExternal: (filePath) => {
-      window.open(`file://${filePath}`, '_blank');
-      return Promise.resolve({ ok: true });
+    fileOpenExternal: async (filePath) => {
+      try {
+        const file=await client.call<{name:string;dataBase64:string}>('desktop.readFileBytes',{path:filePath});
+        const bytes=Uint8Array.from(atob(file.dataBase64),c=>c.charCodeAt(0));
+        const url=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
+        const link=document.createElement('a');link.href=url;link.download=file.name;document.body.appendChild(link);link.click();link.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),60_000);
+        return {ok:true};
+      } catch(error) {return {ok:false,error:error instanceof Error?error.message:String(error)};}
     },
-    fileShowInFolder: () => {
-      warnOnce('fileShowInFolder');
-      return Promise.resolve({ ok: false, error: 'not available on web' });
+    fileShowInFolder: async (filePath) => {
+      try {
+        const folder=filePath.replace(/[/\\][^/\\]*$/, '') || '/';
+        await client.call('fs.listEntries',{path:folder});
+        requestOpenInEditor({path:filePath,cwd:folder});
+        return {ok:true};
+      } catch(error) {return {ok:false,error:error instanceof Error?error.message:String(error)};}
     },
 
     // Start the host-side watch, then subscribe to the bus topic that watch
     // publishes (fs.changed, payload { path, eventType }) and filter by path.
     // Unsub stops the watch and drops the bus subscription.
     watchFile: (path, onChange) => {
-      client.call('fs.watch', { path }).catch(() => {});
+      const watchId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      let canonical = path, live = true;
+      let pending: Promise<{ path?: string }> | undefined;
+      const start = () => {
+        if (!live || pending) return;
+        pending = client.call<{ path?: string }>('fs.watch', { path, watchId });
+        void pending.then((result) => { if (result?.path) canonical = result.path; })
+          .catch(() => {})
+          .finally(() => { pending = undefined; });
+      };
       const off = client.subscribe('fs.changed', (ev) => {
         const info = (ev.data ?? {}) as { path?: string; eventType?: 'change' | 'rename' };
-        if (info.path === path && info.eventType)
+        if (live && (info.path === canonical || info.path === path) && info.eventType)
           onChange({ path: info.path, eventType: info.eventType });
       });
+      const reconnect = client.onReconnect(start);
+      const renewal = setInterval(start, 60_000);
+      start();
       return () => {
+        live = false;
+        clearInterval(renewal); reconnect();
         off();
-        client.call('fs.unwatch', { path }).catch(() => {});
+        const stop = () => { void client.call('fs.unwatch', { path: canonical, watchId }).catch(() => {}); };
+        if (pending) void pending.finally(stop).catch(() => {});
+        else stop();
       };
     },
 
@@ -1054,10 +1079,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     gitPush: (cwd) => client.call<{ output: string }>('git.push', { cwd }).then((r) => r.output),
 
     // ── Config ───────────────────────────────────────────────────────────
-    getConfig: () => client.call<AppConfig>('config.get', {}),
-    reloadConfig: () => client.call<AppConfig>('config.reload', {}),
+    getConfig: () => client.call<AppConfig>('config.get', {}).then(applyAssets),
+    reloadConfig: () => client.call<AppConfig>('config.reload', {}).then(applyAssets),
     getConfigPath: () => client.call<string>('config.getPath', {}),
-    saveConfig: (partial: AppConfigPartial) => client.call<AppConfig>('config.save', partial),
 
     // ── Sessions / analytics / layouts ───────────────────────────────────
     listSessions: () => client.call<SessionListEntry[]>('sessions.list', {}),
@@ -1074,12 +1098,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // ── Claude discovery / profiles ──────────────────────────────────────
     claudeListSessionsForDir: (cwd) => client.call('claude.sessionsForDir', { cwd }),
     claudeProfilesList: () => client.call<ClaudeProfile[]>('claude.profiles.list', {}),
-    claudeProfilesAdd: (name, configDir, extraArgs, mcpItemIds) =>
-      client.call<ClaudeProfile>('claude.profiles.add', { name, configDir, extraArgs, mcpItemIds }),
-    claudeProfilesUpdate: (id, updates) =>
-      client.call<ClaudeProfile>('claude.profiles.update', { id, updates }),
-    claudeProfilesRemove: (id) =>
-      client.call<void>('claude.profiles.remove', { id }).then(() => {}),
     // The SINGULAR call is the full snapshot — it is what seeds the history
     // that later bounded windows splice onto, so it must not go through the
     // sparse overlay.
@@ -1147,11 +1165,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Peers are configured on the hub MACHINE (peers.json + hub restart);
     // the web mirror can see the fleet but not edit the links. Null tells the
     // settings UI to render read-only.
-    federationPeersConfig: async () => null,
-    federationSavePeersConfig: async () => ({
-      ok: false,
-      error: 'peers are configured on the hub machine, not from the web client',
-    }),
+    federationPeersConfig: () => client.call('federation.peersConfig', {}),
+    federationSavePeersConfig: (peers) => client.call('federation.savePeersConfig', {peers}),
     federationPeers: () =>
       client
         .call<Array<{ name: string; connected: boolean; lastSeen?: number }>>(
@@ -1298,12 +1313,13 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       const permissions = await client
         .call<{ scope?: string; canManageTokens?: boolean }>('remote.pairingInfo')
         .catch(() => null);
+      const sharing = await client.call<{enabled:boolean;canToggleSharing:boolean}>('remote.sharingInfo',{}).catch(()=>null);
       const scope = permissions?.scope;
       const pairingScope =
         scope === 'operator' || scope === 'triage' || scope === 'view' ? scope : undefined;
       const base = hubOrigin;
       return {
-        enabled: true,
+        enabled: sharing?.enabled ?? true,
         token,
         remoteUrl: `${base}/m`,
         appUrl: `${base}/app/`,
@@ -1311,8 +1327,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         desktopBus: false,
         pairingScope,
         canManageTokens: permissions?.canManageTokens === true,
-        canToggleSharing: false,
+        canToggleSharing: sharing?.canToggleSharing === true,
       };
+    },
+    tailscaleGetInfo: () => client.call('remote.tailscaleInfo',{}),
+    tailscaleSetServe: (enabled) => client.call('remote.tailscaleServe',{enabled},130_000),
+    setRemoteShare: async (enabled) => {
+      const state = await client.call<{enabled:boolean}>('remote.setSharing',{enabled},130_000);
+      return {...state,token,remoteUrl:hubOrigin+'/m',appUrl:hubOrigin+'/app/',busUrl:hubOrigin.replace(/^http/,'ws')+'/bus',desktopBus:false};
     },
     remoteTokensList: () => client.call('remote.tokensList'),
     remoteTokenGetOrCreate: (scope, label) =>
@@ -1320,19 +1342,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     remoteTokenRevoke: (token) => client.call('remote.tokenRevoke', { token }),
     // No host PATH to scan from a browser — report nothing so tool gates
     // never show a false "missing" notice on the web mirror.
-    toolsStatus: () => Promise.resolve([]),
     // Custom UI fonts live on the host filesystem; the web mirror can neither
     // open the native dialog nor serve workspacer-font:// — bundled fonts only.
-    installUiFont: () => Promise.resolve(null),
-    listUiFonts: () => Promise.resolve([]),
     // Host-only: the download writes into the desktop's config dir, and the
     // workspacer-icon:// protocol that serves it only exists there. The web
     // client still renders a derived mark, so nothing is missing visually.
-    downloadProjectIcon: () =>
-      Promise.resolve({
-        ok: false as const,
-        error: 'Icons can only be downloaded in the desktop app',
-      }),
     // The plugin catalogue. Not host-owned: main's IPC handler is itself a thin
     // proxy over GET /plugins + GET /plugins/tokens, and this client holds the
     // same bearer token, so it asks the hub directly. Without it `/app` (and the
@@ -1391,16 +1405,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         .call<void>('__publish', event)
         .then(() => {})
         .catch(() => {}),
-    installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    inspectPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    checkPluginUpdates: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    listExamplePlugins: () => {
-      warnOnce('listExamplePlugins');
-      return Promise.resolve([]);
-    },
-    installExamplePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    removePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
-    setPluginEnabled: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
+    ...createWebPluginAdmin(hubHttpBase, token),
     // Pane tokens are minted over the hub's guarded route, exactly as the
     // desktop does it — this client holds a bearer token and already uses it for
     // the sibling /plugins/* routes. It stopped being optional when the shared
@@ -1491,6 +1496,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No native OS dialog over the bus (it'd open on the host, not the viewer).
     // pickFolder opens our in-app host filesystem browser (WebFolderPicker,
     // mounted in App) by dispatching an event it resolves; fsListDir backs it.
+    filePickerList: (path) => client.call('desktop.filePickerList',{path}),
     fsListDir: (p) => client.call('fs.listDir', { path: p }),
     pickFolder: (defaultPath) =>
       new Promise<string | null>((resolve) => {
@@ -1508,7 +1514,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // native dialog and its real host paths still win there. Desktop
     // REMOTE-CLIENT mode does reach it, and must: its host is not the agent's.
     pickFiles: (_defaultPath?: string, opts?: { attachment?: boolean; sessionId?: string }) =>
-      opts?.attachment ? pickAndUpload(opts.sessionId) : refuseHostFilePick(),
+      opts?.attachment ? pickAndUpload(opts.sessionId) : new Promise<string[]>((resolve) => {window.dispatchEvent(new CustomEvent('web:pick-files',{detail:{defaultPath:_defaultPath,resolve:(paths:string[]|null)=>resolve(paths??[])}}));}),
     // Land bytes from this client on the agent's machine. Qualified for
     // federation exactly like agents.sendMessage, so an attachment for a
     // session living on a peer hub is written by that peer's own hub — the
@@ -1528,17 +1534,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // The host's clipboard is not the one the browser user pasted from, so
     // there is nothing to spill. null sends the paste handler down the upload
     // path with the bytes the browser itself gave it.
-    taskInspectorEdit: async () => ({
-      ok: false,
-      code: 'unavailable',
-      error: TASK_INSPECTOR_UNAVAILABLE,
-    }),
-    taskInspectorOpen: async () => ({ ok: false, error: TASK_INSPECTOR_UNAVAILABLE }),
-    dispatchHistoryRead: async () => ({
-      available: false,
-      reason:
-        'Recent agents history is available only on the originating local desktop; remote/headless collection is unsupported.',
-    }),
     saveClipboardImage: () => Promise.resolve(null),
     importChromeCookies: () =>
       Promise.resolve({ imported: 0, skipped: 0, errors: ['not available on web'] }),
@@ -1609,15 +1604,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     installCli: () => {
       warnOnce('installCli');
       return Promise.resolve({ ok: false, message: 'not available on web' });
-    },
-    // Model-rate overrides live in a host file; the web client can't read/write it.
-    pricingGetRates: () => {
-      warnOnce('pricingGetRates');
-      return Promise.resolve({ defaults: {}, overrides: {} });
-    },
-    pricingSaveOverrides: () => {
-      warnOnce('pricingSaveOverrides');
-      return Promise.resolve({ ok: false });
     },
   };
 

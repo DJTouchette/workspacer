@@ -2,6 +2,8 @@ import { dialog, type BrowserWindow } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { FONT_EXT, customFontFamily } from '../shared/customFonts';
+export { customFontFamily } from '../shared/customFonts';
 
 /**
  * User-uploaded UI fonts. A font file picked in Settings → Appearance is
@@ -12,7 +14,6 @@ import * as os from 'os';
  * resolves by name in the renderer (lib/uiFont.ts).
  */
 
-const FONT_EXT = /\.(ttf|otf|woff2?)$/i;
 
 export function customFontsDir(): string {
   return path.join(os.homedir(), '.workspacer', 'fonts');
@@ -24,16 +25,6 @@ let protocolMap: Map<string, string> | null = null;
 /** Display/family name for an installed file: extension, variable-font axis
  *  brackets, and common style suffixes stripped; separators become spaces.
  *  "SpaceGrotesk[wght].ttf" → "SpaceGrotesk", "My_Font-Regular.otf" → "My Font". */
-export function customFontFamily(file: string): string {
-  return (
-    file
-      .replace(FONT_EXT, '')
-      .replace(/\[[^\]]*\]/g, '')
-      .replace(/[-_. ]?(VariableFont[^.]*|Variable|Regular|VF)$/i, '')
-      .replace(/[-_.]+/g, ' ')
-      .trim() || file
-  );
-}
 
 function formatOf(file: string): string {
   const ext = (file.split('.').pop() || '').toLowerCase();

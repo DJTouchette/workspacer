@@ -154,3 +154,31 @@ func TestTokenRevokeAcceptsATokenThatStartsWithADash(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenFacadeAuthorityPreservesCredentialAndRejectsPairings(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "tokens.json")
+	rec, err := authtoken.Mint(file, authtoken.ScopeOperator, "mcp-service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []string{"true", "false"} {
+		if code := runTokenFacadeAuthority([]string{"--tokens-file", file, "--label", "mcp-service", "--enabled", enabled}); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		rows, err := authtoken.Load(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Token != rec.Token || rows[0].FacadeAuthority != (enabled == "true") {
+			t.Fatal("grant changed credential or did not persist")
+		}
+	}
+	for _, label := range []string{"session:manager", "Remote Control: operator"} {
+		if _, err := authtoken.Mint(file, authtoken.ScopeOperator, label); err != nil {
+			t.Fatal(err)
+		}
+		if runTokenFacadeAuthority([]string{"--tokens-file", file, "--label", label, "--enabled", "true"}) == 0 {
+			t.Fatal("granted a non-infrastructure record")
+		}
+	}
+}

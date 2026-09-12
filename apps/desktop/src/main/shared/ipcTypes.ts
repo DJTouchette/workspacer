@@ -92,6 +92,9 @@ export interface RemoteTokenRecord {
    *  spawn's skipPermissions is otherwise clamped off. Absent = no grant.
    *  TWIN: authtoken.Record.YoloAllowed. */
   yoloAllowed?: boolean;
+  /** Owner-provisioned MCP service identity delegation. Never a pairing grant.
+   * TWIN: authtoken.Record.FacadeAuthority. */
+  facadeAuthority?: boolean;
   /** Capability methods a `provider`-scope token may REGISTER as the provider
    *  of (the hub's cn.provides second source). Written by the Go CLI, never by
    *  the desktop — but PRESERVED here, because normalizeRecord rebuilds every

@@ -67,6 +67,8 @@ linux:
       to: hub/workspacer
     - from: ../../services/claudemon/target/release/claudemon
       to: hub/claudemon
+    - from: dist/headless/desktop-host.cjs
+      to: hub/desktop-host.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -90,6 +92,8 @@ win:
       to: hub/workspacer.exe
     - from: ../../services/claudemon/target/release/claudemon.exe
       to: hub/claudemon.exe
+    - from: dist/headless/desktop-host.cjs
+      to: hub/desktop-host.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -113,6 +117,8 @@ mac:
       to: hub/workspacer
     - from: ../../services/claudemon/target/release/claudemon
       to: hub/claudemon
+    - from: dist/headless/desktop-host.cjs
+      to: hub/desktop-host.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

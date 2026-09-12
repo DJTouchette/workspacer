@@ -82,16 +82,10 @@ it('click expands the production Fleet card through the bridged preload and only
   expect(screen.queryByTestId('fleet-inline-review')).toBeNull();
 });
 it('shows backend and missing metadata states without a live git fallback', () => {
-  // The web backend has no review transport.  A desktop whose older preload
-  // lacks the optional methods must preserve that absence instead of trying a
-  // bus, filesystem, or remote fallback.
-  window.electronAPI = createBridgedBackend(
-    { platform: 'linux' } as Parameters<typeof createBridgedBackend>[0],
-    'token',
-    'ws://local/bus',
-  );
+  // A genuinely absent API still has an explicit unavailable state.
+  window.electronAPI = {} as typeof window.electronAPI;
   const view = mount();
-  expect(screen.getByText(/Remote\/headless review is not supported/)).toBeTruthy();
+  expect(screen.getByText(/selected host does not provide review evidence/)).toBeTruthy();
   view.unmount();
   window.electronAPI = { fleetReviewRead: vi.fn() } as unknown as typeof window.electronAPI;
   mount('');

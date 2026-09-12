@@ -245,6 +245,10 @@ var claudemonCallers = []callerScan{
 		what: "the 5h-window warmer: reads /usage for Claude's default login, /usage/report for Codex's on-disk window, and posts /heartbeat", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 3,
 	},
 	{
+		file: "apps/desktop/src/main/services/nativeDesktopServices.ts", server: "claudemon-api",
+		what: "native-hosted browser heartbeat history", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 1,
+	},
+	{
 		file: "apps/desktop/src/main/services/directCompletion.ts", server: "claudemon-api",
 		what: "agent auto-titling through POST /oneshot", res: []*regexp.Regexp{tsClaudemonBaseRe}, floor: 1,
 	},

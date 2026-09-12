@@ -61,7 +61,7 @@ function FleetReviewBody({
   const unavailable = forgotten
     ? 'Review data forgotten.'
     : unsupported
-      ? 'Review evidence is available only on the originating local desktop. Remote/headless review is not supported.'
+      ? 'The selected host does not provide review evidence. Upgrade that host to inspect captured changes.'
       : !host?.sessionId
         ? 'The owning manager session is unavailable.'
         : !evidenceId

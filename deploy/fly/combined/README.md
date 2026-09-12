@@ -178,3 +178,68 @@ only for spawn folder/model discovery; general content access remains confined
 to active workspaces. This update includes the brain binary for that fix.
 Idle shutdown remains in observation mode. Manual Stop/Wake remains available
 in the mobile top bar for operator pairings.
+
+### Idle stop and web audit update, 2026-09-12
+
+Automatic idle stop is now **enabled**, with the existing 15-minute quiet
+period and 30-second sampling. Live work, pending attention and unknown state
+continue to block stopping. Recent client input also defers the quiet period.
+
+Current image: `registry.fly.io/workspacer-node:web-parity-20260912`, digest
+`sha256:84619a2c8c5c86f0036438ba5d48c53b0925e0c51d15f9d7ca79d44f8381aa9c`.
+It adds web plugin administration by replacing only browser assets on the
+policy-only `idle-stop-20260912` layer. Hub/brain/worker binaries remain those
+from `mobile-spawn-20260911-v2`.
+
+The isolated supervisor sets idle mode from `/opt/combined/power.json`, after
+clearing its environment; setting a Fly environment variable alone does not
+override this policy. For a future policy change, build a layer with:
+
+```sh
+python3 deploy/fly/combined/build-idle-mode.py BASE_IMAGE NEW_IMAGE APP MACHINE stop
+```
+
+Use `observe` or `off` instead to change that policy. The builder verifies the
+app/machine identity and preserves timeout/wake configuration. For a web-only
+code update, `bash deploy/fly/combined/build-web-upgrade.sh BASE_IMAGE NEW_IMAGE`
+builds and replaces only the browser bundle. Publish the resulting image and
+use `deploy-upgrade.py ... --restart-idle` to apply it after the live-work guard.
+
+`verify-web-capabilities.py APP MACHINE --expect-plugin-admin` checks the served
+plugin bundle, reads actual method registrations, and runs an allowlist of
+read-only probes without printing credentials or application content. See the
+[web parity audit](../../../docs/web-parity-audit-2026-09-12.md) for the remaining
+functional gaps; browser and headless desktop parity is not complete.
+
+### Desktop parity upgrade
+
+`build-parity-upgrade.sh CURRENT_IMAGE OUTPUT_IMAGE` preserves the existing
+isolated supervisor, identities, persistent volume and power policy while shipping
+current hub/brain/MCP/claudemon binaries, `desktop-host.cjs`, the web app and bundled
+examples. The companion requires Node.js **22.13+** (the image build checks this).
+The first-run defaults are the same webview-only editor and timeline as native;
+existing plugin sets are preserved.
+
+The root network helper exposes only this node's fixed Tailscale HTTPS proxy over
+a socket owned by hub UID 10002, mode 0600, plus a random private credential
+stored under the protected hub config directory. It runs with the supervisor's existing
+capability-dropping launcher; the parent sets socket ownership. Worker UID 10001
+cannot access it or the root Tailscale socket. The proxy's enabled state persists
+across idle stops. Shell-job administration now requires the actual owner token.
+
+Before deployment, run the disposable image/browser check:
+
+```sh
+node apps/desktop/scripts/verify-parity-image.mjs OUTPUT_IMAGE
+python3 deploy/fly/combined/parity-preflight.py workspacer-node 1857645df24448
+```
+
+Once checks pass, `parity-preflight.py ... --provision` backs up and adds only the
+approved operator MCP service's `facadeAuthority` provenance grant, and marks
+an **empty** job registry for the new owner-only scheduler. The legacy jobs flag
+stays disabled, so an older rollback image cannot accidentally enable its older
+authorization policy. It refuses active/unknown work, non-operator MCP scope,
+and dormant job definitions that could unexpectedly run. It never prints bearer
+credentials and preserves token-store ownership. Profile-account grants remain
+independent. Deploy with the existing idle-guarded `deploy-upgrade.py`; do not
+restart an active or unknown fleet. Keep the old image/config backup for rollback.

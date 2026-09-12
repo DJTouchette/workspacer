@@ -77,6 +77,8 @@ export const HOST_ONLY = [
   'htmlCardReadDiff', // owner-validated, descriptor-pinned local snapshot; no unchecked bus fallback
   'setTitleBarOverlay', // Windows native caption-button theming
   'onTerminalExit', // MessagePort exit signal; no bus event for it
+  'fileOpenExternal', // native application opening; browser downloads bytes
+  'fileShowInFolder', // native file manager; browser opens server editor
   'pickFolder', // native OS folder dialog
   'pickFiles', // native OS file dialog
   'importChromeCookies', // reads the host browser profile
@@ -169,8 +171,9 @@ export const HOST_ONLY = [
  * @param busUrl  the local hub's `ws://…/bus` URL (from `getRemoteInfo`).
  */
 export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: string): ElectronAPI {
-  const bus = createWebBackend(token, busUrl);
+  const bus = createWebBackend(token, busUrl, { nativeAssets: true });
   const api = { ...bus } as ElectronAPI;
+  delete api.getUiAsset; // this shell can resolve its native cached-asset protocols
 
   // Keep the genuine host platform (the web backend forces 'web', which the UI
   // uses to gate native-only chrome like the Windows titlebar overlay).

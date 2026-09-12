@@ -752,6 +752,18 @@ func TestCompositionRecordNamesOnlyRegisteredCapabilities(t *testing.T) {
 	for _, m := range methodName.FindAllStringSubmatch(brain[start:start+end], -1) {
 		registered[m[1]] = true
 	}
+	// The brain appends this shared explicit registry. Follow the actual append,
+	// not a blanket exemption for a namespace which could cease to be provided.
+	if strings.Contains(brain[start:start+end], "capspec.DesktopServices...") {
+		for _, method := range DesktopServices {
+			registered[method] = true
+		}
+	}
+	if strings.Contains(brain[start:start+end], "capspec.UIAssetServices...") {
+		for _, method := range UIAssetServices {
+			registered[method] = true
+		}
+	}
 	if len(registered) < 50 {
 		t.Fatalf("parsed only %d registered capabilities from the two providers — the registration syntax changed and this guard is comparing against nothing", len(registered))
 	}

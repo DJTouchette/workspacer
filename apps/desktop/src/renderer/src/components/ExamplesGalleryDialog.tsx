@@ -59,8 +59,11 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
       .then((list) => {
         if (live) setExamples((list as PluginManifest[]) ?? []);
       })
-      .catch(() => {
-        if (live) setExamples([]);
+      .catch((err: unknown) => {
+        if (live) {
+          setExamples([]);
+          setError(`Could not load examples: ${err instanceof Error ? err.message : 'request failed'}`);
+        }
       });
     return () => {
       live = false;

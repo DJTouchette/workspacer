@@ -98,6 +98,8 @@ func ParseScope(s string) (Scope, error) {
 // `agents.*` would silently grant agents.spawn, and any method added later
 // must be admitted here deliberately (fail closed for scoped tokens).
 var viewMethods = []string{
+	"remote.sharingInfo",
+	"ui.fonts", "ui.asset", // cached display assets, not arbitrary filesystem reads
 	"usage.report",         // Overview account quota and sampled pace
 	"usage.pacingSchedule", // WHICH week that pace was computed against
 	//                          (five weekdays or seven calendar days). Read-only
@@ -235,6 +237,8 @@ var triageMethods = []string{
 // that is a different question from being allowed to ANSWER.
 var providerMethods = []string{
 	"layout.get", // cmd/brain/main.go — the only method a headless node calls
+
+	"plugins.prepareLaunch", // Requires this provider's still-pending, owner-authorized spawn.
 }
 
 // Methods returns the method patterns a scope may call. Operator is the single
@@ -289,6 +293,10 @@ type Record struct {
 	// judged the caller — the stamp says the request MAY be honored, it does not
 	// itself request the bypass.
 	YoloAllowed bool `json:"yoloAllowed,omitempty"`
+	// FacadeAuthority lets an explicitly provisioned operator MCP multiplexer
+	// assert authenticated local session provenance. It grants no owner-only
+	// methods, profile accounts, full-access bypass, or federation authority.
+	FacadeAuthority bool `json:"facadeAuthority,omitempty"`
 	// Role tags a session token with the role of the session it was minted for
 	// ("manager"). Written by the desktop's mint path and read back by its
 	// grant reconciler (a config full-access flip updates exactly the manager

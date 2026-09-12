@@ -279,8 +279,12 @@ type fleetEntry struct {
 	// Escalation is the validated fixed-shape terminal response. Error is set
 	// only when the tag existed but validation failed; that entry remains an
 	// ordinary completion so malformed data is never silently accepted.
-	Escalation      string `json:"escalation,omitempty"`
-	EscalationError string `json:"escalationError,omitempty"`
+	Escalation           string `json:"escalation,omitempty"`
+	EscalationError      string `json:"escalationError,omitempty"`
+	Result               string `json:"result,omitempty"`
+	ResultError          string `json:"resultError,omitempty"`
+	ReviewEvidenceID     string `json:"reviewEvidenceId,omitempty"`
+	WorkflowInstructions string `json:"workflowInstructions,omitempty"`
 }
 
 // formatFleetEntry renders one entry's bullet BODY (no leading "- ").
@@ -347,6 +351,11 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 
 	var extras []string
 	for _, e := range entries {
+		if e.ReviewEvidenceID != "" {
+			extras = append(extras, fmt.Sprintf("Review evidence — session:%s: %s", e.SessionID, e.ReviewEvidenceID))
+		}
+	}
+	for _, e := range entries {
 		if e.Failed != "" {
 			extras = append(extras, fleetFailedNote)
 			break
@@ -368,6 +377,13 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 		}
 	}
 	for _, e := range entries {
+		if e.Result != "" {
+			extras = append(extras, fmt.Sprintf("Structured result — %s (session:%s):\n%s", e.Label, e.SessionID, e.Result))
+		} else if e.ResultError != "" {
+			extras = append(extras, fmt.Sprintf("Structured result MISSING — %s (session:%s): %s. Read the prose report below/above instead.", e.Label, e.SessionID, e.ResultError))
+		}
+	}
+	for _, e := range entries {
 		if e.Escalation != "" {
 			extras = append(extras, fmt.Sprintf("Worker escalation — %s (session:%s):\n%s",
 				e.Label, e.SessionID, e.Escalation))
@@ -381,6 +397,11 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 		if e.FullReply != "" {
 			extras = append(extras, fmt.Sprintf("Full final message — %s (session:%s):\n%s",
 				e.Label, e.SessionID, renderFullReply(e.FullReply)))
+		}
+	}
+	for _, e := range entries {
+		if e.WorkflowInstructions != "" {
+			extras = append(extras, e.WorkflowInstructions)
 		}
 	}
 	if len(extras) == 0 {

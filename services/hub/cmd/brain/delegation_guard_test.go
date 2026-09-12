@@ -169,10 +169,19 @@ func TestMainOwnedCapabilitiesDoNotCollideWithTheBrain(t *testing.T) {
 		// confines to ITS OWN workspace roots, so a node path fails with
 		// "outside the allowed workspace" rather than "no provider". Different
 		// message, same blank chip — and it fails safe either way.
-		"git.status":  {false, "both shell out to the same git binary through the same assertPathAllowed(workspaceRoots) guard; identical wire shape"},
-		"git.log":     {false, "same — the brain's parseGitLog is a port of gitService.ts's parseLog, same --pretty format and same 1..50 clamp"},
-		"git.diff":    {false, "same, including anchorGitPathspec: `path` is anchored on the derived work-tree root and the untracked leg is additionally held to the workspace roots on BOTH providers"},
-		"git.numstat": {false, "same, including the core.quotepath=false prefix so unicode paths match the ones git.status printed"},
+		"git.commitDiff":           {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"git.commitNumstat":        {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"git.stage":                {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"git.unstage":              {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"git.commit":               {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"git.push":                 {false, "same desktop Git command and workspace/root operand confinement; headless review parity"},
+		"fs.watch":                 {false, "both observe confined files and publish fs.changed; brain polling survives atomic replacement"},
+		"fs.unwatch":               {false, "releases the same shared path watch"},
+		"claude.handoffAgentBrief": {false, "same agent instruction, bounded file wait and deterministic fallback as desktop"},
+		"git.status":               {false, "both shell out to the same git binary through the same assertPathAllowed(workspaceRoots) guard; identical wire shape"},
+		"git.log":                  {false, "same — the brain's parseGitLog is a port of gitService.ts's parseLog, same --pretty format and same 1..50 clamp"},
+		"git.diff":                 {false, "same, including anchorGitPathspec: `path` is anchored on the derived work-tree root and the untracked leg is additionally held to the workspace roots on BOTH providers"},
+		"git.numstat":              {false, "same, including the core.quotepath=false prefix so unicode paths match the ones git.status printed"},
 
 		// LIVE CONTROL (livecontrol.go). The switch itself is equivalent on all
 		// three — both providers POST the same claudemon endpoints, and the

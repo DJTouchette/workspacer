@@ -533,6 +533,11 @@ func brainGitCwdGuard(method, handler string) Witness {
 // compositionInert is the written record of "considered, and it cannot be half
 // of a composition", with the evidence each sentence rests on.
 var compositionInert = map[string]InertClaim{
+	"plugins.prepareLaunch": {
+		Reason:    "The callback can return child-local env/argv, but only as part of the exact already-authorized owner spawn on the caller's provider connection. It writes no grant or host configuration. authorizeLaunchPreparation refuses ambient provider use, swapped plugin ids, finished calls and revoked owners, and the resulting patch is validated before launching the same child.",
+		Witnesses: []Witness{guarded(argBearing("authorizeLaunchPreparation", "plugins.prepareLaunch", []string{"services", "hub", "cmd", "hub", "launchintegration.go"}))},
+	},
+
 	"agents.dispatchPrepare": {
 		Reason:    "Allocates a remote worktree but executes no agent or repository setup hook. Its canonical `cwd` and `remoteOrigin` nonce are validated before allocation; agents.spawn separately requires the same credential and consumes the durable single-use lease. No local workflow identifier or permission grant is accepted from the origin.",
 		Witnesses: []Witness{paramsClassified("cwd", "remoteOrigin")},

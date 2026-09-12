@@ -473,7 +473,7 @@ var (
 // yet must not be a root.
 func (r *registry) agentCwds(ctx context.Context) []string {
 	cwdCacheMu.Lock()
-	if !cwdCacheAt.IsZero() && time.Since(cwdCacheAt) < cwdCacheTTL {
+	if r.store == nil && !cwdCacheAt.IsZero() && time.Since(cwdCacheAt) < cwdCacheTTL {
 		cached := cwdCacheVals
 		cwdCacheMu.Unlock()
 		return cached
@@ -505,10 +505,12 @@ func (r *registry) agentCwds(ctx context.Context) []string {
 		cwds = append(cwds, s.Cwd)
 	}
 
-	cwdCacheMu.Lock()
-	cwdCacheAt = time.Now()
-	cwdCacheVals = cwds
-	cwdCacheMu.Unlock()
+	if r.store == nil {
+		cwdCacheMu.Lock()
+		cwdCacheAt = time.Now()
+		cwdCacheVals = cwds
+		cwdCacheMu.Unlock()
+	}
 	return cwds
 }
 

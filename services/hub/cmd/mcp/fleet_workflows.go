@@ -29,7 +29,7 @@ func addWorkflowTools(b *build) {
 		return
 	}
 	for _, item := range []struct{ name, op, desc, fields, required string }{
-		{"list_workflows", "list", "List local desktop Fleet workflows, revisioned selections and dispatch template inputs. Headless/older peers unavailable.", "", ""},
+		{"list_workflows", "list", "List local Fleet workflows, revisioned selections and dispatch template inputs.", "", ""},
 		{"get_workflow", "get", "Read a Fleet workflow definition.", "id", "id"},
 		{"validate_workflow", "validate", "Validate a declarative 1–8 step definition; never grants permissions or launches agents.", "definition", "definition"},
 		{"create_workflow", "create", "Create a custom Fleet definition with a unique id, revision 1.", "definition", "definition"},
@@ -48,7 +48,7 @@ func addWorkflowTools(b *build) {
 		mcp.AddTool(b.s, &mcp.Tool{Name: item.name, Description: item.desc, InputSchema: operationSchema[workflowIn](item.fields, item.required)}, func(ctx context.Context, _ *mcp.CallToolRequest, in workflowIn) (*mcp.CallToolResult, any, error) {
 			// Session identity is request-local, never accepted as a tool argument. No Hub parameter.
 			if callerSessionID(ctx) == "" {
-				return nil, nil, fmt.Errorf("Fleet workflows require a local authenticated session; use desktop Settings for host management")
+				return nil, nil, fmt.Errorf("Fleet workflows require a local authenticated session; use server Settings for host management")
 			}
 			if item.name == "select_default_workflow" && in.Cwd != "" {
 				return nil, nil, fmt.Errorf("global selection must omit cwd")

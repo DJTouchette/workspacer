@@ -379,3 +379,12 @@ describe("provider-tier records (a remote node's credential, minted by the Go CL
     expect(listRemoteTokens().map((r) => r.scope)).toEqual(['provider']);
   });
 });
+
+it('preserves MCP infrastructure authority across token writes and excludes it from pairing controls', () => {
+  const rec = {token:'facade-infrastructure-token',scope:'operator',label:'mcp-service',created:new Date(0).toISOString(),facadeAuthority:true};
+  fs.writeFileSync(tokensFile(), JSON.stringify([rec]));
+  getOrCreateRemoteToken('view','Dashboard');
+  expect(JSON.parse(fs.readFileSync(tokensFile(),'utf8')).find((r: {token:string}) => r.token === rec.token)).toMatchObject(rec);
+  expect(listRemoteTokens().some(r => r.token === rec.token)).toBe(false);
+  expect(() => revokeRemoteToken(rec.token)).toThrow(/Infrastructure/);
+});

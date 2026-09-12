@@ -195,6 +195,7 @@ var eventTopics = []EventTopic{
 		Pattern:     "fs.changed",
 		Disposition: TopicGuardedBy,
 		Method:      "fs.watch",
+		Publisher:   "fs.watch",
 		Reason:      "a change feed on a path, republished to every subscriber rather than to the caller that asked for it — an activity oracle on files whose contents may still be unreadable. fs.watch is what installs the watcher",
 	},
 
@@ -329,26 +330,31 @@ var eventTopics = []EventTopic{
 	},
 	{
 		Pattern:     "workflow.started",
+		Publisher:   "desktop.workflowAgentConversation",
 		Disposition: TopicOpenByDecision,
 		Reason:      "run name, phases, agents and the absolute cwd — and that cwd is already in the view-reachable agent.snapshot for the same session, so the topic adds a run label to a disclosure the tier already has. The workflow feed is what Mission Control's remote views render",
 	},
 	{
 		Pattern:     "workflow.completed",
+		Publisher:   "desktop.workflowAgentConversation",
 		Disposition: TopicOpenByDecision,
 		Reason:      "the completion half of workflow.started: status, durationMs, token and tool-call totals for a run whose cwd the tier already sees on agent.snapshot",
 	},
 	{
 		Pattern:     "workflow.failed",
+		Publisher:   "desktop.workflowAgentConversation",
 		Disposition: TopicOpenByDecision,
 		Reason:      "the failure half of workflow.started, same payload shape and the same disclosure as the completion one",
 	},
 	{
 		Pattern:     "workflow.agent.finished",
+		Publisher:   "desktop.workflowAgentConversation",
 		Disposition: TopicOpenByDecision,
 		Reason:      "per-agent roll-up of a run — label, model, status, tokens, toolCalls, phaseTitle. Model and token counts for a visible session are already in that session's snapshot and statusline",
 	},
 	{
 		Pattern:     "library.changed",
+		Publisher:   "library.list",
 		Disposition: TopicOpenByDecision,
 		Reason:      "the payload is EMPTY — a bare \"refetch\" signal, published with no data field at all (libraryService.ts). library.list is in neither scoped tier, so a receiver learns only that something changed and cannot follow it; there is nothing here to withhold. If this topic ever grows a payload it must be reclassified, which is why the reason names the emptiness rather than the tier",
 	},

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 )
 
@@ -27,43 +26,12 @@ func TestAnalyticsRegisteredFullScopeOnly(t *testing.T) {
 	}
 }
 
-// The headless stubs return well-formed empty results with an "unavailable"
-// marker, so a web client degrades to an empty dashboard instead of erroring on
-// a missing provider.
-func TestAnalyticsStubsReturnEmptyMarkedResults(t *testing.T) {
-	reg := newRegistry(newClaudemonClient("http://unused"))
-
-	res, err := reg.handle(context.Background(), "analytics.summary", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var summary struct {
-		Totals struct {
-			Sessions int `json:"sessions"`
-		} `json:"totals"`
-		ByDay       []any  `json:"byDay"`
-		ByProvider  []any  `json:"byProvider"`
-		Unavailable string `json:"unavailable"`
-	}
-	if err := json.Unmarshal(res, &summary); err != nil {
-		t.Fatalf("summary not valid JSON: %v", err)
-	}
-	if summary.Unavailable != "headless" {
-		t.Errorf("summary should carry unavailable=headless, got %q", summary.Unavailable)
-	}
-	if summary.Totals.Sessions != 0 || summary.ByDay == nil || summary.ByProvider == nil {
-		t.Errorf("summary should be empty-but-well-formed, got %+v", summary)
-	}
-
-	res, err = reg.handle(context.Background(), "analytics.recent", []byte(`{"limit":50}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var recent []any
-	if err := json.Unmarshal(res, &recent); err != nil {
-		t.Fatalf("recent not valid JSON array: %v", err)
-	}
-	if len(recent) != 0 {
-		t.Errorf("recent should be empty headless, got %d rows", len(recent))
+// Source failure must not masquerade as a measured empty history.
+func TestAnalyticsUnavailableSourceReturnsError(t *testing.T) {
+	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
+	for _, method := range []string{"analytics.summary", "analytics.recent"} {
+		if _, err := reg.handle(context.Background(), method, nil); err == nil {
+			t.Fatalf("%s concealed unavailable history", method)
+		}
 	}
 }

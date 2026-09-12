@@ -37,6 +37,7 @@ func main() {
 
 	cm := newClaudemonClient(*claudemonURL)
 	reg := newRegistry(cm)
+	defer reg.desktopServices.close()
 	reg.scope = *scope
 	reg.mcpFacadeURL = *mcpFacadeURL
 	methods := reg.methodsForScope(*scope)
@@ -123,6 +124,10 @@ func main() {
 		// terminals.open asks a CLIENT to open a visible terminal pane; it has
 		// no pane of its own to open, so the bus is its only way to be answered.
 		reg.publish = bus.publish
+		reg.callHub = bus.call
+		go reg.runFileChanges(ctx)
+		go reg.runLibraryChanges(ctx)
+		go reg.runDesktopObservations(ctx)
 		// agents.notifyWhen's one-shot watches are evaluated on a sweep rather
 		// than on every snapshot push — a threshold on spend is not a real-time
 		// signal, and a sweep cannot be starved by a chatty session.

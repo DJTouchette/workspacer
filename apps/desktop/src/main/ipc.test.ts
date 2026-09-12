@@ -1095,15 +1095,13 @@ it('installs the default production bridge and carries preparation and tagged se
     const remote = window.electronAPI;
     vi.mocked(ipcRenderer.invoke).mockClear();
     bridgeMocks.busCall.mockClear();
-    expect(await remote.managerRequestPrepare!('remote-owner', body)).toMatchObject({
-      available: false,
-    });
-    expect(await remote.claudeMessage('remote-owner', body, held.requestId)).toMatchObject({
-      ok: false,
-      requestId: held.requestId,
-    });
+    bridgeMocks.busCall.mockResolvedValue({available:true,requestId:'remote-request',ok:true});
+    expect(await remote.managerRequestPrepare!('remote-owner',body)).toMatchObject({available:true,requestId:'remote-request'});
+    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith('desktop.managerRequestPrepare',{sessionId:'remote-owner',text:body,bootstrap:undefined},'ws://remote-fixture/bus');
+    bridgeMocks.busCall.mockRejectedValueOnce(new Error('Request unavailable on this server'));
+    await expect(remote.claudeMessage('remote-owner',body,held.requestId)).rejects.toThrow('Request unavailable');
+    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith('desktop.managerRequestSend',{sessionId:'remote-owner',requestId:held.requestId},'ws://remote-fixture/bus');
     expect(ipcRenderer.invoke).not.toHaveBeenCalled();
-    expect(bridgeMocks.busCall).not.toHaveBeenCalled();
     expect(
       store
         .listRequests('successor')
@@ -1113,7 +1111,7 @@ it('installs the default production bridge and carries preparation and tagged se
       [prepared, rejected, generic, uncertain, held].map((request) => request.requestId).sort(),
     );
     await remote.claudeMessage('remote-owner', 'ordinary remote message');
-    expect(bridgeMocks.busCall).toHaveBeenCalledExactlyOnceWith(
+    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith(
       'agents.sendMessage',
       { sessionId: 'remote-owner', text: 'ordinary remote message' },
       'ws://remote-fixture/bus',
