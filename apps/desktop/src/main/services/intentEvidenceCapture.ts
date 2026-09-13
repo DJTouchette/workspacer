@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import fs, { realpathSync } from 'node:fs';
+import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -19,7 +19,15 @@ const exec = promisify(execFile);
 export async function captureIntentGit(cwd: string): Promise<IntentGitCapture> {
   if (!path.isAbsolute(cwd) || cwd.includes('\0'))
     throw new Error('Invalid host execution directory');
-  const canonicalCwd = realpathSync(cwd);
+  const canonicalCwd = fs.realpathSync(cwd);
+  const cwdIdentity = fs.statSync(canonicalCwd, { bigint: true });
+  if (!cwdIdentity.isDirectory()) throw new Error('Host execution directory is unavailable');
+  const matchesCwdIdentity = (directory: string): boolean => {
+    const current = fs.statSync(directory, { bigint: true });
+    return (
+      current.isDirectory() && current.dev === cwdIdentity.dev && current.ino === cwdIdentity.ino
+    );
+  };
   const deadline = Date.now() + INTENT_CAPTURE_LIMITS.timeoutMs;
   const baseEnv = { ...process.env };
   for (const key of Object.keys(baseEnv))
@@ -48,12 +56,23 @@ export async function captureIntentGit(cwd: string): Promise<IntentGitCapture> {
     );
     return stdout;
   };
-  const repositoryRoot = realpathSync(
+  const repositoryRoot = fs.realpathSync(
     (await git(canonicalCwd, ['rev-parse', '--show-toplevel'])).trim(),
   );
+  // Git for Windows expands 8.3 paths (RUNNER~1) that Node realpath preserves.
+  // Use Git's spelling of the execution subtree only after proving it names
+  // the same directory. Never case-fold or broaden the shared path guard.
+  const prefix = (await git(canonicalCwd, ['rev-parse', '--show-prefix'])).replace(/\r?\n$/, '');
+  const comparisonScope = fs.realpathSync(path.resolve(repositoryRoot, prefix));
+  if (
+    !isWithin(comparisonScope, repositoryRoot) ||
+    !matchesCwdIdentity(comparisonScope) ||
+    (comparisonScope !== canonicalCwd && cwdIdentity.ino === 0n)
+  )
+    throw new Error('Git execution directory identity does not match the linked session');
   const headCommit = (await git(repositoryRoot, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
   if (!/^[a-f0-9]{40,64}$/.test(headCommit)) throw new Error('Git HEAD is unavailable');
-  const objects = realpathSync(
+  const objects = fs.realpathSync(
     (
       await git(repositoryRoot, ['rev-parse', '--path-format=absolute', '--git-path', 'objects'])
     ).trim(),
@@ -129,13 +148,19 @@ export async function captureIntentGit(cwd: string): Promise<IntentGitCapture> {
     const allowed = (file: string) => {
       const absolute = path.resolve(repositoryRoot, file);
       const parent = canonicalRoot(path.dirname(absolute));
+      // Keep checking the host's original spelling too: config/credential
+      // roots may themselves use an 8.3 alias that Git has expanded.
+      const originalPath = path.resolve(canonicalCwd, path.relative(comparisonScope, absolute));
+      const originalParent = canonicalRoot(path.dirname(originalPath));
       if (
         !file ||
         path.isAbsolute(file) ||
         file.includes('\uFFFD') ||
-        !isWithin(absolute, canonicalCwd) ||
+        !isWithin(absolute, comparisonScope) ||
         !parent ||
-        !isWithin(parent, canonicalCwd)
+        !isWithin(parent, comparisonScope) ||
+        !originalParent ||
+        !isWithin(originalParent, canonicalCwd)
       )
         return false;
       if (
@@ -148,7 +173,10 @@ export async function captureIntentGit(cwd: string): Promise<IntentGitCapture> {
           )
       )
         return false;
-      return !isSecretPath(path.join(parent, path.basename(absolute)));
+      return (
+        !isSecretPath(path.join(parent, path.basename(absolute))) &&
+        !isSecretPath(path.join(originalParent, path.basename(originalPath)))
+      );
     };
     const changedFiles: string[] = [];
     for (const file of files) {
@@ -194,7 +222,9 @@ export async function captureIntentGit(cwd: string): Promise<IntentGitCapture> {
       (await git(repositoryRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], true)).trim() !==
         headCommit ||
       !Buffer.from(readIndex() ?? []).equals(Buffer.from(index ?? [])) ||
-      realpathSync(cwd) !== canonicalCwd
+      fs.realpathSync(cwd) !== canonicalCwd ||
+      !matchesCwdIdentity(canonicalCwd) ||
+      !matchesCwdIdentity(comparisonScope)
     )
       throw new Error('Execution changed during evidence capture. Try again when edits settle.');
     return {

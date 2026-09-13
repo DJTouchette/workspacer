@@ -142,3 +142,61 @@ it('ignores inherited repository and config override variables', async () => {
   vi.stubEnv('GIT_CONFIG_VALUE_0', 'true');
   expect((await captureIntentGit(root)).artifact).toContain('+host bytes');
 });
+
+it('accepts a differently spelled execution scope only when its directory identity matches, preserving subtree confinement', async () => {
+  const { root, git } = repo();
+  mkdirSync(path.join(root, 'frontend'));
+  writeFileSync(path.join(root, 'frontend/view.txt'), 'before\n');
+  git('add', '.');
+  git('commit', '-m', 'Subdirectory');
+  writeFileSync(path.join(root, 'frontend/view.txt'), 'after\n');
+  writeFileSync(path.join(root, 'answer.txt'), 'outside execution\n');
+  const alias = path.join(root, 'execution-alias');
+  symlinkSync(
+    path.join(root, 'frontend'),
+    alias,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  const realpath = fs.realpathSync.bind(fs);
+  // Reproduce the runner's Node/Git spelling disagreement without changing
+  // platform path semantics: Node retains the alias; Git returns the real root.
+  vi.spyOn(fs, 'realpathSync').mockImplementation(((value: fs.PathLike, options?: unknown) =>
+    String(value) === alias
+      ? alias
+      : (realpath as (...args: unknown[]) => unknown)(value, options)) as typeof fs.realpathSync);
+  const captured = await captureIntentGit(alias);
+  expect(captured.cwd).toBe(alias);
+  expect(captured.repositoryRoot).toBe(root);
+  expect(captured.changedFiles).toEqual(['frontend/view.txt']);
+  expect(captured.artifact).toContain('+after');
+  expect(captured.artifact).not.toContain('outside execution');
+});
+
+it('refuses an alias whose physical identity differs from Git scope or changes during capture', async () => {
+  const { root } = repo();
+  writeFileSync(path.join(root, 'answer.txt'), 'after\n');
+  const alias = path.join(root, 'execution-alias');
+  const outside = path.join(root, 'other-directory');
+  mkdirSync(outside);
+  symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const realpath = fs.realpathSync.bind(fs),
+    stat = fs.statSync.bind(fs);
+  const foreign = stat(outside, { bigint: true });
+  vi.spyOn(fs, 'realpathSync').mockImplementation(((value: fs.PathLike, options?: unknown) =>
+    String(value) === alias
+      ? alias
+      : (realpath as (...args: unknown[]) => unknown)(value, options)) as typeof fs.realpathSync);
+  let scopeReads = 0;
+  let mismatchAt = 1;
+  vi.spyOn(fs, 'statSync').mockImplementation(((
+    value: fs.PathLike,
+    options?: { bigint?: boolean },
+  ) => {
+    if (String(value) === root && options?.bigint && ++scopeReads >= mismatchAt) return foreign;
+    return (stat as (...args: unknown[]) => unknown)(value, options);
+  }) as typeof fs.statSync);
+  await expect(captureIntentGit(alias)).rejects.toThrow('identity does not match');
+  scopeReads = 0;
+  mismatchAt = 2;
+  await expect(captureIntentGit(alias)).rejects.toThrow('Execution changed');
+});

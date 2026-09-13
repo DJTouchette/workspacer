@@ -301,9 +301,14 @@ describe.runIf(process.platform === 'win32')(
       git('config', 'user.name', 'Intent test');
       git('config', 'user.email', 'test@example.com');
       fs.writeFileSync(path.join(directory, 'result.txt'), 'before\n');
+      fs.mkdirSync(path.join(directory, 'frontend'));
+      fs.writeFileSync(path.join(directory, 'frontend', 'view.txt'), 'frontend before\n');
       git('add', '.');
       git('commit', '-m', 'Baseline');
       fs.writeFileSync(path.join(directory, 'result.txt'), 'after\n');
+      fs.writeFileSync(path.join(directory, 'frontend', 'view.txt'), 'frontend after\n');
+      fs.writeFileSync(path.join(directory, 'staged.txt'), 'staged change\n');
+      git('add', 'staged.txt');
       const captured = await captureIntentGit(directory);
       const { canonicalRoot, isWithin, isSecretPath } = await import('../lib/pathConfinement');
       const absolute = path.resolve(captured.repositoryRoot, 'result.txt');
@@ -327,6 +332,12 @@ describe.runIf(process.platform === 'win32')(
       );
       expect(captured.changedFiles, diagnostics).toContain('result.txt');
       expect(captured.artifact, diagnostics).toContain('+after');
+      expect(captured.artifact, diagnostics).toContain('+staged change');
+      const subtree = await captureIntentGit(path.join(directory, 'frontend'));
+      expect(subtree.changedFiles, JSON.stringify(subtree, null, 2)).toEqual(['frontend/view.txt']);
+      expect(subtree.artifact).toContain('+frontend after');
+      expect(subtree.artifact).not.toContain('+staged change');
+      expect(subtree.artifact).not.toContain('+after');
     }, 60000);
   },
 );

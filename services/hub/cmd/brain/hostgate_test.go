@@ -37,7 +37,7 @@ import (
 var symlinkGate = sweepguard.Gate("cmd/brain's symlink-gated tests", 27)
 
 // gitGate counts the tests that shell out to a real `git`.
-var gitGate = sweepguard.Gate("cmd/brain's git-gated tests", 18)
+var gitGate = sweepguard.Gate("cmd/brain's git-gated tests", 19)
 
 // sandboxConfigHome points the whole test BINARY's configDir() at a temp dir.
 //
