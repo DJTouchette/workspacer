@@ -435,9 +435,9 @@ replacement while an operation is in flight. Reads are bounded, new writes refus
 existing files, and replacement/removal checks the reviewed content digest. Windows
 runtime tests cover Unicode paths, reserved/device/alternate-stream paths, junctions,
 parent sharing, all retained-file stores, knowledge reconciliation, and Git for Windows.
-Worker isolation and database-lock responsiveness are undergoing release
-verification before publication. Client and hub budgets accommodate the bounded
-file-operation budget without widening unrelated operation deadlines.
+File-backed actions run in a bounded Windows worker, and SQLite write locks do
+not span native helper I/O. Client and hub budgets accommodate that worker without
+widening unrelated operation deadlines.
 
 The interface now opens existing work on Overview, with a clear outcome, criterion
 coverage, execution count, and next decisions. New intents remain in the editor.

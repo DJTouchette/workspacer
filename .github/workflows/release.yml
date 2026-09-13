@@ -243,6 +243,7 @@ jobs:
           # at /app (the full renderer), no flag needed.
           cp -r "apps/desktop/dist/web" "$dir/web"
           cp "apps/desktop/dist/headless/desktop-host.cjs" "$dir/desktop-host.cjs"
+          cp "apps/desktop/dist/headless/intent-file-worker.cjs" "$dir/intent-file-worker.cjs"
           cp -r "services/hub/examples" "$dir/examples"
           # The build stamp — the ONLY thing in this bundle that says what it is.
           # None of the four binaries has an honest --version (`workspacer`, `hub`

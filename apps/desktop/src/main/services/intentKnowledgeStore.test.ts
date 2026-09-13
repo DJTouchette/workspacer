@@ -280,3 +280,40 @@ it('checks the pinned target bytes before replacing context, even if its pathnam
   );
   expect(fs.readFileSync(path.join(f.context, 'sample.md'), 'utf8')).toBe(baseline);
 });
+
+it('refuses hardlinked knowledge documents instead of exposing bytes linked from outside the project', () => {
+  const f = fixture();
+  const outside = path.join(f.directory, 'outside-secret.md');
+  fs.writeFileSync(outside, 'OUTSIDE SECRET');
+  fs.linkSync(outside, path.join(f.context, 'hardlink.md'));
+  expect(() => f.list()).toThrow();
+});
+
+it('keeps knowledge capture filesystem reads outside the SQLite write lock', () => {
+  const f = fixture();
+  const document = f.list().documents[0];
+  const other = new DatabaseSync(path.join(f.directory, 'work.sqlite'));
+  opened.push(other);
+  other.exec('PRAGMA busy_timeout=0');
+  const read = fs.readSync.bind(fs);
+  let checked = false;
+  vi.spyOn(fs, 'readSync').mockImplementation(((...args: unknown[]) => {
+    if (!checked) {
+      checked = true;
+      other.exec('BEGIN IMMEDIATE');
+      other.exec('ROLLBACK');
+    }
+    return (read as (...values: unknown[]) => number)(...args);
+  }) as typeof fs.readSync);
+  expect(
+    f.store.request({
+      action: 'captureKnowledge',
+      id: f.id,
+      captureId: 'without-write-lock',
+      expectedRevision: 1,
+      path: document.path,
+      expectedSha256: document.sha256,
+    }),
+  ).toMatchObject({ action: 'captureKnowledge' });
+  expect(checked).toBe(true);
+});

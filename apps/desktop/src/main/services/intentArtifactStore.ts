@@ -139,17 +139,31 @@ export class IntentArtifactStore {
       throw new Error('Record ID was already used for different content');
     return JSON.parse(String(row.snapshot));
   }
-  private insert(table: Table, value: RecordType, key: string): void {
-    const count = Number(
+  private insert<T extends RecordType>(table: Table, value: T, key: string): T {
+    return this.transaction(() => {
+      const existing = this.existing<T>(table, value.id, key);
+      if (existing) return existing;
+      this.workspace(value.workspaceId, value.intentRevision);
+      if (table === 'intent_alternative_selections') {
+        const selection = value as IntentAlternativeSelection;
+        const latest = this.all<IntentAlternativeSelection>(table, value.workspaceId).find(
+          (row) => row.groupId === selection.groupId,
+        );
+        if (latest?.id !== selection.previousSelectionId)
+          throw new Error('Alternative selection changed elsewhere. Reload before choosing again.');
+      }
+      const count = Number(
+        this.db
+          .prepare(`SELECT count(*) AS n FROM ${table} WHERE workspace_id=?`)
+          .get(value.workspaceId)?.n,
+      );
+      if (count >= (table === 'intent_annotations' ? LIMIT.annotations : LIMIT.records))
+        throw new Error('Workspace artifact record limit reached');
       this.db
-        .prepare(`SELECT count(*) AS n FROM ${table} WHERE workspace_id=?`)
-        .get(value.workspaceId)?.n,
-    );
-    if (count >= (table === 'intent_annotations' ? LIMIT.annotations : LIMIT.records))
-      throw new Error('Workspace artifact record limit reached');
-    this.db
-      .prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?, ?)`)
-      .run(value.id, value.workspaceId, value.intentRevision, JSON.stringify(value), key);
+        .prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?, ?)`)
+        .run(value.id, value.workspaceId, value.intentRevision, JSON.stringify(value), key);
+      return value;
+    });
   }
   private currentArtifact(id: string, workspace: IntentWorkspace): IntentArtifact {
     const artifact = this.get<IntentArtifact>('intent_artifacts', id, workspace.id);
@@ -212,7 +226,7 @@ export class IntentArtifactStore {
     const id = text(input.id, 'workspace ID');
     let written: Pick<ReturnType<typeof openIntentArtifactFile>, 'remove' | 'close'> | undefined;
     try {
-      return this.transaction(() => {
+      return (() => {
         const base = this.workspace(id);
         if (input.action === 'artifacts')
           return {
@@ -330,8 +344,15 @@ export class IntentArtifactStore {
               fs.fsyncSync(file.fd);
             }
           }
-          this.insert('intent_artifacts', artifact, key);
-          return { action: 'addArtifact', artifact };
+          const saved = this.insert('intent_artifacts', artifact, key);
+          if (written && saved.contentId !== artifact.contentId) {
+            try {
+              written.remove();
+            } catch {
+              /* Unreferenced loser bytes are safe to retain if cleanup fails. */
+            }
+          }
+          return { action: 'addArtifact', artifact: saved };
         }
         if (input.action === 'annotateArtifact') {
           const annotationId = text(input.annotationId, 'annotation ID');
@@ -380,8 +401,10 @@ export class IntentArtifactStore {
             text: note,
             ...(point ? { point } : {}),
           };
-          this.insert('intent_annotations', annotation, key);
-          return { action: 'annotateArtifact', annotation };
+          return {
+            action: 'annotateArtifact',
+            annotation: this.insert('intent_annotations', annotation, key),
+          };
         }
         if (input.action === 'createDemonstration') {
           const demonstrationId = text(input.demonstrationId, 'demonstration ID');
@@ -427,8 +450,10 @@ export class IntentArtifactStore {
             title,
             steps: pinned,
           };
-          this.insert('intent_demonstrations', demonstration, key);
-          return { action: 'createDemonstration', demonstration };
+          return {
+            action: 'createDemonstration',
+            demonstration: this.insert('intent_demonstrations', demonstration, key),
+          };
         }
         if (input.action === 'createAlternativeGroup') {
           const groupId = text(input.groupId, 'alternative group ID');
@@ -487,8 +512,10 @@ export class IntentArtifactStore {
             budgetMinutes: Number(input.budgetMinutes),
             alternatives,
           };
-          this.insert('intent_alternative_groups', group, key);
-          return { action: 'createAlternativeGroup', group };
+          return {
+            action: 'createAlternativeGroup',
+            group: this.insert('intent_alternative_groups', group, key),
+          };
         }
         if (input.action === 'selectAlternative') {
           const selectionId = text(input.selectionId, 'selection ID');
@@ -534,11 +561,13 @@ export class IntentArtifactStore {
             reason,
             ...(previousSelectionId ? { previousSelectionId } : {}),
           };
-          this.insert('intent_alternative_selections', selection, key);
-          return { action: 'selectAlternative', selection };
+          return {
+            action: 'selectAlternative',
+            selection: this.insert('intent_alternative_selections', selection, key),
+          };
         }
         throw new Error('Unknown artifact action');
-      });
+      })();
     } catch (error) {
       if (written) {
         try {

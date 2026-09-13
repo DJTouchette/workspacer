@@ -275,8 +275,8 @@ Linux pins directory descriptors through `/proc/self/fd`. Windows uses its bundl
 Windows PowerShell/.NET helper to open native relative handles and refuse junctions,
 reparse points, alternate streams, and unsafe device paths. No extra module or
 global installation is needed; Windows PowerShell must remain available under the
-host's normal policy. The Windows responsiveness worker is undergoing release verification before
-nightly publication.
+host's normal policy. File work runs outside the Windows owner event loop, so agent updates and
+navigation stay responsive while native file validation finishes.
 
 Other owning-host platforms report secure-file operations as unavailable instead
 of weakening path checks. A browser on another platform can use a supported Linux

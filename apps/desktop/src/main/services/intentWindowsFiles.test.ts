@@ -304,7 +304,29 @@ describe.runIf(process.platform === 'win32')(
       git('add', '.');
       git('commit', '-m', 'Baseline');
       fs.writeFileSync(path.join(directory, 'result.txt'), 'after\n');
-      expect((await captureIntentGit(directory)).artifact).toContain('+after');
+      const captured = await captureIntentGit(directory);
+      const { canonicalRoot, isWithin, isSecretPath } = await import('../lib/pathConfinement');
+      const absolute = path.resolve(captured.repositoryRoot, 'result.txt');
+      const parent = canonicalRoot(path.dirname(absolute));
+      const diagnostics = JSON.stringify(
+        {
+          directory,
+          canonicalDirectory: fs.realpathSync(directory),
+          gitRoot: git('rev-parse', '--show-toplevel').toString().trim(),
+          originalStatus: git('status', '--porcelain=v1', '-z').toString(),
+          canonicalScope: canonicalRoot(captured.cwd),
+          absolute,
+          parent,
+          lexicalWithin: isWithin(absolute, captured.cwd),
+          parentWithin: parent ? isWithin(parent, captured.cwd) : false,
+          secret: parent ? isSecretPath(path.join(parent, 'result.txt')) : null,
+          captured,
+        },
+        null,
+        2,
+      );
+      expect(captured.changedFiles, diagnostics).toContain('result.txt');
+      expect(captured.artifact, diagnostics).toContain('+after');
     }, 60000);
   },
 );

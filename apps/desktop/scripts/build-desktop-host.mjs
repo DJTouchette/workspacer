@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { build } from 'esbuild';
 import './gen-desktop-services.mjs';
+import './build-intent-file-worker.mjs';
 await build({
   entryPoints: ['src/main/headless/stdio.ts'],
   outfile: 'dist/headless/desktop-host.cjs',

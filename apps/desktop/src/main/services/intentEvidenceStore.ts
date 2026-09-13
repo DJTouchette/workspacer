@@ -185,6 +185,11 @@ export class IntentEvidenceStore {
 
   request(input: Record<string, unknown>): IntentEvidenceResponse {
     const id = text(input.id, 'workspace ID');
+    if (input.action === 'readEvidence') {
+      this.workspace(id);
+      const evidence = this.evidence(text(input.evidenceId, 'evidence ID'), id);
+      return { action: 'readEvidence', evidence, artifact: this.readArtifact(evidence) };
+    }
     return this.transaction(() => {
       const workspace = this.workspace(id);
       if (input.action === 'evidence')
@@ -202,10 +207,6 @@ export class IntentEvidenceStore {
             .all(id)
             .map((r) => JSON.parse(String(r.snapshot))),
         };
-      if (input.action === 'readEvidence') {
-        const evidence = this.evidence(text(input.evidenceId, 'evidence ID'), id);
-        return { action: 'readEvidence', evidence, artifact: this.readArtifact(evidence) };
-      }
       if (input.action === 'recordReview') return this.recordReview(input, id);
       if (input.action !== 'addEvidence') throw new Error('Unknown evidence action');
       const evidenceId = text(input.evidenceId, 'evidence ID');
@@ -357,9 +358,34 @@ export class IntentEvidenceStore {
     const artifactId = randomUUID();
     let written: Pick<ReturnType<typeof openIntentArtifactFile>, 'remove' | 'close'> | undefined;
     try {
-      return this.transaction(() => {
+      this.current(id, input.expectedRevision);
+      if (process.platform === 'win32') {
+        writeIntentFile(
+          this.artifactDirectory(),
+          `${artifactId}.diff`,
+          Buffer.from(artifact, 'utf8'),
+          null,
+          INTENT_CAPTURE_LIMITS.bytes,
+        );
+        written = {
+          remove: () =>
+            removeIntentFile(
+              this.artifactDirectory(),
+              `${artifactId}.diff`,
+              digest(artifact),
+              INTENT_CAPTURE_LIMITS.bytes,
+            ),
+          close: () => {},
+        };
+      } else {
+        const file = openIntentArtifactFile(this.artifactDirectory(), `${artifactId}.diff`, true);
+        written = file;
+        fs.writeFileSync(file.fd, artifact, 'utf8');
+        fs.fsyncSync(file.fd);
+      }
+      const result = this.transaction(() => {
         const existing = this.existing<IntentEvidence>('intent_evidence', evidenceId, key);
-        if (existing) return { action: 'captureEvidence', evidence: existing };
+        if (existing) return { action: 'captureEvidence' as const, evidence: existing };
         this.current(id, input.expectedRevision);
         const current = this.execution(executionId, id);
         if (
@@ -368,30 +394,6 @@ export class IntentEvidenceStore {
           current.session?.hub
         )
           throw new Error('Execution identity changed during evidence capture');
-        if (process.platform === 'win32') {
-          writeIntentFile(
-            this.artifactDirectory(),
-            `${artifactId}.diff`,
-            Buffer.from(artifact, 'utf8'),
-            null,
-            INTENT_CAPTURE_LIMITS.bytes,
-          );
-          written = {
-            remove: () =>
-              removeIntentFile(
-                this.artifactDirectory(),
-                `${artifactId}.diff`,
-                digest(artifact),
-                INTENT_CAPTURE_LIMITS.bytes,
-              ),
-            close: () => {},
-          };
-        } else {
-          const file = openIntentArtifactFile(this.artifactDirectory(), `${artifactId}.diff`, true);
-          written = file;
-          fs.writeFileSync(file.fd, artifact, 'utf8');
-          fs.fsyncSync(file.fd);
-        }
         const evidence: IntentEvidence = {
           id: evidenceId,
           workspaceId: id,
@@ -407,8 +409,16 @@ export class IntentEvidenceStore {
           git: { ...facts, artifactId, sha256: digest(artifact), bytes },
         };
         this.insert('intent_evidence', evidence, key);
-        return { action: 'captureEvidence', evidence };
+        return { action: 'captureEvidence' as const, evidence };
       });
+      if (written && result.evidence.git?.artifactId !== artifactId) {
+        try {
+          written.remove();
+        } catch {
+          /* Unreferenced loser bytes are safe to retain if cleanup fails. */
+        }
+      }
+      return result;
     } catch (error) {
       if (written) {
         try {

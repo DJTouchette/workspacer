@@ -39,7 +39,13 @@ jobs:
           npm run typecheck:main
           npm run build:desktop-host
       - name: Exercise Windows PowerShell 5.1 and real NTFS handles
-        run: npx vitest run src/main/services/intentWindowsFiles.test.ts --maxWorkers=1
+        run: npx vitest run src/main/services/intentWindowsFiles.test.ts src/main/services/intentFileWorkerBroker.test.ts src/main/services/intentFileWorker.test.ts --maxWorkers=1
+      - name: Install Electron runtime for native worker smoke
+        run: node node_modules/electron/install.js
+      - name: Smoke the bundled worker in Electron's Node runtime
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: node_modules/electron/dist/electron.exe scripts/smoke-intent-file-worker.cjs
 
   release-check-runner:
     runs-on: ubuntu-latest

@@ -10,8 +10,39 @@ import { INTENT_ARTIFACT_LIMITS, type IntentArtifactResponse } from '../shared/i
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const db of databases.splice(0)) if (db.isOpen) db.close();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+it('never holds a SQLite write lock while saving bytes and rejects a concurrent owner revision before committing metadata', () => {
+  const f = fixture();
+  const other = open(f.filename);
+  other.db.exec('PRAGMA busy_timeout=0');
+  const write = fs.writeFileSync.bind(fs);
+  let changed = false;
+  vi.spyOn(fs, 'writeFileSync').mockImplementation(((
+    file: Parameters<typeof fs.writeFileSync>[0],
+    ...args: unknown[]
+  ) => {
+    if (!changed && typeof file === 'number') {
+      changed = true;
+      other.workspaces.request({
+        action: 'update',
+        id: f.workspace.id,
+        expectedRevision: 1,
+        fields: { ...f.workspace, title: 'Concurrent owner edit' },
+        reason: 'While artifact bytes are written',
+      });
+    }
+    return (write as (...values: unknown[]) => void)(file, ...args);
+  }) as typeof fs.writeFileSync);
+  expect(() => f.store.request(f.upload)).toThrow('changed elsewhere');
+  expect(changed).toBe(true);
+  expect(f.store.request({ action: 'artifacts', id: f.workspace.id })).toMatchObject({
+    artifacts: [],
+  });
+  expect(fs.readdirSync(path.join(f.root, 'intent-artifacts'))).toEqual([]);
 });
 function open(filename: string) {
   const db = new DatabaseSync(filename);

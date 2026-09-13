@@ -74,10 +74,33 @@ export class IntentKnowledgeStore {
       throw new Error('Record belongs to another workspace or record type');
     return JSON.parse(String(row.snapshot));
   }
-  private insert(id: string, workspaceId: string, kind: string, value: unknown): void {
-    this.db
-      .prepare('INSERT INTO intent_knowledge VALUES (?,?,?,?)')
-      .run(id, workspaceId, kind, JSON.stringify(value));
+  private insert<T extends IntentKnowledgeCapture | IntentFinding | IntentKnowledgePromotion>(
+    id: string,
+    workspaceId: string,
+    kind: string,
+    value: T,
+  ): T {
+    return this.transaction(() => {
+      const existing = this.record<T>(id, workspaceId, kind);
+      if (existing) {
+        const identity = (record: T) =>
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(record).filter(
+                ([key]) => !['createdAt', 'capturedAt', 'status', 'detail'].includes(key),
+              ),
+            ),
+          );
+        if (identity(existing) !== identity(value))
+          throw new Error('Record ID already belongs to different content');
+        return existing;
+      }
+      this.workspace(workspaceId, value.intentRevision);
+      this.db
+        .prepare('INSERT INTO intent_knowledge VALUES (?,?,?,?)')
+        .run(id, workspaceId, kind, JSON.stringify(value));
+      return value;
+    });
   }
   private save(proposal: IntentKnowledgePromotion): void {
     this.db
@@ -119,7 +142,8 @@ export class IntentKnowledgeStore {
     const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
       const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > MAX_DOC) throw new Error('Rivet document exceeds 128 KiB');
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_DOC)
+        throw new Error('Rivet document exceeds 128 KiB');
       const buffer = Buffer.alloc(MAX_DOC + 1);
       const count = fs.readSync(fd, buffer, 0, buffer.length, 0);
       if (count > MAX_DOC) throw new Error('Rivet document exceeds 128 KiB');
@@ -211,7 +235,7 @@ export class IntentKnowledgeStore {
       return this.publish(id, input);
     if (!Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1)
       throw new Error('A saved intent revision is required');
-    return this.transaction(() => {
+    return (() => {
       this.workspace(id, input.expectedRevision);
       if (input.action === 'captureKnowledge') {
         const captureId = stableId(input.captureId),
@@ -238,8 +262,10 @@ export class IntentKnowledgeStore {
           content,
           capturedAt: new Date().toISOString(),
         };
-        this.insert(capture.id, id, 'capture', capture);
-        return { action: 'captureKnowledge', capture };
+        return {
+          action: 'captureKnowledge',
+          capture: this.insert(capture.id, id, 'capture', capture),
+        };
       }
       if (input.action === 'recordFinding') {
         const findingId = stableId(input.findingId),
@@ -274,8 +300,10 @@ export class IntentKnowledgeStore {
           author: 'user',
           createdAt: new Date().toISOString(),
         };
-        this.insert(finding.id, id, 'finding', finding);
-        return { action: 'recordFinding', finding };
+        return {
+          action: 'recordFinding',
+          finding: this.insert(finding.id, id, 'finding', finding),
+        };
       }
       if (input.action !== 'prepareKnowledgePromotion') throw new Error('Unknown knowledge action');
       const proposalId = stableId(input.proposalId),
@@ -334,9 +362,11 @@ export class IntentKnowledgeStore {
         status: 'draft',
         detail: 'Saved for review; no project file changed.',
       };
-      this.insert(proposal.id, id, 'proposal', proposal);
-      return { action: 'prepareKnowledgePromotion', proposal };
-    });
+      return {
+        action: 'prepareKnowledgePromotion',
+        proposal: this.insert(proposal.id, id, 'proposal', proposal),
+      };
+    })();
   }
   private publish(id: string, input: Record<string, unknown>): IntentKnowledgeResponse {
     const proposalId = stableId(input.proposalId);
@@ -369,8 +399,6 @@ export class IntentKnowledgeStore {
       const current = this.record<IntentKnowledgePromotion>(proposalId, id, 'proposal')!;
       if (current.status !== 'draft') return current;
       this.workspace(id, proposal.intentRevision);
-      if (!matches())
-        throw new Error('Project document changed. Prepare and review a new promotion.');
       proposal.status = 'unknown';
       proposal.detail = 'File write started; completion has not been recorded.';
       this.save(proposal);

@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
 import {
   mkdtempSync,
   readFileSync,
@@ -18,8 +19,60 @@ import type { IntentEvidenceResponse } from '../shared/intentEvidence';
 const roots: string[] = [];
 const opened: DatabaseSync[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const db of opened.splice(0)) if (db.isOpen) db.close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+it('leaves evidence file writes outside the SQLite lock and rejects a concurrently changed intent before committing', async () => {
+  const f = fixture();
+  const other = open(f.filename);
+  other.db.exec('PRAGMA busy_timeout=0');
+  const write = fs.writeFileSync.bind(fs);
+  let changed = false;
+  vi.spyOn(fs, 'writeFileSync').mockImplementation(((
+    file: Parameters<typeof fs.writeFileSync>[0],
+    ...args: unknown[]
+  ) => {
+    if (!changed && typeof file === 'number') {
+      changed = true;
+      other.workspaceStore.request({
+        action: 'update',
+        id: f.workspace.id,
+        expectedRevision: 1,
+        fields: { ...f.workspace, title: 'Concurrent owner edit' },
+        reason: 'While evidence bytes are written',
+      });
+    }
+    return (write as (...values: unknown[]) => void)(file, ...args);
+  }) as typeof fs.writeFileSync);
+  await expect(f.store.capture(f.git, live)).rejects.toThrow('changed elsewhere');
+  expect(changed).toBe(true);
+  expect(f.store.request({ action: 'evidence', id: f.workspace.id })).toMatchObject({
+    evidence: [],
+  });
+  expect(readdirSync(path.join(f.root, 'intent-evidence'))).toEqual([]);
+});
+
+it('allows owner metadata writes while an evidence artifact is being read', async () => {
+  const f = fixture();
+  await f.store.capture(f.git, live);
+  const other = open(f.filename);
+  other.db.exec('PRAGMA busy_timeout=0');
+  const read = fs.readSync.bind(fs);
+  let checked = false;
+  vi.spyOn(fs, 'readSync').mockImplementation(((...args: unknown[]) => {
+    if (!checked) {
+      checked = true;
+      other.db.exec('BEGIN IMMEDIATE');
+      other.db.exec('ROLLBACK');
+    }
+    return (read as (...values: unknown[]) => number)(...args);
+  }) as typeof fs.readSync);
+  expect(
+    f.store.request({ action: 'readEvidence', id: f.workspace.id, evidenceId: f.git.evidenceId }),
+  ).toMatchObject({ artifact: captured.artifact });
+  expect(checked).toBe(true);
 });
 function open(filename: string) {
   const db = new DatabaseSync(filename);

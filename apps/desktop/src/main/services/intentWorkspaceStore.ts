@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { isMainThread } from 'node:worker_threads';
+import { isIntentFileAction } from './intentFileWorkerProtocol';
 import { getConfigDir } from './configService';
 import { IntentSteeringStore, type IntentDirectionDelivery } from './intentSteeringStore';
 import { IntentEvidenceStore, INTENT_EVIDENCE_SCHEMA } from './intentEvidenceStore';
@@ -800,6 +802,14 @@ export async function intentWorkspaceRequest(
 ): Promise<IntentWorkspaceResponse> {
   const request = object(input);
   const active = (await intentWorkspaceStoreIfUsed(true))!;
+  if (process.platform === 'win32' && isMainThread && isIntentFileAction(request)) {
+    const { runIntentFileRequest } = await import('./intentFileWorkerBroker');
+    return runIntentFileRequest(
+      path.join(getConfigDir(), 'intent-workspaces.sqlite'),
+      request,
+      sessions,
+    );
+  }
   if ((SOURCE_ACTIONS as readonly string[]).includes(String(request.action)))
     return active.sources.request(request);
   if (request.action === 'captureEvidence') return active.evidence.capture(request, sessions);

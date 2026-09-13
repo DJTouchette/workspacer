@@ -98,13 +98,14 @@ public static class IntentNativeFiles {
   }
   public static void WriteFile(string directory,string leaf,string data,string expected,int limit) {
     byte[] bytes=Convert.FromBase64String(data); if(bytes.Length>limit || limit<0 || limit>16*1024*1024)throw new IOException("Artifact exceeds its byte limit");
+    bool create=String.IsNullOrEmpty(expected); // PowerShell 5.1 marshals $null to an empty System.String.
     using(DirectoryLease lease=new DirectoryLease(directory,true)) {
       // FILE_CREATE never follows or overwrites an existing leaf. Replacements
       // lock the existing ordinary file exclusively, check its exact bytes,
       // and write through that same handle. A failure remains an unknown receipt.
-      using(SafeFileHandle file=Relative(lease.Last,leaf,false,Read|Write,expected==null?2u:1u,0))
+      using(SafeFileHandle file=Relative(lease.Last,leaf,false,Read|Write,create?2u:1u,0))
       using(FileStream stream=new FileStream(file,FileAccess.ReadWrite)) {
-        if(expected!=null && Hash(Bytes(stream,limit))!=expected)throw new IOException("Project document changed during promotion");
+        if(!create && Hash(Bytes(stream,limit))!=expected)throw new IOException("Project document changed during promotion");
         stream.Position=0; stream.Write(bytes,0,bytes.Length); stream.SetLength(bytes.Length); stream.Flush(true);
       }
     }
@@ -131,8 +132,15 @@ export interface IntentWindowsFileRequest {
   expected?: string | null;
   limit: number;
 }
+let operationDeadline: number | undefined;
+export function setIntentWindowsFileDeadline(expiresAt: number | undefined): void {
+  operationDeadline = expiresAt;
+}
 export function runIntentWindowsFiles(request: IntentWindowsFileRequest): { values?: string[] } {
   if (process.platform !== 'win32') throw new Error('Windows file helper requires Windows');
+  const remaining =
+    operationDeadline === undefined ? 30_000 : Math.min(30_000, operationDeadline - Date.now());
+  if (remaining <= 0) throw new Error('Intent file operation deadline expired before file I/O');
   const executable = path.win32.join(
     process.env.SystemRoot || 'C:\\Windows',
     'System32',
@@ -149,11 +157,15 @@ export function runIntentWindowsFiles(request: IntentWindowsFileRequest): { valu
         input: JSON.stringify(request),
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 30_000,
+        timeout: remaining,
         maxBuffer: 48 * 1024 * 1024,
       },
     );
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT')
+      throw new Error(
+        'Secure Windows file operation timed out. Its outcome may be uncertain; inspect saved records before retrying a write.',
+      );
     const output = (error as { stdout?: string }).stdout;
     if (output) {
       try {
