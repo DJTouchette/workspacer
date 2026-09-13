@@ -6,7 +6,7 @@ interface Listing {
   parent: string;
   home: string;
   dirs: string[];
-  files?: Array<{name:string;path:string}>;
+  files?: Array<{ name: string; path: string }>;
 }
 
 interface PendingPick {
@@ -33,15 +33,28 @@ const WebFolderPicker: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const browse = useCallback(async (path?: string) => {
-    const version=++revision.current;
-    setError(null);setListing(null);setSelected([]);
+    const version = ++revision.current;
+    setError(null);
+    setListing(null);
+    setSelected([]);
     try {
-      const files=active.current?.files && window.electronAPI.filePickerList;
-      const listing=files ? await files(path) : await window.electronAPI.fsListDir!(path);
-      const entries='entries' in listing ? listing.entries : undefined;
-      const result={...listing,dirs:entries ? entries.filter(e=>e.isDir).map(e=>e.name) : ('dirs' in listing ? listing.dirs : []),files:entries?.filter(e=>!e.isDir)};
-      if(version===revision.current&&active.current)setListing(result);
-    } catch(error) {if(version===revision.current)setError(error instanceof Error?error.message:'Cannot read folder');}
+      const files = active.current?.files && window.electronAPI.filePickerList;
+      const listing = files ? await files(path) : await window.electronAPI.fsListDir!(path);
+      const entries = 'entries' in listing ? listing.entries : undefined;
+      const result = {
+        ...listing,
+        dirs: entries
+          ? entries.filter((e) => e.isDir).map((e) => e.name)
+          : 'dirs' in listing
+            ? listing.dirs
+            : [],
+        files: entries?.filter((e) => !e.isDir),
+      };
+      if (version === revision.current && active.current) setListing(result);
+    } catch (error) {
+      if (version === revision.current)
+        setError(error instanceof Error ? error.message : 'Cannot read folder');
+    }
   }, []);
 
   // Open on event.
@@ -49,14 +62,21 @@ const WebFolderPicker: React.FC = () => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as PendingPick;
       active.current?.resolve(null);
-      active.current={...detail,files:e.type==='web:pick-files'};
+      active.current = { ...detail, files: e.type === 'web:pick-files' };
       setPending(active.current);
-      setListing(null);setSelected([]);
+      setListing(null);
+      setSelected([]);
       void browse(detail.defaultPath);
     };
     window.addEventListener('web:pick-folder', handler);
     window.addEventListener('web:pick-files', handler);
-    return () => {window.removeEventListener('web:pick-folder',handler);window.removeEventListener('web:pick-files',handler);active.current?.resolve(null);active.current=null;revision.current++;};
+    return () => {
+      window.removeEventListener('web:pick-folder', handler);
+      window.removeEventListener('web:pick-files', handler);
+      active.current?.resolve(null);
+      active.current = null;
+      revision.current++;
+    };
   }, [browse]);
 
   // Esc cancels.
@@ -71,7 +91,9 @@ const WebFolderPicker: React.FC = () => {
   }, [pending]);
 
   const finish = (path: string | string[] | null) => {
-    active.current?.resolve(path);active.current=null;revision.current++;
+    active.current?.resolve(path);
+    active.current = null;
+    revision.current++;
     setPending(null);
     setListing(null);
     setError(null);
@@ -199,12 +221,35 @@ const WebFolderPicker: React.FC = () => {
                 <Folder size={13} color="var(--wks-accent)" /> {name}
               </button>
             ))}
-          {!error && listing?.files?.map(file => (
-            <label key={file.path} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',fontSize:'0.76rem',color:'var(--wks-text-secondary)',cursor:'pointer'}}>
-              <input type="checkbox" checked={selected.includes(file.path)} onChange={event=>setSelected(current=>event.target.checked?[...current,file.path]:current.filter(p=>p!==file.path))}/>
-              <File size={13}/>{file.name}
-            </label>
-          ))}
+          {!error &&
+            listing?.files?.map((file) => (
+              <label
+                key={file.path}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  fontSize: '0.76rem',
+                  color: 'var(--wks-text-secondary)',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(file.path)}
+                  onChange={(event) =>
+                    setSelected((current) =>
+                      event.target.checked
+                        ? [...current, file.path]
+                        : current.filter((p) => p !== file.path),
+                    )
+                  }
+                />
+                <File size={13} />
+                {file.name}
+              </label>
+            ))}
         </div>
 
         {/* Actions */}

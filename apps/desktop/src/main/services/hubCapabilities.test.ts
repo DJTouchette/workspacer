@@ -1713,7 +1713,10 @@ describe('providers discovery', () => {
 
   it('discovers models in a configured project before an agent runs there', async () => {
     getAllSnapshots.mockReturnValue([] as never);
-    getConfig.mockReturnValueOnce({ projects: { [providerCwd]: {} }, agents: { binaries: { codex: '/custom/codex' } } } as never);
+    getConfig.mockReturnValueOnce({
+      projects: { [providerCwd]: {} },
+      agents: { binaries: { codex: '/custom/codex' } },
+    } as never);
     const res = await call('providers.listModels', { provider: 'codex', cwd: providerCwd });
     expect(clientMock.listProviderModels).toHaveBeenCalledWith('codex', providerCwd, '/bin/codex');
     expect(res).toEqual(['m1', 'm2']);

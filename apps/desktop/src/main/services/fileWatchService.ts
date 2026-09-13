@@ -45,13 +45,23 @@ function sweepLeases(): void {
     if (entry.refcount === 0 && entry.leases.size === 0) disposeWatch(file, entry);
     else if (entry.leases.size) any = true;
   }
-  if (!any && leaseSweep) { clearInterval(leaseSweep); leaseSweep = undefined; }
+  if (!any && leaseSweep) {
+    clearInterval(leaseSweep);
+    leaseSweep = undefined;
+  }
 }
 function lease(entry: WatchEntry, id?: string): void {
-  if (!id) { entry.refcount++; return; }
-  if (id.length > 128 || (entry.leases.size >= 128 && !entry.leases.has(id))) throw new Error('Too many file watchers or invalid watchId');
+  if (!id) {
+    entry.refcount++;
+    return;
+  }
+  if (id.length > 128 || (entry.leases.size >= 128 && !entry.leases.has(id)))
+    throw new Error('Too many file watchers or invalid watchId');
   entry.leases.set(id, Date.now() + 180_000);
-  if (!leaseSweep) { leaseSweep = setInterval(sweepLeases, 30_000); leaseSweep.unref?.(); }
+  if (!leaseSweep) {
+    leaseSweep = setInterval(sweepLeases, 30_000);
+    leaseSweep.unref?.();
+  }
 }
 
 /**
@@ -76,7 +86,8 @@ export function setEmitSink(sink: EmitSink): void {
  * one watcher serves both transports.
  */
 export function startWatch(filePath: string, onEvent?: EmitSink, watchId?: string): void {
-  if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128)) throw new Error('Invalid watchId');
+  if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128))
+    throw new Error('Invalid watchId');
   const resolved = path.resolve(filePath);
   const existing = watches.get(resolved);
   if (existing) {
@@ -87,8 +98,11 @@ export function startWatch(filePath: string, onEvent?: EmitSink, watchId?: strin
   let watcher: fs.FSWatcher;
   try {
     let directory = false;
-    try { directory = fs.statSync(resolved).isDirectory(); }
-    catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+    try {
+      directory = fs.statSync(resolved).isDirectory();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     watcher = fs.watch(directory ? resolved : path.dirname(resolved), (eventType, filename) => {
       if (!directory && filename && filename.toString() !== path.basename(resolved)) return;
       // fs.watch's callback must never throw — a thrown error here crashes the
@@ -134,7 +148,13 @@ export function startWatch(filePath: string, onEvent?: EmitSink, watchId?: strin
     console.warn(`[fileWatch] watcher error for ${resolved}: ${(err as Error).message}`);
   });
 
-  const entry: WatchEntry = { watcher, refcount: 0, leases: new Map(), timer: null, lastEventType: 'change' };
+  const entry: WatchEntry = {
+    watcher,
+    refcount: 0,
+    leases: new Map(),
+    timer: null,
+    lastEventType: 'change',
+  };
   lease(entry, watchId);
   watches.set(resolved, entry);
 }

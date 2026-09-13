@@ -47,6 +47,6 @@ export function publishSnapshot(makeSnapshot: () => ClaudeSessionSnapshot): void
   });
 }
 
-const telemetry=createWorkflowTelemetry(publishToHub);
-export const publishWorkflowRuns=telemetry.publishWorkflowRuns;
-export const forgetSession=telemetry.forgetSession;
+const telemetry = createWorkflowTelemetry(publishToHub);
+export const publishWorkflowRuns = telemetry.publishWorkflowRuns;
+export const forgetSession = telemetry.forgetSession;

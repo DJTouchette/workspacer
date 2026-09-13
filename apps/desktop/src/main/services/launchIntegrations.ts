@@ -15,14 +15,15 @@ async function listIntegrations(): Promise<any[]> {
   return list;
 }
 
-
 export async function prepareLaunchIntegration(
- id: Parameters<typeof prepareLaunchIntegrationCore>[0],
- context: Parameters<typeof prepareLaunchIntegrationCore>[1],
- base: Parameters<typeof prepareLaunchIntegrationCore>[2],
- dependencies: Parameters<typeof prepareLaunchIntegrationCore>[3] = {
-   list:listIntegrations,
-   call:async (method,params)=>(await import('./hubClient')).callHub(method,params),
-   routing:readCodexProvider,
- },
-) {return prepareLaunchIntegrationCore(id,context,base,dependencies);}
+  id: Parameters<typeof prepareLaunchIntegrationCore>[0],
+  context: Parameters<typeof prepareLaunchIntegrationCore>[1],
+  base: Parameters<typeof prepareLaunchIntegrationCore>[2],
+  dependencies: Parameters<typeof prepareLaunchIntegrationCore>[3] = {
+    list: listIntegrations,
+    call: async (method, params) => (await import('./hubClient')).callHub(method, params),
+    routing: readCodexProvider,
+  },
+) {
+  return prepareLaunchIntegrationCore(id, context, base, dependencies);
+}

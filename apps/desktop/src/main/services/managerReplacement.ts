@@ -50,7 +50,9 @@ function source(id: string, paneId?: string): ManagerLaunch {
     !recorded ||
     !grants ||
     session.transport !== 'stream' ||
-    (paneId && claudemonSessionClient.attachedSession(paneId) !== id && !managerViewerBound(paneId,id))
+    (paneId &&
+      claudemonSessionClient.attachedSession(paneId) !== id &&
+      !managerViewerBound(paneId, id))
   )
     throw new ManagerReplacementUnavailable(MANAGER_REPLACEMENT_UNAVAILABLE);
   if (recorded.options.launchIntegrationId)
@@ -239,7 +241,8 @@ export const managerReplacementService = new ManagerReplacementService(managerRe
         });
     }
   },
-  bound: (paneId, id) => claudemonSessionClient.attachedSession(paneId) === id || managerViewerBound(paneId,id),
+  bound: (paneId, id) =>
+    claudemonSessionClient.attachedSession(paneId) === id || managerViewerBound(paneId, id),
   send: (id, text, sourceRequest) => claudemonSessionClient.messageDirect(id, text, sourceRequest),
   retryRequest: (target, requestId) => {
     const inbox = managerRequests();

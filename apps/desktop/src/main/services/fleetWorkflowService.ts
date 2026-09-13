@@ -30,4 +30,8 @@ const templates = (): WorkflowTemplate[] =>
       params: dispatchTemplateParams(t.body),
     }));
 
-export const { fleetWorkflowStore, fleetWorkflowRequest } = createFleetWorkflowService(runtime, (id) => claudeSessionStore.getSnapshot(id) ?? undefined, templates);
+export const { fleetWorkflowStore, fleetWorkflowRequest } = createFleetWorkflowService(
+  runtime,
+  (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+  templates,
+);

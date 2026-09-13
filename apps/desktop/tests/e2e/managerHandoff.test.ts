@@ -45,9 +45,7 @@ async function open(page: import('@playwright/test').Page, mode: string, fontPro
   await page.evaluate(() => (window as any).fleetHarness.pilot());
   await expect(
     page
-      .getByTitle(
-        'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
-      )
+      .getByTitle('Checkpoint and replace this Fleet Manager in the same pane — local workers only')
       .filter({ visible: true }),
   ).toBeVisible();
 }
@@ -61,9 +59,7 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
   });
   await open(page, 'happy', true);
   const button = page
-    .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
-    )
+    .getByTitle('Checkpoint and replace this Fleet Manager in the same pane — local workers only')
     .filter({ visible: true });
   await button.click();
   await expect(page.getByText('Manager handoff complete').filter({ visible: true })).toBeVisible();
@@ -115,9 +111,7 @@ test('automatic same-pane replacement and renderer reload preserve workspace ide
 test('failed preparation retains old manager and shows retryable error', async ({ page }) => {
   await open(page, 'fail');
   await page
-    .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
-    )
+    .getByTitle('Checkpoint and replace this Fleet Manager in the same pane — local workers only')
     .filter({ visible: true })
     .click();
   await expect(
@@ -135,9 +129,7 @@ test('uncertain acknowledgement remains visible without replay until explicit ri
 }) => {
   await open(page, 'ambiguous');
   await page
-    .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
-    )
+    .getByTitle('Checkpoint and replace this Fleet Manager in the same pane — local workers only')
     .filter({ visible: true })
     .click();
   await expect(
@@ -162,9 +154,7 @@ test('uncertain acknowledgement remains visible without replay until explicit ri
 test('unavailable host is explicit and never opens ordinary handoff dialog', async ({ page }) => {
   await open(page, 'unavailable');
   await page
-    .getByTitle(
-      'Checkpoint and replace this Fleet Manager in the same pane — local workers only',
-    )
+    .getByTitle('Checkpoint and replace this Fleet Manager in the same pane — local workers only')
     .filter({ visible: true })
     .click();
   await expect(

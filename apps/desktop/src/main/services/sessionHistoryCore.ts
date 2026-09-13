@@ -101,7 +101,10 @@ function rowFilter(
 }
 
 export class SessionHistoryStore {
-  constructor(private readonly database: {readonly db: Pick<BetterSqlite3.Database, 'prepare'>}, private readonly strictWrites = false) {}
+  constructor(
+    private readonly database: { readonly db: Pick<BetterSqlite3.Database, 'prepare'> },
+    private readonly strictWrites = false,
+  ) {}
   /** Insert or update a session's metadata row, keyed by session_id. */
   record(rec: SessionHistoryRecord): void {
     try {

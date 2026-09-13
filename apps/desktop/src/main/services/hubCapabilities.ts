@@ -284,7 +284,10 @@ function browseRoots(): string[] {
 /** Only spawn setup may browse an explicitly configured inactive project.
  * Content reads/writes retain workspaceRoots; config is not a file-access grant. */
 function spawnSetupRoots(): string[] {
-  return [...browseRoots(), ...Object.keys(configService.getConfig()?.projects ?? {}).filter((p) => path.isAbsolute(p))];
+  return [
+    ...browseRoots(),
+    ...Object.keys(configService.getConfig()?.projects ?? {}).filter((p) => path.isAbsolute(p)),
+  ];
 }
 
 /**
@@ -2747,7 +2750,8 @@ export function registerHubCapabilities(): void {
   registerCapability('fs.watch', (params: unknown) => {
     const { path: p, watchId } = (params ?? {}) as { path?: string; watchId?: string };
     if (!p) throw new Error('fs.watch requires a path');
-    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128)) throw new Error('Invalid watchId');
+    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128))
+      throw new Error('Invalid watchId');
     const path = assertPathAllowed('fs.watch', p, workspaceRoots());
     startWatch(path, undefined, watchId);
     return { ok: true, path };
@@ -2755,7 +2759,8 @@ export function registerHubCapabilities(): void {
   registerCapability('fs.unwatch', (params: unknown) => {
     const { path: p, watchId } = (params ?? {}) as { path?: string; watchId?: string };
     if (!p) throw new Error('fs.unwatch requires a path');
-    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128)) throw new Error('Invalid watchId');
+    if (watchId !== undefined && (typeof watchId !== 'string' || watchId.length > 128))
+      throw new Error('Invalid watchId');
     stopWatch(assertPathAllowed('fs.unwatch', p, workspaceRoots()), watchId);
     return { ok: true };
   });
@@ -2998,7 +3003,10 @@ export function registerHubCapabilities(): void {
   });
   // New browser transports retain native service ownership when this desktop
   // supplies the hub. Lazy import avoids the session-store startup cycle.
-  for (const method of [...desktopServiceMethods.ownerMethods, ...desktopServiceMethods.assetMethods]) {
+  for (const method of [
+    ...desktopServiceMethods.ownerMethods,
+    ...desktopServiceMethods.assetMethods,
+  ]) {
     registerCapability(method, async (params: unknown) => {
       const { nativeDesktopService } = await import('./nativeDesktopServices');
       return nativeDesktopService(method, params, {
@@ -3008,5 +3016,4 @@ export function registerHubCapabilities(): void {
       });
     });
   }
-
 }

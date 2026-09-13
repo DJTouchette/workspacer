@@ -29,7 +29,18 @@ test('Stop pauses reconnect and Wake explicitly opens a new connection', async (
           JSON.stringify({
             op: 'result',
             id: frame.id,
-            result: { canStop: true, label: 'Test server', wake: 'http', idleMode: 'observe', idle: {quiescent:false, calmSeconds:0, dwellSeconds:900, blockers:[{kind:'session-working',detail:'Agent is working'}]} },
+            result: {
+              canStop: true,
+              label: 'Test server',
+              wake: 'http',
+              idleMode: 'observe',
+              idle: {
+                quiescent: false,
+                calmSeconds: 0,
+                dwellSeconds: 900,
+                blockers: [{ kind: 'session-working', detail: 'Agent is working' }],
+              },
+            },
           }),
         );
       } else if (frame.op === 'call' && frame.method === 'machine.stop') {

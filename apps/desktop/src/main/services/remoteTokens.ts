@@ -279,7 +279,8 @@ export function revokeRemoteToken(token: string): RemoteTokenRecord {
   const records = readTokens();
   const idx = records.findIndex((r) => r.token === ref);
   if (idx < 0) throw new Error('token not found');
-  if (records[idx].facadeAuthority) throw new Error('Infrastructure credentials cannot be revoked through pairing controls');
+  if (records[idx].facadeAuthority)
+    throw new Error('Infrastructure credentials cannot be revoked through pairing controls');
   const [removed] = records.splice(idx, 1);
   writeTokens(records);
   return removed;

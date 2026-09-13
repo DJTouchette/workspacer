@@ -62,7 +62,9 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
       .catch((err: unknown) => {
         if (live) {
           setExamples([]);
-          setError(`Could not load examples: ${err instanceof Error ? err.message : 'request failed'}`);
+          setError(
+            `Could not load examples: ${err instanceof Error ? err.message : 'request failed'}`,
+          );
         }
       });
     return () => {

@@ -279,8 +279,13 @@ class ClaudeProfileService {
   private modifying = false;
   private change<T>(action: () => T): T {
     return withConfigLock(profilesFile, () => {
-      this.load(); this.modifying = true;
-      try { return action(); } finally { this.modifying = false; }
+      this.load();
+      this.modifying = true;
+      try {
+        return action();
+      } finally {
+        this.modifying = false;
+      }
     });
   }
 
@@ -293,12 +298,13 @@ class ClaudeProfileService {
     // file, made the brain list an id its own update refused, and made
     // claude.profiles.add mint isDefault:true on one provider and false on the
     // other for the same call. Pinned by contracts/claude-profiles-cases.json.
-    if (this.profiles.length === 0) this.change(() => {
-      if (this.profiles.length === 0) {
-        this.profiles.push(DEFAULT_PROFILE());
-        this.save();
-      }
-    });
+    if (this.profiles.length === 0)
+      this.change(() => {
+        if (this.profiles.length === 0) {
+          this.profiles.push(DEFAULT_PROFILE());
+          this.save();
+        }
+      });
   }
 
   getProfiles(): ClaudeProfile[] {
@@ -335,7 +341,8 @@ class ClaudeProfileService {
       tokenEnvVar?: string;
     } = {},
   ): ClaudeProfile {
-    if (!this.modifying) return this.change(() => this.addProfile(name, configDir, extraArgs, mcpItemIds, init));
+    if (!this.modifying)
+      return this.change(() => this.addProfile(name, configDir, extraArgs, mcpItemIds, init));
     const profile: ClaudeProfile = normalizeProfile({
       id: crypto.randomUUID(),
       name,
@@ -407,7 +414,9 @@ class ClaudeProfileService {
   private save(): void {
     const dir = getConfigDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    atomicWriteFileSync(profilesFile, JSON.stringify({ profiles: this.profiles }, null, 2), { mode: 0o600 });
+    atomicWriteFileSync(profilesFile, JSON.stringify({ profiles: this.profiles }, null, 2), {
+      mode: 0o600,
+    });
   }
 }
 

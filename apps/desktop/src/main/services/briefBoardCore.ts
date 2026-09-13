@@ -30,7 +30,9 @@ import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { withFileLock } from '../lib/fileLock';
 import { configService } from './configService';
 let recentSessions: (limit: number) => Array<{ cwd: string }> = () => [];
-export function setBoardRecentSessions(source: typeof recentSessions): void { recentSessions = source; }
+export function setBoardRecentSessions(source: typeof recentSessions): void {
+  recentSessions = source;
+}
 import {
   BOARD_COLUMNS,
   BriefColumnMissing,

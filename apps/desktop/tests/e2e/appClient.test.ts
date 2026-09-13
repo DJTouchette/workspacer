@@ -87,7 +87,7 @@ async function openApp(page: Page): Promise<string[]> {
 
 test('Wake reaches the public doorbell and resumes the app bus', async ({ page }) => {
   let wakeRequests = 0;
-  await page.route('https://wake.example.test/health', async route => {
+  await page.route('https://wake.example.test/health', async (route) => {
     wakeRequests++;
     await route.fulfill({ status: 200, body: 'awake' });
   });

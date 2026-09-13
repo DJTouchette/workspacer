@@ -56,7 +56,7 @@ test.describe('mobile client', () => {
 
   test('Wake reaches the public doorbell and resumes a paused connection', async ({ page }) => {
     let wakeRequests = 0;
-    await page.route('https://wake.example.test/health', async route => {
+    await page.route('https://wake.example.test/health', async (route) => {
       wakeRequests++;
       await route.fulfill({ status: 200, body: 'awake' });
     });
@@ -70,8 +70,14 @@ test.describe('mobile client', () => {
     await expect(page.locator('#machinePower')).toBeHidden();
     await expect(page.locator('.agent').first()).toBeVisible({ timeout: 10000 });
     expect(wakeRequests).toBe(1);
-    expect(await page.evaluate(() => localStorage.getItem('wks.machine.paused:' +
-      `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`))).toBeNull();
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem(
+          'wks.machine.paused:' +
+            `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`,
+        ),
+      ),
+    ).toBeNull();
   });
 
   test('fleet ranks attention first and renders card telemetry', async ({ page }) => {

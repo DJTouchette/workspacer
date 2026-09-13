@@ -44,20 +44,31 @@ export const ProjectMark: React.FC<{
   const [remoteSrc, setRemoteSrc] = useState<string>();
   useEffect(() => {
     let live = true;
-    setBroken(false); setRemoteSrc(undefined);
+    setBroken(false);
+    setRemoteSrc(undefined);
     if (original?.startsWith('workspacer-icon://') && window.electronAPI?.getUiAsset) {
-      void Promise.resolve().then(() => {
-        const file = decodeURIComponent(original.slice('workspacer-icon://'.length));
-        return window.electronAPI.getUiAsset!('icon', file);
-      }).then((asset) => {
-        if (live) setRemoteSrc(`data:${asset.mime};base64,${asset.dataBase64}`);
-      }).catch(() => { if (live) setBroken(true); });
+      void Promise.resolve()
+        .then(() => {
+          const file = decodeURIComponent(original.slice('workspacer-icon://'.length));
+          return window.electronAPI.getUiAsset!('icon', file);
+        })
+        .then((asset) => {
+          if (live) setRemoteSrc(`data:${asset.mime};base64,${asset.dataBase64}`);
+        })
+        .catch(() => {
+          if (live) setBroken(true);
+        });
     }
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
   }, [original]);
   if (!p) return null;
 
-  const src = original?.startsWith('workspacer-icon://') && window.electronAPI?.getUiAsset ? remoteSrc : original;
+  const src =
+    original?.startsWith('workspacer-icon://') && window.electronAPI?.getUiAsset
+      ? remoteSrc
+      : original;
   const showFavicon = Boolean(src) && !broken;
   // An emoji carries its own colour and needs no tinted plate behind it; a
   // letter mark does. Detected by "not ASCII", which is what an emoji is here.

@@ -10,18 +10,16 @@ vi.mock('../../src/components/LinkedMachinesSection', () => ({ default: () => nu
 
 describe('RemoteShareDialog web pairing', () => {
   it('offers full-control scope and correct phone/full-app links to the owner', async () => {
-    window.electronAPI.getRemoteInfo = vi
-      .fn()
-      .mockResolvedValue({
-        enabled: true,
-        token: 'owner',
-        remoteUrl: 'https://example.test/m',
-        appUrl: 'https://example.test/app/',
-        busUrl: 'wss://example.test/bus',
-        pairingScope: 'operator',
-        canManageTokens: true,
-        canToggleSharing: false,
-      });
+    window.electronAPI.getRemoteInfo = vi.fn().mockResolvedValue({
+      enabled: true,
+      token: 'owner',
+      remoteUrl: 'https://example.test/m',
+      appUrl: 'https://example.test/app/',
+      busUrl: 'wss://example.test/bus',
+      pairingScope: 'operator',
+      canManageTokens: true,
+      canToggleSharing: false,
+    });
     window.electronAPI.remoteTokenGetOrCreate = vi.fn(async (scope) => ({
       token: 'paired-' + scope,
       scope,
@@ -48,18 +46,16 @@ describe('RemoteShareDialog web pairing', () => {
     );
   });
   it('does not mislabel a triage token as operator or attempt token administration', async () => {
-    window.electronAPI.getRemoteInfo = vi
-      .fn()
-      .mockResolvedValue({
-        enabled: true,
-        token: 'triage',
-        remoteUrl: 'https://example.test/m',
-        appUrl: 'https://example.test/app/',
-        busUrl: 'wss://example.test/bus',
-        pairingScope: 'triage',
-        canManageTokens: false,
-        canToggleSharing: false,
-      });
+    window.electronAPI.getRemoteInfo = vi.fn().mockResolvedValue({
+      enabled: true,
+      token: 'triage',
+      remoteUrl: 'https://example.test/m',
+      appUrl: 'https://example.test/app/',
+      busUrl: 'wss://example.test/bus',
+      pairingScope: 'triage',
+      canManageTokens: false,
+      canToggleSharing: false,
+    });
     const mint = vi.fn();
     window.electronAPI.remoteTokenGetOrCreate = mint;
     window.electronAPI.remoteTokensList = vi.fn();

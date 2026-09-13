@@ -282,14 +282,18 @@ export function createSnapshotFold(client: Pick<HubBusClient, 'call'>) {
   return { foldSparse, foldConversation, seedFull, noteLaunch };
 }
 
-export function createPtyStreams(client: HubBusClient, qualify: (sessionId: string, method: string) => string = (_id, method) => method) {
+export function createPtyStreams(
+  client: HubBusClient,
+  qualify: (sessionId: string, method: string) => string = (_id, method) => method,
+) {
   const streams = new Map<string, PtyStream>();
 
   const ensure = (sessionId: string): PtyStream => {
     const existing = streams.get(sessionId);
     if (existing) return existing;
     // attachTerminal makes claudemon replay its ring buffer (the current screen).
-    const attach = () => client.call(qualify(sessionId, 'sessions.attachTerminal'), { sessionId }).catch(() => {});
+    const attach = () =>
+      client.call(qualify(sessionId, 'sessions.attachTerminal'), { sessionId }).catch(() => {});
     const entry: PtyStream = {
       viewers: 0,
       reprimers: new Set(),
@@ -374,13 +378,22 @@ export function createPtyStreams(client: HubBusClient, qualify: (sessionId: stri
   return { stream, reprime, reprimeAll };
 }
 
-export function createWebBackend(token: string, busUrl?: string, options: { nativeAssets?: boolean } = {}): ElectronAPI {
+export function createWebBackend(
+  token: string,
+  busUrl?: string,
+  options: { nativeAssets?: boolean } = {},
+): ElectronAPI {
   const client = new HubBusClient(token, busUrl);
   client.start();
   installMachinePower(client, busUrl);
-  const assets = browserAssets((method, params, timeout) => client.call(method, params, timeout), options.nativeAssets);
+  const assets = browserAssets(
+    (method, params, timeout) => client.call(method, params, timeout),
+    options.nativeAssets,
+  );
   const applyAssets = (config: AppConfig): AppConfig => {
-    void assets.ensureFont(config.ui?.fontFamily).catch((error) => console.warn('Could not load the configured font:', error));
+    void assets
+      .ensureFont(config.ui?.fontFamily)
+      .catch((error) => console.warn('Could not load the configured font:', error));
     return config;
   };
 
@@ -411,7 +424,11 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
   // Refcounted live PTY streams (see createPtyStreams). `reprime` fires the
   // debounced "re-attach + replay" hooks for a session so a freshly-shown pane
   // repaints; `reprimeAll` does it for every live stream.
-  const { stream: streamPty, reprime, reprimeAll } = createPtyStreams(client, (id, method) => qualify(id, method));
+  const {
+    stream: streamPty,
+    reprime,
+    reprimeAll,
+  } = createPtyStreams(client, (id, method) => qualify(id, method));
 
   // Federation: which peer hub each remote session lives on, learned from
   // stamped agent.snapshot envelopes and peer-fleet seeds; plus the last
@@ -800,40 +817,90 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
     // unchanged and every other consumer reads it off the snapshot, where the
     // pills already look.
     spawnClaude: async (opts) => {
-      const target=opts.targetHub?.trim();
-      if(target&&!/^[A-Za-z0-9_-]+$/.test(target))throw new Error('Invalid peer name');
-      if(target&&opts.launchIntegrationId)throw new Error('Launch integrations must be selected on the execution host');
-      const {targetHub:_targetHub,...local}=opts;
+      const target = opts.targetHub?.trim();
+      if (target && !/^[A-Za-z0-9_-]+$/.test(target)) throw new Error('Invalid peer name');
+      if (target && opts.launchIntegrationId)
+        throw new Error('Launch integrations must be selected on the execution host');
+      const { targetHub: _targetHub, ...local } = opts;
       // Match native peer dispatch: local profile/facade/worktree settings
       // belong to this host and must not be applied to a different machine.
-      const payload=target ? {provider:opts.provider,transport:opts.transport,cwd:opts.cwd,model:opts.model,modelIdentity:opts.modelIdentity,contextWindow:opts.contextWindow,effort:opts.effort,permissionMode:opts.permissionMode,label:opts.label,cols:opts.cols,rows:opts.rows,message:opts.message} : local;
-      const result=await client.call<{sessionId:string;fullAccess?:boolean;escalationScrubbed?:string[];messageQueued?:boolean;messageError?:string}>(target?`hub:${target}/agents.spawn`:'agents.spawn',payload,6*60_000);
-      if(!result?.sessionId)throw new Error('Spawn returned no session identity');
-      if(target)sessionHub.set(result.sessionId,target);
-      if(typeof result.fullAccess==='boolean')noteLaunch(result.sessionId,{permissionMode:launchPermissionMode(opts.provider,result.fullAccess,opts.permissionMode),fullAccess:result.fullAccess,escalationScrubbed:result.escalationScrubbed});
-      if(target&&opts.message?.trim()&&result.messageQueued!==true&&!result.messageError){
-        await client.call(`hub:${target}/agents.sendMessage`,{sessionId:result.sessionId,text:opts.message});
+      const payload = target
+        ? {
+            provider: opts.provider,
+            transport: opts.transport,
+            cwd: opts.cwd,
+            model: opts.model,
+            modelIdentity: opts.modelIdentity,
+            contextWindow: opts.contextWindow,
+            effort: opts.effort,
+            permissionMode: opts.permissionMode,
+            label: opts.label,
+            cols: opts.cols,
+            rows: opts.rows,
+            message: opts.message,
+          }
+        : local;
+      const result = await client.call<{
+        sessionId: string;
+        fullAccess?: boolean;
+        escalationScrubbed?: string[];
+        messageQueued?: boolean;
+        messageError?: string;
+      }>(target ? `hub:${target}/agents.spawn` : 'agents.spawn', payload, 6 * 60_000);
+      if (!result?.sessionId) throw new Error('Spawn returned no session identity');
+      if (target) sessionHub.set(result.sessionId, target);
+      if (typeof result.fullAccess === 'boolean')
+        noteLaunch(result.sessionId, {
+          permissionMode: launchPermissionMode(
+            opts.provider,
+            result.fullAccess,
+            opts.permissionMode,
+          ),
+          fullAccess: result.fullAccess,
+          escalationScrubbed: result.escalationScrubbed,
+        });
+      if (target && opts.message?.trim() && result.messageQueued !== true && !result.messageError) {
+        await client.call(`hub:${target}/agents.sendMessage`, {
+          sessionId: result.sessionId,
+          text: opts.message,
+        });
       }
       return result.sessionId;
     },
     // Observe edits from another client or a local config writer, including
     // older hubs. Reads are passive for the server's idle policy.
     onConfigChanged: (callback) => {
-      let live = true, busy = false, previous = '';
+      let live = true,
+        busy = false,
+        previous = '';
       const refresh = async () => {
         if (!live || busy) return;
         busy = true;
         try {
           const config = await client.call<AppConfig>('config.get', {});
           const next = JSON.stringify(config);
-          if (live && next !== previous) { previous = next; callback(applyAssets(config)); }
-        } catch { /* Preserve the last document and retry after reconnection. */ }
-        finally { busy = false; }
+          if (live && next !== previous) {
+            previous = next;
+            callback(applyAssets(config));
+          }
+        } catch {
+          /* Preserve the last document and retry after reconnection. */
+        } finally {
+          busy = false;
+        }
       };
-      const timer = setInterval(() => { void refresh(); }, 1000);
-      const off = client.onReconnect(() => { void refresh(); });
+      const timer = setInterval(() => {
+        void refresh();
+      }, 1000);
+      const off = client.onReconnect(() => {
+        void refresh();
+      });
       void refresh();
-      return () => { live = false; clearInterval(timer); off(); };
+      return () => {
+        live = false;
+        clearInterval(timer);
+        off();
+      };
     },
     claudeListModels: () => client.call('claude.listModels', {}),
     // Auto-titling runs a local headless `claude --print` in the desktop main
@@ -843,16 +910,26 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
     // plain provider-native subagent rows (runId null) can be read through
     // claudemon and folded client-side.
     workflowAgentTranscript: async (sessionId, runId, agentId) => {
-      if (runId !== null) return client.call(qualify(sessionId, 'desktop.workflowAgentTranscript'), { sessionId, runId, agentId });
+      if (runId !== null)
+        return client.call(qualify(sessionId, 'desktop.workflowAgentTranscript'), {
+          sessionId,
+          runId,
+          agentId,
+        });
       const conv = await readProviderSubagentConversation(sessionId, runId, agentId);
       if (!conv) return null;
       return conv
         .map((turn) => ({ role: turn.role, text: transcriptLineText(turn) }))
         .filter((turn) => turn.text.length > 0);
     },
-    workflowAgentConversation: (sessionId, runId, agentId) => runId !== null
-      ? client.call(qualify(sessionId, 'desktop.workflowAgentConversation'), { sessionId, runId, agentId })
-      : readProviderSubagentConversation(sessionId, runId, agentId),
+    workflowAgentConversation: (sessionId, runId, agentId) =>
+      runId !== null
+        ? client.call(qualify(sessionId, 'desktop.workflowAgentConversation'), {
+            sessionId,
+            runId,
+            agentId,
+          })
+        : readProviderSubagentConversation(sessionId, runId, agentId),
     // Live per-provider discovery over the bus (providers.* capabilities): the
     // managed provider's model catalog and PATH-detection status, so the web
     // Spawn dialog matches the desktop instead of falling back to free-text.
@@ -879,22 +956,32 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
         })),
     claudeMessage: (sessionId, text, requestId) => {
       if (requestId !== undefined)
-        return client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'desktop.managerRequestSend'), { sessionId, requestId }, 60_000);
+        return client.call<{ ok: boolean; mode?: string }>(
+          qualify(sessionId, 'desktop.managerRequestSend'),
+          { sessionId, requestId },
+          60_000,
+        );
       return client.call<{ ok: boolean; mode?: string }>(qualify(sessionId, 'agents.sendMessage'), {
         sessionId,
         text,
       });
     },
     claudeSetPermissionMode: (sessionId, mode) =>
-      client.call<{ ok: boolean; mode?: string; error?: string }>(qualify(sessionId, 'claude.setPermissionMode'), {
-        sessionId,
-        mode,
-      }),
+      client.call<{ ok: boolean; mode?: string; error?: string }>(
+        qualify(sessionId, 'claude.setPermissionMode'),
+        {
+          sessionId,
+          mode,
+        },
+      ),
     claudeSetEffort: (sessionId, effort) =>
-      client.call<{ ok: boolean; effort?: string; error?: string }>(qualify(sessionId, 'claude.setEffort'), {
-        sessionId,
-        effort,
-      }),
+      client.call<{ ok: boolean; effort?: string; error?: string }>(
+        qualify(sessionId, 'claude.setEffort'),
+        {
+          sessionId,
+          effort,
+        },
+      ),
     claudeSetModel: (sessionId, model, effort, modelIdentity, contextWindow) =>
       client.call<{
         ok: boolean;
@@ -910,7 +997,8 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
         modelIdentity,
         contextWindow,
       }),
-    managerReplacement: (request) => client.call('desktop.managerReplacement', {request, bindings:[...viewerSessions]}, 60_000),
+    managerReplacement: (request) =>
+      client.call('desktop.managerReplacement', { request, bindings: [...viewerSessions] }, 60_000),
     claudeHandoffBrief: (sessionId) =>
       client.call<{ ok: boolean; markdown?: string; path?: string; error?: string }>(
         qualify(sessionId, 'claude.handoffBrief'),
@@ -932,7 +1020,9 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
         .then(() => {}),
     claudeResize: (sessionId, cols, rows) => {
       reprime(sessionId);
-      return client.call<void>(qualify(sessionId, 'sessions.terminalResize'), { sessionId, cols, rows }).then(() => {});
+      return client
+        .call<void>(qualify(sessionId, 'sessions.terminalResize'), { sessionId, cols, rows })
+        .then(() => {});
     },
     claudeSignal: (sessionId, signal) =>
       client.call<void>(qualify(sessionId, 'claude.signal'), { sessionId, signal }).then(() => {}),
@@ -963,7 +1053,10 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
       client.call<void>(qualify(sessionId, 'claude.gate'), { sessionId, on }).then(() => {}),
     claudeWrite: (viewerKey, data) => {
       client
-        .call(qualify(sessionFor(viewerKey), 'sessions.terminalInput'), { sessionId: sessionFor(viewerKey), data })
+        .call(qualify(sessionFor(viewerKey), 'sessions.terminalInput'), {
+          sessionId: sessionFor(viewerKey),
+          data,
+        })
         .catch(() => {});
     },
     onClaudeOutput: (viewerKey, callback) => streamPty(sessionFor(viewerKey), callback),
@@ -985,36 +1078,57 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
       ),
     fileOpenExternal: async (filePath) => {
       try {
-        const file=await client.call<{name:string;dataBase64:string}>('desktop.readFileBytes',{path:filePath});
-        const bytes=Uint8Array.from(atob(file.dataBase64),c=>c.charCodeAt(0));
-        const url=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
-        const link=document.createElement('a');link.href=url;link.download=file.name;document.body.appendChild(link);link.click();link.remove();
-        setTimeout(()=>URL.revokeObjectURL(url),60_000);
-        return {ok:true};
-      } catch(error) {return {ok:false,error:error instanceof Error?error.message:String(error)};}
+        const file = await client.call<{ name: string; dataBase64: string }>(
+          'desktop.readFileBytes',
+          { path: filePath },
+        );
+        const bytes = Uint8Array.from(atob(file.dataBase64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     },
     fileShowInFolder: async (filePath) => {
       try {
-        const folder=filePath.replace(/[/\\][^/\\]*$/, '') || '/';
-        await client.call('fs.listEntries',{path:folder});
-        requestOpenInEditor({path:filePath,cwd:folder});
-        return {ok:true};
-      } catch(error) {return {ok:false,error:error instanceof Error?error.message:String(error)};}
+        const folder = filePath.replace(/[/\\][^/\\]*$/, '') || '/';
+        await client.call('fs.listEntries', { path: folder });
+        requestOpenInEditor({ path: filePath, cwd: folder });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     },
 
     // Start the host-side watch, then subscribe to the bus topic that watch
     // publishes (fs.changed, payload { path, eventType }) and filter by path.
     // Unsub stops the watch and drops the bus subscription.
     watchFile: (path, onChange) => {
-      const watchId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      let canonical = path, live = true;
+      const watchId =
+        typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      let canonical = path,
+        live = true;
       let pending: Promise<{ path?: string }> | undefined;
       const start = () => {
         if (!live || pending) return;
         pending = client.call<{ path?: string }>('fs.watch', { path, watchId });
-        void pending.then((result) => { if (result?.path) canonical = result.path; })
+        void pending
+          .then((result) => {
+            if (result?.path) canonical = result.path;
+          })
           .catch(() => {})
-          .finally(() => { pending = undefined; });
+          .finally(() => {
+            pending = undefined;
+          });
       };
       const off = client.subscribe('fs.changed', (ev) => {
         const info = (ev.data ?? {}) as { path?: string; eventType?: 'change' | 'rename' };
@@ -1026,9 +1140,12 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
       start();
       return () => {
         live = false;
-        clearInterval(renewal); reconnect();
+        clearInterval(renewal);
+        reconnect();
         off();
-        const stop = () => { void client.call('fs.unwatch', { path: canonical, watchId }).catch(() => {}); };
+        const stop = () => {
+          void client.call('fs.unwatch', { path: canonical, watchId }).catch(() => {});
+        };
         if (pending) void pending.finally(stop).catch(() => {});
         else stop();
       };
@@ -1166,7 +1283,7 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
     // the web mirror can see the fleet but not edit the links. Null tells the
     // settings UI to render read-only.
     federationPeersConfig: () => client.call('federation.peersConfig', {}),
-    federationSavePeersConfig: (peers) => client.call('federation.savePeersConfig', {peers}),
+    federationSavePeersConfig: (peers) => client.call('federation.savePeersConfig', { peers }),
     federationPeers: () =>
       client
         .call<Array<{ name: string; connected: boolean; lastSeen?: number }>>(
@@ -1313,7 +1430,9 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
       const permissions = await client
         .call<{ scope?: string; canManageTokens?: boolean }>('remote.pairingInfo')
         .catch(() => null);
-      const sharing = await client.call<{enabled:boolean;canToggleSharing:boolean}>('remote.sharingInfo',{}).catch(()=>null);
+      const sharing = await client
+        .call<{ enabled: boolean; canToggleSharing: boolean }>('remote.sharingInfo', {})
+        .catch(() => null);
       const scope = permissions?.scope;
       const pairingScope =
         scope === 'operator' || scope === 'triage' || scope === 'view' ? scope : undefined;
@@ -1330,11 +1449,22 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
         canToggleSharing: sharing?.canToggleSharing === true,
       };
     },
-    tailscaleGetInfo: () => client.call('remote.tailscaleInfo',{}),
-    tailscaleSetServe: (enabled) => client.call('remote.tailscaleServe',{enabled},130_000),
+    tailscaleGetInfo: () => client.call('remote.tailscaleInfo', {}),
+    tailscaleSetServe: (enabled) => client.call('remote.tailscaleServe', { enabled }, 130_000),
     setRemoteShare: async (enabled) => {
-      const state = await client.call<{enabled:boolean}>('remote.setSharing',{enabled},130_000);
-      return {...state,token,remoteUrl:hubOrigin+'/m',appUrl:hubOrigin+'/app/',busUrl:hubOrigin.replace(/^http/,'ws')+'/bus',desktopBus:false};
+      const state = await client.call<{ enabled: boolean }>(
+        'remote.setSharing',
+        { enabled },
+        130_000,
+      );
+      return {
+        ...state,
+        token,
+        remoteUrl: hubOrigin + '/m',
+        appUrl: hubOrigin + '/app/',
+        busUrl: hubOrigin.replace(/^http/, 'ws') + '/bus',
+        desktopBus: false,
+      };
     },
     remoteTokensList: () => client.call('remote.tokensList'),
     remoteTokenGetOrCreate: (scope, label) =>
@@ -1496,7 +1626,7 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
     // No native OS dialog over the bus (it'd open on the host, not the viewer).
     // pickFolder opens our in-app host filesystem browser (WebFolderPicker,
     // mounted in App) by dispatching an event it resolves; fsListDir backs it.
-    filePickerList: (path) => client.call('desktop.filePickerList',{path}),
+    filePickerList: (path) => client.call('desktop.filePickerList', { path }),
     fsListDir: (p) => client.call('fs.listDir', { path: p }),
     pickFolder: (defaultPath) =>
       new Promise<string | null>((resolve) => {
@@ -1514,7 +1644,18 @@ export function createWebBackend(token: string, busUrl?: string, options: { nati
     // native dialog and its real host paths still win there. Desktop
     // REMOTE-CLIENT mode does reach it, and must: its host is not the agent's.
     pickFiles: (_defaultPath?: string, opts?: { attachment?: boolean; sessionId?: string }) =>
-      opts?.attachment ? pickAndUpload(opts.sessionId) : new Promise<string[]>((resolve) => {window.dispatchEvent(new CustomEvent('web:pick-files',{detail:{defaultPath:_defaultPath,resolve:(paths:string[]|null)=>resolve(paths??[])}}));}),
+      opts?.attachment
+        ? pickAndUpload(opts.sessionId)
+        : new Promise<string[]>((resolve) => {
+            window.dispatchEvent(
+              new CustomEvent('web:pick-files', {
+                detail: {
+                  defaultPath: _defaultPath,
+                  resolve: (paths: string[] | null) => resolve(paths ?? []),
+                },
+              }),
+            );
+          }),
     // Land bytes from this client on the agent's machine. Qualified for
     // federation exactly like agents.sendMessage, so an attachment for a
     // session living on a peer hub is written by that peer's own hub — the

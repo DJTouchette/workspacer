@@ -14,7 +14,6 @@ export { customFontFamily } from '../shared/customFonts';
  * resolves by name in the renderer (lib/uiFont.ts).
  */
 
-
 export function customFontsDir(): string {
   return path.join(os.homedir(), '.workspacer', 'fonts');
 }

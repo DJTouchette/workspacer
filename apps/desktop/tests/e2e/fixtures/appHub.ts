@@ -396,7 +396,8 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
       case 'config.reload':
         return reply(f.id, liveConfig);
       case 'desktop.saveConfig':
-        liveConfig=deepMerge(liveConfig,params.partial??{});return reply(f.id,liveConfig);
+        liveConfig = deepMerge(liveConfig, params.partial ?? {});
+        return reply(f.id, liveConfig);
       case 'config.save':
         liveConfig = deepMerge(liveConfig, params ?? {});
         return reply(f.id, liveConfig);
@@ -548,7 +549,8 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
  * gap does, and some tests want that).
  */
 const METHODS = [
-  ...desktopMethods.ownerMethods, ...desktopMethods.assetMethods,
+  ...desktopMethods.ownerMethods,
+  ...desktopMethods.assetMethods,
   'agents.sendMessage',
   'agents.spawn',
   'analytics.recent',

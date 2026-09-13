@@ -81,11 +81,14 @@ beforeEach(() => {
 });
 
 describe('webBackend.pickFiles — a real browser picker, not a prompt for host paths', () => {
-  it('uses the server file chooser for a host-path pick',async()=>{
-    const handler=(event:Event)=>(event as CustomEvent).detail.resolve(['/server/source.ts']);
-    window.addEventListener('web:pick-files',handler);
-    try {expect(await createWebBackend('t').pickFiles('/server')).toEqual(['/server/source.ts']);}
-    finally{window.removeEventListener('web:pick-files',handler);}
+  it('uses the server file chooser for a host-path pick', async () => {
+    const handler = (event: Event) => (event as CustomEvent).detail.resolve(['/server/source.ts']);
+    window.addEventListener('web:pick-files', handler);
+    try {
+      expect(await createWebBackend('t').pickFiles('/server')).toEqual(['/server/source.ts']);
+    } finally {
+      window.removeEventListener('web:pick-files', handler);
+    }
   });
 
   it('never asks the user to type a path on the host', async () => {
