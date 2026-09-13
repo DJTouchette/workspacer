@@ -22,6 +22,23 @@ type fileWatchState struct {
 	paths map[string]*watchedFile
 }
 
+// os.Stat on Windows saves a pathname and defers loading the volume/file ID
+// until os.SameFile. Resolve it while sampling, before an atomic replacement can
+// make an older FileInfo load the replacement's identity from that same path.
+// This also applies to the first sample after a missing file is created.
+func statWatchedFile(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, info) {
+		// SameFile returns false when the lazy native ID lookup fails. Refuse
+		// this sample instead of treating an unknown identity as unchanged.
+		return nil, fmt.Errorf("file identity is unavailable for watch path %q", path)
+	}
+	return info, nil
+}
+
 func (r *registry) fsWatch(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Path    string `json:"path"`
@@ -40,7 +57,7 @@ func (r *registry) fsWatch(ctx context.Context, raw json.RawMessage) (json.RawMe
 	if r.publish == nil {
 		return nil, fmt.Errorf("file change publisher is unavailable")
 	}
-	info, err := os.Stat(path)
+	info, err := statWatchedFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -132,7 +149,7 @@ func (r *registry) pollFileChanges(ctx context.Context) {
 			r.fileWatches.mu.Unlock()
 			continue
 		}
-		info, err := os.Stat(path)
+		info, err := statWatchedFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			continue
 		}

@@ -91,6 +91,55 @@ func TestHeadlessFileWatchRefusesEscapeAndStopsOnSymlinkSwap(t *testing.T) {
 	}
 }
 
+func TestHeadlessFileWatchFreezesIdentityAfterMissingFileAppears(t *testing.T) {
+	fx := newGitFixture(t)
+	r := registryWithCwds(t, fx.agentCwd)
+	var events []map[string]string
+	r.publish = func(_ string, data json.RawMessage) {
+		var event map[string]string
+		if err := json.Unmarshal(data, &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	filename := filepath.Join(fx.agentCwd, "appears.txt")
+	raw, _ := json.Marshal(map[string]string{"path": filename})
+	if _, err := r.fsWatch(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, []byte("first\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r.pollFileChanges(context.Background())
+	if len(events) != 1 || events[0]["eventType"] != "rename" {
+		t.Fatalf("creation event: %+v", events)
+	}
+	first, err := os.Stat(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(fx.agentCwd, "replacement.tmp")
+	if err := os.WriteFile(replacement, []byte("other\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the observable size/mode/mtime the same: the changed file identity
+	// must distinguish replacement even when metadata alone cannot do so.
+	if err := os.Chtimes(replacement, first.ModTime(), first.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, filename); err != nil {
+		t.Fatal(err)
+	}
+	r.pollFileChanges(context.Background())
+	if len(events) != 2 || events[1]["eventType"] != "rename" {
+		t.Fatalf("replacement after creation: %+v", events)
+	}
+	r.pollFileChanges(context.Background())
+	if len(events) != 2 {
+		t.Fatalf("unchanged file emitted: %+v", events)
+	}
+}
+
 func TestHeadlessFileWatchLeaseRenewalExpiryAndMissingFile(t *testing.T) {
 	fx := newGitFixture(t)
 	r := registryWithCwds(t, fx.agentCwd)
