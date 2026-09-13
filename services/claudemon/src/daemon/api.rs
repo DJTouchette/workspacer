@@ -1404,11 +1404,9 @@ async fn get_conversation(
         }
         return Json(conv.summary_source(&id)).into_response();
     }
-    let (seq, first_seq, mut items) = conv.snapshot_windowed(&id).unwrap_or((0, 0, Vec::new()));
-    if let Some(since) = q.since {
-        let skip = items_skip(first_seq, items.len(), since);
-        items.drain(0..skip);
-    }
+    let (seq, first_seq, items) = conv
+        .snapshot_since(&id, q.since)
+        .unwrap_or((0, 0, Vec::new()));
     // `first_seq` rides along so a client can place the window without
     // reconstructing it from the item count — which coalescing makes wrong.
     Json(json!({ "session_id": id, "seq": seq, "first_seq": first_seq, "items": items }))
@@ -1507,18 +1505,6 @@ async fn post_handoff(
         }
     };
     Json(json!({ "ok": true, "markdown": markdown, "path": path })).into_response()
-}
-
-/// How many leading items to drop so only those with sequence > `since` remain,
-/// given a window of `len` items whose first carries sequence `first_seq`.
-/// Clamped to `[0, len]`.
-///
-/// `first_seq` is supplied by the store rather than reconstructed as
-/// `seq - len + 1`: coalesced stream fragments advance `seq` without adding an
-/// item, so that formula landed hundreds of sequences to the right and made
-/// `?since=` return the entire retained conversation on every poll.
-fn items_skip(first_seq: u64, len: usize, since: u64) -> usize {
-    (since.saturating_add(1).saturating_sub(first_seq) as usize).min(len)
 }
 
 /// Global SSE feed of conversation deltas across all sessions — the content
@@ -2429,6 +2415,64 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_conversation_since_keeps_coalesced_replies_and_followups() {
+        let state = test_state();
+        state.conv.push(
+            "poll-stream",
+            vec![ConversationItem::UserMessage {
+                text: "first prompt".into(),
+                timestamp: None,
+            }],
+        );
+        for _ in 0..100 {
+            state.conv.push(
+                "poll-stream",
+                vec![ConversationItem::AssistantText {
+                    text: "x".into(),
+                    timestamp: None,
+                }],
+            );
+        }
+        // A phone that saw the first chunk must still receive the growing reply.
+        let (_, body) = request(
+            state.clone(),
+            get("/sessions/poll-stream/conversation?since=2"),
+        )
+        .await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["seq"], 101);
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert_eq!(v["items"][0]["text"], "x".repeat(100));
+        state.conv.push(
+            "poll-stream",
+            vec![ConversationItem::UserMessage {
+                text: "follow-up".into(),
+                timestamp: None,
+            }],
+        );
+        state.conv.push(
+            "poll-stream",
+            vec![ConversationItem::AssistantText {
+                text: "reply to follow-up".into(),
+                timestamp: None,
+            }],
+        );
+        let (_, body) = request(
+            state.clone(),
+            get("/sessions/poll-stream/conversation?since=101"),
+        )
+        .await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["seq"], 103);
+        assert_eq!(v["items"].as_array().unwrap().len(), 2);
+        assert_eq!(v["items"][0]["text"], "follow-up");
+        assert_eq!(v["items"][1]["text"], "reply to follow-up");
+        let (_, body) = request(state, get("/sessions/poll-stream/conversation?since=103")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v["items"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3843,32 +3887,6 @@ mod tests {
         let (status, _body) = request(test_state(), req).await;
         assert!(status.is_client_error(), "got {status}");
         assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[test]
-    fn items_skip_window() {
-        // 5 items whose first carries seq 1.
-        assert_eq!(items_skip(1, 5, 0), 0); // since 0 → keep all
-        assert_eq!(items_skip(1, 5, 3), 3); // since 3 → keep items 4,5
-        assert_eq!(items_skip(1, 5, 5), 5); // since 5 → keep none
-        assert_eq!(items_skip(1, 5, 9), 5); // since beyond the window → keep none
-                                            // A trimmed window: 4 items starting at seq 7.
-        assert_eq!(items_skip(7, 4, 6), 0); // since older than the window → keep all
-        assert_eq!(items_skip(7, 4, 8), 2); // since 8 → keep items 9,10
-        assert_eq!(items_skip(0, 0, 0), 0); // empty
-
-        // The case the old signature got wrong. A stream turn coalesces 800
-        // token fragments into 1 item plus 3 tool items: seq reaches 803 while
-        // len is 4. Reconstructing first_seq as seq-len+1 gave 800, so a client
-        // polling from 400 was told to skip nothing and re-read the whole
-        // conversation every time. With the real first_seq (1) it skips
-        // correctly.
-        assert_eq!(
-            items_skip(1, 4, 400),
-            4,
-            "everything is older than since=400"
-        );
-        assert_eq!(items_skip(1, 4, 0), 0);
     }
 
     // --- CORS + Host guard --------------------------------------------------

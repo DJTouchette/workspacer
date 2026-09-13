@@ -279,6 +279,26 @@ impl ConversationStore {
             .map(|l| (l.seq, l.first_seq(), l.items.clone()))
     }
 
+    /// Filter using each item's last update sequence. Coalesced assistant text
+    /// advances its sequence without adding an item, so array positions cannot
+    /// be used as cursors. Keep the window metadata and items under one lock.
+    pub fn snapshot_since(
+        &self,
+        session_id: &str,
+        since: Option<u64>,
+    ) -> Option<(u64, u64, Vec<ConversationItem>)> {
+        self.logs.get(session_id).map(|l| {
+            let items = l
+                .items
+                .iter()
+                .zip(&l.item_seqs)
+                .filter(|(_, seq)| since.is_none_or(|since| **seq > since))
+                .map(|(item, _)| item.clone())
+                .collect();
+            (l.seq, l.first_seq(), items)
+        })
+    }
+
     /// Project under the log lock: never clone arbitrary tool inputs/results.
     pub fn summary_source(&self, session_id: &str) -> super::summary_source::SummarySource {
         match self.logs.get(session_id) {

@@ -6,8 +6,8 @@ is `docs/web-parity-audit-2026-09-12.md`; live results are in
 `docs/web-capability-live-2026-09-12.json` and the generated API inventory is current.
 
 Live app/machine: workspacer-node / 1857645df24448.
-Image: registry.fly.io/workspacer-node:wake-fix-20260912.
-Digest: sha256:c660ea2d2c49ed87a0ca44497bcf0377421662a6c83a480291b2a2a43086d7b4.
+Image: registry.fly.io/workspacer-node:mobile-chat-fix-20260912.
+Digest: sha256:d696b79afba959c133062b90aea98133085ab22f4ec918e9d1ccc2aa9e7ae3e6.
 Live validation passed: 165 capabilities; hub/daemon/facade ready; HTTPS sharing
 available/active/controllable; idle STOP still 900 seconds. The update's live guard
 reported no work blockers. A client-active blocker immediately after boot/verification
@@ -90,3 +90,18 @@ machine and successfully started it using the deployed mobile Wake button.
 Repeat via `apps/desktop/scripts/verify-machine-wake.mjs` (requires explicit
 `--stop-idle`; refuses work blockers). The client-only image builder is
 `deploy/fly/combined/build-client-upgrade.sh`; it preserves the parity supervisor.
+
+## Mobile transcript follow-up (2026-09-12)
+
+The daemon conversation endpoint treated sequence numbers as contiguous item
+positions when filtering `?since=`. Streamed assistant chunks coalesce in the
+retained log, so this skipped growing replies and later user/assistant messages.
+Filtering now uses each item's actual last-update sequence under the log lock.
+The HTTP regression failed before the fix and passed afterward; all 874 daemon
+library tests passed (4 ignored). No mobile shell change is needed.
+
+`deploy/fly/combined/build-daemon-upgrade.sh` replaces only the daemon in the
+existing image. `inspect-mobile-sessions.py` reads session/transcript metadata
+without printing prompt text or credentials. Inspection found no live sessions
+before deployment; the only persisted session was a stopped PTY row from Sept 10,
+so the user's specific failed conversation could not be recovered for comparison.
