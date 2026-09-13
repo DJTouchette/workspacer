@@ -86,6 +86,8 @@ interface Config {
     /** App-wide UI mode: 'fleet' (full mission-control chrome) or 'focus'
      *  (minimal — rail sidebar, no inspector rail / Fleet Deck). */
     mode?: 'fleet' | 'focus';
+    /** Opt-in project-owned intent workspaces; independent of fleet/focus. */
+    intentWorkspaces?: boolean;
   };
   terminal: {
     shell: string;

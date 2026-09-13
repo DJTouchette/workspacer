@@ -59,6 +59,404 @@ const launch = (page: any) =>
   dialog(page).getByRole('button', { name: 'Dispatch agent', exact: true });
 const calls = (page: any) => page.evaluate(() => (window as any).firstUse.calls);
 
+test('Intent workspace setting and work surface preserve existing panes and saved work', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await expect(page.getByRole('button', { name: 'Work', exact: true })).toHaveCount(0);
+  await page
+    .getByLabel('Ask the Fleet Manager')
+    .fill('Keep this agent session while organizing work');
+  await page.getByRole('button', { name: 'Ask Fleet Manager', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => Object.keys((window as any).firstUse.snapshots()).length))
+    .toBe(1);
+  // In-memory service fixture; SQLite persistence and conflicts have real-DB tests.
+  await page.evaluate(() => {
+    let workspace: any;
+    const revisions: any[] = [];
+    (window as any).electronAPI.usagePacingSchedule = async () => null;
+    (window as any).electronAPI.intentWorkspaceRequest = async (request: any) => {
+      if (request.action === 'list')
+        return { action: 'list', workspaces: workspace ? [workspace] : [] };
+      if (request.action === 'history') return { action: 'history', revisions };
+      if (request.action === 'executions')
+        return { action: 'executions', executions: [], links: [] };
+      const now = new Date().toISOString();
+      workspace = {
+        ...request.fields,
+        projectRoot: request.projectRoot ?? workspace.projectRoot,
+        id: 'intent-fixture',
+        revision: (workspace?.revision ?? 0) + 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      revisions.unshift({
+        revision: workspace.revision,
+        at: now,
+        reason: request.reason || 'Workspace created',
+        snapshot: structuredClone(workspace),
+      });
+      return { action: request.action, workspace: structuredClone(workspace) };
+    };
+  });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const setting = page.getByRole('checkbox', { name: 'Intent workspaces (preview)' });
+  // Layout is one section in the settings pane; its global search finds it.
+  await page.getByPlaceholder('Search settings…').fill('Intent workspaces');
+  await setting.check();
+  await expect(page.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).intentExistingPanes = [...document.querySelector('.app-content')!.children];
+  });
+  await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByRole('button', { name: 'Create an intent' }).click();
+  await page.getByLabel('Title', { exact: true }).fill('Export filtered results');
+  await page
+    .getByLabel('Desired outcome')
+    .fill('Customers export the results they are viewing, with their current filters preserved.');
+  await page
+    .getByLabel('Constraints')
+    .fill('CSV only for this release. Use existing authorization.');
+  await page
+    .getByLabel('Success criteria')
+    .fill('The exported rows match the selected filters across all pages.');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await expect(page.getByText('Saved revision 1.', { exact: true })).toBeVisible();
+  await page.getByLabel('Constraints').fill('CSV only. Include column headers.');
+  await page.getByRole('button', { name: 'Back to agents' }).click();
+  await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await expect(page.getByLabel('Constraints')).toHaveValue('CSV only. Include column headers.');
+  await page.getByLabel('Reason for this revision').fill('Clarified export format');
+  await page.getByRole('button', { name: 'Save revision' }).click();
+  await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).firstUse;
+    fixture.update(Object.keys(fixture.snapshots())[0], {
+      ambientState: 'waiting_approval',
+      pendingApproval: {
+        toolName: 'Bash',
+        toolInput: { command: 'npm test' },
+        timestamp: Date.now(),
+      },
+    });
+  });
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).firstUse;
+    fixture.update(Object.keys(fixture.snapshots())[0], {
+      ambientState: 'idle',
+      pendingApproval: null,
+    });
+  });
+  await page.screenshot({
+    path: testInfo.outputPath('intent-workspace-desktop.png'),
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(() =>
+      (window as any).intentExistingPanes.every(
+        (node: Element, i: number) => node === document.querySelector('.app-content')?.children[i],
+      ),
+    ),
+  ).toBe(true);
+  await page.getByRole('button', { name: 'Back to agents' }).click();
+  await setting.uncheck();
+  await expect(page.getByRole('button', { name: 'Work', exact: true })).toHaveCount(0);
+  await setting.check();
+  await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await expect(page.getByLabel('Constraints')).toHaveValue('CSV only. Include column headers.');
+  expect((await calls(page)).filter((call: any) => call.method === 'spawnClaude')).toHaveLength(1);
+  await page.getByRole('tab', { name: 'History', exact: true }).click();
+  await expect(page.getByText('Revision 2 · Clarified export format')).toBeVisible();
+  await page.getByRole('tab', { name: 'Intent', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByLabel('Title', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({
+    path: testInfo.outputPath('intent-workspace-mobile.png'),
+    fullPage: true,
+  });
+});
+
+test('Intent execution launches pinned context and links existing agents without sending', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.evaluate(async () => {
+    const fixture = (window as any).firstUse;
+    let workspace: any = {
+      id: 'intent-execution',
+      title: 'Export filtered results',
+      projectRoot: '/fixture/project',
+      outcome: 'Customers export matching rows',
+      constraints: 'CSV only',
+      successCriteria: 'Filters preserved',
+      sourceUrl: '',
+      status: 'active',
+      revision: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const executions = new Map<string, any>();
+    const links: any[] = [];
+    const directions: any[] = [],
+      sentDirections: string[] = [];
+    (window as any).intentFixture = {
+      executions: () => [...executions.values()],
+      directions: () => directions,
+      sentDirections: () => sentDirections,
+      delivery: 'accepted',
+    };
+    (window as any).electronAPI.intentWorkspaceRequest = async (request: any) => {
+      if (request.action === 'list')
+        return { action: 'list', workspaces: [structuredClone(workspace)] };
+      if (request.action === 'history') return { action: 'history', revisions: [] };
+      if (request.action === 'executions')
+        return {
+          action: 'executions',
+          executions: structuredClone([...executions.values()]),
+          links: structuredClone(links),
+        };
+      if (request.action === 'directions')
+        return { action: 'directions', directions: structuredClone(directions) };
+      if (request.action === 'controls') return { action: 'controls', controls: [] };
+      if (request.action === 'evidence')
+        return { action: 'evidence', criteria: [], evidence: [], reviews: [] };
+      if (request.action === 'sources') return { action: 'sources', sources: [], comments: [] };
+      if (request.action === 'artifacts')
+        return {
+          action: 'artifacts',
+          artifacts: [],
+          annotations: [],
+          demonstrations: [],
+          groups: [],
+          selections: [],
+        };
+      if (request.action === 'prepareDirection') {
+        const direction = {
+          id: request.directionId,
+          workspaceId: workspace.id,
+          executionId: request.executionId,
+          target: executions.get(request.executionId).session,
+          intentRevision: workspace.revision,
+          author: 'user',
+          text: request.text,
+          createdAt: new Date().toISOString(),
+          supersedesId: request.supersedesId,
+          attempts: [],
+        } as any;
+        direction.packet = fixture.buildIntentDirectionContext(workspace, direction);
+        if (request.supersedesId)
+          directions.find((item) => item.id === request.supersedesId).supersededBy = direction.id;
+        directions.unshift(direction);
+        return { action: 'prepareDirection', created: true, direction: structuredClone(direction) };
+      }
+      if (request.action === 'sendDirection') {
+        const direction = directions.find((item) => item.id === request.directionId);
+        sentDirections.push(direction.packet);
+        direction.attempts.push({
+          id: request.attemptId,
+          status: (window as any).intentFixture.delivery,
+          startedAt: new Date().toISOString(),
+          detail: 'Fixture messaging receipt',
+        });
+        return { action: 'sendDirection', dispatched: true, direction: structuredClone(direction) };
+      }
+      if (request.action === 'update') {
+        workspace = { ...workspace, ...request.fields, revision: workspace.revision + 1 };
+        return { action: 'update', workspace: structuredClone(workspace) };
+      }
+      if (request.action === 'prepareExecution') {
+        if (executions.has(request.executionId))
+          return {
+            action: 'prepareExecution',
+            created: false,
+            execution: structuredClone(executions.get(request.executionId)),
+          };
+        if (request.expectedRevision !== workspace.revision) throw new Error('Intent changed');
+        const execution = {
+          id: request.executionId,
+          workspaceId: workspace.id,
+          intentRevision: workspace.revision,
+          kind: 'launch',
+          state: 'launching',
+          task: request.task,
+          contextPacket: fixture.buildIntentContext(workspace, request.executionId, request.task),
+          session: null,
+          lastObservation: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        executions.set(execution.id, execution);
+        return { action: 'prepareExecution', created: true, execution: structuredClone(execution) };
+      }
+      if (request.action === 'linkExecution') {
+        const execution = executions.get(request.executionId);
+        Object.assign(execution, { state: 'linked', session: request.session });
+        return { action: 'linkExecution', execution: structuredClone(execution) };
+      }
+      if (request.action === 'attachSession') {
+        const execution = {
+          id: crypto.randomUUID(),
+          workspaceId: workspace.id,
+          intentRevision: workspace.revision,
+          kind: 'attached',
+          state: 'linked',
+          task: '',
+          contextPacket: null,
+          session: request.session,
+          lastObservation: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        executions.set(execution.id, execution);
+        return { action: 'attachSession', execution: structuredClone(execution) };
+      }
+      if (request.action === 'addWorkLink') {
+        const link = {
+          id: crypto.randomUUID(),
+          workspaceId: workspace.id,
+          kind: request.kind,
+          target: request.target,
+          createdAt: new Date().toISOString(),
+        };
+        links.push(link);
+        return { action: 'addWorkLink', link };
+      }
+      throw new Error('Unexpected intent fixture request: ' + request.action);
+    };
+    await (window as any).electronAPI.saveConfig({
+      ui: { intentWorkspaces: true },
+      agents: { defaultProvider: 'codex', spawnInWorktree: false },
+    });
+  });
+  await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByRole('tab', { name: 'Execution', exact: true }).click();
+  await page.getByRole('button', { name: 'Start agent', exact: true }).click();
+  const dispatch = page.getByRole('dialog', { name: 'Dispatch agent' });
+  await expect(dispatch.getByText(/using saved intent revision 1/)).toBeVisible();
+  await dispatch
+    .getByLabel('What should this agent do?')
+    .fill('Implement filtered CSV export and run the relevant tests.');
+  await dispatch.getByRole('button', { name: 'Dispatch agent', exact: true }).click();
+  await expect(dispatch).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).intentFixture.executions()[0]?.state))
+    .toBe('linked');
+  const spawnCalls = (await calls(page)).filter((call: any) => call.method === 'spawnClaude');
+  expect(spawnCalls).toHaveLength(1);
+  expect(spawnCalls[0].args[0].provider).toBe('codex');
+  const pinned = await page.evaluate(
+    () => (window as any).intentFixture.executions()[0].contextPacket,
+  );
+  expect(spawnCalls[0].args[0].message).toBe(pinned);
+  expect(pinned).toContain('Intent revision: 1');
+  expect(pinned).toContain('CSV only');
+  expect(pinned).toContain('AGENTS.md');
+  expect((await calls(page)).filter((call: any) => call.method === 'claudeMessage')).toHaveLength(
+    0,
+  );
+  await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByRole('tab', { name: 'Intent', exact: true }).click();
+  await page.getByLabel('Constraints').fill('CSV and Excel');
+  await page.getByRole('button', { name: 'Save revision' }).click();
+  await expect(page.getByText('Saved revision 2.', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Execution', exact: true }).click();
+  await expect(page.getByText('Revision 1 · Earlier intent')).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as any).intentFixture.executions()[0].contextPacket),
+  ).toBe(pinned);
+  await page.getByLabel('Pull request URL').fill('https://example.com/pull/42');
+  await page.getByRole('button', { name: 'Add reference', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'https://example.com/pull/42' })).toBeVisible();
+  const existingId = await page.evaluate(() =>
+    (window as any).electronAPI.spawnClaude({
+      cwd: '/fixture/project',
+      provider: 'claude',
+      message: 'Existing investigation',
+    }),
+  );
+  await page.getByLabel('Existing agent').selectOption(JSON.stringify(['', existingId]));
+  await page.getByRole('button', { name: 'Link agent', exact: true }).click();
+  await expect(page.getByText(/Tracking link/)).toBeVisible();
+  expect((await calls(page)).filter((call: any) => call.method === 'spawnClaude')).toHaveLength(2);
+  expect((await calls(page)).filter((call: any) => call.method === 'claudeMessage')).toHaveLength(
+    0,
+  );
+  await page.getByRole('tab', { name: 'Direction', exact: true }).click();
+  const executionId = await page.evaluate(() => (window as any).intentFixture.executions()[0].id);
+  await page.getByLabel('Target execution').selectOption(executionId);
+  await page
+    .getByLabel('What should change?')
+    .fill('Reuse the existing permission checks for Excel exports.');
+  await page.getByRole('tab', { name: 'Execution', exact: true }).click();
+  await page.getByRole('tab', { name: 'Direction', exact: true }).click();
+  await expect(page.getByLabel('What should change?')).toHaveValue(
+    'Reuse the existing permission checks for Excel exports.',
+  );
+  await page.getByRole('button', { name: 'Save direction for review' }).click();
+  await expect(page.getByText('Saved · Not sent', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).intentFixture.sentDirections().length)).toBe(0);
+  const directionPacket = await page.evaluate(
+    () => (window as any).intentFixture.directions()[0].packet,
+  );
+  expect(directionPacket).toContain('Intent revision: 2');
+  expect(directionPacket).toContain('CSV and Excel');
+  await page.screenshot({
+    path: testInfo.outputPath('intent-direction-review-desktop.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Send direction', exact: true }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Accepted by messaging service' }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).intentFixture.sentDirections()[0])).toBe(
+    directionPacket,
+  );
+  await page.getByRole('button', { name: 'Replace direction', exact: true }).click();
+  await page.getByLabel('What should change?').fill('Keep CSV only for this release; defer Excel.');
+  await page.getByRole('button', { name: 'Save direction for review' }).click();
+  await expect(page.getByText(/Replaced by direction/)).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).intentFixture.delivery = 'unknown';
+  });
+  await page.getByRole('button', { name: 'Send direction', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Delivery uncertain' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry delivery' })).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.locator('.intent-detail').evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath('intent-direction-mobile.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.getByRole('tab', { name: 'Execution', exact: true }).click();
+  await page.screenshot({
+    path: testInfo.outputPath('intent-execution-desktop.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Start agent', exact: true }).scrollIntoViewIfNeeded();
+  expect(
+    await page.locator('.intent-detail').evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath('intent-execution-mobile.png'),
+    fullPage: true,
+  });
+});
+
 for (const uiMode of ['focus', 'fleet']) {
   for (const viewLevel of ['piloting', 'fleet']) {
     test(`Overview navigation after restoring ${uiMode}/${viewLevel}`, async ({ page }) => {

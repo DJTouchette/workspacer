@@ -5,6 +5,74 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { createServer } from 'node:http';
+
+test('background intent results survive host restarts without an Execution view', { timeout: 30_000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspacer-intent-host-'));
+  const testHome = path.join(root, 'home');
+  fs.mkdirSync(testHome, { recursive: true });
+  const env = { ...process.env, HOME: testHome, USERPROFILE: testHome, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_DATA_HOME: path.join(root, 'data'), XDG_CACHE_HOME: path.join(root, 'cache') };
+  delete env.HUB_TOKEN;
+  let report = 'Working on the feature';
+  const reads = [];
+  const daemon = createServer((req, res) => {
+    reads.push(req.url);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ projection: 'agent-status-source/v1', sessionId: 'linked-worker', events: [{ kind: 'assistant_text', text: report }] }));
+  });
+  await new Promise((resolve) => daemon.listen(0, '127.0.0.1', resolve));
+  const session = { sessionId: 'linked-worker', cwd: testHome, label: 'Worker', provider: 'codex', status: 'active', ambientState: 'streaming' };
+  const context = { workspaceRoots: [testHome], setupRoots: [testHome], snapshots: [session], daemonURL: `http://127.0.0.1:${daemon.address().port}` };
+  let child, closed;
+  const stop = async () => { if (child && child.exitCode === null) child.stdin.end(); if (closed) await closed; };
+  const start = () => {
+    child = spawn(process.execPath, ['dist/headless/desktop-host.cjs'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const running = child;
+    let logs = '';
+    running.stderr.on('data', (chunk) => { logs += chunk; });
+    const pending = new Map();
+    let seq = 0;
+    closed = new Promise((resolve) => running.once('close', resolve));
+    running.once('exit', () => { for (const entry of pending.values()) entry.reject(new Error(`Host exited: ${logs}`)); });
+    createInterface({ input: running.stdout }).on('line', (line) => {
+      const response = JSON.parse(line);
+      if (response.event) return;
+      const entry = pending.get(response.id);
+      if (!entry) throw new Error('Unexpected protocol frame: ' + line);
+      pending.delete(response.id);
+      response.error ? entry.reject(new Error(response.error)) : entry.resolve(response.result);
+    });
+    return (method, params = {}) => new Promise((resolve, reject) => {
+      const id = String(++seq);
+      pending.set(id, { resolve, reject });
+      running.stdin.write(JSON.stringify({ id, method, params, context }) + '\n');
+    });
+  };
+  t.after(async () => { await stop(); await new Promise((resolve) => daemon.close(resolve)); fs.rmSync(root, { recursive: true, force: true }); });
+  let call = start();
+  await call('internal.observe');
+  const databasePath = path.join(root, 'config', 'workspacer', 'intent-workspaces.sqlite');
+  assert.equal(fs.existsSync(databasePath), false, 'ordinary observation must not create an unused intent database');
+  assert.equal(reads.length, 0, 'unlinked sessions must not fetch reports');
+  const created = await call('desktop.intentWorkspaceRequest', { request: { action: 'create', projectRoot: testHome, fields: { title: 'Feature', outcome: '', constraints: '', successCriteria: '', sourceUrl: '', status: 'active' } } });
+  const id = created.workspace.id;
+  assert.equal(fs.existsSync(databasePath), true);
+  await call('desktop.intentWorkspaceRequest', { request: { action: 'attachSession', id, expectedRevision: 1, session: { ...session, hub: '' } } });
+  await stop();
+  call = start();
+  session.status = 'ended';
+  report = 'Completed the feature. All targeted checks passed.';
+  // First request after process restart is an observation, not a workspace read.
+  await call('internal.observe');
+  assert.deepEqual(reads, ['/sessions/linked-worker/conversation?summary_source=1']);
+  context.snapshots = [];
+  await stop();
+  call = start();
+  const result = await call('desktop.intentWorkspaceRequest', { request: { action: 'executions', id } });
+  assert.equal(result.executions[0].lastObservation.state, 'stopped');
+  assert.equal(result.executions[0].lastObservation.summary, report);
+  assert.equal(result.captureWarning, undefined);
+});
 
 test('shared desktop services over the production private protocol', { timeout: 30_000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspacer-desktop-host-'));
@@ -36,6 +104,21 @@ test('shared desktop services over the production private protocol', { timeout: 
     child.stdin.write(JSON.stringify({id,method,params,context})+'\n');
   });
   assert.equal((await call('desktop.worktreeInfo',{cwd:repo})).isRepo,true);
+  const intentFields = { title: 'Export results', outcome: 'Filtered exports', constraints: '', successCriteria: '', sourceUrl: '', status: 'draft' };
+  const createdIntent = await call('desktop.intentWorkspaceRequest', { request: { action: 'create', projectRoot: repo, fields: intentFields } });
+  assert.equal(createdIntent.workspace.revision, 1);
+  const intentId = createdIntent.workspace.id;
+  await call('desktop.intentWorkspaceRequest', { request: { action: 'update', id: intentId, expectedRevision: 1, fields: { ...intentFields, constraints: 'CSV only' }, reason: 'Release scope' } });
+  assert.equal((await call('desktop.intentWorkspaceRequest', { request: { action: 'list' } })).workspaces[0].constraints, 'CSV only');
+  await assert.rejects(call('desktop.intentWorkspaceRequest', { request: { action: 'update', id: intentId, expectedRevision: 1, fields: intentFields, reason: '' } }), /changed elsewhere/);
+  assert.equal((await call('desktop.intentWorkspaceRequest', { request: { action: 'history', id: intentId } })).revisions.length, 2);
+  const intentLaunch = { action: 'prepareExecution', id: intentId, expectedRevision: 2, executionId: 'intent-run', task: 'Implement and validate the export' };
+  const launchRecord = await call('desktop.intentWorkspaceRequest', { request: intentLaunch });
+  assert.equal(launchRecord.created, true);
+  assert.match(launchRecord.execution.contextPacket, /CSV only/);
+  assert.equal((await call('desktop.intentWorkspaceRequest', { request: intentLaunch })).created, false);
+  await call('desktop.intentWorkspaceRequest', { request: { action: 'linkExecution', id: intentId, executionId: 'intent-run', session: { sessionId: owner.sessionId, label: owner.label, provider: 'claude', hub: '', cwd: repo } } });
+  assert.equal((await call('desktop.intentWorkspaceRequest', { request: { action: 'executions', id: intentId } })).executions[0].session.sessionId, owner.sessionId);
   await assert.rejects(call('desktop.worktreeInfo',{cwd:root,context:{setupRoots:[root]}}),/outside/);
   const font = Buffer.from('0001000000000000', 'hex');
   const installed = await call('desktop.installUiFont', {name:'Fixture.ttf',dataBase64:font.toString('base64')});

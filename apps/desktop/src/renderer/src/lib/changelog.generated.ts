@@ -23,6 +23,27 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: 'Unreleased',
+    date: '',
+    unreleased: true,
+    sections: [
+      {
+        title: 'Added',
+        items: [
+          '**Intent workspaces keep a feature together across agent sessions.** Enable Intent workspaces (preview) in Settings → Layout to capture outcomes and constraints, link executions, review criterion evidence, steer with durable delivery receipts, and retain artifacts, annotations, screenshot walkthroughs, and alternative decisions. Stable projects support multiple repositories and explicit root relocation without moving files or rewriting fleet settings.',
+          '**Review external requirements and reusable project knowledge deliberately.** Manual sources, Jira Cloud, and Azure DevOps retain accepted snapshots and source drift, with explicit reviewed comment publishing. Rivet captures pin document versions and promote findings only after review. Future execution packets include accepted context; older packets remain unchanged.',
+          '**Windows supports retained intent files and Rivet operations.** A bundled native Windows file helper guards against reparse points and concurrent path changes; no extra installation is required. Service receipts, user assessments, and verified evidence remain separate throughout the workflow.',
+        ],
+      },
+      {
+        title: 'Changed',
+        items: [
+          '**Work has a clearer overview and responsive navigation.** Compact keyboard tabs, a collapsible mobile work list, searchable project work, and clearer status and evidence summaries make large features easier to follow. Drafts, retry identities, and review bases survive navigation and lost responses.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.165.0',
     date: '2026-09-08',
     unreleased: false,

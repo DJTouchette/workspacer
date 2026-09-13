@@ -226,6 +226,9 @@ const SECTIONS: SectionDef[] = [
     label: 'Layout',
     group: 'Workspace',
     keywords: [
+      'intent workspaces',
+      'features',
+      'preview',
       'layout',
       'pane',
       'tab',

@@ -16,6 +16,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  intent-windows-files:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install test dependencies without native addon rebuilds
+        run: npm ci --ignore-scripts
+      - name: Install renderer type dependencies
+        working-directory: apps/desktop/src/renderer
+        run: npm ci --ignore-scripts
+      - name: Compile desktop types and standalone host with embedded Windows helper
+        run: |
+          npm run typecheck:main
+          npm run build:desktop-host
+      - name: Exercise Windows PowerShell 5.1 and real NTFS handles
+        run: npx vitest run src/main/services/intentWindowsFiles.test.ts --maxWorkers=1
+
   release-check-runner:
     runs-on: ubuntu-latest
     steps:

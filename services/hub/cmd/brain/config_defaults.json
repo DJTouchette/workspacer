@@ -14,7 +14,8 @@
     "guiFontScale": 1.15,
     "uiFontScale": 1.0,
     "diffView": "stacked",
-    "mode": "fleet"
+    "mode": "fleet",
+    "intentWorkspaces": false
   },
   "terminal": {
     "shell": "",

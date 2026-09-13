@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { resolveUiMode, type UiMode } from '../../lib/uiMode';
 import { Section, Row, ModeButton } from './primitives';
@@ -9,10 +9,41 @@ interface LayoutSectionProps {
 }
 
 const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
+  const [intentError, setIntentError] = useState('');
+  const [savingIntent, setSavingIntent] = useState(false);
   const uiMode = resolveUiMode(config.ui?.mode);
   const setUiMode = (mode: UiMode) => save({ ui: { ...config.ui, mode } });
   return (
     <Section title="Layout">
+      <Row label="Intent workspaces (preview)">
+        <input
+          type="checkbox"
+          aria-label="Intent workspaces (preview)"
+          checked={config.ui?.intentWorkspaces === true}
+          disabled={savingIntent}
+          onChange={async (event) => {
+            const enabled = event.target.checked;
+            setSavingIntent(true);
+            setIntentError('');
+            try {
+              await save({ ui: { ...config.ui, intentWorkspaces: enabled } });
+            } catch (error) {
+              setIntentError(error instanceof Error ? error.message : String(error));
+            } finally {
+              setSavingIntent(false);
+            }
+          }}
+        />
+      </Row>
+      <p style={{ fontSize: '0.72rem', color: 'var(--wks-text-tertiary)' }}>
+        Adds Work to the tab bar: organize features by project and keep their intent and revision
+        history. Turning this off keeps saved workspaces.
+      </p>
+      {intentError && (
+        <p role="alert" style={{ color: 'var(--wks-error)' }}>
+          {intentError}
+        </p>
+      )}
       <Row label="UI mode">
         <div style={{ display: 'flex', gap: '6px' }}>
           <ModeButton

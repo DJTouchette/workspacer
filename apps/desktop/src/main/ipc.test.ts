@@ -669,6 +669,85 @@ it('history read derives the current manager from live host state, ignoring call
   }
 });
 
+it('intent direction IPC uses host snapshots and the existing native message adapter with durable replay fencing', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const intent = await import('./services/intentWorkspaceStore');
+  const { claudeSessionStore } = await import('./services/claudeSessionStore');
+  const { claudemonSessionClient } = await import('./services/claudemonSessionClient');
+  const db = new DatabaseSync(':memory:');
+  const store = new intent.IntentWorkspaceStore(db);
+  const target = {
+    sessionId: 'intent-ipc-worker',
+    hub: '',
+    label: 'Worker',
+    provider: 'codex',
+    cwd: '/project',
+  };
+  const snapshots = vi
+    .spyOn(claudeSessionStore, 'getAllSnapshots')
+    .mockReturnValue([target] as never);
+  const message = vi
+    .spyOn(claudemonSessionClient, 'message')
+    .mockReset()
+    .mockResolvedValue({ ok: true });
+  const service = vi
+    .spyOn(intent, 'intentWorkspaceRequest')
+    .mockImplementation(async (input, live = [], delivery) => {
+      const request = input as Record<string, unknown>;
+      if (request.action === 'sendDirection') return store.steering.send(request, live, delivery!);
+      return store.request(input, live);
+    });
+  try {
+    const invoke = (request: unknown) =>
+      handlers.get('intent-workspace:request')!(null, request) as Promise<any>;
+    const created = await invoke({
+      action: 'create',
+      projectRoot: '/project',
+      fields: {
+        title: 'Feature',
+        outcome: '',
+        constraints: '',
+        successCriteria: '',
+        sourceUrl: '',
+        status: 'active',
+      },
+    });
+    const id = created.workspace.id;
+    const attached = await invoke({
+      action: 'attachSession',
+      id,
+      expectedRevision: 1,
+      session: target,
+    });
+    const prepared = await invoke({
+      action: 'prepareDirection',
+      id,
+      directionId: 'ipc-direction',
+      executionId: attached.execution.id,
+      expectedRevision: 1,
+      text: 'Preserve permissions',
+    });
+    expect(message).not.toHaveBeenCalled();
+    const send = {
+      action: 'sendDirection',
+      id,
+      directionId: 'ipc-direction',
+      attemptId: 'ipc-attempt',
+      target: { sessionId: 'forged' },
+      status: 'accepted',
+    };
+    expect(await invoke(send)).toMatchObject({ direction: { attempts: [{ status: 'accepted' }] } });
+    await invoke(send);
+    expect(message).toHaveBeenCalledTimes(1);
+    expect(message).toHaveBeenCalledWith(target.sessionId, prepared.direction.packet);
+  } finally {
+    service.mockRestore();
+    snapshots.mockRestore();
+    message.mockRestore();
+    db.close();
+  }
+});
+
 describe('routing preferences IPC', () => {
   it('forwards only the five connected-hub methods and preserves errors', async () => {
     const { callHub } = await import('./services/hubClient');
@@ -1095,12 +1174,29 @@ it('installs the default production bridge and carries preparation and tagged se
     const remote = window.electronAPI;
     vi.mocked(ipcRenderer.invoke).mockClear();
     bridgeMocks.busCall.mockClear();
-    bridgeMocks.busCall.mockResolvedValue({available:true,requestId:'remote-request',ok:true});
-    expect(await remote.managerRequestPrepare!('remote-owner',body)).toMatchObject({available:true,requestId:'remote-request'});
-    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith('desktop.managerRequestPrepare',{sessionId:'remote-owner',text:body,bootstrap:undefined},'ws://remote-fixture/bus');
+    bridgeMocks.busCall.mockResolvedValue({
+      available: true,
+      requestId: 'remote-request',
+      ok: true,
+    });
+    expect(await remote.managerRequestPrepare!('remote-owner', body)).toMatchObject({
+      available: true,
+      requestId: 'remote-request',
+    });
+    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith(
+      'desktop.managerRequestPrepare',
+      { sessionId: 'remote-owner', text: body, bootstrap: undefined },
+      'ws://remote-fixture/bus',
+    );
     bridgeMocks.busCall.mockRejectedValueOnce(new Error('Request unavailable on this server'));
-    await expect(remote.claudeMessage('remote-owner',body,held.requestId)).rejects.toThrow('Request unavailable');
-    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith('desktop.managerRequestSend',{sessionId:'remote-owner',requestId:held.requestId},'ws://remote-fixture/bus');
+    await expect(remote.claudeMessage('remote-owner', body, held.requestId)).rejects.toThrow(
+      'Request unavailable',
+    );
+    expect(bridgeMocks.busCall).toHaveBeenLastCalledWith(
+      'desktop.managerRequestSend',
+      { sessionId: 'remote-owner', requestId: held.requestId },
+      'ws://remote-fixture/bus',
+    );
     expect(ipcRenderer.invoke).not.toHaveBeenCalled();
     expect(
       store

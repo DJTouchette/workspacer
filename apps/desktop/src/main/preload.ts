@@ -894,6 +894,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // .workspacer/brief.md, and `to: 'archive'` moves them out into
   // brief.archive.md. Both reject rather than half-write; the returned lane is
   // freshly re-read from disk, so the pane never renders what it hoped for.
+  intentWorkspaceRequest: (
+    request: import('./shared/intentWorkspace').IntentWorkspaceRequest,
+  ): Promise<import('./shared/intentWorkspace').IntentWorkspaceResponse> =>
+    ipcRenderer.invoke(IPC.INTENT_WORKSPACE_REQUEST, request),
   loadBriefBoard: (): Promise<BoardData> => ipcRenderer.invoke(IPC.BRIEF_BOARD_LOAD),
   moveBriefCard: (req: BoardMoveRequest): Promise<BoardLane> =>
     ipcRenderer.invoke(IPC.BRIEF_BOARD_MOVE, req),

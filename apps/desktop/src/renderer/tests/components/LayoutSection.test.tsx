@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import LayoutSection from '../../src/components/settings/LayoutSection';
 import type { Config } from '../../src/hooks/useConfig';
@@ -19,6 +19,27 @@ function renderSection(config: Partial<Config>) {
 }
 
 describe('LayoutSection — peek/gap slider fallbacks on a fresh install', () => {
+  it('keeps intent workspaces off by default and saves the setting independently of focus mode', async () => {
+    const save = vi.fn().mockResolvedValue({});
+    render(<LayoutSection config={{ ui: { mode: 'focus' } } as Config} save={save} />);
+    const toggle = screen.getByRole('checkbox', { name: 'Intent workspaces (preview)' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(save).toHaveBeenCalledWith({ ui: { mode: 'focus', intentWorkspaces: true } });
+  });
+
+  it('shows a failed setting save', async () => {
+    render(
+      <LayoutSection
+        config={{} as Config}
+        save={vi.fn().mockRejectedValue(new Error('Config write refused'))}
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Intent workspaces (preview)' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Config write refused');
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+  });
+
   it('renders both sliders at 0 with 0px labels when config.panes is absent', () => {
     renderSection({}); // fresh install: no `panes` key in the config file
 

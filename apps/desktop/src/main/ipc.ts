@@ -69,6 +69,9 @@ import { checkPreviewFileUrl } from './lib/webviewGuard';
 import { webviewFileRoots } from './lib/webviewRoots';
 import { canonicalizePath, isSecretPath } from './lib/pathConfinement';
 import { readHtmlCardDiff } from './services/gitService';
+import { intentWorkspaceRequest } from './services/intentWorkspaceStore';
+import { deliverIntentDirection } from './services/intentDirectionDelivery';
+import { deliverIntentControl } from './services/intentControlDelivery';
 import { loadBoard, applyBoardMove, type BoardMoveRequest } from './services/briefBoardService';
 import { readImagePreview } from './services/imagePreview';
 import { savePastedImage } from './services/clipboardImage';
@@ -1557,6 +1560,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return result;
   });
 
+  ipcMain.handle(IPC.INTENT_WORKSPACE_REQUEST, (_event, request: unknown) =>
+    intentWorkspaceRequest(
+      request,
+      claudeSessionStore.getAllSnapshots(),
+      deliverIntentDirection,
+      deliverIntentControl,
+    ),
+  );
   ipcMain.handle(IPC.BRIEF_BOARD_LOAD, () => loadBoard());
   ipcMain.handle(IPC.BRIEF_BOARD_MOVE, (_event, req: BoardMoveRequest) => applyBoardMove(req));
 

@@ -35,7 +35,10 @@ const usageBusCall = vi.hoisted(() =>
   vi.fn(async (_method: string, _params: unknown, _url?: string) => ({})),
 );
 
-beforeEach(() => {usageBusCall.mockReset();usageBusCall.mockResolvedValue({});});
+beforeEach(() => {
+  usageBusCall.mockReset();
+  usageBusCall.mockResolvedValue({});
+});
 
 // Keep createWebBackend from opening a real WebSocket — a no-op bus client is
 // all we need to reflect over the built object's keys.
@@ -71,6 +74,7 @@ vi.mock('../../src/backend/hubBusClient', () => ({
 // subscriptions, and hub-core plumbing (layout doc, __publish) all count.
 const BUS_BACKED = [
   'filePickerList',
+  'intentWorkspaceRequest',
   'keepWarmHeartbeats',
   'agentSuggestTitle',
   'onConfigChanged',
@@ -236,6 +240,20 @@ function repoFile(...segments: string[]): string {
 }
 
 describe('backend parity — every ElectronAPI method is triaged into one bucket', () => {
+  it('routes intent workspace requests to the selected host and propagates conflicts', async () => {
+    const api = createWebBackend('token', 'ws://intent-host/bus');
+    const request = { action: 'list' } as const;
+    usageBusCall.mockResolvedValueOnce({ action: 'list', workspaces: [] });
+    expect(await api.intentWorkspaceRequest!(request)).toEqual({ action: 'list', workspaces: [] });
+    expect(usageBusCall).toHaveBeenCalledWith(
+      'desktop.intentWorkspaceRequest',
+      { request },
+      'ws://intent-host/bus',
+    );
+    usageBusCall.mockRejectedValueOnce(new Error('Workspace changed elsewhere'));
+    await expect(api.intentWorkspaceRequest!(request)).rejects.toThrow('changed elsewhere');
+  });
+
   it('routes request-tagged chat through the real desktop bridge without changing ordinary bus chat', async () => {
     const receipt = { ok: false, requestId: 'host-request', delivery: 'unknown', mode: 'unknown' };
     const prepare = vi.fn().mockResolvedValue({ available: true, requestId: 'host-request' });
@@ -284,20 +302,51 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
   });
 
   it('keeps capture and delivery on the selected server, including old native preloads', async () => {
-    const prepare=vi.fn(),send=vi.fn();
-    const ipc={platform:'linux',managerRequestPrepare:prepare,claudeMessage:send} as unknown as ElectronAPI;
-    const apis=[createRemoteBackend(ipc,'token','ws://remote-fixture/bus'),createWebBackend('token','ws://remote-fixture/bus'),createBridgedBackend({platform:'linux'} as ElectronAPI,'token','ws://remote-fixture/bus')];
-    for(const api of apis){
-      usageBusCall.mockClear();usageBusCall.mockResolvedValue({available:true,requestId:'server-request',ok:true});
-      expect(await api.managerRequestPrepare!('manager','captured text')).toMatchObject({requestId:'server-request'});
-      expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerRequestPrepare',{sessionId:'manager',text:'captured text',bootstrap:undefined},'ws://remote-fixture/bus');
-      expect(await api.claudeMessage('manager','not a second copy','server-request')).toMatchObject({ok:true});
-      expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerRequestSend',{sessionId:'manager',requestId:'server-request'},'ws://remote-fixture/bus');
+    const prepare = vi.fn(),
+      send = vi.fn();
+    const ipc = {
+      platform: 'linux',
+      managerRequestPrepare: prepare,
+      claudeMessage: send,
+    } as unknown as ElectronAPI;
+    const apis = [
+      createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus'),
+      createWebBackend('token', 'ws://remote-fixture/bus'),
+      createBridgedBackend(
+        { platform: 'linux' } as ElectronAPI,
+        'token',
+        'ws://remote-fixture/bus',
+      ),
+    ];
+    for (const api of apis) {
+      usageBusCall.mockClear();
+      usageBusCall.mockResolvedValue({ available: true, requestId: 'server-request', ok: true });
+      expect(await api.managerRequestPrepare!('manager', 'captured text')).toMatchObject({
+        requestId: 'server-request',
+      });
+      expect(usageBusCall).toHaveBeenLastCalledWith(
+        'desktop.managerRequestPrepare',
+        { sessionId: 'manager', text: 'captured text', bootstrap: undefined },
+        'ws://remote-fixture/bus',
+      );
+      expect(
+        await api.claudeMessage('manager', 'not a second copy', 'server-request'),
+      ).toMatchObject({ ok: true });
+      expect(usageBusCall).toHaveBeenLastCalledWith(
+        'desktop.managerRequestSend',
+        { sessionId: 'manager', requestId: 'server-request' },
+        'ws://remote-fixture/bus',
+      );
       usageBusCall.mockRejectedValueOnce(new Error('acknowledgement lost'));
-      await expect(api.claudeMessage('manager','must not replay','server-request')).rejects.toThrow('acknowledgement lost');
-      expect(usageBusCall.mock.calls.filter(([method])=>method==='agents.sendMessage')).toHaveLength(0);
+      await expect(
+        api.claudeMessage('manager', 'must not replay', 'server-request'),
+      ).rejects.toThrow('acknowledgement lost');
+      expect(
+        usageBusCall.mock.calls.filter(([method]) => method === 'agents.sendMessage'),
+      ).toHaveLength(0);
     }
-    expect(prepare).not.toHaveBeenCalled();expect(send).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('manager replacement uses the native controller locally and selected server remotely', async () => {
@@ -310,9 +359,15 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     });
     expect(replace).toHaveBeenCalledExactlyOnceWith({ action: 'list' });
     const remote = createRemoteBackend(ipc, 'token', 'ws://remote-fixture/bus');
-    usageBusCall.mockResolvedValue({available:true,operations:[]});
-    expect(await remote.managerReplacement?.({action:'list'})).toMatchObject({available:true});
-    expect(usageBusCall).toHaveBeenLastCalledWith('desktop.managerReplacement',{request:{action:'list'},bindings:[]},'ws://remote-fixture/bus');
+    usageBusCall.mockResolvedValue({ available: true, operations: [] });
+    expect(await remote.managerReplacement?.({ action: 'list' })).toMatchObject({
+      available: true,
+    });
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'desktop.managerReplacement',
+      { request: { action: 'list' }, bindings: [] },
+      'ws://remote-fixture/bus',
+    );
     expect(replace).toHaveBeenCalledTimes(1);
   });
   it('the buckets partition the web backend surface exactly (no untriaged method)', () => {
@@ -492,9 +547,14 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     for (const m of capSrc.matchAll(/(?:registerCapability|cat)\s*\(\s*'([^']+)'/g)) {
       registered.add(m[1]);
     }
-    for(const method of [...desktopMethods.ownerMethods,...desktopMethods.assetMethods]) registered.add(method);
-    const hubSource=readFileSync(repoFile('..','..','..','..','..','..','services','hub','cmd','hub','main.go'),'utf8');
-    for(const match of hubSource.matchAll(/RegisterLocal(?:Ident)?\(\s*"([^"]+)"/g)) registered.add(match[1]);
+    for (const method of [...desktopMethods.ownerMethods, ...desktopMethods.assetMethods])
+      registered.add(method);
+    const hubSource = readFileSync(
+      repoFile('..', '..', '..', '..', '..', '..', 'services', 'hub', 'cmd', 'hub', 'main.go'),
+      'utf8',
+    );
+    for (const match of hubSource.matchAll(/RegisterLocal(?:Ident)?\(\s*"([^"]+)"/g))
+      registered.add(match[1]);
     // Hub-core surface the main process does NOT register (owned by the hub
     // daemon / bus itself), so a match against hubCapabilities.ts is not
     // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
@@ -632,10 +692,16 @@ describe('Recent agents stays on the local host path', () => {
       'fixture',
       'ws://fixture',
     );
-    usageBusCall.mockResolvedValue({available:true,tasks:[]});
-    expect(await absent.dispatchHistoryRead?.()).toMatchObject({available:true});
-    expect(await createWebBackend('fixture','ws://fixture').dispatchHistoryRead?.()).toMatchObject({available:true});
-    expect(usageBusCall).toHaveBeenLastCalledWith('desktop.dispatchHistoryRead',{},'ws://fixture');
+    usageBusCall.mockResolvedValue({ available: true, tasks: [] });
+    expect(await absent.dispatchHistoryRead?.()).toMatchObject({ available: true });
+    expect(await createWebBackend('fixture', 'ws://fixture').dispatchHistoryRead?.()).toMatchObject(
+      { available: true },
+    );
+    expect(usageBusCall).toHaveBeenLastCalledWith(
+      'desktop.dispatchHistoryRead',
+      {},
+      'ws://fixture',
+    );
   });
 });
 
@@ -693,7 +759,7 @@ it('reads selected-server runtime facts; bridged preserves native lifecycle', as
   expect(
     (await createBridgedBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
   ).toBe('failed');
-  usageBusCall.mockResolvedValue({claudemon:'ready',hub:'ready',facade:'ready'});
+  usageBusCall.mockResolvedValue({ claudemon: 'ready', hub: 'ready', facade: 'ready' });
   expect((await createWebBackend('token').agentRuntimeStatus!()).claudemon).toBe('ready');
   expect(
     (await createRemoteBackend(ipc, 'token', 'ws://fixture/bus').agentRuntimeStatus!()).claudemon,
@@ -725,7 +791,7 @@ it('task edits use native IPC locally and the selected owner service elsewhere',
     await createBridgedBackend(ipc, 'fixture', 'ws://fixture').taskInspectorEdit?.(request),
   ).toMatchObject({ ok: true });
   expect(edit).toHaveBeenCalledWith(request);
-  usageBusCall.mockResolvedValue({ok:true,task:{taskId:'task'}});
+  usageBusCall.mockResolvedValue({ ok: true, task: { taskId: 'task' } });
   for (const api of [
     createBridgedBackend({ platform: 'linux' } as ElectronAPI, 'fixture', 'ws://fixture'),
     createWebBackend('fixture', 'ws://fixture'),
@@ -747,12 +813,15 @@ it('provider ping follows the selected execution host', async () => {
   expect(
     await createBridgedBackend(ipc, 'token', 'ws://local').providerReadiness!('claude', true),
   ).toEqual({ state: 'responding', checkedAt: 1 });
-  usageBusCall.mockResolvedValue({state:'responding',checkedAt:2});
+  usageBusCall.mockResolvedValue({ state: 'responding', checkedAt: 2 });
   for (const api of [
     createWebBackend('token'),
     createRemoteBackend(ipc, 'token', 'ws://remote'),
     createBridgedBackend({} as ElectronAPI, 'token', 'ws://old'),
   ])
-    expect(await api.providerReadiness!('claude', true)).toEqual({state:'responding',checkedAt:2});
+    expect(await api.providerReadiness!('claude', true)).toEqual({
+      state: 'responding',
+      checkedAt: 2,
+    });
   expect(read).toHaveBeenCalledTimes(1);
 });

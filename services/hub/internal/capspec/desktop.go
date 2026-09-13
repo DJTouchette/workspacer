@@ -24,6 +24,7 @@ var DesktopServices = []string{
 	"desktop.managerRequestPrepare",
 	"desktop.managerRequestSend",
 	"desktop.loadBriefBoard",
+	"desktop.intentWorkspaceRequest",
 	"desktop.moveBriefCard",
 	"desktop.claudeProfilesAdd",
 	"desktop.claudeProfilesUpdate",

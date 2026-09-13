@@ -316,7 +316,7 @@ export function useAgentManager() {
        *  the consent to send (e.g. a guide tour chip, a manager kickoff). */
       kickoffMessage?: string;
       /** Manager inbox bootstrap runs after local session registration, before any user input. */
-      onSessionReady?: (sessionId: string) => Promise<void>;
+      onSessionReady?: (sessionId: string, executionCwd: string) => Promise<void>;
       /** The id of the agent this one nests under in the sidebar. */
       parentId?: string;
       /** Federation: spawn on this peer hub instead of locally. Plumbed to the
@@ -446,7 +446,7 @@ export function useAgentManager() {
         ...prev.filter((a) => a.id !== agent.id && (!sessionId || a.sessionId !== sessionId)),
         agent,
       ]);
-      await opts.onSessionReady?.(sessionId);
+      await opts.onSessionReady?.(sessionId, cwd);
       setActiveAgentId(agent.id);
       return agent.id;
     },

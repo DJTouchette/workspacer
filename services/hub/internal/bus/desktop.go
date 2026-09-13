@@ -43,6 +43,8 @@ func desktopServiceAllowed(method string, cn *conn) bool {
 		return authenticatedDesktopUser("desktop.managerRequestSend", cn)
 	case "desktop.loadBriefBoard":
 		return authenticatedDesktopUser("desktop.loadBriefBoard", cn)
+	case "desktop.intentWorkspaceRequest":
+		return authenticatedDesktopUser("desktop.intentWorkspaceRequest", cn)
 	case "desktop.moveBriefCard":
 		return authenticatedDesktopUser("desktop.moveBriefCard", cn)
 	case "desktop.claudeProfilesAdd":

@@ -112,7 +112,10 @@ export interface UpdateStatus {
 
 export interface ElectronAPI extends RoutingAPI {
   /** Browser/remote transport for cached display assets; native shells use their protocols. */
-  getUiAsset?: (kind: 'font' | 'icon', file: string) => Promise<{ dataBase64: string; mime: string; family?: string }>;
+  getUiAsset?: (
+    kind: 'font' | 'icon',
+    file: string,
+  ) => Promise<{ dataBase64: string; mime: string; family?: string }>;
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
 
@@ -710,13 +713,21 @@ export interface ElectronAPI extends RoutingAPI {
 
   /** The brief board (BoardPane). One swimlane per project, plus the manager's
    *  own fleet lane. Absent on web — the board writes to local files. */
+  intentWorkspaceRequest?: (
+    request: import('../../../main/shared/intentWorkspace').IntentWorkspaceRequest,
+  ) => Promise<import('../../../main/shared/intentWorkspace').IntentWorkspaceResponse>;
   loadBriefBoard?: () => Promise<BoardData>;
   /** The drag, and it is a real write: a column move relocates the entry's
    *  lines inside `.workspacer/brief.md`; `to: 'archive'` moves them out into
    *  `brief.archive.md`. Resolves with the lane re-read from disk. */
   moveBriefCard?: (req: BoardMoveRequest) => Promise<BoardLane>;
   /** Open a file with the OS default handler via a file:// URL (browser for .html). */
-  filePickerList?: (path?: string) => Promise<{path:string;parent:string;home:string;entries:Array<{name:string;path:string;isDir:boolean}>}>;
+  filePickerList?: (path?: string) => Promise<{
+    path: string;
+    parent: string;
+    home: string;
+    entries: Array<{ name: string; path: string; isDir: boolean }>;
+  }>;
   fileOpenExternal: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Reveal a file in the OS file manager. No-ops ({ok:false}) on web. */
   fileShowInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
