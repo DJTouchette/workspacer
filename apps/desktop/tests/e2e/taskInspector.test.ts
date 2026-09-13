@@ -50,6 +50,22 @@ test.beforeEach(async ({ page }) => {
     socket.send(JSON.stringify({ op: 'hello', scope: 'operator' }));
     socket.onMessage((message) => {
       const frame = JSON.parse(String(message));
+      // On an old preload the bridged API now asks the owning host. Model the
+      // hub's actual missing-provider error rather than a malformed [] history.
+      if (
+        frame.op === 'call' &&
+        frame.method === 'desktop.dispatchHistoryRead' &&
+        page.url().includes('mode=old')
+      ) {
+        socket.send(
+          JSON.stringify({
+            op: 'error',
+            id: frame.id,
+            error: 'no provider for desktop.dispatchHistoryRead',
+          }),
+        );
+        return;
+      }
       if (frame.op === 'call')
         socket.send(
           JSON.stringify({
@@ -382,7 +398,7 @@ test('clearing both PR fields removes the PR while retaining a concurrent ticket
 });
 for (const [mode, message] of [
   ['empty', 'No recorded tasks match this selection.'],
-  ['old', 'Recent agents history is available only'],
+  ['old', 'Could not refresh tasks. Error: no provider for desktop.dispatchHistoryRead'],
   ['remote', 'Task Inspector is available in the local desktop app only'],
   ['error', 'Could not refresh tasks.'],
   ['loading', 'Loading tasks…'],
@@ -391,6 +407,12 @@ for (const [mode, message] of [
   test(`honest ${mode} state`, async ({ page }) => {
     await page.goto(`${base}?mode=${mode}`);
     await expect(page.getByText(message, { exact: false }).first()).toBeVisible();
+    if (mode === 'old') {
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Save references', exact: true })).toHaveCount(
+        0,
+      );
+    }
   });
 test('unknown worker attribution stays empty and recent tasks remain selectable', async ({
   page,

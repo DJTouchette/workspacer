@@ -10,6 +10,7 @@
  * bus protocol, so the provider is the only thing worth faking.
  */
 import * as fs from 'fs';
+import * as path from 'path';
 import { test, expect, type Page } from '@playwright/test';
 import {
   startMobileHub,
@@ -642,8 +643,14 @@ test.describe('mobile client', () => {
     expect(sent.sessionId).toBe('ws1');
     // …and the sent text carrying a real path in the hub's landing pad,
     // desktop-parity marker form, with the bytes actually on disk.
-    const m = /^\[Image: (\S+workspacer-uploads\/[^\]]+\.png)\] see this$/.exec(sent.text);
+    const m = /^\[Image: ([^\]\r\n]+)\] see this$/.exec(sent.text);
     expect(m, `text was: ${sent.text}`).toBeTruthy();
+    expect(path.isAbsolute(m![1])).toBe(true);
+    // uploads.DirName scopes the landing pad to the hub process's OS identity.
+    expect(path.basename(path.dirname(m![1]))).toBe(
+      `workspacer-uploads-${process.getuid?.() ?? -1}`,
+    );
+    expect(path.basename(m![1])).toMatch(/^m-\d+-[a-f0-9]{8}\.png$/);
     expect(fs.readFileSync(m![1])).toEqual(png);
     // The composer resets fully after a successful send.
     await expect(page.locator('#attach .att')).toHaveCount(0);

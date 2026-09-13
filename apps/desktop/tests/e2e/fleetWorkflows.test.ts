@@ -76,6 +76,20 @@ for (const width of [360, 1280])
       });
     });
 test('conflicts preserve draft and unavailable hosts say so', async ({ page }) => {
+  const busCalls: string[] = [];
+  // Missing preload methods now retain the desktop-service bus fallback. An
+  // old host must refuse that RPC, not leave a connection unanswered forever.
+  await page.routeWebSocket('**/fixture-bus*', (socket) => {
+    socket.send(JSON.stringify({ op: 'hello', scope: 'operator' }));
+    socket.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (frame.op !== 'call') return;
+      busCalls.push(frame.method);
+      socket.send(
+        JSON.stringify({ op: 'error', id: frame.id, error: `no provider for ${frame.method}` }),
+      );
+    });
+  });
   await page.goto(`${base}?conflict`);
   await page.getByRole('button', { name: 'Create workflow' }).click();
   await page.getByLabel('Workflow name').fill('Keep my draft');
@@ -84,7 +98,12 @@ test('conflicts preserve draft and unavailable hosts say so', async ({ page }) =
   await expect(page.getByLabel('Workflow name')).toHaveValue('Keep my draft');
   await page.goto(`${base}?unavailable`);
   await expect(
-    page.getByText(/selected host does not provide Fleet workflows/).first(),
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'no provider for desktop.fleetWorkflowRequest' })
+      .first(),
   ).toBeVisible();
+  expect(busCalls).toContain('desktop.fleetWorkflowRequest');
   await expect(page.getByRole('button', { name: 'Create workflow' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Reload current values' })).toBeVisible();
 });
