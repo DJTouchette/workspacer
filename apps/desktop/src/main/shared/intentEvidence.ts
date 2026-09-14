@@ -51,6 +51,8 @@ export interface IntentReview {
   id: string;
   workspaceId: string;
   intentRevision: number;
+  proposalId?: string;
+  directionId?: string;
   decision: 'accept' | 'changes-requested';
   reason: string;
   evidenceIds: string[];
@@ -85,6 +87,7 @@ export type IntentEvidenceRequest =
       id: string;
       expectedRevision: number;
       reviewId: string;
+      proposalId?: string;
       decision: IntentReview['decision'];
       reason: string;
       evidenceIds: string[];

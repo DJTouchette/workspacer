@@ -1,3 +1,4 @@
+import { boundIntentReport, type IntentCompletionProposal } from '../shared/intentCompletion';
 import type { IntentDirectionDelivery } from './intentSteeringStore';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -165,9 +166,23 @@ export class IntentAutomationStore {
     }
     this.save(run);
   }
-  review(id: string, decision: string, reason: string) {
+  review(id: string, decision: string, reason: string, proposal?: IntentCompletionProposal) {
     const workspace = this.workspace(id);
-    if (!this.get(id)) return;
+    if (!this.get(id)) {
+      if (!proposal) return;
+      this.save({
+        id: proposal.runId || proposal.id,
+        workspaceId: id,
+        intentRevision: workspace.revision,
+        executionId: proposal.executionId,
+        session: proposal.session,
+        state: 'review',
+        message: '',
+        report: proposal.summary || '',
+        deadline: new Date().toISOString(),
+        updatedAt: '',
+      });
+    }
     if (decision === 'accept') {
       const run = this.get(id)!;
       if (!['review', 'paused', 'complete'].includes(run.state) || run.operation)
@@ -266,10 +281,20 @@ export class IntentAutomationStore {
       if (!sample) continue;
       const workspace = this.workspace(run.workspaceId);
       if (workspace.revision !== run.intentRevision) continue;
+      const execution = this.db
+        .prepare('SELECT snapshot FROM intent_executions WHERE id=?')
+        .get(run.executionId);
+      if (
+        execution &&
+        JSON.parse(String(execution.snapshot)).lastObservation?.observedAt >
+          sample.observation.observedAt
+      )
+        continue;
       const observation = sample.observation;
-      const report = ['idle', 'stopped'].includes(observation.state)
-        ? readIntentRunReport(observation.summary, run)
-        : undefined;
+      const report =
+        sample.completionIdle && !sample.finalReport?.interrupted && !sample.finalReport?.truncated
+          ? readIntentRunReport(boundIntentReport(sample.finalReport?.text || '').report, run)
+          : undefined;
       if (report) {
         run.state = report.state;
         run.report = report.summary;

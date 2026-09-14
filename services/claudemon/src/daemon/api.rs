@@ -1364,6 +1364,7 @@ async fn get_transcript(
 struct ConversationQuery {
     /// Versioned, fixed-budget internal status-summary projection.
     summary_source: Option<u8>,
+    completion_source: Option<u8>,
     /// Return only items *after* this sequence number (1-based). Lets a client
     /// poll cheap incremental deltas — e.g. a supervisor digesting just the new
     /// turns since it last looked, instead of the whole transcript every time.
@@ -1397,6 +1398,12 @@ async fn get_conversation(
         {
             conv.push(&id, replayed);
         }
+    }
+    if let Some(version) = q.completion_source {
+        if version != 1 {
+            return (StatusCode::BAD_REQUEST, "unsupported completion projection").into_response();
+        }
+        return Json(conv.completion_source(&id)).into_response();
     }
     if let Some(version) = q.summary_source {
         if version != 1 {

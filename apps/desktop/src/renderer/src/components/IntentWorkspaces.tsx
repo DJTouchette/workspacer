@@ -1,3 +1,4 @@
+import IntentCompletion from './IntentCompletion';
 import IntentAutomation from './IntentAutomation';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -522,7 +523,7 @@ export default function IntentWorkspaces({
                       <div className="intent-workspace-meta">
                         <span className="intent-status-pill" data-status={workspace?.status}>
                           <span className="intent-status-dot" data-status={workspace?.status} />
-                          {workspace?.status}
+                          {workspace?.status === 'review' ? 'Review needed' : workspace?.status}
                         </span>
                         <span className="intent-muted">
                           Revision {workspace?.revision}
@@ -786,6 +787,16 @@ export default function IntentWorkspaces({
                   )}
                   {!creating && workspace && execution && (
                     <>
+                      {['overview', 'review'].includes(view) && (
+                        <IntentCompletion
+                          key={`completion-${workspace.id}`}
+                          workspace={workspace}
+                          disabled={dirty || saving}
+                          onChanged={() => void refresh()}
+                          onEvidence={() => navigate('review')}
+                          onOpenSession={execution.onOpenSession}
+                        />
+                      )}
                       {view === 'overview' && (
                         <IntentAutomation
                           key={`automation-${workspace.id}`}

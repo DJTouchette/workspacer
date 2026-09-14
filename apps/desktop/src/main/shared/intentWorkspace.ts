@@ -1,3 +1,4 @@
+import type { IntentCompletionView } from './intentCompletion';
 import type { IntentAutomationRequest, IntentAutomationResponse } from './intentAutomation';
 import type { IntentEvidenceRequest, IntentEvidenceResponse } from './intentEvidence';
 import type { IntentSourceRequest, IntentSourceResponse } from './intentSources';
@@ -51,6 +52,7 @@ export interface IntentSessionRef {
 }
 
 export interface IntentObservation {
+  completionIdle?: boolean;
   state: string;
   summary: string;
   cwd: string;
@@ -152,6 +154,8 @@ export interface IntentLiveSession {
   liveCwd?: string;
   label?: string;
   provider?: string;
+  subagents?: readonly { status: string }[];
+  activeToolCalls?: readonly unknown[];
   conversation?: readonly { role: string; content: string }[];
   pendingQuestions?: readonly { question: string }[] | null;
   pendingApproval?: { toolName: string } | null;
@@ -211,6 +215,7 @@ export function buildIntentContext(
       null,
       2,
     ),
+    `Finish with an outcome summary containing actual checks, changed artifacts, caveats and unresolved questions. Never include credentials or tool transcripts. When ready for human review, with no outstanding workers, end with a fenced intent-report JSON containing executionId: ${executionId}, revision: ${workspace.revision}, state: "review", summary (string), checks, artifacts, caveats, followUps (arrays of strings). If dedicated run instructions specify runId, use that contract instead. Agent reports do not verify criteria or approve outcomes.`,
     'The source URL is a reference; its contents were not imported into this packet.',
     '',
     'Requested work:',
@@ -221,6 +226,7 @@ export function buildIntentContext(
 }
 
 export type IntentWorkspaceRequest =
+  | { action: 'completionProposals'; id: string }
   | IntentAutomationRequest
   | IntentEvidenceRequest
   | IntentSourceRequest
@@ -265,6 +271,7 @@ export type IntentWorkspaceRequest =
   | { action: 'addWorkLink'; id: string; kind: IntentWorkLink['kind']; target: string };
 
 export type IntentWorkspaceResponse =
+  | IntentCompletionView
   | IntentAutomationResponse
   | IntentEvidenceResponse
   | IntentSourceResponse

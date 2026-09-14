@@ -2505,7 +2505,7 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
-    void captureIntentWorkspaceSessions([session]).catch((err) => {
+    void captureIntentWorkspaceSessions([session], [...this.sessions.values()]).catch((err) => {
       console.warn('[intent-workspaces] observation unavailable', err);
     });
     try {

@@ -20,9 +20,11 @@ const fetchMock = vi.fn();
 const projection = (text: string) =>
   new Response(
     JSON.stringify({
-      projection: 'agent-status-source/v1',
+      projection: 'intent-completion-source/v1',
       sessionId: 'worker',
-      events: [{ kind: 'assistant_text', text }],
+      text,
+      truncated: false,
+      interrupted: false,
     }),
   );
 beforeEach(() => {
@@ -55,7 +57,7 @@ afterEach(() => {
 it('captures sparse local reports without browser transcript demand', async () => {
   await captureHeadlessIntentSessions([{ ...session, status: 'ended' }], 'http://daemon');
   expect(fetchMock).toHaveBeenCalledWith(
-    'http://daemon/sessions/worker/conversation?summary_source=1',
+    'http://daemon/sessions/worker/conversation?completion_source=1',
     expect.anything(),
   );
   expect(store.request({ action: 'executions', id })).toMatchObject({
@@ -84,7 +86,7 @@ it.each(['old daemon', 'oversized', 'failed request'])(
       failure === 'old daemon'
         ? new Response(JSON.stringify({ items: [] }))
         : failure === 'oversized'
-          ? new Response('x'.repeat(5001))
+          ? new Response('x'.repeat(26001))
           : new Response('', { status: 503 }),
     );
     await captureHeadlessIntentSessions([{ ...session, status: 'ended' }], 'http://daemon');

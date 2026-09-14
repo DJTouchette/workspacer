@@ -998,3 +998,24 @@
     font-size: 0.9rem;
   }
 }
+
+.intent-completion {
+  border-inline-start: 3px solid var(--wks-warning);
+}
+.intent-completion fieldset {
+  min-width: 0;
+}
+.intent-completion textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.intent-completion .intent-packet {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+}
+.intent-completion li,
+.intent-completion label {
+  overflow-wrap: anywhere;
+}

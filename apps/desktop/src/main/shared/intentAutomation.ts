@@ -71,7 +71,7 @@ export function intentRunInstructions(run: IntentRun): string {
   return [
     'You are dedicated to this intent only. Do not adopt unrelated workers, act on other projects, or read a standalone fleet handoff. The saved intent is your complete scope. Pursue this intent autonomously until its success criteria are ready for user review or you need a meaningful decision. Make routine implementation choices yourself. Delegate when useful and rely on worker wakes. Do not stop merely to offer to continue. Ask about scope, product decisions and missing authority with a recommendation. Stay within the saved constraints and existing permissions. Do not merge, deploy, publish or perform destructive actions without existing authorization. Do not claim user verification.',
     `You have until ${run.deadline}; stop and report a blocker when that limit is reached, including stopping outstanding workers.`,
-    'When you need the user, or implementation and checks are ready for review, end your reply with the following fenced JSON. Keep the entire final reply under 3500 characters. The summary contains your question or the result, actual checks and unresolved limitations (under 3000 characters).',
+    'When you need the user, or implementation and checks are ready for review, end your reply with the following fenced JSON. Keep the entire final reply under 3500 characters. The summary contains your question or the result, actual checks, changed artifacts, caveats and unresolved questions (under 3000 characters).',
     '```intent-report',
     JSON.stringify({
       runId: run.id,
@@ -80,6 +80,7 @@ export function intentRunInstructions(run: IntentRun): string {
       summary: 'Your question and recommended answer',
     }),
     '```',
+    'Optional JSON fields checks, artifacts, caveats and followUps are arrays of strings containing actual results only. Do not include secrets, transcript excerpts or tool inputs.',
     'Use state "review" only when ready for human review and no workers remain running. Regular progress and waiting for workers do not use this block. Reports are not acceptance.',
     run.message,
   ].join('\n');

@@ -123,15 +123,19 @@ it('activates once, asks a question, resumes the same manager and hands off to h
     directions: [{ attempts: [{ status: 'accepted' }] }],
   });
   expect(() =>
-    f.store.request({
-      action: 'recordReview',
-      id: f.workspace.id,
-      expectedRevision: 1,
-      reviewId: 'accept',
-      decision: 'accept',
-      reason: 'Looks good',
-      evidenceIds: [],
-    }),
+    f.store.request(
+      {
+        action: 'recordReview',
+        id: f.workspace.id,
+        expectedRevision: 1,
+        proposalId: f.store.completions.view(f.workspace.id).currentProposalId,
+        reviewId: 'accept',
+        decision: 'accept',
+        reason: 'Looks good',
+        evidenceIds: [],
+      },
+      live,
+    ),
   ).toThrow('user-verified');
   f.store.request({
     action: 'addEvidence',
@@ -143,15 +147,19 @@ it('activates once, asks a question, resumes the same manager and hands off to h
     note: 'Opened export and checked rows',
     reference: '',
   });
-  f.store.request({
-    action: 'recordReview',
-    id: f.workspace.id,
-    expectedRevision: 1,
-    reviewId: 'accept',
-    decision: 'accept',
-    reason: 'Verified CSV',
-    evidenceIds: ['verified'],
-  });
+  f.store.request(
+    {
+      action: 'recordReview',
+      id: f.workspace.id,
+      expectedRevision: 1,
+      proposalId: f.store.completions.view(f.workspace.id).currentProposalId,
+      reviewId: 'accept',
+      decision: 'accept',
+      reason: 'Verified CSV',
+      evidenceIds: ['verified'],
+    },
+    live,
+  );
   expect(f.store.request({ action: 'list' })).toMatchObject({
     workspaces: [{ status: 'complete', revision: 1 }],
   });
@@ -242,6 +250,7 @@ it('keeps review feedback and continuation durable without re-running accepted r
     action: 'recordReview',
     id: f.workspace.id,
     expectedRevision: 1,
+    proposalId: f.store.completions.view(f.workspace.id).currentProposalId,
     reviewId: 'changes',
     decision: 'changes-requested',
     reason: 'Handle Unicode',

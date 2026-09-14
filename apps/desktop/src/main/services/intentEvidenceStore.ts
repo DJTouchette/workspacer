@@ -315,7 +315,10 @@ export class IntentEvidenceStore {
     if (!Array.isArray(input.evidenceIds) || input.evidenceIds.length > 512)
       throw new Error('Invalid review evidence selection');
     const evidenceIds = [...new Set(input.evidenceIds.map((value) => text(value, 'evidence ID')))];
+    const proposalId =
+      input.proposalId === undefined ? undefined : text(input.proposalId, 'proposal ID');
     const key = JSON.stringify({
+      ...(proposalId ? { proposalId } : {}),
       action: 'recordReview',
       id,
       expectedRevision: input.expectedRevision,
@@ -348,13 +351,14 @@ export class IntentEvidenceStore {
       workspaceId: id,
       intentRevision: workspace.revision,
       decision: input.decision,
+      ...(proposalId ? { proposalId } : {}),
       reason,
       evidenceIds,
       author: 'user',
       createdAt: new Date().toISOString(),
     };
-    this.insert('intent_reviews', review, key);
     this.onReview?.(review);
+    this.insert('intent_reviews', review, key);
     return { action: 'recordReview', review };
   }
 

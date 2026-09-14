@@ -1,3 +1,4 @@
+import { boundIntentReport } from '../shared/intentCompletion';
 import type { IntentLiveSession } from '../shared/intentWorkspace';
 import {
   captureIntentSessions,
@@ -8,9 +9,12 @@ import {
  * bounded data projection only for explicitly linked local sessions. No LLM call,
  * browser demand, or whole-transcript download is involved.
  */
-async function report(daemonURL: string, sessionId: string): Promise<string> {
+async function report(
+  daemonURL: string,
+  sessionId: string,
+): Promise<{ text: string; truncated: boolean; interrupted: boolean }> {
   const response = await fetch(
-    `${daemonURL.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}/conversation?summary_source=1`,
+    `${daemonURL.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}/conversation?completion_source=1`,
     {
       signal: AbortSignal.timeout(3000),
     },
@@ -24,7 +28,7 @@ async function report(daemonURL: string, sessionId: string): Promise<string> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > 5000) {
+      if (size > 26_000) {
         await reader.cancel();
         throw new Error('Daemon report projection exceeded its size limit');
       }
@@ -35,19 +39,15 @@ async function report(daemonURL: string, sessionId: string): Promise<string> {
   }
   const source = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   if (
-    source?.projection !== 'agent-status-source/v1' ||
+    source?.projection !== 'intent-completion-source/v1' ||
     source.sessionId !== sessionId ||
-    !Array.isArray(source.events)
+    typeof source.text !== 'string' ||
+    source.text.length > 4000 ||
+    typeof source.truncated !== 'boolean' ||
+    typeof source.interrupted !== 'boolean'
   )
-    throw new Error('Update the daemon to support bounded report capture');
-  const text =
-    [...source.events]
-      .reverse()
-      .find(
-        (event) =>
-          event.kind === 'assistant_text' && typeof event.text === 'string' && event.text.trim(),
-      )?.text || '';
-  return text;
+    throw new Error('Update the daemon to support bounded completion capture');
+  return { text: source.text, truncated: source.truncated, interrupted: source.interrupted };
 }
 
 export async function captureHeadlessIntentSessions(
@@ -63,7 +63,7 @@ export async function captureHeadlessIntentSessions(
     (session) =>
       !session.hubOffline && tracked.has(JSON.stringify([session.hub || '', session.sessionId])),
   );
-  const samples = captureIntentSessions(candidates);
+  const samples = captureIntentSessions(candidates, sessions);
   let index = 0;
   // Bound concurrency even for a large fleet. Existing native/full snapshots and
   // peer rows never cause a request against a same-ID local daemon session.
@@ -78,10 +78,12 @@ export async function captureHeadlessIntentSessions(
           continue;
         }
         try {
-          const text = await report(daemonURL, session.sessionId);
+          const final = await report(daemonURL, session.sessionId);
           store.reportCaptureResult(session.sessionId);
-          if (text && !session.pendingApproval && !session.pendingQuestions?.length)
-            samples[i].observation.summary = text;
+          samples[i].finalReport = final;
+          samples[i].observation.completionIdle = !!samples[i].completionIdle && !final.interrupted;
+          if (final.text && !session.pendingApproval && !session.pendingQuestions?.length)
+            samples[i].observation.summary = boundIntentReport(final.text).report;
         } catch (error) {
           store.reportCaptureResult(
             session.sessionId,

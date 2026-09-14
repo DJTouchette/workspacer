@@ -1,3 +1,9 @@
+import { IntentCompletionStore, INTENT_COMPLETION_SCHEMA } from './intentCompletionStore';
+import {
+  intentCompletionIdle,
+  boundIntentReport,
+  INTENT_REPORT_LIMIT,
+} from '../shared/intentCompletion';
 import { INTENT_INTEGRATION_SCHEMA } from './intentIntegrationStore';
 import { INTENT_SOURCE_SYNC_SCHEMA } from './intentSourceSyncStore';
 import {
@@ -82,8 +88,9 @@ function fields(value: unknown): IntentFields {
  * Current state and its revision are committed together; stale clients must reload.
  * No foreign path from a request is opened: projectRoot is an identity only.
  */
-export const INTENT_WORKSPACE_SCHEMA_VERSION = 8;
+export const INTENT_WORKSPACE_SCHEMA_VERSION = 9;
 export class IntentWorkspaceStore {
+  readonly completions: IntentCompletionStore;
   readonly automation: IntentAutomationStore;
   readonly steering: IntentSteeringStore;
   readonly evidence: IntentEvidenceStore;
@@ -161,7 +168,8 @@ export class IntentWorkspaceStore {
             prior &&
             prior.state === observation.state &&
             prior.summary === observation.summary &&
-            prior.cwd === observation.cwd
+            prior.cwd === observation.cwd &&
+            prior.completionIdle === observation.completionIdle
           )
             continue;
           const busy = ['thinking', 'streaming', 'background'].includes(observation.state);
@@ -210,7 +218,10 @@ export class IntentWorkspaceStore {
           }
         });
       for (const key of consumed) this.pending.delete(key);
-      this.transaction(() => this.automation.observe(observations));
+      this.transaction(() => {
+        this.completions.observe(observations);
+        this.automation.observe(observations);
+      });
       this.captureWarning = undefined;
     } catch (error) {
       this.captureWarning = `Background result capture failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -274,9 +285,12 @@ export class IntentWorkspaceStore {
       this.transaction(() =>
         db.exec(INTENT_EVIDENCE_SCHEMA + INTENT_CONTROL_SCHEMA + 'PRAGMA user_version=4;'),
       );
-    this.evidence = new IntentEvidenceStore(db, undefined, (review) =>
-      this.automation.review(review.workspaceId, review.decision, review.reason),
-    );
+    this.evidence = new IntentEvidenceStore(db, undefined, (review) => {
+      const proposal = this.completions.validateReview(review);
+      this.automation.review(review.workspaceId, review.decision, review.reason, proposal);
+      if (review.decision === 'changes-requested')
+        review.directionId = this.automation.get(review.workspaceId)?.id;
+    });
     this.controls = new IntentControlStore(db, (id) => this.contextPacket(id));
     this.projects = new IntentProjectStore(db);
     if (version < 5)
@@ -302,6 +316,9 @@ export class IntentWorkspaceStore {
       this.transaction(() => db.exec(INTENT_SOURCE_SYNC_SCHEMA + 'PRAGMA user_version=7;'));
     if (version < 8)
       this.transaction(() => db.exec(INTENT_INTEGRATION_SCHEMA + 'PRAGMA user_version=8;'));
+    if (version < 9)
+      this.transaction(() => db.exec(INTENT_COMPLETION_SCHEMA + 'PRAGMA user_version=9;'));
+    this.completions = new IntentCompletionStore(db);
     this.sources = new IntentSourceStore(db);
     this.knowledge = new IntentKnowledgeStore(db);
     this.artifacts = new IntentArtifactStore(db);
@@ -401,6 +418,8 @@ export class IntentWorkspaceStore {
 
   request(input: unknown, sessions: readonly IntentLiveSession[] = []): IntentWorkspaceResponse {
     const request = object(input);
+    if (request.action === 'completionProposals')
+      return this.completions.view(text(request.id, 'workspace ID', 128, true));
     if (
       [
         'automation',
@@ -443,8 +462,36 @@ export class IntentWorkspaceStore {
       return this.steering.request(request);
     if (
       ['evidence', 'addEvidence', 'readEvidence', 'recordReview'].includes(String(request.action))
-    )
+    ) {
+      if (
+        request.action === 'recordReview' &&
+        request.proposalId &&
+        request.decision === 'accept'
+      ) {
+        // Owner-host current lifecycle, not renderer-supplied eligibility. Replays
+        // are handled by the evidence operation key before any further side effect.
+        const replay = this.db
+          .prepare('SELECT id FROM intent_reviews WHERE id=?')
+          .get(String(request.reviewId));
+        if (!replay) {
+          const view = this.completions.view(String(request.id));
+          const proposal = view.proposals.find((p) => p.id === request.proposalId);
+          const live =
+            proposal &&
+            sessions.find(
+              (s) =>
+                s.sessionId === proposal.session.sessionId &&
+                (s.hub || '') === proposal.session.hub,
+            );
+          if (!live || !intentCompletionIdle(live, sessions))
+            throw new Error(
+              'The execution is unavailable or no longer idle. Open the session before approving.',
+            );
+          this.capture(captureIntentSessions(sessions));
+        }
+      }
       return this.evidence.request(request);
+    }
     if (['controls', 'prepareControl', 'reconcileControl'].includes(String(request.action)))
       return this.controls.request(request);
     if (request.action === 'executions') {
@@ -801,11 +848,14 @@ export interface CapturedIntentSession {
   sessionId: string;
   hub?: string;
   observation: IntentObservation;
+  completionIdle?: boolean;
+  finalReport?: { text: string; truncated: boolean; interrupted: boolean };
 }
 const sessionKey = (session: { sessionId: string; hub?: string }) =>
   JSON.stringify([session.hub || '', session.sessionId]);
 export function captureIntentSessions(
   sessions: readonly IntentLiveSession[],
+  lifecycleSessions: readonly IntentLiveSession[] = sessions,
 ): CapturedIntentSession[] {
   const now = new Date().toISOString();
   return sessions
@@ -813,8 +863,34 @@ export function captureIntentSessions(
     .map((session) => ({
       sessionId: session.sessionId,
       hub: session.hub,
-      observation: intentObservation(session, now),
+      observation: {
+        ...intentObservation(session, now),
+        completionIdle:
+          intentCompletionIdle(session, lifecycleSessions) &&
+          !captureFinalIntentReport(session.conversation || []).interrupted,
+        summary: boundIntentReport(intentObservation(session, now).summary).report,
+      },
+      completionIdle: intentCompletionIdle(session, lifecycleSessions),
+      ...(session.conversation !== undefined
+        ? { finalReport: captureFinalIntentReport(session.conversation) }
+        : {}),
     }));
+}
+export function captureFinalIntentReport(
+  conversation: NonNullable<IntentLiveSession['conversation']>,
+): NonNullable<CapturedIntentSession['finalReport']> {
+  // Never reach backwards across a newer user message to reuse a previous outcome.
+  const last = [...conversation]
+    .reverse()
+    .find((turn) => turn.role === 'assistant' || turn.role === 'user');
+  const text = last?.role === 'assistant' ? last.content : '';
+  return {
+    text: text.slice(0, INTENT_REPORT_LIMIT),
+    truncated: text.length > INTENT_REPORT_LIMIT,
+    interrupted: conversation
+      .slice(-2)
+      .some((turn) => /\[Request interrupted by user\]/i.test(turn.content)),
+  };
 }
 let store: Promise<IntentWorkspaceStore> | undefined;
 let nextExistenceCheck = 0;
@@ -846,10 +922,11 @@ export async function intentWorkspaceStoreIfUsed(
 
 export async function captureIntentWorkspaceSessions(
   sessions: readonly IntentLiveSession[],
+  lifecycleSessions: readonly IntentLiveSession[] = sessions,
 ): Promise<void> {
   if (!store && Date.now() < nextExistenceCheck) return;
   // Detach before the asynchronous lazy open: native session rows mutate in place.
-  const observations = captureIntentSessions(sessions);
+  const observations = captureIntentSessions(sessions, lifecycleSessions);
   const active = await intentWorkspaceStoreIfUsed();
   active?.capture(observations);
 }
