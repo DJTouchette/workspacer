@@ -150,3 +150,37 @@ private headless host using scratch storage. The browser flow uses manual source
 provider-specific UI behavior is covered by renderer tests. No live account,
 credential, Windows runtime, or production quota behavior was exercised. No
 installation, push, merge, deployment, publishing, or nightly was performed.
+
+### Pre-ship review corrections (2026-09-13)
+
+Repair commit **5f9cfd41** preserves incomplete coverage on a primary-object 304;
+only a full read can restore `fresh`. The regression closes and reopens an on-disk
+SQLite database, checks the Sources response and context freshness label, preserves
+the prior immutable artifact/reconciliation timestamp, and verifies recovery on a
+full read. A renderer test checks that recent successful checks still display
+`partial`. Packets omit the external-status header when all linked sources lack
+external state. Accepted requirements and lifecycle/revision semantics are unchanged.
+
+The account test now runs actual store code in separate OS processes opening the
+same local SQLite file. The holder starts its competitor after acquiring the lease
+and before releasing it; injected time verifies cooldown and subsequent acquisition
+without sleeps. This is a local-process guarantee, not a shared-filesystem or
+cross-machine guarantee.
+
+Validation on Linux / Node v26.2.0 / npm 11.14.1 with existing dependencies:
+
+- Focused main intent/headless suites: **153 passed, 8 existing skips**.
+- Additional summary, IPC/federation and session-store suites: **174 passed**.
+- Sources and Workspaces renderer suites: **17 passed**.
+- Sync-store suite after tightening the process error assertion: **10 passed**.
+- Main and renderer typechecks: **passed**.
+- Main/preload, desktop renderer, web renderer and desktop-host builds: **passed**.
+- Playwright `--project=renderer intentCompletion.test.ts --workers=1`: **2 passed**.
+- Prettier on the four changed TypeScript/TSX files and `git diff --check`: **passed**.
+
+Rivet MCP context/recon guided the repair. MCP `witness.select` returned an empty
+body, so the local `rivet witness select` supplied the selection. Two Rivet learnings
+record the coverage and lease guarantees. Existing large-chunk, color-environment
+and deprecation warnings remain. Provider refresh remains mocked; the browser uses
+manual sources with the real private headless host. No live providers, credentials,
+physical-main changes, installs, push, merge, publishing or deployment occurred.
