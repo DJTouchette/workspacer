@@ -45,6 +45,7 @@ const assessmentLabel = {
   'user-verified': 'Verified by you',
 };
 interface Props {
+  openEvidence?: number;
   workspace: IntentWorkspace;
   visible: boolean;
   disabled: boolean;
@@ -53,12 +54,21 @@ interface Props {
 }
 
 export default function IntentEvidence({
+  openEvidence = 0,
   workspace,
   visible,
   disabled,
   draft = EMPTY,
   onDraftChange,
 }: Props) {
+  const evidenceForm = useRef<HTMLDetailsElement>(null);
+  const [completionReview, setCompletionReview] = useState(false);
+  useEffect(() => {
+    if (visible && openEvidence && evidenceForm.current) {
+      evidenceForm.current.open = true;
+      evidenceForm.current.querySelector('select')?.focus();
+    }
+  }, [visible, openEvidence]);
   const [criteria, setCriteria] = useState<IntentCriterion[]>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [reviews, setReviews] = useState<IntentReview[]>([]);
@@ -92,13 +102,17 @@ export default function IntentEvidence({
     const mine = ++sequence.current;
     setLoading(true);
     try {
-      const [result, runs] = await Promise.all([
+      const [result, runs, completions] = await Promise.all([
         call({ action: 'evidence', id: workspace.id }),
         call({ action: 'executions', id: workspace.id }),
+        call({ action: 'completionProposals', id: workspace.id }).catch(() => undefined),
       ]);
       if (!mounted.current || active.current !== workspace.id || mine !== sequence.current) return;
       if (result.action !== 'evidence' || runs.action !== 'executions')
         throw new Error('Update the host to use evidence review.');
+      setCompletionReview(
+        completions?.action === 'completionProposals' && !!completions.proposals?.length,
+      );
       setCriteria(result.criteria);
       setEvidence(result.evidence);
       setReviews(result.reviews);
@@ -265,7 +279,10 @@ export default function IntentEvidence({
           })}
         </ol>
       )}
-      <details open={evidence.length === 0 || !!draft.note || !!draft.linkedEvidenceId}>
+      <details
+        ref={evidenceForm}
+        open={!!openEvidence || evidence.length === 0 || !!draft.note || !!draft.linkedEvidenceId}
+      >
         <summary>{draft.linkedEvidenceId ? 'Record your verification' : 'Add evidence'}</summary>
         <form
           onSubmit={async (event) => {
@@ -526,87 +543,98 @@ export default function IntentEvidence({
           )}
         </article>
       ))}
-      <h3>Review decision</h3>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (busy.current) return;
-          const next = {
-            ...draft,
-            reviewId: draft.reviewId || crypto.randomUUID(),
-            reviewRevision: draft.reviewRevision ?? workspace.revision,
-          };
-          onDraftChange(next);
-          if (
-            await mutate({
-              action: 'recordReview',
-              id: workspace.id,
-              expectedRevision: next.reviewRevision,
-              reviewId: next.reviewId,
-              decision: next.reviewDecision,
-              reason: next.reviewReason,
-              evidenceIds: next.reviewEvidenceIds,
-            })
-          )
-            onDraftChange({
-              ...draft,
-              reviewId: undefined,
-              reviewRevision: undefined,
-              reviewReason: '',
-              reviewEvidenceIds: [],
-            });
-        }}
-      >
-        <fieldset disabled={pending || disabled}>
-          <label>
-            Review outcome
-            <select
-              value={draft.reviewDecision}
-              onChange={(event) =>
+      {completionReview ? (
+        <p>
+          Use the Completion review card above to Request changes or Approve outcome with selected
+          verified evidence.
+        </p>
+      ) : (
+        <>
+          <h3>Review decision</h3>
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (busy.current) return;
+              const next = {
+                ...draft,
+                reviewId: draft.reviewId || crypto.randomUUID(),
+                reviewRevision: draft.reviewRevision ?? workspace.revision,
+              };
+              onDraftChange(next);
+              if (
+                await mutate({
+                  action: 'recordReview',
+                  id: workspace.id,
+                  expectedRevision: next.reviewRevision,
+                  reviewId: next.reviewId,
+                  decision: next.reviewDecision,
+                  reason: next.reviewReason,
+                  evidenceIds: next.reviewEvidenceIds,
+                })
+              )
                 onDraftChange({
                   ...draft,
                   reviewId: undefined,
                   reviewRevision: undefined,
-                  reviewDecision: event.target.value as IntentReview['decision'],
-                })
-              }
-            >
-              <option value="changes-requested">Request changes</option>
-              <option value="accept">Accept reviewed work</option>
-            </select>
-          </label>
-          <label>
-            Review reason
-            <textarea
-              aria-label="Review reason"
-              required
-              rows={3}
-              maxLength={8000}
-              value={draft.reviewReason}
-              onChange={(event) =>
-                onDraftChange({
-                  ...draft,
-                  reviewId: undefined,
-                  reviewRevision: undefined,
-                  reviewReason: event.target.value,
-                })
-              }
-            />
-          </label>
-          {draft.reviewDecision === 'accept' && !covered && (
-            <p className="intent-muted">
-              Select user-verified evidence for every current criterion, with no unresolved evidence
-              selected, before accepting.
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={!draft.reviewReason.trim() || (draft.reviewDecision === 'accept' && !covered)}
+                  reviewReason: '',
+                  reviewEvidenceIds: [],
+                });
+            }}
           >
-            Record review decision
-          </button>
-        </fieldset>
-      </form>
+            <fieldset disabled={pending || disabled}>
+              <label>
+                Review outcome
+                <select
+                  value={draft.reviewDecision}
+                  onChange={(event) =>
+                    onDraftChange({
+                      ...draft,
+                      reviewId: undefined,
+                      reviewRevision: undefined,
+                      reviewDecision: event.target.value as IntentReview['decision'],
+                    })
+                  }
+                >
+                  <option value="changes-requested">Request changes</option>
+                  <option value="accept">Accept reviewed work</option>
+                </select>
+              </label>
+              <label>
+                Review reason
+                <textarea
+                  aria-label="Review reason"
+                  required
+                  rows={3}
+                  maxLength={8000}
+                  value={draft.reviewReason}
+                  onChange={(event) =>
+                    onDraftChange({
+                      ...draft,
+                      reviewId: undefined,
+                      reviewRevision: undefined,
+                      reviewReason: event.target.value,
+                    })
+                  }
+                />
+              </label>
+              {draft.reviewDecision === 'accept' && !covered && (
+                <p className="intent-muted">
+                  Select user-verified evidence for every current criterion, with no unresolved
+                  evidence selected, before accepting.
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={
+                  !draft.reviewReason.trim() || (draft.reviewDecision === 'accept' && !covered)
+                }
+              >
+                Record review decision
+              </button>
+            </fieldset>
+          </form>
+        </>
+      )}
       {reviews.map((review) => (
         <article key={review.id} className="intent-execution">
           <strong>{review.decision === 'accept' ? 'Review accepted' : 'Changes requested'}</strong>

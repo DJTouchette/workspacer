@@ -21,7 +21,10 @@ CREATE INDEX IF NOT EXISTS intent_completion_workspace ON intent_completion_prop
 /** Immutable proposals; currentness is derived, never rewritten into history.
  * All mutation methods execute inside the workspace/evidence write transaction. */
 export class IntentCompletionStore {
-  constructor(private db: DatabaseSync) {}
+  constructor(
+    private db: DatabaseSync,
+    private onReady?: (workspace: IntentWorkspace) => void,
+  ) {}
   private workspace(id: string): IntentWorkspace {
     const row = this.db.prepare('SELECT snapshot FROM intent_workspaces WHERE id=?').get(id);
     if (!row) throw new Error('Workspace no longer exists');
@@ -142,6 +145,7 @@ export class IntentCompletionStore {
         provenance: 'owner-host-final-assistant/v1',
       };
       if (valid && !truncated) {
+        proposal.structuredState = 'missing';
         proposal.summary = boundIntentReport(String(value!.summary)).report;
         for (const field of ['checks', 'artifacts', 'caveats', 'followUps'] as const) {
           const items = value![field];
@@ -149,13 +153,16 @@ export class IntentCompletionStore {
             Array.isArray(items) &&
             items.length <= 32 &&
             items.every((s) => typeof s === 'string' && s.length <= 1000)
-          )
+          ) {
             proposal[field] = items.map((s) => boundIntentReport(s).report);
+            if (proposal.structuredState !== 'malformed') proposal.structuredState = 'provided';
+          } else if (items !== undefined) proposal.structuredState = 'malformed';
         }
       }
-      this.db
+      const inserted = this.db
         .prepare('INSERT OR IGNORE INTO intent_completion_proposals VALUES (?, ?, ?, ?, ?)')
         .run(id, workspace.id, workspace.revision, execution.id, JSON.stringify(proposal));
+      if (inserted.changes && !run && proposal.completedAt) this.onReady?.(workspace);
     }
   }
   /** Called after the existing evidence gate, under the same write lock. */
@@ -167,7 +174,7 @@ export class IntentCompletionStore {
       !review.proposalId &&
       !run &&
       !view.proposals.length &&
-      this.execution(review.workspaceId)?.kind !== 'launch'
+      this.execution(review.workspaceId)?.completionContract !== 1
     )
       return;
     const proposal = view.proposals.find((p) => p.id === review.proposalId);
@@ -182,6 +189,23 @@ export class IntentCompletionStore {
     )
       throw new Error('This proposal has already been reviewed. Refresh before continuing.');
     if (review.decision === 'accept') {
+      const uncertainDirection = this.db
+        .prepare(
+          'SELECT snapshot FROM intent_directions WHERE execution_id=? AND intent_revision=?',
+        )
+        .all(proposal.executionId, proposal.intentRevision)
+        .some((row) => {
+          const direction = JSON.parse(String(row.snapshot));
+          return (
+            !direction.supersededBy &&
+            !['observed', 'not-observed'].includes(direction.reconciliations?.at(-1)?.assessment) &&
+            direction.attempts.some((attempt: { status: string }) => attempt.status === 'unknown')
+          );
+        });
+      if (uncertainDirection)
+        throw new Error(
+          'Direction delivery is unknown. Inspect and reconcile the execution before approval.',
+        );
       const execution = this.execution(review.workspaceId);
       if (
         !proposal.completedAt ||

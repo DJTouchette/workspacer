@@ -244,7 +244,7 @@ export class IntentAutomationStore {
         action: 'restartIntent' as const,
         run: this.activate(
           workspace,
-          `The previous manager session ${predecessor.sessionId} ended. Inspect its execution history and reconcile only its workers before dispatching; do not duplicate existing work.`,
+          `The previous manager session ${predecessor.sessionId} ended. Saved user direction: ${run.message}\nInspect its execution history and reconcile only its workers before dispatching; do not duplicate existing work.`,
           input.minutes === undefined ? 60 : Number(input.minutes),
         ),
       };

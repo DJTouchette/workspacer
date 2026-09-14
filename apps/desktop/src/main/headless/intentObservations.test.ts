@@ -105,3 +105,18 @@ it.each(['old daemon', 'oversized', 'failed request'])(
     });
   },
 );
+
+it('preserves the same bounded final assistant text as native capture, including reports longer than 800 characters', async () => {
+  const { captureIntentSessions } = await import('../services/intentWorkspaceStore');
+  const text = 'Verbatim report\n' + 'checked '.repeat(200);
+  fetchMock.mockImplementation(async () => projection(text));
+  const capture = vi.spyOn(store, 'capture');
+  await captureHeadlessIntentSessions([{ ...session, ambientState: 'idle' }], 'http://daemon');
+  const headless = capture.mock.calls.at(-1)![0][0];
+  const native = captureIntentSessions([
+    { ...session, ambientState: 'idle', conversation: [{ role: 'assistant', content: text }] },
+  ])[0];
+  expect(headless.finalReport).toEqual(native.finalReport);
+  expect(headless.completionIdle).toEqual(native.completionIdle);
+  expect(headless.observation.summary).toEqual(native.observation.summary);
+});

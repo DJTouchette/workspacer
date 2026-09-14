@@ -2371,6 +2371,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_conversation_completion_source_is_versioned_and_bounded() {
+        let state = test_state();
+        state.conv.push(
+            "final-1",
+            vec![ConversationItem::AssistantText {
+                text: "Final report".into(),
+                timestamp: None,
+            }],
+        );
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/final-1/conversation?completion_source=1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["projection"], "intent-completion-source/v1");
+        assert_eq!(value["text"], "Final report");
+        assert_eq!(value["truncated"], false);
+        let (status, _) = request(
+            state,
+            get("/sessions/final-1/conversation?completion_source=2"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn get_conversation_summary_projection_is_additive_and_bounded() {
         let state = test_state();
         state.conv.push(

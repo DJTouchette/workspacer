@@ -103,6 +103,7 @@ export default function IntentWorkspaces({
   const [notice, setNotice] = useState('');
   const [views, setViews] = useState<Record<string, WorkView>>({});
   const [directionDrafts, setDirectionDrafts] = useState<Record<string, IntentDirectionDraft>>({});
+  const [verificationRequest, setVerificationRequest] = useState(0);
   const [evidenceDrafts, setEvidenceDrafts] = useState<Record<string, IntentEvidenceDraft>>({});
   const [controlDrafts, setControlDrafts] = useState<Record<string, IntentControlDraft>>({});
   const [directionAssessments, setDirectionAssessments] = useState<
@@ -460,7 +461,7 @@ export default function IntentWorkspaces({
                     </span>
                     <small>
                       <span className="intent-status-dot" data-status={item.status} />
-                      {item.status}
+                      {item.status === 'review' ? 'Review needed' : item.status}
                     </small>
                     <IntentAttentionBadge
                       refs={executionIndex[item.id] || []}
@@ -793,7 +794,10 @@ export default function IntentWorkspaces({
                           workspace={workspace}
                           disabled={dirty || saving}
                           onChanged={() => void refresh()}
-                          onEvidence={() => navigate('review')}
+                          onEvidence={() => {
+                            setVerificationRequest((value) => value + 1);
+                            navigate('review');
+                          }}
                           onOpenSession={execution.onOpenSession}
                         />
                       )}
@@ -852,6 +856,7 @@ export default function IntentWorkspaces({
                         }
                       />
                       <IntentEvidence
+                        openEvidence={verificationRequest}
                         key={`evidence-${workspace.id}`}
                         workspace={workspace}
                         visible={execution.visible !== false && view === 'review'}

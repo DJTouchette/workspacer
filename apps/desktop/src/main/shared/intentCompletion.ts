@@ -12,6 +12,7 @@ export interface IntentCompletionProposal {
   capturedAt: string;
   report: string;
   reportState: 'reported' | 'missing' | 'malformed' | 'oversized';
+  structuredState?: 'provided' | 'missing' | 'malformed';
   summary?: string;
   checks?: string[];
   artifacts?: string[];

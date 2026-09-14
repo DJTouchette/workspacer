@@ -162,7 +162,13 @@ export class IntentWorkspaceStore {
           const prior = execution.lastObservation;
           // Sparse snapshots (or a temporarily unavailable report source) must
           // not erase text already captured from the host.
-          const observation = { ...incoming, summary: incoming.summary || prior?.summary || '' };
+          const observation = {
+            ...incoming,
+            summary: incoming.summary || prior?.summary || '',
+            completionIdle:
+              incoming.completionIdle ??
+              (incoming.state === prior?.state ? prior.completionIdle : false),
+          };
           if (prior && prior.observedAt > observation.observedAt) continue;
           if (
             prior &&
@@ -318,7 +324,9 @@ export class IntentWorkspaceStore {
       this.transaction(() => db.exec(INTENT_INTEGRATION_SCHEMA + 'PRAGMA user_version=8;'));
     if (version < 9)
       this.transaction(() => db.exec(INTENT_COMPLETION_SCHEMA + 'PRAGMA user_version=9;'));
-    this.completions = new IntentCompletionStore(db);
+    this.completions = new IntentCompletionStore(db, (workspace) =>
+      this.automation.status(workspace, 'review', 'Agent reported work ready for review'),
+    );
     this.sources = new IntentSourceStore(db);
     this.knowledge = new IntentKnowledgeStore(db);
     this.artifacts = new IntentArtifactStore(db);
@@ -483,7 +491,11 @@ export class IntentWorkspaceStore {
                 s.sessionId === proposal.session.sessionId &&
                 (s.hub || '') === proposal.session.hub,
             );
-          if (!live || !intentCompletionIdle(live, sessions))
+          if (
+            !live ||
+            this.reportFailures.has(live.sessionId) ||
+            !intentCompletionIdle(live, sessions)
+          )
             throw new Error(
               'The execution is unavailable or no longer idle. Open the session before approving.',
             );
@@ -770,6 +782,7 @@ export class IntentWorkspaceStore {
           workspaceId: id,
           intentRevision: workspace.revision,
           kind: session ? 'attached' : 'launch',
+          ...(session ? {} : { completionContract: 1 as const }),
           state: session ? 'linked' : 'launching',
           task,
           contextPacket: session ? null : buildIntentContext(workspace, executionId, task),
@@ -865,9 +878,11 @@ export function captureIntentSessions(
       hub: session.hub,
       observation: {
         ...intentObservation(session, now),
-        completionIdle:
-          intentCompletionIdle(session, lifecycleSessions) &&
-          !captureFinalIntentReport(session.conversation || []).interrupted,
+        completionIdle: !intentCompletionIdle(session, lifecycleSessions)
+          ? false
+          : session.conversation === undefined
+            ? undefined
+            : !captureFinalIntentReport(session.conversation).interrupted,
         summary: boundIntentReport(intentObservation(session, now).summary).report,
       },
       completionIdle: intentCompletionIdle(session, lifecycleSessions),
@@ -885,7 +900,7 @@ export function captureFinalIntentReport(
     .find((turn) => turn.role === 'assistant' || turn.role === 'user');
   const text = last?.role === 'assistant' ? last.content : '';
   return {
-    text: text.slice(0, INTENT_REPORT_LIMIT),
+    text: text.slice(0, INTENT_REPORT_LIMIT).replace(/[\uD800-\uDBFF]$/, ''),
     truncated: text.length > INTENT_REPORT_LIMIT,
     interrupted: conversation
       .slice(-2)

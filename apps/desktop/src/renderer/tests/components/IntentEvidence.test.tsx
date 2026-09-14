@@ -228,9 +228,11 @@ it('keeps host Git facts distinct from criterion verification and records verifi
   await screen.findByText(/Git facts captured by host/);
   expect(screen.getByText(/Evidence needs review/)).toBeInTheDocument();
   expect(screen.queryByText(/User verification recorded/)).not.toBeInTheDocument();
-  expect(request.mock.calls.every(([r]) => ['evidence', 'executions'].includes(r.action))).toBe(
-    true,
-  );
+  expect(
+    request.mock.calls.every(([r]) =>
+      ['evidence', 'executions', 'completionProposals'].includes(r.action),
+    ),
+  ).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Inspect captured diff' }));
   expect(await screen.findByText(/\+return CSV;/)).toBeInTheDocument();
   expect(request).toHaveBeenCalledWith({ action: 'readEvidence', id: 'work', evidenceId: 'git' });

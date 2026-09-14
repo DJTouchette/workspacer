@@ -252,3 +252,80 @@ it('supersedes proposals on requirement revision, new execution and stale CAS', 
   expect(f.store.completions.view(f.id).proposals).toHaveLength(1);
   expect(() => f.store.request(request, [f.live])).toThrow();
 });
+
+it('does not restore approval eligibility from a sparse idle snapshot after interruption', async () => {
+  const f = await fixture();
+  f.observe();
+  f.verify();
+  const request = f.request();
+  f.observe({
+    conversation: [
+      ...f.live.conversation,
+      { role: 'user', content: '[Request interrupted by user]' },
+    ],
+  });
+  const { conversation: _conversation, ...sparse } = f.live;
+  f.store.capture(captureIntentSessions([sparse]));
+  expect(() => f.store.request(request, [sparse])).toThrow('current completed');
+  expect(f.db.prepare('SELECT count(*) AS n FROM intent_reviews').get()?.n).toBe(0);
+});
+it('blocks acceptance while a separate direction delivery is unknown', async () => {
+  const f = await fixture();
+  f.observe();
+  f.verify();
+  f.store.request({
+    action: 'prepareDirection',
+    id: f.id,
+    expectedRevision: 1,
+    directionId: 'uncertain',
+    executionId: f.run.executionId,
+    text: 'Check one more edge case',
+  });
+  await f.store.steering.send(
+    { action: 'sendDirection', id: f.id, directionId: 'uncertain', attemptId: 'attempt' },
+    [f.live],
+    async () => ({ status: 'unknown', detail: 'No receipt' }),
+  );
+  expect(() => f.store.request(f.request(), [f.live])).toThrow('delivery is unknown');
+});
+it('a newer execution supersedes the earlier proposal without rewriting it', async () => {
+  const f = await fixture();
+  f.observe();
+  const before = f.proposal();
+  f.store.request({
+    action: 'prepareExecution',
+    id: f.id,
+    expectedRevision: 1,
+    executionId: 'new-execution',
+    task: 'New execution',
+  });
+  expect(f.store.completions.view(f.id).currentProposalId).toBeNull();
+  expect(f.store.completions.view(f.id).proposals).toEqual([before]);
+});
+it('retains a valid summary while explicitly omitting malformed structured fields', async () => {
+  const f = await fixture();
+  f.observe({
+    conversation: [
+      {
+        role: 'assistant',
+        content:
+          '```intent-report\n' +
+          JSON.stringify({
+            runId: f.run.id,
+            revision: 1,
+            state: 'review',
+            summary: 'Ready',
+            checks: 'passed',
+            artifacts: ['export.ts'],
+          }) +
+          '\n```',
+      },
+    ],
+  });
+  expect(f.proposal()).toMatchObject({
+    reportState: 'reported',
+    structuredState: 'malformed',
+    artifacts: ['export.ts'],
+  });
+  expect(f.proposal().checks).toBeUndefined();
+});

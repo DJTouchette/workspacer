@@ -780,3 +780,160 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('reviews a synthetic execution report, requests changes once, then verifies and approves on mobile', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90000);
+  page.setDefaultTimeout(15000);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-outcome-review-'));
+  const repo = path.join(root, 'project');
+  fs.mkdirSync(repo);
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    HOME: root,
+    USERPROFILE: root,
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_DATA_HOME: path.join(root, 'data'),
+    APPDATA: path.join(root, 'config'),
+    CLAUDE_CONFIG_DIR: path.join(root, '.claude'),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+  };
+  const callbacks: any[] = [];
+  let host = isolatedHost(repo, env, callbacks);
+  const session: any = {
+    sessionId: 'synthetic-outcome',
+    hub: '',
+    cwd: repo,
+    label: 'Synthetic worker',
+    provider: 'codex',
+    status: 'active',
+    ambientState: 'idle',
+    conversation: [],
+  };
+  const request = (input: any) => host.request(input, [session]);
+  try {
+    const { workspace } = await request({
+      action: 'create',
+      projectRoot: repo,
+      fields: {
+        title: 'Review export outcome',
+        outcome: 'Export CSV',
+        constraints: 'No external providers',
+        successCriteria: 'CSV opens',
+        sourceUrl: '',
+        status: 'draft',
+      },
+    });
+    await request({
+      action: 'prepareExecution',
+      id: workspace.id,
+      expectedRevision: 1,
+      executionId: 'execution',
+      task: 'Implement export',
+    });
+    await request({ action: 'linkExecution', id: workspace.id, executionId: 'execution', session });
+    session.conversation = [
+      {
+        role: 'assistant',
+        content:
+          'Export implemented.\n```intent-report\n' +
+          JSON.stringify({
+            executionId: 'execution',
+            revision: 1,
+            state: 'review',
+            summary: 'Export works',
+            checks: ['Synthetic checks passed'],
+            artifacts: ['export.csv'],
+            caveats: ['No live providers'],
+            followUps: [],
+          }) +
+          '\n```',
+      },
+    ];
+    await request({ action: 'executions', id: workspace.id });
+    expect(
+      (await request({ action: 'completionProposals', id: workspace.id })).proposals,
+    ).toHaveLength(1);
+    await page.route('**/*', (route) =>
+      new URL(route.request().url()).origin === new URL(base).origin
+        ? route.continue()
+        : route.abort(),
+    );
+    await page.exposeFunction('intentTestHost', (input: any) => request(input));
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.goto(`${base}?runtime=ready&theme=dark`);
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    await page.evaluate(async () => {
+      const api = (window as any).electronAPI;
+      api.intentWorkspaceRequest = (input: any) => (window as any).intentTestHost(input);
+      api.usagePacingSchedule = async () => null;
+      await api.saveConfig({ ui: { intentWorkspaces: true } });
+    });
+    await work(page).click();
+    await page.getByRole('button', { name: 'Review export outcome review', exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const card = page.getByRole('region', { name: 'Completion review' });
+    await expect(card.getByRole('heading', { name: 'Review needed' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Approve outcome' })).toBeDisabled();
+    await card.getByLabel('Outcome review feedback').fill('Handle Unicode');
+    await card.getByRole('button', { name: 'Request changes', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(card.getByRole('heading', { name: 'Changes requested' })).toBeVisible();
+    await expect(card.getByRole('status')).toContainText('consumption is not confirmed');
+    expect(callbacks.filter((c) => c.method === 'intent.send')).toHaveLength(1);
+    const { run } = await request({ action: 'automation', id: workspace.id });
+    session.conversation = [
+      {
+        role: 'assistant',
+        content:
+          'Unicode fixed.\n```intent-report\n' +
+          JSON.stringify({
+            runId: run.id,
+            revision: 1,
+            state: 'review',
+            summary: 'Unicode exports work',
+            checks: ['Unicode fixture passed'],
+            artifacts: ['export.csv'],
+            caveats: [],
+            followUps: [],
+          }) +
+          '\n```',
+      },
+    ];
+    await request({ action: 'executions', id: workspace.id });
+    await expect(card.getByRole('heading', { name: 'Review needed' })).toBeVisible();
+    await card.getByRole('button', { name: 'Select or verify evidence in Review' }).click();
+    await page.getByLabel('Success criterion').selectOption('r1:c1');
+    await page.getByLabel('Evidence assessment').selectOption('user-verified');
+    await page.getByLabel('Evidence or verification notes').fill('I opened the Unicode CSV');
+    await page.getByRole('button', { name: 'Record evidence', exact: true }).click();
+    await card.getByRole('checkbox', { name: 'I opened the Unicode CSV' }).check();
+    await card.getByLabel('Outcome review feedback').fill('Verified this revision');
+    await card.getByRole('button', { name: 'Approve outcome' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(card.getByRole('heading', { name: 'Approved' })).toBeVisible();
+    const accepted = (await request({ action: 'evidence', id: workspace.id })).reviews[0];
+    expect(accepted.proposalId).toBeTruthy();
+    expect(accepted.evidenceIds).toHaveLength(1);
+    expect((await request({ action: 'list' })).workspaces[0].status).toBe('complete');
+    await expect(card.getByText('Earlier completion reports')).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath('approved-outcome-mobile.png'),
+      fullPage: true,
+    });
+    await host.stop();
+    host = isolatedHost(repo, env, callbacks);
+    expect(
+      (await request({ action: 'completionProposals', id: workspace.id })).proposals,
+    ).toHaveLength(2);
+    expect((await request({ action: 'evidence', id: workspace.id })).reviews[0]).toEqual(accepted);
+  } finally {
+    await host.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

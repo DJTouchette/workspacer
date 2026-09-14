@@ -1275,21 +1275,50 @@ mod tests {
     fn completion_source_bounds_and_excludes_transcript_payloads() {
         let conv = super::ConversationStore::new();
         assert_eq!(conv.completion_source("missing")["text"], "");
-        conv.push("completion", vec![
-            super::ConversationItem::UserMessage {text: "USER SECRET".into(), timestamp: None},
-            super::ConversationItem::ToolResult {tool_use_id: "t".into(), content: "TOOL SECRET".into(), is_error: false, timestamp: None},
-            super::ConversationItem::AssistantText {text: " Verbatim final\nreport ".into(), timestamp: None},
-        ]);
+        conv.push(
+            "completion",
+            vec![
+                super::ConversationItem::UserMessage {
+                    text: "USER SECRET".into(),
+                    timestamp: None,
+                },
+                super::ConversationItem::ToolResult {
+                    tool_use_id: "t".into(),
+                    content: "TOOL SECRET".into(),
+                    is_error: false,
+                    timestamp: None,
+                },
+                super::ConversationItem::AssistantText {
+                    text: " Verbatim final\nreport ".into(),
+                    timestamp: None,
+                },
+            ],
+        );
         let source = conv.completion_source("completion");
         assert_eq!(source["text"], " Verbatim final\nreport ");
         assert!(!source.to_string().contains("SECRET"));
-        conv.push("completion", vec![super::ConversationItem::UserMessage {text: "[Request interrupted by user]".into(), timestamp: None}]);
+        conv.push(
+            "completion",
+            vec![super::ConversationItem::UserMessage {
+                text: "[Request interrupted by user]".into(),
+                timestamp: None,
+            }],
+        );
         let source = conv.completion_source("completion");
         assert_eq!(source["text"], "");
         assert_eq!(source["interrupted"], true);
-        conv.push("completion", vec![super::ConversationItem::AssistantText {text: "😀".repeat(3000), timestamp: None}]);
+        conv.push(
+            "completion",
+            vec![super::ConversationItem::AssistantText {
+                text: "😀".repeat(3000),
+                timestamp: None,
+            }],
+        );
         let source = conv.completion_source("completion");
-        assert_eq!(source["text"].as_str().unwrap().encode_utf16().count(), 4000);
+        assert_eq!(
+            source["text"].as_str().unwrap().encode_utf16().count(),
+            4000
+        );
         assert_eq!(source["truncated"], true);
         assert!(source.to_string().len() < 26000);
     }

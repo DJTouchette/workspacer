@@ -309,7 +309,7 @@ export class IntentEvidenceStore {
   }
   private recordReview(input: Record<string, unknown>, id: string): IntentEvidenceResponse {
     const reviewId = text(input.reviewId, 'review ID');
-    const reason = text(input.reason, 'review reason', 8000);
+    const reason = text(input.reason, 'review reason', input.proposalId ? 4000 : 8000);
     if (input.decision !== 'accept' && input.decision !== 'changes-requested')
       throw new Error('Invalid review decision');
     if (!Array.isArray(input.evidenceIds) || input.evidenceIds.length > 512)

@@ -87,8 +87,38 @@ their exact original contents.
 The workspace lifecycle is **Draft → Active → Review → Complete**. Activate to
 start implementation. The manager returns work to Review when it reports that
 implementation and checks are ready. In Review, **Request changes** resumes the
-manager with your reason. **Accept reviewed work** marks a reactive intent Complete
-once selected user-verified evidence covers every current criterion.
+manager with your reason. The **Completion review** card in Overview and Review
+shows **Review needed**, **Changes requested**, or **Approved** for the current
+revision. Its report is the agent's final assistant text (up to 4,000 characters,
+with recognizable credentials redacted), with reported checks, artifacts,
+caveats and follow-ups when supplied. **Open execution session** opens the source
+conversation.
+
+The workflow is **launch → agent report → Review needed → Request changes or
+verify evidence and Approve outcome**. A normal idle turn does not establish
+completion. The owner host must observe idle without pending approval, questions,
+running tools or background descendants, plus a report correlated to this run
+and requirement revision. Interrupted, stopped, killed, unknown-delivery and
+blocked work cannot be approved. Missing, malformed or oversized reports show
+**Needs inspection**; request a current outcome report instead of guessing success.
+
+**Request changes** saves your feedback and an immutable review before queuing a
+direction through the existing delivery path. The card distinguishes sent,
+rejected and unknown receipts. Sent means the transport accepted the direction,
+not that the agent consumed it. Repeating the same operation does not send twice.
+If the session is unavailable, open Overview, inspect it and use **Start replacement
+manager** once the host confirms it stopped. Saved feedback is retained. Unknown
+delivery requires inspection before another direction.
+
+**Approve outcome** is an explicit human decision. First record verification in
+Review, then select user-verified evidence for every criterion in the completion
+card and enter your review reason. Agent reports only supply reported evidence;
+they never count as user verification. Acceptance and the transition to Complete
+commit together. Approval is specific to the proposal and intent revision; a new
+run, execution or requirement revision supersedes older proposals. Earlier
+reports and review decisions remain inspectable. Legacy manual evidence reviews
+remain available for work without the new execution contract; changing a status
+label alone does not record approval.
 
 A source-link field remains a reference. Import an Azure DevOps PR in **Sources**
 to observe its state, reviewers, bounded comments, commits and validation summary.
@@ -347,6 +377,11 @@ State belongs to the connected host. The dedicated `intent-workspaces.sqlite`
 database is in that host's Workspacer configuration directory—normally
 `~/.config/workspacer` on Linux, `$XDG_CONFIG_HOME/workspacer` when configured,
 or `%APPDATA%\\workspacer` on Windows.
+Schema v9 adds immutable completion proposals without rewriting existing Intents
+or launch packets. Headless capture requires a daemon supporting
+`intent-completion-source/v1`; older daemons produce an explicit capture warning
+and do not supply approval eligibility. No summarizer model is used.
+
 Saved artifact/evidence files live beside it in `intent-artifacts` and
 `intent-evidence`; project knowledge promotions live in the repository. Preserve
 the database and retained-file directories together when backing up or migrating

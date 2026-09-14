@@ -1,3 +1,4 @@
+import { captureIntentSessions } from './intentWorkspaceStore';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -94,7 +95,7 @@ function legacy() {
   db.prepare('INSERT INTO intent_executions VALUES(?,?,?,?)').run('old-run', 'w', 1, execution);
   return { db, file, directory, projectRoot, workspace, current, first, execution, oldPacket };
 }
-it('retains the PR rework and completion lifecycle without treating status as review evidence', () => {
+it('retains the PR rework and completion lifecycle without treating status as review evidence', async () => {
   const f = legacy();
   let store = new IntentWorkspaceStore(f.db);
   let workspace = f.workspace;
@@ -109,16 +110,30 @@ it('retains the PR rework and completion lifecycle without treating status as re
     if (result.action !== 'update') throw new Error('Expected update');
     workspace = result.workspace;
   };
+  const live = [
+    {
+      sessionId: 'new-manager',
+      hub: '',
+      provider: 'codex',
+      cwd: f.projectRoot,
+      label: 'Manager',
+      ambientState: 'idle',
+    },
+  ];
   const review = (decision: 'accept' | 'changes-requested', evidenceIds: string[] = []) =>
-    store.request({
-      action: 'recordReview',
-      id: workspace.id,
-      expectedRevision: workspace.revision,
-      reviewId: `review-${workspace.revision}-${decision}`,
-      decision,
-      evidenceIds,
-      reason: decision === 'accept' ? 'Checked CSV output' : 'Address PR feedback',
-    });
+    store.request(
+      {
+        action: 'recordReview',
+        id: workspace.id,
+        expectedRevision: workspace.revision,
+        reviewId: `review-${workspace.revision}-${decision}`,
+        proposalId: store.completions.view(workspace.id).currentProposalId || undefined,
+        decision,
+        evidenceIds,
+        reason: decision === 'accept' ? 'Checked CSV output' : 'Address PR feedback',
+      },
+      live,
+    );
   const evidence = () => {
     const result = store.request({ action: 'evidence', id: workspace.id });
     if (result.action !== 'evidence') throw new Error('Expected evidence');
@@ -150,6 +165,39 @@ it('retains the PR rework and completion lifecycle without treating status as re
     reference: '',
     assessment: 'user-verified',
   });
+  expect(() => review('accept', ['verified-output'])).toThrow('Completion proposal');
+  store.request({
+    action: 'activateIntent',
+    id: workspace.id,
+    expectedRevision: workspace.revision,
+  });
+  await store.automation.tick(live, {
+    spawn: async () => live[0],
+    send: async () => ({ status: 'accepted', detail: 'sent' }),
+    interrupt: async () => ({ status: 'accepted', detail: 'interrupted' }),
+  });
+  const run = store.automation.get(workspace.id)!;
+  store.capture(
+    captureIntentSessions([
+      {
+        ...live[0],
+        conversation: [
+          {
+            role: 'assistant',
+            content:
+              '```intent-report\n' +
+              JSON.stringify({
+                runId: run.id,
+                revision: workspace.revision,
+                state: 'review',
+                summary: 'CSV export implemented',
+              }) +
+              '\n```',
+          },
+        ],
+      },
+    ]),
+  );
   review('accept', ['verified-output']);
   const acceptedRevision = workspace.revision;
   expect(summarizeIntent(workspace, { evidence: evidence() }).review?.decision).toBe('accept');
@@ -173,7 +221,9 @@ it('retains the PR rework and completion lifecycle without treating status as re
   });
   expect(store.request({ action: 'executions', id: workspace.id })).toMatchObject({
     links: [{ kind: 'pull-request', target: 'https://example.test/pull/42' }],
-    executions: [{ intentRevision: 1, contextPacket: f.oldPacket }],
+    executions: expect.arrayContaining([
+      expect.objectContaining({ intentRevision: 1, contextPacket: f.oldPacket }),
+    ]),
   });
   move('active', 'Reopened after merge');
   const history = store.request({ action: 'history', id: workspace.id });

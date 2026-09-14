@@ -26,6 +26,7 @@ export default function IntentCompletion({
   onEvidence: () => void;
   onOpenSession?: (session: IntentSessionRef) => void;
 }) {
+  const heading = useRef<HTMLHeadingElement>(null);
   const [view, setView] = useState<IntentCompletionView>();
   const [evidence, setEvidence] = useState<Evidence>();
   const [directions, setDirections] = useState<IntentDirection[]>([]);
@@ -52,7 +53,12 @@ export default function IntentCompletion({
       if (
         results[0].action !== 'completionProposals' ||
         results[1].action !== 'evidence' ||
-        results[2].action !== 'directions'
+        results[2].action !== 'directions' ||
+        !Array.isArray(results[0].proposals) ||
+        !Array.isArray(results[1].reviews) ||
+        !Array.isArray(results[1].criteria) ||
+        !Array.isArray(results[1].evidence) ||
+        !Array.isArray(results[2].directions)
       )
         throw new Error('Update the host to review completion reports.');
       setView(results[0]);
@@ -75,9 +81,11 @@ export default function IntentCompletion({
     };
   }, [load, workspace.revision]);
   const proposal = view?.proposals.find((p) => p.id === view.currentProposalId);
-  const review = evidence?.reviews.find(
-    (r) => r.proposalId === proposal?.id && r.intentRevision === workspace.revision,
-  );
+  const review =
+    proposal &&
+    evidence?.reviews.find(
+      (r) => r.proposalId === proposal?.id && r.intentRevision === workspace.revision,
+    );
   const latestReview = evidence?.reviews.find(
     (r) => r.proposalId && r.intentRevision === workspace.revision,
   );
@@ -122,6 +130,7 @@ export default function IntentCompletion({
       setSelected([]);
       onChanged();
       await load();
+      requestAnimationFrame(() => heading.current?.focus());
     } catch (e) {
       if (alive.current) setError(String(e));
     } finally {
@@ -140,6 +149,11 @@ export default function IntentCompletion({
         <p role="status">
           Report {p.reportState}. Open the session and request a current outcome report before
           approval.
+        </p>
+      )}
+      {p.structuredState === 'malformed' && (
+        <p className="intent-muted">
+          Some structured fields were malformed and omitted. Inspect the original report.
         </p>
       )}
       {p.redacted && <p className="intent-muted">Recognizable credentials were redacted.</p>}
@@ -162,7 +176,11 @@ export default function IntentCompletion({
               ))}
             </ul>
           ) : (
-            <p className="intent-muted">No structured {field} provided; inspect the report.</p>
+            <p className="intent-muted">
+              {p[field]
+                ? 'None reported.'
+                : 'Not supplied as a structured field; inspect the report.'}
+            </p>
           )}
         </div>
       ))}
@@ -178,9 +196,10 @@ export default function IntentCompletion({
     <Surface
       elevation="flat"
       className="intent-completion intent-executions"
+      role="region"
       aria-label="Completion review"
     >
-      <h3 aria-live="polite">
+      <h3 ref={heading} tabIndex={-1} aria-live="polite">
         {review?.decision === 'accept'
           ? 'Approved'
           : review?.decision === 'changes-requested' ||
@@ -220,7 +239,7 @@ export default function IntentCompletion({
             <textarea
               required
               rows={3}
-              maxLength={8000}
+              maxLength={4000}
               value={reason}
               disabled={!!pending}
               onChange={(e) => setReason(e.target.value)}

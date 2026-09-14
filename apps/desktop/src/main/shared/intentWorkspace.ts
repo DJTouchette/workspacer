@@ -64,6 +64,7 @@ export interface IntentExecution {
   workspaceId: string;
   intentRevision: number;
   kind: 'launch' | 'attached';
+  completionContract?: 1;
   state: 'launching' | 'linked' | 'unknown';
   task: string;
   /** Immutable launch payload. Null for tracking-only associations. */
@@ -215,7 +216,7 @@ export function buildIntentContext(
       null,
       2,
     ),
-    `Finish with an outcome summary containing actual checks, changed artifacts, caveats and unresolved questions. Never include credentials or tool transcripts. When ready for human review, with no outstanding workers, end with a fenced intent-report JSON containing executionId: ${executionId}, revision: ${workspace.revision}, state: "review", summary (string), checks, artifacts, caveats, followUps (arrays of strings). If dedicated run instructions specify runId, use that contract instead. Agent reports do not verify criteria or approve outcomes.`,
+    `Finish with an outcome summary containing actual checks, changed artifacts, caveats and unresolved questions. Keep the entire final reply below 3500 characters. Never include credentials or tool transcripts. When ready for human review, with no outstanding workers, end with a fenced intent-report JSON containing executionId: ${executionId}, revision: ${workspace.revision}, state: "review", summary (string), checks, artifacts, caveats, followUps (arrays of strings). If dedicated run instructions specify runId, use that contract instead. Agent reports do not verify criteria or approve outcomes.`,
     'The source URL is a reference; its contents were not imported into this packet.',
     '',
     'Requested work:',

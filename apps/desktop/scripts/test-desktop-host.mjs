@@ -18,7 +18,7 @@ test('background intent results survive host restarts without an Execution view'
   const daemon = createServer((req, res) => {
     reads.push(req.url);
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ projection: 'agent-status-source/v1', sessionId: 'linked-worker', events: [{ kind: 'assistant_text', text: report }] }));
+    res.end(JSON.stringify({ projection: 'intent-completion-source/v1', sessionId: 'linked-worker', text: report, truncated: false, interrupted: false }));
   });
   await new Promise((resolve) => daemon.listen(0, '127.0.0.1', resolve));
   const session = { sessionId: 'linked-worker', cwd: testHome, label: 'Worker', provider: 'codex', status: 'active', ambientState: 'streaming' };
@@ -64,7 +64,7 @@ test('background intent results survive host restarts without an Execution view'
   report = 'Completed the feature. All targeted checks passed.';
   // First request after process restart is an observation, not a workspace read.
   await call('internal.observe');
-  assert.deepEqual(reads, ['/sessions/linked-worker/conversation?summary_source=1']);
+  assert.deepEqual(reads, ['/sessions/linked-worker/conversation?completion_source=1']);
   context.snapshots = [];
   await stop();
   call = start();
