@@ -645,7 +645,11 @@ function ExternalStatus({
         Last successful sync: {external?.lastSuccess ?? 'Never'}
         {external ? ` · next attempt ${new Date(external.nextAttempt).toISOString()}` : ''}
       </p>
-      {external && <p className="intent-muted">{external.detail}</p>}
+      {external && (
+        <p className="intent-muted">
+          {external.detail} Collections reconciled: {external.reconciledAt ?? 'Not yet'}.
+        </p>
+      )}
       {external?.projection && (
         <details>
           <summary>Last successful external projection</summary>

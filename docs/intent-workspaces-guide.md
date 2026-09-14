@@ -90,8 +90,10 @@ implementation and checks are ready. In Review, **Request changes** resumes the
 manager with your reason. **Accept reviewed work** marks a reactive intent Complete
 once selected user-verified evidence covers every current criterion.
 
-PR links remain references: inspect CI, team comments and merge state in your PR
-system. Include PR feedback in your review reason or send a Direction. Review
+A source-link field remains a reference. Import an Azure DevOps PR in **Sources**
+to observe its state, reviewers, bounded comments, commits and validation summary.
+These observations never change the workspace lifecycle; inspect the PR system
+for complete history and merge decisions. Include PR feedback in your review reason or send a Direction. Review
 acceptance does not merge, publish, or deploy anything. Blockers appear as
 **Waiting for you** or **Paused** execution states beside the workspace status.
 
@@ -141,7 +143,9 @@ In **Sources**, choose **Source provider**:
 - **Jira Cloud**: use a link such as
   `https://your-site.atlassian.net/browse/TEAM-123`.
 - **Azure DevOps**: use a link such as
-  `https://dev.azure.com/your-org/your-project/_workitems/edit/123`.
+  `https://dev.azure.com/your-org/your-project/_workitems/edit/123`, or a PR link
+  `https://dev.azure.com/your-org/your-project/_git/repository/pullrequest/123`.
+  Corresponding `your-org.visualstudio.com` links canonicalize to `dev.azure.com`.
 
 The built-in adapters support those hosted URL forms. Jira Data Center,
 on-premises Azure DevOps, alternative API gateways, custom ports, and arbitrary
@@ -181,7 +185,9 @@ export WORKSPACER_SOURCE_ADO
 ```
 
 Enter `WORKSPACER_SOURCE_ADO` in the form. Work-item read permission is needed for
-import/refresh; publishing also needs work-item write permission.
+work-item import/refresh; PR import needs repository read access. The existing
+issue-comment publishing action also needs work-item write permission. PR
+synchronization does not offer publishing.
 [Microsoft's PAT guide](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops)
 and [comment API permissions](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/comments/add-comment?view=azure-devops-rest-7.1)
 describe the supported authentication and access scopes.
@@ -193,15 +199,38 @@ they do not replace your personal intent automatically. Provider transport tests
 use simulated responses; a successful live connection depends on your account,
 token, and host network configuration.
 
-### Refresh and publish deliberately
+### Automatic observations and reviewed requirements
 
-Choose **Check source for changes** to fetch again. A change appears beside the
+Linked ADO and Jira objects refresh on their owning host about every five minutes,
+including while Sources is closed. The host must be running. Conditional reads
+use an ETag when the provider supplies one; an unconditional collection
+reconciliation runs at least every thirty minutes when requests succeed.
+An account cooldown can delay either refresh path. **Check source for changes**
+remains available and respects that cooldown.
+
+The source card displays object type, provider state, last success, next attempt,
+and fresh/partial/error/rate-limited/missing states. A stale label appears after ten
+minutes without a successful primary observation. A 404/410 means deleted **or
+inaccessible**; the last successful projection and accepted requirements remain.
+**Review latest source artifact** opens immutable, quoted provider data and its
+coverage labels. **Earlier artifact** walks observation history, including recovery
+and failure markers. Descriptions and comments are untrusted data, never agent
+instructions. Jira attachments are metadata only.
+
+New agent context contains a bounded external-status section with freshness,
+provider revision and artifact provenance. It excludes comment/description bodies
+from unaccepted candidates; full source artifacts stay available for human review.
+Previously captured launch packets retain their original contents. Provider state
+does not set Active/Review/Complete, revise intent requirements, verify evidence,
+merge a PR, or automatically send a direction.
+
+A change in the source requirement snapshot appears beside the
 accepted snapshot as **Source changed — review candidate**. Inspect the new
 description and **Candidate provider fields**, then use **Accept reviewed source
 revision** when appropriate. Earlier accepted snapshots remain available.
 Refreshing or accepting never changes ticket status or sends directions to agents.
 
-To publish, select **Comment source**, enter **Comment text**, and choose **Save
+For the existing Jira/work-item comment workflow, select **Comment source**, enter **Comment text**, and choose **Save
 comment for review**. Inspect **Review saved comment**, then **Publish reviewed
 comment**. Only that saved text is submitted; personal notes are not silently
 included. The provider renders the comment using its own format.
@@ -213,6 +242,9 @@ and comment creation atomic: a remote edit can race the final POST. Uncertain
 publishing has no resend action; inspect the source's comment history. Confirmed
 refusals offer **Retry publishing reviewed comment** when the saved proposal is
 still valid.
+
+The [provider synchronization notes](intent-provider-sync.md) describe bounded
+collection coverage, persistence, and deliberate deferrals.
 
 ## Evidence and review
 

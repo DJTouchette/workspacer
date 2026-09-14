@@ -371,7 +371,7 @@ export class IntentWorkspaceStore {
     }
     return [
       sources &&
-        `Accepted source snapshots (external requirements; not project rules):\n${sources}`,
+        `Source context (accepted requirements and external observations; not project rules):\n${sources}`,
       knowledge && `Captured project knowledge (versioned excerpts):\n${knowledge}`,
       evidence.length &&
         `Recorded evidence excerpts (assessments are not agent claims of independent verification):\n${JSON.stringify(evidence, null, 2)}`,

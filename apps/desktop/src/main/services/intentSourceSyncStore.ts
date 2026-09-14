@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS intent_source_artifacts (
  sequence INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL REFERENCES intent_sources(id),
  digest TEXT NOT NULL, observed_at TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(source_id, digest)
 );
+CREATE TABLE IF NOT EXISTS intent_source_events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL REFERENCES intent_sources(id),
+ artifact_digest TEXT NOT NULL, observed_at TEXT NOT NULL, status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS intent_source_events_source ON intent_source_events(source_id,sequence);
 CREATE TABLE IF NOT EXISTS intent_source_accounts (id TEXT PRIMARY KEY, available_at INTEGER NOT NULL);
 `;
 const PERIOD = 5 * 60_000;
@@ -26,6 +31,11 @@ const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /** One account lease shared by import, manual refresh and background sync, including across hosts
  * sharing this SQLite DB. No token is used as a key. A crashed request releases after two minutes. */
+class AccountBusy extends Error {
+  constructor(readonly until: number) {
+    super('Source account is busy or backing off; retry after its next scheduled attempt.');
+  }
+}
 export class IntentSourceSyncStore {
   constructor(
     private db: DatabaseSync,
@@ -60,8 +70,11 @@ export class IntentSourceSyncStore {
       )
       .get(id, now + 120_000, now);
     if (!row)
-      throw new Error(
-        'Source account is busy or backing off; retry after its next scheduled attempt.',
+      throw new AccountBusy(
+        Number(
+          this.db.prepare('SELECT available_at FROM intent_source_accounts WHERE id=?').get(id)
+            ?.available_at ?? now + 5000,
+        ),
       );
     return id;
   }
@@ -144,8 +157,17 @@ export class IntentSourceSyncStore {
       reconciledAt: read.notModified ? old?.reconciledAt : at,
       artifactDigest: digest,
     };
+    if (digest && (!old || old.artifactDigest !== digest || old.status !== state.status))
+      this.event(sourceId, digest, at, state.status);
     this.save(sourceId, state);
     return state;
+  }
+  private event(id: string, digest: string, at: string, status: string) {
+    this.db
+      .prepare(
+        'INSERT INTO intent_source_events(source_id,artifact_digest,observed_at,status) VALUES(?,?,?,?)',
+      )
+      .run(id, digest, at, status);
   }
   private save(id: string, state: IntentExternalState) {
     this.db
@@ -155,8 +177,30 @@ export class IntentSourceSyncStore {
       .run(id, state.nextAttempt, JSON.stringify(state));
   }
   async refresh(source: IntentSource, apply: (read: SourceSyncResult) => void): Promise<void> {
-    const account = this.claim(source);
     const old = this.state(source.id);
+    let account: string;
+    try {
+      account = this.claim(source);
+    } catch (error) {
+      if (error instanceof AccountBusy) {
+        const at = new Date(this.now()).toISOString();
+        // Move blocked rows out of the bounded due window; otherwise a large account
+        // can starve unrelated accounts after a rate limit or a host restart.
+        this.save(source.id, {
+          projection: null,
+          observedAt: at,
+          lastSuccess: null,
+          lastFailure: null,
+          freshnessUntil: at,
+          failures: 0,
+          status: 'error',
+          detail: 'Waiting for source account cooldown.',
+          ...old,
+          nextAttempt: error.until,
+        });
+      }
+      throw error;
+    }
     let cooldown = 5000;
     try {
       const conditional =
@@ -202,22 +246,22 @@ export class IntentSourceSyncStore {
         artifactDigest: old?.artifactDigest,
         reconciledAt: old?.reconciledAt,
       };
-      // Immutable missing marker: 404 is ambiguous (permissions may hide existence).
-      if (missing)
+      // Failure observations are immutable too; a repeated failure adds no duplicate event.
+      // A 404 remains ambiguous because permissions may hide existence.
+      if (old?.status !== state.status) {
+        const payload = JSON.stringify({
+          ...(missing ? { tombstone: 'deleted-or-inaccessible' } : { failure: state.status }),
+          status,
+          previousArtifact: old?.artifactDigest,
+        });
+        const digest = hash(payload);
         this.db
           .prepare(
             'INSERT OR IGNORE INTO intent_source_artifacts(source_id,digest,observed_at,payload) VALUES(?,?,?,?)',
           )
-          .run(
-            source.id,
-            hash(`missing:${status}:${old?.artifactDigest ?? ''}`),
-            at,
-            JSON.stringify({
-              tombstone: 'deleted-or-inaccessible',
-              status,
-              previousArtifact: old?.artifactDigest,
-            }),
-          );
+          .run(source.id, digest, at, payload);
+        this.event(source.id, digest, at, state.status);
+      }
       this.save(source.id, state);
     } finally {
       this.release(account, cooldown);
@@ -226,13 +270,17 @@ export class IntentSourceSyncStore {
   artifacts(id: string, before?: number): IntentSourceArtifact[] {
     return this.db
       .prepare(
-        'SELECT * FROM intent_source_artifacts WHERE source_id=? AND sequence<? ORDER BY sequence DESC LIMIT 1',
+        `SELECT e.sequence,e.observed_at,e.status,a.digest,a.payload
+      FROM intent_source_events e JOIN intent_source_artifacts a
+      ON a.source_id=e.source_id AND a.digest=e.artifact_digest
+      WHERE e.source_id=? AND e.sequence<? ORDER BY e.sequence DESC LIMIT 1`,
       )
       .all(id, before ?? Number.MAX_SAFE_INTEGER)
       .map((r) => ({
         sequence: Number(r.sequence),
         digest: String(r.digest),
         observedAt: String(r.observed_at),
+        eventStatus: String(r.status),
         payload: JSON.parse(String(r.payload)),
       }));
   }

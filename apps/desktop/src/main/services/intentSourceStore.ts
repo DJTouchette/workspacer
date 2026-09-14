@@ -165,8 +165,10 @@ export class IntentSourceStore {
         objectType: p?.objectType,
         state: p?.state,
         providerRevision: p?.revision,
+        summaryExcerpt: p ? JSON.stringify(p.summary).slice(0, 1800) : undefined,
         observedAt: external.observedAt,
         lastSuccess: external.lastSuccess,
+        collectionsReconciledAt: external.reconciledAt,
         freshness: Date.parse(external.freshnessUntil) < Date.now() ? 'stale' : external.status,
         artifactDigest: external.artifactDigest,
       });

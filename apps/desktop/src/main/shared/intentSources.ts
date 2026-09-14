@@ -130,6 +130,7 @@ export interface IntentExternalState {
 }
 export interface IntentSourceArtifact {
   sequence: number;
+  eventStatus?: string;
   digest: string;
   observedAt: string;
   /** Full bounded, recursively redacted provider data; never instructions. */

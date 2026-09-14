@@ -201,6 +201,7 @@ export function createIntentSourceAdapter(
       url: string;
       etag?: string;
       responseEtag?: string;
+      responseCursor?: string;
     },
   ): Promise<Record<string, unknown>> {
     const routes = endpoints(c);
@@ -253,6 +254,8 @@ export function createIntentSourceAdapter(
       );
       if (options) {
         const etag = response.headers.get('etag');
+        const cursor = response.headers.get('x-ms-continuationtoken');
+        if (cursor && cursor.length <= 1024) options.responseCursor = cursor;
         // ETags are opaque, bounded and sanitized below before persistence.
         if (etag && etag.length <= 1024 && !/[\r\n]/.test(etag)) options.responseEtag = etag;
       }
@@ -302,7 +305,7 @@ export function createIntentSourceAdapter(
           return Object.fromEntries(
             Object.entries(value).map(([key, item]) => [
               redactText(key),
-              /^(authorization|password|secret|access[_-]?token|refresh[_-]?token|api[_-]?key)$/i.test(
+              /^(authorization|password|secret|token|credentials|access[_-]?token|refresh[_-]?token|api[_-]?key)$/i.test(
                 key,
               )
                 ? '[redacted]'
@@ -312,6 +315,7 @@ export function createIntentSourceAdapter(
         return value;
       };
       if (options?.responseEtag) options.responseEtag = redactText(options.responseEtag);
+      if (options?.responseCursor) options.responseCursor = redactText(options.responseCursor);
       return object(redact(JSON.parse(raw)));
     } catch (error) {
       if (error instanceof SourceHttpError) throw error;
@@ -325,9 +329,18 @@ export function createIntentSourceAdapter(
       return synchronizeSource(
         c,
         async (url, conditional) => {
-          const options = { url, etag: conditional, responseEtag: undefined as string | undefined };
+          const options = {
+            url,
+            etag: conditional,
+            responseEtag: undefined as string | undefined,
+            responseCursor: undefined as string | undefined,
+          };
           try {
-            return { data: await json(c, undefined, options), etag: options.responseEtag };
+            return {
+              data: await json(c, undefined, options),
+              etag: options.responseEtag,
+              continuationToken: options.responseCursor,
+            };
           } catch (error) {
             if (error instanceof SourceHttpError && error.status === 304 && conditional)
               return { data: null, etag: conditional };

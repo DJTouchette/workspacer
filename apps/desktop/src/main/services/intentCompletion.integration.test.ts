@@ -347,7 +347,12 @@ it('pins accepted source, knowledge, evidence and selections into future launch/
   );
   const providerRead = vi.fn().mockResolvedValue({ nativeId: 'TEAM-12', snapshot: accepted });
   const providerComment = vi.fn();
-  const sources = new IntentSourceStore(f.db, { read: providerRead, comment: providerComment });
+  let sourceTime = Date.now();
+  const sources = new IntentSourceStore(
+    f.db,
+    { read: providerRead, comment: providerComment },
+    () => sourceTime,
+  );
   await sources.request({
     action: 'addSource',
     id: 'w',
@@ -360,6 +365,7 @@ it('pins accepted source, knowledge, evidence and selections into future launch/
     },
   });
   providerRead.mockResolvedValue({ nativeId: 'TEAM-12', snapshot: candidate });
+  sourceTime += 6000;
   await sources.request({
     action: 'refreshSource',
     id: 'w',

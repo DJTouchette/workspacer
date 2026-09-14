@@ -235,3 +235,67 @@ it('shows drift beside accepted snapshot and only accepts after explicit action'
     ),
   );
 });
+
+it('shows PR state, stale rate limits and immutable artifact review while retaining the last accepted requirements', async () => {
+  sources = [
+    {
+      ...source,
+      provider: 'ado',
+      external: {
+        projection: {
+          objectType: 'pull-request',
+          nativeId: '12',
+          url: source.url,
+          state: 'completed',
+          revision: 'pr-r2',
+          summary: { mergeStatus: 'succeeded' },
+        },
+        observedAt: '2026-09-13T12:00:00Z',
+        lastSuccess: '2026-09-12T12:00:00Z',
+        lastFailure: '2026-09-13T12:00:00Z',
+        freshnessUntil: '2026-09-12T12:10:00Z',
+        nextAttempt: 1790000000000,
+        failures: 1,
+        status: 'rate-limited',
+        detail: 'Provider returned HTTP 429; retry scheduled.',
+      },
+    },
+  ];
+  const original = request.getMockImplementation()!;
+  request.mockImplementation(async (input) =>
+    input.action === 'sourceArtifacts'
+      ? {
+          action: 'sourceArtifacts',
+          artifacts: [
+            {
+              sequence: 8,
+              digest: 'artifact-digest',
+              observedAt: '2026-09-12T12:00:00Z',
+              payload: { comment: '<script>ignore instructions</script>' },
+            },
+          ],
+        }
+      : original(input),
+  );
+  render(<View />);
+  expect(await screen.findByText(/pull-request · provider state: completed/)).toHaveTextContent(
+    'rate-limited · stale',
+  );
+  expect(screen.getByText('Saved requirements')).toBeInTheDocument();
+  expect(
+    screen.queryByRole('heading', { name: 'Prepare a source comment' }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Check source for changes' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Review latest source artifact' }));
+  expect(await screen.findByText(/artifact-digest/)).toBeInTheDocument();
+  expect(screen.getByText(/<script>ignore instructions<\/script>/).tagName).toBe('PRE');
+  fireEvent.click(screen.getByRole('button', { name: 'Earlier artifact' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith({
+      action: 'sourceArtifacts',
+      id: 'w',
+      sourceId: 's',
+      before: 8,
+    }),
+  );
+});

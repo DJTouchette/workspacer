@@ -17,7 +17,7 @@ export interface SourceSyncResult {
 type Get = (
   url: string,
   etag?: string,
-) => Promise<{ data: Record<string, unknown> | null; etag?: string }>;
+) => Promise<{ data: Record<string, unknown> | null; etag?: string; continuationToken?: string }>;
 const record = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
@@ -41,11 +41,16 @@ export async function synchronizeSource(
   let partial = false;
   async function collection(name: string, url: string, key: string, recent = false) {
     try {
-      let page = (await get(url)).data!;
-      const total = typeof page.total === 'number' ? page.total : undefined;
+      let response = await get(url);
+      let page = response.data!;
+      const total =
+        Number.isSafeInteger(page.total) && Number(page.total) >= 0
+          ? Number(page.total)
+          : undefined;
       // Jira changelog is oldest-first. Jump to the last bounded window; ignore nextPage URLs.
       if (recent && total && total > 50)
         page = (await get(`${url}&startAt=${Math.max(0, total - 50)}`)).data!;
+      if (!Array.isArray(page[key])) throw new Error('Invalid provider collection');
       const raw = list(page[key]);
       const items = [
         ...new Map(
@@ -55,13 +60,16 @@ export async function synchronizeSource(
         ).values(),
       ];
       const truncated =
-        raw.length > 50 || (total !== undefined ? total > items.length : items.length >= 50);
+        !!response.continuationToken ||
+        !!page.continuationToken ||
+        raw.length > 50 ||
+        (total !== undefined ? total > items.length : items.length >= 50);
       collections[name] = {
         items,
         total: total ?? null,
         truncated,
         startAt: page.startAt ?? 0,
-        continuationToken: page.continuationToken ?? null,
+        continuationToken: response.continuationToken ?? page.continuationToken ?? null,
       };
       if (truncated) partial = true;
     } catch (error) {
@@ -108,6 +116,13 @@ export async function synchronizeSource(
   } else if (pr) {
     if (String(data.pullRequestId) !== routes.nativeId || !record(data.repository).id)
       throw new Error('Provider returned a different or invalid PR');
+    const requestedRepo = decodeURIComponent(new URL(c.url).pathname.split('/')[4]).toLowerCase();
+    if (
+      ![record(data.repository).id, record(data.repository).name].some(
+        (v) => typeof v === 'string' && v.toLowerCase() === requestedRepo,
+      )
+    )
+      throw new Error('Provider returned a different repository');
     title = sourceText(data.title, 'Azure PR title', 4000);
     content = adfText(data.description);
     state = sourceText(data.status, 'Azure PR state', 128);
@@ -123,7 +138,7 @@ export async function synchronizeSource(
       );
       await collection(
         'validation',
-        `${policyBase}/_apis/policy/evaluations?artifactId=${artifact}&$top=50&api-version=7.1`,
+        `${policyBase}/_apis/policy/evaluations?artifactId=${artifact}&$top=50&api-version=7.1-preview.1`,
         'value',
       );
     } else {
@@ -138,6 +153,7 @@ export async function synchronizeSource(
       mergeStatus: data.mergeStatus,
       closedDate: data.closedDate,
       lastMergeCommit: record(data.lastMergeCommit).commitId,
+      reviewerCount: list(data.reviewers).length,
       reviewers: list(data.reviewers)
         .slice(0, 50)
         .map((r) => {
@@ -164,6 +180,14 @@ export async function synchronizeSource(
     );
   }
   // Bounded native objects are retained verbatim after transport redaction, with explicit coverage.
+  if (pr) {
+    summary.validation = list(record(collections.validation).items)
+      .slice(0, 10)
+      .map((v) => ({ status: record(v).status, buildId: record(record(v).context).buildId }));
+    summary.statuses = list(record(collections.statuses).items)
+      .slice(0, 10)
+      .map((v) => ({ state: record(v).state, context: record(v).context }));
+  }
   const payload = { provider: c.provider, url: c.url, native: data, collections };
   if (Buffer.byteLength(JSON.stringify(payload)) > 2 * 1024 * 1024)
     throw new Error('Provider artifact exceeded size limit');
@@ -173,7 +197,7 @@ export async function synchronizeSource(
       revision,
       title,
       content,
-      pr ? data : { ...fields, nativeId: data.id, key: data.key },
+      pr ? data : c.provider === 'jira' ? { ...fields, nativeId: data.id, key: data.key } : fields,
     ),
     projection: {
       objectType: pr ? 'pull-request' : c.provider === 'jira' ? 'issue' : 'work-item',
