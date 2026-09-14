@@ -116,3 +116,32 @@ test exercises real adapters against mocked HTTP without a viewer. Renderer test
 cover stale/rate-limited projections, artifact paging and safe quoted rendering.
 The existing intent suites retain reactive lifecycle/revision and launch-packet
 coverage. Final command results are recorded in the handoff.
+
+### Local verification result (2026-09-13)
+
+Environment: Linux x86_64, Node v26.2.0, npm 11.14.1; existing dependencies and
+Chromium. Commands below ran from `apps/desktop` unless noted.
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | Main and renderer passed |
+| `npm run test:main -- src/main/services/intent src/main/headless/intent` | 150 passed; 8 existing platform skips |
+| `npm run test:main -- src/main/shared/intentSummary.test.ts src/main/ipc.test.ts src/main/ipcFederationRouting.test.ts src/main/services/claudeSessionStore.test.ts tests/main/claudeSessionStore.test.ts` | 174 passed |
+| `npm run test:renderer -- tests/components/IntentSources.test.tsx tests/components/IntentWorkspaces.test.tsx` | 16 passed |
+| `npm run build` | Main/preload, desktop renderer and web renderer passed |
+| `npm run build:desktop-host` | Passed |
+| `node_modules/.bin/playwright test --project=renderer intentCompletion.test.ts --workers=1` | 2 passed: persistent owner workflow and responsive Work shell |
+| Prettier check on all changed TypeScript/TSX files | Passed |
+| `git diff --check` (repo root) | Passed |
+
+Rivet context/recon and `rivet witness select` guided the checks. The callable MCP
+server was not exposed in this runtime; the installed Rivet/recon CLI supplied the
+equivalent operations and `rivet learnings add` captured the finding. Builds emitted
+existing large-chunk and tool deprecation warnings, with no build failures.
+
+Runtime evidence comprises an owner-scheduler integration with real adapters and
+mocked HTTP for both providers, plus Chromium against production UI and a real
+private headless host using scratch storage. The browser flow uses manual sources;
+provider-specific UI behavior is covered by renderer tests. No live account,
+credential, Windows runtime, or production quota behavior was exercised. No
+installation, push, merge, deployment, publishing, or nightly was performed.
