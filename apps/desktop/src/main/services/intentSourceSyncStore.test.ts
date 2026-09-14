@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { buildSync } from 'esbuild';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
 import { IntentSourceStore, INTENT_SOURCE_SCHEMA } from './intentSourceStore';
@@ -43,8 +48,8 @@ function result(c: IntentSourceConnection, revision = 'r1'): SourceSyncResult {
     },
   };
 }
-function fixture() {
-  const db = new DatabaseSync(':memory:');
+function fixture(path = ':memory:') {
+  const db = new DatabaseSync(path);
   opened.push(db);
   db.exec(
     'CREATE TABLE intent_workspaces(id TEXT PRIMARY KEY, snapshot TEXT NOT NULL);' +
@@ -266,3 +271,118 @@ it('migrates v6 source snapshots and launch packets byte-for-byte; lazily syncs 
   expect(migrated.sources.sync.due()).toEqual([{ id: 'legacy', workspaceId: id }]);
   expect(migrated.sources.contextPacket(id)).toContain('Accepted original');
 });
+
+it('keeps persisted partial coverage through 304 and reports partial to UI and context until full reconciliation', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'intent-partial-')), 'state.db');
+  const f = fixture(path);
+  f.sync.mockImplementation(async (c) => ({ ...result(c), partial: true }));
+  await f.add();
+  const first = f.store.sync.artifacts('s')[0];
+  const reconciledAt = f.store.sync.state('s')!.reconciledAt;
+  opened.splice(opened.indexOf(f.db), 1);
+  f.db.close();
+  const reopened = new DatabaseSync(path);
+  opened.push(reopened);
+  const restarted = new IntentSourceStore(reopened, f.adapter, f.now);
+  f.sync.mockResolvedValue({ nativeId: 'TEAM-1', notModified: true });
+  f.advance();
+  await restarted.tick();
+  expect(f.sync).toHaveBeenLastCalledWith(expect.objectContaining(jira), undefined);
+  const response = await restarted.request({ action: 'sources', id: 'w' });
+  expect(response).toMatchObject({
+    sources: [
+      {
+        external: {
+          status: 'partial',
+          reconciledAt,
+          lastSuccess: new Date(f.now()).toISOString(),
+          detail: 'Bounded or unavailable collections; inspect artifact coverage.',
+        },
+      },
+    ],
+  });
+  expect(restarted.sync.artifacts('s')[0]).toEqual(first);
+  const clock = vi.spyOn(Date, 'now').mockImplementation(f.now);
+  try {
+    expect(restarted.contextPacket('w')).toContain('"freshness":"partial"');
+    expect(restarted.contextPacket('w')).not.toContain('"freshness":"fresh"');
+  } finally {
+    clock.mockRestore();
+  }
+  f.advance();
+  f.sync.mockImplementation(async (c) => result(c));
+  await restarted.tick();
+  expect(f.sync).toHaveBeenLastCalledWith(expect.objectContaining(jira), undefined);
+  expect(restarted.sync.state('s')).toMatchObject({
+    status: 'fresh',
+    reconciledAt: new Date(f.now()).toISOString(),
+  });
+});
+
+it('omits external context for accepted legacy sources without external state', async () => {
+  const f = fixture();
+  await f.add();
+  f.db.exec('DELETE FROM intent_external_objects');
+  expect(f.store.contextPacket('w')).toContain('Accepted original');
+  expect(f.store.contextPacket('w')).not.toContain('External status observations');
+});
+
+it('coordinates account leases between two OS processes with separate SQLite connections', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'intent-lease-'));
+  const bundle = join(dir, 'sync.cjs');
+  buildSync({
+    entryPoints: [resolve('src/main/services/intentSourceSyncStore.ts')],
+    outfile: bundle,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    logLevel: 'silent',
+  });
+  const dbPath = join(dir, 'leases.db');
+  const db = new DatabaseSync(dbPath);
+  db.exec(
+    'CREATE TABLE intent_source_accounts(id TEXT PRIMARY KEY, available_at INTEGER NOT NULL)',
+  );
+  db.close();
+  // The holder invokes a second process from inside its adapter, after claim() has
+  // committed and before release(). No sleeps, network, or wall-clock races.
+  const probe = `
+    const { DatabaseSync } = require('node:sqlite');
+    const { IntentSourceSyncStore } = require(process.argv[1]);
+    const db = new DatabaseSync(process.argv[2]);
+    const store = new IntentSourceSyncStore(db, { sync: async () => ({ nativeId: '1' }) }, () => Number(process.argv[3]));
+    store.import(${JSON.stringify(jira)}).then(() => {
+      console.log(JSON.stringify({ status: 'claimed', pid: process.pid }));
+    }, (error) => {
+      if (!error.message.includes('Source account is busy or backing off')) throw error;
+      console.log(JSON.stringify({ status: 'busy', pid: process.pid }));
+    }).finally(() => db.close());
+  `;
+  const holder = `
+    const { execFileSync } = require('node:child_process');
+    const { DatabaseSync } = require('node:sqlite');
+    const { IntentSourceSyncStore } = require(process.argv[1]);
+    const db = new DatabaseSync(process.argv[2]);
+    const probe = (now) => JSON.parse(execFileSync(process.execPath,
+      ['-e', ${JSON.stringify(probe)}, process.argv[1], process.argv[2], String(now)],
+      { encoding: 'utf8', timeout: 10000 }));
+    let competing;
+    const store = new IntentSourceSyncStore(db, { sync: async () => {
+      competing = probe(1000000);
+      return { nativeId: '1' };
+    } }, () => 1000000);
+    store.import(${JSON.stringify(jira)}).then(() => {
+      console.log(JSON.stringify({ pid: process.pid, competing, cooldown: probe(1000000), released: probe(1005001) }));
+    }).finally(() => db.close());
+  `;
+  const actual = JSON.parse(
+    execFileSync(process.execPath, ['-e', holder, bundle, dbPath], {
+      encoding: 'utf8',
+      timeout: 15000,
+    }),
+  );
+  expect(actual.competing.status).toBe('busy');
+  expect(actual.competing.pid).not.toBe(actual.pid);
+  expect(actual.cooldown.status).toBe('busy');
+  expect(actual.released.status).toBe('claimed');
+}, 20000);

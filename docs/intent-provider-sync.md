@@ -64,7 +64,10 @@ pruning policy; per-record size is bounded, total historical database size can g
 
 The owner runtime has an independent five-second scheduler tick. It processes at
 most 32 due sources and four concurrent accounts, one active sync per Jira site or
-ADO organization across imports/manual/background work sharing the database.
+ADO organization across imports/manual/background work sharing a local SQLite file.
+A deterministic test verifies contention and cooldown between two OS processes
+with separate connections on one machine. Cross-machine/shared-filesystem SQLite
+locking and provider quota coordination are not verified or supported guarantees.
 This conservative site/organization grouping also serializes different credential
 references on the same service. The account lease expires after two minutes on a
 crash. Successful accounts have a five-second cooldown; sources normally refresh
@@ -74,7 +77,9 @@ bypass an account lease or cooldown. Separate databases/process installations do
 not coordinate their provider quotas.
 
 ETags are sent only when returned by the provider. A 304 updates primary freshness
-without rewriting accepted snapshots or artifact bytes. Collection reconciliation
+without rewriting accepted snapshots or artifact bytes. It cannot upgrade partial
+coverage to fresh: partial persists until a full read confirms completeness, including
+after reopening the database. Collection reconciliation
 bypasses ETags every thirty minutes; partial/error/missing observations also force
 an unconditional read. Secondary collections can therefore lag a successful 304;
 the persisted reconciliation timestamp records that distinction. A collection

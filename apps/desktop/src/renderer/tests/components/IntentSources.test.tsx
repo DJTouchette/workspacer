@@ -299,3 +299,34 @@ it('shows PR state, stale rate limits and immutable artifact review while retain
     }),
   );
 });
+
+it('labels recently checked partial collections as partial rather than fresh', async () => {
+  const now = new Date().toISOString();
+  sources = [
+    {
+      ...source,
+      external: {
+        projection: {
+          objectType: 'issue',
+          nativeId: 'TEAM-1',
+          url: source.url,
+          state: 'Open',
+          summary: {},
+        },
+        observedAt: now,
+        lastSuccess: now,
+        lastFailure: null,
+        freshnessUntil: new Date(Date.now() + 600000).toISOString(),
+        nextAttempt: Date.now() + 300000,
+        failures: 0,
+        status: 'partial',
+        detail: 'Bounded or unavailable collections; inspect artifact coverage.',
+      },
+    },
+  ];
+  render(<View />);
+  const status = await screen.findByText(/issue · provider state: Open/);
+  expect(status).toHaveTextContent('partial');
+  expect(status).not.toHaveTextContent('fresh');
+  expect(screen.getByText(/Bounded or unavailable collections/)).toBeInTheDocument();
+});

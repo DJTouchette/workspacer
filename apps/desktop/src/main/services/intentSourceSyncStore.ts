@@ -29,8 +29,9 @@ const PERIOD = 5 * 60_000;
 const RECONCILE = 30 * 60_000;
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** One account lease shared by import, manual refresh and background sync, including across hosts
- * sharing this SQLite DB. No token is used as a key. A crashed request releases after two minutes. */
+/** One account lease shared by import, manual refresh and background sync, including local processes
+ * sharing this SQLite DB (not a cross-machine quota coordinator). No token is used as a key.
+ * A crashed request releases after two minutes. */
 class AccountBusy extends Error {
   constructor(readonly until: number) {
     super('Source account is busy or backing off; retry after its next scheduled attempt.');
@@ -141,6 +142,9 @@ export class IntentSourceSyncStore {
         )
         .run(sourceId, digest, at, payload);
     }
+    // A primary-object 304 cannot establish secondary collection completeness.
+    // Only a full successful read may recover partial (or failed) coverage.
+    const partial = read.partial || (read.notModified && old?.status !== 'fresh');
     const state: IntentExternalState = {
       projection: read.projection ?? old?.projection ?? null,
       observedAt: at,
@@ -149,8 +153,8 @@ export class IntentSourceSyncStore {
       freshnessUntil: new Date(now + PERIOD * 2).toISOString(),
       nextAttempt: now + PERIOD,
       failures: 0,
-      status: read.partial ? 'partial' : 'fresh',
-      detail: read.partial
+      status: partial ? 'partial' : 'fresh',
+      detail: partial
         ? 'Bounded or unavailable collections; inspect artifact coverage.'
         : 'Authoritative provider observation.',
       etag: read.notModified ? old?.etag : read.etag,
