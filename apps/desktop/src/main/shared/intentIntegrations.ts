@@ -102,7 +102,7 @@ export function normalizeIntegration(value: unknown): IntentIntegrationDraft {
     baseUrl = `https://dev.azure.com/${match[1]}/${encodeURIComponent(project)}`;
   }
   const credentialEnv = text(v.credentialEnv, 'credential environment name');
-  if (!/^WORKSPACER_SOURCE_[A-Z0-9_]+$/.test(credentialEnv))
+  if (credentialEnv.length > 128 || !/^WORKSPACER_SOURCE_[A-Z0-9_]+$/.test(credentialEnv))
     throw new Error('Credential name must match WORKSPACER_SOURCE_[A-Z0-9_]+');
   const defaultProjectKey =
     v.provider === 'jira'

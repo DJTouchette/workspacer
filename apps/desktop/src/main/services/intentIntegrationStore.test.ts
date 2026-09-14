@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { IntentSourceStore, INTENT_SOURCE_SCHEMA } from './intentSourceStore';
-import { sourceSnapshot, sourceConnection } from './intentSourceAdapters';
+import { endpoints, sourceSnapshot, sourceConnection } from './intentSourceAdapters';
 import {
   normalizeIntegration,
   resolveIntegration,
@@ -53,11 +53,13 @@ function fixture(file = ':memory:') {
     );
   let now = Date.now();
   const sync = vi.fn(async (c: IntentSourceConnection) => ({
-    nativeId: 'TEAM-1',
+    nativeId: endpoints(c).nativeId,
     snapshot: sourceSnapshot('r1', 'Requirement', 'Original', {}),
     projection: {
-      objectType: 'issue' as const,
-      nativeId: 'TEAM-1',
+      objectType:
+        endpoints(c).objectType ??
+        (c.provider === 'jira' ? ('issue' as const) : ('work-item' as const)),
+      nativeId: endpoints(c).nativeId,
       url: c.url,
       state: 'active',
       revision: 'r1',
@@ -292,4 +294,78 @@ it('migrates a version 7 store and preserves legacy source records', () => {
     INTENT_WORKSPACE_SCHEMA_VERSION,
   );
   expect(db.prepare('SELECT count(*) AS count FROM intent_integrations').get()?.count).toBe(0);
+});
+
+it.each([
+  [jira, 'issue', 'team-123', 'https://team.atlassian.net/browse/TEAM-123'],
+  [ado, 'work-item', '123', 'https://dev.azure.com/org/My%20Project/_workitems/edit/123'],
+  [
+    ado,
+    'pull-request',
+    '123',
+    'https://dev.azure.com/org/My%20Project/_git/Repo%20One/pullrequest/123',
+  ],
+] as const)(
+  'short references use the identical import and sync connection for %s %s',
+  async (integration, objectType, identifier, url) => {
+    const short = fixture(),
+      full = fixture();
+    await short.save(integration);
+    const reference = { integrationId: 'j', expectedIntegrationVersion: 1, objectType, identifier };
+    expect(await short.store.request({ action: 'previewSource', id: 'w', reference })).toEqual({
+      action: 'previewSource',
+      connection: { provider: integration.provider, credentialEnv: integration.credentialEnv, url },
+    });
+    expect(short.sync).not.toHaveBeenCalled();
+    await expect(
+      short.store.request({
+        action: 'previewSource',
+        id: 'w',
+        reference: { ...reference, expectedIntegrationVersion: 0 },
+      }),
+    ).rejects.toThrow('Integration changed');
+    const imported = await short.store.request({ ...short.attach, reference });
+    const legacy = await full.store.request({
+      action: 'addSource',
+      id: 'w',
+      sourceId: 's',
+      expectedRevision: 1,
+      connection: { provider: integration.provider, credentialEnv: integration.credentialEnv, url },
+    });
+    expect(short.sync.mock.calls[0]).toEqual(full.sync.mock.calls[0]);
+    if (imported.action !== 'attachSource' || legacy.action !== 'addSource')
+      throw new Error('Expected imports');
+    expect(imported.source.url).toBe(legacy.source.url);
+    expect(imported.source.nativeId).toBe(legacy.source.nativeId);
+    expect(imported.source.accepted.digest).toBe(legacy.source.accepted.digest);
+    short.advance();
+    full.advance();
+    await short.store.tick();
+    await full.store.tick();
+    const shortConnection = short.sync.mock.calls.at(-1)![0],
+      fullConnection = full.sync.mock.calls.at(-1)![0];
+    expect({
+      provider: shortConnection.provider,
+      url: shortConnection.url,
+      credentialEnv: shortConnection.credentialEnv,
+    }).toEqual({
+      provider: fullConnection.provider,
+      url: fullConnection.url,
+      credentialEnv: fullConnection.credentialEnv,
+    });
+  },
+);
+it('rejects invalid credential names at save time and never stores unknown secret fields in operation receipts', async () => {
+  const f = fixture();
+  for (const credentialEnv of [
+    'TOKEN',
+    'WORKSPACER_SOURCE_lower',
+    'WORKSPACER_SOURCE_' + 'A'.repeat(128),
+  ])
+    await expect(f.save({ ...jira, credentialEnv })).rejects.toThrow('Credential');
+  await f.save({ ...jira, token: 'synthetic-unknown-secret' } as IntentIntegrationDraft);
+  for (const table of ['intent_integrations', 'intent_integration_operations'])
+    expect(JSON.stringify(f.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain(
+      'synthetic-unknown-secret',
+    );
 });

@@ -4,7 +4,56 @@ Reviewer entry points: `intentSourceSync.ts` maps provider observations;
 `intentSourceSyncStore.ts` owns durable projections, artifact/event provenance,
 account leases and backoff; `intentAutomationRuntime.ts` runs it on both owning
 hosts. `IntentSources.tsx` exposes freshness and paged artifact review through the
-existing intent request boundary. No configuration setting was introduced.
+existing intent request boundary. Project connections use `intentIntegrationStore.ts`
+and shared `intentIntegrations.ts`; `IntentIntegrations.tsx` provides their editor
+and attach flow. Configuration metadata lives in the Intent database, not config.yaml.
+
+## Configure once per project
+
+In an Intent's **Sources** tab, expand **Project tracker integrations**. Create a
+named Jira Cloud or Azure DevOps connection and enter the **environment variable
+name**, never its value. The owning host must already have that variable configured
+(the existing `WORKSPACER_SOURCE_[A-Z0-9_]+` rule and provider credential formats
+still apply). You can create multiple connections and reuse them from every Intent
+whose project directory matches.
+
+For Jira, use the site base URL (`https://team.atlassian.net`) and optionally a
+default project key. For Azure, use the organization/project URL
+(`https://dev.azure.com/org/project`) and optionally a default repository. The
+registry accepts canonical HTTPS provider hosts only, without credentials, ports,
+query strings or fragments. Azure project/repository names are validated as single
+path segments and encoded when constructing URLs.
+
+Choose the named connection and object type, then enter `TEAM-123` for Jira or a
+positive numeric ID for an Azure work item or PR. Jira keys are uppercased; a bare
+positive number uses the connection's default Jira project key, when configured.
+An Azure PR needs a repository: configure a default, enter the explicit PR repository
+field, or use `repo#123`. Conflicting explicit repository inputs are rejected. Review
+the displayed canonical URL and **Attach source**. This imports the same source and
+starts the same automatic synchronization as full-URL import. **Add a source by full
+URL** remains available, including manual references.
+
+Editing a connection affects future attachments. Each attached source retains the
+resolved URL, credential variable reference, stable connection ID, connection version
+and metadata at attachment time. Existing sources **do not switch tenant, project,
+repository or credential variable** after edits. To use another boundary, attach a
+new source and review its requirements. Disabling a connection prevents new
+attachments; existing sources continue to synchronize with their original credential
+reference. Removal is blocked while any source references the connection; disable
+it instead. Sources show the original connection name/version, even after a rename.
+
+The registry is stored in the existing Intent SQLite database (schema version 8),
+scoped by the saved project directory, without another `config.yaml` writer.
+Worktrees with different saved project directories have separate registries. Unused
+removed connections retain an internal tombstone so an old ID cannot be reused.
+Registry mutations use connection-version CAS and operation IDs; attachments use
+Intent-revision and connection-version checks plus an idempotent source ID. A stale
+connection requires reloading and reviewing the URL again. Successful attachment
+retries use their original pinned metadata, including after edits or disablement.
+Native, headless and hub-routed clients use the existing `intentWorkspaceRequest`
+transport with `integrations`, `saveIntegration`, `removeIntegration`, `previewSource`
+and `attachSource` actions. These operations never alter Intent lifecycle,
+requirement revisions, evidence or automation decisions.
 
 ## Provenance and lifecycle compatibility
 
@@ -127,17 +176,17 @@ coverage. Final command results are recorded in the handoff.
 Environment: Linux x86_64, Node v26.2.0, npm 11.14.1; existing dependencies and
 Chromium. Commands below ran from `apps/desktop` unless noted.
 
-| Check | Result |
-| --- | --- |
-| `npm run typecheck` | Main and renderer passed |
-| `npm run test:main -- src/main/services/intent src/main/headless/intent` | 150 passed; 8 existing platform skips |
-| `npm run test:main -- src/main/shared/intentSummary.test.ts src/main/ipc.test.ts src/main/ipcFederationRouting.test.ts src/main/services/claudeSessionStore.test.ts tests/main/claudeSessionStore.test.ts` | 174 passed |
-| `npm run test:renderer -- tests/components/IntentSources.test.tsx tests/components/IntentWorkspaces.test.tsx` | 16 passed |
-| `npm run build` | Main/preload, desktop renderer and web renderer passed |
-| `npm run build:desktop-host` | Passed |
-| `node_modules/.bin/playwright test --project=renderer intentCompletion.test.ts --workers=1` | 2 passed: persistent owner workflow and responsive Work shell |
-| Prettier check on all changed TypeScript/TSX files | Passed |
-| `git diff --check` (repo root) | Passed |
+| Check                                                                                                                                                                                                      | Result                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `npm run typecheck`                                                                                                                                                                                        | Main and renderer passed                                      |
+| `npm run test:main -- src/main/services/intent src/main/headless/intent`                                                                                                                                   | 150 passed; 8 existing platform skips                         |
+| `npm run test:main -- src/main/shared/intentSummary.test.ts src/main/ipc.test.ts src/main/ipcFederationRouting.test.ts src/main/services/claudeSessionStore.test.ts tests/main/claudeSessionStore.test.ts` | 174 passed                                                    |
+| `npm run test:renderer -- tests/components/IntentSources.test.tsx tests/components/IntentWorkspaces.test.tsx`                                                                                              | 16 passed                                                     |
+| `npm run build`                                                                                                                                                                                            | Main/preload, desktop renderer and web renderer passed        |
+| `npm run build:desktop-host`                                                                                                                                                                               | Passed                                                        |
+| `node_modules/.bin/playwright test --project=renderer intentCompletion.test.ts --workers=1`                                                                                                                | 2 passed: persistent owner workflow and responsive Work shell |
+| Prettier check on all changed TypeScript/TSX files                                                                                                                                                         | Passed                                                        |
+| `git diff --check` (repo root)                                                                                                                                                                             | Passed                                                        |
 
 Rivet context/recon and `rivet witness select` guided the checks. The callable MCP
 server was not exposed in this runtime; the installed Rivet/recon CLI supplied the

@@ -1221,3 +1221,49 @@ it('installs the default production bridge and carries preparation and tagged se
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it('native Intent IPC forwards project integration CRUD, preview and attach with CAS fields intact', async () => {
+  const intent = await import('./services/intentWorkspaceStore');
+  const service = vi
+    .spyOn(intent, 'intentWorkspaceRequest')
+    .mockImplementation(async (input) => ({ action: (input as any).action }) as never);
+  try {
+    const invoke = (request: unknown) =>
+      handlers.get('intent-workspace:request')!(null, request) as Promise<any>;
+    const reference = {
+      integrationId: 'j',
+      expectedIntegrationVersion: 3,
+      objectType: 'issue',
+      identifier: 'TEAM-1',
+    };
+    for (const request of [
+      { action: 'integrations', id: 'w' },
+      {
+        action: 'saveIntegration',
+        id: 'w',
+        integrationId: 'j',
+        expectedVersion: 2,
+        operationId: 'op',
+        integration: { credentialEnv: 'WORKSPACER_SOURCE_TEAM' },
+      },
+      {
+        action: 'removeIntegration',
+        id: 'w',
+        integrationId: 'j',
+        expectedVersion: 3,
+        operationId: 'remove',
+      },
+      { action: 'previewSource', id: 'w', reference },
+      { action: 'attachSource', id: 'w', sourceId: 's', expectedRevision: 1, reference },
+    ]) {
+      expect(await invoke(request)).toEqual({ action: request.action });
+      expect(service.mock.calls.at(-1)?.[0]).toEqual(request);
+    }
+    service.mockRejectedValueOnce(new Error('Integration changed. Reload before continuing.'));
+    await expect(invoke({ action: 'integrations', id: 'w' })).rejects.toThrow(
+      'Integration changed',
+    );
+  } finally {
+    service.mockRestore();
+  }
+});

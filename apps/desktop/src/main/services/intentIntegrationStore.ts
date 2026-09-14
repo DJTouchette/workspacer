@@ -12,6 +12,7 @@ import { sourceConnection, sourceText } from './intentSourceAdapters';
 export const INTENT_INTEGRATION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS intent_integrations (id TEXT PRIMARY KEY, project_root TEXT NOT NULL, snapshot TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS intent_integrations_project ON intent_integrations(project_root);
+CREATE INDEX IF NOT EXISTS intent_sources_integration ON intent_sources(json_extract(snapshot, '$.integration.id'));
 CREATE TABLE IF NOT EXISTS intent_integration_operations (id TEXT PRIMARY KEY, request TEXT NOT NULL, response TEXT NOT NULL);
 `;
 export class IntentIntegrationStore {

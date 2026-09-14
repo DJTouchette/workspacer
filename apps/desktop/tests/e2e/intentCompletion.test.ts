@@ -9,11 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { freePort } from './fixtures/scratchState';
+import { jiraIssue } from '../fixtures/intentSources';
 
 let vite: ChildProcess;
 let base: string;
 let cache: string;
 test.beforeAll(async () => {
+  test.setTimeout(90000);
   const port = await freePort();
   base = `http://127.0.0.1:${port}/first-use-harness.html`;
   cache = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-completion-vite-'));
@@ -22,11 +24,19 @@ test.beforeAll(async () => {
     [
       '--input-type=module',
       '-e',
-      `import { createServer } from 'vite'; const server = await createServer(${JSON.stringify({ cacheDir: cache, server: { host: '127.0.0.1', port, strictPort: true } })}); await server.listen();`,
+      `import { build, preview } from 'vite'; const config = ${JSON.stringify({ cacheDir: cache, build: { target: 'esnext', outDir: path.join(cache, 'dist'), rollupOptions: { input: path.resolve(__dirname, '../../src/renderer/first-use-harness.html') } }, preview: { host: '127.0.0.1', port, strictPort: true } })}; await build(config); await preview(config);`,
     ],
-    { cwd: path.resolve(__dirname, '../../src/renderer'), stdio: 'ignore' },
+    { cwd: path.resolve(__dirname, '../../src/renderer'), stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  for (const deadline = Date.now() + 20000; Date.now() < deadline;) {
+  let buildLog = '';
+  vite.stdout?.on('data', (chunk) => {
+    buildLog = (buildLog + String(chunk)).slice(-12000);
+  });
+  vite.stderr?.on('data', (chunk) => {
+    buildLog = (buildLog + String(chunk)).slice(-12000);
+  });
+  for (const deadline = Date.now() + 60000; Date.now() < deadline;) {
+    if (vite.exitCode !== null) throw new Error(`Intent production harness exited: ${buildLog}`);
     try {
       if ((await fetch(base)).ok) return;
     } catch {
@@ -34,7 +44,7 @@ test.beforeAll(async () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error('Intent completion harness failed to start');
+  throw new Error(`Intent completion harness failed to start: ${buildLog}`);
 });
 test.afterAll(async () => {
   if (vite && vite.exitCode === null && vite.signalCode === null) {
@@ -153,6 +163,22 @@ test('completes the intent review workflow through persistent owner services on 
     GIT_CONFIG_GLOBAL: '/dev/null',
     LANG: 'C.UTF-8',
   };
+  // The provider transport is entirely synthetic; any unexpected network call fails closed.
+  const providerFixture = path.join(root, 'provider-fixture.cjs');
+  fs.writeFileSync(
+    providerFixture,
+    `
+    const issue = ${JSON.stringify(jiraIssue)};
+    globalThis.fetch = async (input, options) => {
+      const url = new URL(String(input));
+      if (url.hostname !== 'team.atlassian.net' || options.method !== 'GET' || options.redirect !== 'manual') throw new Error('Unexpected fixture network request');
+      const data = url.pathname.endsWith('/comment') ? { comments: [], total: 0 } : url.pathname.endsWith('/changelog') ? { values: [], total: 0 } : issue;
+      return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+    };
+  `,
+  );
+  env.NODE_OPTIONS = `--require=${providerFixture}`;
+  env.WORKSPACER_SOURCE_BROWSER_FIXTURE = 'fixture@example.invalid:synthetic-test-value';
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: repo, env, encoding: 'utf8' });
   git('init', '-q');
@@ -283,6 +309,69 @@ test('completes the intent review workflow through persistent owner services on 
     expect(
       (await host.request({ action: 'sources', id: workspace.id })).sources[0].accepted.content,
     ).toBe('Preserve filtered rows and permissions.');
+
+    const integrationToggle = page.getByText('Project tracker integrations', { exact: true });
+    await integrationToggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Connection name')).toBeEnabled();
+    await page.getByLabel('Connection name').fill('Shared Jira');
+    await page.getByLabel('Jira site base URL').fill('https://team.atlassian.net');
+    await page.getByLabel('Default project key (optional)').fill('TEAM');
+    await page
+      .getByLabel('Connection credential environment name')
+      .fill('WORKSPACER_SOURCE_BROWSER_FIXTURE');
+    await page.getByLabel('Connection credential environment name').press('Enter');
+    await expect(page.getByRole('button', { name: 'Edit Shared Jira' })).toBeVisible();
+    const registry = await host.request({ action: 'integrations', id: workspace.id });
+    const integrationId = registry.integrations[0].id;
+    expect(registry.integrations[0]).toMatchObject({
+      name: 'Shared Jira',
+      version: 1,
+      credentialEnv: 'WORKSPACER_SOURCE_BROWSER_FIXTURE',
+    });
+    await page.getByLabel('Named integration').selectOption(integrationId);
+    await page.getByLabel('Native identifier').fill('team-1');
+    await expect(page.getByLabel('Canonical source URL')).toHaveText(
+      'https://team.atlassian.net/browse/TEAM-1',
+    );
+    await page.getByLabel('Native identifier').press('Enter');
+    await expect(page.getByRole('heading', { name: 'Export CSV', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Remove Shared Jira' })).toBeDisabled();
+    await page.getByRole('button', { name: 'Edit Shared Jira' }).click();
+    await page.getByLabel('Connection name').fill('Renamed Jira');
+    await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Disable Renamed Jira' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Disable Renamed Jira' }).click();
+    await expect(page.getByRole('button', { name: 'Enable Renamed Jira' })).toBeVisible();
+    await expect(page.getByText(/Attached through Shared Jira/)).toBeVisible();
+    const sourceState = await host.request({ action: 'sources', id: workspace.id });
+    const tracker = sourceState.sources.find((source: any) => source.integration);
+    expect(tracker).toMatchObject({
+      url: 'https://team.atlassian.net/browse/TEAM-1',
+      integration: { id: integrationId, name: 'Shared Jira', version: 1 },
+      external: { status: 'fresh' },
+    });
+    expect(JSON.stringify(sourceState)).not.toContain('synthetic-test-value');
+    const companion = await host.request({
+      action: 'create',
+      projectRoot: repo,
+      fields: {
+        title: 'Another Intent',
+        outcome: '',
+        constraints: '',
+        successCriteria: '',
+        sourceUrl: '',
+        status: 'draft',
+      },
+    });
+    expect(
+      (await host.request({ action: 'integrations', id: companion.workspace.id })).integrations,
+    ).toMatchObject([{ id: integrationId, name: 'Renamed Jira', enabled: false, references: 1 }]);
+    await page.screenshot({
+      path: testInfo.outputPath('intent-project-integrations.png'),
+      fullPage: true,
+      animations: 'disabled',
+    });
 
     await tab(page, 'Knowledge').click();
     await page.getByRole('button', { name: 'Capture document version' }).click();
@@ -438,7 +527,7 @@ test('completes the intent review workflow through persistent owner services on 
         host.request({ action, id: workspace.id }),
       ),
     );
-    expect(reopened.workspaces[0]).toMatchObject({
+    expect(reopened.workspaces.find((item: any) => item.id === workspace.id)).toMatchObject({
       id: workspace.id,
       revision: 2,
       projectId: workspace.projectId,
@@ -452,7 +541,10 @@ test('completes the intent review workflow through persistent owner services on 
     expect(artifacts.selections).toHaveLength(1);
     expect(knowledge.captures).toHaveLength(1);
     expect(knowledge.proposals[0].status).toBe('written');
-    expect(sources.sources).toHaveLength(1);
+    expect(sources.sources).toHaveLength(2);
+    expect(
+      (await host.request({ action: 'integrations', id: workspace.id })).integrations,
+    ).toMatchObject([{ id: integrationId, enabled: false, references: 1 }]);
     expect(controls.controls[0].attempts[0].status).toBe('accepted');
     await tab(page, 'Overview').click();
     await page.getByRole('button', { name: 'Refresh work overview' }).click();

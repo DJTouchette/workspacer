@@ -1,3 +1,4 @@
+import IntentIntegrations from './IntentIntegrations';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Surface } from './Surface';
 import { inputStyle } from './settings/primitives';
@@ -213,9 +214,17 @@ export default function IntentSources({
           Reload sources to enable source changes. Your draft is preserved.
         </p>
       )}
+      <IntentIntegrations
+        key={workspace.id}
+        workspace={workspace}
+        disabled={blocked}
+        onAttached={() => {
+          void load();
+        }}
+      />
       <Surface elevation="flat" pad="md">
         <details open={!sources.length || !!draft.url || !!draft.content}>
-          <summary>Add a source</summary>
+          <summary>Add a source by full URL</summary>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -356,6 +365,12 @@ export default function IntentSources({
       {sources.map((source) => (
         <Surface key={source.id} elevation="flat" pad="md">
           <h3>{source.accepted.title || source.nativeId}</h3>
+          {source.integration && (
+            <p className="intent-muted">
+              Attached through {source.integration.name} (connection version{' '}
+              {source.integration.version}). URL and credential reference are pinned.
+            </p>
+          )}
           <a href={source.url} target="_blank" rel="noreferrer">
             {source.provider}: {source.nativeId}
           </a>
