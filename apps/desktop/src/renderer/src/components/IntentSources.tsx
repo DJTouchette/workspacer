@@ -5,6 +5,7 @@ import type { IntentWorkspace } from '../../../main/shared/intentWorkspace';
 import {
   SOURCE_CAPABILITIES,
   type IntentSource,
+  type IntentSourceArtifact,
   type IntentSourceComment,
   type IntentSourceDraft,
   type IntentSourceRequest,
@@ -123,7 +124,13 @@ export default function IntentSources({
   }, [load, workspace.id]);
   useEffect(() => {
     if (visible) void load();
+    const timer = visible
+      ? setInterval(() => {
+          if (!busy.current) void load();
+        }, 15000)
+      : undefined;
     return () => {
+      clearInterval(timer);
       generation.current++;
     };
   }, [visible, load, workspace.id]);
@@ -334,7 +341,9 @@ export default function IntentSources({
                     ? 'email:API-token for this Jira site'
                     : 'a personal access token for this Azure organization'}
                   . Enter only the variable name here. The credential stays on the host. Import and
-                  refresh read this ticket; comments require a separate review and Publish action.
+                  automatic refresh read this object. Azure PR links are supported; PR
+                  synchronization is read-only. Issue comments require a separate review and Publish
+                  action.
                 </p>
               </>
             )}
@@ -350,6 +359,7 @@ export default function IntentSources({
           <a href={source.url} target="_blank" rel="noreferrer">
             {source.provider}: {source.nativeId}
           </a>
+          <ExternalStatus source={source} call={call} />
           <p className="intent-muted">
             Accepted revision {source.accepted.revision} · fetched {source.accepted.fetchedAt}
           </p>
@@ -428,7 +438,11 @@ export default function IntentSources({
           )}
         </Surface>
       ))}
-      {sources.some((s) => SOURCE_CAPABILITIES[s.provider].publishComment) && (
+      {sources.some(
+        (s) =>
+          SOURCE_CAPABILITIES[s.provider].publishComment &&
+          s.external?.projection?.objectType !== 'pull-request',
+      ) && (
         <Surface elevation="flat" pad="md">
           <h3>Prepare a source comment</h3>
           <p className="intent-muted">
@@ -487,7 +501,11 @@ export default function IntentSources({
               >
                 <option value="">Select a source</option>
                 {sources
-                  .filter((s) => SOURCE_CAPABILITIES[s.provider].publishComment)
+                  .filter(
+                    (s) =>
+                      SOURCE_CAPABILITIES[s.provider].publishComment &&
+                      s.external?.projection?.objectType !== 'pull-request',
+                  )
                   .map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.accepted.title || s.nativeId}
@@ -575,5 +593,92 @@ export default function IntentSources({
         </Surface>
       ))}
     </section>
+  );
+}
+
+function ExternalStatus({
+  source,
+  call,
+}: {
+  source: IntentSource;
+  call: (request: IntentSourceRequest) => Promise<IntentSourceResponse>;
+}) {
+  const [artifact, setArtifact] = useState<IntentSourceArtifact>();
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState(false);
+  const [end, setEnd] = useState(false);
+  const external = source.external;
+  if (source.provider === 'manual') return null;
+  const stale = !external || Date.parse(external.freshnessUntil) < Date.now();
+  async function review(before?: number) {
+    setPending(true);
+    setError('');
+    try {
+      const response = await call({
+        action: 'sourceArtifacts',
+        id: source.workspaceId,
+        sourceId: source.id,
+        before,
+      });
+      if (response.action !== 'sourceArtifacts')
+        throw new Error('Host does not support artifact review.');
+      if (response.artifacts[0]) {
+        setArtifact(response.artifacts[0]);
+        setEnd(false);
+      } else setEnd(true);
+    } catch {
+      setError('Could not load source artifact. Retry when the host is available.');
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div>
+      <p className="intent-muted">
+        {external?.projection?.objectType ?? 'External object'} · provider state:{' '}
+        {external?.projection?.state || 'Unknown'}
+        {' · '}
+        {external?.status ?? 'Awaiting first sync'}
+        {stale ? ' · stale' : ''}
+      </p>
+      <p className="intent-muted">
+        Last successful sync: {external?.lastSuccess ?? 'Never'}
+        {external ? ` · next attempt ${new Date(external.nextAttempt).toISOString()}` : ''}
+      </p>
+      {external && <p className="intent-muted">{external.detail}</p>}
+      {external?.projection && (
+        <details>
+          <summary>Last successful external projection</summary>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {JSON.stringify(external.projection, null, 2)}
+          </pre>
+        </details>
+      )}
+      <p className="intent-muted">
+        External observations are quoted reference data. They do not change intent status, accepted
+        requirements, or verified evidence. Refresh runs on the owning host without this view open.
+      </p>
+      <button type="button" disabled={pending} onClick={() => void review()}>
+        Review latest source artifact
+      </button>
+      {error && <p role="alert">{error}</p>}
+      {artifact && (
+        <details open>
+          <summary>Immutable source artifact · {artifact.observedAt}</summary>
+          <p className="intent-muted">Digest {artifact.digest} · untrusted provider data</p>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {JSON.stringify(artifact.payload, null, 2)}
+          </pre>
+          <button
+            type="button"
+            disabled={pending || end}
+            onClick={() => void review(artifact.sequence)}
+          >
+            Earlier artifact
+          </button>
+        </details>
+      )}
+      {end && <p className="intent-muted">No more source artifacts.</p>}
+    </div>
   );
 }

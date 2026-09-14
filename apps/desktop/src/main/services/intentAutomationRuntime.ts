@@ -24,8 +24,30 @@ export function startIntentAutomationRuntime(
       busy = false;
     }
   };
+  // Separate busy guard: slow provider I/O must not delay reactive manager delivery.
+  let sourceBusy = false;
+  let stopped = false;
+  const sync = async () => {
+    if (sourceBusy || stopped) return;
+    sourceBusy = true;
+    try {
+      const store = await intentWorkspaceStoreIfUsed();
+      if (!stopped) await store?.sources.tick();
+    } catch {
+      /* Source failures are persisted by the source store; no raw HTTP errors in logs. */
+    } finally {
+      sourceBusy = false;
+    }
+  };
+  const sourceTimer = setInterval(() => void sync(), 5000);
+  sourceTimer.unref();
+  void sync();
   const timer = setInterval(() => void tick(), 5000);
   timer.unref();
   void tick();
-  return () => clearInterval(timer);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    clearInterval(sourceTimer);
+  };
 }

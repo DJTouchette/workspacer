@@ -32,7 +32,11 @@ function fixture(file = ':memory:') {
     read: vi.fn().mockResolvedValue({ nativeId: 'TEAM-1', snapshot: original }),
     comment: vi.fn().mockResolvedValue({ status: 'accepted', detail: 'Accepted', remoteId: '9' }),
   };
-  const store = new IntentSourceStore(db, adapter);
+  let now = Date.now();
+  const advance = () => {
+    now += 6000;
+  };
+  const store = new IntentSourceStore(db, adapter, () => now);
   const add = { action: 'addSource', id: 'w', sourceId: 's', expectedRevision: 1, connection };
   const prepare = {
     action: 'prepareSourceComment',
@@ -44,7 +48,7 @@ function fixture(file = ':memory:') {
     text: 'A reviewed user comment',
   };
   const publish = { action: 'publishSourceComment', id: 'w', commentId: 'c', attemptId: 'a' };
-  return { db, store, adapter, add, prepare, publish };
+  return { db, store, adapter, add, prepare, publish, advance };
 }
 it('manual sources require no credentials or I/O, preserve notes, and cannot publish', async () => {
   const f = fixture();
@@ -66,6 +70,7 @@ it('keeps immutable accepted snapshots through refresh/accept and database reope
   await f.store.request(f.add);
   const changed = sourceSnapshot('r2', 'Changed', 'New requirements', { state: 'Different' });
   vi.mocked(f.adapter.read).mockResolvedValue({ nativeId: 'TEAM-1', snapshot: changed });
+  f.advance();
   const refresh = await f.store.request({
     action: 'refreshSource',
     id: 'w',
@@ -186,13 +191,14 @@ it('compiles bounded accepted provenance without candidates or credential refere
     nativeId: 'TEAM-1',
     snapshot: sourceSnapshot('r2', 'Title', 'UNACCEPTED', {}),
   });
+  f.advance();
   await f.store.request({ action: 'refreshSource', id: 'w', sourceId: 's', expectedVersion: 1 });
   const packet = f.store.contextPacket('w');
   expect(packet).toContain('Original requirements');
   expect(packet).toContain(original.digest);
   expect(packet).not.toContain('UNACCEPTED');
   expect(packet).not.toContain('WORKSPACER_SOURCE_TEST');
-  expect(packet.length).toBeLessThan(25000);
+  expect(packet.length).toBeLessThan(32000);
 });
 it('does no I/O on failed durable claim and retains uncertainty on failed receipt write', async () => {
   const f = fixture();

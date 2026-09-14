@@ -1,3 +1,4 @@
+import { synchronizeSource, type SourceSyncResult } from './intentSourceSync';
 import { createHash } from 'node:crypto';
 import type {
   IntentSourceConnection,
@@ -19,6 +20,7 @@ export const SOURCE_RESPONSE_LIMIT = 512 * 1024;
 export const SOURCE_TIMEOUT_MS = 8000;
 type Receipt = IntentSourceComment['attempts'][number];
 export interface IntentSourceAdapter {
+  sync?(connection: IntentSourceConnection, etag?: string): Promise<SourceSyncResult>;
   read(
     connection: IntentSourceConnection,
   ): Promise<{ nativeId: string; snapshot: IntentSourceSnapshot }>;
@@ -61,6 +63,22 @@ export function sourceConnection(value: unknown): IntentSourceConnection {
     );
   if (parsed.protocol !== 'https:' || parsed.port || parsed.search || parsed.hash)
     throw new Error('Provider URLs must use HTTPS with no port, query or fragment');
+  // Canonical web URLs only; never use provider-supplied API/next-page links.
+  const legacy = parsed.hostname.match(/^([a-zA-Z0-9_-]+)\.visualstudio\.com$/);
+  if (connection.provider === 'ado' && legacy) {
+    parsed.hostname = 'dev.azure.com';
+    parsed.pathname = `/${legacy[1]}${parsed.pathname}`;
+  }
+  parsed.pathname = parsed.pathname
+    .replace(/\/$/, '')
+    .split('/')
+    .map((part) => encodeURIComponent(decodeURIComponent(part)))
+    .join('/');
+  if (connection.provider === 'ado')
+    parsed.pathname = parsed.pathname
+      .replace(/\/pullrequest\//i, '/pullrequest/')
+      .replace(/\/_git\//i, '/_git/');
+  connection.url = parsed.href;
   endpoints(connection);
   return connection;
 }
@@ -69,6 +87,7 @@ export function endpoints(c: IntentSourceConnection): {
   read: string;
   comment: string;
   nativeId: string;
+  objectType?: 'issue' | 'work-item' | 'pull-request';
 } {
   const u = new URL(c.url);
   if (u.protocol !== 'https:' || u.username || u.password || u.port || u.search || u.hash)
@@ -81,6 +100,24 @@ export function endpoints(c: IntentSourceConnection): {
     }
   }
   if (c.provider === 'ado' && u.hostname === 'dev.azure.com') {
+    const pr = u.pathname.match(
+      /^\/([a-zA-Z0-9_-]+)\/([^/]+)\/_git\/([^/]+)\/pullrequest\/([1-9][0-9]*)\/?$/i,
+    );
+    if (pr) {
+      const segment = (raw: string) => {
+        const decoded = decodeURIComponent(raw);
+        if (/[\\/\x00-\x1f]/.test(decoded) || decoded === '.' || decoded === '..')
+          throw new Error('Invalid Azure path');
+        return encodeURIComponent(decoded);
+      };
+      const base = `${u.origin}/${pr[1]}/${segment(pr[2])}/_apis/git/repositories/${segment(pr[3])}/pullRequests/${pr[4]}`;
+      return {
+        read: `${base}?api-version=7.1`,
+        comment: '',
+        nativeId: pr[4],
+        objectType: 'pull-request',
+      };
+    }
     const match = u.pathname.match(
       /^\/([a-zA-Z0-9_-]+)\/([^/]+)\/_workitems\/edit\/([1-9][0-9]*)\/?$/,
     );
@@ -134,7 +171,7 @@ function object(value: unknown): Record<string, unknown> {
     throw new Error('Provider returned an invalid record');
   return value as Record<string, unknown>;
 }
-function adfText(value: unknown, depth = 0): string {
+export function adfText(value: unknown, depth = 0): string {
   if (depth > 30 || value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map((v) => adfText(v, depth + 1)).join('\n');
@@ -144,8 +181,11 @@ function adfText(value: unknown, depth = 0): string {
   }
   return '';
 }
-class SourceHttpError extends Error {
-  constructor(readonly status: number) {
+export class SourceHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfter = 0,
+  ) {
     super(`Provider returned HTTP ${status}`);
   }
 }
@@ -154,8 +194,19 @@ export function createIntentSourceAdapter(
   fetcher: typeof fetch = fetch,
   env: NodeJS.ProcessEnv = process.env,
 ): IntentSourceAdapter {
-  async function json(c: IntentSourceConnection, write?: string): Promise<Record<string, unknown>> {
+  async function json(
+    c: IntentSourceConnection,
+    write?: string,
+    options?: {
+      url: string;
+      etag?: string;
+      responseEtag?: string;
+    },
+  ): Promise<Record<string, unknown>> {
     const routes = endpoints(c);
+    if (write !== undefined && !routes.comment) throw new Error('PR synchronization is read-only');
+    if (options && new URL(options.url).origin !== new URL(routes.read).origin)
+      throw new Error('Invalid provider host');
     if (!/^WORKSPACER_SOURCE_[A-Z0-9_]+$/.test(c.credentialEnv))
       throw new Error('Invalid credential environment name');
     const secret = env[c.credentialEnv];
@@ -185,20 +236,34 @@ export function createIntentSourceAdapter(
                     },
                   },
             );
-      const response = await fetcher(write === undefined ? routes.read : routes.comment, {
-        method: write === undefined ? 'GET' : 'POST',
-        redirect: 'manual',
-        signal,
-        headers: {
-          Authorization: `Basic ${encoded}`,
-          Accept: 'application/json',
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
+      const response = await fetcher(
+        options?.url ?? (write === undefined ? routes.read : routes.comment),
+        {
+          method: write === undefined ? 'GET' : 'POST',
+          redirect: 'manual',
+          signal,
+          headers: {
+            Authorization: `Basic ${encoded}`,
+            Accept: 'application/json',
+            ...(options?.etag ? { 'If-None-Match': options.etag } : {}),
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          body,
         },
-        body,
-      });
+      );
+      if (options) {
+        const etag = response.headers.get('etag');
+        // ETags are opaque, bounded and sanitized below before persistence.
+        if (etag && etag.length <= 1024 && !/[\r\n]/.test(etag)) options.responseEtag = etag;
+      }
       if (!response.ok) {
         void response.body?.cancel();
-        throw new SourceHttpError(response.status);
+        const retry = response.headers.get('retry-after') || '';
+        const delay = /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+        throw new SourceHttpError(
+          response.status,
+          Number.isFinite(delay) ? Math.max(0, Math.min(delay, 86400000)) : 0,
+        );
       }
       if (Number(response.headers.get('content-length')) > SOURCE_RESPONSE_LIMIT) {
         void response.body?.cancel();
@@ -235,10 +300,18 @@ export function createIntentSourceAdapter(
         if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
         if (value && typeof value === 'object')
           return Object.fromEntries(
-            Object.entries(value).map(([key, item]) => [redactText(key), redact(item, depth + 1)]),
+            Object.entries(value).map(([key, item]) => [
+              redactText(key),
+              /^(authorization|password|secret|access[_-]?token|refresh[_-]?token|api[_-]?key)$/i.test(
+                key,
+              )
+                ? '[redacted]'
+                : redact(item, depth + 1),
+            ]),
           );
         return value;
       };
+      if (options?.responseEtag) options.responseEtag = redactText(options.responseEtag);
       return object(redact(JSON.parse(raw)));
     } catch (error) {
       if (error instanceof SourceHttpError) throw error;
@@ -248,8 +321,40 @@ export function createIntentSourceAdapter(
     }
   }
   return {
+    async sync(c, etag) {
+      return synchronizeSource(
+        c,
+        async (url, conditional) => {
+          const options = { url, etag: conditional, responseEtag: undefined as string | undefined };
+          try {
+            return { data: await json(c, undefined, options), etag: options.responseEtag };
+          } catch (error) {
+            if (error instanceof SourceHttpError && error.status === 304 && conditional)
+              return { data: null, etag: conditional };
+            throw error;
+          }
+        },
+        etag,
+      );
+    },
     async read(c) {
       const data = await json(c);
+      if (endpoints(c).objectType === 'pull-request') {
+        if (String(data.pullRequestId) !== endpoints(c).nativeId)
+          throw new Error('Provider returned a different PR');
+        return {
+          nativeId: String(data.pullRequestId),
+          snapshot: sourceSnapshot(
+            String(
+              (data.lastMergeSourceCommit && object(data.lastMergeSourceCommit).commitId) ||
+                data.status,
+            ),
+            sourceText(data.title, 'Azure PR title', 4000),
+            adfText(data.description),
+            data,
+          ),
+        };
+      }
       const fields = object(data.fields);
       const nativeId = endpoints(c).nativeId;
       if (c.provider === 'jira') {

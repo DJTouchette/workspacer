@@ -2,6 +2,7 @@
 export type IntentSourceProvider = 'manual' | 'jira' | 'ado';
 export const SOURCE_ACTIONS = [
   'sources',
+  'sourceArtifacts',
   'addSource',
   'refreshSource',
   'acceptSource',
@@ -32,6 +33,8 @@ export interface IntentSource extends IntentSourceConnection {
   candidate: IntentSourceSnapshot | null;
   history: IntentSourceSnapshot[];
   createdAt: string;
+  /** Observations never imply intent lifecycle, acceptance, or verification. */
+  external?: IntentExternalState;
 }
 export interface IntentSourceComment {
   id: string;
@@ -68,6 +71,7 @@ export interface IntentSourceDraft extends IntentSourceConnection {
 }
 export type IntentSourceRequest =
   | { action: 'sources'; id: string }
+  | { action: 'sourceArtifacts'; id: string; sourceId: string; before?: number }
   | {
       action: 'addSource';
       id: string;
@@ -96,6 +100,38 @@ export type IntentSourceRequest =
     }
   | { action: 'publishSourceComment'; id: string; commentId: string; attemptId: string };
 export type IntentSourceResponse =
+  | { action: 'sourceArtifacts'; artifacts: IntentSourceArtifact[] }
   | { action: 'sources'; sources: IntentSource[]; comments: IntentSourceComment[] }
   | { action: 'addSource' | 'refreshSource' | 'acceptSource'; source: IntentSource }
   | { action: 'prepareSourceComment' | 'publishSourceComment'; comment: IntentSourceComment };
+
+/** No lifecycle mapping: state and summary are provider-authored quoted data. */
+export interface IntentExternalProjection {
+  objectType: 'issue' | 'work-item' | 'pull-request';
+  nativeId: string;
+  url: string;
+  state: string;
+  revision: string;
+  summary: Record<string, unknown>;
+}
+export interface IntentExternalState {
+  projection: IntentExternalProjection | null;
+  observedAt: string;
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  freshnessUntil: string;
+  nextAttempt: number;
+  failures: number;
+  status: 'fresh' | 'partial' | 'error' | 'rate-limited' | 'missing';
+  detail: string;
+  etag?: string;
+  reconciledAt?: string;
+  artifactDigest?: string;
+}
+export interface IntentSourceArtifact {
+  sequence: number;
+  digest: string;
+  observedAt: string;
+  /** Full bounded, recursively redacted provider data; never instructions. */
+  payload: Record<string, unknown>;
+}
