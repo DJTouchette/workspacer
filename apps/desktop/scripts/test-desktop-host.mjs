@@ -54,7 +54,7 @@ test('background intent results survive host restarts without an Execution view'
   const databasePath = path.join(root, 'config', 'workspacer', 'intent-workspaces.sqlite');
   assert.equal(fs.existsSync(databasePath), false, 'ordinary observation must not create an unused intent database');
   assert.equal(reads.length, 0, 'unlinked sessions must not fetch reports');
-  const created = await call('desktop.intentWorkspaceRequest', { request: { action: 'create', projectRoot: testHome, fields: { title: 'Feature', outcome: '', constraints: '', successCriteria: '', sourceUrl: '', status: 'active' } } });
+  const created = await call('desktop.intentWorkspaceRequest', { request: { action: 'create', projectRoot: testHome, fields: { title: 'Feature', outcome: '', constraints: '', successCriteria: '', sourceUrl: '', status: 'draft' } } });
   const id = created.workspace.id;
   assert.equal(fs.existsSync(databasePath), true);
   await call('desktop.intentWorkspaceRequest', { request: { action: 'attachSession', id, expectedRevision: 1, session: { ...session, hub: '' } } });

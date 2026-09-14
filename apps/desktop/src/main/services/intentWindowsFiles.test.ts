@@ -189,7 +189,7 @@ describe.runIf(process.platform === 'win32')(
             constraints: '',
             successCriteria: 'Works on Windows',
             sourceUrl: '',
-            status: 'active',
+            status: 'draft',
           },
         });
         if (created.action !== 'create') throw new Error('Expected workspace');
