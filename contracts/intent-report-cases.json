@@ -1,5 +1,17 @@
 {
   "description": "Redact full input before longest scalar-aligned prefix <=4000 UTF-16 units. truncated measures redacted text; redacted includes replacements outside retained prefix. ASCII credential syntax, preserving all other text. Native capture and Rust projection must agree; projected redactionVersion=1 is required by headless readers.",
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "TypeScript capture and Rust completion projection must redact and bound the same reports identically.",
+        "required": ["input", "output"],
+        "loaders": [
+          "apps/desktop/src/main/shared/intentReport.test.ts::it.each(fixtures.cases)",
+          "services/claudemon/src/session/intent_report.rs::fn intent_report_shared_adversarial_contract()"
+        ]
+      }
+    }
+  },
   "cases": [
     {
       "input": "  # Done\n\n- checked: 12 passed\n\tCafé 😀\n",

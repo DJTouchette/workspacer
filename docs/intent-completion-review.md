@@ -54,7 +54,10 @@ and replacement instructions retain it. New runs/executions/revisions supersede
 old proposals without mutating them. Legacy packets remain readable; legacy manual
 reviews without a new execution contract do not imply outcome approval.
 
-## Verification (Linux, existing dependencies)
+## Implementation verification (earlier run; Linux, existing dependencies)
+
+The results and versions in this section were recorded by the implementation run;
+they are separate from the repair and vocabulary-validation runs below.
 
 - Full main suite with `--maxWorkers=4`: **4,168 passed, 18 skipped**. Later focused
   completion/automation/workspace/headless regression run: **66 passed**, including
@@ -90,6 +93,10 @@ physical checkout changes, push, merge, publication or nightly release.
 
 ## Credential-boundary repair verification (2026-09-14)
 
+These results belong to the repair run at `694335fd`, not the subsequent
+independent review or vocabulary-validation run. Toolchain versions can differ
+between those shells.
+
 Reviewer entry points: `main/shared/intentReport.ts`, the mirrored Rust
 `session/intent_report.rs`, and `contracts/intent-report-cases.json`. The corpus
 moves every character position of each credential across 3,999/4,000/4,001 units,
@@ -109,3 +116,28 @@ projection have integration checks for the same boundary and provenance.
   changed-file Prettier and `git diff --check` passed.
 - Environment: Linux, Node **26.2.0**, Rust **1.95.0**; existing dependencies only.
   No live provider access. Existing immutable proposal history is not rewritten.
+
+## Vocabulary correction verification (2026-09-14)
+
+This separate run started at `694335fd` and changed only fixture governance
+metadata and documentation. Direct version commands in this worktree reported
+Node **26.2.0**, rustc **1.95.0** (`59807616e`), Cargo **1.95.0** (`f2d3ce0bd`),
+and Go **1.25.4 linux/amd64**. Earlier run results above are historical records,
+not results rerun by this correction.
+
+- Desktop vocabulary guard, shared report contract, completion store/integration
+  and headless observation tests: **109 passed** across five files.
+- Go `go test ./cmd/brain -run 'Contract|Corpus|Vocab|Fixture|DeclaredBlockLoader'
+-count=1`: passed, including the twin vocabulary guard and loader resolution.
+  Its first run found the missing `contracts/README.md` owner row; the row was
+  added and the full command passed on rerun. Neither vocabulary guard changed.
+- Rust `cargo test --offline intent_report_shared_adversarial_contract`:
+  **1 passed**; `cargo test --offline completion_source`: **2 passed**.
+- Main and renderer typechecks and `cargo fmt --check`: passed.
+- Prettier passed for the fixture, this document and the Rivet learning.
+  `contracts/README.md` fails Prettier both at parent `694335fd` and after the
+  one-row addition; existing table formatting was retained to keep this narrow.
+  `git diff --check`: passed.
+- `witness.select` returned no test selections for the fixture/docs paths;
+  the explicit focused checks above were run. Browser tests were not rerun:
+  no feature behavior or UI changed. No live providers or external publication.
