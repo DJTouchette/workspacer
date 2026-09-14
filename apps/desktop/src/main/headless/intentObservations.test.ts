@@ -21,6 +21,8 @@ const projection = (text: string) =>
   new Response(
     JSON.stringify({
       projection: 'intent-completion-source/v1',
+      redactionVersion: 1,
+      redacted: false,
       sessionId: 'worker',
       text,
       truncated: false,
@@ -118,5 +120,53 @@ it('preserves the same bounded final assistant text as native capture, including
   ])[0];
   expect(headless.finalReport).toEqual(native.finalReport);
   expect(headless.completionIdle).toEqual(native.completionIdle);
+  expect(headless.observation.summary).toEqual(native.observation.summary);
+});
+
+it('rejects pre-redaction projections instead of persisting an irreparable boundary fragment', async () => {
+  fetchMock.mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({
+          projection: 'intent-completion-source/v1',
+          sessionId: 'worker',
+          text: '.'.repeat(3992) + 'sk-leake',
+          truncated: true,
+          interrupted: false,
+        }),
+      ),
+  );
+  await captureHeadlessIntentSessions([{ ...session, ambientState: 'idle' }], 'http://daemon');
+  const result = store.request({ action: 'executions', id });
+  expect(result).toHaveProperty('captureWarning');
+  expect(JSON.stringify(result)).not.toContain('sk-leake');
+});
+
+it('retains daemon redaction provenance and does not truncate a sanitized projection twice', async () => {
+  const { captureIntentSessions } = await import('../services/intentWorkspaceStore');
+  const raw = 'password=' + 's'.repeat(5000) + '\nDone 😀';
+  const native = captureIntentSessions([
+    { ...session, conversation: [{ role: 'assistant', content: raw }] },
+  ])[0];
+  fetchMock.mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({
+          projection: 'intent-completion-source/v1',
+          sessionId: 'worker',
+          redactionVersion: 1,
+          ...native.finalReport,
+        }),
+      ),
+  );
+  const capture = vi.spyOn(store, 'capture');
+  await captureHeadlessIntentSessions([session], 'http://daemon');
+  const headless = capture.mock.calls.at(-1)![0][0];
+  expect(headless.finalReport).toEqual(native.finalReport);
+  expect(headless.finalReport).toMatchObject({
+    redacted: true,
+    truncated: false,
+    text: 'password=[redacted]\nDone 😀',
+  });
   expect(headless.observation.summary).toEqual(native.observation.summary);
 });

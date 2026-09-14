@@ -1,4 +1,3 @@
-import { boundIntentReport } from '../shared/intentCompletion';
 import type { IntentLiveSession } from '../shared/intentWorkspace';
 import {
   captureIntentSessions,
@@ -12,7 +11,7 @@ import {
 async function report(
   daemonURL: string,
   sessionId: string,
-): Promise<{ text: string; truncated: boolean; interrupted: boolean }> {
+): Promise<{ text: string; truncated: boolean; interrupted: boolean; redacted: boolean }> {
   const response = await fetch(
     `${daemonURL.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}/conversation?completion_source=1`,
     {
@@ -41,13 +40,20 @@ async function report(
   if (
     source?.projection !== 'intent-completion-source/v1' ||
     source.sessionId !== sessionId ||
+    source.redactionVersion !== 1 ||
+    typeof source.redacted !== 'boolean' ||
     typeof source.text !== 'string' ||
     source.text.length > 4000 ||
     typeof source.truncated !== 'boolean' ||
     typeof source.interrupted !== 'boolean'
   )
     throw new Error('Update the daemon to support bounded completion capture');
-  return { text: source.text, truncated: source.truncated, interrupted: source.interrupted };
+  return {
+    text: source.text,
+    truncated: source.truncated,
+    interrupted: source.interrupted,
+    redacted: source.redacted,
+  };
 }
 
 export async function captureHeadlessIntentSessions(
@@ -83,7 +89,7 @@ export async function captureHeadlessIntentSessions(
           samples[i].finalReport = final;
           samples[i].observation.completionIdle = !!samples[i].completionIdle && !final.interrupted;
           if (final.text && !session.pendingApproval && !session.pendingQuestions?.length)
-            samples[i].observation.summary = boundIntentReport(final.text).report;
+            samples[i].observation.summary = final.text;
         } catch (error) {
           store.reportCaptureResult(
             session.sessionId,

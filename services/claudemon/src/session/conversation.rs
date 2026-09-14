@@ -335,16 +335,10 @@ impl ConversationStore {
             }
             _ => ("", false),
         };
-        let mut units = 0;
-        let bounded: String = text
-            .chars()
-            .take_while(|c| {
-                units += c.len_utf16();
-                units <= 4000
-            })
-            .collect();
+        let (bounded, redacted, truncated) = super::intent_report::bound(text);
         serde_json::json!({"projection": "intent-completion-source/v1", "sessionId": session_id,
-            "text": bounded, "truncated": text.encode_utf16().count() > 4000, "interrupted": interrupted})
+            "text": bounded, "truncated": truncated, "interrupted": interrupted,
+            "redactionVersion": 1, "redacted": redacted})
     }
 
     pub fn has_conversation(&self, session_id: &str) -> bool {

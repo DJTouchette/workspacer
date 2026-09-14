@@ -1,0 +1,81 @@
+{
+  "description": "Redact full input before longest scalar-aligned prefix <=4000 UTF-16 units. truncated measures redacted text; redacted includes replacements outside retained prefix. ASCII credential syntax, preserving all other text. Native capture and Rust projection must agree; projected redactionVersion=1 is required by headless readers.",
+  "cases": [
+    {
+      "input": "  # Done\n\n- checked: 12 passed\n\tCafé 😀\n",
+      "output": "  # Done\n\n- checked: 12 passed\n\tCafé 😀\n"
+    },
+    {
+      "input": "sk-0123456789abcdef",
+      "output": "[redacted token]"
+    },
+    {
+      "input": "ghp_0123456789abcdef",
+      "output": "[redacted token]"
+    },
+    {
+      "input": "github_pat_testcredential",
+      "output": "[redacted token]"
+    },
+    {
+      "input": "Bearer abcDEF+/0123456789.secret=",
+      "output": "[redacted authorization]"
+    },
+    {
+      "input": "bAsIc abcDEF+/0123456789==",
+      "output": "[redacted authorization]"
+    },
+    {
+      "input": "password=0123456789abcdef",
+      "output": "password=[redacted]"
+    },
+    {
+      "input": "api_key: 0123456789abcdef",
+      "output": "api_key: [redacted]"
+    },
+    {
+      "input": "{\"password\":\"hunter2\",\"API_KEY\":\"anothercredential\"}",
+      "output": "{\"password\":\"[redacted]\",\"API_KEY\":\"[redacted]\"}"
+    },
+    {
+      "input": "access-token='abcdef'; secret: 😀credential",
+      "output": "access-token='[redacted]'; secret: [redacted]"
+    },
+    {
+      "input": "https://user:password@example.test/path",
+      "output": "https://[redacted]@example.test/path"
+    },
+    {
+      "input": "-----BEGIN RSA PRIVATE KEY-----\n0123456789abcdef\n-----END RSA PRIVATE KEY-----\nDone",
+      "output": "[redacted private key]\nDone"
+    },
+    {
+      "input": "-----BEGIN PRIVATE KEY-----\n0123456789abcdef",
+      "output": "[redacted private key]"
+    },
+    {
+      "input": "[redacted token]\npassword=[redacted]\nBearer [redacted authorization]",
+      "output": "[redacted token]\npassword=[redacted]\nBearer [redacted authorization]"
+    },
+    {
+      "input": "sk-0123456789abcdef\nBearer abcdef\npassword=abcdef\nghp_0123456789abcdef",
+      "output": "[redacted token]\n[redacted authorization]\npassword=[redacted]\n[redacted token]"
+    },
+    {
+      "input": "password=\"two words \\\" escaped 😀\"; Done",
+      "output": "password=\"[redacted]\"; Done"
+    },
+    {
+      "input": "password=[redacted]butsecret",
+      "output": "password=[redacted]"
+    },
+    {
+      "input": "Bearer abcdef\nBasic abcdef\napi_key: abcdef",
+      "output": "[redacted authorization]\n[redacted authorization]\napi_key: [redacted]"
+    },
+    {
+      "input": "😀sk-0123456789abcdef\n密碼 api_key=abcdef",
+      "output": "😀[redacted token]\n密碼 api_key=[redacted]"
+    }
+  ]
+}

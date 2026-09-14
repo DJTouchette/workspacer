@@ -22,11 +22,24 @@ A malformed or absent report is retained for inspection with no completion times
 
 The completion timestamp is when the owner host observes this boundary, not an
 invented provider finish time. Reports retain up to 4,000 UTF-16 units of final
-assistant text, preserving formatting except recognizable credential redaction.
+assistant text **after** recognizable credential redaction over the entire input.
+The retained prefix never splits a surrogate pair (an astral character uses two
+units); `truncated` describes the redacted text, and `redacted` records replacements
+even outside the retained prefix. Redaction may therefore make an oversized raw
+report fit. Native observation summaries use this same boundary. Sanitizing an
+already captured report preserves its text, and capture provenance survives storage.
+The dependency-free TypeScript/Rust scanners share adversarial fixtures in
+`contracts/intent-report-cases.json`: ASCII credential prefixes, ECMAScript
+whitespace, quoted password/key values, private keys and URL credentials. All
+other formatting is preserved. These recognizable patterns are not a general
+secret detector.
 Structured fields remain agent assertions; malformed optional fields are omitted
 explicitly. No tool input/results or user transcript are added to a proposal.
 The headless daemon projection `intent-completion-source/v1` replaces the former
-800-character-per-event status summary for this purpose. Older daemons fail closed
+800-character-per-event status summary for this purpose. Its additive
+`redactionVersion: 1` and boolean `redacted` fields are required by the reader:
+truncated text from an older daemon cannot be safely repaired downstream.
+Older daemons fail closed
 with a capture warning. Sparse snapshots cannot restore eligibility after an
 interrupted observation.
 
@@ -74,3 +87,25 @@ Existing Windows-only tests were skipped on Linux. Native Electron GUI and live
 provider execution were not exercised; browser production assets and the shared
 owner services were exercised with synthetic sessions. No dependencies installed,
 physical checkout changes, push, merge, publication or nightly release.
+
+## Credential-boundary repair verification (2026-09-14)
+
+Reviewer entry points: `main/shared/intentReport.ts`, the mirrored Rust
+`session/intent_report.rs`, and `contracts/intent-report-cases.json`. The corpus
+moves every character position of each credential across 3,999/4,000/4,001 units,
+with Unicode, quoted/escaped values, multiple secrets and already-redacted text.
+Native capture, persisted proposals, observation summaries and the daemon HTTP
+projection have integration checks for the same boundary and provenance.
+
+- Focused plus witness-selected main/IPC/headless suites: **571 passed, 8 skipped**.
+- Witness-selected Intent renderer suites: **92 passed** using the renderer's
+  own Vitest installation (the desktop runner cannot resolve renderer jsdom).
+- Production Playwright Intent completion suite: **3 passed**, including synthetic
+  execution, persistent owner services, mobile review and keyboard navigation.
+- Rust offline shared adversarial contract: **1 passed**; completion projection
+  and HTTP protocol: **2 passed**. `cargo build --offline` and `cargo fmt --check`
+  passed.
+- Main and renderer typechecks, main/preload and private desktop-host builds,
+  changed-file Prettier and `git diff --check` passed.
+- Environment: Linux, Node **26.2.0**, Rust **1.95.0**; existing dependencies only.
+  No live provider access. Existing immutable proposal history is not rewritten.

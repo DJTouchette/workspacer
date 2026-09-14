@@ -1,9 +1,5 @@
 import { IntentCompletionStore, INTENT_COMPLETION_SCHEMA } from './intentCompletionStore';
-import {
-  intentCompletionIdle,
-  boundIntentReport,
-  INTENT_REPORT_LIMIT,
-} from '../shared/intentCompletion';
+import { intentCompletionIdle, boundIntentReport } from '../shared/intentCompletion';
 import { INTENT_INTEGRATION_SCHEMA } from './intentIntegrationStore';
 import { INTENT_SOURCE_SYNC_SCHEMA } from './intentSourceSyncStore';
 import {
@@ -862,7 +858,7 @@ export interface CapturedIntentSession {
   hub?: string;
   observation: IntentObservation;
   completionIdle?: boolean;
-  finalReport?: { text: string; truncated: boolean; interrupted: boolean };
+  finalReport?: { text: string; truncated: boolean; interrupted: boolean; redacted?: boolean };
 }
 const sessionKey = (session: { sessionId: string; hub?: string }) =>
   JSON.stringify([session.hub || '', session.sessionId]);
@@ -883,7 +879,6 @@ export function captureIntentSessions(
           : session.conversation === undefined
             ? undefined
             : !captureFinalIntentReport(session.conversation).interrupted,
-        summary: boundIntentReport(intentObservation(session, now).summary).report,
       },
       completionIdle: intentCompletionIdle(session, lifecycleSessions),
       ...(session.conversation !== undefined
@@ -899,9 +894,11 @@ export function captureFinalIntentReport(
     .reverse()
     .find((turn) => turn.role === 'assistant' || turn.role === 'user');
   const text = last?.role === 'assistant' ? last.content : '';
+  const bounded = boundIntentReport(text);
   return {
-    text: text.slice(0, INTENT_REPORT_LIMIT).replace(/[\uD800-\uDBFF]$/, ''),
-    truncated: text.length > INTENT_REPORT_LIMIT,
+    text: bounded.report,
+    truncated: bounded.truncated,
+    redacted: bounded.redacted,
     interrupted: conversation
       .slice(-2)
       .some((turn) => /\[Request interrupted by user\]/i.test(turn.content)),

@@ -2390,6 +2390,26 @@ mod tests {
         assert_eq!(value["projection"], "intent-completion-source/v1");
         assert_eq!(value["text"], "Final report");
         assert_eq!(value["truncated"], false);
+        assert_eq!(value["redactionVersion"], 1);
+        assert_eq!(value["redacted"], false);
+        state.conv.push(
+            "credential",
+            vec![ConversationItem::AssistantText {
+                text: format!("{}sk-0123456789abcdef", ".".repeat(3992)),
+                timestamp: None,
+            }],
+        );
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/credential/conversation?completion_source=1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["text"], format!("{}[redacte", ".".repeat(3992)));
+        assert_eq!(value["redacted"], true);
+        assert_eq!(value["truncated"], true);
+        assert!(!String::from_utf8(body).unwrap().contains("012345"));
         let (status, _) = request(
             state,
             get("/sessions/final-1/conversation?completion_source=2"),

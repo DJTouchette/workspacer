@@ -89,7 +89,7 @@ start implementation. The manager returns work to Review when it reports that
 implementation and checks are ready. In Review, **Request changes** resumes the
 manager with your reason. The **Completion review** card in Overview and Review
 shows **Review needed**, **Changes requested**, or **Approved** for the current
-revision. Its report is the agent's final assistant text (up to 4,000 characters,
+revision. Its report is the agent's final assistant text (up to 4,000 UTF-16 units after redaction,
 with recognizable credentials redacted), with reported checks, artifacts,
 caveats and follow-ups when supplied. **Open execution session** opens the source
 conversation.
@@ -151,10 +151,10 @@ restart an ended agent. Neither operation rolls back code or external actions.
 assessment remains separate from the service's receipt and does not unlock replay
 of an uncertain request.
 
-| Receipt | Meaning and recovery |
-| --- | --- |
-| Accepted | The addressed service accepted the request. Inspect actual agent behavior separately. |
-| Failed | The operation was refused or could not be submitted. Correct the stated problem, refresh, and use the explicit retry when offered. |
+| Receipt   | Meaning and recovery                                                                                                                                      |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accepted  | The addressed service accepted the request. Inspect actual agent behavior separately.                                                                     |
+| Failed    | The operation was refused or could not be submitted. Correct the stated problem, refresh, and use the explicit retry when offered.                        |
 | Uncertain | The request may have taken effect. Inspect the agent conversation or source ticket. The same operation cannot be replayed automatically or after restart. |
 
 A saved request is not a delivered request. Service acceptance is not proof that
@@ -379,7 +379,7 @@ database is in that host's Workspacer configuration directory—normally
 or `%APPDATA%\\workspacer` on Windows.
 Schema v9 adds immutable completion proposals without rewriting existing Intents
 or launch packets. Headless capture requires a daemon supporting
-`intent-completion-source/v1`; older daemons produce an explicit capture warning
+`intent-completion-source/v1` with `redactionVersion: 1`; older daemons produce an explicit capture warning
 and do not supply approval eligibility. No summarizer model is used.
 
 Saved artifact/evidence files live beside it in `intent-artifacts` and

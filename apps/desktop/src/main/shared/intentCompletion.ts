@@ -1,6 +1,6 @@
 import type { IntentLiveSession, IntentSessionRef } from './intentWorkspace';
 
-export const INTENT_REPORT_LIMIT = 4000;
+export { boundIntentReport, INTENT_REPORT_LIMIT } from './intentReport';
 export interface IntentCompletionProposal {
   id: string;
   workspaceId: string;
@@ -66,26 +66,4 @@ export function intentCompletionIdle(
       !['ended', 'stopped'].includes(s.status || '') &&
       !clear(s),
   );
-}
-
-/** No transcript, tool input or model call. Preserve report formatting except
- * bounded known credential patterns; disclose any redaction to the reviewer. */
-export function boundIntentReport(text: string): { report: string; redacted: boolean } {
-  const bounded = text.slice(0, INTENT_REPORT_LIMIT);
-  const report = bounded
-    .replace(
-      /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*(?:-----END [^-]*PRIVATE KEY-----|$)/g,
-      '[redacted private key]',
-    )
-    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '[redacted authorization]')
-    .replace(
-      /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]+)/g,
-      '[redacted token]',
-    )
-    .replace(
-      /((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s,;"}]+/gi,
-      '$1[redacted]',
-    )
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@');
-  return { report, redacted: report !== bounded };
 }

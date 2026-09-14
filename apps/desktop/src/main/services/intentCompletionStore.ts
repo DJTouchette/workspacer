@@ -111,14 +111,15 @@ export class IntentCompletionStore {
         typeof value.summary === 'string' &&
         value.summary.trim() &&
         value.summary.length <= 3000;
-      const reportState: IntentCompletionProposal['reportState'] = truncated
-        ? 'oversized'
-        : !text.trim()
-          ? 'missing'
-          : valid
-            ? 'reported'
-            : 'malformed';
       const bounded = boundIntentReport(text);
+      const reportState: IntentCompletionProposal['reportState'] =
+        truncated || bounded.truncated
+          ? 'oversized'
+          : !text.trim()
+            ? 'missing'
+            : valid
+              ? 'reported'
+              : 'malformed';
       const id = createHash('sha256')
         .update(
           JSON.stringify([
@@ -141,7 +142,8 @@ export class IntentCompletionStore {
         completedAt: reportState === 'reported' ? sample.observation.observedAt : null,
         capturedAt: sample.observation.observedAt,
         reportState,
-        ...bounded,
+        report: bounded.report,
+        redacted: !!sample.finalReport.redacted || bounded.redacted,
         provenance: 'owner-host-final-assistant/v1',
       };
       if (valid && !truncated) {

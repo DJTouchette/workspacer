@@ -1,3 +1,4 @@
+import { boundIntentReport } from './intentReport';
 import type { IntentCompletionView } from './intentCompletion';
 import type { IntentAutomationRequest, IntentAutomationResponse } from './intentAutomation';
 import type { IntentEvidenceRequest, IntentEvidenceResponse } from './intentEvidence';
@@ -184,7 +185,7 @@ export function intentObservation(session: IntentLiveSession, now: string): Inte
     '';
   return {
     state,
-    summary: summary.slice(0, 4000),
+    summary: boundIntentReport(summary).report,
     cwd: session.liveCwd || session.cwd || '',
     observedAt: now,
   };

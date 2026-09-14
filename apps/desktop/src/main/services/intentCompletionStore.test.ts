@@ -329,3 +329,35 @@ it('retains a valid summary while explicitly omitting malformed structured field
   });
   expect(f.proposal().checks).toBeUndefined();
 });
+
+it('redacts full native reports before both proposal and observation bounds', async () => {
+  const { boundIntentReport } = await import('../shared/intentReport');
+  const f = await fixture();
+  for (const n of [3999, 4000, 4001]) {
+    for (const secret of [
+      'sk-0123456789abcdef',
+      'ghp_0123456789abcdef',
+      'github_pat_abcdef',
+      'Bearer abcdef',
+      'Basic abcdef',
+      'password=abcdef',
+      'api_key=abcdef',
+    ]) {
+      const text = '.'.repeat(n - 8) + secret + '\n' + f.live.conversation[0].content;
+      const expected = boundIntentReport(text);
+      const sample = captureIntentSessions([
+        { ...f.live, conversation: [{ role: 'assistant', content: text }] },
+      ])[0];
+      expect(sample.finalReport).toMatchObject({
+        text: expected.report,
+        redacted: true,
+        truncated: expected.truncated,
+      });
+      expect(sample.observation.summary).toEqual(expected.report);
+      f.store.capture([sample]);
+      const view = f.store.request({ action: 'completionProposals', id: f.id });
+      expect(JSON.stringify(view)).not.toContain('abcdef');
+      expect(JSON.stringify(view)).toContain('"redacted":true');
+    }
+  }
+});
