@@ -1,3 +1,4 @@
+import { INTENT_INTEGRATION_SCHEMA } from './intentIntegrationStore';
 import { INTENT_SOURCE_SYNC_SCHEMA } from './intentSourceSyncStore';
 import {
   IntentAutomationStore,
@@ -81,7 +82,7 @@ function fields(value: unknown): IntentFields {
  * Current state and its revision are committed together; stale clients must reload.
  * No foreign path from a request is opened: projectRoot is an identity only.
  */
-export const INTENT_WORKSPACE_SCHEMA_VERSION = 7;
+export const INTENT_WORKSPACE_SCHEMA_VERSION = 8;
 export class IntentWorkspaceStore {
   readonly automation: IntentAutomationStore;
   readonly steering: IntentSteeringStore;
@@ -299,6 +300,8 @@ export class IntentWorkspaceStore {
     );
     if (version < 7)
       this.transaction(() => db.exec(INTENT_SOURCE_SYNC_SCHEMA + 'PRAGMA user_version=7;'));
+    if (version < 8)
+      this.transaction(() => db.exec(INTENT_INTEGRATION_SCHEMA + 'PRAGMA user_version=8;'));
     this.sources = new IntentSourceStore(db);
     this.knowledge = new IntentKnowledgeStore(db);
     this.artifacts = new IntentArtifactStore(db);

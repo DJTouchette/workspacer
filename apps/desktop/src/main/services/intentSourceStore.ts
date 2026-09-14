@@ -1,3 +1,9 @@
+import { IntentIntegrationStore, INTENT_INTEGRATION_SCHEMA } from './intentIntegrationStore';
+import {
+  resolveIntegration,
+  type IntentIntegration,
+  type IntentIntegrationReference,
+} from '../shared/intentIntegrations';
 import { IntentSourceSyncStore, INTENT_SOURCE_SYNC_SCHEMA } from './intentSourceSyncStore';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
@@ -19,8 +25,11 @@ CREATE TABLE IF NOT EXISTS intent_sources (id TEXT PRIMARY KEY, workspace_id TEX
 CREATE INDEX IF NOT EXISTS intent_sources_workspace ON intent_sources(workspace_id);
 CREATE TABLE IF NOT EXISTS intent_source_comments (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES intent_workspaces(id), source_id TEXT NOT NULL REFERENCES intent_sources(id), snapshot TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS intent_source_comments_workspace ON intent_source_comments(workspace_id);
-` + INTENT_SOURCE_SYNC_SCHEMA;
+` +
+  INTENT_SOURCE_SYNC_SCHEMA +
+  INTENT_INTEGRATION_SCHEMA;
 export class IntentSourceStore {
+  readonly integrations: IntentIntegrationStore;
   readonly sync: IntentSourceSyncStore;
   private syncing = false;
   /** Bounded owner-host work; no renderer or model calls. Each account gets one request at a time. */
@@ -64,6 +73,7 @@ export class IntentSourceStore {
     private adapter: IntentSourceAdapter = createIntentSourceAdapter(),
     now: () => number = Date.now,
   ) {
+    this.integrations = new IntentIntegrationStore(db);
     this.sync = new IntentSourceSyncStore(db, adapter, now);
   }
   private transaction<T>(run: () => T): T {
@@ -189,6 +199,12 @@ export class IntentSourceStore {
   async request(input: Record<string, unknown>): Promise<IntentSourceResponse> {
     const id = sourceText(input.id, 'workspace ID');
     this.workspace(id);
+    if (
+      ['integrations', 'saveIntegration', 'removeIntegration', 'previewSource'].includes(
+        String(input.action),
+      )
+    )
+      return this.integrations.request(input);
     if (input.action === 'sources')
       return {
         action: 'sources',
@@ -220,8 +236,35 @@ export class IntentSourceStore {
         artifacts: this.sync.artifacts(sourceId, input.before as number | undefined),
       };
     }
-    if (input.action === 'addSource') {
-      const connection = sourceConnection(input.connection);
+    if (input.action === 'addSource' || input.action === 'attachSource') {
+      const action = input.action;
+      let integration: IntentIntegration | undefined;
+      const existingRow = this.db
+        .prepare('SELECT snapshot FROM intent_sources WHERE id=?')
+        .get(sourceId);
+      const pinned = existingRow
+        ? (JSON.parse(String(existingRow.snapshot)) as IntentSource)
+        : null;
+      let connection;
+      if (action === 'attachSource') {
+        const reference = input.reference as IntentIntegrationReference;
+        // Successful retries resolve against the immutable original metadata, even after edits.
+        if (pinned?.integration) {
+          if (
+            !reference ||
+            pinned.workspaceId !== id ||
+            pinned.integration.id !== reference.integrationId ||
+            pinned.integration.version !== reference.expectedIntegrationVersion
+          )
+            throw new Error('Source ID was already used for a different integration');
+          integration = pinned.integration;
+          connection = sourceConnection(resolveIntegration(integration, reference));
+        } else {
+          const resolved = this.integrations.resolve(id, input.reference);
+          integration = resolved.integration;
+          connection = resolved.connection;
+        }
+      } else connection = sourceConnection(input.connection);
       const title = sourceText(input.title, 'source title', 4000, true);
       const content = sourceText(input.content, 'source content', 32000, true);
       const existing = this.db
@@ -230,6 +273,7 @@ export class IntentSourceStore {
       if (existing) {
         const source = JSON.parse(String(existing.snapshot)) as IntentSource;
         if (
+          (action === 'attachSource' && !source.integration) ||
           source.workspaceId !== id ||
           source.provider !== connection.provider ||
           source.url !== connection.url ||
@@ -238,7 +282,7 @@ export class IntentSourceStore {
             (source.accepted.title !== title || source.accepted.content !== content))
         )
           throw new Error('Source ID was already used for different content');
-        return { action: 'addSource', source };
+        return { action, source: this.source(sourceId, id) };
       }
       this.current(id, input.expectedRevision);
       const read =
@@ -249,10 +293,12 @@ export class IntentSourceStore {
       const snapshot = read.snapshot;
       return this.transaction(() => {
         this.current(id, input.expectedRevision);
+        if (integration) this.integrations.resolve(id, input.reference);
         const raced = this.db.prepare('SELECT id FROM intent_sources WHERE id=?').get(sourceId);
         if (raced) throw new Error('Source was added elsewhere. Reload before continuing.');
         const source: IntentSource = {
           ...connection,
+          ...(integration ? { integration } : {}),
           id: sourceId,
           workspaceId: id,
           nativeId: read.nativeId,
@@ -266,7 +312,7 @@ export class IntentSourceStore {
           .prepare('INSERT INTO intent_sources VALUES(?,?,?)')
           .run(sourceId, id, JSON.stringify(source));
         if (connection.provider !== 'manual') source.external = this.sync.record(sourceId, read);
-        return { action: 'addSource', source };
+        return { action, source };
       });
     }
     const source = this.source(sourceId, id);

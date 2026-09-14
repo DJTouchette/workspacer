@@ -10,7 +10,7 @@ import { sourceSnapshot, SourceHttpError, type IntentSourceAdapter } from './int
 import type { IntentSource, IntentSourceConnection } from '../shared/intentSources';
 import type { SourceSyncResult } from './intentSourceSync';
 vi.mock('./configService', () => ({ getConfigDir: () => '/unused-sync-tests' }));
-import { IntentWorkspaceStore } from './intentWorkspaceStore';
+import { IntentWorkspaceStore, INTENT_WORKSPACE_SCHEMA_VERSION } from './intentWorkspaceStore';
 const jira: IntentSourceConnection = {
   provider: 'jira',
   url: 'https://team.atlassian.net/browse/TEAM-1',
@@ -265,7 +265,9 @@ it('migrates v6 source snapshots and launch packets byte-for-byte; lazily syncs 
     'DROP TABLE intent_source_events; DROP TABLE intent_external_objects; DROP TABLE intent_source_artifacts; DROP TABLE intent_source_accounts; PRAGMA user_version=6;',
   );
   const migrated = new IntentWorkspaceStore(db);
-  expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(7);
+  expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(
+    INTENT_WORKSPACE_SCHEMA_VERSION,
+  );
   expect(db.prepare('SELECT snapshot FROM intent_sources').get()?.snapshot).toBe(sourceBytes);
   expect(db.prepare('SELECT snapshot FROM intent_executions').get()?.snapshot).toBe(packet);
   expect(migrated.sources.sync.due()).toEqual([{ id: 'legacy', workspaceId: id }]);

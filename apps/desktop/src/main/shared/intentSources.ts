@@ -1,6 +1,16 @@
+import type {
+  IntentIntegration,
+  IntentIntegrationRequest,
+  IntentIntegrationResponse,
+} from './intentIntegrations';
 /** Source requirements retain provider semantics and never overwrite personal intent. */
 export type IntentSourceProvider = 'manual' | 'jira' | 'ado';
 export const SOURCE_ACTIONS = [
+  'integrations',
+  'saveIntegration',
+  'removeIntegration',
+  'previewSource',
+  'attachSource',
   'sources',
   'sourceArtifacts',
   'addSource',
@@ -27,6 +37,8 @@ export interface IntentSourceSnapshot {
 export interface IntentSource extends IntentSourceConnection {
   id: string;
   workspaceId: string;
+  /** Resolved metadata at attachment time; edits never retarget this source. */
+  integration?: IntentIntegration;
   nativeId: string;
   version: number;
   accepted: IntentSourceSnapshot;
@@ -70,6 +82,7 @@ export interface IntentSourceDraft extends IntentSourceConnection {
   comment: string;
 }
 export type IntentSourceRequest =
+  | IntentIntegrationRequest
   | { action: 'sources'; id: string }
   | { action: 'sourceArtifacts'; id: string; sourceId: string; before?: number }
   | {
@@ -100,9 +113,13 @@ export type IntentSourceRequest =
     }
   | { action: 'publishSourceComment'; id: string; commentId: string; attemptId: string };
 export type IntentSourceResponse =
+  | IntentIntegrationResponse
   | { action: 'sourceArtifacts'; artifacts: IntentSourceArtifact[] }
   | { action: 'sources'; sources: IntentSource[]; comments: IntentSourceComment[] }
-  | { action: 'addSource' | 'refreshSource' | 'acceptSource'; source: IntentSource }
+  | {
+      action: 'attachSource' | 'addSource' | 'refreshSource' | 'acceptSource';
+      source: IntentSource;
+    }
   | { action: 'prepareSourceComment' | 'publishSourceComment'; comment: IntentSourceComment };
 
 /** No lifecycle mapping: state and summary are provider-authored quoted data. */
