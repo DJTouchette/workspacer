@@ -98,7 +98,7 @@ describe('intent capture without a renderer window', () => {
           constraints: '',
           successCriteria: '',
           sourceUrl: '',
-          status: 'active',
+          status: 'draft',
         },
       });
       if (created.action !== 'create') throw new Error('Expected workspace');

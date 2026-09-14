@@ -709,7 +709,7 @@ it('intent direction IPC uses host snapshots and the existing native message ada
         constraints: '',
         successCriteria: '',
         sourceUrl: '',
-        status: 'active',
+        status: 'draft',
       },
     });
     const id = created.workspace.id;
