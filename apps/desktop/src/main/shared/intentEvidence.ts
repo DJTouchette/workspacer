@@ -36,8 +36,8 @@ export interface IntentEvidence {
   workspaceId: string;
   intentRevision: number;
   criterion: IntentCriterion;
-  kind: 'manual' | 'git';
-  author: 'user';
+  kind: 'manual' | 'git' | 'agent-report';
+  author: 'user' | 'agent';
   assessment: IntentEvidenceAssessment;
   note: string;
   reference: string;

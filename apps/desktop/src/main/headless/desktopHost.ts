@@ -1,3 +1,6 @@
+import { startIntentAutomationRuntime } from '../services/intentAutomationRuntime';
+import type { IntentAutomationEffects } from '../services/intentAutomationStore';
+import { resolveManagerProvider } from '../lib/roleProviders';
 import { createWorkflowTelemetry } from '../services/workflowTelemetryCore';
 import { listPickerEntries, readFileBytes } from './files';
 import { hostCall } from './hostBridge';
@@ -243,12 +246,63 @@ function liveOwner(context: HostContext, id: string) {
   return owner;
 }
 
+const headlessIntentAutomation: IntentAutomationEffects = {
+  async spawn(cwd, label, message) {
+    const provider = resolveManagerProvider();
+    const result = await hostCall<{ sessionId?: string; messageQueued?: boolean }>('intent.spawn', {
+      cwd,
+      label,
+      message,
+      provider,
+    });
+    if (!result?.sessionId || result.messageQueued !== true)
+      throw new Error(
+        `Manager launch or kickoff unconfirmed. Inspect session ${result?.sessionId || 'list'}.`,
+      );
+    return { sessionId: result.sessionId, hub: '', cwd, label, provider };
+  },
+  send: (target, text) =>
+    hostCall('intent.send', { sessionId: target.sessionId, hub: target.hub, text }),
+  async interrupt(target) {
+    const descendants = new Set([target.sessionId]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const session of currentContext.snapshots)
+        if (
+          (session.hub || '') === target.hub &&
+          session.parentSessionId &&
+          descendants.has(session.parentSessionId) &&
+          !descendants.has(session.sessionId)
+        ) {
+          descendants.add(session.sessionId);
+          changed = true;
+        }
+    }
+    for (const sessionId of descendants) {
+      const receipt = await hostCall<{ status: string; detail: string }>('intent.interrupt', {
+        sessionId,
+        hub: target.hub,
+      });
+      if (receipt.status !== 'accepted') return receipt;
+    }
+    return {
+      status: 'accepted',
+      detail: 'Interrupt requested for the manager and its current workers.',
+    };
+  },
+};
+let intentRuntimeStarted = false;
+
 export async function desktopHostCall(
   method: string,
   params: Params,
   context: HostContext,
 ): Promise<unknown> {
   currentContext = context;
+  if (!nativeSnapshot && !intentRuntimeStarted) {
+    intentRuntimeStarted = true;
+    startIntentAutomationRuntime(() => currentContext.snapshots, headlessIntentAutomation);
+  }
   ensureRuntime();
   if (context.daemonURL) configureCompletionDaemonURL(context.daemonURL);
   if (context.templates) {
@@ -652,6 +706,7 @@ export async function desktopHostCall(
             }),
           );
         },
+        headlessIntentAutomation,
       );
     case 'desktop.loadBriefBoard':
       return loadBoard();

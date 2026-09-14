@@ -1,3 +1,4 @@
+import IntentAutomation from './IntentAutomation';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -49,7 +50,7 @@ const EMPTY: IntentFields = {
   sourceUrl: '',
   status: 'draft',
 };
-type Draft = { fields: IntentFields; revision: number; reason: string };
+type Draft = { fields: IntentFields; revision: number; reason: string; updatedAt?: string };
 const WORK_VIEWS = [
   { id: 'overview', label: 'Overview', icon: Compass },
   { id: 'intent', label: 'Intent', icon: Target },
@@ -90,6 +91,9 @@ export default function IntentWorkspaces({
   const [creating, setCreating] = useState(false);
   const [newFields, setNewFields] = useState<IntentFields>({ ...EMPTY });
   const [projectRoot, setProjectRoot] = useState(defaultRoot || Object.keys(projects)[0] || '');
+  const [statusEvents, setStatusEvents] = useState<
+    { at: string; status: string; reason: string }[]
+  >([]);
   const [revisions, setRevisions] = useState<IntentRevision[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -219,7 +223,10 @@ export default function IntentWorkspaces({
     if (selected && !creating)
       void request({ action: 'history', id: selected })
         .then((result) => {
-          if (current && result.action === 'history') setRevisions(result.revisions);
+          if (current && result.action === 'history') {
+            setRevisions(result.revisions);
+            setStatusEvents(result.statusEvents || []);
+          }
         })
         .catch((error) => {
           if (current) setHistoryError(String(error instanceof Error ? error.message : error));
@@ -227,7 +234,32 @@ export default function IntentWorkspaces({
     return () => {
       current = false;
     };
-  }, [selected, workspace?.revision, creating]);
+  }, [selected, workspace?.revision, workspace?.updatedAt, creating]);
+
+  useEffect(() => {
+    let alive = true;
+    const timer = setInterval(() => {
+      if (saveBusy.current) return;
+      const generation = listGeneration.current;
+      void request({ action: 'list' })
+        .then((result) => {
+          if (
+            alive &&
+            !saveBusy.current &&
+            generation === listGeneration.current &&
+            result.action === 'list'
+          ) {
+            setWorkspaces(result.workspaces);
+            setExecutionIndex(result.executionIndex || {});
+          }
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   function edit(patch: Partial<IntentFields>) {
     setNotice('');
@@ -237,6 +269,7 @@ export default function IntentWorkspaces({
         const nextDraft = {
           fields: { ...(current[workspace.id]?.fields ?? workspace), ...patch },
           revision: current[workspace.id]?.revision ?? workspace.revision,
+          updatedAt: current[workspace.id]?.updatedAt ?? workspace.updatedAt,
           reason: current[workspace.id]?.reason ?? '',
         };
         const next = { ...current };
@@ -271,6 +304,7 @@ export default function IntentWorkspaces({
               id: workspace!.id,
               expectedRevision: draft?.revision ?? workspace!.revision,
               fields,
+              expectedUpdatedAt: draft?.updatedAt ?? workspace!.updatedAt,
               reason: draft?.reason ?? '',
             },
       );
@@ -284,7 +318,11 @@ export default function IntentWorkspaces({
         return next;
       });
       setSelected(saved.id);
-      if (wasCreating) setViews((current) => ({ ...current, [saved.id]: 'intent' }));
+      if (saved.status === 'active' || wasCreating)
+        setViews((current) => ({
+          ...current,
+          [saved.id]: saved.status === 'active' ? 'overview' : 'intent',
+        }));
       setCreating(false);
       setWorkListOpen(false);
       setNewFields({ ...EMPTY });
@@ -638,6 +676,7 @@ export default function IntentWorkspaces({
                       <label>
                         Workspace status
                         <select
+                          aria-describedby="intent-status-help"
                           value={fields.status}
                           onChange={(event) =>
                             edit({ status: event.target.value as IntentFields['status'] })
@@ -650,6 +689,13 @@ export default function IntentWorkspaces({
                           ))}
                         </select>
                       </label>
+                      <p id="intent-status-help" className="intent-muted">
+                        Saving Active starts or resumes a dedicated manager using your Fleet Manager
+                        settings, existing permissions, and a 60-minute work limit. It asks for
+                        decisions and returns work to Review. Status changes preserve evidence;
+                        requirement edits create a new revision and are sent to active work. PR
+                        links do not track merge status. Use Review to verify and accept results.
+                      </p>
                       {!creating && (
                         <label>
                           Reason for this revision
@@ -663,6 +709,8 @@ export default function IntentWorkspaces({
                                   [workspace.id]: {
                                     fields: current[workspace.id]?.fields ?? workspace,
                                     revision: current[workspace.id]?.revision ?? workspace.revision,
+                                    updatedAt:
+                                      current[workspace.id]?.updatedAt ?? workspace.updatedAt,
                                     reason: event.target.value,
                                   },
                                 }));
@@ -677,7 +725,16 @@ export default function IntentWorkspaces({
                           className="intent-primary"
                           disabled={!dirty || loading}
                         >
-                          {saving ? 'Saving…' : creating ? 'Create workspace' : 'Save revision'}
+                          {saving
+                            ? 'Saving…'
+                            : fields.status === 'active' &&
+                                (creating || workspace?.status !== 'active')
+                              ? creating
+                                ? 'Create and activate'
+                                : 'Save and activate'
+                              : creating
+                                ? 'Create workspace'
+                                : 'Save revision'}
                         </button>
                         {!creating && dirty && (
                           <button
@@ -729,6 +786,16 @@ export default function IntentWorkspaces({
                   )}
                   {!creating && workspace && execution && (
                     <>
+                      {view === 'overview' && (
+                        <IntentAutomation
+                          key={`automation-${workspace.id}`}
+                          workspace={workspace}
+                          disabled={dirty || saving}
+                          sessions={execution.sessions}
+                          onChanged={() => void refresh()}
+                          onOpenSession={execution.onOpenSession}
+                        />
+                      )}
                       <IntentOverview
                         key={`overview-${workspace.id}`}
                         workspace={workspace}
@@ -816,6 +883,11 @@ export default function IntentWorkspaces({
                           {historyError}
                         </p>
                       )}
+                      {statusEvents.map((event, index) => (
+                        <p key={`${event.at}-${index}`} className="intent-muted">
+                          {new Date(event.at).toLocaleString()} · {event.status} · {event.reason}
+                        </p>
+                      ))}
                       {revisions.map((revision) => (
                         <details key={revision.revision}>
                           <summary>

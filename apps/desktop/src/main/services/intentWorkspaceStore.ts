@@ -1,3 +1,8 @@
+import {
+  IntentAutomationStore,
+  INTENT_AUTOMATION_SCHEMA,
+  type IntentAutomationEffects,
+} from './intentAutomationStore';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -75,8 +80,9 @@ function fields(value: unknown): IntentFields {
  * Current state and its revision are committed together; stale clients must reload.
  * No foreign path from a request is opened: projectRoot is an identity only.
  */
-export const INTENT_WORKSPACE_SCHEMA_VERSION = 5;
+export const INTENT_WORKSPACE_SCHEMA_VERSION = 6;
 export class IntentWorkspaceStore {
+  readonly automation: IntentAutomationStore;
   readonly steering: IntentSteeringStore;
   readonly evidence: IntentEvidenceStore;
   readonly controls: IntentControlStore;
@@ -202,6 +208,7 @@ export class IntentWorkspaceStore {
           }
         });
       for (const key of consumed) this.pending.delete(key);
+      this.transaction(() => this.automation.observe(observations));
       this.captureWarning = undefined;
     } catch (error) {
       this.captureWarning = `Background result capture failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -265,7 +272,9 @@ export class IntentWorkspaceStore {
       this.transaction(() =>
         db.exec(INTENT_EVIDENCE_SCHEMA + INTENT_CONTROL_SCHEMA + 'PRAGMA user_version=4;'),
       );
-    this.evidence = new IntentEvidenceStore(db);
+    this.evidence = new IntentEvidenceStore(db, undefined, (review) =>
+      this.automation.review(review.workspaceId, review.decision, review.reason),
+    );
     this.controls = new IntentControlStore(db, (id) => this.contextPacket(id));
     this.projects = new IntentProjectStore(db);
     if (version < 5)
@@ -279,6 +288,14 @@ export class IntentWorkspaceStore {
         this.projects.backfill();
         db.exec('PRAGMA user_version=5;');
       });
+    if (version < 6)
+      this.transaction(() => db.exec(INTENT_AUTOMATION_SCHEMA + 'PRAGMA user_version=6;'));
+    this.automation = new IntentAutomationStore(
+      db,
+      (input) => this.request(input),
+      (input, sessions, deliver) => this.steering.send(input, sessions, deliver),
+      (workspace, run) => this.evidence.reportRun(workspace, run),
+    );
     this.sources = new IntentSourceStore(db);
     this.knowledge = new IntentKnowledgeStore(db);
     this.artifacts = new IntentArtifactStore(db);
@@ -378,6 +395,17 @@ export class IntentWorkspaceStore {
 
   request(input: unknown, sessions: readonly IntentLiveSession[] = []): IntentWorkspaceResponse {
     const request = object(input);
+    if (
+      [
+        'automation',
+        'activateIntent',
+        'pauseIntent',
+        'answerIntent',
+        'restartIntent',
+        'resumeInspectedIntent',
+      ].includes(String(request.action))
+    )
+      return this.transaction(() => this.automation.request(request, sessions));
     if (
       [
         'projects',
@@ -482,6 +510,7 @@ export class IntentWorkspaceStore {
           .prepare('INSERT INTO intent_workspaces VALUES (?, ?, ?, ?, ?)')
           .run(workspace.id, workspace.projectRoot, 1, now, JSON.stringify(workspace));
         this.record(workspace, 'Workspace created');
+        if (workspace.status === 'active') this.automation.activate(workspace);
       });
       return { action: 'create', workspace };
     }
@@ -493,6 +522,11 @@ export class IntentWorkspaceStore {
         throw new Error('Workspace no longer exists');
       return {
         action: 'history',
+        statusEvents: this.db
+          .prepare(
+            'SELECT at, status, reason FROM intent_status_events WHERE workspace_id=? ORDER BY rowid DESC',
+          )
+          .all(id) as { at: string; status: IntentFields['status']; reason: string }[],
         revisions: this.db
           .prepare('SELECT * FROM intent_revisions WHERE workspace_id=? ORDER BY revision DESC')
           .all(id)
@@ -518,16 +552,35 @@ export class IntentWorkspaceStore {
           'This workspace changed elsewhere. Your draft is preserved; reload the latest revision before saving.',
         );
       const previous = JSON.parse(String(row.snapshot)) as IntentWorkspace;
+      if (
+        request.expectedUpdatedAt !== undefined &&
+        request.expectedUpdatedAt !== previous.updatedAt
+      )
+        throw new Error('This work item changed. Refresh before saving.');
+      const contentChanged = (
+        ['title', 'outcome', 'constraints', 'successCriteria', 'sourceUrl'] as const
+      ).some((key) => previous[key] !== next[key]);
       const workspace: IntentWorkspace = {
         ...previous,
         ...next,
-        revision: previous.revision + 1,
-        updatedAt: new Date().toISOString(),
+        revision: previous.revision + (contentChanged ? 1 : 0),
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(previous.updatedAt) + 1)).toISOString(),
       };
       this.db
         .prepare('UPDATE intent_workspaces SET revision=?, updated_at=?, snapshot=? WHERE id=?')
         .run(workspace.revision, workspace.updatedAt, JSON.stringify(workspace), id);
-      this.record(workspace, reason || 'Intent updated');
+      if (contentChanged) this.record(workspace, reason || 'Intent updated');
+      if (previous.status !== workspace.status)
+        this.automation.status(workspace, workspace.status, reason || 'Status updated');
+      if (workspace.status === 'active' && (previous.status !== 'active' || contentChanged))
+        this.automation.activate(
+          workspace,
+          contentChanged
+            ? 'The user updated the intent. Read the current requirements and adjust your work.'
+            : '',
+        );
+      else if (workspace.status !== 'active' && previous.status === 'active')
+        this.automation.pause(workspace, 'Work left Active status');
       return { action: 'update', workspace };
     });
   }
@@ -709,6 +762,7 @@ export class IntentWorkspaceStore {
       } else throw new Error('Unknown execution action');
       execution.updatedAt = new Date().toISOString();
       persist(execution);
+      if (request.action === 'linkExecution') this.automation.linked(execution);
       return { action: request.action, execution: observe(execution) };
     });
   }
@@ -799,6 +853,7 @@ export async function intentWorkspaceRequest(
   sessions: readonly IntentLiveSession[] = [],
   deliver?: IntentDirectionDelivery,
   deliverControl?: IntentControlDelivery,
+  effects?: IntentAutomationEffects,
 ): Promise<IntentWorkspaceResponse> {
   const request = object(input);
   const active = (await intentWorkspaceStoreIfUsed(true))!;
@@ -821,5 +876,7 @@ export async function intentWorkspaceRequest(
     if (!deliver) throw new Error('This host does not support direction delivery');
     return active.steering.send(request, sessions, deliver);
   }
-  return active.request(input, sessions);
+  const result = active.request(input, sessions);
+  if (effects) await active.automation.tick(sessions, effects);
+  return result;
 }

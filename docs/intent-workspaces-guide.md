@@ -25,11 +25,41 @@ source-link field is a reference; use **Sources** to retain imported requirement
 Choose **Create workspace**. Later changes use **Save revision** and retain the
 earlier versions in **History**.
 
-The draft/active/review/complete status describes your work item. It does not
-change a ticket's status. Save edits before starting an execution or recording
-review decisions; another client's newer revision causes a conflict instead of
-overwriting their work. Saved records survive restart. Unsaved drafts are not a
-durable substitute for saving.
+Saving **Active** starts or resumes a dedicated manager on the owning host. It
+uses your Fleet Manager provider/model settings and existing permissions, pursues
+the saved outcome, and brings questions or a completion report back to **Overview**.
+Use **Activate** on Overview to choose a work limit (1–480 minutes, default 60).
+Existing preview records already labelled Active remain inert after upgrading;
+activate them explicitly when ready. The owning host must stay running, but the
+Work view and browser may be closed.
+
+Status changes preserve the requirements revision and its evidence. Editing the
+title, outcome, constraints, criteria, or source link creates a new revision. Saving
+requirements while Active prepares and delivers updated instructions to the same
+manager. Earlier launch packets remain immutable. Conflicting edits require a
+refresh; saved records survive restart.
+
+In **Overview**, **Answer and continue** delivers your answer and resumes the same
+manager. Native agent questions and tool approvals open their existing conversation
+controls. Routine decisions stay with the manager. When work is ready, the manager
+returns a report and the host changes the item to **Review**. Its report is retained
+as **Reported** evidence for up to 64 criteria (subject to available record capacity);
+your verification is still required. Reports do not claim independent verification.
+
+**Pause work** records a pause instruction and requests interrupts for the manager
+and its currently known workers. Check external background work separately; this
+is not a rollback. The time limit uses the same pause path. **Resume work** continues
+a live manager. A confirmed ended manager offers **Start replacement manager**;
+the replacement is instructed to inspect earlier work before dispatching anything.
+Unconfirmed launches or messages are never replayed automatically after restart.
+Inspect Execution and link a known existing launch to recover its identity. For
+an unconfirmed message to a linked manager, inspect its conversation, then use
+**Resume with inspected direction** to give a new instruction; the original
+uncertain receipt remains retained.
+
+If a manager ends a turn without a question or review report and no workers remain
+active, the host requests continuation at most three times before bringing it back
+to you. Ordinary idle transitions alone never mark work complete.
 
 In **Execution**, choose **Start agent** to use the existing provider/model and
 permission dialog. The host records the saved intent revision and exact initial
@@ -38,8 +68,8 @@ a message. Branch and pull-request references are tracking links; adding one doe
 not create a branch or publish a PR.
 
 Open **Context recorded at launch** to inspect what was requested. Editing the
-intent later does not silently change that packet or send instructions to an
-already-running agent. Retained reports are bounded excerpts of agent messages,
+intent later preserves that packet; saving changes while Active sends a new
+direction to the dedicated manager. Retained reports are bounded excerpts of agent messages,
 not independently verified results or a complete transcript. Background capture
 requires a running owning host; a brief session can disappear between headless
 observation cycles.
@@ -51,6 +81,25 @@ selections. Source revision/digest and knowledge SHA-256 provenance accompany
 the excerpts. Unaccepted source candidates and credential settings are excluded.
 Capturing newer context affects newly prepared packets; existing packets keep
 their exact original contents.
+
+## Work through PR review, changes, and merge
+
+The workspace lifecycle is **Draft → Active → Review → Complete**. Activate to
+start implementation. The manager returns work to Review when it reports that
+implementation and checks are ready. In Review, **Request changes** resumes the
+manager with your reason. **Accept reviewed work** marks a reactive intent Complete
+once selected user-verified evidence covers every current criterion.
+
+PR links remain references: inspect CI, team comments and merge state in your PR
+system. Include PR feedback in your review reason or send a Direction. Review
+acceptance does not merge, publish, or deploy anything. Blockers appear as
+**Waiting for you** or **Paused** execution states beside the workspace status.
+
+Status transitions are retained separately in **History** and do not invalidate
+criterion evidence. Changes to requirements still create revisions; previous
+reviews do not verify a changed outcome. Direct status editing remains available,
+so setting Complete manually is not proof of verification. Moving out of Active
+requests a pause of reactive execution.
 
 ## Steer and assess delivery
 
@@ -187,8 +236,9 @@ changes** or **Accept reviewed work**, enter a **Review reason**, and choose
 **Record review decision**. Acceptance requires selected user-verified evidence
 for every current criterion and no selected unresolved evidence. A review is
 revision-specific; previous reviews do not verify later intent revisions.
-Recording a review does not change the work item's status or publish a team
-review. Set the intent's status explicitly when you are ready.
+For reactive work, acceptance sets Complete and requesting changes resumes Active.
+Neither action publishes a team review. Work that has never been activated retains
+its manual lifecycle.
 
 ## Artifacts, demonstrations, and alternatives
 

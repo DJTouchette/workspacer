@@ -186,7 +186,7 @@ it('refuses linked storage directories, cross-workspace links and stale-revision
     action: 'update',
     id: f.workspace.id,
     expectedRevision: 1,
-    fields: f.workspace,
+    fields: { ...f.workspace, outcome: 'Revised export outcome' },
     reason: 'New intent',
   });
   expect(() => f.store.request(note)).toThrow('changed elsewhere');
@@ -320,7 +320,7 @@ it('records bounded alternative hypotheses and explicit reasoned selections with
     action: 'update',
     id: f.workspace.id,
     expectedRevision: 1,
-    fields: f.workspace,
+    fields: { ...f.workspace, outcome: 'Revised export outcome' },
     reason: 'New revision',
   });
   expect(() =>

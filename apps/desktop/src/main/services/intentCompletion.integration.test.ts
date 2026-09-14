@@ -4,12 +4,13 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('./configService', () => ({ getConfigDir: () => '/unused-intent-completion-tests' }));
-import { IntentWorkspaceStore } from './intentWorkspaceStore';
+import { IntentWorkspaceStore, INTENT_WORKSPACE_SCHEMA_VERSION } from './intentWorkspaceStore';
 import { INTENT_EVIDENCE_SCHEMA } from './intentEvidenceStore';
 import { INTENT_CONTROL_SCHEMA } from './intentControlStore';
 import { IntentSourceStore } from './intentSourceStore';
 import { sourceSnapshot } from './intentSourceAdapters';
 import { intentCriteria } from '../shared/intentEvidence';
+import { summarizeIntent } from '../shared/intentSummary';
 import type { IntentWorkspace } from '../shared/intentWorkspace';
 
 const opened: DatabaseSync[] = [];
@@ -93,10 +94,106 @@ function legacy() {
   db.prepare('INSERT INTO intent_executions VALUES(?,?,?,?)').run('old-run', 'w', 1, execution);
   return { db, file, directory, projectRoot, workspace, current, first, execution, oldPacket };
 }
+it('retains the PR rework and completion lifecycle without treating status as review evidence', () => {
+  const f = legacy();
+  let store = new IntentWorkspaceStore(f.db);
+  let workspace = f.workspace;
+  const move = (status: IntentWorkspace['status'], reason: string) => {
+    const result = store.request({
+      action: 'update',
+      id: workspace.id,
+      expectedRevision: workspace.revision,
+      fields: { ...workspace, status },
+      reason,
+    });
+    if (result.action !== 'update') throw new Error('Expected update');
+    workspace = result.workspace;
+  };
+  const review = (decision: 'accept' | 'changes-requested', evidenceIds: string[] = []) =>
+    store.request({
+      action: 'recordReview',
+      id: workspace.id,
+      expectedRevision: workspace.revision,
+      reviewId: `review-${workspace.revision}-${decision}`,
+      decision,
+      evidenceIds,
+      reason: decision === 'accept' ? 'Checked CSV output' : 'Address PR feedback',
+    });
+  const evidence = () => {
+    const result = store.request({ action: 'evidence', id: workspace.id });
+    if (result.action !== 'evidence') throw new Error('Expected evidence');
+    return result;
+  };
+
+  store.request({
+    action: 'addWorkLink',
+    id: workspace.id,
+    kind: 'pull-request',
+    target: 'https://example.test/pull/42',
+  });
+  expect(store.request({ action: 'list' })).toMatchObject({
+    workspaces: [{ status: 'active', revision: 2 }],
+  });
+  move('review', 'PR open');
+  review('changes-requested');
+  expect(store.request({ action: 'list' })).toMatchObject({ workspaces: [{ status: 'review' }] });
+  move('active', 'Addressing PR comments');
+  move('review', 'Ready for another review');
+  expect(() => review('accept')).toThrow();
+  store.request({
+    action: 'addEvidence',
+    id: workspace.id,
+    expectedRevision: workspace.revision,
+    evidenceId: 'verified-output',
+    criterionId: `r${workspace.revision}:c1`,
+    note: 'Opened CSV and checked headings',
+    reference: '',
+    assessment: 'user-verified',
+  });
+  review('accept', ['verified-output']);
+  const acceptedRevision = workspace.revision;
+  expect(summarizeIntent(workspace, { evidence: evidence() }).review?.decision).toBe('accept');
+  move('complete', 'Merge checked externally');
+  expect(summarizeIntent(workspace, { evidence: evidence() })).toMatchObject({
+    verifiedCriteria: 1,
+    review: expect.objectContaining({ decision: 'accept' }),
+  });
+  expect(evidence().reviews).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ intentRevision: acceptedRevision, decision: 'accept' }),
+    ]),
+  );
+
+  f.db.close();
+  const reopened = new DatabaseSync(f.file);
+  opened.push(reopened);
+  store = new IntentWorkspaceStore(reopened);
+  expect(store.request({ action: 'list' })).toMatchObject({
+    workspaces: [{ status: 'complete', revision: 2 }],
+  });
+  expect(store.request({ action: 'executions', id: workspace.id })).toMatchObject({
+    links: [{ kind: 'pull-request', target: 'https://example.test/pull/42' }],
+    executions: [{ intentRevision: 1, contextPacket: f.oldPacket }],
+  });
+  move('active', 'Reopened after merge');
+  const history = store.request({ action: 'history', id: workspace.id });
+  if (history.action !== 'history') throw new Error('Expected history');
+  expect(history.revisions).toHaveLength(2);
+  expect(history.statusEvents).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ status: 'review', reason: 'PR open' }),
+      expect.objectContaining({ status: 'complete', reason: 'Checked CSV output' }),
+    ]),
+  );
+  expect(evidence().reviews).toHaveLength(2);
+});
+
 it('migrates real v4 rows, preserves cross-module provenance through root relocation and restart', async () => {
   const f = legacy();
   const store = new IntentWorkspaceStore(f.db);
-  expect(f.db.prepare('PRAGMA user_version').get()?.user_version).toBe(5);
+  expect(f.db.prepare('PRAGMA user_version').get()?.user_version).toBe(
+    INTENT_WORKSPACE_SCHEMA_VERSION,
+  );
   expect(f.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   const latest = JSON.parse(
     String(f.db.prepare('SELECT snapshot FROM intent_workspaces WHERE id=?').get('w')!.snapshot),
@@ -223,7 +320,9 @@ it('rolls back the entire v5 migration if identity backfill refuses corrupt lega
   );
   f.db.prepare('UPDATE intent_workspaces SET snapshot=? WHERE id=?').run(f.current, 'w');
   new IntentWorkspaceStore(f.db);
-  expect(f.db.prepare('PRAGMA user_version').get()?.user_version).toBe(5);
+  expect(f.db.prepare('PRAGMA user_version').get()?.user_version).toBe(
+    INTENT_WORKSPACE_SCHEMA_VERSION,
+  );
 });
 
 it('pins accepted source, knowledge, evidence and selections into future launch/direction/continue packets only', async () => {

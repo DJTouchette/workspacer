@@ -1,3 +1,4 @@
+import type { IntentRun } from '../shared/intentAutomation';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,6 +61,7 @@ export class IntentEvidenceStore {
       artifactDirectory?: string;
       capture?: (cwd: string) => Promise<IntentGitCapture>;
     } = {},
+    private readonly onReview?: (review: IntentReview) => void,
   ) {}
 
   private transaction<T>(run: () => T): T {
@@ -272,6 +274,39 @@ export class IntentEvidenceStore {
       return { action: 'addEvidence', evidence };
     });
   }
+  /** Called inside the owner observation transaction. Reports are explicitly
+   * unverified and leave capacity for the user's verification records. */
+  reportRun(workspace: IntentWorkspace, run: IntentRun) {
+    const count = Number(
+      this.db
+        .prepare('SELECT count(*) AS n FROM intent_evidence WHERE workspace_id=?')
+        .get(workspace.id)?.n,
+    );
+    for (const criterion of intentCriteria(workspace.revision, workspace.successCriteria).slice(
+      0,
+      Math.max(0, Math.min(64, 256 - count)),
+    )) {
+      const id = `run-${run.id}-${criterion.id}`;
+      if (this.db.prepare('SELECT id FROM intent_evidence WHERE id=?').get(id)) continue;
+      this.insert(
+        'intent_evidence',
+        {
+          id,
+          workspaceId: workspace.id,
+          intentRevision: workspace.revision,
+          criterion,
+          kind: 'agent-report',
+          author: 'agent',
+          assessment: 'reported',
+          note: `Agent's overall completion report. Verify this criterion independently.\n\n${run.report}`,
+          reference: '',
+          executionId: run.executionId,
+          createdAt: new Date().toISOString(),
+        },
+        JSON.stringify({ runId: run.id, criterion: criterion.id }),
+      );
+    }
+  }
   private recordReview(input: Record<string, unknown>, id: string): IntentEvidenceResponse {
     const reviewId = text(input.reviewId, 'review ID');
     const reason = text(input.reason, 'review reason', 8000);
@@ -319,6 +354,7 @@ export class IntentEvidenceStore {
       createdAt: new Date().toISOString(),
     };
     this.insert('intent_reviews', review, key);
+    this.onReview?.(review);
     return { action: 'recordReview', review };
   }
 

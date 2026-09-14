@@ -27,6 +27,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   and verified evidence remain separate throughout the workflow.
 
 ### Changed
+- **Active intents can run through a dedicated manager.** Activate saved work
+  with a time limit, answer questions, pause or resume execution, and review
+  reported results. Status transitions now preserve the requirements revision
+  and its evidence; changes to requirements retain a new revision. Uncertain
+  execution requests require inspection instead of automatic replay.
 - **Work has a clearer overview and responsive navigation.** Compact keyboard
   tabs, a collapsible mobile work list, searchable project work, and clearer
   status and evidence summaries make large features easier to follow. Drafts,

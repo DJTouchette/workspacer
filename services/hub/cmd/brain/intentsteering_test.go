@@ -192,3 +192,35 @@ func TestIntentSteeringDesktopHostEndToEnd(t *testing.T) {
 		t.Fatal("lost direction history")
 	}
 }
+
+func TestIntentActivationUsesManagerSpawnWithoutCallerGrants(t *testing.T) {
+	rec := newRecorder()
+	srv := rec.server()
+	defer srv.Close()
+	reg := newSpawnTestRegistry(t, srv.URL)
+	reg.meta = newMetaStore()
+	reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
+	result, err := reg.replacementHostCall(context.Background(), "intent.spawn", []byte(`{"cwd":"/tmp","provider":"codex","label":"Intent: Export","message":"Pursue the saved intent","yoloGranted":true,"skipPermissions":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := rec.calls("/sessions/spawn-managed")
+	if len(calls) != 1 {
+		t.Fatalf("expected one manager, got %d", len(calls))
+	}
+	if calls[0].body["first_message"] != "Pursue the saved intent" {
+		t.Fatalf("lost kickoff: %+v", calls[0].body)
+	}
+	if strings.Contains(string(result), `"fullAccess":true`) {
+		t.Fatalf("caller grants leaked: %s", result)
+	}
+	var response struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil || response.SessionID == "" {
+		t.Fatalf("no manager identity: %s %v", result, err)
+	}
+	if meta, ok := reg.meta.get(response.SessionID); !ok || !meta.IsWakeTarget {
+		t.Fatalf("manager cannot receive worker wakes: %+v", meta)
+	}
+}

@@ -66,6 +66,9 @@ type replacementMetadata struct {
 }
 
 func (r *registry) replacementHostCall(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	if method == "intent.spawn" {
+		return r.spawnIntentManager(ctx, params)
+	}
 	if method == "intent.send" {
 		return r.sendIntentDirection(ctx, params)
 	}

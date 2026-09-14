@@ -509,7 +509,7 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
           constraints: 'Preserve permissions and column headers.',
           successCriteria: 'Only filtered rows are exported\nPermission checks remain in place',
           sourceUrl: '',
-          status: 'active',
+          status: 'draft',
         },
       })
     ).workspace;
@@ -547,7 +547,7 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
     await work(page).click();
     const shell = page.getByRole('region', { name: 'Intent workspaces', exact: true });
     const list = shell.getByRole('complementary', { name: 'Project work' });
-    await list.getByRole('button', { name: `${first.title} active`, exact: true }).click();
+    await list.getByRole('button', { name: `${first.title} draft`, exact: true }).click();
     const names = [
       'Overview',
       'Intent',
@@ -589,7 +589,7 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
             `${second.title} draft`,
           );
           await toggle.click();
-          await list.getByRole('button', { name: `${first.title} active`, exact: true }).click();
+          await list.getByRole('button', { name: `${first.title} draft`, exact: true }).click();
           await expect(
             shell.getByRole('heading', { name: first.title, exact: true }),
           ).toBeVisible();

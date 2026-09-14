@@ -1,3 +1,4 @@
+import { nativeIntentAutomation, ensureNativeIntentAutomation } from './intentAutomationNative';
 /** Browser owner requests hosted by a running native desktop. The headless
  * process uses the same service implementations with its own lifecycle source.
  */
@@ -40,11 +41,13 @@ export async function nativeDesktopService(
   const p = (raw ?? {}) as Record<string, unknown>;
   switch (method) {
     case 'desktop.intentWorkspaceRequest':
+      ensureNativeIntentAutomation();
       return intentWorkspaceRequest(
         p.request,
         claudeSessionStore.getAllSnapshots(),
         deliverIntentDirection,
         deliverIntentControl,
+        nativeIntentAutomation,
       );
     case 'desktop.sessionGrantReconcile': {
       const session =

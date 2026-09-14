@@ -440,7 +440,11 @@ export default function IntentEvidence({
           </div>
           <p className="intent-muted">
             {assessmentLabel[item.assessment]} · {new Date(item.createdAt).toLocaleString()}
-            {item.git ? ' · Git facts captured by host' : ''}
+            {item.git
+              ? ' · Git facts captured by host'
+              : item.author === 'agent'
+                ? ' · Agent report, awaiting your verification'
+                : ''}
           </p>
           <p className="intent-result">{item.note}</p>
           {item.reference && (

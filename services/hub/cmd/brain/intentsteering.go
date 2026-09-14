@@ -89,3 +89,25 @@ func (r *registry) interruptIntentExecution(ctx context.Context, raw json.RawMes
 	}
 	return jsonResult(map[string]string{"status": "accepted", "detail": "The signal service accepted the interrupt request. Inspect the session; background work may continue and earlier actions are not undone."})
 }
+
+// Only the owner child can activate an intent. No caller-supplied grant fields
+// cross this boundary; ordinary spawn permission policy still applies.
+func (r *registry) spawnIntentManager(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Cwd      string `json:"cwd"`
+		Label    string `json:"label"`
+		Message  string `json:"message"`
+		Provider string `json:"provider"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Cwd) == "" || strings.TrimSpace(p.Message) == "" || len(p.Message) > 256*1024 {
+		return nil, fmt.Errorf("invalid intent launch")
+	}
+	params, err := json.Marshal(map[string]any{"cwd": p.Cwd, "label": p.Label, "message": p.Message, "provider": p.Provider, "manager": true, "toolScope": "operator", "transport": "stream"})
+	if err != nil {
+		return nil, err
+	}
+	return r.spawn(ctx, params)
+}

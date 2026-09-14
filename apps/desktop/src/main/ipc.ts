@@ -1,3 +1,7 @@
+import {
+  nativeIntentAutomation,
+  ensureNativeIntentAutomation,
+} from './services/intentAutomationNative';
 import { requestManagerReplacement } from './services/managerReplacement';
 import { workflowBusy } from './services/fleetWorkflowRuntime';
 import { providerReadinessService } from './services/providerReadinessRuntime';
@@ -171,6 +175,7 @@ function refuseSecretRead(filePath: string): string {
 let ipcHandlersRegistered = false;
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  ensureNativeIntentAutomation();
   claudemonSessionClient.setMainWindow(mainWindow);
   libraryService.setMainWindow(mainWindow);
 
@@ -1566,6 +1571,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       claudeSessionStore.getAllSnapshots(),
       deliverIntentDirection,
       deliverIntentControl,
+      nativeIntentAutomation,
     ),
   );
   ipcMain.handle(IPC.BRIEF_BOARD_LOAD, () => loadBoard());

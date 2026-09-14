@@ -1,3 +1,4 @@
+import type { IntentAutomationRequest, IntentAutomationResponse } from './intentAutomation';
 import type { IntentEvidenceRequest, IntentEvidenceResponse } from './intentEvidence';
 import type { IntentSourceRequest, IntentSourceResponse } from './intentSources';
 import type { IntentProject, IntentProjectRequest, IntentProjectResponse } from './intentProject';
@@ -144,6 +145,7 @@ export interface IntentLiveSession {
   sessionId: string;
   hub?: string;
   hubOffline?: boolean;
+  parentSessionId?: string;
   status?: string;
   ambientState?: string;
   cwd?: string;
@@ -159,7 +161,9 @@ export function intentObservation(session: IntentLiveSession, now: string): Inte
   const state =
     session.status === 'ended' || session.status === 'stopped'
       ? 'stopped'
-      : session.ambientState || 'unknown';
+      : session.pendingApproval || session.pendingQuestions?.length
+        ? 'blocked'
+        : session.ambientState || 'unknown';
   let assistantText = '';
   const conversation = session.conversation ?? [];
   for (let i = conversation.length - 1; i >= 0; i--) {
@@ -212,11 +216,12 @@ export function buildIntentContext(
     'Requested work:',
     task,
     '',
-    'Report the result against the success criteria, the checks actually run, and any unresolved questions or blockers. Later edits to the workspace are not automatically delivered to this session.',
+    'Report the result against the success criteria, the checks actually run, and any unresolved questions or blockers. This recorded launch snapshot never changes. Later directions arrive as separate messages.',
   ].join('\n');
 }
 
 export type IntentWorkspaceRequest =
+  | IntentAutomationRequest
   | IntentEvidenceRequest
   | IntentSourceRequest
   | IntentProjectRequest
@@ -226,7 +231,14 @@ export type IntentWorkspaceRequest =
   | ({ action: 'reconcileDirection'; id: string; directionId: string } & IntentReconciliationInput)
   | { action: 'list' }
   | { action: 'create'; projectRoot: string; fields: IntentFields }
-  | { action: 'update'; id: string; expectedRevision: number; fields: IntentFields; reason: string }
+  | {
+      action: 'update';
+      id: string;
+      expectedRevision: number;
+      expectedUpdatedAt?: string;
+      fields: IntentFields;
+      reason: string;
+    }
   | { action: 'history'; id: string }
   | { action: 'directions'; id: string }
   | {
@@ -253,6 +265,7 @@ export type IntentWorkspaceRequest =
   | { action: 'addWorkLink'; id: string; kind: IntentWorkLink['kind']; target: string };
 
 export type IntentWorkspaceResponse =
+  | IntentAutomationResponse
   | IntentEvidenceResponse
   | IntentSourceResponse
   | IntentProjectResponse
@@ -267,7 +280,11 @@ export type IntentWorkspaceResponse =
       projects?: IntentProject[];
     }
   | { action: 'create' | 'update'; workspace: IntentWorkspace }
-  | { action: 'history'; revisions: IntentRevision[] }
+  | {
+      action: 'history';
+      revisions: IntentRevision[];
+      statusEvents?: { at: string; status: IntentStatus; reason: string }[];
+    }
   | { action: 'directions'; directions: IntentDirection[] }
   | { action: 'prepareDirection'; direction: IntentDirection; created: boolean }
   | { action: 'sendDirection'; direction: IntentDirection; dispatched: boolean }

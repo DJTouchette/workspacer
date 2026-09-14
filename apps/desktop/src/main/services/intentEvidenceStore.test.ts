@@ -259,7 +259,7 @@ it('refuses cross-workspace, cross-criterion and stale-revision references and m
     action: 'update',
     id: f.workspace.id,
     expectedRevision: 1,
-    fields: f.workspace,
+    fields: { ...f.workspace, outcome: 'Revised export outcome' },
     reason: 'Revision',
   });
   expect(() =>
@@ -329,7 +329,7 @@ it('rejects an intent revision changed during capture without leaving an artifac
       action: 'update',
       id: f.workspace.id,
       expectedRevision: 1,
-      fields: f.workspace,
+      fields: { ...f.workspace, outcome: 'Revised export outcome' },
       reason: 'During capture',
     });
     return captured;

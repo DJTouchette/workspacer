@@ -41,7 +41,7 @@ function workspace() {
       constraints: '',
       successCriteria: 'Retained bytes',
       sourceUrl: '',
-      status: 'active',
+      status: 'draft',
     },
   });
   if (result.action !== 'create') throw new Error('Expected workspace');
