@@ -1019,3 +1019,205 @@
 .intent-completion label {
   overflow-wrap: anywhere;
 }
+
+/* Keep the board visible beside the intent inspector. */
+.intent-board-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.intent-board-toolbar .intent-filter {
+  flex: 1;
+  min-width: 160px;
+  max-width: 360px;
+  margin: 0;
+}
+.intent-board-layout {
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  overflow: hidden;
+}
+.intent-board {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 16px;
+}
+.intent-board-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 16px;
+}
+.intent-board-filters label {
+  margin: 0;
+  max-width: 220px;
+}
+.intent-board-filters select {
+  padding: 6px 10px;
+  font-size: 0.72rem;
+}
+.intent-board-filters button[aria-pressed='true'] {
+  background: var(--wks-accent-bg);
+  color: var(--wks-accent-text);
+}
+.intent-board-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(240px, 1fr));
+  gap: 16px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
+}
+.intent-board-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--wks-radius-md);
+}
+.intent-board-column[data-drop='true'] {
+  background: var(--wks-accent-bg);
+}
+.intent-board-column > header {
+  padding: 12px 4px;
+  position: sticky;
+  top: 0;
+  background: var(--wks-bg-base);
+  z-index: 1;
+}
+.intent-board-column h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.8rem;
+}
+.intent-board-column header p {
+  color: var(--wks-text-tertiary);
+  font-size: 0.72rem;
+  margin: 6px 0 0;
+}
+.intent-board-count {
+  font-size: 0.66rem;
+  color: var(--wks-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.intent-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px;
+}
+.intent-board-card {
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.intent-board-card[data-selected='true'] {
+  outline: 2px solid var(--wks-accent);
+  outline-offset: 1px;
+}
+.intent-workspaces .intent-board-card-open {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  padding: 16px;
+  background: transparent;
+}
+.intent-workspaces .intent-board-card-open:hover {
+  background: var(--wks-bg-hover);
+}
+.intent-board-card-open strong {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.intent-board-project {
+  font-size: 0.66rem;
+  color: var(--wks-text-tertiary);
+  overflow-wrap: anywhere;
+}
+.intent-board-outcome {
+  color: var(--wks-text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.intent-board-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.intent-board-card-footer .intent-muted {
+  font-size: 0.66rem;
+}
+.intent-board-card-footer button {
+  font-size: 0.72rem;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+.intent-workspaces .intent-board-add {
+  background: transparent;
+  justify-content: flex-start;
+  color: var(--wks-text-tertiary);
+}
+.intent-board-empty {
+  padding: 16px 8px;
+  color: var(--wks-text-muted);
+  font-size: 0.72rem;
+}
+.intent-board-drop-hint {
+  padding: 8px;
+  color: var(--wks-accent-text);
+  font-size: 0.72rem;
+}
+.intent-board-layout > .intent-detail {
+  flex: 0 0 min(52%, 760px);
+  min-width: 360px;
+  box-sizing: border-box;
+  border-left: 1px solid var(--wks-border-subtle);
+  padding: 16px;
+  background: var(--wks-bg-base);
+}
+.intent-detail-close {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+@media (max-width: 850px) {
+  .intent-board-layout {
+    position: relative;
+  }
+  .intent-board-layout > .intent-detail {
+    position: absolute;
+    inset: 0;
+    min-width: 0;
+    width: 100%;
+    z-index: 2;
+    border-left: 0;
+  }
+  .intent-board-columns {
+    grid-template-columns: repeat(4, minmax(260px, 80vw));
+  }
+  .intent-board-toolbar {
+    padding: 10px 12px;
+  }
+  .intent-board {
+    padding: 0 12px 12px;
+  }
+}

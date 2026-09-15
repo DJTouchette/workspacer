@@ -287,7 +287,10 @@ export class IntentSourceStore {
       this.current(id, input.expectedRevision);
       const read =
         connection.provider === 'manual'
-          ? { nativeId: connection.url, snapshot: sourceSnapshot('manual', title, content, {}) }
+          ? {
+              nativeId: connection.url || sourceId,
+              snapshot: sourceSnapshot('manual', title, content, {}),
+            }
           : await this.sync.import(connection);
       if (!read.snapshot) throw new Error('Import did not return a snapshot');
       const snapshot = read.snapshot;

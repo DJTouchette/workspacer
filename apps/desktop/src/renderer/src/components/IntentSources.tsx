@@ -371,9 +371,13 @@ export default function IntentSources({
               {source.integration.version}). URL and credential reference are pinned.
             </p>
           )}
-          <a href={source.url} target="_blank" rel="noreferrer">
-            {source.provider}: {source.nativeId}
-          </a>
+          {source.url ? (
+            <a href={source.url} target="_blank" rel="noreferrer">
+              {source.provider}: {source.nativeId}
+            </a>
+          ) : (
+            <p className="intent-muted">Collected context</p>
+          )}
           <ExternalStatus source={source} call={call} />
           <p className="intent-muted">
             Accepted revision {source.accepted.revision} · fetched {source.accepted.fetchedAt}

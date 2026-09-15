@@ -1,3 +1,5 @@
+import type { IntentWorkspace } from './intentWorkspace';
+import type { IntentSource } from './intentSources';
 import type { IntentSourceConnection } from './intentSources';
 
 export interface IntentIntegrationDraft {
@@ -26,6 +28,15 @@ export interface IntentIntegrationReference {
   repository?: string;
 }
 export type IntentIntegrationRequest =
+  | { action: 'jiraIntegrations'; projectRoot: string }
+  | {
+      action: 'importJiraIntent';
+      projectRoot: string;
+      operationId: string;
+      integrationId: string;
+      expectedIntegrationVersion: number;
+      identifier: string;
+    }
   | { action: 'integrations'; id: string }
   | {
       action: 'saveIntegration';
@@ -51,6 +62,8 @@ export type IntentIntegrationRequest =
       reference: IntentIntegrationReference;
     };
 export type IntentIntegrationResponse =
+  | { action: 'jiraIntegrations'; integrations: IntentIntegrationView[] }
+  | { action: 'importJiraIntent'; workspace: IntentWorkspace; source: IntentSource }
   | { action: 'integrations'; integrations: IntentIntegrationView[] }
   | { action: 'saveIntegration' | 'removeIntegration'; integration: IntentIntegration }
   | { action: 'previewSource'; connection: IntentSourceConnection };

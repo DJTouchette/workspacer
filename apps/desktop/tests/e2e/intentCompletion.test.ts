@@ -559,6 +559,61 @@ test('completes the intent review workflow through persistent owner services on 
             .length,
       ),
     ).toBe(1);
+
+    // Import a second intent through the board using the same pinned Jira registry.
+    const currentConnection = (await host.request({ action: 'integrations', id: workspace.id }))
+      .integrations[0];
+    await host.request({
+      action: 'saveIntegration',
+      id: workspace.id,
+      integrationId,
+      operationId: 'enable-for-board-import',
+      expectedVersion: currentConnection.version,
+      integration: { ...currentConnection, enabled: true },
+    });
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.getByRole('button', { name: 'From Jira', exact: true }).click();
+    await page.getByLabel('Project directory', { exact: true }).fill(repo);
+    await expect(page.getByRole('option', { name: 'Renamed Jira' })).toBeAttached();
+    await page.getByLabel('Jira issue key or URL').fill('TEAM-1');
+    await page.screenshot({
+      path: testInfo.outputPath('intent-from-jira-desktop.png'),
+      animations: 'disabled',
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Background source refresh shares the Jira account lease; retry the same
+    // form operation after its short cooldown, without bypassing host pacing.
+    await expect(async () => {
+      const submit = page.getByRole('button', { name: 'Import as draft', exact: true });
+      if (await submit.isVisible()) await submit.click();
+      await expect(
+        page.getByText(
+          'Imported from Jira. Review the outcome, constraints and success criteria before activating.',
+        ),
+      ).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 20000, intervals: [5000] });
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Export CSV');
+    const imported = (await host.request({ action: 'list' })).workspaces.find(
+      (item: any) =>
+        item.title === 'Export CSV' &&
+        item.sourceUrl === 'https://team.atlassian.net/browse/TEAM-1',
+    );
+    expect(imported).toMatchObject({
+      status: 'draft',
+      sourceUrl: 'https://team.atlassian.net/browse/TEAM-1',
+      revision: 1,
+    });
+    expect((await host.request({ action: 'sources', id: imported.id })).sources[0]).toMatchObject({
+      integration: { id: integrationId },
+      provider: 'jira',
+    });
+    await tab(page, 'Sources').click();
+    await expect(page.getByText(/Attached through Renamed Jira/)).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath('intent-from-jira-mobile.png'),
+      animations: 'disabled',
+    });
+    expect(browserErrors).toEqual([]);
   } finally {
     await host.stop();
     fs.rmSync(root, { recursive: true, force: true });
@@ -638,7 +693,7 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
     });
     await work(page).click();
     const shell = page.getByRole('region', { name: 'Intent workspaces', exact: true });
-    const list = shell.getByRole('complementary', { name: 'Project work' });
+    const list = shell.getByRole('region', { name: 'Intent board', exact: true });
     await list.getByRole('button', { name: `${first.title} draft`, exact: true }).click();
     const names = [
       'Overview',
@@ -663,32 +718,19 @@ test('keeps the Work shell usable across widths, themes, mobile selection, and k
           .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).colorScheme))
           .toBe(theme);
         themeColors[theme] = await shell.evaluate((node) => getComputedStyle(node).backgroundColor);
-        if (width === 320) {
-          const toggle = shell.getByRole('button', { name: 'Work list', exact: true });
-          await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-          await expect(list).toBeHidden();
-          await toggle.click();
-          await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-          await expect(list).toBeVisible();
-          await list.getByRole('button', { name: `${second.title} draft`, exact: true }).click();
-          await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-          await expect(list).toBeHidden();
-          await expect(
-            shell.getByRole('heading', { name: second.title, exact: true }),
-          ).toBeVisible();
-          await expect(shell.locator('.intent-item[aria-current="page"]')).toHaveAttribute(
-            'aria-label',
-            `${second.title} draft`,
-          );
-          await toggle.click();
-          await list.getByRole('button', { name: `${first.title} draft`, exact: true }).click();
-          await expect(
-            shell.getByRole('heading', { name: first.title, exact: true }),
-          ).toBeVisible();
-        } else {
-          await expect(list).toBeVisible();
-          await expect(shell.getByRole('button', { name: 'Work list', exact: true })).toBeHidden();
-        }
+        await shell.getByRole('button', { name: 'Back to board', exact: true }).click();
+        await expect(list).toBeVisible();
+        await expect(shell.getByRole('main', { name: 'Intent details' })).toBeHidden();
+        await expect(list.locator('.intent-board-column')).toHaveCount(4);
+        await page.screenshot({
+          path: testInfo.outputPath(`intent-board-${width}-${theme}.png`),
+          animations: 'disabled',
+        });
+        await list.getByRole('button', { name: `${second.title} draft`, exact: true }).click();
+        await expect(shell.getByRole('heading', { name: second.title, exact: true })).toBeVisible();
+        await shell.getByRole('button', { name: 'Back to board', exact: true }).click();
+        await list.getByRole('button', { name: `${first.title} draft`, exact: true }).click();
+        await expect(shell.getByRole('heading', { name: first.title, exact: true })).toBeVisible();
         const rail = shell.getByRole('tablist', { name: 'Workspace views' });
         await expect(rail.getByRole('tab')).toHaveCount(names.length);
         const geometry = await rail.evaluate((node) => {

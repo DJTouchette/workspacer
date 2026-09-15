@@ -5,7 +5,7 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCheck,
-  ChevronDown,
+  X,
   Compass,
   FolderOpen,
   History,
@@ -32,7 +32,9 @@ import IntentProjects, { type IntentProjectsDraft } from './IntentProjects';
 import type { IntentProject } from '../../../main/shared/intentProject';
 import IntentKnowledge, { type IntentKnowledgeDraft } from './IntentKnowledge';
 import IntentArtifacts from './IntentArtifacts';
-import IntentOverview, { IntentAttentionBadge } from './IntentOverview';
+import IntentOverview from './IntentOverview';
+import IntentBoard from './IntentBoard';
+import IntentJiraImport from './IntentJiraImport';
 import {
   INTENT_STATUSES,
   type IntentFields,
@@ -90,6 +92,7 @@ export default function IntentWorkspaces({
   const [selected, setSelected] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [creating, setCreating] = useState(false);
+  const [importingJira, setImportingJira] = useState(false);
   const [newFields, setNewFields] = useState<IntentFields>({ ...EMPTY });
   const [projectRoot, setProjectRoot] = useState(defaultRoot || Object.keys(projects)[0] || '');
   const [statusEvents, setStatusEvents] = useState<
@@ -119,7 +122,9 @@ export default function IntentWorkspaces({
   const [stableProjects, setStableProjects] = useState<IntentProject[]>([]);
   const [executionIndex, setExecutionIndex] = useState<Record<string, IntentSessionRef[]>>({});
   const [visitedArtifacts, setVisitedArtifacts] = useState<string[]>([]);
-  const [workListOpen, setWorkListOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const closeDetailRef = useRef<HTMLButtonElement>(null);
   const [filter, setFilter] = useState('');
   const listGeneration = useRef(0);
   const saveBusy = useRef(false);
@@ -160,14 +165,12 @@ export default function IntentWorkspaces({
         items: workspaces.filter((item) => item.projectRoot === root),
       })),
   ];
-  const filteredGroups = projectGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) =>
-        `${item.title} ${item.outcome} ${group.label}`.toLowerCase().includes(filter.toLowerCase()),
-      ),
-    }))
-    .filter((group) => !filter || group.items.length);
+  const filteredGroups = projectGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) =>
+      `${item.title} ${item.outcome} ${group.label}`.toLowerCase().includes(filter.toLowerCase()),
+    ),
+  }));
 
   function navigate(next: WorkView) {
     if (!selected) return;
@@ -193,6 +196,7 @@ export default function IntentWorkspaces({
   }, [selected, creating, view, showProjects]);
 
   async function refresh() {
+    setError('');
     const mine = ++listGeneration.current;
     setLoading(true);
     try {
@@ -203,7 +207,6 @@ export default function IntentWorkspaces({
       setWorkspaces(result.workspaces);
       setStableProjects(result.projects || []);
       setExecutionIndex(result.executionIndex || {});
-      setSelected((current) => current ?? result.workspaces[0]?.id ?? null);
     } catch (error) {
       if (mine === listGeneration.current)
         setError(String(error instanceof Error ? error.message : error));
@@ -326,7 +329,7 @@ export default function IntentWorkspaces({
           [saved.id]: saved.status === 'active' ? 'overview' : 'intent',
         }));
       setCreating(false);
-      setWorkListOpen(false);
+      setDetailOpen(true);
       setNewFields({ ...EMPTY });
       setNotice(`Saved revision ${saved.revision}.`);
     } catch (error) {
@@ -336,6 +339,25 @@ export default function IntentWorkspaces({
       setSaving(false);
     }
   }
+
+  function createIntent() {
+    openerRef.current = document.activeElement as HTMLElement;
+    setImportingJira(false);
+    setCreating(true);
+    setShowProjects(false);
+    setDetailOpen(true);
+    setError('');
+    setNotice('');
+  }
+
+  function closeDetail() {
+    setDetailOpen(false);
+    openerRef.current?.focus();
+  }
+
+  useEffect(() => {
+    if (detailOpen) closeDetailRef.current?.focus();
+  }, [detailOpen, selected]);
 
   const dirty = creating || !!draft;
   return (
@@ -348,16 +370,6 @@ export default function IntentWorkspaces({
           <span className="intent-preview-badge">Preview</span>
         </div>
         <div className="intent-header-actions">
-          <button
-            type="button"
-            className="intent-list-toggle"
-            aria-expanded={workListOpen}
-            aria-controls="intent-project-list"
-            onClick={() => setWorkListOpen((open) => !open)}
-          >
-            <FolderOpen size={14} aria-hidden="true" /> Work list{' '}
-            <ChevronDown size={12} aria-hidden="true" />
-          </button>
           <button type="button" onClick={onClose} aria-label="Back to agents">
             <ArrowLeft size={14} aria-hidden="true" />
             <span className="intent-back-label">Back to agents</span>
@@ -370,111 +382,101 @@ export default function IntentWorkspaces({
           {notice}
         </p>
       )}
-      <div className="intent-layout">
-        <aside
-          id="intent-project-list"
-          className="intent-list"
-          data-open={workListOpen}
-          aria-label="Project work"
-        >
-          <div className="intent-actions">
-            <button
-              type="button"
-              disabled={saving || loading}
-              onClick={() => {
-                setCreating(true);
-                setShowProjects(false);
-                setWorkListOpen(false);
-                setError('');
-                setNotice('');
-              }}
-            >
-              <Plus size={14} /> New intent
-            </button>
-            <button
-              type="button"
-              disabled={saving || loading}
-              aria-label="Refresh workspaces"
-              onClick={() => {
-                setError('');
-                void refresh();
-              }}
-            >
-              <RefreshCw size={14} />
-            </button>
-            <button
-              type="button"
-              aria-pressed={showProjects}
-              onClick={() => setShowProjects((current) => !current)}
-              title="Manage projects and repositories"
-            >
-              <FolderOpen size={14} aria-hidden="true" />
-              <span className="intent-sr-only">Projects</span>
-            </button>
-          </div>
-          {workspaces.length > 0 && (
-            <label className="intent-filter">
-              <span className="intent-sr-only">Find work</span>
-              <input
-                type="search"
-                placeholder="Find work…"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-              />
-            </label>
-          )}
-          {loading && <p role="status">Loading work…</p>}
-          {!loading && filter && !filteredGroups.length && (
-            <p role="status" className="intent-muted">
-              No work matches “{filter}”.
-            </p>
-          )}
-          {filteredGroups.map((group) => {
-            const items = group.items;
-            return (
-              <div key={group.id} className="intent-project">
-                <h3 title={group.roots.join('\n')}>
-                  <span>{group.label}</span>
-                  <span className="intent-project-count">{items.length}</span>
-                </h3>
-                {items.length === 0 && <p className="intent-muted">No work yet</p>}
-                {items.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    disabled={saving}
-                    aria-label={`${item.title}${drafts[item.id] ? ' · Unsaved' : ''} ${item.status}`}
-                    aria-current={!creating && selected === item.id ? 'page' : undefined}
-                    className="intent-item"
-                    onClick={() => {
-                      setSelected(item.id);
-                      setShowProjects(false);
-                      setWorkListOpen(false);
-                      setCreating(false);
-                      setError('');
-                      setNotice('');
-                    }}
-                  >
-                    <span>
-                      {item.title}
-                      {drafts[item.id] ? ' · Unsaved' : ''}
-                    </span>
-                    <small>
-                      <span className="intent-status-dot" data-status={item.status} />
-                      {item.status === 'review' ? 'Review needed' : item.status}
-                    </small>
-                    <IntentAttentionBadge
-                      refs={executionIndex[item.id] || []}
-                      sessions={execution?.sessions || []}
-                    />
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </aside>
+      <div className="intent-board-toolbar">
+        <label className="intent-filter">
+          <span className="intent-sr-only">Find work</span>
+          <input
+            type="search"
+            placeholder="Find work…"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </label>
+        <div className="intent-actions">
+          <button
+            type="button"
+            className="intent-primary"
+            disabled={saving || loading}
+            onClick={createIntent}
+          >
+            <Plus size={14} />
+            New intent
+          </button>
+          <button
+            type="button"
+            disabled={saving || loading}
+            onClick={() => {
+              openerRef.current = document.activeElement as HTMLElement;
+              setImportingJira(true);
+              setShowProjects(false);
+              setDetailOpen(true);
+              setError('');
+              setNotice('');
+            }}
+          >
+            <Link2 size={14} />
+            From Jira
+          </button>
+          <button
+            type="button"
+            disabled={saving || loading}
+            aria-label="Refresh workspaces"
+            onClick={() => void refresh()}
+          >
+            <RefreshCw size={14} />
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              openerRef.current = document.activeElement as HTMLElement;
+              setImportingJira(false);
+              setShowProjects(true);
+              setDetailOpen(true);
+            }}
+          >
+            <FolderOpen size={14} />
+            Projects
+          </button>
+        </div>
+      </div>
+      {error && !detailOpen && (
+        <p role="alert" className="intent-error">
+          {error}
+        </p>
+      )}
+      <div className="intent-layout intent-board-layout" data-detail-open={detailOpen}>
+        <IntentBoard
+          groups={filteredGroups}
+          selected={detailOpen && !creating && !showProjects && !importingJira ? selected : null}
+          drafts={drafts}
+          executionIndex={executionIndex}
+          sessions={execution?.sessions || []}
+          disabled={saving}
+          loading={loading}
+          onCreate={createIntent}
+          onOpen={(id, nextView) => {
+            openerRef.current = document.activeElement as HTMLElement;
+            setImportingJira(false);
+            setSelected(id);
+            setCreating(false);
+            setShowProjects(false);
+            setDetailOpen(true);
+            setError('');
+            setNotice('');
+            if (nextView) setViews((current) => ({ ...current, [id]: nextView }));
+          }}
+        />
         <main
           className="intent-detail"
+          hidden={!detailOpen}
+          aria-label="Intent details"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !saving) {
+              event.stopPropagation();
+              closeDetail();
+            }
+          }}
           ref={contentRef}
           onScroll={(event) => {
             scrollPositions.current[
@@ -482,6 +484,32 @@ export default function IntentWorkspaces({
             ] = event.currentTarget.scrollTop;
           }}
         >
+          <div className="intent-detail-close">
+            <button ref={closeDetailRef} type="button" disabled={saving} onClick={closeDetail}>
+              <X size={14} />
+              Back to board
+            </button>
+          </div>
+          <IntentJiraImport
+            onBusyChange={setSaving}
+            visible={importingJira}
+            defaultRoot={projectRoot}
+            roots={roots}
+            onImported={(saved) => {
+              setWorkspaces((current) => [
+                saved,
+                ...current.filter((item) => item.id !== saved.id),
+              ]);
+              setSelected(saved.id);
+              setViews((current) => ({ ...current, [saved.id]: 'intent' }));
+              setCreating(false);
+              setImportingJira(false);
+              setDetailOpen(true);
+              setNotice(
+                'Imported from Jira. Review the outcome, constraints and success criteria before activating.',
+              );
+            }}
+          />
           <IntentProjects
             visible={showProjects && execution?.visible !== false}
             disabled={saving}
@@ -489,7 +517,7 @@ export default function IntentWorkspaces({
             onDraftChange={setProjectDraft}
             onChanged={() => void refresh()}
           />
-          <div hidden={showProjects}>
+          <div hidden={showProjects || importingJira}>
             {error && (
               <p role="alert" className="intent-error">
                 {error}

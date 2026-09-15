@@ -50,6 +50,9 @@ describe('intent workspaces', () => {
       return { action: input.action, ...(values[input.action] as object) };
     });
     render(<IntentWorkspaces onClose={vi.fn()} execution={{ sessions: [] }} />);
+    await screen.findByRole('button', { name: 'Export results draft' });
+    expect(screen.queryByRole('main', { name: 'Intent details' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Export results draft' }));
     const overview = await screen.findByRole('tab', { name: 'Overview' });
     expect(overview).toHaveAttribute('aria-selected', 'true');
     expect(overview).toHaveAttribute('tabindex', '0');
@@ -74,10 +77,15 @@ describe('intent workspaces', () => {
         : { action: 'history', revisions: [] },
     );
     render(<IntentWorkspaces onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Export results draft' }));
     await screen.findByDisplayValue('Export results');
     fireEvent.change(screen.getByLabelText('Constraints'), {
       target: { value: 'Keep permissions' },
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to board' }));
+    expect(screen.queryByRole('main', { name: 'Intent details' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Export results · Unsaved draft' }));
+    expect(screen.getByLabelText('Constraints')).toHaveValue('Keep permissions');
     fireEvent.change(screen.getByRole('searchbox', { name: 'Find work' }), {
       target: { value: 'Login' },
     });
@@ -100,6 +108,7 @@ describe('intent workspaces', () => {
         : { action: 'history', revisions: [] },
     );
     render(<IntentWorkspaces onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Export results draft' }));
     await screen.findByDisplayValue('Export results');
     fireEvent.change(screen.getByLabelText('Constraints'), { target: { value: 'Temporary' } });
     fireEvent.change(screen.getByLabelText('Constraints'), { target: { value: '' } });
@@ -137,6 +146,7 @@ describe('intent workspaces', () => {
       throw new Error('This workspace changed elsewhere');
     });
     render(<IntentWorkspaces onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Export results draft' }));
     await screen.findByDisplayValue('Export results');
     fireEvent.change(screen.getByLabelText('Constraints'), { target: { value: 'CSV only' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save revision' }));
@@ -158,6 +168,7 @@ describe('intent workspaces', () => {
         : { action: 'history', revisions: [] },
     );
     render(<IntentWorkspaces onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Export results draft' }));
     await screen.findByDisplayValue('Export results');
     fireEvent.change(screen.getByLabelText('Constraints'), { target: { value: 'CSV only' } });
     fireEvent.click(screen.getByRole('button', { name: 'Login fix draft' }));

@@ -1,3 +1,5 @@
+import { resolveIntegration, type IntentIntegrationResponse } from '../shared/intentIntegrations';
+import type { IntentSource } from '../shared/intentSources';
 import { IntentCompletionStore, INTENT_COMPLETION_SCHEMA } from './intentCompletionStore';
 import { intentCompletionIdle, boundIntentReport } from '../shared/intentCompletion';
 import { INTENT_INTEGRATION_SCHEMA } from './intentIntegrationStore';
@@ -84,7 +86,7 @@ function fields(value: unknown): IntentFields {
  * Current state and its revision are committed together; stale clients must reload.
  * No foreign path from a request is opened: projectRoot is an identity only.
  */
-export const INTENT_WORKSPACE_SCHEMA_VERSION = 9;
+export const INTENT_WORKSPACE_SCHEMA_VERSION = 10;
 export class IntentWorkspaceStore {
   readonly completions: IntentCompletionStore;
   readonly automation: IntentAutomationStore;
@@ -320,6 +322,12 @@ export class IntentWorkspaceStore {
       this.transaction(() => db.exec(INTENT_INTEGRATION_SCHEMA + 'PRAGMA user_version=8;'));
     if (version < 9)
       this.transaction(() => db.exec(INTENT_COMPLETION_SCHEMA + 'PRAGMA user_version=9;'));
+    if (version < 10)
+      this.transaction(() =>
+        db.exec(
+          `CREATE TABLE IF NOT EXISTS intent_jira_imports (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, response TEXT NOT NULL); PRAGMA user_version=10;`,
+        ),
+      );
     this.completions = new IntentCompletionStore(db, (workspace) =>
       this.automation.status(workspace, 'review', 'Agent reported work ready for review'),
     );
@@ -420,8 +428,141 @@ export class IntentWorkspaceStore {
     }
   }
 
+  private insertWorkspace(request: Record<string, unknown>): IntentWorkspace {
+    const projectRoot = text(request.projectRoot, 'Project directory', 4096, true);
+    if (!path.isAbsolute(projectRoot))
+      throw new Error('Project directory must be an absolute path on the connected host');
+    const now = new Date().toISOString();
+    const workspace: IntentWorkspace = {
+      ...fields(request.fields),
+      id: randomUUID(),
+      projectRoot: path.normalize(projectRoot),
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    Object.assign(workspace, this.projects.ensureRepository(workspace.projectRoot));
+    this.db
+      .prepare('INSERT INTO intent_workspaces VALUES (?, ?, ?, ?, ?)')
+      .run(workspace.id, workspace.projectRoot, 1, now, JSON.stringify(workspace));
+    this.record(workspace, 'Workspace created');
+    if (workspace.status === 'active') this.automation.activate(workspace);
+    return workspace;
+  }
+
+  async importJira(
+    input: Record<string, unknown>,
+  ): Promise<Extract<IntentIntegrationResponse, { action: 'importJiraIntent' }>> {
+    const projectRoot = path.normalize(text(input.projectRoot, 'Project directory', 4096, true));
+    if (!path.isAbsolute(projectRoot))
+      throw new Error('Project directory must be an absolute path on the connected host');
+    const operationId = text(input.operationId, 'Import operation ID', 128, true);
+    const integrationId = text(input.integrationId, 'Integration ID', 128, true);
+    const identifier = text(input.identifier, 'Jira issue key or URL', 2048, true);
+    if (
+      !Number.isSafeInteger(input.expectedIntegrationVersion) ||
+      Number(input.expectedIntegrationVersion) < 1
+    )
+      throw new Error('Invalid integration version');
+    const fingerprint = JSON.stringify({
+      projectRoot,
+      integrationId,
+      identifier,
+      version: input.expectedIntegrationVersion,
+    });
+    const replay = () => {
+      const row = this.db
+        .prepare('SELECT fingerprint,response FROM intent_jira_imports WHERE id=?')
+        .get(operationId);
+      if (!row) return null;
+      if (row.fingerprint !== fingerprint)
+        throw new Error('Import operation ID was already used for another ticket');
+      return JSON.parse(String(row.response)) as Extract<
+        IntentIntegrationResponse,
+        { action: 'importJiraIntent' }
+      >;
+    };
+    const prior = replay();
+    if (prior) return prior;
+    const resolve = () => {
+      const integration = this.sources.integrations
+        .listProject(projectRoot)
+        .find((item) => item.id === integrationId);
+      if (!integration || integration.provider !== 'jira' || !integration.enabled)
+        throw new Error('Choose an enabled Jira connection for this project');
+      if (integration.version !== input.expectedIntegrationVersion)
+        throw new Error('Jira connection changed. Reload connections before importing.');
+      let key = identifier;
+      if (/^https?:/i.test(key)) {
+        const url = new URL(key);
+        if (
+          url.origin !== integration.baseUrl ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash ||
+          !/^\/browse\/[^/]+$/.test(url.pathname)
+        )
+          throw new Error('Use a Jira issue URL from the selected connection');
+        key = url.pathname.slice('/browse/'.length);
+      }
+      const connection = resolveIntegration(integration, { objectType: 'issue', identifier: key });
+      return { integration, connection };
+    };
+    const { integration, connection } = resolve();
+    const read = await this.sources.sync.import(connection);
+    if (!read.snapshot) throw new Error('Jira did not return ticket requirements');
+    return this.transaction(() => {
+      const raced = replay();
+      if (raced) return raced;
+      resolve(); // Configuration may change while Jira is being read.
+      const workspace = this.insertWorkspace({
+        projectRoot,
+        fields: {
+          title: read.snapshot!.title.slice(0, 240) || read.nativeId,
+          outcome: read.snapshot!.content.slice(0, 32000),
+          constraints: '',
+          successCriteria: '',
+          sourceUrl: connection.url,
+          status: 'draft',
+        },
+      });
+      const source: IntentSource = {
+        ...connection,
+        integration,
+        id: randomUUID(),
+        workspaceId: workspace.id,
+        nativeId: read.nativeId,
+        version: 1,
+        accepted: read.snapshot!,
+        candidate: null,
+        history: [],
+        createdAt: new Date().toISOString(),
+      };
+      this.db
+        .prepare('INSERT INTO intent_sources VALUES(?,?,?)')
+        .run(source.id, workspace.id, JSON.stringify(source));
+      source.external = this.sources.sync.record(source.id, read);
+      const response = { action: 'importJiraIntent' as const, workspace, source };
+      this.db
+        .prepare('INSERT INTO intent_jira_imports VALUES(?,?,?)')
+        .run(operationId, fingerprint, JSON.stringify(response));
+      return response;
+    });
+  }
+
   request(input: unknown, sessions: readonly IntentLiveSession[] = []): IntentWorkspaceResponse {
     const request = object(input);
+    if (request.action === 'jiraIntegrations') {
+      const projectRoot = text(request.projectRoot, 'Project directory', 4096, true);
+      if (!path.isAbsolute(projectRoot)) throw new Error('Project directory must be absolute');
+      return {
+        action: 'jiraIntegrations',
+        integrations: this.sources.integrations
+          .listProject(path.normalize(projectRoot))
+          .filter((item) => item.provider === 'jira' && item.enabled),
+      };
+    }
     if (request.action === 'completionProposals')
       return this.completions.view(text(request.id, 'workspace ID', 128, true));
     if (
@@ -553,26 +694,7 @@ export class IntentWorkspaceStore {
       };
     }
     if (request.action === 'create') {
-      const projectRoot = text(request.projectRoot, 'Project directory', 4096, true);
-      if (!path.isAbsolute(projectRoot))
-        throw new Error('Project directory must be an absolute path on the connected host');
-      const now = new Date().toISOString();
-      const workspace: IntentWorkspace = {
-        ...fields(request.fields),
-        id: randomUUID(),
-        projectRoot: path.normalize(projectRoot),
-        revision: 1,
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.transaction(() => {
-        Object.assign(workspace, this.projects.ensureRepository(workspace.projectRoot));
-        this.db
-          .prepare('INSERT INTO intent_workspaces VALUES (?, ?, ?, ?, ?)')
-          .run(workspace.id, workspace.projectRoot, 1, now, JSON.stringify(workspace));
-        this.record(workspace, 'Workspace created');
-        if (workspace.status === 'active') this.automation.activate(workspace);
-      });
+      const workspace = this.transaction(() => this.insertWorkspace(request));
       return { action: 'create', workspace };
     }
     if (request.action !== 'history' && request.action !== 'update')
@@ -960,6 +1082,7 @@ export async function intentWorkspaceRequest(
       sessions,
     );
   }
+  if (request.action === 'importJiraIntent') return active.importJira(request);
   if ((SOURCE_ACTIONS as readonly string[]).includes(String(request.action)))
     return active.sources.request(request);
   if (request.action === 'captureEvidence') return active.evidence.capture(request, sessions);

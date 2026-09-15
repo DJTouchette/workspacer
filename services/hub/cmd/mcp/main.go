@@ -876,6 +876,9 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 		"brief.archive")
 
 	// ── UI navigation (event-backed, explicit triage+ gate; see ui.go) ─────
+	b.group = "intents"
+	addIntentTools(b)
+
 	b.group = "ui"
 	addUiTools(b)
 

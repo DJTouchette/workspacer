@@ -50,20 +50,23 @@ function fixture(file = ':memory:') {
   const publish = { action: 'publishSourceComment', id: 'w', commentId: 'c', attemptId: 'a' };
   return { db, store, adapter, add, prepare, publish, advance };
 }
-it('manual sources require no credentials or I/O, preserve notes, and cannot publish', async () => {
-  const f = fixture();
-  const result = await f.store.request({
-    ...f.add,
-    connection: { provider: 'manual', url: 'https://example.test/task', credentialEnv: 'ignored' },
-    title: 'Source',
-    content: 'Requirements',
-  });
-  expect(result).toMatchObject({
-    source: { credentialEnv: '', accepted: { content: 'Requirements' } },
-  });
-  expect(f.adapter.read).not.toHaveBeenCalled();
-  await expect(f.store.request(f.prepare)).rejects.toThrow('do not publish');
-});
+it.each(['https://example.test/task', ''])(
+  'manual sources with URL %j preserve notes without I/O and cannot publish',
+  async (url) => {
+    const f = fixture();
+    const result = await f.store.request({
+      ...f.add,
+      connection: { provider: 'manual', url, credentialEnv: 'ignored' },
+      title: 'Source',
+      content: 'Requirements',
+    });
+    expect(result).toMatchObject({
+      source: { credentialEnv: '', accepted: { content: 'Requirements' } },
+    });
+    expect(f.adapter.read).not.toHaveBeenCalled();
+    await expect(f.store.request(f.prepare)).rejects.toThrow('do not publish');
+  },
+);
 it('keeps immutable accepted snapshots through refresh/accept and database reopen', async () => {
   const file = path.join(mkdtempSync(path.join(tmpdir(), 'intent-source-')), 'state.db');
   const f = fixture(file);

@@ -30,9 +30,12 @@ export class IntentIntegrationStore {
     return JSON.parse(String(row.snapshot));
   }
   list(workspaceId: string): IntentIntegrationView[] {
+    return this.listProject(this.project(workspaceId));
+  }
+  listProject(projectRoot: string): IntentIntegrationView[] {
     return this.db
       .prepare('SELECT snapshot FROM intent_integrations WHERE project_root=? ORDER BY rowid')
-      .all(this.project(workspaceId))
+      .all(projectRoot)
       .map((row) => JSON.parse(String(row.snapshot)) as IntentIntegration)
       .filter((c) => !c.deleted)
       .map((c) => ({ ...c, references: this.references(c.id) }));

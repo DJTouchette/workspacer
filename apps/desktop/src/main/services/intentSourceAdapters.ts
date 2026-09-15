@@ -39,7 +39,9 @@ export function sourceConnection(value: unknown): IntentSourceConnection {
   const v = value as Partial<IntentSourceConnection> | null;
   if (!v || !['manual', 'jira', 'ado'].includes(v.provider || ''))
     throw new Error('Unknown source provider');
-  const url = sourceText(v.url, 'source URL', 2048);
+  const url = sourceText(v.url, 'source URL', 2048, v.provider === 'manual');
+  // Locally collected notes have no external URL to fetch or link.
+  if (v.provider === 'manual' && !url) return { provider: 'manual', url: '', credentialEnv: '' };
   let parsed: URL;
   try {
     parsed = new URL(url);
