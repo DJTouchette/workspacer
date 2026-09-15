@@ -168,6 +168,8 @@ test('Intent workspace setting and work surface preserve existing panes and save
   await expect(page.getByRole('button', { name: 'Work', exact: true })).toHaveCount(0);
   await setting.check();
   await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByRole('button', { name: 'Export filtered results draft', exact: true }).click();
+  await page.getByRole('tab', { name: 'Intent', exact: true }).click();
   await expect(page.getByLabel('Constraints')).toHaveValue('CSV only. Include column headers.');
   expect((await calls(page)).filter((call: any) => call.method === 'spawnClaude')).toHaveLength(1);
   await page.getByRole('tab', { name: 'History', exact: true }).click();
@@ -340,6 +342,7 @@ test('Intent execution launches pinned context and links existing agents without
     });
   });
   await page.getByRole('button', { name: 'Work', exact: true }).click();
+  await page.getByRole('button', { name: 'Export filtered results active', exact: true }).click();
   await page.getByRole('tab', { name: 'Execution', exact: true }).click();
   await page.getByRole('button', { name: 'Start agent', exact: true }).click();
   const dispatch = page.getByRole('dialog', { name: 'Dispatch agent' });
