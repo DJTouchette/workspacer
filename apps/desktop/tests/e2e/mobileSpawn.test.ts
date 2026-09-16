@@ -62,7 +62,6 @@ test('browse remote folders and dispatch an explicit model, effort, full access 
     effort: 'high',
     permissionMode: 'bypassPermissions',
     skipPermissions: true,
-    yoloGranted: true,
     label: 'Mobile dispatch',
     message: 'Implement the selected change and run its tests.',
   });

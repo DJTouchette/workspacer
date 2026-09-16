@@ -82,7 +82,7 @@ describe('active path contract', () => {
         if (testCase.expect === 'deny') {
           expect(run).toThrow();
         } else {
-          expect(run()).toBe(substitute(testCase.resolvesTo as string, sandbox));
+          expect(run()).toBe(path.normalize(substitute(testCase.resolvesTo as string, sandbox)));
         }
       } finally {
         fs.rmSync(sandbox, { recursive: true, force: true });
@@ -108,7 +108,10 @@ describe('ambient paths and selected objects', () => {
   });
 
   it('uses a separator boundary for selected-object containment', () => {
-    expect(containsCanonical('/srv/repo', '/srv/repo/file')).toBe(true);
-    expect(containsCanonical('/srv/repo', '/srv/repository/file')).toBe(false);
+    const selected = path.join(os.tmpdir(), 'wks-boundary-repo');
+    expect(containsCanonical(selected, path.join(selected, 'file'))).toBe(true);
+    expect(
+      containsCanonical(selected, path.join(os.tmpdir(), 'wks-boundary-repository', 'file')),
+    ).toBe(false);
   });
 });
