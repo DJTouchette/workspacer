@@ -4,10 +4,10 @@
  * fragments that go with them. The facade is assumed to be already running at
  * http://127.0.0.1:7897/mcp — this module does NOT start it.
  *
- * Sessions granted the facade get a per-session SCOPED token (remoteTokens.ts)
- * carried as an Authorization header in a per-session config file, so the
- * facade serves them a TIER of its tools (view/triage/operator) instead of the
- * whole surface. The prompts here are deliberately short: detailed usage
+ * Every supported Workspacer-launched agent gets a per-session authenticated
+ * operator token (remoteTokens.ts), carried as an Authorization header in a
+ * per-session config file. Legacy external tokens may still use the historical
+ * view/triage scopes, but spawn inputs cannot narrow an agent's surface. The prompts here are deliberately short: detailed usage
  * guidance lives behind the facade's own `help` tool, fetched on demand, so
  * connected agents don't pay context for docs they may never need.
  */
@@ -80,7 +80,8 @@ export function managedFacadeInstructions(opts: {
  * Build the argv fragment that grants a spawned session the workspacer MCP
  * facade (--mcp-config + pre-allowed tools + an --append-system-prompt note).
  *
- * The session gets a short scope-appropriate role note for its tier.
+ * Spawned sessions use the operator role note; the scope parameter remains for
+ * compatibility with manually constructed external facade configs.
  *
  * When `token` is set the config is a per-session file carrying it as an
  * Authorization header, so the facade serves the session its tier; without a

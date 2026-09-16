@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -70,24 +68,11 @@ func spawnEchoParams(t *testing.T, ctx context.Context, cs *mcp.ClientSession, a
 // forward, so the hub's yoloGranted stamp (which it applies to the facade's
 // host-token conn regardless) never meets a live bypass request. The clamp is
 // silent — the spawn still succeeds, just with approvals on.
-func TestSpawnAgentClampsSkipPermissionsForAnUngrantedSession(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	cs := yoloGrantSession(t, ctx, false)
-	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "skipPermissions": true})
-	// omitempty on the wire: a clamped-false bool is dropped, so the provider
-	// must see NO truthy skipPermissions.
-	if params["skipPermissions"] == true {
-		t.Fatalf("ungranted session's skipPermissions was not clamped before forward: %v", params)
-	}
-}
-
 // TestSpawnAgentForwardsSkipPermissionsForAGrantedSession: a session token WITH
 // the full-access grant forwards skipPermissions untouched → the hub stamps
 // yoloGranted → the provider (here, the echo) receives the live request. The
 // positive half, end to end.
-func TestSpawnAgentForwardsSkipPermissionsForAGrantedSession(t *testing.T) {
+func TestSpawnAgentForwardsSkipPermissionsWithoutAGrantStamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -96,8 +81,8 @@ func TestSpawnAgentForwardsSkipPermissionsForAGrantedSession(t *testing.T) {
 	if params["skipPermissions"] != true {
 		t.Fatalf("granted session's skipPermissions must ride through the facade: %v", params)
 	}
-	if params["yoloGranted"] != true {
-		t.Fatalf("hub did not stamp yoloGranted on the facade's forwarded spawn: %v", params)
+	if _, stamped := params["yoloGranted"]; stamped {
+		t.Fatalf("obsolete yolo grant stamp reached the provider: %v", params)
 	}
 }
 
@@ -107,37 +92,11 @@ func TestSpawnAgentForwardsSkipPermissionsForAGrantedSession(t *testing.T) {
 // token (label from the request context; "untokened" over the in-memory test
 // transport) and the requested agent label; and NO line when nothing was
 // requested, so the log only speaks when a bypass was actually dropped.
-func TestSpawnAgentClampLogsTheStrip(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(prev)
-
-	cs := yoloGrantSession(t, ctx, false)
-	_ = spawnEchoParams(t, ctx, cs, map[string]any{
-		"cwd": "/tmp", "skipPermissions": true, "label": "worker-1",
-	})
-	out := buf.String()
-	if !strings.Contains(out, "requested skipPermissions without the full-access grant") ||
-		!strings.Contains(out, `"worker-1"`) || !strings.Contains(out, "untokened") {
-		t.Fatalf("stripped bypass must be logged with token + agent label, got:\n%s", out)
-	}
-
-	buf.Reset()
-	_ = spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "label": "worker-2"})
-	if strings.Contains(buf.String(), "full-access grant") {
-		t.Fatalf("a spawn that requested no bypass must not log a clamp line, got:\n%s", buf.String())
-	}
-}
-
 // TestServerCacheSeparatesYoloGrants: two records at the same tier with
 // different full-access grants must never share a server — the clamp is closed
 // over the build, so a shared server IS a shared grant. Also pins that a
 // yolo-only record does NOT collapse onto the shared (clamped) tier server.
-func TestServerCacheSeparatesYoloGrants(t *testing.T) {
+func TestServerCacheIgnoresLegacyYoloGrants(t *testing.T) {
 	client := busclient.New("ws://127.0.0.1:0/bus", "")
 	cache := newServerCache(client, newPluginCatalog(client), tierServers(client))
 
@@ -146,8 +105,8 @@ func TestServerCacheSeparatesYoloGrants(t *testing.T) {
 		t.Fatal("a grantless record should get the shared tier server")
 	}
 	full := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator, YoloAllowed: true})
-	if full == plain {
-		t.Fatal("a full-access record must not collapse onto the grantless (clamped) tier server")
+	if full != plain {
+		t.Fatal("a legacy full-access grant changed an otherwise identical server")
 	}
 	again := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator, YoloAllowed: true})
 	if again != full {

@@ -1,7 +1,8 @@
 // Command workspacer is the thin launcher for workspacer's headless server
 // mode. `workspacer serve` starts and supervises claudemon (the Rust session
-// daemon) and the hub (the Go event bus, run with --brain-scope full so it in
-// turn supervises a brain that provides the whole capability surface), wires
+// daemon), the hub (the Go event bus, run with --brain-scope full), and the
+// authenticated MCP facade used by spawned agents. The hub in
+// turn supervises a brain that provides the whole capability surface, wires
 // the ports and the shared auth token between them, and prints the URLs +
 // pairing token a remote client (/remote, /m, the TUI, MCP) needs. A
 // full-scope brain + claudemon IS the headless server — this binary only
@@ -22,7 +23,7 @@ import (
 const usage = `workspacer — headless server launcher for workspacer
 
 Usage:
-  workspacer serve        start claudemon + hub (+ brain) and supervise them
+  workspacer serve        start claudemon + hub + brain + MCP facade and supervise them
   workspacer plugin dev   boot the stack and hot-reload one plugin on file change
   workspacer status       report what's running on the workspacer ports
   workspacer token        mint / list / revoke capability-scoped bus tokens

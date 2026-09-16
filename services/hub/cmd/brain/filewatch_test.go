@@ -62,35 +62,6 @@ func TestHeadlessFileWatchReplacementAndReferences(t *testing.T) {
 	}
 }
 
-func TestHeadlessFileWatchRefusesEscapeAndStopsOnSymlinkSwap(t *testing.T) {
-	fx := newGitFixture(t)
-	r := registryWithCwds(t, fx.agentCwd)
-	count := 0
-	r.publish = func(string, json.RawMessage) { count++ }
-	outside := filepath.Join(fx.outside, "secret.txt")
-	for _, method := range []string{"fs.watch", "fs.unwatch"} {
-		raw, _ := json.Marshal(map[string]string{"path": outside})
-		if _, err := r.handle(context.Background(), method, raw); err == nil {
-			t.Fatalf("%s allowed outside path", method)
-		}
-	}
-	path := filepath.Join(fx.agentCwd, "tracked.ts")
-	raw, _ := json.Marshal(map[string]string{"path": path})
-	if _, err := r.handle(context.Background(), "fs.watch", raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, path); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	r.pollFileChanges(context.Background())
-	if count != 0 || len(r.fileWatches.paths) != 0 {
-		t.Fatal("watch survived an escaping symlink swap")
-	}
-}
-
 func TestHeadlessFileWatchFreezesIdentityAfterMissingFileAppears(t *testing.T) {
 	fx := newGitFixture(t)
 	r := registryWithCwds(t, fx.agentCwd)

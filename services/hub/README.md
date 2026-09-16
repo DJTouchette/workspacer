@@ -417,8 +417,9 @@ edits the file and is compiled into the binary.
 ## Headless server (`cmd/workspacer`)
 
 `workspacer` is the product face of headless mode: one thin launcher that
-starts **claudemon + hub** (the hub run with `--brain-scope full`, so it in
-turn supervises a brain providing the whole capability surface) and wires the
+starts **claudemon + hub + the authenticated MCP facade** (the hub runs with
+`--brain-scope full`, so it in turn supervises a brain providing the whole
+capability surface) and wires the
 ports and the shared auth token between them. A full-scope brain + claudemon
 *is* the headless server — this binary only launches, supervises (restart with
 backoff on crash, give-up after repeated failures, SIGTERM cascade on

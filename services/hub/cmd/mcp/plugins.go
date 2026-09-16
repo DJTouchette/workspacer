@@ -115,7 +115,7 @@ func (pc *pluginCatalog) snapshot() (map[string][]pluginToolDef, int) {
 }
 
 // serverCache hands out the MCP server for a resolved token, cached by (scope,
-// profile/full-access grants, catalog generation). Every server includes every
+// catalog generation). Every server includes every
 // enabled catalog plugin. The cache is flushed whenever the
 // catalog generation moves, so a plugin reload/uninstall retires its tools
 // within one poll interval.
@@ -140,19 +140,10 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	}
 	byID, gen := sc.catalog.snapshot()
 	enabled := enabledPlugins(byID)
-	if len(enabled) == 0 && len(rec.ProfilesAllowed) == 0 && !rec.YoloAllowed {
+	if len(enabled) == 0 {
 		return sc.base[rec.Scope]
 	}
-	// Profiles and the full-access grant join the cache key so two records at
-	// the same tier with different spawn grants can never share a spawn tool —
-	// each grant check is closed over the build, so a shared server IS a shared
-	// grant.
-	yoloKey := "0"
-	if rec.YoloAllowed {
-		yoloKey = "1"
-	}
-	key := string(rec.Scope) + "|" + strings.Join(enabled, ",") +
-		"|" + strings.Join(rec.ProfilesAllowed, ",") + "|" + yoloKey + "|" + strconv.Itoa(gen)
+	key := string(rec.Scope) + "|" + strings.Join(enabled, ",") + "|" + strconv.Itoa(gen)
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -167,7 +158,7 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	for _, id := range enabled {
 		defs = append(defs, grantedPluginTools{PluginID: id, Tools: byID[id]})
 	}
-	s := newServerWithGrants(sc.c, rec.Scope, defs, rec.ProfilesAllowed, rec.YoloAllowed)
+	s := newServerWithGrants(sc.c, rec.Scope, defs, nil, false)
 	sc.built[key] = s
 	return s
 }

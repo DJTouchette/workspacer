@@ -39,6 +39,7 @@ import { app } from 'electron';
 import {
   killStaleListener,
   waitForHealth,
+  probeHealth,
   PORTS,
   RestartBackoff,
   daemonSpawnOptions,
@@ -55,6 +56,8 @@ let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopMcpFacade() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
+/** True when a healthy facade owned by `workspacer serve` was adopted. */
+let adoptedExternal = false;
 const backoff = new RestartBackoff();
 
 function exeName(): string {
@@ -71,19 +74,31 @@ function mcpBinaryPath(): string {
 /** Spawn the facade. Idempotent — repeat calls return the existing ready promise. */
 export function startMcpFacade(): Promise<void> {
   if (readyPromise) return readyPromise;
-
-  const bin = mcpBinaryPath();
-  if (!fs.existsSync(bin)) {
-    noteRuntimePhase('facade', 'failed');
-    return Promise.reject(
-      new Error(
-        `mcp facade binary not found at ${bin} (run: cd services/hub && go build -o mcp ./cmd/mcp)`,
-      ),
-    );
-  }
-
   intentionalStop = false;
-  return launch(bin);
+  readyPromise = observeRuntimeStart(
+    'facade',
+    (async () => {
+      // `workspacer serve` may already own the canonical facade. Adopt a
+      // healthy listener before considering stale-port cleanup; otherwise the
+      // desktop kills the CLI's child and two supervisors fight over :7897.
+      if (await probeHealth(`http://${ADDR}/health`)) {
+        adoptedExternal = true;
+        backoff.reset();
+        console.log(`[mcp] adopted healthy external facade at ${ADDR}`);
+        return;
+      }
+
+      const bin = mcpBinaryPath();
+      if (!fs.existsSync(bin)) {
+        throw new Error(
+          `mcp facade binary not found at ${bin} (run: cd services/hub && go build -o mcp ./cmd/mcp)`,
+        );
+      }
+      adoptedExternal = false;
+      await launch(bin);
+    })(),
+  );
+  return readyPromise;
 }
 
 /**
@@ -180,15 +195,11 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = observeRuntimeStart(
-    'facade',
-    waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal).then(
-      () => {
-        backoff.reset();
-      },
-    ),
+  return waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal).then(
+    () => {
+      backoff.reset();
+    },
   );
-  return readyPromise;
 }
 
 /** Respawn after an unexpected exit, with exponential backoff. */
@@ -203,13 +214,15 @@ function scheduleRestart(bin: string): void {
   console.warn(`[mcp] unexpected exit — restarting in ${delay}ms`);
   setTimeout(() => {
     if (intentionalStop || child) return; // stopped, or already back up
-    launch(bin).catch((err) => console.error('[mcp] restart failed health check:', err));
+    readyPromise = observeRuntimeStart('facade', launch(bin));
+    readyPromise.catch((err) => console.error('[mcp] restart failed health check:', err));
   }, delay);
 }
 
 export function stopMcpFacade(): Promise<void> {
   intentionalStop = true;
   backoff.reset();
+  adoptedExternal = false;
   const c = child;
   child = null;
   readyPromise = null;

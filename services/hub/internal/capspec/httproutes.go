@@ -361,7 +361,7 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Server: "claudemon-api", Pattern: "/sessions/:id/permission-mode", Disposition: RouteLoopbackConfined,
-		Reason:   "live permission-mode switch. The bus twin runs the shared escalation allow-list (assertNoPermissionBypass, the 'second door' the spawn clamp names); this route applies only its own vocabulary validation, so escalation is refused on the bus and accepted here",
+		Reason:   "live permission-mode switch. Both host and authenticated agent routes apply only provider vocabulary validation; Workspacer no longer maintains a separate bypass grant",
 		Twin:     "claude.setPermissionMode",
 		TwinKind: TwinMethod,
 	},

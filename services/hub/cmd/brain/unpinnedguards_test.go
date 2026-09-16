@@ -122,42 +122,6 @@ func TestClaudeScopeRemoveRefusesAnIdThatIsNotABasename(t *testing.T) {
 // workspaceRoots to browseRoots left every hub package green while library.save
 // wrote an attacker-authored SUBAGENT DEFINITION — prompt and tool instructions
 // Claude loads and executes — into `<any dir under $HOME>/.claude/agents/`.
-func TestClaudeScopeSaveIsConfinedToTheWorkspaceNotTheHomeTree(t *testing.T) {
-	home, _ := sandboxHome(t)
-	// A directory under $HOME that no agent runs in: inside the BROWSE roots,
-	// outside the WORKSPACE roots. That is the entire distinction.
-	victim := filepath.Join(home, "victim-project")
-	if err := os.MkdirAll(victim, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	live, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := registryWithCwd(t, live)
-
-	// Floor first: the LIVE agent cwd is writable, so a refusal below is about
-	// the root set and not about claude-scope saves being broken.
-	raw, _ := json.Marshal(map[string]any{
-		"scope": "claude", "kind": "agent", "id": "ok", "title": "ok",
-		"body": "hello", "cwd": live,
-	})
-	if _, err := reg.handle(context.Background(), "library.save", raw); err != nil {
-		t.Fatalf("floor: a claude-scope save into a live agent cwd must be allowed: %v", err)
-	}
-
-	raw, _ = json.Marshal(map[string]any{
-		"scope": "claude", "kind": "agent", "id": "pwned", "title": "pwned",
-		"body": "ATTACKER-CONTROLLED SUBAGENT DEFINITION", "cwd": victim,
-	})
-	if _, err := reg.handle(context.Background(), "library.save", raw); err == nil {
-		t.Fatal("library.save{scope:claude} into a home-tree directory with no live agent was ALLOWED — the claude leg is using the BROWSE roots, and its payload is a subagent definition Claude executes")
-	}
-	if _, err := os.Stat(filepath.Join(victim, ".claude", "agents", "pwned.md")); err == nil {
-		t.Fatal("the refused save still planted the file")
-	}
-}
-
 // ── libraryItemDirs: the global store must be RESOLVED ───────────────────────
 
 // The comment above that line states the property outright — "configDir() itself

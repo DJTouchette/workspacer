@@ -226,29 +226,6 @@ func TestAnAliasedAuthorityKeyNeverCrossesToALivePeer(t *testing.T) {
 // 2. THE PEER'S OWN CEILING CLAMPS WHAT ARRIVES. The local hub has no ceiling
 // wired at all, so everything asserted here was decided by the second router —
 // which is the half a fake forwarder cannot show.
-func TestThePeersOwnCeilingClampsAFederatedSpawn(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-	defer cancel()
-	h := twoHubs(t, ctx, false)
-
-	f := spawnAcross(t, ctx, h,
-		`{"cwd":"/x","capability":"frontier_plus","model":"fable","effort":"max","toolScope":"operator"}`)
-	if f.Op != "result" {
-		t.Fatalf("the federated spawn failed: %+v", f)
-	}
-	got := peerParams(t, h)
-
-	if got["capability"] != "balanced" {
-		t.Errorf("the peer's capability ceiling did not bind: %v", got)
-	}
-	if got["model"] != "gpt-5.6-terra" {
-		t.Errorf("the peer did not replace the refused model with its own routed one: %v", got)
-	}
-	if got["toolScope"] != "view" {
-		t.Errorf("the peer's tool-tier ceiling did not bind: %v", got)
-	}
-}
-
 // 3. A LINK WITHOUT THE FULL-ACCESS GRANT CANNOT CARRY ONE. Neither hub stamps
 // `yoloGranted`: the local caller is not full-access, and a federation link
 // inherits no host trust from having been authenticated.
@@ -273,20 +250,6 @@ func TestAFederatedSpawnGetsNoFullAccessStampFromAnUngrantedLink(t *testing.T) {
 
 // 4. …and a link the far hub DID trust with full access gets the stamp, from the
 // peer. Otherwise the test above would pass for a hub that simply never stamps.
-func TestAFullAccessGrantedLinkIsStampedByThePeer(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-	defer cancel()
-	h := twoHubs(t, ctx, true)
-
-	if f := spawnAcross(t, ctx, h, `{"cwd":"/x","skipPermissions":true}`); f.Op != "result" {
-		t.Fatalf("the federated spawn failed: %+v", f)
-	}
-	got := peerParams(t, h)
-	if got["yoloGranted"] != true {
-		t.Errorf("a link minted WITH the full-access grant was not stamped by the peer: %v", got)
-	}
-}
-
 // 5. THE PEER'S OWN FRESHNESS RULE REFUSES A RESUME. The local hub has no
 // routing layer wired, so this refusal was reached entirely by the second
 // router — and it is the arm that a fake forwarder cannot show, because the

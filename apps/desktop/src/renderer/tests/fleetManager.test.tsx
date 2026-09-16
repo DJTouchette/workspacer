@@ -176,7 +176,7 @@ describe('spawnFleetManager', () => {
     expect(claudeMessage).not.toHaveBeenCalled();
   });
 
-  it('spawns chat-first at operator tier with the manager flag and an auto-sent kickoff', async () => {
+  it('spawns chat-first with the manager flag and an auto-sent kickoff', async () => {
     const hook = renderHook(() => useAgentManager());
     await act(async () => {
       await hook.result.current.spawnFleetManager('status please', '/home/u/Work');
@@ -186,7 +186,6 @@ describe('spawnFleetManager', () => {
     expect(opts).toMatchObject({
       cwd: '/home/u/Work',
       transport: 'stream',
-      toolScope: 'operator',
       manager: true,
     });
     // The kickoff is the doctrine + the ask, auto-sent — and it rides the SPAWN
@@ -228,7 +227,6 @@ describe('spawnFleetManager', () => {
       'SCOUT/REVIEW',
       'worktree:true',
       'projects[<dir>].delivery',
-      'yolo:true',
       '/standup',
       '/checkpoint',
       '/handoff',
@@ -254,7 +252,6 @@ describe('spawnFleetManager', () => {
     expect(spawnClaude.mock.calls[0][0]).toMatchObject({
       provider: 'codex',
       transport: 'stream',
-      toolScope: 'operator',
       manager: true,
       fleetFullAccess: true,
     });

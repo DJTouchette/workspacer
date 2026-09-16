@@ -109,6 +109,30 @@ beforeEach(() => {
 });
 
 describe('SpawnAgentDialog permissions', () => {
+  it('shows Pi as unsupported and prevents a misleading tool-less launch', async () => {
+    const onSpawn = vi.fn();
+    api.providerCheckAll = vi
+      .fn()
+      .mockResolvedValue([
+        { provider: 'pi', found: true, resolvedPath: '/usr/bin/pi', customBin: '' },
+      ]);
+    render(
+      <SpawnAgentDialog
+        defaultCwd="/repo"
+        defaultProvider="pi"
+        onSpawn={onSpawn}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/Pi is unsupported because its CLI has no MCP bridge/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start agent/i })).toBeDisabled();
+    expect(screen.getByText('UNSUPPORTED')).toBeInTheDocument();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
   it('keeps advanced controls collapsed while allowing directory-only spawn', () => {
     const { onSpawn } = renderDialog();
 

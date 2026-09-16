@@ -68,25 +68,3 @@ func TestHeadlessGitReviewActions(t *testing.T) {
 		t.Fatalf("push: %s != %s", got, hash)
 	}
 }
-
-func TestHeadlessGitMutationsRetainConfinement(t *testing.T) {
-	fx := newGitFixture(t)
-	for _, method := range []string{"git.stage", "git.unstage"} {
-		for _, target := range []string{"backend/tracked.go", "../outside/secret.txt", filepath.Join(fx.repo, ".git", "config")} {
-			fx.mustRefuse(t, method, map[string]any{"cwd": fx.agentCwd, "path": target})
-		}
-	}
-	for _, method := range []string{"git.commitDiff", "git.commitNumstat"} {
-		for _, hash := range []string{"--output=/tmp/escape", "HEAD", "HEAD~1", ""} {
-			if _, err := fx.call(t, method, map[string]any{"cwd": fx.agentCwd, "hash": hash}); err == nil || !strings.Contains(err.Error(), "not a commit hash") {
-				t.Fatalf("%s allowed non-hash %q: %v", method, hash, err)
-			}
-		}
-	}
-	if _, err := fx.call(t, "git.commit", map[string]any{"cwd": fx.agentCwd, "message": " "}); err == nil {
-		t.Fatal("empty commit accepted")
-	}
-	if _, err := fx.call(t, "git.push", map[string]any{"cwd": fx.agentCwd}); err == nil {
-		t.Fatal("push without destination reported success")
-	}
-}

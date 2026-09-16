@@ -148,7 +148,6 @@ it('prepares one exact step with a conditional decision and returns canonical di
       role: 'scout',
       stage: 'scout',
       template: 'scout-task',
-      toolScope: 'view',
     },
   });
   if (!prepared.ok || !prepared.dispatch) throw new Error('No dispatch plan');

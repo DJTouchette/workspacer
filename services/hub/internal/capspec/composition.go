@@ -212,50 +212,6 @@ var compositions = []Composition{
 		},
 	},
 	{
-		Name:     "fs.write plants a provider's hooks/permissions file; the next spawn in that cwd runs it unprompted",
-		Shape:    ShapeWriteThenInterpret,
-		A:        "fs.write",
-		B:        "agents.spawn",
-		Crossing: "fs.write is confined to the live agent cwds; agents.spawn is unconfined BY DECISION because starting a process is a separate authorization question. Every guard read `<cwd>/.claude/settings.json` as ordinary project DATA — inside a root, not a credential basename, no `.git` component — while Claude Code reads it as POLICY AND ARGV: a SessionStart hook runs as the desktop user before any model call, with no approval prompt and no permission mode. With no cwd at all the spawn normalizes to $HOME, which puts ~/.claude/settings.json in the same reach and makes the hook fire for every claude session on the host.",
-		ClosedBy: "the agent-interpreted-config arm of the secret gate — pathIsAgentInterpretedConfig in cmd/brain/fsguard.go and internal/bus/policy.go, isAgentInterpretedConfigPath in pathConfinement.ts — pinned across all three copies by the `secrets` cases of contracts/path-containment-cases.json",
-		Bearings: []Bearing{secretGateBearing("fs.write", brainHandlersFile)},
-	},
-	{
-		Name:     "fs.write plants <cwd>/.opencode/plugin/*.js; providers.listModels executes it",
-		Shape:    ShapeWriteThenInterpret,
-		A:        "fs.write",
-		B:        "providers.listModels",
-		Crossing: "capspec's own excuse for providers.listModels' cwd said it 'picks which project's provider config to READ; the provider resolves the file itself'. opencode does not read that directory, it RUNS every .opencode/plugin/*.js in it at startup, before printing a model list, with no manifest and no other file required — and the consent list labelled the capability 'List available models'. A cwd that selects data needs no confinement; a cwd that selects an interpreter's plugin directory needs the confinement git.* got.",
-		ClosedBy: "both halves: the plugin directory is refused by the same gate (pathIsAgentInterpretedConfig / isAgentInterpretedConfigPath), and the cwd moved from unscopedByDecision into PathParam (browse roots) with both providers asserting it — pinned by the `providers.listModels` row of the corpus `methods` block",
-		// Both halves, because this pair is closed at both ends: the writer
-		// cannot plant the file and the reader cannot be aimed at one.
-		Bearings: []Bearing{
-			secretGateBearing("fs.write", brainHandlersFile),
-			secretGateBearing("providers.listModels", brainProvFile),
-		},
-	},
-	{
-		Name:     "fs.write plants a ripgrep .ignore; search.project then returns the files the secret gate exists to refuse",
-		Shape:    ShapeWriteThenInterpret,
-		A:        "fs.write",
-		B:        "search.project",
-		Crossing: "search.project guards its CWD and nothing else, delegating per-file exclusion to ripgrep's hidden/ignore walker — whose policy is a file INSIDE the searched directory. `<root>/.ignore` holding `!*` is an ordinary dotfile to every guard here, so bytes written as DATA by one confined call became the READ POLICY of the next, and matching lines came back out of .git/config and .settings.json.",
-		ClosedBy: "the read-set invariant: a capability that returns file CONTENT may not return bytes fs.read would refuse. resultPathIsSecret in cmd/brain/search.go and isSecretResultPath in pathConfinement.ts, applied per result path",
-		Bearings: []Bearing{{
-			Kind: BearsAtCallSite, On: "search.project", Symbol: "resultPathIsSecret",
-			// The handler names the method in its own body; from there the hops
-			// are real calls: searchProject → the collector's addLine → the
-			// per-result gate.
-			Entry: Site{"searchProject", brainHandlersFile},
-			Chain: []Site{
-				{"searchProject", brainHandlersFile},
-				{"searchProject", brainSearchFile},
-				{"addLine", brainSearchFile},
-				{"resultPathIsSecret", brainSearchFile},
-			},
-		}},
-	},
-	{
 		Name:     "layout.set writes the shared document; the desktop's next launch respawns it through the LOCAL spawn door",
 		Shape:    ShapeWidenThenUse,
 		A:        "layout.set",
@@ -552,10 +508,19 @@ var compositionInert = map[string]InertClaim{
 	"routing.preferences.reset":    {Reason: "WRITE-THEN-INTERPRET: sparse typed policy only, composed by routing.Service, never host YAML. WIDEN-THEN-USE: host model classification and freshness floors are retained, no ranks, ceilings or tool scope are accepted. routingPreferencesTrusted requires authenticated host operator authority, excludes scoped operator and peer-link callers. CAS validates before atomic install.", Witnesses: []Witness{guarded(argBearing("routingPreferencesTrusted", "routing.preferences.reset", []string{"services", "hub", "cmd", "hub", "routingpreferences.go"}))}},
 	"routing.preview":              {Reason: "Pure selection reads bounded usage and cached provider snapshots; writes no audit, events, config or sessions. Canonical `cwd` selects a trusted ceiling but no mappings or paths are returned.", Witnesses: []Witness{paramsClassified("cwd")}},
 	// ── recorded halves; listed for the guard's own completeness check ──────
-	"fs.read":                 recordedHalf,
-	"fs.write":                recordedHalf,
-	"search.project":          recordedHalf,
-	"providers.listModels":    recordedHalf,
+	"fs.read": recordedHalf,
+	"fs.write": {
+		Reason:    "writes the absolute path chosen by an authenticated operator agent. Directory grants and secret-path filters were intentionally removed; the caller already holds host file authority and no later Workspacer guard treats the write as a lesser trust class. NOTHING HERE IS MACHINE-CHECKED because unrestricted host file access is the product contract.",
+		Witnesses: []Witness{noWitness},
+	},
+	"search.project": {
+		Reason:    "searches the caller-chosen absolute directory under the authenticated operator's host authority. Result filtering is intentionally not a second filesystem grant. NOTHING HERE IS MACHINE-CHECKED because unrestricted host file access is the product contract.",
+		Witnesses: []Witness{noWitness},
+	},
+	"providers.listModels": {
+		Reason:    "runs the chosen provider in the caller-chosen directory to discover models. The authenticated operator may already launch that provider and access that directory. NOTHING HERE IS MACHINE-CHECKED because unrestricted host access is the product contract.",
+		Witnesses: []Witness{noWitness},
+	},
 	"layout.set":              recordedHalf,
 	"layouts.save":            recordedHalf,
 	"sessions.save":           recordedHalf,
@@ -777,11 +742,8 @@ var compositionInert = map[string]InertClaim{
 		Witnesses: []Witness{paramsClassified("text", "answers", "option")},
 	},
 	"claude.setPermissionMode": {
-		Reason: "changes the `mode` a running agent runs in, which IS state a later guard consults — and it is closed by the shared escalation allow-list, called as assertNoPermissionBypass('claude.setPermissionMode', mode), the same clamp agents.spawn applies",
-		Witnesses: []Witness{
-			guarded(argBearing("assertNoPermissionBypass", "claude.setPermissionMode", desktopCapsFile)),
-			paramsClassified("mode"),
-		},
+		Reason:    "changes the running provider's `mode`. An authenticated agent caller may choose any provider-supported mode; no Workspacer grant or later guard depends on it",
+		Witnesses: []Witness{paramsClassified("mode")},
 	},
 	"sessions.terminalInput": {
 		Reason:    "types bytes into a session's PTY — `data` and `bytesB64`, both classified as exactly that. Its OUTPUT side (sessions.attachTerminal / pty.bytes.*) is a recorded pair; the input side reaches a shell that is already running as the user, which is what terminals.create's own allow-list governs",

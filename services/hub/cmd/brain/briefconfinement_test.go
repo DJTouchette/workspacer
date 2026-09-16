@@ -117,53 +117,7 @@ func (fx briefFixture) mustRefuse(t *testing.T, method string, params map[string
 	}
 }
 
-// ── brief.append: the caller names a DIRECTORY ──────────────────────────────
-
-func TestBriefAppendCannotWriteOutsideTheAllowedRoots(t *testing.T) {
-	fx := newBriefFixture(t)
-
-	for _, c := range []struct{ name, project string }{
-		{"a plain directory outside every root", fx.outside},
-		{"another project on the same machine", fx.sibling},
-		{"the sandbox itself, which CONTAINS the allowed root", fx.sandbox},
-		{"the home directory", filepath.Join(fx.sandbox, "home")},
-		{"a traversal out of the allowed root", filepath.Join(fx.agentCwd, "..", "outside")},
-		{"a traversal dressed as a subdirectory", filepath.Join(fx.agentCwd, "sub", "..", "..", "outside")},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			fx.mustRefuse(t, "brief.append", map[string]any{
-				"project": c.project, "section": "Recently", "line": "planted by a bus caller",
-			})
-			// Nothing was written where it was aimed. A refusal that still
-			// created the file would be the whole failure, reported as a
-			// success only to whoever looked at the disk.
-			if _, err := os.Stat(briefPathFor(c.project)); err == nil {
-				body, _ := os.ReadFile(briefPathFor(c.project))
-				if strings.Contains(string(body), "planted by a bus caller") {
-					t.Fatalf("a REFUSED brief.append still wrote to %s", briefPathFor(c.project))
-				}
-			}
-		})
-	}
-
-	// THE CONTROL. The guard must not simply deny everything: the caller's OWN
-	// project is allowed, or every case above passes for the wrong reason.
-	res, err := fx.call(t, "brief.append", map[string]any{
-		"project": fx.agentCwd, "section": "Recently", "line": "legitimate line",
-	})
-	if err != nil {
-		t.Fatalf("the allowed project was REFUSED, so every denial above proves nothing: %v", err)
-	}
-	if !strings.Contains(res, "legitimate line") {
-		t.Errorf("the allowed append did not report the line it wrote: %s", truncate(res))
-	}
-	body, err := os.ReadFile(briefPathFor(fx.agentCwd))
-	if err != nil || !strings.Contains(string(body), "- legitimate line") {
-		t.Fatalf("the allowed append did not land on disk: %v / %s", err, body)
-	}
-}
-
-// THE SUBTLE ONE, and the reason the brief path is composed under the guard's
+// ── brief.append: the caller names a DIRECTORY ──────────────────────────────// THE SUBTLE ONE, and the reason the brief path is composed under the guard's
 // CANONICAL answer rather than under the caller's string.
 //
 // `project` passes the guard — it IS the allowed agent cwd. But the directory
@@ -192,22 +146,7 @@ func TestBriefAppendDoesNotFollowASymlinkedWorkspacerDirectory(t *testing.T) {
 	}
 }
 
-// ── fs.readImage: the path guard AND the extension allowlist ────────────────
-
-func TestReadImageCannotEscapeTheAllowedRoots(t *testing.T) {
-	fx := newBriefFixture(t)
-	for _, c := range []struct{ name, path string }{
-		{"an image outside every root", filepath.Join(fx.outside, "photo.png")},
-		{"another project's tree", filepath.Join(fx.sibling, ".workspacer", "brief.md")},
-		{"a traversal out of the allowed root", filepath.Join(fx.agentCwd, "..", "outside", "photo.png")},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			fx.mustRefuse(t, "fs.readImage", map[string]any{"path": c.path})
-		})
-	}
-}
-
-// THE SECOND HALF, and the one a path guard alone does not close: inside an
+// ── fs.readImage: the path guard AND the extension allowlist ────────────────// THE SECOND HALF, and the one a path guard alone does not close: inside an
 // allowed root, only allowlisted extensions are served. Without it, fs.readImage
 // returns the bytes of any file an agent's cwd contains, base64'd into a data:
 // URL — a general-purpose file reader wearing the name of a thumbnailer.

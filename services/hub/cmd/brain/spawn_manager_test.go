@@ -76,44 +76,6 @@ func TestManagerSpawnIsRecordedAsAWakeTarget(t *testing.T) {
 // an ordinary spawn. If `manager` ever grows a privilege implication it must
 // move behind the hub-verified stamp instead, and this test should fail loudly
 // when someone wires one in.
-func TestManagerSpawnGrantsNoBypass(t *testing.T) {
-	reg, _, pty := managerSpawnRig(t)
-	// The most aggressive thing an ungranted bus caller can ask for, with
-	// `manager` asserted alongside in the hope it unlocks something.
-	params := []byte(`{"cwd":"/tmp","transport":"pty","manager":true,"skipPermissions":true,"permissionMode":"bypassPermissions"}`)
-	if _, err := reg.handle(context.Background(), "agents.spawn", params); err != nil {
-		t.Fatal(err)
-	}
-	if containsStr(pty.Argv, "--dangerously-skip-permissions") {
-		t.Errorf("manager:true must not unlock --dangerously-skip-permissions for an ungranted bus caller, got %v", pty.Argv)
-	}
-	if containsPair(pty.Argv, "--permission-mode", "bypassPermissions") {
-		t.Errorf("manager:true must not unlock a bypass permission mode for an ungranted bus caller, got %v", pty.Argv)
-	}
-}
-
 // TestManagerSpawnDoesNotSelfGrantOnTheManagedLeg is the same clamp on the leg
 // that carries the bypass as a wire field rather than argv, so neither spawn
 // path can become the manager-shaped escalation door.
-func TestManagerSpawnDoesNotSelfGrantOnTheManagedLeg(t *testing.T) {
-	reg, managed, _ := managerSpawnRig(t)
-	params := []byte(`{"cwd":"/tmp","provider":"codex","manager":true,"skipPermissions":true}`)
-	if _, err := reg.handle(context.Background(), "agents.spawn", params); err != nil {
-		t.Fatal(err)
-	}
-	body, _ := json.Marshal(managed)
-	var m map[string]any
-	_ = json.Unmarshal(body, &m)
-	for _, k := range []string{"yolo", "skip_permissions", "permission_mode"} {
-		switch v := m[k].(type) {
-		case bool:
-			if v {
-				t.Errorf("manager:true must not set %q on an ungranted managed spawn: %s", k, body)
-			}
-		case string:
-			if isPermissionEscalation(v) {
-				t.Errorf("manager:true must not set %q to a bypass mode on an ungranted managed spawn: %s", k, body)
-			}
-		}
-	}
-}

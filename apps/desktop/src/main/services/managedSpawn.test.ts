@@ -158,13 +158,29 @@ beforeEach(() => {
 });
 
 describe('spawnManagedAgent — ordinary collaboration skills', () => {
-  it.each(['claude', 'codex', 'copilot', 'opencode', 'pi'] as const)(
+  it.each(['claude', 'codex', 'copilot', 'opencode'] as const)(
     'runs the provider-aware installer for %s spawns',
     async (provider) => {
       await spawnManagedAgent({ provider, cwd: '/proj', transport: 'stream' });
       expect(collaborationSkills).toHaveBeenCalledWith(provider, '/proj');
+      expect(mintSessionFacadeToken).toHaveBeenCalledWith(
+        expect.any(String),
+        'operator',
+        ['*'],
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(lastManaged().instructions).toContain('FACADE');
     },
   );
+
+  it('refuses Pi visibly because its CLI has no MCP bridge', async () => {
+    await expect(spawnManagedAgent({ provider: 'pi', cwd: '/proj' })).rejects.toThrow(
+      'Pi is not supported',
+    );
+    expect(collaborationSkills).not.toHaveBeenCalled();
+  });
 
   it('carries the fallback pointer in the managed instruction channel', async () => {
     collaborationSkills.mockReturnValue('READ THE ORDINARY AGENT SKILLS');
@@ -228,7 +244,7 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect(lastManaged().contextWindow).toBeUndefined();
   });
 
-  it.each(['copilot', 'opencode', 'pi'] as const)(
+  it.each(['copilot', 'opencode'] as const)(
     'refuses an invented context request for %s at the shared spawn boundary',
     async (provider) => {
       await expect(
@@ -274,7 +290,7 @@ describe('spawnManagedAgent — codex headless (stream) wire shape', () => {
     expect(lastMeta().transport).toBe('pty');
   });
 
-  it.each(['opencode', 'pi'] as const)(
+  it.each(['opencode'] as const)(
     '%s never sends a transport key, even if a caller passes one',
     async (provider) => {
       await spawnManagedAgent({ provider, transport: 'stream', cwd: '/proj' });
@@ -474,12 +490,12 @@ describe('spawnManagedAgent — win32 codex', () => {
   });
 });
 
-describe('spawnManagedAgent — facade tool tiers', () => {
-  it('codex + toolScope mints a token and carries it as a ?t= query on the facade URL', async () => {
+describe('spawnManagedAgent — automatic operator facade', () => {
+  it('codex ignores legacy toolScope and carries an operator token on the facade URL', async () => {
     await spawnManagedAgent({ provider: 'codex', cwd: '/proj', toolScope: 'view' });
 
     expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
-    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('view');
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
     expect(lastManaged().mcp).toBe('http://127.0.0.1:0/mcp?t=tok-abc');
     expect(lastManaged().instructions).toContain('FACADE');
     expect(lastManaged().instructions).not.toContain('wks-escalation');
@@ -493,7 +509,7 @@ describe('spawnManagedAgent — facade tool tiers', () => {
       toolScope: 'triage',
     });
 
-    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('triage');
+    expect(mintSessionFacadeToken.mock.calls[0][1]).toBe('operator');
     // The config FILE rides extraArgs; the token itself must not be in argv.
     const extraArgs = lastManaged().extraArgs as string[];
     expect(extraArgs[extraArgs.indexOf('--mcp-config') + 1]).toBe('/cfg/session-facade.json');
@@ -511,25 +527,31 @@ describe('spawnManagedAgent — facade tool tiers', () => {
     expect(lastManaged().mcp).toBe('http://127.0.0.1:0/mcp?t=tok-abc');
   });
 
-  it('pi gets instructions but no token (it has no MCP client to spend it on)', async () => {
-    await spawnManagedAgent({ provider: 'pi', cwd: '/proj', toolScope: 'operator' });
-
-    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
-    expect(lastManaged().instructions).toContain('FACADE');
-    expect(lastManaged().instructions).not.toContain('wks-escalation');
+  it('Pi is rejected rather than launched without its required tools', async () => {
+    await expect(
+      spawnManagedAgent({ provider: 'pi', cwd: '/proj', toolScope: 'operator' }),
+    ).rejects.toThrow('Pi is not supported');
+    expect(spawnManagedMock).not.toHaveBeenCalled();
   });
 
-  it('an ordinary pane with no facade gets no token, mcp, or fleet contract', async () => {
+  it('an ordinary pane gets the operator facade without requesting it', async () => {
     await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
 
-    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
-    expect(lastManaged()).not.toHaveProperty('mcp');
-    expect(lastManaged()).not.toHaveProperty('instructions');
+    expect(mintSessionFacadeToken).toHaveBeenCalledWith(
+      expect.any(String),
+      'operator',
+      ['*'],
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(lastManaged().mcp).toContain('t=tok-abc');
+    expect(lastManaged().instructions).toContain('FACADE');
   });
 });
 
-describe('spawnManagedAgent — manager grants (config-resolved, stream path)', () => {
-  it('a manager spawn mints role "manager" with the yolo grant resolved from config, not the caller flag', async () => {
+describe('spawnManagedAgent — manager identity without legacy grants', () => {
+  it('a manager token keeps its role and omits yolo/profile grants', async () => {
     // Caller passes a stale fleetFullAccess:true (e.g. a respawn re-passing
     // the value frozen at the original spawn) but config has since revoked it:
     // the re-minted token must be ungranted.
@@ -542,11 +564,12 @@ describe('spawnManagedAgent — manager grants (config-resolved, stream path)', 
       fleetFullAccess: true,
     });
 
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
+    expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
     expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('manager');
   });
 
-  it('agents.fleetFullAccess (or a per-project yolo) grants the manager token without any caller flag', async () => {
+  it('legacy full-access config no longer changes the token grant shape', async () => {
     mockConfig = { agents: { fleetFullAccess: true } };
     await spawnManagedAgent({
       provider: 'claude',
@@ -555,7 +578,7 @@ describe('spawnManagedAgent — manager grants (config-resolved, stream path)', 
       manager: true,
       toolScope: 'operator',
     });
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
 
     mockConfig = { projects: { '/proj/app': { yolo: true } } };
     await spawnManagedAgent({
@@ -565,7 +588,7 @@ describe('spawnManagedAgent — manager grants (config-resolved, stream path)', 
       manager: true,
       toolScope: 'operator',
     });
-    expect(mintSessionFacadeToken.mock.calls[1][4]).toBe(true);
+    expect(mintSessionFacadeToken.mock.calls[1][4]).toBeUndefined();
   });
 });
 
@@ -573,14 +596,13 @@ describe('spawnManagedAgent — manager grants (config-resolved, stream path)', 
 describe('spawnManagedAgent — resultSchema', () => {
   const schema = { type: 'object', properties: { commit: { type: 'string' } } };
 
-  it('rides the first-turn instructions for a PLAIN (non-facade) managed worker', async () => {
+  it('joins the automatic facade instructions with a structured result contract', async () => {
     await spawnManagedAgent({ provider: 'opencode', cwd: '/proj', resultSchema: schema });
     const instructions = lastManaged().instructions as string;
     expect(instructions).toContain('wks-result');
     expect(instructions).toContain('"commit"');
-    // No facade was asked for, so no facade role text and no mcp URL.
-    expect(instructions).not.toContain('FACADE');
-    expect(lastManaged().mcp).toBeUndefined();
+    expect(instructions).toContain('FACADE');
+    expect(lastManaged().mcp).toBeTruthy();
   });
 
   it('JOINS the facade role note and the contract rather than dropping one', async () => {
@@ -751,7 +773,7 @@ describe('spawnManagedAgent — firstMessage', () => {
 });
 
 describe('spawnManagedAgent — fleet-worker terminal escalation contract', () => {
-  it.each(['codex', 'copilot', 'opencode', 'pi'] as const)(
+  it.each(['codex', 'copilot', 'opencode'] as const)(
     '%s receives the contract without a facade or resultSchema',
     async (provider) => {
       await spawnManagedAgent({ provider, cwd: '/proj', parentSessionId: 'manager-1' });
@@ -814,7 +836,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     expect(lastMeta()).toMatchObject({ isWakeTarget: true, provider: 'codex' });
   });
 
-  it('mints its token with the manager role, profile grants and the config yolo grant', async () => {
+  it('mints an ambient operator token with the manager role and no legacy grants', async () => {
     await spawnManagedAgent({
       provider: 'codex',
       transport: 'stream',
@@ -828,13 +850,9 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     )! as unknown[];
     expect(typeof sessionId).toBe('string');
     expect(scope).toBe('operator');
-    expect(plugins).toBeUndefined();
-    // profilesAllowed: the hub verifies this and stamps profileGranted on the
-    // worker spawn, which is how a manager dispatches under another account.
-    expect(profiles).toEqual(['default']);
-    // yoloAllowed: config-resolved (never the caller's flag) — without it every
-    // dispatched worker's skipPermissions is clamped off by the hub.
-    expect(yolo).toBe(true);
+    expect(plugins).toEqual(['*']);
+    expect(profiles).toBeUndefined();
+    expect(yolo).toBeUndefined();
     expect(role).toBe('manager');
     // …and the facade actually attaches, with the token on the URL (codex
     // registers MCP servers by URL and cannot send headers).
@@ -852,7 +870,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     expect(installManagerSkills).toHaveBeenCalledWith('codex');
   });
 
-  it('drops the yolo grant when config says so, without touching the role', async () => {
+  it('does not mint a yolo grant when config changes, while retaining the role', async () => {
     mockConfig = { agents: { fleetFullAccess: false } };
     await spawnManagedAgent({
       provider: 'codex',
@@ -865,7 +883,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
       fleetFullAccess: true,
     });
     const call = mintSessionFacadeToken.mock.calls.at(-1)! as unknown[];
-    expect(call[4]).toBe(false);
+    expect(call[4]).toBeUndefined();
     expect(call[5]).toBe('manager');
   });
 });
@@ -897,15 +915,15 @@ describe('spawnManagedAgent — a Fleet Manager on copilot', () => {
       fleetFullAccess: true,
     });
 
-  it('is wake-eligible, tokened at operator tier, and holds the manager grants', async () => {
+  it('is wake-eligible and tokened at operator tier without legacy grants', async () => {
     await spawnCopilotManager();
     expect(lastMeta()).toMatchObject({ isWakeTarget: true, provider: 'copilot' });
     const [, scope, , profiles, yolo, role] = mintSessionFacadeToken.mock.calls.at(
       -1,
     )! as unknown[];
     expect(scope).toBe('operator');
-    expect(profiles).toEqual(['default']);
-    expect(yolo).toBe(true);
+    expect(profiles).toBeUndefined();
+    expect(yolo).toBeUndefined();
     expect(role).toBe('manager');
     // The facade URL carries the token: copilot registers servers by URL in its
     // --additional-mcp-config document, same as codex's -c override.

@@ -48,12 +48,16 @@ func resolveBrainBin(flagVal string) string {
 
 // brainArgs builds the brain's argv from the hub's own settings so the two agree
 // on bus URL, auth, claudemon, and scope.
-func brainArgs(addr, claudemonURL, scope string) []string {
-	return []string{
+func brainArgs(addr, claudemonURL, scope, mcpFacadeURL string) []string {
+	args := []string{
 		"--hub", "ws://" + busDialAddr(addr) + "/bus",
 		"--claudemon", claudemonURL,
 		"--scope", scope,
 	}
+	if mcpFacadeURL != "" {
+		args = append(args, "--mcp-facade", mcpFacadeURL)
+	}
+	return args
 }
 
 // busDialAddr turns the hub's BIND address into one its own child can dial.

@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // argsAfter returns the value following flag in args, or "".
@@ -59,6 +64,34 @@ func TestBuildServePlanWiring(t *testing.T) {
 				}
 				if hasFlag(p.Hub.Args, "--brain-bin") || hasFlag(p.Hub.Args, "--plugins-dir") || hasFlag(p.Hub.Args, "--webapp-dir") {
 					t.Errorf("optional flags leaked into hub argv: %v", p.Hub.Args)
+				}
+			},
+		},
+		{
+			name: "verified MCP facade is supervised and forwarded to the brain",
+			opts: func() serveOptions {
+				o := base
+				o.MCPBin, o.MCPPort = "/bin/mcp", 17897
+				return o
+			}(),
+			want: func(t *testing.T, p servePlan) {
+				if p.MCP.Bin != "/bin/mcp" {
+					t.Fatalf("MCP child = %+v", p.MCP)
+				}
+				if got := argsAfter(p.MCP.Args, "--addr"); got != "127.0.0.1:17897" {
+					t.Errorf("mcp --addr = %q", got)
+				}
+				if got := argsAfter(p.MCP.Args, "--hub"); got != "ws://127.0.0.1:7895/bus" {
+					t.Errorf("mcp --hub = %q", got)
+				}
+				if got := argsAfter(p.Hub.Args, "--brain-mcp-facade"); got != "http://127.0.0.1:17897/mcp" {
+					t.Errorf("hub brain facade = %q", got)
+				}
+				if len(p.MCP.Env) != 1 || p.MCP.Env[0] != "HUB_TOKEN=tok" {
+					t.Errorf("mcp env = %v", p.MCP.Env)
+				}
+				if hasFlag(p.MCP.Args, "--token") || strings.Contains(strings.Join(p.MCP.Env, "\n"), "WKS_MCP_TOKEN") {
+					t.Errorf("MCP token leaked into argv or static facade token was armed: %+v", p.MCP)
 				}
 			},
 		},
@@ -143,6 +176,19 @@ func TestBuildServePlanWiring(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.want(t, buildServePlan(tt.opts))
 		})
+	}
+}
+
+func TestWaitForMCPHealthRequiresHubConnection(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "hubConnected": calls.Add(1) > 1})
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForMCPHealth(ctx, srv.URL, time.Second); err != nil {
+		t.Fatal(err)
 	}
 }
 

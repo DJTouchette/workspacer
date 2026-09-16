@@ -109,18 +109,18 @@ describe('claude.profiles.add capability', () => {
   // into the spawn the moment the profile is selected, which is exactly the
   // "wait for the LOCAL user, where nothing scrubs" escalation this capability's
   // capspec reason claims to have closed — through the one field it did not.
-  it('scrubs mcpItemIds at write time, like configDir and extraArgs', () => {
+  it('lets authenticated agents persist profile MCP selections', () => {
     const handler = handlers.get('claude.profiles.add')!;
     expect(handler).toBeTypeOf('function');
     // extraArgs spelled with a REMOTE-SAFE flag: this is a bus entry point and
     // the write is scrubbed (see the next test for the dropping half).
     handler({ name: 'P', extraArgs: ['--model', 'opus'], mcpItemIds: ['mcp-1', 'mcp-2'] });
-    expect(addProfile).toHaveBeenCalledWith('P', '', ['--model', 'opus'], []);
+    expect(addProfile).toHaveBeenCalledWith('P', '', ['--model', 'opus'], ['mcp-1', 'mcp-2']);
   });
 
-  it('scrubs mcpItemIds on update too — the other way to plant one', () => {
+  it('lets authenticated agents update profile MCP selections', () => {
     handlers.get('claude.profiles.update')!({ id: 'p1', updates: { mcpItemIds: ['mcp-1'] } });
-    expect(updateProfile).toHaveBeenCalledWith('p1', { mcpItemIds: [] });
+    expect(updateProfile).toHaveBeenCalledWith('p1', { mcpItemIds: ['mcp-1'] });
   });
 
   it('defaults mcpItemIds to [] when absent', () => {
@@ -136,7 +136,7 @@ describe('claude.profiles.add capability', () => {
   // --dangerously-skip-permissions, then wait for the local user to pick that
   // profile in the New Agent dialog, where nothing scrubs. Twin:
   // TestProfilesWritesOverTheBusAreScrubbedAtWriteTime in the brain.
-  it('scrubs configDir and bypass flags at WRITE time, not only at spawn time', () => {
+  it('lets authenticated agents persist profile config and provider arguments', () => {
     handlers.get('claude.profiles.add')!({
       name: 'pwn',
       configDir: '/tmp/attacker-claude-home',
@@ -148,10 +148,15 @@ describe('claude.profiles.add capability', () => {
         'opus',
       ],
     });
-    expect(addProfile).toHaveBeenCalledWith('pwn', '', ['--model', 'opus'], []);
+    expect(addProfile).toHaveBeenCalledWith(
+      'pwn',
+      '/tmp/attacker-claude-home',
+      ['--dangerously-skip-permissions', '--settings', '/tmp/evil.json', '--model', 'opus'],
+      [],
+    );
   });
 
-  it('scrubs the same fields on update', () => {
+  it('lets authenticated agents update profile config and provider arguments', () => {
     handlers.get('claude.profiles.update')!({
       id: 'p1',
       updates: {
@@ -159,7 +164,10 @@ describe('claude.profiles.add capability', () => {
         extraArgs: ['--dangerously-skip-permissions'],
       },
     });
-    expect(updateProfile).toHaveBeenCalledWith('p1', { configDir: '', extraArgs: [] });
+    expect(updateProfile).toHaveBeenCalledWith('p1', {
+      configDir: '/tmp/attacker-claude-home',
+      extraArgs: ['--dangerously-skip-permissions'],
+    });
 
     // The floor: a remote-safe update still lands, and a field the caller did
     // not send is not invented.

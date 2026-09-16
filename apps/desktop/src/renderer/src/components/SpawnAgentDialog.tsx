@@ -106,9 +106,9 @@ interface SpawnAgentDialogProps {
     permissionMode?: string;
     skipPermissions?: boolean;
     mcpItemIds?: string[];
-    /** Workspacer MCP tool tier (view/triage/operator); omitted = none. */
+    /** Legacy compatibility input; supported agents always receive operator tools. */
     toolScope?: 'view' | 'triage' | 'operator';
-    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    /** Legacy compatibility input; every enabled plugin tool is ambient. */
     pluginTools?: string[];
     resumeSessionId?: string;
     /** Spawn into a fresh git worktree of `cwd` instead of `cwd` itself. */
@@ -649,9 +649,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   const currentDetection = providerDetection.find((d) => d.provider === provider);
   const missingProvider = !targetHub && providerAvailability(detection, provider) === 'missing';
+  const piUnsupported = provider === 'pi';
   const canSubmit =
     !!cwd.trim() &&
     !missingProvider &&
+    !piUnsupported &&
     !runtimeStatus.blocked &&
     repoInfo?.directory !== 'invalid' &&
     (!hasTaskHandoff || !!prompt.trim()) &&
@@ -1320,7 +1322,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       }
                     >
                       {p.label}
-                      {p.missing ? (
+                      {p.value === 'pi' ? (
+                        <span className="spawn-badge spawn-danger">UNSUPPORTED</span>
+                      ) : p.missing ? (
                         <span className="spawn-badge spawn-danger">NOT INSTALLED</span>
                       ) : p.beta ? (
                         <span className="spawn-badge">BETA</span>
@@ -1453,7 +1457,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               <div className="spawn-status-line">
                 <span
                   aria-hidden
-                  className={`spawn-dot ${missingProvider || runtimeStatus.blocked || repoInfo?.directory === 'invalid' ? 'spawn-dot-error' : ''}`}
+                  className={`spawn-dot ${missingProvider || piUnsupported || runtimeStatus.blocked || repoInfo?.directory === 'invalid' ? 'spawn-dot-error' : ''}`}
                 />
                 {cwd.trim() && !targetHub && (
                   <span className="spawn-project-identity">
@@ -1472,11 +1476,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 <span>
                   {targetHub
                     ? 'Remote provider availability unknown'
-                    : missingProvider
-                      ? `${providerLabel} is not installed.`
-                      : providerAvailability(detection, provider) === 'installed'
-                        ? `${providerLabel} CLI found.`
-                        : `${providerLabel} availability is unknown.`}
+                    : piUnsupported
+                      ? 'Pi is unsupported because its CLI has no MCP bridge for the required Workspacer tools.'
+                      : missingProvider
+                        ? `${providerLabel} is not installed.`
+                        : providerAvailability(detection, provider) === 'installed'
+                          ? `${providerLabel} CLI found.`
+                          : `${providerLabel} availability is unknown.`}
                 </span>
               </div>
               {!['unchecked', 'unsupported', 'responding'].includes(readiness.status.state) && (
@@ -1499,11 +1505,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 <div>
                   {targetHub
                     ? 'Provider availability on the selected machine is unknown.'
-                    : missingProvider
-                      ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
-                      : providerAvailability(detection, provider) === 'installed'
-                        ? `${providerLabel} CLI found.`
-                        : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
+                    : piUnsupported
+                      ? 'Pi cannot be launched as a Workspacer agent. Choose Claude Code, Codex, GitHub Copilot, or OpenCode.'
+                      : missingProvider
+                        ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
+                        : providerAvailability(detection, provider) === 'installed'
+                          ? `${providerLabel} CLI found.`
+                          : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
                 </div>
                 {['unchecked', 'unsupported', 'responding'].includes(readiness.status.state) && (
                   <div>{readiness.detail}</div>

@@ -1,9 +1,13 @@
 ---
 name: spawn-agent
-description: Spawn a bounded child coding agent for independent or parallel work, then handle its progress, blocker, and completion wakes. Use when a task has a substantial separable subtask; handle quick work directly.
+description: Ordinary-agent helper for spawning a bounded direct child and handling only that child's wakes. Do not use for Fleet Manager dispatches, tracked tasks, or workflows.
 ---
 
 # Spawn an agent
+
+This skill is for ordinary agents. Fleet Managers must follow the Fleet
+workflow/task doctrine and must not use this skill to bypass it with
+`trackTask:false`.
 
 Use `spawn_agent` with `trackTask:false`; ordinary agents do not own Fleet
 Manager tasks or workflows. The host derives your parent identity, so do not

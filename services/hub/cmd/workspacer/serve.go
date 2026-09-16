@@ -27,6 +27,7 @@ const readyTimeout = 20 * time.Second
 const (
 	defaultClaudemonAPIPort  = 7891
 	defaultClaudemonHookPort = 7890
+	defaultMCPFacadePort     = 7897
 )
 
 // runServe is the product face of headless mode: resolve the sibling daemons,
@@ -84,7 +85,9 @@ type commonServeFlags struct {
 	host, token                    *string
 	trustedHost                    *string
 	hubPort, apiPort, hookPort     *int
+	mcpPort                        *int
 	claudemonBin, hubBin, brainBin *string
+	mcpBin                         *string
 	pluginOrigin                   *string
 	dbPath                         *string
 	noClaudemonInit                *bool
@@ -101,6 +104,8 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 		claudemonBin: fs.String("claudemon-bin", "", "path to the claudemon binary (default: sibling of this binary, then PATH)"),
 		hubBin:       fs.String("hub-bin", "", "path to the hub binary (default: sibling of this binary, then PATH)"),
 		brainBin:     fs.String("brain-bin", "", "path to the brain binary the hub supervises (default: sibling of this binary, then the hub auto-detects its own sibling / PATH)"),
+		mcpBin:       fs.String("mcp-bin", "", "path to the MCP facade binary (default: sibling of this binary, then PATH; missing disables agent Workspacer tools without inventing an endpoint)"),
+		mcpPort:      fs.Int("mcp-port", defaultMCPFacadePort, "loopback port for the authenticated MCP facade"),
 		trustedHost: fs.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"),
 			"comma-separated hostname(s) a reverse proxy in front of the hub presents (e.g. the `tailscale serve` MagicDNS name). A TLS front-end terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the hub's Host/Origin pins refuse, so it must be named or every route behind it answers 403"),
 		pluginOrigin: fs.String("plugin-origin", os.Getenv("WORKSPACER_PLUGIN_ORIGIN"),
@@ -132,6 +137,8 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		ClaudemonBin:  resolveBin("claudemon", *f.claudemonBin, sib),
 		HubBin:        resolveBin("hub", *f.hubBin, sib),
 		BrainBin:      resolveBin("brain", *f.brainBin, sib),
+		MCPBin:        resolveBin("mcp", *f.mcpBin, sib),
+		MCPPort:       *f.mcpPort,
 		AdvertiseHost: advertiseHost(*f.host, localIPv4s()),
 		TrustedHosts:  *f.trustedHost,
 		PluginOrigin:  *f.pluginOrigin,
@@ -158,6 +165,9 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 	if opts.BrainBin == "" {
 		fmt.Fprintln(os.Stderr, "workspacer: warning: no brain binary found — the bus will have no headless capability provider (build it with `make build-cli`, or pass --brain-bin)")
 	}
+	if opts.MCPBin == "" {
+		fmt.Fprintln(os.Stderr, "workspacer: warning: no mcp facade binary found — spawned agents will not receive Workspacer tools (build it with `make build-cli`, or pass --mcp-bin)")
+	}
 	// The token is what makes a headless server pairable *and* safe: unlike the
 	// desktop-spawned hub there is no trusted local UI, so we never run open.
 	if opts.Token == "" {
@@ -171,19 +181,23 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 	return opts, true
 }
 
-// stack is a booted claudemon + hub pair plus the plan that wired them, returned
-// by bootStack. Shared by `serve` and `plugin dev`.
+// stack is a booted claudemon + hub pair plus the optional authenticated MCP
+// facade and the plan that wired them. Shared by `serve` and `plugin dev`.
 type stack struct {
 	plan      servePlan
 	claudemon *child
 	hub       *child
+	mcp       *child
 }
 
-// shutdown stops the hub first, then claudemon: SIGTERM lets the hub tear down
-// the brain and plugin sidecars while claudemon (which the brain talks to) is
-// still alive.
+// shutdown stops the facade first, then hub, then claudemon. The hub can tear
+// down the brain and plugin sidecars while claudemon is still alive, and the
+// facade never reconnects through that teardown.
 func (s *stack) shutdown(logw io.Writer) {
 	fmt.Fprintln(logw, "[workspacer] shutting down…")
+	if s.mcp != nil {
+		s.mcp.Stop()
+	}
 	s.hub.Stop()
 	s.claudemon.Stop()
 }
@@ -205,6 +219,13 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 		{"127.0.0.1", opts.HookPort, "claudemon hook port"},
 		{"127.0.0.1", opts.APIPort, "claudemon API port"},
 		{opts.Host, opts.HubPort, "hub port"},
+	}
+	if opts.MCPBin != "" {
+		ports = append(ports, struct {
+			host string
+			port int
+			what string
+		}{"127.0.0.1", opts.MCPPort, "MCP facade port"})
 	}
 	for _, p := range ports {
 		if err := probeListen(p.host, p.port); err != nil {
@@ -229,10 +250,18 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 	// life. See servePlan.Init.
 	runInitStep(ctx, plan.Init, logw)
 
-	fmt.Fprintln(logw, "[workspacer] starting claudemon + hub (brain-scope full)…")
+	children := "claudemon + hub"
+	if plan.MCP.Bin != "" {
+		children += " + authenticated MCP facade"
+	}
+	fmt.Fprintf(logw, "[workspacer] starting %s (brain-scope full)…\n", children)
 	claudemon := startChild(ctx, plan.Claudemon, logw, newRestartBackoff())
 	hub := startChild(ctx, plan.Hub, logw, newRestartBackoff())
-	s := &stack{plan: plan, claudemon: claudemon, hub: hub}
+	var mcp *child
+	if plan.MCP.Bin != "" {
+		mcp = startChild(ctx, plan.MCP, logw, newRestartBackoff())
+	}
+	s := &stack{plan: plan, claudemon: claudemon, hub: hub, mcp: mcp}
 
 	if err := waitForHealth(ctx, plan.ClaudemonHealth, readyTimeout); err != nil {
 		s.shutdown(logw)
@@ -242,7 +271,46 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 		s.shutdown(logw)
 		return nil, fmt.Errorf("hub failed to become healthy: %w", err)
 	}
+	if plan.MCPHealth != "" {
+		if err := waitForMCPHealth(ctx, plan.MCPHealth, readyTimeout); err != nil {
+			s.shutdown(logw)
+			return nil, fmt.Errorf("MCP facade failed to become ready: %w", err)
+		}
+	}
 	return s, nil
+}
+
+// waitForMCPHealth requires both an HTTP-ready facade and a live bus bridge.
+// A 200 with hubConnected:false can serve no tools and must not be advertised
+// to the brain as a usable endpoint.
+func waitForMCPHealth(ctx context.Context, url string, timeout time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			var body struct {
+				HubConnected bool `json:"hubConnected"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && decodeErr == nil && body.HubConnected {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("no bus-connected answer from %s within %s", url, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // probeListen checks a port is free by briefly binding it. There is a small

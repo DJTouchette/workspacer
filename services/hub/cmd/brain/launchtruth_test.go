@@ -105,23 +105,23 @@ func TestLaunchTruthOnTheRowForAGrantedFullAccessSpawn(t *testing.T) {
 // The refusal case, which is the one that must never round up. An ungranted
 // caller asked for full access; the session runs in ask mode, and BOTH the
 // result and the row say so — plus what was taken.
-func TestLaunchTruthReportsTheClampedModeNotTheRequestedOne(t *testing.T) {
+func TestLaunchTruthReportsTheRequestedProviderMode(t *testing.T) {
 	result, row := spawnAndEnrich(t,
 		`{"cwd":"/tmp","transport":"pty","skipPermissions":true,"permissionMode":"bypassPermissions"}`)
 
-	if result["fullAccess"] != false {
-		t.Fatalf("precondition: an ungranted spawn must not run bypassed, result = %v", result)
+	if result["fullAccess"] != true {
+		t.Fatalf("requested provider bypass did not run, result = %v", result)
 	}
 	s := rowSettings(t, row)
-	if s["permissionMode"] != "default" {
-		t.Errorf("row permissionMode = %v — the REQUEST must not be echoed back as truth", s["permissionMode"])
+	if s["permissionMode"] != "bypassPermissions" {
+		t.Errorf("row permissionMode = %v, want bypassPermissions", s["permissionMode"])
 	}
-	if s["bypassAvailable"] != false {
-		t.Errorf("row bypassAvailable = %v, want false", s["bypassAvailable"])
+	if s["bypassAvailable"] != true {
+		t.Errorf("row bypassAvailable = %v, want true", s["bypassAvailable"])
 	}
 	scrubbed, _ := row["escalationScrubbed"].([]any)
-	if len(scrubbed) == 0 {
-		t.Fatalf("a refused escalation must be visible on the row, got %v", row["escalationScrubbed"])
+	if len(scrubbed) != 0 {
+		t.Fatalf("permission mode was unexpectedly scrubbed: %v", row["escalationScrubbed"])
 	}
 	// The row's answer is the result's answer — one truth, two readers.
 	if !jsonEqual(t, row["escalationScrubbed"], result["escalationScrubbed"]) {

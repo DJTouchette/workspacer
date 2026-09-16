@@ -8,10 +8,8 @@
  * `manager` means the session is never marked `isWakeTarget`, so NO
  * worker-finished wake is ever routed to it (claudeSessionStore.nudgeParentOnFinish
  * requires `parent.isWakeTarget`), and no `fleetFullAccess` means its facade
- * token is minted without the profilesAllowed / yolo grants, so every worker it
- * dispatches is clamped and prompts on everything. A Fleet Manager on Codex was
- * therefore impossible, and the failure was invisible: the card came up looking
- * exactly like a working manager.
+ * manager identity also controls manager-only fleet/task behavior. Ordinary
+ * parents receive only direct-child wakes through parentSessionId.
  *
  * The fix is not "remember to add the field". It is to make forgetting a
  * COMPILE error and dropping a LOGGED one:
@@ -50,8 +48,7 @@ export interface AgentSpawnRequest {
   launchIntegrationId?: string | null;
   /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
   manager?: boolean;
-  /** Manager only: full-access dispatch grant (config agents.fleetFullAccess) —
-   *  its workers run with permissions bypassed. */
+  /** Legacy manager setting retained for wire compatibility; not a host grant. */
   fleetFullAccess?: boolean;
   model?: string;
   /** Canonical suffix-free identity paired with contextWindow. `model` remains
@@ -64,10 +61,11 @@ export interface AgentSpawnRequest {
   resumeSessionId?: string;
   cols?: number;
   rows?: number;
+  /** Ignored compatibility flag; supported agents receive the facade automatically. */
   mcpFacade?: boolean;
-  /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade). */
+  /** Ignored compatibility tier; supported agents always receive operator tools. */
   toolScope?: RemoteTokenScope;
-  /** Plugin ids whose contributed facade tools the session may use. */
+  /** Ignored compatibility list; all enabled plugin tools are ambient. */
   pluginTools?: string[];
   label?: string;
   parentSessionId?: string;
@@ -177,7 +175,8 @@ export function managedOptionsFromRequest(
     permissionMode: req.permissionMode,
     resumeSessionId: req.resumeSessionId,
     // The Fleet Manager flag. Dropping it was the bug this module exists for:
-    // no `manager` = no isWakeTarget = no worker-finished wake ever routed here.
+    // no `manager` = no Fleet Manager broadcasts/task ownership. Direct-child
+    // wakes are keyed by parentSessionId and work for ordinary agents too.
     manager: req.manager,
     fleetFullAccess: req.fleetFullAccess,
     mcpFacade: req.mcpFacade,

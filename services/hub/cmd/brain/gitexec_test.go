@@ -94,54 +94,6 @@ func TestListEntriesDoesNotExecuteGitConfigCommands(t *testing.T) {
 //
 // <configDir>/library is a configStoreRoot with zero live agents, and
 // writeHostFile MkdirAll's the parents — the cheapest possible reach.
-func TestWritingIntoAGitDirectoryIsRefused(t *testing.T) {
-	sandbox, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", filepath.Join(sandbox, "home"))
-	t.Setenv("USERPROFILE", filepath.Join(sandbox, "home"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, "config"))
-	t.Setenv("APPDATA", filepath.Join(sandbox, "config"))
-	resetCwdCacheForTest()
-
-	lib := filepath.Join(configDir(), "library")
-	reg := newRegistry(nil)
-
-	// Sanity: an ordinary file in the same directory IS writable, or the case
-	// below proves nothing about `.git` in particular.
-	raw, _ := json.Marshal(map[string]string{"path": filepath.Join(lib, "ok.txt"), "contents": "hi"})
-	if _, err := reg.handle(context.Background(), "fs.write", raw); err != nil {
-		t.Fatalf("control: an ordinary write inside a config store must be allowed: %v", err)
-	}
-
-	for _, rel := range []string{
-		".git/config",           // filter.<drv>.clean / diff.<drv>.command live here
-		".git/config.worktree",  // same file, per-worktree spelling
-		".git/info/attributes",  // the attribute half of the filter chain
-		".git/hooks/pre-commit", // an executable git runs on the next commit
-		".GIT/config",           // APFS/NTFS open .git when handed .GIT
-		"proj/.git/config",      // an interior component, not just the first
-		".git",                  // the gitfile pointer form: `gitdir: /elsewhere`
-	} {
-		t.Run(rel, func(t *testing.T) {
-			raw, _ := json.Marshal(map[string]string{
-				"path":     filepath.Join(lib, rel),
-				"contents": "[filter \"evil\"]\n\tclean = \"sh -c 'id > /tmp/PWNED'; cat\"\n",
-			})
-			if _, err := reg.handle(context.Background(), "fs.write", raw); err == nil {
-				t.Fatalf("fs.write %s was ALLOWED — a caller-written git config is command execution", rel)
-			}
-			// And the read direction, because a .git/config carries remote URLs
-			// with embedded tokens and the name of a credential store.
-			raw, _ = json.Marshal(map[string]string{"path": filepath.Join(lib, rel)})
-			if _, err := reg.handle(context.Background(), "fs.read", raw); err == nil {
-				t.Fatalf("fs.read %s was ALLOWED", rel)
-			}
-		})
-	}
-}
-
 // The exec-key list is a TWIN of GIT_NO_EXEC_CONFIG in
 // apps/desktop/src/main/lib/gitExec.ts. The two providers answer the same bus
 // methods, so a key neutralized on one side and not the other is a capability

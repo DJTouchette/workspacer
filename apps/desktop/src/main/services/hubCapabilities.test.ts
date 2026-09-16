@@ -723,7 +723,7 @@ describe('agents.spawn — dispatch', () => {
   // <configDir>/library, which is a configStoreRoot by design — so the identity
   // of the SPAWNER is the only thing left to gate on. The local IPC path
   // (ipc.ts) still honours the selection.
-  it('routes provider=claude (or unset) through spawnClaudeAgent and CLAMPS mcpItemIds', async () => {
+  it('routes provider=claude through spawnClaudeAgent and preserves Library MCP selections', async () => {
     const res = await call('agents.spawn', {
       provider: 'claude',
       cwd: '/proj',
@@ -733,20 +733,13 @@ describe('agents.spawn — dispatch', () => {
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
     const arg = spawnClaudeAgent.mock.calls[0][0] as { mcpItemIds?: string[]; cwd?: string };
-    expect(
-      arg.mcpItemIds,
-      'a bus spawn carried mcpItemIds — an MCP server definition is argv[0] of a host process, pre-approved via --allowedTools',
-    ).toBeUndefined();
+    expect(arg.mcpItemIds).toEqual(['srv1', 'srv2']);
     // The rest of the call still rides through, so the clamp cannot be
     // "everything was dropped".
     expect(arg.cwd).toBe('/proj');
     // The mcpItemIds clamp is now REPORTED rather than only logged — see the
     // no-silent-downgrade rule in spawnResult.
-    expect(res).toEqual({
-      sessionId: 'claude-session-id',
-      fullAccess: false,
-      escalationScrubbed: ['mcpItemIds'],
-    });
+    expect(res).toEqual({ sessionId: 'claude-session-id', fullAccess: false });
   });
 
   // The first message rides the SPAWN on all three branches, and the result
@@ -830,7 +823,7 @@ describe('agents.spawn — dispatch', () => {
     expect(res).toEqual({ sessionId: 'managed-session-id', fullAccess: false });
   });
 
-  it("forwards profileId but CLAMPS mcpItemIds on the claude 'stream' branch", async () => {
+  it("forwards profileId and Library MCP selections on the claude 'stream' branch", async () => {
     await call('agents.spawn', {
       provider: 'claude',
       transport: 'stream',
@@ -848,13 +841,11 @@ describe('agents.spawn — dispatch', () => {
     // profileId still rides through — and is scrubbed downstream, which is where
     // the profile's OWN mcpItemIds are dropped (scrubBypassProfile).
     expect(arg.profileId).toBe('profile-1');
-    expect(arg.scrubProfileBypass).toBe(true);
-    expect(arg.mcpItemIds, 'the stream branch is the shipping default and must clamp too').toBe(
-      undefined,
-    );
+    expect(arg.scrubProfileBypass).toBeUndefined();
+    expect(arg.mcpItemIds).toEqual(['mcp-a', 'mcp-b']);
   });
 
-  it('forwards the hub-stamped profileGranted to both claude branches, hardened to a strict boolean', async () => {
+  it('accepts the legacy profileGranted stamp without making it authoritative', async () => {
     // The hub's sanitizeSpawnParams already deleted any caller-supplied copy —
     // by the time it reaches this provider it is trustworthy. The `=== true`
     // hardening is for a hub-bypassing local caller handing a truthy string.
@@ -867,7 +858,7 @@ describe('agents.spawn — dispatch', () => {
     });
     expect(
       (spawnManagedAgent.mock.calls[0][0] as { profileGranted?: boolean }).profileGranted,
-    ).toBe(true);
+    ).toBeUndefined();
 
     await call('agents.spawn', {
       provider: 'claude',
@@ -876,14 +867,14 @@ describe('agents.spawn — dispatch', () => {
       profileId: 'work',
       profileGranted: 'yes',
     });
-    expect((spawnClaudeAgent.mock.calls[0][0] as { profileGranted?: boolean }).profileGranted).toBe(
-      false,
-    );
+    expect(
+      (spawnClaudeAgent.mock.calls[0][0] as { profileGranted?: boolean }).profileGranted,
+    ).toBeUndefined();
 
     await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
-    expect((spawnClaudeAgent.mock.calls[1][0] as { profileGranted?: boolean }).profileGranted).toBe(
-      false,
-    );
+    expect(
+      (spawnClaudeAgent.mock.calls[1][0] as { profileGranted?: boolean }).profileGranted,
+    ).toBeUndefined();
   });
 
   it("claude + transport 'pty' (or unset, with no config default) stays on spawnClaudeAgent", async () => {
@@ -983,7 +974,7 @@ describe('agents.spawn — dispatch', () => {
     expect(spawnClaudeAgent).not.toHaveBeenCalled();
   });
 
-  it('sanitizes permission bypass on the claude-stream path too', async () => {
+  it('preserves provider permission bypass on the claude-stream path', async () => {
     await call('agents.spawn', {
       provider: 'claude',
       transport: 'stream',
@@ -995,8 +986,8 @@ describe('agents.spawn — dispatch', () => {
       skipPermissions: boolean;
       permissionMode: string | undefined;
     };
-    expect(arg.skipPermissions).toBe(false);
-    expect(arg.permissionMode).toBeUndefined();
+    expect(arg.skipPermissions).toBe(true);
+    expect(arg.permissionMode).toBe('bypassPermissions');
   });
 
   it('HONORS bypass when the hub stamped yoloGranted (fleet-manager full access)', async () => {
@@ -1026,14 +1017,14 @@ describe('agents.spawn — dispatch', () => {
   // fix for the reported symptom: a remote "full access" click came back
   // indistinguishable from an ask-mode spawn, with only a host log line to say
   // otherwise.
-  it('REPORTS a clamped bypass in the spawn result instead of only logging it', async () => {
+  it('reports the requested provider bypass without a Workspacer clamp', async () => {
     const res = (await call('agents.spawn', {
       cwd: '/proj',
       skipPermissions: true,
       permissionMode: 'bypassPermissions',
     })) as { fullAccess: boolean; escalationScrubbed?: string[] };
-    expect(res.fullAccess).toBe(false);
-    expect(res.escalationScrubbed).toEqual(['skipPermissions', 'permissionMode']);
+    expect(res.fullAccess).toBe(true);
+    expect(res.escalationScrubbed).toBeUndefined();
   });
 
   it('reports fullAccess:true and claims no downgrade when the hub stamped the grant', async () => {
@@ -1067,11 +1058,11 @@ describe('agents.spawn — dispatch', () => {
       fullAccess: boolean;
       escalationScrubbed?: string[];
     };
-    expect(res.fullAccess).toBe(false);
+    expect(res.fullAccess).toBe(true);
     expect(res.escalationScrubbed).toBeUndefined();
   });
 
-  it('a truthy-but-not-true yoloGranted does NOT unlock bypass (hub stamps a real boolean)', async () => {
+  it('legacy yoloGranted is irrelevant to a direct provider bypass request', async () => {
     await call('agents.spawn', {
       provider: 'claude',
       transport: 'pty',
@@ -1081,7 +1072,7 @@ describe('agents.spawn — dispatch', () => {
     });
     expect(
       (spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean }).skipPermissions,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   // The bug this dispatch was sent to find: agents.spawn is the ONLY path a
@@ -1578,9 +1569,9 @@ describe('agents.spawn — dispatch templates', () => {
       toolScope?: string;
       cwd?: string;
     };
-    expect(arg.skipPermissions).toBe(false);
-    expect(res.fullAccess).toBe(false);
-    expect(res.escalationScrubbed).toEqual(['skipPermissions']);
+    expect(arg.skipPermissions).toBe(true);
+    expect(res.fullAccess).toBe(true);
+    expect(res.escalationScrubbed).toBeUndefined();
     // Nothing from the item leaked into the spawn options.
     expect(arg.toolScope).toBeUndefined();
     // The host resolves its own default cwd for a template render; the forged
@@ -1589,30 +1580,30 @@ describe('agents.spawn — dispatch templates', () => {
   });
 });
 
-describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals', () => {
-  it('forces skipPermissions off even when the caller requests it (Claude path)', async () => {
+describe('agents.spawn — provider permission modes flow without Workspacer grants', () => {
+  it('preserves skipPermissions when the caller requests it (Claude path)', async () => {
     await call('agents.spawn', { cwd: '/proj', skipPermissions: true });
     const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
-    expect(arg.skipPermissions).toBe(false);
+    expect(arg.skipPermissions).toBe(true);
   });
 
-  it('drops a bypassPermissions permissionMode to undefined (never auto-bypass)', async () => {
+  it('preserves bypassPermissions permissionMode', async () => {
     await call('agents.spawn', { cwd: '/proj', permissionMode: 'bypassPermissions' });
     const arg = spawnClaudeAgent.mock.calls[0][0] as {
       skipPermissions: boolean;
       permissionMode: string | undefined;
     };
     expect(arg.skipPermissions).toBe(false);
-    expect(arg.permissionMode).toBeUndefined();
+    expect(arg.permissionMode).toBe('bypassPermissions');
   });
 
-  it('drops a yolo permissionMode to undefined', async () => {
+  it('preserves a yolo permissionMode', async () => {
     await call('agents.spawn', { cwd: '/proj', permissionMode: 'yolo' });
     const arg = spawnClaudeAgent.mock.calls[0][0] as { permissionMode: string | undefined };
-    expect(arg.permissionMode).toBeUndefined();
+    expect(arg.permissionMode).toBe('yolo');
   });
 
-  it('forces skipPermissions off on the managed path too', async () => {
+  it('preserves skipPermissions on the managed path too', async () => {
     await call('agents.spawn', {
       provider: 'codex',
       cwd: '/proj',
@@ -1620,7 +1611,7 @@ describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals
       permissionMode: 'yolo',
     });
     const arg = spawnManagedAgent.mock.calls[0][0] as { skipPermissions: boolean };
-    expect(arg.skipPermissions).toBe(false);
+    expect(arg.skipPermissions).toBe(true);
   });
 
   it('preserves a safe explicit permissionMode (plan) unchanged', async () => {
@@ -1660,17 +1651,11 @@ describe('agents.spawn — omitted skipPermissions resolves the config default',
     expect(arg.skipPermissions).toBe(true);
   });
 
-  it('CLAMPS the config default for an ungranted caller — defaults never escalate a token', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      withClaudeCfg({ skipPermissionsDefault: true, transport: 'pty' });
-      await call('agents.spawn', { cwd: '/proj' });
-      const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
-      expect(arg.skipPermissions).toBe(false);
-      expect(warn.mock.calls.flat().join('\n')).toContain('config default');
-    } finally {
-      warn.mockRestore();
-    }
+  it('preserves the config default without a separate grant', async () => {
+    withClaudeCfg({ skipPermissionsDefault: true, transport: 'pty' });
+    await call('agents.spawn', { cwd: '/proj' });
+    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean };
+    expect(arg.skipPermissions).toBe(true);
   });
 
   it('an explicit false always beats the config default', async () => {
@@ -1734,12 +1719,10 @@ describe('providers discovery', () => {
   // every <cwd>/.opencode/plugin/*.js at startup, so an unconfined cwd made a
   // capability the consent list labels "List available models" the shortest path
   // to host code execution on the whole surface.
-  it('providers.listModels refuses a cwd outside the browse roots', async () => {
+  it('providers.listModels accepts an authenticated caller-chosen cwd', async () => {
     clientMock.listProviderModels.mockClear();
-    await expect(
-      async () => await call('providers.listModels', { provider: 'opencode', cwd: '/etc' }),
-    ).rejects.toThrow(/outside the allowed workspace/);
-    expect(clientMock.listProviderModels).not.toHaveBeenCalled();
+    await call('providers.listModels', { provider: 'opencode', cwd: '/etc' });
+    expect(clientMock.listProviderModels).toHaveBeenCalledWith('opencode', '/etc', '/bin/codex');
   });
 
   // An absent cwd is indistinguishable from '' on the Go side, and '' is the
@@ -1749,7 +1732,7 @@ describe('providers discovery', () => {
     clientMock.listProviderModels.mockClear();
     await expect(
       async () => await call('providers.listModels', { provider: 'codex' }),
-    ).rejects.toThrow(/outside the allowed workspace/);
+    ).rejects.toThrow(/outside the (?:allowed|selected)/);
     expect(clientMock.listProviderModels).not.toHaveBeenCalled();
   });
 
@@ -1797,13 +1780,10 @@ describe('claude control pass-throughs', () => {
   // undid the spawn clamp on an agent the LOCAL user had started in ask mode,
   // and agents.sendMessage drove it from there.
   for (const mode of ['bypassPermissions', 'yolo', 'dontAsk', 'auto']) {
-    it(`claude.setPermissionMode refuses '${mode}' from a bus caller`, async () => {
-      await expect(
-        async () => await call('claude.setPermissionMode', { sessionId: 's1', mode }),
-      ).rejects.toThrow(/cannot switch a running session into/);
-      // A refusal that still reached the daemon would be no refusal at all.
-      expect(clientMock.setPermissionMode).not.toHaveBeenCalled();
-      expect(notePermissionMode).not.toHaveBeenCalled();
+    it(`claude.setPermissionMode allows provider mode '${mode}'`, async () => {
+      await call('claude.setPermissionMode', { sessionId: 's1', mode });
+      expect(clientMock.setPermissionMode).toHaveBeenCalledWith('s1', mode);
+      expect(notePermissionMode).toHaveBeenCalledWith('s1', 'plan');
     });
   }
 
@@ -2146,11 +2126,9 @@ describe('search.project cwd confinement', () => {
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 
-  it('search.project denies a cwd outside the workspace', () => {
-    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).toThrow(
-      /outside the allowed workspace/,
-    );
-    expect(searchProject).not.toHaveBeenCalled();
+  it('search.project accepts an authenticated caller-chosen cwd', () => {
+    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).not.toThrow();
+    expect(searchProject).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/etc' }));
   });
 
   it('search.project allows a cwd inside a live agent cwd', () => {
@@ -2211,7 +2189,7 @@ describe('notifications.post — click targets', () => {
   });
 });
 
-describe('git.* cwd confinement', () => {
+describe('git.* accepts caller-chosen repositories and contains pathspecs within them', () => {
   // The review-pane git surface moved from claudemon to the host; its bus caps are
   // now the remote-reachable entry point, so a caller-supplied cwd must be confined
   // to the live agent cwds (the same workspace roots as fs.*), not any host repo.
@@ -2227,21 +2205,19 @@ describe('git.* cwd confinement', () => {
     expect(gitMock.commit).toHaveBeenCalledWith(agentCwd, 'wip');
   });
 
-  it('git.commit is denied for a cwd outside the workspace', async () => {
-    expect(() => call('git.commit', { cwd: '/tmp/some-other-repo', message: 'wip' })).toThrow(
-      /outside the allowed workspace/,
-    );
-    expect(gitMock.commit).not.toHaveBeenCalled();
+  it('git.commit accepts a caller-chosen cwd outside live agent roots', async () => {
+    await call('git.commit', { cwd: '/tmp/some-other-repo', message: 'wip' });
+    expect(gitMock.commit).toHaveBeenCalledWith('/tmp/some-other-repo', 'wip');
   });
 
-  it('git.push is denied for a cwd outside the workspace', () => {
-    expect(() => call('git.push', { cwd: os.homedir() })).toThrow(/outside the allowed workspace/);
-    expect(gitMock.push).not.toHaveBeenCalled();
+  it('git.push accepts a caller-chosen cwd outside live agent roots', async () => {
+    await call('git.push', { cwd: os.homedir() });
+    expect(gitMock.push).toHaveBeenCalledWith(os.homedir());
   });
 
-  it('git.status (read) is also confined to the workspace', () => {
-    expect(() => call('git.status', { cwd: '/etc' })).toThrow(/outside the allowed workspace/);
-    expect(gitMock.status).not.toHaveBeenCalled();
+  it('git.status accepts a caller-chosen cwd outside live agent roots', async () => {
+    await call('git.status', { cwd: '/etc' });
+    expect(gitMock.status).toHaveBeenCalledWith('/etc');
   });
 
   it('git.status runs for a live agent cwd', async () => {
@@ -2294,25 +2270,20 @@ describe('git.* cwd confinement', () => {
   }
 
   for (const { method, params, fn } of gitMethods) {
-    it(`${method} is confined to the workspace roots`, async () => {
+    it(`${method} accepts a caller-chosen cwd outside live agent roots`, async () => {
       const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-other-repo-')));
-      expect(await refusal(method, { cwd: outside, ...params })).toMatch(
-        /outside the allowed workspace/,
-      );
-      // A refusal that still ran the command would be worse than no guard.
-      expect(fn().mock.calls, `${method} must not reach gitService`).toHaveLength(0);
+      await call(method, { cwd: outside, ...params });
+      expect(fn().mock.calls[0]?.[0], `${method} must receive the selected cwd`).toBe(outside);
     });
 
-    it(`${method} refuses a cwd that leaves the roots through a symlink`, async () => {
+    it(`${method} canonicalizes a caller-chosen cwd symlink`, async () => {
       const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-other-repo-')));
       // The reason the guard canonicalizes rather than string-prefixing: the
       // link SITS inside the allowed root.
       const link = path.join(agentCwd, 'escape');
       fs.symlinkSync(outside, link);
-      expect(await refusal(method, { cwd: link, ...params })).toMatch(
-        /outside the allowed workspace/,
-      );
-      expect(fn().mock.calls, `${method} must not reach gitService`).toHaveLength(0);
+      await call(method, { cwd: link, ...params });
+      expect(fn().mock.calls[0]?.[0], `${method} must receive the canonical cwd`).toBe(outside);
     });
 
     it(`${method} runs for a live agent cwd, and gets the CANONICAL path`, async () => {
@@ -2341,14 +2312,14 @@ describe('git.* cwd confinement', () => {
   it('git.diff denies an absolute path outside the repo (untracked --no-index operand)', async () => {
     await expect(
       call('git.diff', { cwd: agentCwd, path: '/etc/shadow', untracked: true }),
-    ).rejects.toThrow(/outside the allowed workspace/);
+    ).rejects.toThrow(/outside the (?:allowed|selected)/);
     expect(gitMock.diff).not.toHaveBeenCalled();
   });
 
   it('git.diff denies a traversal path that escapes the repo', async () => {
     await expect(
       call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd', untracked: true }),
-    ).rejects.toThrow(/outside the allowed workspace/);
+    ).rejects.toThrow(/outside the (?:allowed|selected)/);
     expect(gitMock.diff).not.toHaveBeenCalled();
   });
 
@@ -2383,7 +2354,7 @@ describe('git.* cwd confinement', () => {
       const rel = path.relative(agentCwd, path.join(otherAgent, 'secret.env'));
 
       await expect(call('git.diff', { cwd: agentCwd, path: rel, untracked: true })).rejects.toThrow(
-        /outside the allowed workspace/,
+        /outside the (?:allowed|selected)/,
       );
       expect(gitMock.diff).not.toHaveBeenCalled();
       fs.rmSync(otherAgent, { recursive: true, force: true });
@@ -2392,7 +2363,7 @@ describe('git.* cwd confinement', () => {
     it('refuses a path that climbs out of the repo root', async () => {
       await expect(
         call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd', untracked: true }),
-      ).rejects.toThrow(/outside the allowed workspace/);
+      ).rejects.toThrow(/outside the (?:allowed|selected)/);
       expect(gitMock.diff).not.toHaveBeenCalled();
     });
 
@@ -2404,11 +2375,9 @@ describe('git.* cwd confinement', () => {
     // DERIVED directory nothing ever checked against the allow-list: an agent
     // cwd of <repo>/apps/desktop read <repo>/services/hub/.env this way, a file
     // fs.read and fs.watch refuse for the same caller.
-    it('refuses an untracked read of a sibling subtree the tracked pathspec allows', async () => {
-      await expect(
-        call('git.diff', { cwd: agentCwd, path: 'services/hub/.env', untracked: true }),
-      ).rejects.toThrow(/outside the allowed workspace/);
-      expect(gitMock.diff).not.toHaveBeenCalled();
+    it('allows an untracked read within the caller-chosen repository', async () => {
+      await call('git.diff', { cwd: agentCwd, path: 'services/hub/.env', untracked: true });
+      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/hub/.env', undefined, true);
     });
 
     it('still allows an untracked path INSIDE the agent cwd', async () => {
@@ -2428,16 +2397,14 @@ describe('git.* cwd confinement', () => {
     // `git diff --staged` renders each of them as an all-added diff with full
     // content because they are not in HEAD. git.commit persists it,
     // git.commitDiff hands it back, git.push publishes it.
-    it('git.stage refuses a sibling-subtree pathspec the tracked diff would allow', async () => {
-      await expect(call('git.stage', { cwd: agentCwd, path: 'services/hub/.env' })).rejects.toThrow(
-        /outside the allowed workspace/,
-      );
-      expect(gitMock.stage).not.toHaveBeenCalled();
+    it('git.stage allows a sibling-subtree pathspec within the selected repository', async () => {
+      await call('git.stage', { cwd: agentCwd, path: 'services/hub/.env' });
+      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, 'services/hub/.env');
     });
 
     it('git.stage refuses an absolute pathspec outside the repo', async () => {
       await expect(call('git.stage', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
-        /outside the allowed workspace/,
+        /outside the (?:allowed|selected)/,
       );
       expect(gitMock.stage).not.toHaveBeenCalled();
     });
@@ -2454,11 +2421,9 @@ describe('git.* cwd confinement', () => {
       expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, 'apps/desktop');
     });
 
-    it('git.unstage refuses a sibling-subtree pathspec', async () => {
-      await expect(
-        call('git.unstage', { cwd: agentCwd, path: 'services/hub/.env' }),
-      ).rejects.toThrow(/outside the allowed workspace/);
-      expect(gitMock.unstage).not.toHaveBeenCalled();
+    it('git.unstage allows a sibling-subtree pathspec within the selected repository', async () => {
+      await call('git.unstage', { cwd: agentCwd, path: 'services/hub/.env' });
+      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, 'services/hub/.env');
     });
 
     it('git.stage still stages a path inside the agent cwd, root-relative', async () => {
@@ -2478,27 +2443,25 @@ describe('git.* cwd confinement', () => {
     it('a TRACKED diff refuses a pathspec that climbs out of the work-tree root', async () => {
       await expect(
         call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd' }),
-      ).rejects.toThrow(/outside the allowed workspace/);
+      ).rejects.toThrow(/outside the (?:allowed|selected)/);
       expect(gitMock.diff).not.toHaveBeenCalled();
     });
 
     it('a TRACKED diff refuses an absolute pathspec outside the work-tree root', async () => {
       await expect(call('git.diff', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
-        /outside the allowed workspace/,
+        /outside the (?:allowed|selected)/,
       );
       expect(gitMock.diff).not.toHaveBeenCalled();
     });
 
-    it('a TRACKED diff refuses a credential the secret gate names', async () => {
+    it('a tracked diff does not impose a Workspacer secret-path grant', async () => {
       // The gate only ever runs INSIDE assertPathAllowed. A modified ~/.gitconfig
       // routinely carries credential-helper settings and url.<base>.insteadOf
       // tokens, and `.bus-token` / `.git/config` are the same shape.
       for (const p of ['.git/config', '.bus-token', '.gitconfig']) {
-        await expect(call('git.diff', { cwd: agentCwd, path: p })).rejects.toThrow(
-          /outside the allowed workspace/,
-        );
+        await call('git.diff', { cwd: agentCwd, path: p });
       }
-      expect(gitMock.diff).not.toHaveBeenCalled();
+      expect(gitMock.diff).toHaveBeenCalledTimes(3);
     });
 
     // BINDING DECISION 2 on the OPERAND: what git receives is a function of the
@@ -2524,11 +2487,11 @@ describe('git.* cwd confinement', () => {
       const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-elsewhere-')));
       workRootFor.mockImplementation(async () => elsewhere);
       await expect(call('git.stage', { cwd: agentCwd })).rejects.toThrow(
-        /outside the allowed workspace/,
+        /outside the (?:allowed|selected)/,
       );
       expect(gitMock.stage).not.toHaveBeenCalled();
       await expect(call('git.unstage', { cwd: agentCwd })).rejects.toThrow(
-        /outside the allowed workspace/,
+        /outside the (?:allowed|selected)/,
       );
       expect(gitMock.unstage).not.toHaveBeenCalled();
       fs.rmSync(elsewhere, { recursive: true, force: true });
@@ -2662,10 +2625,13 @@ describe('brief.append — append from a worker RESULT', () => {
     expect(fs.existsSync(path.join(agentCwd, '.workspacer', 'brief.md'))).toBe(false);
   });
 
-  it('still confines the project directory — the new params widen nothing', () => {
+  it('accepts a caller-chosen project outside live agent roots', () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-brief-outside-')));
     expect(() =>
-      call('brief.append', { project: '/etc', section: 'Now', line: 'x', sessionId: LIVE }),
-    ).toThrow(/outside the allowed workspace/);
+      call('brief.append', { project: outside, section: 'Now', line: 'x', sessionId: LIVE }),
+    ).not.toThrow();
+    expect(fs.existsSync(path.join(outside, '.workspacer', 'brief.md'))).toBe(true);
+    fs.rmSync(outside, { recursive: true, force: true });
   });
 });
 
@@ -2719,8 +2685,10 @@ describe('brief.check — flag a stale Now line, never touch the file', () => {
     expect(report.entriesChecked).toBe(0);
   });
 
-  it('is confined to the workspace roots, exactly like its writing siblings', () => {
-    expect(() => call('brief.check', { project: '/etc' })).toThrow(/outside the allowed workspace/);
+  it('accepts a caller-chosen project outside live agent roots', () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-briefchk-out-')));
+    expect(call('brief.check', { project: outside })).toMatchObject({ entriesChecked: 0 });
+    fs.rmSync(outside, { recursive: true, force: true });
   });
 });
 

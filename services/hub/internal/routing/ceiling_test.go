@@ -1,7 +1,6 @@
 package routing
 
 import (
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -263,29 +262,6 @@ func TestUnrankedCeilingJudgesNothing(t *testing.T) {
 	}
 }
 
-func TestCheckSpawnClampsTheToolScope(t *testing.T) {
-	client := filepath.Join(t.TempDir(), "client")
-	m, err := Load("test.yaml", []byte(
-		"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n  "+strconv.Quote(client)+": { max_capability: balanced, max_tool_scope: triage }\n"))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: filepath.Join(client, "sub"), ToolScope: "operator", Capability: "frontier"})
-	if !v.ToolScopeRefused || v.ToolScope != "triage" {
-		t.Errorf("operator was not clamped to triage inside a triage-capped tree: %+v", v)
-	}
-	if !v.CapabilityRefused || v.Capability != "balanced" {
-		t.Errorf("frontier was not clamped to balanced inside a balanced-capped tree: %+v", v)
-	}
-	if v.Key != client {
-		t.Errorf("matched ceiling %q, want the ancestor entry", v.Key)
-	}
-	// A sibling whose name shares the prefix is NOT inside it.
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: client + "-old", ToolScope: "operator"}); v.ToolScopeRefused {
-		t.Errorf("%s was treated as inside %s: %+v", client+"-old", client, v)
-	}
-}
-
 func TestCheckSpawnIgnoresLegacyToolScopeCeilings(t *testing.T) {
 	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: view }\n"))
 	if err != nil {
@@ -301,29 +277,6 @@ func TestCheckSpawnIgnoresLegacyToolScopeCeilings(t *testing.T) {
 // exists to keep that precondition visible: hand CheckSpawn the unresolved
 // spelling and the capped directory is missed entirely. The enforcement site is
 // what resolves; nothing here does, and nothing here should.
-func TestCeilingLookupNeedsAnAlreadyCanonicalPath(t *testing.T) {
-	dir := t.TempDir()
-	real := filepath.Join(dir, "client")
-	if err := os.MkdirAll(real, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(dir, "shortcut")
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	m, err := Load("test.yaml", []byte(
-		"ceilings:\n  default: { max_capability: frontier, max_tool_scope: operator }\n  "+real+": { max_capability: cheap, max_tool_scope: view }\n"))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: real, ToolScope: "operator"}); !v.ToolScopeRefused {
-		t.Fatalf("the capped directory did not clamp on its own canonical path: %+v", v)
-	}
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: link, ToolScope: "operator"}); v.ToolScopeRefused {
-		t.Fatalf("the symlink spelling matched the capped entry — CeilingFor is lexical and must not appear to resolve links, or the enforcement site's canonicalization stops being load-bearing: %+v", v)
-	}
-}
-
 // AN AUTHORITY GATE FAILS CLOSED IN BOTH DIRECTIONS. These two pin the half that
 // used to fail OPEN: a ceiling row the file cannot parse. It was reported and
 // then skipped, so a typo in the policy silently deleted the policy for that
@@ -344,23 +297,6 @@ func TestAnUnrankableConfiguredCeilingDeniesRatherThanAdmits(t *testing.T) {
 	}
 	if len(v.Because) == 0 || !strings.Contains(v.Because[0], "frontierr") {
 		t.Errorf("the refusal must quote the unrankable value so the operator knows what to fix: %v", v.Because)
-	}
-}
-
-func TestAnUnknownConfiguredToolTierDeniesRatherThanAdmits(t *testing.T) {
-	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: opperator }\n"))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", ToolScope: "operator"})
-	if !v.Denied {
-		t.Fatalf("a ceiling whose max_tool_scope is not a tier admitted an operator-tier spawn: %+v", v)
-	}
-	// A spawn asking for NO tier is not judged by the tier arm at all, so an
-	// unparseable tier row must not deny it: the row it cannot read is one this
-	// spawn was never going to be measured against.
-	if v := m.CheckSpawn(SpawnRequest{CanonicalCwd: "/x", Capability: "balanced"}); v.Denied {
-		t.Errorf("a spawn asking for no tool tier was denied by an unreadable TIER row: %+v", v)
 	}
 }
 

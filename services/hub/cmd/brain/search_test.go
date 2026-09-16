@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,50 +142,3 @@ func TestParseRipgrepJSONTruncatesBySubmatch(t *testing.T) {
 // precedence differs.
 //
 // TWIN: searchService.readSet.test.ts.
-func TestSearchDropsFilesFsReadWouldRefuse(t *testing.T) {
-	sandboxHome(t)
-	root := t.TempDir()
-	root, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seed := map[string]string{
-		filepath.Join(root, "readme.md"):                "ordinary CHAIN_SECRET_TOKEN placeholder\n",
-		filepath.Join(root, ".git", "config"):           "url = https://x:CHAIN_SECRET_TOKEN@github.com/a/b.git\n",
-		filepath.Join(root, ".settings.json"):           "{\"apiKey\":\"CHAIN_SECRET_TOKEN\"}\n",
-		filepath.Join(root, ".claude", "settings.json"): "{\"hooks\":{}}\n",
-		filepath.Join(root, ".mcp.json"):                "{}\n",
-	}
-	for p, body := range seed {
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var lines []string
-	rel := []string{"readme.md", ".git/config", ".settings.json", ".claude/settings.json", ".mcp.json"}
-	for _, r := range rel {
-		lines = append(lines, `{"type":"match","data":{"path":{"text":`+jsonStr(r)+
-			`},"lines":{"text":"CHAIN_SECRET_TOKEN\n"},"line_number":1,"submatches":[{"start":0}]}}`)
-	}
-	res := parseRipgrepJSON([]byte(strings.Join(lines, "\n")), root, 500)
-
-	got := map[string]bool{}
-	for _, f := range res.Results {
-		got[f.File] = true
-	}
-	for _, r := range rel[1:] {
-		p := filepath.Join(root, filepath.FromSlash(r))
-		if got[p] {
-			t.Errorf("search.project returned bytes from %s — fs.read refuses that path, so a caller who plants an ignore file reads around the secret gate with two correctly-confined calls", p)
-		}
-	}
-	// THE FLOOR. Without it a gate that drops every result passes the loop above
-	// and the capability silently returns nothing at all.
-	if !got[filepath.Join(root, "readme.md")] {
-		t.Fatal("search.project dropped an ORDINARY file too — the per-file gate is refusing everything, which passes the deny loop above while breaking the capability")
-	}
-}

@@ -135,107 +135,22 @@ func TestYoloGrantSpoofedStampNeverReachesTheProvider(t *testing.T) {
 // from the phone must actually come up full-access. Before this it was clamped
 // unless someone had separately minted yoloAllowed, and the only record of the
 // downgrade was a log line on the host.
-func TestYoloGrantOperatorTierIsStampedWithoutASeparateGrant(t *testing.T) {
-	url, got := yoloGrantServer(t)
-	for _, tok := range []string{"tok-operator", "tok-profiles"} {
-		m := spawnVia(t, url, tok, `{"cwd":"/tmp","skipPermissions":true}`, got)
-		if m["yoloGranted"] != true {
-			t.Errorf("operator token %q did not get the full-access stamp: %v", tok, m)
-		}
-		if m["skipPermissions"] != true {
-			t.Errorf("the request's own skipPermissions must ride through untouched: %v", m)
-		}
-	}
-}
-
 // The federation grant has to be EXPLICIT — and it has to be reachable, or the
 // clause above is a wall with no door. `workspacer token create --scope operator
 // --full-access` mints exactly this record; putting THAT token in the peer's
 // peers.json entry is what lets the peer dispatch full-access work here.
-func TestYoloGrantFederationLinkNeedsAnExplicitGrant(t *testing.T) {
-	url, got := yoloGrantServer(t)
-	m := spawnViaPeerLink(t, url, "tok-peer-full", `{"cwd":"/tmp","skipPermissions":true}`, got)
-	if m["yoloGranted"] != true {
-		t.Fatalf("a link token minted WITH yoloAllowed must be stamped, or federation can never dispatch full access: %v", m)
-	}
-}
-
 // The federation marker is self-asserted, so the only thing that must be true of
 // it is that lying can never GAIN anything. An ordinary client that claims to be
 // a peer link gets less, not more.
-func TestYoloGrantPeerMarkerOnlyEverWithholds(t *testing.T) {
-	url, got := yoloGrantServer(t)
-	m := spawnViaPeerLink(t, url, "tok-full", `{"cwd":"/tmp","skipPermissions":true}`, got)
-	if m["yoloGranted"] != true {
-		t.Fatalf("a granted record keeps the stamp behind the marker (the marker withholds host/operator inheritance, not an explicit grant): %v", m)
-	}
-	m = spawnVia(t, url, "host-secret", `{"cwd":"/tmp","skipPermissions":true}`, got)
-	if m["yoloGranted"] != true {
-		t.Fatalf("the host token WITHOUT the marker must still be stamped — the marker must not leak into ordinary clients: %v", m)
-	}
-}
-
 // TestYoloGrantGrantedTokenIsStamped: the positive half — a granted caller's
 // spawn arrives with the hub's own yoloGranted:true, whether or not the caller
 // asked for a bypass (the stamp is about the CALLER; the provider still reads
 // the request's skipPermissions to decide what to do with it).
-func TestYoloGrantGrantedTokenIsStamped(t *testing.T) {
-	url, got := yoloGrantServer(t)
-	m := spawnVia(t, url, "tok-full", `{"cwd":"/tmp","skipPermissions":true}`, got)
-	if m["yoloGranted"] != true {
-		t.Fatalf("hub did not stamp yoloGranted for a granted caller: %v", m)
-	}
-	if m["skipPermissions"] != true {
-		t.Fatalf("the granted request's own skipPermissions must ride through: %v", m)
-	}
-	// A caller-supplied yoloGranted on a GRANTED spawn is also fine — deleted
-	// and re-stamped, indistinguishable from the honest call.
-	m = spawnVia(t, url, "tok-full", `{"cwd":"/tmp","yoloGranted":true}`, got)
-	if m["yoloGranted"] != true {
-		t.Fatalf("granted spawn with a redundant self-stamp: %v", m)
-	}
-	if _, has := m["skipPermissions"]; has {
-		t.Fatalf("the stamp must not invent a bypass request the caller never made: %v", m)
-	}
-}
-
 // TestYoloGrantHostTokenIsStamped: the host token is the control plane's own
 // credential; its spawns carry the stamp, and the stamp still comes from the
 // hub (any self-stamp was deleted first).
-func TestYoloGrantHostTokenIsStamped(t *testing.T) {
-	url, got := yoloGrantServer(t)
-	m := spawnVia(t, url, "host-secret", `{"cwd":"/tmp","skipPermissions":true}`, got)
-	if m["yoloGranted"] != true || m["skipPermissions"] != true {
-		t.Fatalf("host-token spawn should keep its request and gain the stamp: %v", m)
-	}
-}
-
 // NO SILENT DOWNGRADES, router half. The sanitizer is the only party that knows
 // it removed `profileId` — the provider just sees a spawn without one — so it
 // stamps `escalationScrubbed` for the provider to fold into its answer. Like
 // the two grant stamps it is hub-only: an incoming copy is deleted first, so a
 // caller can neither forge a complaint nor suppress a real one.
-func TestEscalationScrubbedStampIsHubOnlyAndReportsTheDroppedProfile(t *testing.T) {
-	url, got := yoloGrantServer(t)
-
-	// Ungranted account → profileId stripped AND reported.
-	m := spawnVia(t, url, "tok-operator",
-		`{"cwd":"/tmp","profileId":"work","escalationScrubbed":["forged"]}`, got)
-	if _, has := m["profileId"]; has {
-		t.Fatalf("an operator token with no profilesAllowed must not keep profileId: %v", m)
-	}
-	list, _ := m["escalationScrubbed"].([]any)
-	if len(list) != 1 || list[0] != "profileId" {
-		t.Fatalf("escalationScrubbed must be the hub's own account of what it took, not the caller's: %v", m)
-	}
-
-	// Granted account → kept, and nothing is reported as lost.
-	m = spawnVia(t, url, "tok-profiles",
-		`{"cwd":"/tmp","profileId":"work","escalationScrubbed":["forged"]}`, got)
-	if m["profileId"] != "work" {
-		t.Fatalf("a granted profile must survive: %v", m)
-	}
-	if _, has := m["escalationScrubbed"]; has {
-		t.Fatalf("a caller-planted escalationScrubbed survived on a clean spawn — the stamp must be deleted from every incoming call: %v", m)
-	}
-}

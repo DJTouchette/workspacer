@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -36,7 +35,7 @@ func TestSpawnManagedInjectsWorkspacerFacade(t *testing.T) {
 	}
 	instructions, _ := body["instructions"].(string)
 	sessionID, _ := body["session_id"].(string)
-	if sessionID == "" || !strings.Contains(instructions, sessionID) || !strings.Contains(instructions, "view") {
+	if sessionID == "" || !strings.Contains(instructions, sessionID) || !strings.Contains(instructions, "operator") {
 		t.Fatalf("managed facade instructions should name the session and scope, got %q for %q", instructions, sessionID)
 	}
 
@@ -44,11 +43,11 @@ func TestSpawnManagedInjectsWorkspacerFacade(t *testing.T) {
 	if recToken.Token != token {
 		t.Fatalf("token in facade URL does not match stored session token")
 	}
-	if recToken.Scope != authtoken.ScopeView {
-		t.Fatalf("session token scope = %q, want view", recToken.Scope)
+	if recToken.Scope != authtoken.ScopeOperator {
+		t.Fatalf("session token scope = %q, want operator", recToken.Scope)
 	}
-	if !reflect.DeepEqual(recToken.Plugins, []string{"jira"}) {
-		t.Fatalf("plugin grants = %v, want [jira]", recToken.Plugins)
+	if len(recToken.Plugins) != 1 || recToken.Plugins[0] != "*" {
+		t.Fatalf("plugin compatibility field = %v, want ambient wildcard", recToken.Plugins)
 	}
 }
 
@@ -205,23 +204,38 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 	}
 }
 
-func TestSpawnFacadeRequestFailsWhenBrainHasNoFacadeURL(t *testing.T) {
+func TestSpawnWithoutVerifiedFacadeURLDoesNotInventAnEndpoint(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()
 	defer srv.Close()
 	reg := newSpawnTestRegistry(t, srv.URL)
 
-	_, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"provider":"codex","cwd":"/tmp/proj","toolScope":"view"}`))
-	if err == nil || !strings.Contains(err.Error(), "--mcp-facade") {
-		t.Fatalf("expected missing facade URL error, got %v", err)
+	before, err := authtoken.Load(authtoken.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(rec.calls("/sessions/spawn")) != 0 || len(rec.calls("/sessions/spawn-managed")) != 0 {
-		t.Fatalf("facade request without --mcp-facade must not reach claudemon: %+v", rec.hits)
+	_, err = reg.handle(context.Background(), "agents.spawn",
+		[]byte(`{"provider":"codex","cwd":"/tmp/proj","toolScope":"view"}`))
+	if err != nil {
+		t.Fatalf("spawn without a verified facade should still launch honestly: %v", err)
+	}
+	managed := rec.calls("/sessions/spawn-managed")
+	if len(managed) != 1 {
+		t.Fatalf("spawn calls = %d, want 1", len(managed))
+	}
+	if _, advertised := managed[0].body["mcp"]; advertised {
+		t.Fatalf("spawn advertised a dead MCP endpoint: %+v", managed[0].body)
+	}
+	after, err := authtoken.Load(authtoken.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("spawn without facade minted a dangling token: before=%d after=%d", len(before), len(after))
 	}
 }
 
-func TestSpawnManagerFacadeTokenUsesLocalConfigGrants(t *testing.T) {
+func TestSpawnManagerFacadeTokenHasAmbientOperatorAuthorityWithoutLegacyGrants(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()
 	defer srv.Close()
@@ -256,11 +270,11 @@ func TestSpawnManagerFacadeTokenUsesLocalConfigGrants(t *testing.T) {
 	if recToken.Role != "manager" {
 		t.Fatalf("token role = %q, want manager", recToken.Role)
 	}
-	if !recToken.YoloAllowed {
-		t.Fatalf("manager token should carry config-resolved yoloAllowed")
+	if recToken.YoloAllowed {
+		t.Fatalf("manager token retained obsolete yoloAllowed grant")
 	}
-	if !reflect.DeepEqual(recToken.ProfilesAllowed, []string{"default", "ops"}) {
-		t.Fatalf("profilesAllowed = %v, want [default ops]", recToken.ProfilesAllowed)
+	if len(recToken.ProfilesAllowed) != 0 {
+		t.Fatalf("manager token retained obsolete profilesAllowed grant: %v", recToken.ProfilesAllowed)
 	}
 	if managed[0].body["yolo"] != false {
 		t.Fatalf("session process yolo must still be controlled by the hub stamp, got %+v", managed[0].body)

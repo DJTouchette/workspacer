@@ -47,7 +47,7 @@ func spawnDefaultsSession(t *testing.T, ctx context.Context, yolo bool, claudeCf
 // TestSpawnAgentOmittedSkipResolvesConfigDefaultForAGrantedSession: granted
 // token + omitted field + claude.skipPermissionsDefault:true → the worker
 // spawns bypassed, exactly like the desktop dialog's pre-selected toggle.
-func TestSpawnAgentOmittedSkipResolvesConfigDefaultForAGrantedSession(t *testing.T) {
+func TestSpawnAgentOmittedSkipResolvesConfigDefaultWithoutGrant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -56,8 +56,8 @@ func TestSpawnAgentOmittedSkipResolvesConfigDefaultForAGrantedSession(t *testing
 	if params["skipPermissions"] != true {
 		t.Fatalf("granted session + config default on: omitted skipPermissions must resolve to true, got %v", params)
 	}
-	if params["yoloGranted"] != true {
-		t.Fatalf("hub did not stamp yoloGranted on the defaulted spawn: %v", params)
+	if _, stamped := params["yoloGranted"]; stamped {
+		t.Fatalf("obsolete yolo grant stamp reached the provider: %v", params)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestSpawnAgentOmittedSkipHonorsABypassDefaultPermissionMode(t *testing.T) {
 // (never nil): the hub stamps yoloGranted on the facade's trusted host-token
 // connection regardless of session, so a nil left on the wire would let the
 // provider's own default resolution escalate the ungranted token.
-func TestSpawnAgentConfigDefaultIsClampedAndLoggedForAnUngrantedSession(t *testing.T) {
+func TestSpawnAgentConfigDefaultFlowsWithoutAGrant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -98,13 +98,11 @@ func TestSpawnAgentConfigDefaultIsClampedAndLoggedForAnUngrantedSession(t *testi
 	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "label": "worker-d"})
 
 	v, present := params["skipPermissions"]
-	if !present || v != false {
-		t.Fatalf("ungranted session must forward an EXPLICIT skipPermissions:false (got present=%v value=%v) — an omitted field re-resolves the config default provider-side under the facade's yoloGranted stamp", present, v)
+	if !present || v != true {
+		t.Fatalf("config default must flow without a Workspacer grant (got present=%v value=%v)", present, v)
 	}
-	out := buf.String()
-	if !strings.Contains(out, "config-defaulted") || !strings.Contains(out, "full-access grant") ||
-		!strings.Contains(out, `"worker-d"`) {
-		t.Fatalf("clamped config default must be logged with its provenance + agent label, got:\n%s", out)
+	if strings.Contains(buf.String(), "full-access grant") {
+		t.Fatalf("spawn still logged obsolete grant policy: %s", buf.String())
 	}
 }
 
@@ -132,20 +130,6 @@ func TestSpawnAgentOmittedSkipWithDefaultOffStaysOffWithoutTheGrant(t *testing.T
 // ON, and there was no way to tell from the outside why.
 //
 // Note the config here has the default OFF: the grant alone is enough.
-func TestSpawnAgentGrantAddsTheBypassToAnOmittedField(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	cs := spawnDefaultsSession(t, ctx, true, map[string]any{"skipPermissionsDefault": false})
-	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp"})
-	if params["skipPermissions"] != true {
-		t.Fatalf("granted session + omitted skipPermissions must resolve to true (the grant IS the operator's intent), got %v", params)
-	}
-	if params["yoloGranted"] != true {
-		t.Fatalf("hub did not stamp yoloGranted on the granted spawn: %v", params)
-	}
-}
-
 // TestSpawnAgentGrantDoesNotOverrideAnExplicitFalse: the grant fills in an
 // OMITTED field only. A manager that deliberately dispatches one worker with
 // approvals on — a worker about to touch something it should be gated on —

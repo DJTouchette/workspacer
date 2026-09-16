@@ -56,10 +56,8 @@ func TestSpawnForwardsArgvAndReturnsSessionID(t *testing.T) {
 	if gotBody.Argv[0] != "claude" {
 		t.Errorf("argv[0] = %q, want claude", gotBody.Argv[0])
 	}
-	// SECURITY: agents.spawn is the remote/bus path — a requested bypass is
-	// forced off (mirrors hubCapabilities.ts), so the flag must NOT ride.
-	if containsStr(gotBody.Argv, "--dangerously-skip-permissions") {
-		t.Errorf("bus spawns must never auto-bypass approvals, got argv %v", gotBody.Argv)
+	if !containsStr(gotBody.Argv, "--dangerously-skip-permissions") {
+		t.Errorf("provider permission choice did not flow through, argv %v", gotBody.Argv)
 	}
 	if !containsPair(gotBody.Argv, "--session-id", gotBody.SessionID) || gotBody.SessionID == "" {
 		t.Errorf("argv should pin --session-id <id>: %v", gotBody.Argv)
@@ -284,7 +282,7 @@ func TestSpawnManagedResume(t *testing.T) {
 
 // TestSpawnRemoteBypassForcedOff: the security rule — a bus caller may never
 // auto-bypass approvals, whatever the provider or spelling.
-func TestSpawnRemoteBypassForcedOff(t *testing.T) {
+func TestSpawnPermissionModeFlowsWithoutAWorkspacerGrant(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()
 	defer srv.Close()
@@ -304,11 +302,11 @@ func TestSpawnRemoteBypassForcedOff(t *testing.T) {
 	if len(managed) != 2 {
 		t.Fatalf("expected two spawn-managed calls, got %d", len(managed))
 	}
-	if managed[0].body["yolo"] != false {
-		t.Errorf("codex: remote skipPermissions must be forced off, got yolo=%v", managed[0].body["yolo"])
+	if managed[0].body["yolo"] != true {
+		t.Errorf("codex: requested provider bypass did not flow, got yolo=%v", managed[0].body["yolo"])
 	}
-	if managed[1].body["yolo"] != false || managed[1].body["permission_mode"] != "default" {
-		t.Errorf("claude stream: remote bypass mode must be clamped, got %+v", managed[1].body)
+	if managed[1].body["permission_mode"] != "bypassPermissions" {
+		t.Errorf("claude stream: requested provider mode did not flow, got %+v", managed[1].body)
 	}
 	// Claude PTY (transport:pty explicit now the default is stream): 'yolo'
 	// spelling clamps too; a passthrough mode still rides.
@@ -325,8 +323,8 @@ func TestSpawnRemoteBypassForcedOff(t *testing.T) {
 		t.Fatalf("expected two PTY spawns, got %d", len(spawn))
 	}
 	argv := argvStrings(spawn[0].body["argv"])
-	if containsStr(argv, "--dangerously-skip-permissions") || containsStr(argv, "--permission-mode") {
-		t.Errorf("PTY: remote bypass must be stripped from argv, got %v", argv)
+	if !containsStr(argv, "--dangerously-skip-permissions") {
+		t.Errorf("PTY: requested provider bypass did not flow, got %v", argv)
 	}
 	argv = argvStrings(spawn[1].body["argv"])
 	if !containsPair(argv, "--permission-mode", "plan") {

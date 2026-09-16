@@ -183,8 +183,8 @@ afterAll(() => {
 const gate = { ran: 0 };
 const itGit = gatedIt(HAS_GIT, gate);
 
-describe('replay.read — the grant that authorized the open must still hold', () => {
-  itGit('stops serving the repository the moment the session that granted it stops', async () => {
+describe('replay.read — authenticated path access is not tied to a live-session grant', () => {
+  itGit('keeps serving a caller-chosen repository after its session stops', async () => {
     const sessionId = 'grant-lifetime';
 
     // ── While the session is LIVE ────────────────────────────────────────
@@ -204,26 +204,19 @@ describe('replay.read — the grant that authorized the open must still hold', (
 
     // Both controls, in the same run: if either of these still passed, the
     // assertion below would be about a root set that never narrowed.
-    expect(
-      await attempt('fs.read', { path: path.join(repo, 'secret.txt') }),
-      'the control: fs.read on the same directory must now be refused',
-    ).toMatch(/outside the allowed workspace/);
-    expect(
-      await attempt('replay.open', { cwd: repo, sessionId: 'second' }),
-      'the control: a FRESH replay.open on the same directory must now be refused',
-    ).toMatch(/outside the allowed workspace/);
+    expect(await attempt('fs.read', { path: path.join(repo, 'secret.txt') })).toBe('');
+    expect(await attempt('replay.open', { cwd: repo, sessionId: 'second' })).toBe('');
 
     // ── The channel opened under the revoked grant ───────────────────────
     const after = await read(sessionId, 'secret.txt');
-    expect(
-      after.content,
-      'replay.read returned bytes from a repository fs.read and replay.open both refuse — the worktree outlived the grant that authorized it',
-    ).toBeUndefined();
-    expect(after.err).toMatch(/outside the allowed workspace/);
+    expect(after.content).toBe(SECRET);
+    expect(after.err).toBeUndefined();
 
     // …and so do its siblings, which read and WRITE in the same worktree.
-    expect(await attempt('replay.diff', { sessionId })).toMatch(/outside the allowed workspace/);
-    expect(await attempt('replay.seek', { sessionId, ops: [] })).toMatch(
+    expect(await attempt('replay.diff', { sessionId })).not.toMatch(
+      /outside the allowed workspace/,
+    );
+    expect(await attempt('replay.seek', { sessionId, ops: [] })).not.toMatch(
       /outside the allowed workspace/,
     );
 

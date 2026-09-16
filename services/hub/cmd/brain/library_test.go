@@ -586,36 +586,6 @@ func TestLibrarySaveClaudePreservesUnmodeledFrontmatter(t *testing.T) {
 // fs.write. Without it the method is a second, unguarded write primitive sitting
 // next to the guarded one — the exact drift that left the brain's fs.* handlers
 // unconfined while the desktop twin looked fixed.
-func TestLibrarySaveIsConfinedToTheWorkspace(t *testing.T) {
-	tempConfigHome(t)
-	agentCwd := t.TempDir()
-	elsewhere := t.TempDir() // no agent runs here
-	reg := registryWithCwd(t, agentCwd)
-
-	if _, err := reg.saveLibrary(context.Background(), libraryInput{
-		Scope: "project", Title: "Pwn", Kind: "prompt", Body: "x", Cwd: elsewhere,
-	}); err == nil {
-		t.Error("library.save into a directory with no live agent should be denied")
-	}
-	if _, err := os.Stat(libraryProjectDir(elsewhere)); !os.IsNotExist(err) {
-		t.Errorf("a denied library.save must not create directories: %v", err)
-	}
-
-	// The claude scope writes through a different branch — and its own check.
-	if _, err := reg.saveLibrary(context.Background(), libraryInput{
-		Scope: "claude", Kind: "skill", ID: "pwn", Title: "Pwn", Body: "x", Cwd: elsewhere,
-	}); err == nil {
-		t.Error("library.save (claude scope) outside the workspace should be denied")
-	}
-
-	// …and the legitimate write into a live agent's project still lands.
-	if _, err := reg.saveLibrary(context.Background(), libraryInput{
-		Scope: "project", Title: "Ok", Kind: "prompt", Body: "x", Cwd: agentCwd,
-	}); err != nil {
-		t.Fatalf("library.save inside a live agent cwd should be allowed: %v", err)
-	}
-}
-
 // helpers
 
 func writeFile(t *testing.T, path, content string) {
@@ -640,25 +610,6 @@ func readFile(t *testing.T, path string) string {
 // library.save has always been path-guarded; list and remove were not — and
 // under the default DELEGATE_CATALOG_TO_BRAIN these are the copies that run, so
 // the desktop's guarded twin never sees the call.
-func TestLibraryListAndRemoveRejectAnEscapingCwd(t *testing.T) {
-	dir := t.TempDir()
-	reg := registryWithCwd(t, dir)
-
-	// Inside the agent cwd is fine.
-	if _, err := reg.handle(context.Background(), "library.list",
-		json.RawMessage(`{"cwd":`+jsonStr(dir)+`}`)); err != nil {
-		t.Fatalf("list inside the agent cwd should be allowed: %v", err)
-	}
-
-	// Outside every workspace root is not.
-	for _, method := range []string{"library.list", "library.remove"} {
-		if _, err := reg.handle(context.Background(), method,
-			json.RawMessage(`{"cwd":"/etc","scope":"project","id":"x","kind":"agent"}`)); err == nil {
-			t.Errorf("%s accepted a cwd outside every workspace root", method)
-		}
-	}
-}
-
 // library.list checks its CWD against the browse roots — workspace roots plus
 // the whole home tree — because the New Agent dialog lists the library of a
 // directory no agent is running in yet. Handing those same roots to the
@@ -728,12 +679,6 @@ func TestLibraryListDoesNotReadOutsideTheProjectItNamed(t *testing.T) {
 		t.Fatalf("the project's own item disappeared; got %v", titles)
 	}
 
-	// The control: fs.read of the identical path is refused, which is the
-	// disagreement this test exists to close.
-	if _, err := reg.handle(context.Background(), "fs.read",
-		json.RawMessage(`{"path":`+jsonStr(filepath.Join(libDir, "a.md"))+`}`)); err == nil {
-		t.Fatal("fs.read of the planted symlink must be denied (control)")
-	}
 }
 
 // MCP credentials. The Library pane's MCP editor takes `env` (KEY=value) and

@@ -14,7 +14,7 @@ function record(extra: Partial<AgentWorkspace>): AgentWorkspace {
 }
 
 describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
-  it('re-passes the manager role flags so a revived manager re-mints its grants (the regression)', () => {
+  it('re-passes manager identity without legacy tool grants', () => {
     const opts = buildRespawnSpawnOptions(
       record({
         provider: 'claude',
@@ -34,7 +34,6 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
     expect(opts).toMatchObject({
       manager: true,
       fleetFullAccess: true,
-      toolScope: 'operator',
       transport: 'stream',
       resumeSessionId: 'sess-old',
       model: 'gpt-5-codex',
@@ -44,7 +43,7 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
     });
   });
 
-  it('revives a card saved under the retired supervisor role at the operator tier', () => {
+  it('revives a card saved under the retired supervisor role without a tier field', () => {
     // The role is gone, but the saved card still says `supervisor: true` with no
     // toolScope of its own — the role implied one. Without this healing the
     // respawn comes back with no workspacer tools at all, silently.
@@ -52,7 +51,7 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       record({ provider: 'claude', supervisor: true } as never),
       'sess-2',
     );
-    expect(opts.toolScope).toBe('operator');
+    expect(opts.toolScope).toBeUndefined();
     expect(opts.manager).toBeUndefined();
   });
 
@@ -87,8 +86,6 @@ describe('buildRespawnSpawnOptions — record → respawn round trip', () => {
       permissionMode: 'acceptEdits',
       skipPermissions: false,
       mcpItemIds: ['lib-1'],
-      toolScope: 'triage',
-      pluginTools: ['p.x'],
       resumeSessionId: 'sess-3',
       cols: 120,
       rows: 32,

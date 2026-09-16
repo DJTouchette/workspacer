@@ -41,7 +41,7 @@ func saveGrantProfile(t *testing.T) {
 
 // TestGrantedSpawnKeepsConfigDirOnThePtyPath: profileGranted:true (hub-stamped)
 // carries the account onto the classic PTY argv spawn — and nothing else.
-func TestGrantedSpawnKeepsConfigDirOnThePtyPath(t *testing.T) {
+func TestSpawnKeepsSelectedConfigDirOnThePtyPath(t *testing.T) {
 	var gotBody spawnReq
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -60,11 +60,9 @@ func TestGrantedSpawnKeepsConfigDirOnThePtyPath(t *testing.T) {
 	if got := gotBody.Env["CLAUDE_CONFIG_DIR"]; got != "/home/user/.claude-work" {
 		t.Errorf("a GRANTED spawn must run under the profile's account (CLAUDE_CONFIG_DIR), got %q", got)
 	}
-	// The grant is about the account, not about approvals: every bypass smuggle
-	// stays scrubbed, the allowlisted flag still rides.
-	for _, banned := range []string{"--dangerously-skip-permissions", "--settings", "/tmp/evil.json", "--allowedTools", "Bash,Edit"} {
-		if containsStr(gotBody.Argv, banned) {
-			t.Errorf("%q survived onto a granted spawn's argv — the grant must not weaken the bypass scrub: %v", banned, gotBody.Argv)
+	for _, expected := range []string{"--dangerously-skip-permissions", "--settings", "/tmp/evil.json", "--allowedTools", "Bash,Edit"} {
+		if !containsStr(gotBody.Argv, expected) {
+			t.Errorf("profile argument %q did not flow to the spawn: %v", expected, gotBody.Argv)
 		}
 	}
 	if !containsPair(gotBody.Argv, "--model", "opus[1m]") {
@@ -77,7 +75,7 @@ func TestGrantedSpawnKeepsConfigDirOnThePtyPath(t *testing.T) {
 
 // TestGrantedSpawnKeepsConfigDirOnTheManagedPath: same contract on the shipping
 // default (claude.transport=stream → /sessions/spawn-managed).
-func TestGrantedSpawnKeepsConfigDirOnTheManagedPath(t *testing.T) {
+func TestSpawnKeepsSelectedConfigDirOnTheManagedPath(t *testing.T) {
 	var gotBody spawnManagedReq
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,9 +98,9 @@ func TestGrantedSpawnKeepsConfigDirOnTheManagedPath(t *testing.T) {
 	if got := gotBody.Env["CLAUDE_CONFIG_DIR"]; got != "/home/user/.claude-work" {
 		t.Errorf("granted managed spawn must carry the account's CLAUDE_CONFIG_DIR, got %q", got)
 	}
-	for _, banned := range []string{"--dangerously-skip-permissions", "--settings", "--allowedTools"} {
-		if containsStr(gotBody.ExtraArgs, banned) {
-			t.Errorf("%q survived onto a granted managed spawn — the grant must not weaken the bypass scrub: %v", banned, gotBody.ExtraArgs)
+	for _, expected := range []string{"--dangerously-skip-permissions", "--settings", "--allowedTools"} {
+		if !containsStr(gotBody.ExtraArgs, expected) {
+			t.Errorf("profile argument %q did not flow to the managed spawn: %v", expected, gotBody.ExtraArgs)
 		}
 	}
 	if gotBody.Model != "opus[1m]" || gotBody.ModelIdentity != "opus" || gotBody.ContextWindow == nil || *gotBody.ContextWindow != 1_000_000 {
@@ -114,22 +112,3 @@ func TestGrantedSpawnKeepsConfigDirOnTheManagedPath(t *testing.T) {
 // is byte-for-byte yesterday's — profileId resolves, configDir does not ride.
 // (The hub additionally strips profileId itself from ungranted callers, so
 // this leg is defense in depth against a stale or bypassed hub.)
-func TestUngrantedSpawnStillDropsConfigDir(t *testing.T) {
-	var gotBody spawnReq
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{"session_id": gotBody.SessionID})
-	}))
-	defer srv.Close()
-
-	reg := newSpawnTestRegistry(t, srv.URL)
-	saveGrantProfile(t)
-
-	params := []byte(`{"cwd":"/tmp","transport":"pty","profileId":"work"}`)
-	if _, err := reg.handle(context.Background(), "agents.spawn", params); err != nil {
-		t.Fatal(err)
-	}
-	if got := gotBody.Env["CLAUDE_CONFIG_DIR"]; got != "" {
-		t.Errorf("an ungranted spawn inherited the profile's CLAUDE_CONFIG_DIR: %q", got)
-	}
-}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/djtouchette/workspacer-hub/internal/broker"
@@ -34,7 +35,7 @@ func TestResolveBrainBinSibling(t *testing.T) {
 }
 
 func TestBrainArgs(t *testing.T) {
-	got := brainArgs("127.0.0.1:7895", "http://host:7891", "catalog")
+	got := brainArgs("127.0.0.1:7895", "http://host:7891", "catalog", "")
 	want := []string{
 		"--hub", "ws://127.0.0.1:7895/bus",
 		"--claudemon", "http://host:7891",
@@ -43,6 +44,26 @@ func TestBrainArgs(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("brainArgs = %v, want %v", got, want)
 	}
+}
+
+func TestBrainArgsForwardsOnlyAnOwnedFacade(t *testing.T) {
+	without := brainArgs("127.0.0.1:7895", "http://host:7891", "full", "")
+	if strings.Contains(strings.Join(without, " "), "mcp-facade") {
+		t.Fatalf("empty facade still advertised: %v", without)
+	}
+	with := brainArgs("127.0.0.1:7895", "http://host:7891", "full", "http://127.0.0.1:7897/mcp")
+	if got := valueAfter(with, "--mcp-facade"); got != "http://127.0.0.1:7897/mcp" {
+		t.Fatalf("facade arg = %q, args=%v", got, with)
+	}
+}
+
+func valueAfter(args []string, key string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == key {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 // THE SHAPE THIS EXISTS FOR: the hub's bind address is not always an address.
@@ -63,7 +84,7 @@ func TestBrainArgsRewritesAWildcardBindToLoopback(t *testing.T) {
 		{"127.0.0.1:7895", "ws://127.0.0.1:7895/bus"},
 		{"100.86.79.73:7895", "ws://100.86.79.73:7895/bus"},
 	} {
-		got := brainArgs(tc.bind, "http://host:7891", "catalog")
+		got := brainArgs(tc.bind, "http://host:7891", "catalog", "")
 		if got[0] != "--hub" || got[1] != tc.want {
 			t.Errorf("brainArgs(%q) bus URL = %q, want %q", tc.bind, got[1], tc.want)
 		}
@@ -124,7 +145,7 @@ func statusVia(t *testing.T, dial, host string) int {
 // exactly why a whole session of 403 reconnects — with every file-backed
 // capability dead on the bus — produced not one line anywhere.
 func TestBrainSpecInheritsItsOutput(t *testing.T) {
-	spec := brainSpec("/opt/wks/brain", "0.0.0.0:7895", "http://127.0.0.1:7891", "catalog", nil)
+	spec := brainSpec("/opt/wks/brain", "0.0.0.0:7895", "http://127.0.0.1:7891", "catalog", "", nil)
 	if !spec.InheritOutput {
 		t.Fatal("the supervised brain's stdout/stderr are DISCARDED: a permanent failure (the 403 reconnect loop) writes its diagnosis to nowhere")
 	}

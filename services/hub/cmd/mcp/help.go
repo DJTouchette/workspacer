@@ -53,7 +53,7 @@ Reading another agent's activity:
 - get_snapshot: full live detail for one session (turns, tools, usage, pending
   approval/question). Heavier; use when you need everything at once.
 - get_transcript: the raw transcript. Largest payload — prefer the two above,
-  or spawn a cheap worker (spawn_agent with toolScope "view") whose whole job
+  or spawn a cheap worker whose whole job
   is to read it and reply with a digest, so it never enters your own context.
 When you reference a session in an answer, write its id as session:<sessionId>
 so the UI renders a clickable link.`),
@@ -75,18 +75,13 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   Static controllers may still pass parentSessionId explicitly. A manager flag
   remains separate: it controls fleet-wide broadcasts and task ownership, not
   whether an ordinary parent receives its own child's wake.
-- Give the new agent workspacer tools only when it needs them, at the LOWEST
-  tier that works: toolScope "view" for summarizer/reader workers, "triage" to
-  also approve/reply/interrupt, "operator" for everything (spawning included).
-  mcpFacade:true is the legacy spelling of operator.
-- skipPermissions omitted = bypass if your session carries the full-access
-  grant (the operator turned on full access for the fleet, which
-  means the agents you dispatch skip approvals), else the workspacer config
-  default (the same one the desktop spawn dialog pre-selects:
-  claude.skipPermissionsDefault, or a bypass defaultPermissionMode). An
-  explicit true/false always wins — pass false to dispatch ONE worker with
-  approvals on. Requested or defaulted, a bypass is honored only when your
-  session token carries the grant — ungranted spawns start with approvals on.
+- Every supported spawned agent receives the full Workspacer operator surface
+  and every enabled plugin tool automatically, including recursively spawned
+  children. Pi is refused because it has no MCP bridge. Legacy toolScope,
+  mcpFacade and pluginTools inputs are accepted but ignored.
+- skipPermissions is provider configuration, not a Workspacer grant. Omit it
+  for the Workspacer config default, pass true for the provider's bypass mode,
+  or false to keep approvals on for one worker.
 - resultSchema (optional) asks the worker for a MACHINE-READABLE report as well
   as its prose: pass a JSON Schema and the worker is told to end its final
   message with a fenced wks-result block matching it, which arrives back on your
@@ -134,9 +129,9 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   capability to judge, and makes no freshness claim, so a reviewer sent without
   one loses the guarantee that it never saw the implementation. The routing
   topic covers what to ask for and what binds whether you asked or not.
-- YOUR ANSWER MAY COME BACK CLAMPED, and escalationScrubbed on the spawn result
+- YOUR MODEL ANSWER MAY COME BACK CLAMPED, and escalationScrubbed on the spawn result
   is where you see it: a list of the fields the host took away (capability,
-  model, effort, toolScope, profileId are the ones you can cause). It is stamped
+  model and effort are the ordinary cases). It is stamped
   by the host, which deletes any value you sent under that name first, so it
   reports what THIS spawn lost and nothing else. A clamped capability takes the
   model and effort you named with it and substitutes the permitted capability's
@@ -145,8 +140,7 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   person with a text editor can raise a ceiling.
 - Drive it afterwards with send_message; watch it with get_conversation.
 - To spawn on a federated peer machine, pass hub (a hub name seen on
-  list_agents rows). The peer clamps remote spawns itself — permission bypass
-  is refused there — and driving the new agent needs the same hub value.`),
+  list_agents rows). Driving the new agent needs the same hub value.`),
 	"routing": strings.TrimSpace(`
 Routing preferences: routing_preferences_get returns this connected hub's safe
 policy, shipped defaults, inherited host values, sparse overrides and revision.
@@ -169,7 +163,7 @@ into a concrete provider, model and effort when the user has not named a model.
 An explicit user model choice overrides this default: use provider/model and
 exactModel:true on spawn_agent without stale capability/decisionId, or pass
 modelSelection:{provider,model,effort?} to dispatch_workflow_step instead of routing.
-Configured model ceilings and permission grants still apply; an exact choice is
+Configured model ceilings still apply; an exact choice is
 refused rather than replaced if a ceiling prevents it.
 What comes back, and what to do with it:
 - provider, model, effort: pass them to spawn_agent exactly as named.
@@ -238,13 +232,12 @@ Plain spawn_agent accepts an explicit provider/model. Otherwise ask select_model
 and pass its decision through. dispatch_workflow_step already performs automatic routing for its pinned step
 unless modelSelection names the explicit user choice, so do not route separately or spawn a duplicate worker.
 The composed receipt includes the selection and its decisionId for inspection.
-Two rules DO bind on every spawn the host receives, asked or not, because they
+Two model-routing rules DO bind on every spawn the host receives, asked or not, because they
 live in the spawn sanitizer rather than in routing:
-- THE CEILING is per directory (longest matching ancestor wins, default
-  otherwise) and caps two axes: the capability, and the tool tier a worker there
-  may hold. A spawn above it is clamped rather than refused. The capability drops
+- THE MODEL CEILING is per directory (longest matching ancestor wins, default
+  otherwise). A spawn above it is clamped rather than refused. The capability drops
   and takes the model and effort you named with it, replaced by the permitted
-  capability's own; the tool tier is lowered the same way; escalationScrubbed on
+  capability's own; escalationScrubbed on
   the result names what went. select_model applies the SAME ceiling before it
   answers, so a capped answer arrives already capped, with the ceiling and the
   reason on it, instead of being taken away afterwards.
@@ -396,11 +389,11 @@ respawn_with({sessionId, amendment}) is the OTHER half of that move: it clones
 the stopped worker's ORIGINAL task and its cwd/model/provider/effort/parent,
 appends your correction under a heading that supersedes anything above it, and
 starts a fresh agent with both — so you state the DIAGNOSIS, not the whole task
-again. Override model/effort/label/cwd/toolScope as needed; pass worktree:true
+again. Override model/effort/label/cwd as needed; pass worktree:true
 to start clean instead of continuing in the original's worktree. It refuses
 without an amendment (a clone with no correction just repeats itself), and the
-successor's permission mode is re-judged by the same grant check a fresh
-spawn_agent gets — a bypassed original does not make a bypassed clone.
+successor's provider permission mode is copied explicitly; Workspacer applies
+no separate grant or clamp.
 
 close_session refuses while the session is still working — hiding a running
 agent from list_agents while it keeps spending is worse than a stale row — and

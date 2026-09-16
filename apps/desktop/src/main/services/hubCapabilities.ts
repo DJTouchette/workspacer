@@ -728,33 +728,20 @@ export function registerHubCapabilities(): void {
        *  see managedSpawnOptions.ts for why dropping this is the load-bearing
        *  bug class this capability must not repeat. */
       manager?: boolean;
-      /** Manager only: full-access dispatch grant (config agents.fleetFullAccess);
-       *  kept on the wire for record fidelity (fullAccessGrants.ts resolves the
-       *  actual grant from config, not this flag). */
+      /** Legacy manager setting retained for record/wire compatibility. */
       fleetFullAccess?: boolean;
+      /** Accepted and ignored compatibility flag; supported agents receive the facade. */
       mcpFacade?: boolean;
-      /** Facade tool tier: 'view' | 'triage' | 'operator' (implies the facade).
-       *  Not an escalation door: only trusted/operator callers reach
-       *  agents.spawn at all, and the tier only ever NARROWS the facade the
-       *  legacy mcpFacade flag already granted wholesale. */
+      /** Accepted and ignored compatibility tier; supported agents receive operator tools. */
       toolScope?: RemoteTokenScope;
-      /** Plugin ids whose contributed facade tools the session may use. */
+      /** Accepted and ignored compatibility list; enabled plugin tools are ambient. */
       pluginTools?: string[];
       label?: string;
       parentSessionId?: string;
       mcpItemIds?: string[];
-      /** HUB-STAMPED, never caller-supplied: the hub's sanitizeSpawnParams
-       *  deletes any incoming copy and re-stamps true only after verifying the
-       *  calling token's profilesAllowed grant names this exact profileId (or
-       *  the caller is the trusted host). Softens the profile scrub to
-       *  scrubRemoteGrantedProfile — configDir kept, bypass args and
-       *  mcpItemIds still stripped. TWIN: rpc.go sanitizeSpawnParams. */
+      /** Accepted and ignored compatibility stamp from older hubs. */
       profileGranted?: boolean;
-      /** HUB-STAMPED, never caller-supplied (same guarantee as profileGranted):
-       *  the calling token's YoloAllowed grant is verified before this is set.
-       *  When true, the spawn's requested skipPermissions / bypass mode is
-       *  HONORED instead of clamped — the fleet-manager full-access path.
-       *  TWIN: rpc.go sanitizeSpawnParams. */
+      /** Accepted and ignored compatibility stamp from older hubs. */
       yoloGranted?: boolean;
       /** HUB-STAMPED, never caller-supplied (same guarantee as the two above —
        *  sanitizeSpawnParams deletes any incoming copy): the spawn-escalation
@@ -2793,12 +2780,7 @@ export function registerHubCapabilities(): void {
     // both of which fs.read and fs.watch refuse for the same caller. So this
     // one leg is held to the ordinary workspace roots as well.
     const operand = filePath
-      ? await anchorGitPathspec(
-          'git.diff',
-          canonicalCwd,
-          filePath,
-          untracked ? [workspaceRoots()] : [],
-        )
+      ? await anchorGitPathspec('git.diff', canonicalCwd, filePath)
       : filePath;
     return { diff: await git.diff(canonicalCwd, operand, staged, untracked) };
   });
@@ -2846,7 +2828,7 @@ export function registerHubCapabilities(): void {
     if (!cwd) throw new Error('git.stage requires { cwd }');
     const canonicalCwd = guardGitCwd('git.stage', cwd);
     const operand = filePath
-      ? await anchorGitPathspec('git.stage', canonicalCwd, filePath, [workspaceRoots()])
+      ? await anchorGitPathspec('git.stage', canonicalCwd, filePath)
       : await cwdPathspec('git.stage', canonicalCwd);
     const output = await git.stage(canonicalCwd, operand);
     return { ok: true, output };
@@ -2861,7 +2843,7 @@ export function registerHubCapabilities(): void {
     if (!cwd) throw new Error('git.unstage requires { cwd }');
     const canonicalCwd = guardGitCwd('git.unstage', cwd);
     const operand = filePath
-      ? await anchorGitPathspec('git.unstage', canonicalCwd, filePath, [workspaceRoots()])
+      ? await anchorGitPathspec('git.unstage', canonicalCwd, filePath)
       : await cwdPathspec('git.unstage', canonicalCwd);
     const output = await git.unstage(canonicalCwd, operand);
     return { ok: true, output };

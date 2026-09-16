@@ -810,6 +810,9 @@ func TestCloseForgetsTheRowAndStopsALiveDaemonSession(t *testing.T) {
 		"ended": row("ended", "/q", "stopped"),
 	}, map[string]spawnMeta{"idle": {Label: "worker"}})
 	ctx := context.Background()
+	if _, err := mintSessionFacadeToken("idle", authtoken.ScopeOperator, []string{"*"}, nil, false, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := reg.handle(ctx, "agents.close", json.RawMessage(`{"sessionId":"idle"}`))
 	if err != nil {
@@ -827,6 +830,15 @@ func TestCloseForgetsTheRowAndStopsALiveDaemonSession(t *testing.T) {
 	}
 	if n := len(rec.calls("/sessions/idle/signal")); n != 1 {
 		t.Errorf("expected one SIGTERM to the daemon, got %d", n)
+	}
+	rows, err := authtoken.Load(authtoken.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range rows {
+		if token.Label == sessionFacadeTokenLabelPrefix+"idle" {
+			t.Fatal("agents.close left the session facade token valid")
+		}
 	}
 
 	// An ALREADY-ENDED row is forgotten without a second signal: re-SIGTERMing

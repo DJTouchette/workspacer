@@ -37,7 +37,7 @@ const busEvents = vi.hoisted(() => [] as unknown[]);
 vi.mock('./hubClient', () => ({ publishToHub: (e: unknown) => void busEvents.push(e) }));
 
 import { libraryService } from './libraryService';
-import { assertPathAllowed } from '../lib/pathConfinement';
+import { assertPathContained } from '../lib/pathConfinement';
 
 let cwd: string;
 // The USER claude root, pointed at a temp dir for the whole suite. list() now
@@ -233,7 +233,7 @@ describe('libraryService — save confines the path it actually opens', () => {
   const guardFor = (...roots: string[]): ((p: string) => string | null) => {
     return (p) => {
       try {
-        return assertPathAllowed('library.save', p, roots);
+        return assertPathContained('library.save', p, roots);
       } catch {
         return null;
       }
@@ -333,7 +333,7 @@ describe('libraryService — every leg applies the guard it was handed', () => {
     (cap: string, ...roots: string[]) =>
     (p: string): string | null => {
       try {
-        return assertPathAllowed(cap, p, roots);
+        return assertPathContained(cap, p, roots);
       } catch {
         return null;
       }
@@ -684,7 +684,7 @@ describe('libraryService — the derived watch paths go through the same guard',
     const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root, ...extra];
     return (p: string): string | null => {
       try {
-        return assertPathAllowed('library.list', p, roots);
+        return assertPathContained('library.list', p, roots);
       } catch {
         return null;
       }
@@ -910,7 +910,7 @@ describe('libraryService — every leg opens the path the guard RESOLVED', () =>
     const roots = [path.join(fs.realpathSync(h.configDir), 'library'), root];
     return (p: string): string | null => {
       try {
-        return assertPathAllowed('library', p, roots);
+        return assertPathContained('library', p, roots);
       } catch {
         return null;
       }

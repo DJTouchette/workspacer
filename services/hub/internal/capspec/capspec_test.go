@@ -1228,14 +1228,14 @@ var claimableHelpers = []string{
 	"openExternalUrl", "sessionFilePath", "resolveWithinSessionsDir",
 	"layoutFilePath", "claudeProjectDirName", "dropHostTrusted", "workRoot",
 	"resolveInside", "resolveSessionFilename", "buildSessionMcpConfig",
-	"libraryItemRoots", "busMcpItemIds", "profilesPath", "slugSession",
+	"libraryItemRoots", "profilesPath", "slugSession",
 	"assertLibraryItemPath", "slugLibrary",
 	// The composition guards: a git pathspec anchored on the DERIVED work-tree
 	// root (never on the caller's cwd), the cwd-bounded substitute for a
 	// path-less `git add -A`, the replay worktree re-anchor, the live
 	// permission-mode clamp, and the shared live-effort body.
 	"anchorGitPathspec", "cwdPathspec", "containInWorktree",
-	"assertNoPermissionBypass", "applyLiveEffort",
+	"applyLiveEffort",
 }
 
 // helperRe matches a helper name as a WHOLE identifier. Substring matching is

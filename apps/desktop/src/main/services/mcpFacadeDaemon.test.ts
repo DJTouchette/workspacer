@@ -15,12 +15,14 @@ import { EventEmitter } from 'events';
 
 const killStaleListener = vi.fn();
 const waitForHealth = vi.fn().mockResolvedValue(undefined);
+const probeHealth = vi.fn().mockResolvedValue(false);
+const gracefulStop = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../lib/daemonUtils', () => ({
   killStaleListener: (...a: unknown[]) => killStaleListener(...a),
   waitForHealth: (...a: unknown[]) => waitForHealth(...a),
-  gracefulStop: vi.fn().mockResolvedValue(undefined),
-  probeHealth: vi.fn().mockResolvedValue(false),
+  gracefulStop: (...a: unknown[]) => gracefulStop(...a),
+  probeHealth: (...a: unknown[]) => probeHealth(...a),
   daemonSpawnOptions: (extraEnv?: Record<string, string>) => ({
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...extraEnv },
@@ -78,10 +80,23 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   killStaleListener.mockClear();
   spawnMock.mockClear();
+  probeHealth.mockReset().mockResolvedValue(false);
+  gracefulStop.mockClear();
   mockConfig = {};
 });
 
 describe('mcp facade spawn', () => {
+  it('adopts a healthy externally supervised facade and leaves it running on stop', async () => {
+    probeHealth.mockResolvedValue(true);
+    const mod = await loadModule();
+    await mod.startMcpFacade();
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(killStaleListener).not.toHaveBeenCalled();
+    await mod.stopMcpFacade();
+    expect(gracefulStop).toHaveBeenCalledWith(null, 'mcp');
+  });
+
   it('gives the facade the bus token in the environment', async () => {
     const mod = await loadModule();
     await mod.startMcpFacade();

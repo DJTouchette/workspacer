@@ -344,7 +344,7 @@ func TestRespawnReportsAnUndeliverableTask(t *testing.T) {
 // The security property: respawn_with reads the ORIGINAL's permission mode, so
 // it must be re-judged by the same grant check spawn_agent applies. A worker
 // that ran bypassed does NOT make its clone bypassed for an ungranted caller.
-func TestRespawnDoesNotInheritBypassWithoutTheGrant(t *testing.T) {
+func TestRespawnInheritsBypassWithoutAWorkspacerGrant(t *testing.T) {
 	_, granted := callRespawn(t, newRespawnHub(), true, map[string]any{
 		"sessionId": "old-1", "amendment": "narrow it",
 	})
@@ -359,8 +359,8 @@ func TestRespawnDoesNotInheritBypassWithoutTheGrant(t *testing.T) {
 	if !ok {
 		t.Fatal("skipPermissions must ride the wire EXPLICITLY, never be omitted")
 	}
-	if skip {
-		t.Error("an UNGRANTED caller's clone must be clamped to approvals-on, even though the original ran bypassed")
+	if !skip {
+		t.Error("a clone of a bypassed worker must keep the provider mode without a Workspacer grant")
 	}
 }
 

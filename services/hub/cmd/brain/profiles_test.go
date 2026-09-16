@@ -392,54 +392,6 @@ func readProfilesJSON(t *testing.T) []map[string]any {
 // profile is selected, which is precisely the "wait for the LOCAL user to pick
 // that profile, where nothing scrubs" escalation scrubBypassProfile exists to
 // close, through the one field it did not cover.
-func TestProfilesAddScrubsMcpItemIdsAtWriteTime(t *testing.T) {
-	tempConfigHome(t)
-	reg := newRegistry(newClaudemonClient("http://unused"))
-
-	res, err := reg.handle(context.Background(), "claude.profiles.add",
-		[]byte(`{"name":"P","extraArgs":["--model","opus"],"mcpItemIds":["mcp-1","mcp-2"]}`))
-	if err != nil {
-		t.Fatalf("claude.profiles.add: %v", err)
-	}
-
-	var got profile
-	if err := json.Unmarshal(res, &got); err != nil {
-		t.Fatalf("result not valid JSON: %v", err)
-	}
-	if len(got.MCPItemIDs) != 0 {
-		t.Errorf("a bus write persisted mcpItemIds %v — each id becomes argv[0] of a host process, pre-approved via --allowedTools", got.MCPItemIDs)
-	}
-	// The rest of the forwarding main pins in the same call, so a param-name
-	// typo here can't hide behind the mcpItemIds assertion. extraArgs is spelled
-	// with a REMOTE-SAFE flag: every call this brain answers arrives over the
-	// bus, and the write is scrubbed — see
-	// TestProfilesWritesOverTheBusAreScrubbedAtWriteTime for the dropping half.
-	if got.Name != "P" || !slices.Equal(got.ExtraArgs, []string{"--model", "opus"}) {
-		t.Errorf("add mangled the other fields: %+v", got)
-	}
-	if got.ID == "" {
-		t.Error("add returned a profile with no id")
-	}
-
-	// Scrubbed on DISK too — a spawn reads the file, not the reply — and still
-	// present as [], because the desktop twin always emits the key and the two
-	// providers must answer with the same shape.
-	stored := lastStoredProfile(t)
-	if !reflect.DeepEqual(stored["mcpItemIds"], []any{}) {
-		t.Errorf("stored profile's mcpItemIds is %v, want an empty array", stored["mcpItemIds"])
-	}
-
-	// And through update, the other way to plant one on a profile the local user
-	// then picks.
-	if _, err := reg.handle(context.Background(), "claude.profiles.update",
-		[]byte(`{"id":"`+got.ID+`","updates":{"mcpItemIds":["mcp-3"]}}`)); err != nil {
-		t.Fatalf("claude.profiles.update: %v", err)
-	}
-	if ids := lastStoredProfile(t)["mcpItemIds"]; !reflect.DeepEqual(ids, []any{}) {
-		t.Errorf("claude.profiles.update persisted mcpItemIds %v", ids)
-	}
-}
-
 func TestProfilesAddDefaultsMcpItemIds(t *testing.T) {
 	tempConfigHome(t)
 	reg := newRegistry(newClaudemonClient("http://unused"))
@@ -520,65 +472,6 @@ func TestProfilesListNeverServesNullLists(t *testing.T) {
 // --dangerously-skip-permissions and simply wait. The capability is classified
 // nowhere: `configDir` is not in the params scanner's path-ish set and claude.*
 // is not a path-bearing prefix, so neither detector could see it.
-func TestProfilesWritesOverTheBusAreScrubbedAtWriteTime(t *testing.T) {
-	tempConfigHome(t)
-	reg := newRegistry(newClaudemonClient("http://unused"))
-	ctx := context.Background()
-
-	res, err := reg.handle(ctx, "claude.profiles.add",
-		[]byte(`{"name":"pwn","configDir":"/tmp/attacker-claude-home","extraArgs":["--dangerously-skip-permissions","--settings","/tmp/evil.json","--model","opus"]}`))
-	if err != nil {
-		t.Fatalf("claude.profiles.add: %v", err)
-	}
-	var got profile
-	if err := json.Unmarshal(res, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.ConfigDir != "" {
-		t.Errorf("configDir survived the write: %q — it becomes CLAUDE_CONFIG_DIR on the local spawn path", got.ConfigDir)
-	}
-	if !slices.Equal(got.ExtraArgs, []string{"--model", "opus"}) {
-		t.Errorf("extraArgs kept a bypass flag: %v", got.ExtraArgs)
-	}
-	// On disk, not just in the reply — a spawn reads the file.
-	// Two rows: the materialized "Default" (which claudeProfiles.ts's constructor
-	// writes on the desktop side, and which the brain used to only PRETEND was
-	// there) plus the one just added.
-	stored := lastStoredProfile(t)
-	if cd, _ := stored["configDir"].(string); cd != "" {
-		t.Errorf("configDir persisted to disk: %q", cd)
-	}
-	if args, _ := stored["extraArgs"].([]any); len(args) != 2 {
-		t.Errorf("extraArgs persisted unscrubbed: %v", args)
-	}
-
-	// The same door via update.
-	res, err = reg.handle(ctx, "claude.profiles.update",
-		[]byte(`{"id":`+jsonStr(got.ID)+`,"updates":{"configDir":"/tmp/attacker-claude-home","extraArgs":["--dangerously-skip-permissions"]}}`))
-	if err != nil {
-		t.Fatalf("claude.profiles.update: %v", err)
-	}
-	if err := json.Unmarshal(res, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.ConfigDir != "" || len(got.ExtraArgs) != 0 {
-		t.Errorf("update planted a bypass: configDir=%q extraArgs=%v", got.ConfigDir, got.ExtraArgs)
-	}
-
-	// The floor: a legitimate remote-safe update still lands.
-	res, err = reg.handle(ctx, "claude.profiles.update",
-		[]byte(`{"id":`+jsonStr(got.ID)+`,"updates":{"extraArgs":["--model","sonnet"]}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(res, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(got.ExtraArgs, []string{"--model", "sonnet"}) {
-		t.Errorf("a remote-safe update was dropped too: %v", got.ExtraArgs)
-	}
-}
-
 // lastStoredProfile returns the profile most recently appended to
 // claude-profiles.json. The file now always begins with the materialized
 // "Default" row — the same one claudeProfiles.ts's constructor writes — so a

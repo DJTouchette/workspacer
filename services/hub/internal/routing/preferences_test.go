@@ -2,7 +2,6 @@ package routing
 
 import (
 	"encoding/json"
-	"github.com/djtouchette/workspacer-hub/internal/limits"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/limits"
 )
 
 type preferenceCatalog map[string]CatalogSnapshot
@@ -188,21 +189,6 @@ func TestPreferencesUnknownCatalogOnlyBlocksChangedAssignments(t *testing.T) {
 	r, e = s.UpdatePreferences(PreferencesRequest{BaseRevision: r.View.Revision}, "reset")
 	if e != nil || r.Status != "applied" {
 		t.Fatalf("reset blocked %+v %v", r, e)
-	}
-}
-func TestPreferencesRetainsHostModelClassificationAndCeilings(t *testing.T) {
-	s, _, _ := preferenceFixture(t)
-	before := s.Matrix().CheckSpawn(SpawnRequest{CanonicalCwd: t.TempDir(), Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Capability: "cheap", ToolScope: "operator"})
-	r, e := s.UpdatePreferences(prefsRequest(t, s, `{"profiles":{"codex_only":{"frontier_plus":{"model":"gpt-5.6-terra","effort":"high"},"frontier_max":{"model":"gpt-5.6-terra","effort":"high"}}}}`), "save")
-	if e != nil || r.Status != "applied" {
-		t.Fatalf("lowering rows %+v %v", r, e)
-	}
-	after := s.Matrix().CheckSpawn(SpawnRequest{CanonicalCwd: t.TempDir(), Provider: "codex", Model: "gpt-5.6-sol", Effort: "xhigh", Capability: "cheap", ToolScope: "operator"})
-	if before.CapabilityRefused != after.CapabilityRefused || !after.ToolScopeRefused {
-		t.Fatalf("ceiling weakened: before %+v after %+v", before, after)
-	}
-	if rank, _, ok := s.Matrix().capabilityOfModel("codex", "gpt-5.6-sol", "xhigh"); !ok || rank != 5 {
-		t.Fatalf("lost host classification %d %v", rank, ok)
 	}
 }
 

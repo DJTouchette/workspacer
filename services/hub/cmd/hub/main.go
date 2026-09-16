@@ -378,6 +378,7 @@ func main() {
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
+	brainMCPFacade := flag.String("brain-mcp-facade", "", "verified MCP facade URL to pass to the supervised brain; empty means spawned agents receive no Workspacer MCP wiring")
 	pluginOrigin := flag.String("plugin-origin", os.Getenv("WORKSPACER_PLUGIN_ORIGIN"), "a SECOND origin (scheme://host[:port]) that also routes to this hub, used by browser clients to frame plugin UI cross-origin — e.g. a fly.io service on :8443, or `tailscale serve --https=8443`. Without one, /app must frame a hub-served plugin same-origin, which the browser sandboxes opaque and which costs that plugin its bus link. Advertised publicly at /plugins/origin; empty = same-origin framing")
 	trustedHosts := flag.String("trusted-host", os.Getenv("HUB_TRUSTED_HOSTS"), "comma-separated hostname(s) a reverse proxy in front of this hub presents (e.g. the `tailscale serve` MagicDNS name). Required for any TLS front-end: it terminates elsewhere and forwards to our loopback socket, which is the DNS-rebinding shape the Host/Origin pins refuse. Empty = no exemption")
 	var peerFlags multiFlag
@@ -1231,7 +1232,7 @@ func main() {
 			if *token != "" {
 				env = append(env, "HUB_TOKEN="+*token)
 			}
-			brainSup := supervisor.New(brainSpec(bin, *addr, *claudemonURL, *brainScope, env), b)
+			brainSup := supervisor.New(brainSpec(bin, *addr, *claudemonURL, *brainScope, *brainMCPFacade, env), b)
 			brainSup.Start()
 			defer brainSup.Stop()
 			log.Printf("supervising brain (scope=%s) from %s", *brainScope, bin)
@@ -1306,11 +1307,11 @@ func configureTrustedHosts(srv *bus.Server, raw string) []string {
 // config.*, library.*, layouts.* and sessions.* and the app's settings stop
 // persisting. Discarding the one process that can say why is not a trade worth
 // making.
-func brainSpec(bin, addr, claudemonURL, scope string, env []string) supervisor.Spec {
+func brainSpec(bin, addr, claudemonURL, scope, mcpFacadeURL string, env []string) supervisor.Spec {
 	return supervisor.Spec{
 		Name:          "brain",
 		Command:       bin,
-		Args:          brainArgs(addr, claudemonURL, scope),
+		Args:          brainArgs(addr, claudemonURL, scope, mcpFacadeURL),
 		Env:           env,
 		InheritOutput: true,
 	}

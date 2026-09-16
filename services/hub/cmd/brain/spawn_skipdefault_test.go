@@ -90,29 +90,6 @@ func TestSpawnOmittedSkipHonorsABypassDefaultPermissionMode(t *testing.T) {
 // the config default passes the same gate as an explicit request. An unstamped
 // caller's defaulted bypass is clamped, and the strip is logged with its
 // config-default provenance so the silently-approvals-on worker is diagnosable.
-func TestSpawnConfigDefaultClampedAndLoggedWithoutTheGrant(t *testing.T) {
-	var gotBody spawnManagedReq
-	srv := managedSpawnRecorder(t, &gotBody)
-	reg := newSpawnTestRegistry(t, srv.URL)
-	writeSkipDefaultConfig(t, "claude:\n  skipPermissionsDefault: true\n")
-
-	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(prev)
-
-	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if gotBody.Yolo {
-		t.Errorf("an unstamped caller's config-defaulted bypass must be clamped, got %+v", gotBody)
-	}
-	if out := buf.String(); !strings.Contains(out, "config default") || !strings.Contains(out, "full-access grant") {
-		t.Errorf("clamped config default must be logged with its provenance, got:\n%s", out)
-	}
-}
-
 // TestSpawnOmittedSkipWithDefaultOffStaysOff: shipped default (both config
 // values off) + omitted field → approvals on, even for a granted caller, and
 // no clamp line in the log (nothing was stripped).

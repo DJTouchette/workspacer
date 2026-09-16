@@ -407,7 +407,6 @@
           ]
         },
         "loaders": [
-          "services/hub/cmd/brain/fsguard_test.go::TestPathContainmentContractCases(",
           "services/hub/internal/bus/policy_test.go::TestPathContainmentContractCases(",
           "apps/desktop/src/main/lib/pathConfinement.test.ts::path containment \u2014 cross-language contract"
         ]
@@ -501,8 +500,7 @@
           ]
         },
         "loaders": [
-          "services/hub/cmd/brain/library_itemdirs_test.go::TestLibraryItemDirContractCases(",
-          "apps/desktop/src/main/services/hubCapabilitiesKillSwitch.test.ts::library item directories \u2014 cross-language contract"
+          "services/hub/cmd/brain/library_itemdirs_test.go::TestLibraryItemDirContractCases("
         ]
       },
       "paramShapes": {
@@ -579,8 +577,7 @@
         "loaders": [
           "services/hub/cmd/brain/fsguard_test.go::TestCorpusMethodsMatchCapspec(",
           "services/hub/internal/bus/policy_test.go::TestFixtureMethodsMatchCapspec(",
-          "services/hub/internal/capspec/capspec_test.go::TestPathContainmentFixtureCoversPathParam(",
-          "apps/desktop/src/main/services/hubCapabilitiesGuards.test.ts::fixture-driven guard coverage"
+          "services/hub/internal/capspec/capspec_test.go::TestPathContainmentFixtureCoversPathParam("
         ]
       },
       "checkUse": {
@@ -593,8 +590,7 @@
           "callSites"
         ],
         "loaders": [
-          "services/hub/cmd/brain/fsguard_test.go::TestGuardedHandlersOpenTheCanonicalPathTheyValidated(",
-          "apps/desktop/src/main/services/hubCapabilitiesKillSwitch.test.ts::fixture.checkUse.find"
+          "services/hub/cmd/brain/fsguard_test.go::TestGuardedHandlersOpenTheCanonicalPathTheyValidated("
         ]
       },
       "agentCwdLiveness.cases": {

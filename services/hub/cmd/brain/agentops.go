@@ -609,6 +609,9 @@ func (r *registry) closeAgent(ctx context.Context, raw json.RawMessage) (json.Ra
 	}
 	before, known := findFleetSession(r.fleetSessions(ctx), p.SessionID)
 	if !known {
+		if err := revokeSessionFacadeToken(p.SessionID); err != nil {
+			return nil, fmt.Errorf("close_session: no live row remained, but its Workspacer facade token could not be revoked: %w", err)
+		}
 		return jsonResult(map[string]any{
 			"ok": true, "removed": false, "wasLive": false, "daemon": "already-ended",
 			"note": "No such session — it had already been forgotten. Nothing to do.",
@@ -640,6 +643,9 @@ func (r *registry) closeAgent(ctx context.Context, raw json.RawMessage) (json.Ra
 		} else {
 			daemon = "stopped"
 		}
+	}
+	if err := revokeSessionFacadeToken(p.SessionID); err != nil {
+		return nil, fmt.Errorf("close_session: session closed but its Workspacer facade token could not be revoked: %w", err)
 	}
 	out := map[string]any{
 		"ok": true, "removed": true, "wasLive": wasLive, "daemon": daemon,

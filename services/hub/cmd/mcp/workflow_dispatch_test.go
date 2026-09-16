@@ -84,7 +84,7 @@ func TestComposedWorkflowDispatchRoutesAndSpawnsWithExistingGrants(t *testing.T)
 			if route["previousProvider"] != "claude" || route["role"] != "reviewer" || route["cwd"] != "/repo" {
 				t.Fatal(route)
 			}
-			for key, want := range map[string]any{"provider": "codex", "modelIdentity": "gpt-5.4", "effort": "high", "role": "reviewer", "capability": "reviewer", "decisionId": "decision", "dispatchOwnerSessionId": "manager", "parentSessionId": "manager", "afterDispatchId": "prior", "workflowStepId": "review", "expectedTaskRevision": float64(4), "skipPermissions": yolo} {
+			for key, want := range map[string]any{"provider": "codex", "modelIdentity": "gpt-5.4", "effort": "high", "role": "reviewer", "capability": "reviewer", "decisionId": "decision", "dispatchOwnerSessionId": "manager", "parentSessionId": "manager", "afterDispatchId": "prior", "workflowStepId": "review", "expectedTaskRevision": float64(4), "skipPermissions": true} {
 				if spawn[key] != want {
 					t.Fatalf("%s: got %v want %v", key, spawn[key], want)
 				}

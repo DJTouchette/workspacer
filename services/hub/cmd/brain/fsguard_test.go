@@ -17,15 +17,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,90 +113,9 @@ func TestFsCallsInsideAnAgentCwdAreAllowed(t *testing.T) {
 }
 
 // The four shapes of escape, each against every path-bearing method.
-func TestFsCallsOutsideTheWorkspaceAreDenied(t *testing.T) {
-	dir := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outside, []byte("original"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// A symlink INSIDE the allowed cwd pointing out of it: the reason
-	// containment has to resolve symlinks rather than string-prefix the input.
-	link := filepath.Join(dir, "escape")
-	gateSymlink(t, filepath.Dir(outside), link)
-
-	cases := []struct {
-		name string
-		path string
-	}{
-		{"absolute path outside any root", outside},
-		{"traversal out of the agent cwd", filepath.Join(dir, "..", "..", "etc", "passwd")},
-		{"through a symlink planted inside the cwd", filepath.Join(link, "secret.txt")},
-		{"a home-relative path outside the workspace", "~/.ssh/id_rsa"},
-	}
-
-	for _, tc := range cases {
-		for _, method := range []string{"fs.read", "fs.listEntries"} {
-			reg := registryWithCwd(t, dir)
-			_, err := reg.handle(context.Background(), method,
-				json.RawMessage(`{"path":`+jsonStr(tc.path)+`}`))
-			if err == nil {
-				t.Errorf("%s: %s should be denied", method, tc.name)
-				continue
-			}
-			if !strings.Contains(err.Error(), "outside the allowed workspace") {
-				t.Errorf("%s: %s denied for the wrong reason: %v", method, tc.name, err)
-			}
-		}
-	}
-
-	// fs.write gets its own assertion: the denial must also leave the target
-	// alone. An error return that still wrote would be the worst outcome.
-	for _, tc := range cases {
-		reg := registryWithCwd(t, dir)
-		if _, err := reg.handle(context.Background(), "fs.write",
-			json.RawMessage(`{"path":`+jsonStr(tc.path)+`,"contents":"pwned"}`)); err == nil {
-			t.Errorf("fs.write: %s should be denied", tc.name)
-		}
-	}
-	if got, err := os.ReadFile(outside); err != nil || string(got) != "original" {
-		t.Fatalf("a denied fs.write must not touch the file: contents=%q err=%v", got, err)
-	}
-}
-
-func TestSearchProjectIsConfinedToTheWorkspace(t *testing.T) {
-	dir := t.TempDir()
-	reg := registryWithCwd(t, dir)
-	_, err := reg.handle(context.Background(), "search.project",
-		json.RawMessage(`{"query":"password","cwd":"/etc"}`))
-	if err == nil || !strings.Contains(err.Error(), "outside the allowed workspace") {
-		t.Fatalf("search.project outside the workspace should be denied, got %v", err)
-	}
-}
-
 // fs.listDir is the folder picker, so it is allowed across the home tree — but
 // not outside it. (Everything under $HOME is reachable by the user running the
 // app anyway; /etc and other users' homes are not the picker's business.)
-func TestFsListDirAllowsTheHomeTreeAndNothingElse(t *testing.T) {
-	dir := t.TempDir()
-	reg := registryWithCwd(t, dir)
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home dir")
-	}
-	if _, err := reg.handle(context.Background(), "fs.listDir",
-		json.RawMessage(`{"path":`+jsonStr(home)+`}`)); err != nil {
-		t.Fatalf("listing the home dir should be allowed: %v", err)
-	}
-
-	reg = registryWithCwd(t, dir)
-	if _, err := reg.handle(context.Background(), "fs.listDir",
-		json.RawMessage(`{"path":"/etc"}`)); err == nil {
-		t.Fatal("listing /etc should be denied")
-	}
-}
-
 // The config dir used to be a workspace root wholesale, and this test pinned
 // that. It is the wrong shape: the same directory that holds library/, layouts/
 // and sessions/ (the stores a client legitimately edits) also holds remote-token
@@ -244,52 +160,6 @@ func TestConfigStoresAreTheOnlyConfigDirRoots(t *testing.T) {
 // level ABOVE the config dir — the "user spawned an agent in $HOME" case — which
 // makes the roots check say yes to everything below and leaves pathIsSecret as
 // the only thing that can refuse.
-func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
-	dir := tempConfigHome(t)
-	if err := os.MkdirAll(configDir(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The agent cwd is the parent of <configDir>, so <configDir>/... is inside a
-	// legitimate root and the roots check cannot be what refuses below.
-	reg := registryWithCwd(t, dir)
-
-	// Not just the credentials: config.yaml is here because updates.channel is
-	// string-concatenated into the electron-updater feed URL, so a write to it
-	// walks around config.save's host-trusted gate on updates.* and relocates the
-	// updater; workspacer.db and the legacy plugin-settings.json overlay hold
-	// session history and pre-migration plaintext plugin secrets.
-	for _, name := range []string{
-		"remote-token", "tokens.json", "remote-server.json", "vapid.json",
-		"config.yaml", "claude-profiles.json", "plugin-settings.json", "workspacer.db",
-	} {
-		p := filepath.Join(configDir(), name)
-		if err := os.WriteFile(p, []byte("s3cret"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := reg.handle(context.Background(), "fs.read",
-			json.RawMessage(`{"path":`+jsonStr(p)+`}`)); err == nil {
-			t.Errorf("fs.read of %s must be denied even with the config dir inside an agent cwd", name)
-		}
-		if _, err := reg.handle(context.Background(), "fs.write",
-			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"pwned"}`)); err == nil {
-			t.Errorf("fs.write of %s must be denied even with the config dir inside an agent cwd", name)
-		}
-		if got, err := os.ReadFile(p); err != nil || string(got) != "s3cret" {
-			t.Fatalf("a denied write touched %s: %q (%v)", name, got, err)
-		}
-	}
-
-	// A file the rule invents is as bad as one it misses: the three stores stay
-	// writable through the same wide root.
-	for _, store := range []string{"library", "layouts", "sessions"} {
-		p := filepath.Join(configDir(), store, "item.yaml")
-		if _, err := reg.handle(context.Background(), "fs.write",
-			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"ok"}`)); err != nil {
-			t.Errorf("fs.write into %s/ must stay allowed: %v", store, err)
-		}
-	}
-}
-
 // The DISCARD arm of the secret gate's carve-out loop — `sr, ok :=
 // canonicalRoot(store); if !ok { continue }`.
 //
@@ -312,71 +182,10 @@ func TestConfigDirIsRefusedEvenWhenAnAgentCwdReadmitsIt(t *testing.T) {
 // `break` is covered too, by the second half: the gate must go on consulting the
 // carve-outs it CAN resolve, or one broken store silently locks the UI out of
 // the other two.
-func TestAnUnresolvableStoreCarveOutDoesNotDisarmTheSecretGate(t *testing.T) {
-	dir := tempConfigHome(t)
-	cfg := configDir()
-	for _, sub := range []string{"", "sessions", "layouts"} {
-		if err := os.MkdirAll(filepath.Join(cfg, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A self-referential symlink: canonicalRoot(<configDir>/library) hits
-	// maxLinkHops and returns ok=false.
-	gateSymlink(t, filepath.Join(cfg, "library"), filepath.Join(cfg, "library"))
-
-	// Agent cwd one level above the config dir, so the ROOTS check says yes to
-	// everything below and the secret gate is the only thing that can refuse.
-	reg := registryWithCwd(t, dir)
-	ctx := context.Background()
-
-	secret := filepath.Join(cfg, "remote-token")
-	if err := os.WriteFile(secret, []byte("s3cret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reg.handle(ctx, "fs.read", json.RawMessage(`{"path":`+jsonStr(secret)+`}`)); err == nil {
-		t.Error("an unresolvable library carve-out must not make remote-token readable")
-	}
-	if _, err := reg.handle(ctx, "fs.write",
-		json.RawMessage(`{"path":`+jsonStr(secret)+`,"contents":"pwned"}`)); err == nil {
-		t.Error("an unresolvable library carve-out must not make remote-token writable")
-	}
-	if got, err := os.ReadFile(secret); err != nil || string(got) != "s3cret" {
-		t.Fatalf("a denied write reached remote-token: %q (%v)", got, err)
-	}
-
-	// …and the carve-outs that still resolve keep carving.
-	for _, store := range []string{"sessions", "layouts"} {
-		p := filepath.Join(cfg, store, "item.yaml")
-		if _, err := reg.handle(ctx, "fs.write",
-			json.RawMessage(`{"path":`+jsonStr(p)+`,"contents":"ok"}`)); err != nil {
-			t.Errorf("one broken carve-out must not close %s/: %v", store, err)
-		}
-	}
-}
-
 // A plugin's own credentials are denied by BASENAME, wherever they resolve: the
 // roots can only be as narrow as the cwds agents run in, and `workspacer plugin
 // dev` drops a .bus-token into whatever directory it is pointed at — including
 // one inside a project another agent is working in.
-func TestPluginCredentialsAreDeniedInsideAnAgentCwd(t *testing.T) {
-	dir := t.TempDir()
-	reg := registryWithCwd(t, dir)
-
-	for _, name := range []string{".bus-token", ".settings.json"} {
-		p := filepath.Join(dir, "plugin", name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("s3cret"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := reg.handle(context.Background(), "fs.read",
-			json.RawMessage(`{"path":`+jsonStr(p)+`}`)); err == nil {
-			t.Errorf("fs.read of %s must be denied even inside an agent cwd", name)
-		}
-	}
-}
-
 // library.list and library.remove confine the caller's `cwd`, and for a long
 // time that was ALL they confined. Everything they actually touch is DERIVED
 // from that cwd — <cwd>/.workspacer/library/<name>.md, <cwd>/.claude/skills/
@@ -408,56 +217,6 @@ func libraryCwdWithConfigDir(t *testing.T) (cwd, token string) {
 		t.Fatal(err)
 	}
 	return cwd, token
-}
-
-func TestLibraryListDoesNotReadThroughASymlinkOutOfTheRoots(t *testing.T) {
-	cwd, token := libraryCwdWithConfigDir(t)
-
-	// Two plants, because list() reaches the filesystem through two different
-	// walkers: the .md sweep of the project library dir, and the per-skill
-	// SKILL.md read under .claude/skills.
-	projLib := filepath.Join(cwd, ".workspacer", "library")
-	if err := os.MkdirAll(projLib, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gateSymlink(t, token, filepath.Join(projLib, "pwn.md"))
-	skill := filepath.Join(cwd, ".claude", "skills", "x")
-	if err := os.MkdirAll(skill, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(token, filepath.Join(skill, "SKILL.md")); err != nil {
-		t.Fatal(err)
-	}
-
-	// The control: fs.read of the very same symlink is refused. If that ever
-	// stops being true the leak below is not the finding this test describes.
-	reg := registryWithCwd(t, cwd)
-	if _, err := reg.handle(context.Background(), "fs.read",
-		json.RawMessage(`{"path":`+jsonStr(filepath.Join(projLib, "pwn.md"))+`}`)); err == nil {
-		t.Fatal("fs.read of the planted symlink must be denied (the control for this test)")
-	}
-
-	reg = registryWithCwd(t, cwd)
-	res, err := reg.handle(context.Background(), "library.list",
-		json.RawMessage(`{"cwd":`+jsonStr(cwd)+`}`))
-	if err != nil {
-		t.Fatalf("library.list of a legitimate cwd must still succeed: %v", err)
-	}
-	if strings.Contains(string(res), "SUPERSECRET-REMOTE-TOKEN") {
-		t.Fatalf("library.list returned the bus credential through a symlink planted in an allowed root: %s", res)
-	}
-
-	// The floor: a REAL item in the same directory is still listed, so the fix
-	// is a guard and not "library.list stopped reading files".
-	if err := os.WriteFile(filepath.Join(projLib, "ok.md"), []byte("---\ntitle: Fine\n---\n\nbody\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	reg = registryWithCwd(t, cwd)
-	res, err = reg.handle(context.Background(), "library.list",
-		json.RawMessage(`{"cwd":`+jsonStr(cwd)+`}`))
-	if err != nil || !strings.Contains(string(res), "Fine") {
-		t.Fatalf("an ordinary project library item must still be listed: %s (%v)", res, err)
-	}
 }
 
 func TestLibraryRemoveDoesNotDeleteOutsideTheRootsThroughASymlink(t *testing.T) {
@@ -597,16 +356,6 @@ func TestLibraryRemoveEveryLegStaysInsideTheRoots(t *testing.T) {
 // With no live agents and no reachable claudemon, the allow-list must collapse to
 // the config stores — not open up. A shape change in claudemon's /sessions payload
 // must fail closed for the same reason.
-func TestNoLiveAgentsMeansNoWorkspaceRoots(t *testing.T) {
-	resetCwdCacheForTest()
-	t.Cleanup(resetCwdCacheForTest)
-	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1")) // refused
-	if _, err := reg.handle(context.Background(), "fs.read",
-		json.RawMessage(`{"path":"/etc/passwd"}`)); err == nil {
-		t.Fatal("with no live agent cwds, /etc/passwd must still be denied")
-	}
-}
-
 // The root SUPPLY in the shipping deployment, which had no test at all.
 //
 // Under DELEGATE_CATALOG_TO_BRAIN the hub is spawned with --brain-scope catalog,
@@ -623,76 +372,6 @@ func TestNoLiveAgentsMeansNoWorkspaceRoots(t *testing.T) {
 // enrich overlay marks status "ended", and a terminals.create shell (mode
 // "unknown" for life) are all in the payload — and every one of them used to
 // become a read+write root.
-func TestCatalogScopeRootsAreTheLiveClaudemonSessionsOnly(t *testing.T) {
-	live := t.TempDir()
-	stopped := t.TempDir()
-	ended := t.TempDir()
-	shell := t.TempDir()
-	archived := t.TempDir()
-
-	var hits atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sessions" {
-			http.NotFound(w, r)
-			return
-		}
-		hits.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `[
-		 {"session_id":"s-live","cwd":%s,"mode":"input"},
-		 {"session_id":"s-stopped","cwd":%s,"mode":"stopped","updated_at":%s},
-		 {"session_id":"s-ended","cwd":%s,"mode":"","status":"ended"},
-		 {"session_id":"s-shell","cwd":%s,"mode":"unknown"},
-		 {"session_id":"s-archived","cwd":%s,"mode":"input","archived":true}
-		]`, jsonStr(live), jsonStr(stopped), jsonStr(time.Now().UTC().Format(time.RFC3339)),
-			jsonStr(ended), jsonStr(shell), jsonStr(archived))
-	}))
-	t.Cleanup(srv.Close)
-
-	resetCwdCacheForTest()
-	t.Cleanup(resetCwdCacheForTest)
-	reg := newRegistry(newClaudemonClient(srv.URL)) // catalog scope: store stays nil
-	ctx := context.Background()
-
-	if _, err := reg.handle(ctx, "fs.write",
-		json.RawMessage(`{"path":`+jsonStr(filepath.Join(live, "notes.txt"))+`,"contents":"hi"}`)); err != nil {
-		t.Fatalf("the LIVE session's cwd must be a root in catalog scope: %v", err)
-	}
-	if hits.Load() == 0 {
-		t.Fatal("no /sessions request was made — the catalog-scope arm was not exercised, so this test proves nothing")
-	}
-
-	for _, tc := range []struct{ what, dir string }{
-		{"a stopped agent's cwd", stopped},
-		{"a session whose status is ended", ended},
-		{"a terminals.create shell's cwd (mode \"unknown\")", shell},
-		{"an archived session's cwd", archived},
-	} {
-		// Cache the root list once per probe: the point is the root SET, and the
-		// 2s TTL would otherwise let one lookup answer for all five.
-		resetCwdCacheForTest()
-		for _, method := range []string{"fs.read", "fs.write"} {
-			body := `{"path":` + jsonStr(filepath.Join(tc.dir, "notes.txt")) + `,"contents":"x"}`
-			_, err := reg.handle(ctx, method, json.RawMessage(body))
-			if err == nil || !strings.Contains(err.Error(), refusalText) {
-				t.Errorf("%s: %s must be refused (%q), got %v", method, tc.what, refusalText, err)
-			}
-		}
-	}
-
-	// And the roots are the SESSIONS' — not the daemon's own environment. A
-	// branch that answered with $HOME would satisfy nothing above on a host
-	// whose temp dir lives outside home, but say so explicitly.
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		resetCwdCacheForTest()
-		_, err := reg.handle(ctx, "fs.read",
-			json.RawMessage(`{"path":`+jsonStr(filepath.Join(home, "wks-not-a-root.txt"))+`}`))
-		if err == nil || !strings.Contains(err.Error(), refusalText) {
-			t.Errorf("$HOME must not be a workspace root just because the daemon runs there: %v", err)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // contracts/path-containment-cases.json — the cross-language corpus.
 //
@@ -1585,138 +1264,6 @@ func substituted(sub func(string) string, in []string) []string {
 // this fixture existed nothing kept it in agreement with the desktop's copy or
 // the bus's — all three hand-rolled the same walk and disagreed about tilde
 // expansion, symlink-plus-"..", and whether "/" contains anything.
-func TestPathContainmentContractCases(t *testing.T) {
-	fx := loadContractFixture(t)
-	groups := fx.ownedGroups(t)
-
-	owned := 0
-	for _, c := range fx.Cases {
-		if groups[c.Group] {
-			owned++
-		}
-	}
-	if owned == 0 {
-		t.Fatal("no owned cases: a corpus this implementation is not on the hook for guards nothing")
-	}
-	t.Logf("%d owned cases of %d", owned, len(fx.Cases))
-
-	// `owned` counts cases the loop will REGISTER. Every one of them can still
-	// skip itself inside caseSandbox (posixOnly, needsUnreadableDir, needsHome,
-	// needsSymlinks, configDirVia), and on a host without symlink privilege that
-	// is most of the corpus — a green package over an empty sweep. The tally
-	// counts what actually asserted, and the floor at the bottom is what turns
-	// "nothing ran" into red.
-	var tally sweepguard.Tally
-
-	for _, c := range fx.Cases {
-		if !groups[c.Group] {
-			continue
-		}
-		t.Run(c.Name, func(t *testing.T) {
-			t.Cleanup(func() {
-				if t.Skipped() {
-					tally.Skip(hostSkipReason(c))
-				}
-			})
-			_, sub := caseSandbox(t, c)
-			// Past every skip gate: this case is going to assert.
-			tally.Ran(c.Expect)
-			roots := substituted(sub, c.Roots)
-			target := sub(c.Target)
-
-			// WATCHDOG. The walk is hand-rolled and never reaches the platform's
-			// ELOOP, so the only thing between a symlink cycle and a spin is the
-			// hop counter — and the two cycle cases that DO exercise the
-			// relative-link arm would otherwise fail by hanging until the whole
-			// package's 10-minute timeout, which is a red build nobody can read.
-			// Bound it here so a counter regression is a fast, named failure.
-			canonical, err := withDeadline(t, func() (string, error) {
-				return assertPathAllowed("contract", target, roots)
-			})
-			allowed := err == nil
-			want := c.Expect == "allow"
-			if allowed != want {
-				t.Fatalf("expected %s, got allowed=%v (err=%v)\n  target: %q\n  roots:  %q\n  why:    %s",
-					c.Expect, allowed, err, target, roots, c.Why)
-			}
-
-			// The verdict must DECOMPOSE into the two named predicates this file
-			// exports for a raw (not-yet-canonicalized) target. Both shipped with
-			// zero callers and 0.0% coverage — while carrying the same names as
-			// the bus's twins, which ARE live (bus.go authorize, policy.go). So
-			// their fail-closed branches (`return false` and `return true` on an
-			// unverifiable target) had never been executed by anything, and the
-			// first future call site to reach for the obvious-looking name would
-			// have got a predicate no case had ever run. Asserting the identity
-			// rather than each half separately is what makes this non-vacuous:
-			// it says these two ARE the gates assertPathAllowed applies, in the
-			// same order, with the same posture on an unverifiable path.
-			within := pathWithinRoots(roots, target)
-			secret := pathIsSecret(target)
-			if got := within && !secret; got != allowed {
-				t.Fatalf("assertPathAllowed says allowed=%v but pathWithinRoots=%v && !pathIsSecret=%v decomposes to %v — the exported predicates and the guard disagree\n  target: %q\n  roots:  %q",
-					allowed, within, !secret, got, target, roots)
-			}
-			if !allowed {
-				// 7.5: one message for all three refusal reasons, echoing
-				// neither the target, nor where it resolved, nor which gate
-				// fired. Anything else is a probe primitive for a remote caller.
-				if got, want := err.Error(), "contract: "+refusalText; got != want {
-					t.Fatalf("refusal message drifted\n  got:  %q\n  want: %q", got, want)
-				}
-				// THE RIGHT REASON. A deny that happens for the wrong reason is
-				// a case that tests nothing while reporting green — a mangled
-				// ${TOKEN} makes the target a relative literal and every copy
-				// refuses it for not being absolute, with the case's name still
-				// claiming it exercises a symlink escape. deniedBy is the
-				// fixture's independent statement of which gate must fire, and
-				// it is NOT derivable from `group`: 'a symlink out of an allowed
-				// root into the config dir' is a secrets case that containment
-				// refuses first.
-				if got := contractDenyReason(target, roots); got != c.DeniedBy {
-					t.Fatalf("denied for the WRONG REASON: got %q, the fixture says %q\n  target: %q\n  roots:  %q\n  why:    %s",
-						got, c.DeniedBy, target, roots, c.Why)
-				}
-				return
-			}
-			// 7.4/8.1: what comes back is what the handler must open.
-			if !filepath.IsAbs(canonical) {
-				t.Fatalf("allowed but the canonical path is not absolute: %q", canonical)
-			}
-			for _, comp := range strings.Split(canonical, string(filepath.Separator)) {
-				if comp == ".." || comp == "." {
-					t.Fatalf("canonical path still carries a %q component: %q", comp, canonical)
-				}
-			}
-			// The VALUE, not just its shape. Shape alone is what let a
-			// `return filepath.Clean(target)` — the forbidden whole-path helper,
-			// named as such in fsguard.go's own header — pass every case in this
-			// corpus while fs.read handed back a file outside the only allowed
-			// root: Clean's answer is absolute and free of "." and ".." too, it
-			// just points somewhere else. resolvesTo is mandatory on an allow so
-			// a future case cannot be written without pinning the answer.
-			if c.ResolvesTo == "" {
-				t.Fatalf("allow case %q carries no resolvesTo; every allow case must pin the path the guard returns", c.Name)
-			}
-			if want := filepath.FromSlash(sub(c.ResolvesTo)); canonical != want {
-				t.Fatalf("the guard returned a different path than it validated\n  got:  %q\n  want: %q\n  why:  %s", canonical, want, c.Why)
-			}
-		})
-	}
-
-	// Both classes, separately, over a corpus that did not SHRINK. A corpus that
-	// ran only allows says the guard lets things through and nothing else; one
-	// that ran only denies is satisfied by a guard that refuses everything; and
-	// a floor of one of each is satisfied by a 107-case corpus that lost 105 of
-	// them, which is the same failure arriving through a bad merge instead of a
-	// bad host. containmentCorpusFloor is checked against ENUMERATED cases, so
-	// it holds identically on a machine that skips most of the sweep.
-	if err := tally.RequireCorpus("the fsguard containment corpus", containmentCorpusFloor, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	t.Log(tally.String())
-}
-
 // TestCorpusMethodsMatchCapspec pins the two halves of the method contract onto
 // each other: capspec.PathParam is what the BUS confines, the corpus's `methods`
 // block is what the PROVIDERS are tested against, and a method in one and not
@@ -1772,66 +1319,6 @@ func sortedMethods(m map[string]string) []string {
 // cannot ship unguarded, because it must be in capspec (TestBrainMethodsAllScoped
 // forces that), which puts it in the corpus (TestCorpusMethodsMatchCapspec
 // forces that), which lands it here.
-func TestEveryPathBearingBrainMethodIsConfined(t *testing.T) {
-	fx := loadContractFixture(t)
-	groups := fx.ownedGroups(t)
-
-	byMethod := map[string]contractMethod{}
-	for _, m := range fx.Methods {
-		byMethod[m.Method] = m
-	}
-
-	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
-	dispatched := map[string]bool{}
-	for _, set := range [][]string{reg.methods(), reg.catalogMethods()} {
-		for _, m := range set {
-			dispatched[m] = true
-		}
-	}
-
-	// `exercised` counts what the loop EXECUTED, and it is incremented inside the
-	// subtest for that reason: incrementing it here, next to t.Run, counts
-	// REGISTRATION, and a registration count is a full house in a run where every
-	// subtest skipped. That is the exact species this file keeps re-finding, so
-	// it is not repeated in the loop that hunts it.
-	var exercised sweepguard.Tally
-	for _, method := range sortedMethods(capspec.PathParam) {
-		m, ok := byMethod[method]
-		if !ok {
-			continue // reported by TestCorpusMethodsMatchCapspec
-		}
-		if !dispatched[method] {
-			if m.providedByBrain() {
-				t.Errorf("the corpus says the brain provides %s, but neither methods() nor catalogMethods() dispatches it — one of the two is stale", method)
-			}
-			continue
-		}
-		if !m.providedByBrain() {
-			t.Errorf("the brain dispatches %s but the corpus does not list it as a brain provider, so nothing would have tested this side of it", method)
-		}
-		t.Run(method, func(t *testing.T) {
-			t.Cleanup(func() {
-				if t.Skipped() {
-					exercised.Skip("the whole method subtest skipped")
-				}
-			})
-			assertMethodRejectsCorpus(t, fx, groups, m)
-			// Past every gate, and the per-method floor inside has already
-			// insisted the method ran corpus cases: this method was swept. It
-			// is filed as a deny because that is what the sweep asserts — every
-			// case it drives is a refusal.
-			exercised.Ran("deny")
-		})
-	}
-	// EXECUTED, not enumerated: nothing in this sweep is host-gated, so a
-	// subtest that did not run is a drift between capspec, the corpus and the
-	// registry — the very overlap this test measures — and not a machine.
-	if err := exercised.Require("the path-bearing brain method sweep", 0, brainMethodFloor); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%s of capspec's %d path-bearing methods are answered by this brain", exercised.String(), len(capspec.PathParam))
-}
-
 // assertMethodRejectsCorpus drives one real handler with every deny case the
 // brain owns, using the case's roots as the live agent cwds. The handler must
 // refuse with the containment message and not with, say, a decode error that
@@ -2119,130 +1606,6 @@ func assertWroteInsideARoot(t *testing.T, res json.RawMessage, roots []string) {
 // with the sandbox instead of poisoning the next run. A probe that somehow
 // exists anyway is a FATAL, never a skip — the one thing this test must not do
 // is treat "I could not run" as "I passed" — and the loop asserts it ran.
-func TestPathBearingMethodRootSetsMatchTheCorpus(t *testing.T) {
-	fx := loadContractFixture(t)
-	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
-	dispatched := map[string]bool{}
-	for _, set := range [][]string{reg.methods(), reg.catalogMethods()} {
-		for _, m := range set {
-			dispatched[m] = true
-		}
-	}
-
-	// THE COUNTER IS INSIDE THE SUBTEST. It used to be `ran++` here, next to
-	// t.Run, which counts REGISTRATION — and this test's own header describes the
-	// run in which all eight of its subtests skipped and the package printed ok.
-	// A registration counter cannot see that; it reports 8 either way. The rule
-	// is sweepguard's, in its first paragraph, and this was the loop that broke
-	// it. browse and workspace are filed apart, too: a sweep that ran only browse
-	// methods asserted that the guard admits things and nothing else.
-	var swept sweepguard.Tally
-	for _, m := range fx.Methods {
-		if !m.providedByBrain() || !dispatched[m.Method] {
-			continue
-		}
-		t.Run(m.Method, func(t *testing.T) {
-			t.Cleanup(func() {
-				if t.Skipped() {
-					swept.Skip("the rootSet probe for " + m.Method + " skipped")
-				}
-			})
-			// A config dir of its own, so the config stores cannot be what
-			// admits (or refuses) the probe.
-			tempConfigHome(t)
-			// A home of its own, for the reasons in the header. USERPROFILE is
-			// what os.UserHomeDir reads on Windows, HOME everywhere else; set
-			// both so the sandbox holds on either.
-			fakeHome, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			setHome(t, fakeHome)
-			t.Setenv("USERPROFILE", fakeHome)
-			home, err := os.UserHomeDir()
-			if err != nil || home == "" {
-				t.Fatalf("os.UserHomeDir must follow the sandboxed home (%q): %v", fakeHome, err)
-			}
-			if home != fakeHome {
-				t.Fatalf("os.UserHomeDir returned %q, not the sandbox %q — the probe below would land in the real home", home, fakeHome)
-			}
-			cwd, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Under $HOME, does not exist, and is nobody's cwd: inside the
-			// browse roots and outside the workspace roots, by construction.
-			probe := filepath.Join(home, "wks-contract-probe-not-an-agent-cwd")
-			if _, err := os.Lstat(probe); err == nil {
-				t.Fatalf("%s exists inside a freshly created sandbox home — the sandbox is not fresh, and the probe no longer proves anything", probe)
-			}
-			reg := registryWithCwds(t, cwd)
-			params := map[string]any{}
-			for k, v := range m.Params {
-				params[k] = v
-			}
-			params[m.Field] = probe
-			body, _ := json.Marshal(params)
-			_, err = reg.handle(context.Background(), m.Method, json.RawMessage(body))
-			refused := err != nil && strings.Contains(err.Error(), refusalText)
-
-			// The UPPER boundary of `browse`, which nothing probed. browse is
-			// "the home tree plus the workspace roots"; the deny probes are all
-			// outside $HOME's PARENT as well, so widening browseRoots to
-			// filepath.Dir(home) — every other user's home directory — changed no
-			// assertion anywhere. A sibling of $HOME is inside the widened set and
-			// outside the real one, so it must be refused whatever the rootSet is.
-			sibling := filepath.Join(filepath.Dir(home), "wks-contract-probe-sibling-of-home")
-			if _, err := os.Lstat(sibling); err == nil {
-				t.Fatalf("%s already exists — the sandbox is not fresh and this probe proves nothing", sibling)
-			}
-			sibParams := map[string]any{}
-			for k, v := range m.Params {
-				sibParams[k] = v
-			}
-			sibParams[m.Field] = sibling
-			sibBody, _ := json.Marshal(sibParams)
-			if _, sibErr := reg.handle(context.Background(), m.Method, json.RawMessage(sibBody)); sibErr == nil ||
-				!strings.Contains(sibErr.Error(), refusalText) {
-				t.Fatalf("%s accepted a SIBLING of $HOME (%s) — neither root set reaches outside the home tree (err=%v)", m.Method, sibling, sibErr)
-			}
-
-			switch m.RootSet {
-			case "browse":
-				if refused {
-					t.Fatalf("the corpus says %s browses (%s), but it refused a $HOME path that is not a live agent cwd: %v", m.Method, m.RootSet, err)
-				}
-			case "workspace":
-				if !refused {
-					t.Fatalf("the corpus confines %s to the workspace roots, but it accepted a $HOME path no agent is running in (err=%v)", m.Method, err)
-				}
-			default:
-				t.Fatalf("unknown rootSet %q in the corpus for %s", m.RootSet, m.Method)
-			}
-			// Past every assertion, filed by the verdict the probe demanded:
-			// browse must ACCEPT the $HOME probe, workspace must REFUSE it.
-			if m.RootSet == "browse" {
-				swept.Ran("allow")
-			} else {
-				swept.Ran("deny")
-			}
-		})
-	}
-	// Zero subtests is the failure mode this whole family of tests keeps
-	// re-learning: TestPathContainmentContractCases fails hard on an empty owned
-	// set for the same reason. Without this, a corpus that stopped naming
-	// "brain" as a provider — or a registry that stopped dispatching — would
-	// report a green PASS having asserted nothing at all.
-	// Two browse methods and six workspace ones today, and BOTH numbers are the
-	// floor: the browse arm is the only thing that proves the guard still admits
-	// a $HOME path, and the workspace arm the only thing that proves it refuses
-	// one. A sweep that lost either class would still pass a floor of one.
-	if err := swept.Require("the rootSet sweep", browseRootSetFloor, workspaceRootSetFloor); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("swept the rootSet column: %s", swept.String())
-}
-
 // ---------------------------------------------------------------------------
 // checkUse: the OTHER half of BINDING DECISION 2.
 //
@@ -2630,149 +1993,6 @@ func TestGuardedHandlersOpenTheCanonicalPathTheyValidated(t *testing.T) {
 //
 // The corpus pins the guard's half of this (the two trailing-space cases and
 // their resolvesTo); this pins the handlers'.
-func TestGuardedHandlersDoNotRenormalizeTheCanonicalPath(t *testing.T) {
-	dir := t.TempDir()
-	outside := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(outside, "HIDDEN"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gateSymlink(t, outside, filepath.Join(dir, "link"))
-	parent := filepath.Dir(dir)
-
-	// Each probe is an ALLOWED path (it resolves inside the agent cwd) that
-	// names nothing on disk. The handler must therefore fail with ENOENT — the
-	// one thing it must never do is trim the space and succeed.
-	// The invariant is one thing on both platforms — the path the guard checked
-	// is the path the handler opens — but the two sides of it swap over.
-	//
-	// POSIX: a trailing space is an ordinary filename character, so the GUARD
-	// must not trim (the string is an allowed path naming nothing) and the
-	// HANDLER must then fail to open it.
-	//
-	// WINDOWS: Win32 strips trailing spaces and dots before the filesystem sees
-	// the name, so the guard is the side that has to trim (winCanonComponent),
-	// and its verdict must be about the TRIMMED path. Where the trim escapes the
-	// root the guard must refuse — that is the measured escape this closes:
-	// "<store>/.. " listed the config dir, which holds remote-token.
-	for _, tc := range []struct {
-		method string
-		params string
-		note   string
-		// winRefused: on Windows the trimmed path leaves the root (or names a
-		// denied symlink), so the guard must refuse it outright. When false, the
-		// trimmed path is a real file INSIDE the root and the call SUCCEEDS
-		// there — harmless, and the only thing Win32 can do.
-		winRefused bool
-	}{
-		{"fs.listDir", `{"path":` + jsonStr(dir+"/.. ") + `}`,
-			"trimming makes this the parent of the only allowed root", true},
-		{"fs.listDir", `{"path":` + jsonStr(dir+"/link ") + `}`,
-			"trimming makes this the symlink out of the root, which the guard denies by name", true},
-		{"fs.listEntries", `{"path":` + jsonStr(dir+"/link ") + `}`,
-			"same trim, other lister", true},
-		{"fs.read", `{"path":` + jsonStr(dir+"/notes.txt ") + `}`,
-			"trimming makes this an existing file the caller did not name", false},
-	} {
-		t.Run(tc.method+" "+tc.note, func(t *testing.T) {
-			reg := registryWithCwd(t, dir)
-			raw, err := reg.handle(context.Background(), tc.method, json.RawMessage(tc.params))
-
-			if onWindows {
-				if !tc.winRefused {
-					if err != nil {
-						t.Fatalf("%s: the trimmed name is a real file inside the root, so Win32 must open it: %v", tc.method, err)
-					}
-					return
-				}
-				if err == nil {
-					t.Fatalf("%s: the trimmed path leaves the root and the guard allowed it anyway — the guard's answer no longer names the file Win32 opens: %s", tc.method, raw)
-				}
-				if !strings.Contains(err.Error(), refusalText) {
-					t.Fatalf("%s: refused, but not BY THE GUARD (%v). On Windows the guard must trim like Win32 does, so the refusal has to come from containment, not from a failed open", tc.method, err)
-				}
-				return
-			}
-
-			if err == nil {
-				t.Fatalf("%s succeeded on a path that does not exist — the handler re-normalized the guard's answer and opened something else: %s", tc.method, raw)
-			}
-			if strings.Contains(err.Error(), refusalText) {
-				t.Fatalf("%s was refused by the GUARD (%v); the point of this case is that the guard allows the string and the handler must then fail to open it", tc.method, err)
-			}
-		})
-	}
-
-	// fs.write is the one that must SUCCEED, on the literal name with the space.
-	t.Run("fs.write keeps the trailing space instead of clobbering the neighbour", func(t *testing.T) {
-		if onWindows {
-			// Not a defect to pin here: Win32 cannot create a file whose name
-			// ends in a space at all, so "w.txt " and "w.txt" ARE one file and
-			// the neighbour it would "clobber" is itself. Both are inside the
-			// root, so containment is unaffected — the escape that the trim
-			// bought is pinned by the config-dir case below, which runs on both.
-			t.Skip("Win32 strips the trailing space: the two names are the same file")
-		}
-		reg := registryWithCwd(t, dir)
-		if _, err := reg.handle(context.Background(), "fs.write",
-			json.RawMessage(`{"path":`+jsonStr(dir+"/w.txt ")+`,"contents":"spaced"}`)); err != nil {
-			t.Fatalf("writing a filename that ends in a space is legal: %v", err)
-		}
-		if body, err := os.ReadFile(filepath.Join(dir, "w.txt ")); err != nil || string(body) != "spaced" {
-			t.Errorf("fs.write did not land on the canonical %q: %q %v", dir+"/w.txt ", body, err)
-		}
-		if _, err := os.Stat(filepath.Join(dir, "w.txt")); err == nil {
-			t.Error("fs.write trimmed the space and wrote a DIFFERENT file")
-		}
-	})
-
-	// The escalation the trim actually bought: fs.listDir runs on browseRoots, so
-	// "<store>/.. " is the config dir — which is denied when it is named directly.
-	t.Run("fs.listDir cannot reach the config dir through a store", func(t *testing.T) {
-		cfgHome := tempConfigHome(t)
-		t.Setenv("APPDATA", cfgHome)
-		cfg := configDir()
-		if err := os.MkdirAll(filepath.Join(cfg, "layouts"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(cfg, "remote-token"), []byte("tok"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		reg := registryWithCwd(t, dir)
-		if _, err := reg.handle(context.Background(), "fs.listDir",
-			json.RawMessage(`{"path":`+jsonStr(cfg)+`}`)); err == nil {
-			t.Fatal("naming the config dir directly must be refused — the premise of this case")
-		}
-		reg = registryWithCwd(t, dir)
-		raw, err := reg.handle(context.Background(), "fs.listDir",
-			json.RawMessage(`{"path":`+jsonStr(filepath.Join(cfg, "layouts")+"/.. ")+`}`))
-		if err == nil {
-			t.Fatalf("fs.listDir listed the config dir through a trailing space: %s", raw)
-		}
-	})
-
-	// And the plain statement of the whole test, in case a future refactor makes
-	// the calls above fail for some other reason.
-	t.Run("no handler ever reports the parent of a root", func(t *testing.T) {
-		reg := registryWithCwd(t, dir)
-		raw, err := reg.handle(context.Background(), "fs.listDir",
-			json.RawMessage(`{"path":`+jsonStr(dir+"/.. ")+`}`))
-		if err != nil {
-			return
-		}
-		var res listDirResult
-		if err := json.Unmarshal(raw, &res); err != nil {
-			t.Fatal(err)
-		}
-		if res.Path == parent {
-			t.Fatalf("fs.listDir returned the parent %q of the only allowed root %q", parent, dir)
-		}
-	})
-}
-
 // TestBrainRefusesCaseVariantDuplicateParamKeys pins the decoder half of the
 // case-variant-key bypass.
 //

@@ -22,7 +22,7 @@ type explicitWorkflowModel struct {
 }
 
 type dispatchWorkflowIn struct {
-	ModelSelection       *explicitWorkflowModel `json:"modelSelection,omitempty" jsonschema:"explicit user model choice instead of automatic routing; mutually exclusive with routing. Workspace/model ceilings and permission grants still apply."`
+	ModelSelection       *explicitWorkflowModel `json:"modelSelection,omitempty" jsonschema:"explicit user model choice instead of automatic routing; mutually exclusive with routing. Model ceilings still apply; provider permission modes require no separate Workspacer grant."`
 	TaskID               string                 `json:"taskId" jsonschema:"the pinned task you own"`
 	Cwd                  string                 `json:"cwd" jsonschema:"that task's local project directory"`
 	StepID               string                 `json:"stepId" jsonschema:"exact intended step; a retry never advances to a different step"`
@@ -109,18 +109,6 @@ func dispatchWorkflow(ctx context.Context, b *build, in dispatchWorkflowIn) (*mc
 		}
 		if _, err := modelselection.ResolveInput(choice.Provider, choice.Model, "", choice.ContextWindow); err != nil {
 			return toolError("Invalid explicit model selection: " + modelselection.ErrorCode(err))
-		}
-	}
-	// Fail granted-profile requests before recording a conditional decision.
-	if in.ProfileID != "" {
-		found := false
-		for _, profile := range b.profiles {
-			if profile == in.ProfileID {
-				found = true
-			}
-		}
-		if !found {
-			return toolError("profile is not granted to this session")
 		}
 	}
 	prepare := map[string]any{"op": "prepareDispatch", "callerSessionId": caller, "taskId": in.TaskID, "cwd": in.Cwd, "stepId": in.StepID, "expectedTaskRevision": in.ExpectedTaskRevision, "templateParams": in.TemplateParams}

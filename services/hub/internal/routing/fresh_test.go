@@ -2,7 +2,6 @@ package routing
 
 import (
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -206,24 +205,6 @@ profiles:
 // THE TWO REFUSALS ARE INDEPENDENT and both are reported. A spawn can be over
 // the ceiling AND asking to inherit a review's session, and a caller that fixed
 // only the half it was told about would come straight back.
-func TestACeilingClampAndAFreshRefusalAreBothExplained(t *testing.T) {
-	cwd := filepath.Join(t.TempDir(), "project")
-	m := loadMatrix(t, `
-ceilings:
-  `+strconv.Quote(cwd)+`: { max_capability: cheap, max_tool_scope: view }
-`)
-	req := resume(cwd, "", "deep_reviewer")
-	req.ToolScope = "operator"
-	v := m.CheckSpawn(req)
-	if !v.ResumeRefused || !v.CapabilityRefused || !v.ToolScopeRefused {
-		t.Fatalf("the three arms did not all fire: %+v", v)
-	}
-	why := strings.Join(v.Because, " | ")
-	if !strings.Contains(why, "ceilings."+cwd) || !strings.Contains(why, "resumeSessionId") {
-		t.Errorf("the explanation drops one of the two reasons: %s", why)
-	}
-}
-
 // Select never sets this arm: it answers a question about a model, and nothing
 // there is resuming anything. Pinned so the shared CheckSpawn cannot start
 // refusing routing.select's own advice.

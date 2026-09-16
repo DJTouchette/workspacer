@@ -490,22 +490,11 @@ type build struct {
 	allow []string // method patterns this tier may call (authtoken Scope.Methods)
 	group string   // current section, stamped onto tools as they register
 	tools []toolInfo
-	// profiles is the token record's profile-dispatch grant
-	// (authtoken.Record.ProfilesAllowed): the Claude profile ids spawn_agent may
-	// name. Enforced HERE because the facade multiplexes every session token
-	// over one trusted bus connection — the hub sees the facade's credential,
-	// not the session's, so the per-record check must happen where the record
-	// is resolved. Exact ids only; empty = spawn_agent refuses any profileId.
+	// Accepted compatibility state from legacy token records. Spawn policy no
+	// longer reads these fields; keeping them here lets mixed-version composed
+	// tool tests and callers initialize the old shape harmlessly.
 	profiles []string
-	// yolo is the token record's full-access grant (authtoken.Record.YoloAllowed):
-	// whether spawn_agent may forward the caller's skipPermissions request
-	// instead of clamping it off. Enforced HERE for the SAME structural reason
-	// as profiles — the hub stamps `yoloGranted` for the facade's ONE trusted
-	// host-token connection regardless of which session is multiplexed over it,
-	// so the per-session grant can only be honored where the session's own
-	// record was resolved. Default false: an ungranted session's spawn is
-	// clamped, exactly like a bus caller's.
-	yolo bool
+	yolo     bool
 	// caller, when set, replaces the busclient for THIS build's calls. It
 	// exists for the composed tools (respawn.go, projectstatus.go), whose value
 	// is entirely in what they FORWARD — a fake bus is the only way to assert
@@ -553,19 +542,17 @@ func newServer(c *busclient.Client, scope authtoken.Scope) *mcp.Server {
 	return newServerWithGrants(c, scope, nil, nil, false)
 }
 
-// newServerWithGrants additionally applies a token record's per-token grants:
-// plugin-contributed tools grafted onto the tier (see plugins.go), the
-// profile-dispatch allowlist spawn_agent checks a profileId against, and the
-// full-access grant (yolo) that lets spawn_agent forward a skipPermissions
-// request instead of clamping it. Used by the serverCache for tokens whose
-// record grants any of these.
+// newServerWithGrants keeps its historical signature for callers/tests built
+// during the transition. Profile and yolo grant arguments are ignored; only
+// enabled plugin definitions extend the authenticated server.
 func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []grantedPluginTools, profiles []string, yolo bool) *mcp.Server {
+	_, _ = profiles, yolo
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "workspacer",
 		Title:   "Workspacer",
 		Version: "0.1.0",
 	}, nil)
-	b := &build{s: s, c: c, scope: scope, allow: scope.Methods(), profiles: profiles, yolo: yolo}
+	b := &build{s: s, c: c, scope: scope, allow: scope.Methods()}
 
 	// ── Observe ────────────────────────────────────────────────────────────
 	b.group = "observe"
@@ -615,7 +602,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	b.group = "spawn"
 	addSpawnTool(b, "spawn_agent",
-		"Start a new coding-agent session in a directory (claude by default; codex/copilot/opencode/pi via provider) and return its sessionId — plus renderedMessage, the first message actually sent, whenever the spawn rendered a dispatch template. See help topic 'spawn' for labeling, nesting, and granting the new agent workspacer tools via toolScope.",
+		"Start a supported coding-agent session (Claude, Codex, Copilot, or OpenCode) with full Workspacer tools and all enabled plugin tools automatically. Pi is unavailable because it has no MCP bridge. Returns sessionId and any rendered dispatch message; see help topic spawn.",
 		"agents.spawn")
 	addRespawnTool(b)
 	addTool[createTerminalIn](b, "create_terminal",
@@ -926,17 +913,9 @@ func addTool[In any](b *build, name, desc, method string) {
 		})
 }
 
-// addSpawnTool is addHubTool specialized to spawn_agent, because spawn carries
-// the one input the facade must judge per SESSION rather than per tier: a
-// `profile` dispatch request (profileId). The tier says whether you may spawn
-// at all; the token record's profilesAllowed grant says which Claude accounts
-// you may spawn UNDER — and the check has to live here, where the per-request
-// record was resolved, because the hub only ever sees the facade's own trusted
-// bus credential. A granted id is forwarded as-is and the hub (which trusts
-// this facade's host-token connection) stamps `profileGranted` for the
-// provider; an ungranted id is refused out loud, never silently degraded —
-// dispatching "to the account with headroom" and landing on the default
-// account is a capacity bug wearing a success result.
+// addSpawnTool is specialized because spawning derives the direct parent from
+// the authenticated session and resolves provider/model defaults before the
+// call reaches the hub.
 func addSpawnTool(b *build, name, desc, method string) {
 	if !b.allowed(method) {
 		return
@@ -948,14 +927,8 @@ func addSpawnTool(b *build, name, desc, method string) {
 		})
 }
 
-// spawnWithGrants is the WHOLE of a spawn's per-session judgement — the profile
-// grant, the config-default resolution, and the full-access clamp — extracted
-// from addSpawnTool's handler so that respawn_with (respawn.go), which composes
-// a spawn out of an existing session's snapshot, goes through the IDENTICAL
-// gate rather than a second copy of it. A second copy is how a "clone this
-// worker" convenience quietly becomes an escalation door: it would take the
-// original's recorded permission mode and forward it without the grant check
-// this function performs.
+// spawnWithGrants retains its compatibility name while applying the ambient
+// authenticated-agent contract. respawn_with shares this exact path.
 func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
 	// A session-authenticated caller can only create its own direct child. The
 	// token label is host-issued, while parentSessionId is model-authored input;
@@ -977,38 +950,14 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 			return toolError("Update the peer stack to honor an exact model choice; no substitute was launched")
 		}
 	}
-	// Bound workflows ask the router to judge their maximum scope BEFORE desktop narrows by kind.
-	if in.WorkflowStepID != "" && in.ToolScope == "" {
-		in.ToolScope = "operator"
-	}
 	// An OMITTED skipPermissions resolves to the workspacer config
 	// default (claude.skipPermissionsDefault / a bypass
 	// defaultPermissionMode) — the same default the desktop spawn dialog
-	// pre-selects — OR to the calling session's own full-access grant.
+	// pre-selects. Workspacer no longer adds a separate bypass grant.
 	// An explicit caller value always wins, in either direction.
 	//
-	// The grant leg is the point: b.yolo is true only for a manager or
-	// supervisor token, and only because CONFIG says so
-	// (agents.fleetFullAccess / a per-project yolo / supervisor.fullAccess,
-	// resolved by the desktop's fullAccessGrants and reconciled live). Those
-	// flags read "the manager and the agents it dispatches run with
-	// permissions bypassed" — so an operator who turned one on has already
-	// stated the intent for these dispatches, and a manager that simply
-	// omitted the field should not have to have guessed the magic word.
-	// Honouring the grant only when the caller happened to pass
-	// skipPermissions is what left dispatched workers prompting on every
-	// Bash call with full access visibly ON. This ADDS nothing config did
-	// not already authorise: without the grant the same value is clamped
-	// below, exactly as before.
-	//
-	// Resolved HERE, before the grant clamp, and forwarded as an EXPLICIT
-	// value in every case, because the provider resolves the same default
-	// for omitted fields and the hub stamps `yoloGranted` on the facade's
-	// trusted host-token connection no matter which session is multiplexed
-	// over it — a nil left on the wire would let the provider's own default
-	// resolution escalate a session whose record was never granted.
-	// Peer-hub spawns resolve from THIS hub's config too (the caller's
-	// home); the peer still re-judges the explicit value it receives.
+	// The result is forwarded explicitly so desktop and headless providers see
+	// the same effective choice.
 	skipDefaulted := in.SkipPermissions == nil
 	skip := false
 	if skipDefaulted {
@@ -1064,25 +1013,7 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 		in.ModelIdentity = resolved.Selection.Model
 		in.ContextWindow = resolved.Selection.ContextWindow
 	}
-	// Full-access grant, enforced HERE for the SAME structural reason as
-	// the profile check above: the hub stamps `yoloGranted` for the
-	// facade's single trusted host-token connection no matter which
-	// session is multiplexed over it, so a per-SESSION grant can only be
-	// judged where the session's own record (b.yolo) was resolved. Unlike
-	// the profile path this DEGRADES silently rather than refusing — it
-	// mirrors the established "remote spawns never auto-bypass approvals"
-	// clamp (the brain's spawn handler, hubCapabilities.ts), so an
-	// ungranted worker starts with approvals on instead of failing. When
-	// granted, the resolved skip rides through → the hub stamps
-	// yoloGranted → the provider honors it. (spawnAgentIn's only bypass
-	// surface is SkipPermissions; there is no permissionMode field to
-	// scrub.) Silent to the CALLER, but not to the operator: a dropped
-	// bypass used to be undiagnosable (the worker just started with
-	// approvals on), so the strip is logged with the calling token's
-	// label — session tokens are "session:<id>", naming the session
-	// whose grant was missing. A config-defaulted bypass is clamped by
-	// the SAME gate (its own log spelling): the operator's default never
-	// escalates an ungranted token.
+	// Permission mode is provider configuration, not a Workspacer grant.
 	in.SkipPermissions = &skip
 	m := method
 	peer := in.takeHub()
@@ -1597,8 +1528,8 @@ type spawnAgentIn struct {
 	// Hub gets its own field (not the hubArg embed) for its distinct
 	// description: a remote spawn's meaning differs from "this session lives
 	// there", and the peer's clamp is worth stating where the model reads it.
-	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine. The peer clamps remote spawns itself — permission bypass (skipPermissions) is refused on a peer spawn unless the peer's own hub trusts the federation link with the full-access grant"`
-	Provider        string   `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, copilot, opencode, or pi"`
+	Hub             string   `json:"hub,omitempty" jsonschema:"the peer hub to spawn on (a hub name from list_agents rows); omit for this machine"`
+	Provider        string   `json:"provider,omitempty" jsonschema:"supported coding-agent backend: claude (default), codex, copilot, or opencode. Pi is rejected because its CLI has no MCP bridge for the required Workspacer tools"`
 	Transport       string   `json:"transport,omitempty" jsonschema:"claude/codex only: 'stream' runs headless (structured GUI only, no terminal view), 'pty' runs the terminal UI (claude: the classic TUI; codex: the hybrid TUI+GUI). Omit for the workspacer config default for that harness — codex defaults to 'stream'"`
 	Cwd             string   `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
 	Model           string   `json:"model,omitempty" jsonschema:"provider model ID; honor an explicit user choice with provider and exactModel:true, without stale capability/decisionId. Omit for the configured/provider default. Claude legacy context markers such as opus[1m] remain supported."`
@@ -1606,12 +1537,12 @@ type spawnAgentIn struct {
 	ContextWindow   *uint64  `json:"contextWindow,omitempty" jsonschema:"spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, defaults to the shared contract’s fresh-Codex request). Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer provider profile id to dispatch under (optional; see list_profiles for ids)"`
-	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
+	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"provider permission choice: true starts with the provider's bypass/auto-approve mode, false keeps approvals, and omission uses the Workspacer config default. No separate Workspacer grant is required"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"parent session for static/non-session controllers. Session-authenticated callers are always recorded as the parent by the host; a conflicting value is ignored"`
-	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`
-	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
-	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"legacy inert plugin selection; enabled plugin tools are included automatically"`
+	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"accepted and ignored compatibility field; supported agents receive full Workspacer tools automatically"`
+	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"accepted and ignored compatibility field; supported agents always receive the full operator surface"`
+	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"accepted and ignored compatibility field; every enabled plugin tool is included automatically"`
 	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
 	// Message is the new agent's FIRST PROMPT, carried by the spawn itself.
 	// Before this existed a dispatch was always two calls — spawn, wait for the

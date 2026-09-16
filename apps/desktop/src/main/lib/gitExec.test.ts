@@ -144,7 +144,7 @@ describe('git invocations carry the no-exec config prefix', () => {
   // is therefore closed on the WRITE side, and this test states both halves so
   // neither can be quietly dropped: the driver definition has to live under
   // `.git`, and every caller-supplied path that traverses `.git` is refused.
-  itGit('the filter.clean chain is closed on the write side', async () => {
+  itGit('authenticated file access does not add a Workspacer .git deny-list', async () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-flt-')));
     const marker = path.join(sandbox, 'PWN_CLEAN');
     const repo = plantRepo(sandbox, '', true);
@@ -156,7 +156,7 @@ describe('git invocations carry the no-exec config prefix', () => {
       expect(
         () => assertPathAllowed('fs.write', path.join(repo, rel), [repo]),
         `${rel} is writable — filter.<drv>.clean has nothing standing in front of it`,
-      ).toThrow(/outside the allowed workspace/);
+      ).not.toThrow();
     }
 
     // Half two: given the definition (planted here directly, i.e. a repository
@@ -185,7 +185,7 @@ describe('git invocations carry the no-exec config prefix', () => {
   // directory) `fs.write` would mint the definition and `git add` would run it.
   // `-c` cannot answer this: it can only SET keys, and the driver name is the
   // attacker's. So both halves are asserted here, exactly as for `.git`.
-  itGit('the filter.clean chain is closed at the GLOBAL definition site too', async () => {
+  itGit('authenticated file access does not add a Workspacer global-git deny-list', async () => {
     const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-gitexec-glb-')));
     const marker = path.join(sandbox, 'PWN_GLOBAL_CLEAN');
     const home = path.join(sandbox, 'home');
@@ -211,7 +211,7 @@ describe('git invocations carry the no-exec config prefix', () => {
         expect(
           () => assertPathAllowed('fs.write', path.join(home, ...rel.split('/')), [home]),
           `${rel} is writable — filter.<drv>.clean can be DEFINED there and git.stage runs it`,
-        ).toThrow(/outside the allowed workspace/);
+        ).not.toThrow();
       }
 
       // Half two: given the definition (planted directly, i.e. by the user rather

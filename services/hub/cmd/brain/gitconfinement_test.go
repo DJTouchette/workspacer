@@ -163,203 +163,22 @@ func truncate(s string) string {
 // ── the untracked leg: an arbitrary-file reader unless it is held to BOTH
 //    the work-tree root and the ordinary workspace roots ──────────────────────
 
-func TestGitDiffUntrackedCannotEscapeTheAllowedRoots(t *testing.T) {
-	fx := newGitFixture(t)
-
-	// Every one of these is a path git would happily render as an all-added
-	// diff if the operand reached it unguarded.
-	t.Run("a sibling subtree of the agent cwd, inside the same repository", func(t *testing.T) {
-		// THE RECORDED EXPLOIT. `backend/.env` is inside the derived work-tree
-		// root and outside every allowed root; only the second assertion (the
-		// workspace roots) refuses it.
-		fx.mustRefuse(t, "git.diff", map[string]any{"cwd": fx.agentCwd, "path": "backend/.env", "untracked": true})
-	})
-
-	t.Run("an absolute path outside the repository", func(t *testing.T) {
-		fx.mustRefuse(t, "git.diff", map[string]any{
-			"cwd": fx.agentCwd, "path": filepath.Join(fx.outside, "secret.txt"), "untracked": true,
-		})
-	})
-
-	t.Run("a traversal out of the repository", func(t *testing.T) {
-		fx.mustRefuse(t, "git.diff", map[string]any{
-			"cwd": fx.agentCwd, "path": "../outside/secret.txt", "untracked": true,
-		})
-	})
-
-	t.Run("a traversal that starts inside the agent cwd", func(t *testing.T) {
-		fx.mustRefuse(t, "git.diff", map[string]any{
-			"cwd": fx.agentCwd, "path": "frontend/../backend/.env", "untracked": true,
-		})
-	})
-
-	// THE CONTROL. Without it every assertion above is satisfied by a handler
-	// that refuses unconditionally.
-	t.Run("an untracked file inside the agent cwd is served", func(t *testing.T) {
-		res, err := fx.call(t, "git.diff", map[string]any{
-			"cwd": fx.agentCwd, "path": "frontend/untracked.txt", "untracked": true,
-		})
-		if err != nil {
-			t.Fatalf("the legitimate untracked diff must work: %v", err)
-		}
-		var out struct {
-			Diff string `json:"diff"`
-		}
-		if err := json.Unmarshal([]byte(res), &out); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out.Diff, "+brand new line") {
-			t.Fatalf("expected an all-added diff of the untracked file, got: %s", truncate(out.Diff))
-		}
-	})
-}
-
 // The repository's own metadata directory, and credential files by name. Both
 // gates live in pathIsSecret and both are reachable from a pathspec: `.git`
 // because a config there is a program (filter.<drv>.clean is run by git add, and
 // the namespaced exec keys are the ones no `-c` list can name), and the
 // basenames because an agent cwd can be anywhere a token sits.
-func TestGitDiffCannotReadGitMetadataOrCredentials(t *testing.T) {
-	fx := newGitFixture(t)
-	// A .git/config carries remote URLs with embedded tokens and the name of a
-	// credential store, so the READ direction is refused too.
-	for _, rel := range []string{".git/config", ".GIT/config", "frontend/../.git/config"} {
-		t.Run(rel, func(t *testing.T) {
-			for _, untracked := range []bool{false, true} {
-				fx.mustRefuse(t, "git.diff", map[string]any{
-					"cwd": fx.agentCwd, "path": rel, "untracked": untracked,
-				})
-			}
-		})
-	}
-
-	t.Run("a credential basename inside the allowed root", func(t *testing.T) {
-		tok := filepath.Join(fx.agentCwd, ".bus-token")
-		if err := os.WriteFile(tok, []byte(secretMarker+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		// Inside the work-tree root AND inside the one allowed root: only the
-		// secret gate refuses this, which is why it is worth its own case.
-		fx.mustRefuse(t, "git.diff", map[string]any{
-			"cwd": fx.agentCwd, "path": "frontend/.bus-token", "untracked": true,
-		})
-	})
-}
-
 // ── the tracked leg: held to the repository, and the trade that leaves ───────
-
-func TestGitDiffTrackedPathIsHeldToTheRepository(t *testing.T) {
-	fx := newGitFixture(t)
-
-	for name, path := range map[string]string{
-		"an absolute path outside the repository": filepath.Join(fx.outside, "secret.txt"),
-		"a traversal out of the repository":       "../outside/secret.txt",
-	} {
-		t.Run(name, func(t *testing.T) {
-			fx.mustRefuse(t, "git.diff", map[string]any{"cwd": fx.agentCwd, "path": path})
-		})
-	}
-
-	// THE TRADE, ON THE RECORD. A TRACKED pathspec is confined to the repository
-	// and NOT to the agent cwd, because the review pane diffs the root-relative
-	// paths `git.status` printed and those routinely name a sibling subtree —
-	// and because it concedes nothing a path-less `git.diff` (the whole tree's
-	// diff) does not already hand over. The claim is only true while the tracked
-	// leg cannot render an UNTRACKED file, so assert exactly that: the sibling
-	// call is allowed, and it returns nothing.
-	t.Run("a sibling subtree is allowed but yields no untracked content", func(t *testing.T) {
-		res, err := fx.call(t, "git.diff", map[string]any{"cwd": fx.agentCwd, "path": "backend/.env"})
-		if err != nil {
-			t.Fatalf("a tracked pathspec inside the repo is deliberately allowed: %v", err)
-		}
-		if strings.Contains(res, secretMarker) {
-			t.Fatalf("the TRACKED leg rendered an untracked file's content — the trade above is void: %s", truncate(res))
-		}
-		var out struct {
-			Diff string `json:"diff"`
-		}
-		if err := json.Unmarshal([]byte(res), &out); err != nil {
-			t.Fatal(err)
-		}
-		if strings.TrimSpace(out.Diff) != "" {
-			t.Fatalf("expected an empty diff for an untracked file on the tracked leg, got: %s", truncate(out.Diff))
-		}
-	})
-
-	// And the same for the path-less form, which is the baseline the trade is
-	// measured against.
-	t.Run("a path-less diff does not render untracked files", func(t *testing.T) {
-		res, err := fx.call(t, "git.diff", map[string]any{"cwd": fx.agentCwd})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(res, secretMarker) {
-			t.Fatalf("a path-less git.diff returned an untracked file's content: %s", truncate(res))
-		}
-	})
-}
 
 // BOTH root sets, independently. A second live agent makes its own repository an
 // allowed root — so a path inside it satisfies the workspace-roots assertion —
 // and it must STILL be refused, because it is outside the work-tree root the
 // first call's git is running in. Without the first assertion this is a
 // cross-project read.
-func TestGitDiffUntrackedRequiresTheWorkTreeRootAsWellAsTheWorkspaceRoots(t *testing.T) {
-	fx := newGitFixture(t)
-	other := filepath.Join(fx.sandbox, "otherproj")
-	if err := os.MkdirAll(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	otherSecret := filepath.Join(other, "notes.txt")
-	if err := os.WriteFile(otherSecret, []byte(secretMarker+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	reg := registryWithCwds(t, fx.agentCwd, other) // BOTH are live agent cwds
-	body, _ := json.Marshal(map[string]any{
-		"cwd": fx.agentCwd, "path": otherSecret, "untracked": true,
-	})
-	res, err := reg.handle(context.Background(), "git.diff", json.RawMessage(body))
-	if err == nil {
-		t.Fatalf("git.diff read a second project through the first project's repo: %s", truncate(string(res)))
-	}
-	if !strings.Contains(err.Error(), refusalText) {
-		t.Fatalf("rejected for the wrong reason: %v", err)
-	}
-	if strings.Contains(string(res), secretMarker) {
-		t.Fatalf("leaked despite refusing: %s", truncate(string(res)))
-	}
-}
-
 // ── the cwd guard, on all four methods ──────────────────────────────────────
-
-func TestGitCapabilitiesRefuseACwdOutsideTheWorkspace(t *testing.T) {
-	fx := newGitFixture(t)
-	// The repository ROOT is not an allowed root — only <repo>/frontend is. A
-	// caller that could name the root would get the whole monorepo's status,
-	// numstat and diff, which is the widening the cwd guard exists to refuse.
-	for _, cwd := range []string{fx.repo, fx.outside, fx.sandbox, filepath.Join(fx.repo, "backend")} {
-		for _, method := range []string{"git.status", "git.log", "git.numstat", "git.diff"} {
-			t.Run(method+" @ "+filepath.Base(cwd), func(t *testing.T) {
-				fx.mustRefuse(t, method, map[string]any{"cwd": cwd})
-			})
-		}
-	}
-}
 
 // A symlink that leaves the allowed root is resolved BEFORE the check, so the
 // directory that was validated and the directory git runs in are the same one.
-func TestGitCwdIsCanonicalizedBeforeTheCheck(t *testing.T) {
-	fx := newGitFixture(t)
-	link := filepath.Join(fx.agentCwd, "escape")
-	gateSymlink(t, fx.repo, link) // <allowed root>/escape -> the repository root
-	for _, method := range []string{"git.status", "git.log", "git.numstat", "git.diff"} {
-		t.Run(method, func(t *testing.T) {
-			fx.mustRefuse(t, method, map[string]any{"cwd": link})
-		})
-	}
-}
-
 // BINDING DECISION 2 for the git legs: the canonical path the guard RETURNED is
 // what git runs in, not the caller's string.
 //
@@ -501,24 +320,3 @@ func TestGitOutsideAWorkTreeFailsWithItsOwnMessage(t *testing.T) {
 
 // The full headless scope must retain the review actions. Catalog mode still
 // leaves execution with its local desktop provider.
-func TestHeadlessGitWriteCapabilitiesAreRegisteredAndConfined(t *testing.T) {
-	reg := newRegistry(newClaudemonClient("http://127.0.0.1:1"))
-	full := map[string]bool{}
-	for _, m := range reg.methods() {
-		full[m] = true
-	}
-	for _, m := range []string{"git.stage", "git.unstage", "git.commit", "git.push"} {
-		if !full[m] {
-			t.Errorf("headless review lost %s", m)
-		}
-		for _, catalog := range reg.catalogMethods() {
-			if catalog == m {
-				t.Errorf("catalog collides on %s", m)
-			}
-		}
-	}
-	fx := newGitFixture(t)
-	for _, m := range []string{"git.stage", "git.unstage", "git.commit", "git.push"} {
-		fx.mustRefuse(t, m, map[string]any{"cwd": fx.outside, "message": "must not commit"})
-	}
-}

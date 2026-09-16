@@ -57,37 +57,10 @@ func callSpawn(t *testing.T, ctx context.Context, cs *mcp.ClientSession, args ma
 // nothing is forwarded, so the error names the grant rather than echoing a
 // degraded spawn (silently landing on the default account is the failure mode
 // this exists to prevent).
-func TestSpawnAgentRefusesAnUngrantedProfile(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	// A manager blessed for "work" only.
-	cs := spawnGrantSession(t, ctx, []string{"work"})
-	text, isErr := callSpawn(t, ctx, cs, map[string]any{"cwd": "/tmp", "profileId": "personal"})
-	if !isErr {
-		t.Fatalf("ungranted profileId was not refused; result: %s", text)
-	}
-	if !strings.Contains(text, `"personal"`) || !strings.Contains(text, "not granted") {
-		t.Fatalf("refusal should name the profile and the grant, got: %s", text)
-	}
-	if strings.Contains(text, "agents.spawn") && strings.Contains(text, "params") {
-		t.Fatalf("refusal appears to have forwarded to the hub anyway: %s", text)
-	}
-
-	// A record with NO grant at all (the untokened/static operator default)
-	// refuses every profileId — this is fail-closed, and it is also strictly
-	// better than the old silent degradation.
-	cs = spawnGrantSession(t, ctx, nil)
-	text, isErr = callSpawn(t, ctx, cs, map[string]any{"cwd": "/tmp", "profileId": "work"})
-	if !isErr || !strings.Contains(text, "not granted") {
-		t.Fatalf("grantless record should refuse any profileId, got (isErr=%v): %s", isErr, text)
-	}
-}
-
 // TestSpawnAgentForwardsAGrantedProfileAndTheHubStamps: the positive half,
 // end to end — a granted id passes the facade, rides the facade's trusted bus
 // connection, and arrives at the provider WITH the hub's profileGranted stamp.
-func TestSpawnAgentForwardsAGrantedProfileAndTheHubStamps(t *testing.T) {
+func TestSpawnAgentForwardsProfileWithoutAGrantStamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -113,8 +86,8 @@ func TestSpawnAgentForwardsAGrantedProfileAndTheHubStamps(t *testing.T) {
 	if params["profileId"] != "work" {
 		t.Fatalf("provider did not receive the granted profileId: %v", params)
 	}
-	if params["profileGranted"] != true {
-		t.Fatalf("hub did not stamp profileGranted on the facade's forwarded spawn: %v", params)
+	if _, stamped := params["profileGranted"]; stamped {
+		t.Fatalf("obsolete profile grant stamp reached the provider: %v", params)
 	}
 }
 
@@ -148,7 +121,7 @@ func TestSpawnAgentCallerCannotSupplyProfileGranted(t *testing.T) {
 // TestServerCacheSeparatesProfileGrants: two records at the same tier with
 // different account grants must never share a server — the grant check is
 // closed over the build, so a shared server IS a shared grant.
-func TestServerCacheSeparatesProfileGrants(t *testing.T) {
+func TestServerCacheIgnoresLegacyProfileGrants(t *testing.T) {
 	client := busclient.New("ws://127.0.0.1:0/bus", "")
 	cache := newServerCache(client, newPluginCatalog(client), tierServers(client))
 
@@ -157,12 +130,12 @@ func TestServerCacheSeparatesProfileGrants(t *testing.T) {
 		t.Fatal("a grantless record should get the shared tier server")
 	}
 	mgr := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator, ProfilesAllowed: []string{"work"}})
-	if mgr == plain {
-		t.Fatal("a profile-granted record must not collapse onto the grantless tier server")
+	if mgr != plain {
+		t.Fatal("a legacy profile grant changed an otherwise identical server")
 	}
 	other := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator, ProfilesAllowed: []string{"personal"}})
-	if other == mgr {
-		t.Fatal("records with different profile grants shared a server (cache key ignores the grant)")
+	if other != mgr {
+		t.Fatal("legacy profile grant contents changed the server cache key")
 	}
 	again := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator, ProfilesAllowed: []string{"work"}})
 	if again != mgr {

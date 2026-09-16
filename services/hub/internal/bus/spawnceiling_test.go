@@ -195,39 +195,6 @@ func TestCallerTierDoesNotClampAChild(t *testing.T) {
 
 // The legacy `mcpFacade: true` spelling MEANS operator, and a clamp that only
 // rewrote `toolScope` would be walked around by one boolean.
-func TestTheLegacyFacadeFlagIsClampedToo(t *testing.T) {
-	url, got, _ := ceilingServer(t, func(req SpawnCeilingRequest) SpawnCeilingVerdict {
-		v := SpawnCeilingVerdict{Key: "/tmp", MaxCapability: "frontier_plus", MaxToolScope: "view"}
-		if req.ToolScope == "operator" {
-			v.ToolScopeRefused, v.ToolScope = true, "view"
-			v.Because = []string{"the stand-in ceiling caps this directory at view"}
-		}
-		return v
-	})
-
-	m := spawnVia(t, url, "tok-operator", `{"cwd":"/tmp","mcpFacade":true}`, got)
-	if v, present := m["mcpFacade"]; present && v == true {
-		t.Errorf("mcpFacade:true survived a view ceiling — the legacy spelling walks around the clamp: %v", m)
-	}
-	if m["toolScope"] != "view" {
-		t.Errorf("the clamped tier is %v, want view: %v", m["toolScope"], m)
-	}
-	if !namesField(scrubbedList(t, m), "mcpFacade") {
-		t.Errorf("the legacy flag was removed without saying so: %v", m)
-	}
-
-	// BOTH SPELLINGS AT ONCE. `toolScope` wins over `mcpFacade` on both
-	// providers (cmd/brain/facade.go facadeScope, claudeSpawn.ts facadeScope), so
-	// the clamped toolScope is the operative one and the stale legacy flag is
-	// left alone rather than being deleted on a guess. This case exists because
-	// the opposite resolution order would make the clamp a no-op, and nothing
-	// else in the repo pins that order from this side.
-	m = spawnVia(t, url, "tok-operator", `{"cwd":"/tmp","toolScope":"operator","mcpFacade":true}`, got)
-	if m["toolScope"] != "view" {
-		t.Errorf("with both spellings present the clamped tier is %v, want view: %v", m["toolScope"], m)
-	}
-}
-
 // THE CWD REACHES THE RESOLVER CANONICALIZED. CeilingFor on the other side is a
 // LEXICAL ancestor match, so a symlinked spelling that arrived unresolved would
 // walk straight around a per-directory ceiling. The router does the walk; this
@@ -342,19 +309,6 @@ func TestTheCeilingClampAlsoCoversTheFederatedHop(t *testing.T) {
 // test in this package that does not set one), nothing capability-shaped is
 // clamped and the caller-tier half still applies — the two are independent by
 // construction, and conflating them would make Invariant 1a depend on a file.
-func TestWithoutARoutingLayerOnlyTheCallerTierClampApplies(t *testing.T) {
-	url, got, _ := ceilingServer(t, nil)
-
-	m := spawnVia(t, url, "tok-operator", `{"cwd":"/tmp","capability":"frontier_plus","model":"fable"}`, got)
-	if m["capability"] != "frontier_plus" || m["model"] != "fable" {
-		t.Errorf("something was clamped with no ceiling resolver wired: %v", m)
-	}
-	m = spawnVia(t, url, "tok-triage-spawner", `{"cwd":"/tmp","toolScope":"operator"}`, got)
-	if m["toolScope"] != "triage" {
-		t.Errorf("the caller-tier clamp needs no routing file and did not fire: %v", m)
-	}
-}
-
 // jsonString quotes a path for embedding in a params literal.
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)

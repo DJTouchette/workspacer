@@ -542,7 +542,6 @@ test('Guide welcome launch retains its question and retries without dismissing w
   expect(spawns[1].args[0]).toMatchObject({
     provider: 'claude',
     transport: 'stream',
-    toolScope: 'triage',
   });
   expect(spawns[1].args[0].message).toContain('Give me a guided tour');
   expect((await calls(page)).filter((c: any) => c.method === 'claudeMessage')).toEqual([]);
@@ -712,7 +711,7 @@ for (const state of ['starting', 'down', 'degraded', 'ready', 'adopted', 'unknow
     await openFirstTask(page);
     await page.getByLabel('What should this agent do?').fill('Runtime recovery task');
     await dialog(page).getByText('Status details', { exact: true }).click();
-    if (state === 'starting' || state === 'down') {
+    if (state === 'starting' || state === 'down' || state === 'degraded') {
       await expect(launch(page)).toBeDisabled();
       await expect(page.locator('#spawn-runtime-status')).toContainText(
         state === 'starting' ? 'starting' : 'unavailable',
@@ -1228,7 +1227,6 @@ for (const width of [360, 1440]) {
     expect(spawns).toHaveLength(1);
     expect(spawns[0].args[0]).toMatchObject({
       manager: true,
-      toolScope: 'operator',
       transport: 'stream',
       cwd: '/fixture',
     });

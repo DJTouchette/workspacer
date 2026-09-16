@@ -247,14 +247,17 @@ describe('spawnClaudeAgent — Library MCP servers (mcpItemIds)', () => {
     const argv = lastArgv();
     const cfgIdx = argv.indexOf('--mcp-config');
     expect(cfgIdx).toBeGreaterThan(-1);
-    expect(argv[cfgIdx + 1]).toBe('/cfg/session-mcp/srv.json');
+    expect(argv[cfgIdx + 1]).toBe('/cfg/facade.json');
     expect(argv).toContain('--strict-mcp-config');
     const allowIdx = argv.indexOf('--allowedTools');
     expect(allowIdx).toBeGreaterThan(-1);
-    expect(argv[allowIdx + 1]).toBe('mcp__srv1');
+    expect(argv[allowIdx + 1]).toBe('mcp__workspacer');
+    expect(facadeSpawnArgs.mock.calls[0][0]).toMatchObject({
+      additionalServers: [{ id: 'srv1', mcp: { command: 'srv' } }],
+    });
   });
 
-  it('resolves mcpItemIds against the library: only selected, kind=mcp items are passed to buildSessionMcpConfig', async () => {
+  it('resolves mcpItemIds against the library before merging them into the facade', async () => {
     libraryList.mockReturnValue([
       { id: 'srv1', kind: 'mcp', mcp: { command: 'a' } }, // selected
       { id: 'srv2', kind: 'mcp', mcp: { command: 'b' } }, // NOT selected
@@ -264,61 +267,65 @@ describe('spawnClaudeAgent — Library MCP servers (mcpItemIds)', () => {
 
     await spawnClaudeAgent({ cwd: '/proj', mcpItemIds: ['srv1', 'srv3'] });
 
-    expect(buildSessionMcpConfig).toHaveBeenCalledTimes(1);
-    const [, servers] = buildSessionMcpConfig.mock.calls[0] as [string, Array<{ id: string }>];
+    expect(buildSessionMcpConfig).not.toHaveBeenCalled();
+    const servers = (
+      facadeSpawnArgs.mock.calls[0][0] as { additionalServers: Array<{ id: string }> }
+    ).additionalServers;
     expect(servers.map((s) => s.id)).toEqual(['srv1']);
   });
 
-  it('passes the pinned session id to buildSessionMcpConfig so the config file matches the transcript', async () => {
+  it('passes the pinned session id to the facade config so it matches the transcript', async () => {
     libraryList.mockReturnValue([{ id: 'srv1', kind: 'mcp', mcp: { command: 'srv' } }]);
 
     await spawnClaudeAgent({ cwd: '/proj', resumeSessionId: 'fixed-id', mcpItemIds: ['srv1'] });
 
-    const [id] = buildSessionMcpConfig.mock.calls[0] as [string];
-    expect(id).toBe('fixed-id');
+    expect(facadeSpawnArgs.mock.calls[0][0]).toMatchObject({ sessionId: 'fixed-id' });
     expect(lastSpawn().sessionId).toBe('fixed-id');
   });
 
-  it('does NOT emit --mcp-config when no mcpItemIds are given', async () => {
+  it('still emits the automatic facade config when no Library servers are selected', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
     expect(buildSessionMcpConfig).not.toHaveBeenCalled();
-    expect(lastArgv()).not.toContain('--mcp-config');
+    expect(lastArgv()).toContain('--mcp-config');
+    expect(lastArgv()).not.toContain('--strict-mcp-config');
   });
 
-  it('does NOT emit --mcp-config when mcpItemIds is an empty array', async () => {
+  it('treats an empty Library selection as automatic-facade only', async () => {
     await spawnClaudeAgent({ cwd: '/proj', mcpItemIds: [] });
     expect(buildSessionMcpConfig).not.toHaveBeenCalled();
-    expect(lastArgv()).not.toContain('--mcp-config');
+    expect(lastArgv()).toContain('--mcp-config');
+    expect(lastArgv()).not.toContain('--strict-mcp-config');
   });
 
-  it('emits no MCP args when buildSessionMcpConfig finds nothing valid (returns null)', async () => {
+  it('does not consult the legacy standalone MCP config builder', async () => {
     libraryList.mockReturnValue([{ id: 'srv1', kind: 'mcp', mcp: { command: 'srv' } }]);
     buildSessionMcpConfig.mockReturnValue(null);
 
     await spawnClaudeAgent({ cwd: '/proj', mcpItemIds: ['srv1'] });
 
-    const argv = lastArgv();
-    expect(argv).not.toContain('--mcp-config');
-    expect(argv).not.toContain('--strict-mcp-config');
-    expect(argv).not.toContain('--allowedTools');
+    expect(buildSessionMcpConfig).not.toHaveBeenCalled();
+    expect(lastArgv()).toContain('--mcp-config');
   });
 });
 
-describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => {
-  it('a facade worker (mcpFacade) uses facadeSpawnArgs and ignores mcpItemIds', async () => {
+describe('spawnClaudeAgent — automatic operator facade', () => {
+  it('a legacy mcpFacade request still merges Library MCP selections', async () => {
     libraryList.mockReturnValue([{ id: 'srv1', kind: 'mcp', mcp: { command: 'srv' } }]);
 
     await spawnClaudeAgent({ cwd: '/proj', mcpFacade: true, mcpItemIds: ['srv1'] });
 
     expect(buildSessionMcpConfig).not.toHaveBeenCalled();
     expect(facadeSpawnArgs).toHaveBeenCalledTimes(1);
+    expect(facadeSpawnArgs.mock.calls[0][0]).toMatchObject({
+      additionalServers: [{ id: 'srv1', mcp: { command: 'srv' } }],
+    });
     const argv = lastArgv();
     const cfgIdx = argv.indexOf('--mcp-config');
     expect(argv[cfgIdx + 1]).toBe('/cfg/facade.json');
     expect(argv).toContain('--append-system-prompt');
   });
 
-  it('toolScope alone implies the facade and mints at that tier', async () => {
+  it('legacy tier/plugin inputs cannot narrow the automatic operator facade', async () => {
     await spawnClaudeAgent({ cwd: '/proj', toolScope: 'view', pluginTools: ['djtouchette.jira'] });
 
     expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
@@ -328,48 +335,52 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
       string[] | undefined,
     ];
     expect(sessionId).toBeTruthy();
-    expect(scope).toBe('view');
-    expect(plugins).toEqual(['djtouchette.jira']);
-    const args = facadeSpawnArgs.mock.calls[0][0] as { scope?: string };
-    expect(args.scope).toBe('view');
+    expect(scope).toBe('operator');
+    expect(plugins).toEqual(['*']);
     // The facade config rides argv exactly like the legacy facade path.
     const argv = lastArgv();
     expect(argv[argv.indexOf('--mcp-config') + 1]).toBe('/cfg/facade.json');
   });
 
-  it('a plain spawn (no facade flags) mints no token', async () => {
+  it('a plain spawn gets the operator facade automatically', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
 
-    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+    expect(mintSessionFacadeToken).toHaveBeenCalledWith(
+      expect.any(String),
+      'operator',
+      ['*'],
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(lastArgv()).toContain('/cfg/facade.json');
   });
 
-  it('a manager spawn mints its token with a profilesAllowed grant for every local profile', async () => {
+  it('a manager token keeps its role but omits legacy profile/yolo grants', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }, { id: 'work' }]);
     await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
 
     expect(mintSessionFacadeToken).toHaveBeenCalledTimes(1);
-    expect(mintSessionFacadeToken.mock.calls[0][3]).toEqual(['default', 'work']);
-    // No full-access unless CONFIG grants it (agents.fleetFullAccess or a
-    // per-project yolo flag).
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
+    expect(mintSessionFacadeToken.mock.calls[0][3]).toBeUndefined();
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
     // …and the role tag the live grant reconciler keys on.
     expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('manager');
   });
 
-  it('agents.fleetFullAccess on → the manager mints the yolo grant (config-resolved, no caller flag needed)', async () => {
+  it('legacy fleetFullAccess config does not mint a yolo grant', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }]);
     mockConfig.agents = { fleetFullAccess: true };
     await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
 
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 
-  it('a per-project yolo flag alone also mints the manager yolo grant', async () => {
+  it('legacy project yolo config does not mint a yolo grant', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }]);
     mockConfig.projects = { '/home/u/Work/app': { yolo: true }, '/home/u/Work/other': {} };
     await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
 
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(true);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 
   it('a stale caller fleetFullAccess flag cannot resurrect a revoked grant — config wins', async () => {
@@ -383,11 +394,11 @@ describe('spawnClaudeAgent — facade takes precedence over Library MCP', () => 
       fleetFullAccess: true,
     });
 
-    expect(mintSessionFacadeToken.mock.calls[0][4]).toBe(false);
+    expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });
 });
 
-describe('spawnClaudeAgent — profileGranted (fleet-manager dispatch)', () => {
+describe('spawnClaudeAgent — profiles need no Workspacer grant', () => {
   const workProfile = {
     id: 'work',
     name: 'Work',
@@ -396,15 +407,15 @@ describe('spawnClaudeAgent — profileGranted (fleet-manager dispatch)', () => {
     mcpItemIds: ['srv1'],
   };
 
-  it('scrubProfileBypass alone drops the profile configDir (remote doctrine unchanged)', async () => {
+  it('legacy scrubProfileBypass cannot strip the selected profile', async () => {
     getProfile.mockReturnValue(workProfile);
     await spawnClaudeAgent({ cwd: '/proj', profileId: 'work', scrubProfileBypass: true });
 
-    expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBeUndefined();
-    expect(lastArgv()).not.toContain('--dangerously-skip-permissions');
+    expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBe('/accounts/work');
+    expect(lastArgv()).toContain('--dangerously-skip-permissions');
   });
 
-  it('a hub-stamped grant keeps the configDir but still strips the bypass args', async () => {
+  it('legacy profileGranted is accepted but unnecessary', async () => {
     getProfile.mockReturnValue(workProfile);
     await spawnClaudeAgent({
       cwd: '/proj',
@@ -415,7 +426,7 @@ describe('spawnClaudeAgent — profileGranted (fleet-manager dispatch)', () => {
 
     expect(lastSpawn().env.CLAUDE_CONFIG_DIR).toBe('/accounts/work');
     const argv = lastArgv();
-    expect(argv).not.toContain('--dangerously-skip-permissions');
+    expect(argv).toContain('--dangerously-skip-permissions');
     expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
   });
 
@@ -564,9 +575,12 @@ describe('spawnClaudeAgent — resultSchema', () => {
     );
   });
 
-  it('does not inject the fleet contract into an ordinary pane or the Fleet Manager', async () => {
+  it('keeps the automatic facade role separate from the fleet worker contract', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
-    expect(lastArgv()).not.toContain('--append-system-prompt');
+    expect(lastArgv()).toContain('--append-system-prompt');
+    const ordinaryPrompt = lastArgv()[lastArgv().indexOf('--append-system-prompt') + 1];
+    expect(ordinaryPrompt).toContain('ROLE');
+    expect(ordinaryPrompt).not.toContain('wks-escalation');
 
     await spawnClaudeAgent({
       cwd: '/proj',

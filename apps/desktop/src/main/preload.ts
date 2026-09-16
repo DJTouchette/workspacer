@@ -226,7 +226,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * Mints a per-session scoped token; the facade serves only that tier.
      */
     toolScope?: 'view' | 'triage' | 'operator';
-    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    /** Legacy compatibility list; enabled plugin tools are ambient. */
     pluginTools?: string[];
     /** Federation: spawn on this peer hub instead of locally. */
     targetHub?: string;

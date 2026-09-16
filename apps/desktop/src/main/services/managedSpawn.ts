@@ -220,6 +220,11 @@ export interface ManagedSpawnOptions {
  * card and its analytics row are tagged with the right backend from the start.
  */
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
+  if (opts.provider === 'pi') {
+    throw new Error(
+      'Pi is not supported for Workspacer agent spawning: Pi has no MCP bridge, so it cannot receive the required Workspacer tools.',
+    );
+  }
   managerReplacementState.assertResume(opts.resumeSessionId);
   return managerReplacementState.admitted([opts.parentSessionId], () => spawnManaged(opts));
 }
@@ -348,7 +353,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   // Every supported Workspacer-launched agent gets the authenticated operator
   // facade. Legacy tier/plugin fields remain wire-compatible but are ignored.
-  const wantsFacade = provider !== 'pi';
+  const wantsFacade = true;
   const facadeScope: RemoteTokenScope = 'operator';
   const managedId = opts.replacementSessionId || opts.resumeSessionId || randomUUID();
   // Refused out loud rather than dropped — see claudeSpawn's twin.
@@ -358,18 +363,16 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     if (bad) throw new Error(`spawn: ${bad}`);
   }
   const skipPermissions = !!opts.skipPermissions;
-  // Per-session authenticated operator token. Pi has no MCP client, so it gets
-  // no token; every supported provider gets the same ambient facade.
-  const facadeToken = wantsFacade
-    ? mintSessionFacadeToken(
-        managedId,
-        'operator',
-        ['*'],
-        undefined,
-        undefined,
-        opts.manager ? 'manager' : undefined,
-      ).token
-    : undefined;
+  // Per-session authenticated operator token. The Pi refusal above keeps the
+  // unsupported no-MCP harness from ever reaching this ambient facade path.
+  const facadeToken = mintSessionFacadeToken(
+    managedId,
+    'operator',
+    ['*'],
+    undefined,
+    undefined,
+    opts.manager ? 'manager' : undefined,
+  ).token;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
   // set (an explicit mode wins; the legacy boolean maps to bypass — same
   // resolution as the PTY path), managed providers are just ask/yolo.
@@ -478,8 +481,8 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     cwd,
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    // The nudge router (supervisorSessionIds) is keyed on this flag: the
-    // manager is the wake target.
+    // This flag remains the Fleet Manager/global-broadcast marker. Ordinary
+    // parents receive only their own direct-child wakes via parentSessionId.
     isWakeTarget: opts.manager,
     provider,
     ...(resultSchema && { resultSchema }),
@@ -565,8 +568,8 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
       // Claude stream carries the facade via the --mcp-config file above, so
       // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
       // override / opencode.json) and cannot send headers, so their token
-      // rides a `?t=` query param the facade also accepts; pi has no MCP
-      // client at all and keeps the bare URL no-op + role instructions.
+      // rides a `?t=` query param the facade also accepts. Pi is refused at
+      // the public boundary because it has no MCP client.
       ...(!isClaudeStream && {
         mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
       }),
@@ -590,7 +593,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   // enrich this entry as the agent runs. (Stream-transport Claude *does* fire
   // hooks, but only after the first turn starts — same gap, same fix.)
   claudeSessionStore.ensureManagedSession(sessionId, cwd);
-  if (opts.manager && facadeScope === 'operator' && provider !== 'pi') {
+  if (opts.manager && facadeScope === 'operator') {
     const grants = sessionFacadeGrantFingerprint(sessionId);
     if (grants) {
       const {
@@ -726,8 +729,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     cwd,
     label: opts.label,
     parentSessionId: opts.parentSessionId,
-    // The manager is the wake target — same flag, same reason as the managed
-    // path above.
+    // Fleet Manager/global-broadcast marker; direct-child wakes do not require it.
     isWakeTarget: opts.manager,
     provider: 'codex',
     // The hybrid branch records routing too: it is reached through

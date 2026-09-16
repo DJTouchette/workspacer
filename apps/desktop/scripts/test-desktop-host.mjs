@@ -53,7 +53,7 @@ test('shared desktop services over the production private protocol', { timeout: 
   assert.deepEqual(fs.readFileSync(legacyPath), legacyBytes);
   assert.equal(fs.readFileSync(artifactPath, 'utf8'), 'Retained user artifact');
   assert.equal(fs.existsSync(legacyPath + '-wal'), false);
-  await assert.rejects(call('desktop.worktreeInfo',{cwd:root,context:{setupRoots:[root]}}),/outside/);
+  assert.equal((await call('desktop.worktreeInfo',{cwd:root,context:{setupRoots:[root]}})).isRepo,false);
   const font = Buffer.from('0001000000000000', 'hex');
   const installed = await call('desktop.installUiFont', {name:'Fixture.ttf',dataBase64:font.toString('base64')});
   assert.equal(installed.file, 'Fixture.ttf');
@@ -65,7 +65,7 @@ test('shared desktop services over the production private protocol', { timeout: 
   fs.symlinkSync(outsideFont, path.join(home,'.workspacer','fonts','escape.ttf'));
   await assert.rejects(call('ui.asset', {kind:'font',file:'escape.ttf'}), /outside/);
   assert.equal(Buffer.from((await call('desktop.readFileBytes',{path:path.join(repo,'a.txt')})).dataBase64,'base64').toString(),'original\n');
-  await assert.rejects(call('desktop.readFileBytes',{path:path.join(root,'outside.ttf')}),/outside/);
+  assert.equal((await call('desktop.readFileBytes',{path:path.join(root,'outside.ttf')})).dataBase64,font.toString('base64'));
   const rates = await call('desktop.pricingGetRates'); assert.ok(Object.keys(rates.defaults).length > 5);
   await call('desktop.pricingSaveOverrides',{overrides:{'fixture-model':{input:1,output:2}}});
   assert.deepEqual((await call('desktop.pricingGetRates')).overrides['fixture-model'],{input:1,output:2});

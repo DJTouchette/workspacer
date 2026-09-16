@@ -299,18 +299,9 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     facadeSpawnArgs({
       sessionId,
       additionalServers: userMcpServers,
-      // A host-blessed Fleet Manager's token carries a dispatch grant for
-      // every local profile — the hub verifies it and stamps profileGranted
-      // on the worker spawn. Only `manager` gets this; a plain facade worker
-      // has no business spawning as other accounts.
-      // The yolo grant is CONFIG-RESOLVED (fleet full access / per-project
-      // yolo — services/fullAccessGrants is the single formula), never
-      // a caller flag: a respawn re-passing a value frozen at the original
-      // spawn must not resurrect a grant the user has since revoked, nor
-      // withhold one they granted. The hub then stamps yoloGranted on the
-      // holder's worker spawns so their skipPermissions request is honored
-      // instead of clamped. The role tag is what lets a later config flip
-      // find this token and update the grant LIVE (fullAccessGrants sync).
+      // The token identifies and revokes this session. Operator authority and
+      // enabled-plugin tools are ambient; legacy profile/yolo grant fields are
+      // intentionally absent.
       token: mintSessionFacadeToken(
         sessionId,
         'operator',

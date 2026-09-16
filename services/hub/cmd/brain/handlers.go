@@ -600,22 +600,11 @@ type spawnParams struct {
 	Effort     string   `json:"effort"`
 	ProfileID  string   `json:"profileId"`
 	MCPItemIDs []string `json:"mcpItemIds"`
-	// ProfileGranted is stamped by the HUB ROUTER and only by it: the hub
-	// deletes the key from every incoming agents.spawn and re-adds it iff the
-	// verified caller may dispatch under ProfileID (host token, or a tokens.json
-	// record whose profilesAllowed grant lists that exact id) — see
-	// internal/bus sanitizeSpawnParams. When true, the spawn keeps the LOCAL
-	// profile's CLAUDE_CONFIG_DIR (the account is the point of the grant);
-	// bypass flags and mcpItemIds are scrubbed regardless, because the grant is
-	// about which account burns the tokens, never about skipping approvals.
+	// ProfileGranted is an accepted, ignored compatibility stamp. Profile
+	// selection is no longer grant-gated for authenticated agent spawns.
 	ProfileGranted bool `json:"profileGranted"`
-	// YoloGranted is stamped by the HUB ROUTER and only by it, same contract as
-	// ProfileGranted: the hub deletes the key from every incoming agents.spawn
-	// and re-adds it iff the verified caller holds the full-access grant (host
-	// token, or a tokens.json record with yoloAllowed:true) — see internal/bus
-	// sanitizeSpawnParams. The stamp does not itself request a bypass; it says
-	// the request's own SkipPermissions / bypass PermissionMode may be honored
-	// instead of clamped.
+	// YoloGranted is an accepted, ignored compatibility stamp. The requested
+	// provider permission mode now flows through without a Workspacer grant.
 	YoloGranted bool `json:"yoloGranted"`
 	// EscalationScrubbed is stamped by the HUB ROUTER and only by it (it deletes
 	// any incoming copy first, same contract as the two stamps above): the
@@ -639,15 +628,11 @@ type spawnParams struct {
 	Rows            int    `json:"rows"`
 	Label           string `json:"label"`
 	ParentSessionID string `json:"parentSessionId"`
-	// Legacy desktop spelling: request the Workspacer MCP facade with the
-	// default operator scope. Prefer ToolScope for new callers.
-	MCPFacade bool `json:"mcpFacade"`
-	// ToolScope requests a session-scoped facade token at a specific tier
-	// (view/triage/operator). The token is minted locally from config, never from
-	// caller-supplied grants.
-	ToolScope string `json:"toolScope"`
-	// PluginTools carries plugin tool grants recorded onto the session token.
-	// These are inert unless the facade is requested by ToolScope/MCPFacade.
+	// Legacy compatibility fields. Supported providers automatically receive
+	// the operator facade and every enabled plugin tool; these cannot narrow or
+	// widen the ambient surface.
+	MCPFacade   bool     `json:"mcpFacade"`
+	ToolScope   string   `json:"toolScope"`
 	PluginTools []string `json:"pluginTools"`
 	// Manager is the Fleet Manager flag: a nudge-eligible parent. Headless it
 	// means exactly one thing — the session
@@ -846,6 +831,9 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 	// adapter, not a Claude PTY. Same dispatch split as the desktop's
 	// agents.spawn so this path can't silently fall back to spawning Claude.
 	provider := r.roleProviderDefault(p)
+	if provider == "pi" {
+		return nil, fmt.Errorf("Pi is not supported for Workspacer agent spawning: Pi has no MCP bridge, so it cannot receive the required Workspacer tools")
+	}
 	if err := r.resolveManagerSelection(provider, &p); err != nil {
 		return nil, fmt.Errorf("invalid Fleet Manager selection: %w", err)
 	}
@@ -1108,9 +1096,8 @@ func (r *registry) noteLaunch(sessionID, provider string, p spawnParams) {
 // re-pinnable), a fresh spawn pins a new one; codex's 'stream' transport is
 // forwarded on the wire; claude-stream carries permission_mode + resume + the
 // profile's env/extra argv and — deliberately — no wire `transport` key
-// (spawn-managed claude IS the stream adapter). The caller has already clamped
-// off every bypass — unless the hub stamped the full-access grant
-// (yoloGranted), the one case the resolved p.skip survives into `yolo`.
+// (spawn-managed claude IS the stream adapter). Provider permission modes flow
+// through without a separate Workspacer grant.
 func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
 	isClaudeStream := provider == "claude"
 	// Codex's shape is RESOLVED, never inferred from the presence of a key: a
@@ -1167,8 +1154,7 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		Effort:        p.Effort,
 		Bin:           r.resolveSpawnBin(provider),
 		SessionID:     sessionID,
-		// Post-clamp: false for every bus caller except a hub-stamped
-		// yoloGranted spawn (spawn() zeroes the resolved skip otherwise).
+		// Provider permission choice resolved by spawn().
 		Yolo: p.skip,
 	}
 	if provider == "codex" {
@@ -1191,17 +1177,14 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 	}
 	if isClaudeStream {
 		// Claude keeps its full permission-mode vocabulary; an absent mode
-		// resolves to 'default', same as the desktop (bypass never survives the
-		// clamp above). Profile parity with the PTY path: CLAUDE_CONFIG_DIR +
+		// resolves to 'default', same as the desktop. Profile parity with the PTY path: CLAUDE_CONFIG_DIR +
 		// extra argv ride the payload's claude-only env/extra_args fields.
 		mode := p.PermissionMode
 		if mode == "" {
 			mode = "default"
 		}
 		req.PermissionMode = mode
-		// SECURITY: same clamp as the PTY path — a profile's extraArgs must not
-		// smuggle a bypass flag onto the managed claude-stream argv (and
-		// configDir survives only a hub-verified profile grant).
+		// Profile config roots and provider arguments flow as authored.
 		if prof := remoteSpawnProfile(p.ProfileID, true); prof != nil && prof.Provider == "" {
 			if env := buildEnv(prof); len(env) > 0 {
 				req.Env = env

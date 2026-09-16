@@ -48,7 +48,10 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	}
 	baseURL := strings.TrimSpace(r.mcpFacadeURL)
 	if baseURL == "" {
-		baseURL = defaultMCPFacadeURL()
+		// Only the process that owns and health-checked a facade may advertise
+		// one. A bare brain (including an older `workspacer serve`) must never
+		// manufacture a loopback URL that has no listener behind it.
+		return nil, nil
 	}
 	if err := validateSessionConfigName(sessionID); err != nil {
 		return nil, err
@@ -314,10 +317,6 @@ func sessionFacadeInstructions(sessionID string, p spawnParams) string {
 		parts = append(parts, "You are the session manager; use workspacer tools to coordinate child sessions and report their status when needed.")
 	}
 	return strings.Join(parts, "\n")
-}
-
-func defaultMCPFacadeURL() string {
-	return "http://127.0.0.1:7897/mcp"
 }
 
 func cleanStringList(values []string) []string {
