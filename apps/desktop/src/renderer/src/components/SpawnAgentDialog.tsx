@@ -166,7 +166,7 @@ interface ProviderModel {
 /**
  * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
  * workspace page — a blank agent about to be born — not a floating modal:
- * the existing branded header above an F-line project rule and word controls.
+ * an F-line project rule and word controls, with a task field for dispatches.
  * Less common launch options remain available through Advanced.
  */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
@@ -1348,60 +1348,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         animation: 'wks-fade-in 0.25s ease-out',
       }}
     >
-      {/* Soft accent glow behind the centerpiece — pure decoration */}
-      <div
-        aria-hidden
-        style={{
-          position: 'absolute',
-          top: '-18%',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: 'min(720px, 100%)',
-          height: 720,
-          borderRadius: '50%',
-          background:
-            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 65%)',
-          pointerEvents: 'none',
-        }}
-      />
-
       <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
         <fieldset disabled={busy} className="spawn-page">
-          <header className="spawn-header">
-            {/* ── Centerpiece: the agent about to be born ─────────────────── */}
-            <div
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '1px solid var(--wks-border-input)',
-                background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
-                color: 'var(--wks-text-primary)',
-              }}
-            >
-              <AgentLogo provider={provider} size={30} />
-            </div>
-            <div
-              style={{
-                marginTop: 16,
-                fontSize: '1.05rem',
-                fontWeight: 650,
-                letterSpacing: '-0.01em',
-                color: 'var(--wks-text-primary)',
-              }}
-            >
-              {hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
-            </div>
-            <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
-              {hasTaskHandoff
-                ? 'Describe a task, choose its directory, and dispatch.'
-                : 'Choose an agent and directory, then start chatting.'}
-            </div>
-          </header>
-
           <div className="spawn-form">
             {hasTaskHandoff && (
               <div className="spawn-task">

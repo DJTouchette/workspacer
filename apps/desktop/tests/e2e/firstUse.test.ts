@@ -64,9 +64,7 @@ for (const viewport of [
   { width: 1280, height: 900 },
   { width: 360, height: 480 },
 ]) {
-  test(`F-line header and launch controls ${viewport.width}x${viewport.height}`, async ({
-    page,
-  }) => {
+  test(`F-line form and launch controls ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`${base}?spawn=success&runtime=ready&theme=dracula`);
     await page.evaluate(() =>
@@ -75,16 +73,19 @@ for (const viewport of [
     await page.getByRole('button', { name: "Got it — don't show again" }).click();
     await page.keyboard.press('Control+Shift+N');
     const screen = page.getByRole('dialog', { name: 'New Agent', exact: true });
-    const header = screen.locator('.spawn-header');
-    await expect(header.getByText('New Agent', { exact: true })).toBeVisible();
-    await expect(
-      header.getByText('Choose an agent and directory, then start chatting.'),
-    ).toBeVisible();
-    await expect(header.locator('svg')).toHaveAttribute('width', '30');
+    await expect(screen.locator('header')).toHaveCount(0);
+    await expect(screen.getByText('New Agent', { exact: true })).toHaveCount(0);
+    await expect(screen.locator('[style*="radial-gradient"]')).toHaveCount(0);
+    // The existing entrance animation translates the whole screen by 4px.
+    // Wait for the settled layout before measuring its top inset.
+    await expect
+      .poll(async () => (await screen.locator('.spawn-form').boundingBox())?.y)
+      .toBe(viewport.width === 360 ? 20 : 64);
+    await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeInViewport();
     await expect(screen.locator('.spawn-project-line svg')).toHaveAttribute('width', '22');
     await expect(screen.getByLabel('Working directory')).toBeFocused();
     await page.screenshot({
-      path: test.info().outputPath('f-line-header.png'),
+      path: test.info().outputPath('f-line-form.png'),
       animations: 'disabled',
     });
     await expect(screen.getByRole('button', { name: 'Advanced options' })).toHaveAttribute(
@@ -145,7 +146,7 @@ for (const viewport of [
   });
 }
 
-test('F-line retained header and form in every built-in theme', async ({ page }) => {
+test('F-line form in every built-in theme', async ({ page }) => {
   test.setTimeout(60000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`${base}?spawn=success&runtime=ready`);
@@ -164,7 +165,8 @@ test('F-line retained header and form in every built-in theme', async ({ page })
         page.evaluate(() => document.documentElement.style.getPropertyValue('--wks-bg-base')),
       )
       .toBe(theme.bgBase);
-    await expect(screen.locator('.spawn-header')).toBeInViewport();
+    await expect(screen.locator('header')).toHaveCount(0);
+    await expect(screen.locator('.spawn-project-line')).toBeInViewport();
     await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeInViewport();
     await expect(screen.locator('.spawn-project-line')).toHaveCSS('box-shadow', /1px/);
     await page.screenshot({

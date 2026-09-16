@@ -13,4 +13,4 @@ promoted: false
 # Spawn form context disclosure needs in-flow placement at narrow widths
 
 ## Observation
-ModelContextPopover uses a 260px absolutely positioned panel aligned to its trigger's right edge. Moving it into a wrapping F-line option strip can place that edge near the left viewport edge and overflow narrow screens. SpawnAgentDialog locally lays this shared disclosure out in flow; other surfaces retain their floating layout. The pre-existing spawn header on this branch is a dynamic AgentLogo (30px in a 64px circle), title, subtitle and accent glow, not a Workspacer wordmark.
+ModelContextPopover uses a 260px absolutely positioned panel aligned to its trigger's right edge. Moving it into a wrapping F-line option strip can place that edge near the left viewport edge and overflow narrow screens. SpawnAgentDialog locally lays this shared disclosure out in flow; other surfaces retain their floating layout. The final user-selected composition removes the entire header and glow. The inline provider mark remains a form control; no header space should be reserved above the form.

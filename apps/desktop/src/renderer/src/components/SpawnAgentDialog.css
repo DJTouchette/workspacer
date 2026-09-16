@@ -7,19 +7,11 @@
   min-height: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: 9vh 32px 40px;
+  padding: 64px 32px 40px;
   box-sizing: border-box;
 }
 
-.spawn-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
 .spawn-form {
-  margin-top: 40px;
   min-width: 0;
 }
 .spawn-sr-only {
@@ -321,7 +313,7 @@ button.spawn-provider-mark:hover {
 
 @media (max-width: 480px) {
   .spawn-page {
-    padding: 6vh 20px 32px;
+    padding: 32px 20px 32px;
   }
   .spawn-project-line {
     gap: 8px;
@@ -341,9 +333,6 @@ button.spawn-provider-mark:hover {
 @media (max-height: 600px) {
   .spawn-page {
     padding-top: 20px;
-  }
-  .spawn-form {
-    margin-top: 24px;
   }
   .spawn-status {
     margin-top: 20px;

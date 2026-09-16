@@ -229,24 +229,39 @@ describe('SpawnAgentDialog Context popover', () => {
 });
 
 describe('F-line form', () => {
-  it('retains the production header and exposes common controls before More', () => {
-    const { container } = render(
-      <SpawnAgentDialog defaultCwd="/repo" onSpawn={vi.fn()} onCancel={vi.fn()} />,
-    );
-    const header = container.querySelector('.spawn-header')!;
-    expect(header).toHaveTextContent('New Agent');
-    expect(header).toHaveTextContent('Choose an agent and directory, then start chatting.');
-    expect(header.querySelector('svg')).toHaveAttribute('width', '30');
-    expect(screen.getByLabelText('Model', { exact: true })).toBeVisible();
-    expect(screen.getByLabelText('Permissions', { exact: true })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'terminal', exact: true })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(screen.getByLabelText('Context settings')).toBeVisible();
-    expect(screen.queryByLabelText('name', { exact: true })).not.toBeInTheDocument();
-    expect(container.querySelector('.mockbar')).toBeNull();
-  });
+  it.each([false, true])(
+    'starts with the form and exposes common controls (task: %s)',
+    (requireTask) => {
+      const { container } = render(
+        <SpawnAgentDialog
+          defaultCwd="/repo"
+          requireTask={requireTask}
+          onSpawn={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+      expect(container.querySelector('header')).toBeNull();
+      expect(screen.queryByText('New Agent', { exact: true })).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('Choose an agent and directory, then start chatting.'),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('Describe a task, choose its directory, and dispatch.'),
+      ).not.toBeInTheDocument();
+      expect(container.querySelector('[style*="radial-gradient"]')).toBeNull();
+      expect(container.querySelector('.spawn-page')?.firstElementChild).toHaveClass('spawn-form');
+      expect(container.querySelector('.spawn-project-line svg')).toHaveAttribute('width', '22');
+      expect(screen.getByLabelText('Model', { exact: true })).toBeVisible();
+      expect(screen.getByLabelText('Permissions', { exact: true })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'terminal', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText('Context settings')).toBeVisible();
+      expect(screen.queryByLabelText('name', { exact: true })).not.toBeInTheDocument();
+      expect(container.querySelector('.mockbar')).toBeNull();
+    },
+  );
 
   it('keeps hidden advanced choices and submits them with the visible model and transport', async () => {
     const { onSpawn } = renderDialog();
