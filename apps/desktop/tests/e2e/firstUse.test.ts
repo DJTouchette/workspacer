@@ -1132,7 +1132,7 @@ for (const capture of ['legacy', 'missing', 'remote']) {
   });
 }
 
-test('manager request receipt fits 360px and disappears without a routine composer banner', async ({
+test('manager request sends at 360px without a routine acknowledgement notification', async ({
   page,
 }, info) => {
   await page.setViewportSize({ width: 360, height: 900 });
@@ -1144,17 +1144,27 @@ test('manager request receipt fits 360px and disappears without a routine compos
     .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)
     .toBe(1);
   const composer = page.locator('textarea:visible').first();
-  await composer.fill('Please review https://github.com/owner/repo/pull/9492');
+  await page.evaluate(() => {
+    (window as any).requestNotifications = [];
+    window.addEventListener('wks:notify-post', (event) => {
+      (window as any).requestNotifications.push((event as CustomEvent).detail);
+    });
+  });
+  const requestText = 'Please review https://github.com/owner/repo/pull/9492';
+  await composer.fill(requestText);
   await composer.press('Enter');
-  const toast = page.getByRole('status').filter({ hasText: 'Request received' });
-  await expect(toast).toBeVisible();
+  await expect
+    .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)
+    .toBe(2);
+  await expect(page.getByText(requestText, { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue('');
+  const requests = await page.evaluate(() => (window as any).firstUse.requests());
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toMatchObject({ text: requestText, delivery: 'accepted' });
+  expect(await page.evaluate(() => (window as any).requestNotifications)).toEqual([]);
+  await expect(page.getByText('Request received', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/Task capture is pending|Request saved; waiting/)).toHaveCount(0);
-  const box = await toast.boundingBox();
-  expect(box!.x).toBeGreaterThanOrEqual(0);
-  expect(box!.x + box!.width).toBeLessThanOrEqual(360);
-  await page.screenshot({ path: info.outputPath('request-received-360.png') });
-  await expect(toast).toHaveCount(0, { timeout: 9000 });
-  await page.screenshot({ path: info.outputPath('request-cleared-360.png') });
+  await page.screenshot({ path: info.outputPath('request-sent-360.png') });
 });
 
 const paletteAction = async (page: any, name: string) => {

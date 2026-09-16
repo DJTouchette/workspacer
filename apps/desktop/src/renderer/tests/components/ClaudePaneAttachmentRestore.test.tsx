@@ -358,62 +358,70 @@ it('retries one captured card request without duplicate bubbles, but new identic
   delete window.electronAPI.managerRequestPrepare;
 });
 
-it('posts one in-app receipt per request ID and clears durable error text on accepted retry', async () => {
-  const { useClaudePaneModel } = await import('../../src/panes/ClaudePane');
-  const { SessionChatView } = await import('../../src/panes/SessionChatView');
-  let model!: ReturnType<typeof useClaudePaneModel>;
-  function Chat() {
-    model = useClaudePaneModel({
-      paneId: 'receipt',
-      title: 'Manager',
-      isActive: true,
-      cwd: '/repo',
-    });
-    return <SessionChatView {...model} />;
-  }
-  mockSession = makeSnapshot({ isWakeTarget: true });
-  const received = vi.fn();
-  window.addEventListener('wks:notify-post', received);
-  window.electronAPI.managerRequestPrepare = vi
-    .fn()
-    .mockResolvedValueOnce({ available: true, requestId: 'one', delivery: 'pending' })
-    .mockResolvedValueOnce({ available: true, requestId: 'one', delivery: 'pending' })
-    .mockResolvedValueOnce({ available: true, requestId: 'two', delivery: 'pending' });
-  window.electronAPI.claudeMessage = vi
-    .fn()
-    .mockResolvedValueOnce({ ok: false, requestId: 'one', delivery: 'rejected' })
-    .mockResolvedValueOnce({ ok: true, requestId: 'one', delivery: 'accepted' })
-    .mockResolvedValueOnce({ ok: true, requestId: 'one', delivery: 'accepted' })
-    .mockResolvedValueOnce({ ok: true, requestId: 'two', delivery: 'accepted' });
-  const view = render(<Chat />);
-  try {
-    await act(async () => {
-      await model.handleSend('Same text');
-    });
-    expect(screen.getByText(/Chat delivery rejected/)).toBeTruthy();
-    expect(received).not.toHaveBeenCalled();
-    await act(async () => {
-      await model.handleSend('Same text');
-    });
-    expect(
-      screen.queryByText(/Chat delivery rejected|capture is pending|Request saved/),
-    ).toBeNull();
-    expect(received).toHaveBeenCalledTimes(1);
-    view.rerender(<Chat />);
-    await act(async () => {
-      await model.handleSend('Same text');
-    });
-    expect(received).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await model.handleSend('Same text');
-    });
-    expect(received).toHaveBeenCalledTimes(2);
-    expect(received.mock.calls[1][0].detail).toMatchObject({
-      title: 'Request received',
-      id: 'request-received:two',
-    });
-  } finally {
-    window.removeEventListener('wks:notify-post', received);
-    delete window.electronAPI.managerRequestPrepare;
-  }
-});
+it.each(['pending', 'accepted'])(
+  'sends captured manager requests without notifications and clears rejection text on %s retry',
+  async (delivery) => {
+    const { useClaudePaneModel } = await import('../../src/panes/ClaudePane');
+    const { SessionChatView } = await import('../../src/panes/SessionChatView');
+    let model!: ReturnType<typeof useClaudePaneModel>;
+    function Chat() {
+      model = useClaudePaneModel({
+        paneId: 'receipt',
+        title: 'Manager',
+        isActive: true,
+        cwd: '/repo',
+      });
+      return <SessionChatView {...model} />;
+    }
+    mockSession = makeSnapshot({ isWakeTarget: true });
+    const received = vi.fn();
+    window.addEventListener('wks:notify-post', received);
+    window.electronAPI.managerRequestPrepare = vi
+      .fn()
+      .mockResolvedValueOnce({ available: true, requestId: 'one', delivery: 'pending' })
+      .mockResolvedValueOnce({ available: true, requestId: 'two', delivery: 'pending' });
+    window.electronAPI.claudeMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, requestId: 'one', delivery: 'rejected' })
+      .mockResolvedValueOnce({ ok: true, requestId: 'one', delivery })
+      .mockResolvedValueOnce({ ok: true, requestId: 'two', delivery });
+    const view = render(<Chat />);
+    try {
+      await act(async () => {
+        expect(await model.handleSend('Same text')).toEqual({
+          ok: false,
+          error: 'Request delivery rejected',
+        });
+      });
+      expect(screen.getByText(/Chat delivery rejected/)).toBeTruthy();
+      expect(received).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(await model.handleSend('Same text')).toEqual({ ok: true });
+      });
+      expect(
+        screen.queryByText(/Chat delivery rejected|capture is pending|Request saved/),
+      ).toBeNull();
+      expect(received).not.toHaveBeenCalled();
+      expect(screen.getByText('Same text', { exact: true, selector: 'div' })).toBeVisible();
+      expect(screen.getByText('Sending…')).toBeVisible();
+      view.rerender(<Chat />);
+      await act(async () => {
+        expect(await model.handleSend('Same text')).toEqual({ ok: true });
+      });
+      expect(received).not.toHaveBeenCalled();
+      expect(screen.queryByText('Request received')).not.toBeInTheDocument();
+      expect(screen.getByText('Queued — sends when this turn ends')).toBeVisible();
+      expect(window.electronAPI.managerRequestPrepare).toHaveBeenCalledTimes(2);
+      expect(window.electronAPI.managerRequestPrepare).toHaveBeenCalledWith('sess-1', 'Same text');
+      expect(vi.mocked(window.electronAPI.claudeMessage).mock.calls).toEqual([
+        ['sess-1', 'Same text', 'one'],
+        ['sess-1', 'Same text', 'one'],
+        ['sess-1', 'Same text', 'two'],
+      ]);
+      expect(mockWrite).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('wks:notify-post', received);
+      delete window.electronAPI.managerRequestPrepare;
+    }
+  },
+);
