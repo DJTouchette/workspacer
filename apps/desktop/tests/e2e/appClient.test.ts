@@ -269,7 +269,7 @@ test.describe('driving an agent', () => {
 
     await page.keyboard.press('Control+Shift+N');
     // Ctrl+Shift+N opens ordinary creation; task dispatch is a separate flow.
-    const submit = page.getByRole('button', { name: 'Create agent', exact: true });
+    const submit = page.getByRole('button', { name: 'Start agent', exact: true });
     await expect(submit).toBeVisible({ timeout: 10_000 });
     await submit.click();
 

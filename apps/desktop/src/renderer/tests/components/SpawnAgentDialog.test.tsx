@@ -113,11 +113,11 @@ describe('SpawnAgentDialog permissions', () => {
     const { onSpawn } = renderDialog();
 
     expect(advancedButton()).toHaveAttribute('aria-expanded', 'false');
-    // The two per-spawn decisions (model + permissions) are always visible;
-    // everything else stays behind the collapsed advanced fold.
+    // Model, permissions, transport and context are visible before More.
+    // Only model and permissions are native selects.
     expect(screen.queryAllByRole('combobox')).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -147,12 +147,12 @@ describe('SpawnAgentDialog permissions', () => {
     const { onSpawn } = renderDialog();
 
     expect(await screen.findByText(/bypasses all approval prompts/i)).toBeInTheDocument();
-    expect(advancedButton()).toHaveTextContent(/full access/i);
+    expect(permissionSelect()).toHaveValue('bypassPermissions');
 
     fireEvent.click(advancedButton());
     await waitFor(() => expect(permissionSelect().value).toBe('bypassPermissions'));
 
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -197,7 +197,7 @@ describe('SpawnAgentDialog permissions', () => {
     fireEvent.click(screen.getByText('Claude Code').closest('button')!);
     await waitFor(() => expect(effortSelect().value).toBe('xhigh'));
 
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
   });
 });
@@ -206,9 +206,9 @@ describe('SpawnAgentDialog Context popover', () => {
   it('sends the fresh Codex 1M default from the human spawn surface', async () => {
     const { onSpawn } = renderDialog();
     fireEvent.click(screen.getByText('Codex').closest('button')!);
-    fireEvent.click(advancedButton());
     await screen.findByLabelText('Context settings');
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    expect(advancedButton()).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ provider: 'codex', contextWindow: 1_000_000 }),
     );
@@ -217,14 +217,63 @@ describe('SpawnAgentDialog Context popover', () => {
   it('forwards a numeric Codex override selected in the shared popover', async () => {
     const { onSpawn } = renderDialog();
     fireEvent.click(screen.getByText('Codex').closest('button')!);
-    fireEvent.click(advancedButton());
     fireEvent.click(await screen.findByLabelText('Context settings'));
     fireEvent.change(screen.getByLabelText('Custom context tokens'), {
       target: { value: '400000' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ provider: 'codex', contextWindow: 400_000 }),
+    );
+  });
+});
+
+describe('F-line form', () => {
+  it('retains the production header and exposes common controls before More', () => {
+    const { container } = render(
+      <SpawnAgentDialog defaultCwd="/repo" onSpawn={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const header = container.querySelector('.spawn-header')!;
+    expect(header).toHaveTextContent('New Agent');
+    expect(header).toHaveTextContent('Choose an agent and directory, then start chatting.');
+    expect(header.querySelector('svg')).toHaveAttribute('width', '30');
+    expect(screen.getByLabelText('Model', { exact: true })).toBeVisible();
+    expect(screen.getByLabelText('Permissions', { exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'terminal', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText('Context settings')).toBeVisible();
+    expect(screen.queryByLabelText('name', { exact: true })).not.toBeInTheDocument();
+    expect(container.querySelector('.mockbar')).toBeNull();
+  });
+
+  it('keeps hidden advanced choices and submits them with the visible model and transport', async () => {
+    const { onSpawn } = renderDialog();
+    fireEvent.click(advancedButton());
+    fireEvent.change(screen.getByLabelText('name', { exact: true }), {
+      target: { value: 'Review project' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Work', exact: true }));
+    fireEvent.change(screen.getByLabelText('Workspacer tools'), { target: { value: 'view' } });
+    fireEvent.click(advancedButton());
+    expect(screen.queryByLabelText('Workspacer tools')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Advanced overrides')).toHaveTextContent('Review project');
+    expect(screen.getByLabelText('Advanced overrides')).toHaveTextContent('Work');
+    fireEvent.change(screen.getByLabelText('Model', { exact: true }), {
+      target: { value: '__custom__' },
+    });
+    fireEvent.change(screen.getByLabelText('Custom model'), { target: { value: 'sonnet' } });
+    fireEvent.click(screen.getByRole('button', { name: 'headless', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start agent', exact: true }));
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Review project',
+        profileId: 'work-uuid',
+        toolScope: 'view',
+        model: 'sonnet',
+        transport: 'stream',
+      }),
     );
   });
 });
@@ -236,20 +285,22 @@ describe('SpawnAgentDialog profiles', () => {
     // The service always materializes an `id: 'default'` row named "Default"
     // (claudeProfiles.ts and its Go twin), so a synthetic "no profile" chip
     // beside it rendered TWO chips both reading Default.
+    fireEvent.click(advancedButton());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Work' })).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: 'Default' })).toHaveLength(1);
 
     // And the pre-selection is that real row, so a spawn carries the loadout
     // attached to Default in Settings instead of silently skipping it.
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'default' }));
   });
 
   it('switches the selection to another account profile', async () => {
     const { onSpawn } = renderDialog();
 
+    fireEvent.click(advancedButton());
     fireEvent.click(await screen.findByRole('button', { name: 'Work' }));
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'work-uuid' }));
   });
@@ -272,6 +323,7 @@ describe('optional launch integration picker', () => {
       { ...headroom, id: 'disabled', name: 'Disabled', disabled: true },
     ]);
     const { onSpawn } = renderDialog();
+    fireEvent.click(advancedButton());
     const selector = await screen.findByLabelText('Launch integration');
     expect(selector).toHaveValue('');
     expect(screen.queryByRole('option', { name: 'Disabled' })).not.toBeInTheDocument();
@@ -281,7 +333,7 @@ describe('optional launch integration picker', () => {
     fireEvent.change(screen.getByLabelText('Launch integration'), {
       target: { value: headroom.id },
     });
-    fireEvent.click(screen.getByRole('button', { name: /create agent/i }));
+    fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ provider: 'codex', launchIntegrationId: headroom.id }),
     );
@@ -292,6 +344,7 @@ describe('optional launch integration picker', () => {
     try {
       api.listHubPlugins.mockResolvedValue([headroom]);
       renderDialog();
+      fireEvent.click(advancedButton());
       await screen.findByText('Work');
       expect(screen.queryByLabelText('Launch integration')).not.toBeInTheDocument();
     } finally {

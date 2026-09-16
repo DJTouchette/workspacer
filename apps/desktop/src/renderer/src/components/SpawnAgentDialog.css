@@ -1,0 +1,365 @@
+/* F · Line: the project rule is the form's main edge. All selectors are local
+   to the spawn screen; shared context and settings controls keep their other uses. */
+.spawn-page {
+  border: 0;
+  min-width: 0;
+  width: 100%;
+  min-height: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 9vh 32px 40px;
+  box-sizing: border-box;
+}
+
+.spawn-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.spawn-form {
+  margin-top: 40px;
+  min-width: 0;
+}
+.spawn-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.spawn-project-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--wks-border-input);
+}
+.spawn-project-line:focus-within {
+  border-color: var(--wks-accent);
+  box-shadow: 0 1px var(--wks-accent);
+}
+.spawn-project-line:has([aria-invalid='true']) {
+  border-color: var(--wks-error);
+}
+.spawn-project-line input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--wks-text-primary);
+  font: 1.05rem var(--wks-font-mono);
+  padding: 0;
+}
+.spawn-provider-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--wks-radius-sm);
+  background: transparent;
+  color: var(--wks-text-primary);
+  padding: 0;
+}
+
+.spawn-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--wks-text-secondary);
+  font-size: 0.8rem;
+}
+.spawn-providers {
+  margin-top: 12px;
+}
+.spawn-options {
+  margin-top: 6px;
+  gap: 4px 6px;
+}
+.spawn-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--wks-radius-sm);
+  background: transparent;
+  color: var(--wks-text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 4px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.spawn-word[aria-pressed='true'] {
+  color: var(--wks-text-primary);
+  font-weight: 600;
+}
+.spawn-word:hover,
+button.spawn-provider-mark:hover {
+  background: var(--wks-bg-hover);
+}
+.spawn-more {
+  color: var(--wks-text-muted);
+}
+.spawn-option {
+  min-width: 0;
+  max-width: 100%;
+}
+.spawn-option + .spawn-option,
+.spawn-more {
+  border-left: 1px solid var(--wks-border-subtle);
+  padding-left: 8px;
+}
+.spawn-transport {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.spawn-badge {
+  font-size: 0.6rem;
+  color: var(--wks-warning);
+  margin-left: 2px;
+}
+.spawn-deviations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.66rem;
+  color: var(--wks-text-muted);
+}
+
+.spawn-task {
+  margin-bottom: 20px;
+}
+.spawn-task textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--wks-border-input);
+  outline: none;
+  padding: 0 0 10px;
+  font: 0.9rem/1.5 var(--wks-font-sans);
+  color: var(--wks-text-primary);
+}
+.spawn-task textarea:focus {
+  border-color: var(--wks-accent);
+}
+.spawn-task textarea::placeholder {
+  color: var(--wks-text-muted);
+}
+.spawn-hint {
+  font-size: 0.66rem;
+  color: var(--wks-text-muted);
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.spawn-danger {
+  color: var(--wks-error);
+}
+
+.spawn-advanced {
+  margin-top: 16px;
+  border-top: 1px solid var(--wks-border-subtle);
+}
+.spawn-advanced-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.spawn-advanced-row > label,
+.spawn-advanced-row > span {
+  white-space: normal !important;
+}
+.spawn-advanced-row + .spawn-advanced-row {
+  border-top: 1px solid var(--wks-border-subtle);
+}
+
+.spawn-status {
+  margin-top: 32px;
+  color: var(--wks-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.spawn-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.spawn-status-line > span + span:not(.spawn-project-identity)::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--wks-text-muted);
+}
+.spawn-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--wks-text-muted);
+  flex-shrink: 0;
+}
+.spawn-dot-error {
+  background: var(--wks-error);
+}
+.spawn-project-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.spawn-status-details {
+  display: inline-block;
+}
+.spawn-status-details summary {
+  display: inline;
+  cursor: pointer;
+  border-radius: var(--wks-radius-sm);
+}
+.spawn-status-details summary::after {
+  content: '…';
+}
+.spawn-status-details[open] {
+  display: block;
+}
+.spawn-status-details[open] summary {
+  display: block;
+  margin: 6px 0;
+}
+.spawn-status-details[open] > div {
+  margin-top: 6px;
+}
+.spawn-status .spawn-word {
+  font-size: 0.72rem;
+  margin-left: 6px;
+}
+.spawn-missing {
+  margin-top: 10px;
+}
+.spawn-error {
+  margin-top: 16px;
+  color: var(--wks-error);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.spawn-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 40px;
+}
+.spawn-start {
+  border: 0;
+  border-radius: var(--wks-radius-sm);
+  background: var(--wks-accent);
+  color: var(--wks-text-on-accent);
+  font: 600 0.8rem var(--wks-font-sans);
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.spawn-start:hover:enabled {
+  filter: brightness(1.08);
+}
+.spawn-shortcuts {
+  margin: 0 0 0 auto;
+}
+.spawn-shortcuts kbd {
+  font: 0.66rem var(--wks-font-mono);
+}
+.spawn-screen button {
+  cursor: pointer;
+}
+.spawn-screen :is(button, select, input, textarea):disabled {
+  color: var(--wks-text-disabled) !important;
+  cursor: default !important;
+}
+.spawn-start:disabled {
+  background: var(--wks-bg-input);
+}
+.spawn-screen :is(button, select, input, textarea, summary):focus-visible {
+  outline: 2px solid var(--wks-accent);
+  outline-offset: 2px;
+}
+.spawn-screen select option,
+.spawn-screen select optgroup {
+  background: var(--wks-bg-elevated);
+  color: var(--wks-text-primary);
+}
+/* Context is shared with chat. In this wrapping form its disclosure occupies
+   a row, so the fixed-width floating panel cannot escape a narrow viewport. */
+.spawn-form .wks-context-popover > [role='dialog'] {
+  position: static !important;
+  width: min(260px, 100%) !important;
+  box-sizing: border-box;
+  margin-top: 8px;
+  border-radius: var(--wks-radius-md) !important;
+  box-shadow: none !important;
+}
+.spawn-form .wks-context-popover summary {
+  color: var(--wks-text-secondary);
+  font-size: 0.72rem !important;
+  padding: 4px 0;
+}
+
+@media (max-width: 480px) {
+  .spawn-page {
+    padding: 6vh 20px 32px;
+  }
+  .spawn-project-line {
+    gap: 8px;
+  }
+  .spawn-project-line input {
+    font-size: 0.9rem;
+  }
+  .spawn-advanced-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .spawn-shortcuts {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+@media (max-height: 600px) {
+  .spawn-page {
+    padding-top: 20px;
+  }
+  .spawn-form {
+    margin-top: 24px;
+  }
+  .spawn-status {
+    margin-top: 20px;
+  }
+  .spawn-actions {
+    margin-top: 24px;
+  }
+}
+
+/* The whole project rule signals focus; a second box around its input would
+   obscure the single-rule treatment. */
+.spawn-project-line input:focus-visible,
+.spawn-task textarea:focus-visible {
+  outline: none;
+}
+.spawn-readiness-feedback {
+  margin-top: 6px;
+  color: var(--wks-text-secondary);
+}

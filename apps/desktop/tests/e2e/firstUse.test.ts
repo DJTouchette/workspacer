@@ -1,6 +1,7 @@
 /** Fresh generated-default profile, production App and first-use front doors.
  * Every host call is isolated at electronAPI; no live providers or profile files. */
 import { test, expect } from '@playwright/test';
+import { themes } from '../../src/renderer/src/themes';
 import { spawn, type ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -58,6 +59,123 @@ const dialog = (page: any) => page.getByRole('dialog', { name: 'Dispatch agent' 
 const launch = (page: any) =>
   dialog(page).getByRole('button', { name: 'Dispatch agent', exact: true });
 const calls = (page: any) => page.evaluate(() => (window as any).firstUse.calls);
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 360, height: 480 },
+]) {
+  test(`F-line header and launch controls ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`${base}?spawn=success&runtime=ready&theme=dracula`);
+    await page.evaluate(() =>
+      (window as any).electronAPI.saveConfig({ ui: { commandLayerAnnounced: true } }),
+    );
+    await page.getByRole('button', { name: "Got it — don't show again" }).click();
+    await page.keyboard.press('Control+Shift+N');
+    const screen = page.getByRole('dialog', { name: 'New Agent', exact: true });
+    const header = screen.locator('.spawn-header');
+    await expect(header.getByText('New Agent', { exact: true })).toBeVisible();
+    await expect(
+      header.getByText('Choose an agent and directory, then start chatting.'),
+    ).toBeVisible();
+    await expect(header.locator('svg')).toHaveAttribute('width', '30');
+    await expect(screen.locator('.spawn-project-line svg')).toHaveAttribute('width', '22');
+    await expect(screen.getByLabel('Working directory')).toBeFocused();
+    await page.screenshot({
+      path: test.info().outputPath('f-line-header.png'),
+      animations: 'disabled',
+    });
+    await expect(screen.getByRole('button', { name: 'Advanced options' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    const providers = screen.getByRole('group', { name: 'Provider', exact: true });
+    await expect(providers.getByRole('button')).toHaveCount(5);
+    for (const name of ['GitHub Copilot', 'OpenCode', 'Pi', 'Codex']) {
+      await providers.getByRole('button', { name: new RegExp(`^${name}`) }).click();
+      await expect(providers.getByRole('button', { name: new RegExp(`^${name}`) })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    }
+    await screen.getByRole('button', { name: 'Change provider', exact: true }).click();
+    await expect(providers.getByRole('button', { name: 'Codex', exact: true })).toBeFocused();
+    await screen.locator('.spawn-project-line').getByRole('button', { name: 'Browse…' }).click();
+    await expect(screen.getByLabel('Working directory')).toHaveValue('/fixture/project');
+    await screen.getByLabel('Working directory').fill('/fixture/git-folder');
+    await expect(screen.locator('#spawn-folder-status')).toContainText('main');
+    await screen.getByRole('button', { name: 'hybrid', exact: true }).click();
+    await screen.getByLabel('Permissions', { exact: true }).selectOption('yolo');
+    await screen.getByLabel('Context settings').click();
+    await screen.getByLabel('Custom context tokens').fill('400000');
+    await expect(screen.getByRole('dialog', { name: 'Context', exact: true })).toBeInViewport();
+    await screen.getByLabel('Context settings').click();
+    await screen.getByRole('button', { name: 'Advanced options' }).click();
+    await screen.getByLabel('name', { exact: true }).fill('F-line verification');
+    await screen.getByRole('button', { name: 'Advanced options' }).click();
+    await screen.getByRole('button', { name: 'Start agent', exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: test.info().outputPath('f-line-controls.png'),
+      animations: 'disabled',
+    });
+    expect(await screen.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    // Both ends of keyboard traversal stay in the screen, including at short heights.
+    await screen.getByRole('button', { name: 'Cancel', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(
+      screen.getByRole('button', { name: 'Change provider', exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(screen.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await screen.getByLabel('Working directory').press('Enter');
+    await expect(screen).toHaveCount(0);
+    const spawns = (await calls(page)).filter((call: any) => call.method === 'spawnClaude');
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0].args[0]).toMatchObject({
+      cwd: '/fixture/git-folder',
+      provider: 'codex',
+      transport: 'pty',
+      contextWindow: 400000,
+      permissionMode: 'yolo',
+      skipPermissions: true,
+    });
+    expect(spawns[0].args[0].message).toBeUndefined();
+  });
+}
+
+test('F-line retained header and form in every built-in theme', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${base}?spawn=success&runtime=ready`);
+  await page.evaluate(() =>
+    (window as any).electronAPI.saveConfig({ ui: { commandLayerAnnounced: true } }),
+  );
+  await page.getByRole('button', { name: "Got it — don't show again" }).click();
+  await page.keyboard.press('Control+Shift+N');
+  const screen = page.getByRole('dialog', { name: 'New Agent', exact: true });
+  for (const [id, theme] of Object.entries(themes)) {
+    await page.evaluate(async (theme) => {
+      await (window as any).electronAPI.saveConfig({ ui: { theme } });
+    }, id);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.style.getPropertyValue('--wks-bg-base')),
+      )
+      .toBe(theme.bgBase);
+    await expect(screen.locator('.spawn-header')).toBeInViewport();
+    await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeInViewport();
+    await expect(screen.locator('.spawn-project-line')).toHaveCSS('box-shadow', /1px/);
+    await page.screenshot({
+      path: test.info().outputPath(`f-line-${id}.png`),
+      animations: 'disabled',
+    });
+  }
+  await screen.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  expect((await calls(page)).filter((call: any) => call.method === 'spawnClaude')).toEqual([]);
+});
 
 test('legacy Intent preference leaves ordinary Fleet navigation available after reload', async ({
   page,
@@ -591,6 +709,7 @@ for (const state of ['starting', 'down', 'degraded', 'ready', 'adopted', 'unknow
     await page.goto(`${base}?runtime=${state}`);
     await openFirstTask(page);
     await page.getByLabel('What should this agent do?').fill('Runtime recovery task');
+    await dialog(page).getByText('Status details', { exact: true }).click();
     if (state === 'starting' || state === 'down') {
       await expect(launch(page)).toBeDisabled();
       await expect(page.locator('#spawn-runtime-status')).toContainText(
@@ -670,6 +789,7 @@ test('remote cwd never borrows local folder or runtime facts', async ({ page }) 
   await page.getByLabel('Working directory').fill('/remote/owner-only');
   await expect(page.locator('#spawn-folder-status')).toContainText('selected remote machine');
   await expect(page.locator('#spawn-runtime-status')).toContainText('unknown');
+  await dialog(page).getByText('Status details', { exact: true }).click();
   await page.getByRole('button', { name: 'Check folder again' }).click();
   expect(
     (await calls(page)).filter(

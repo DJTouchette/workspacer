@@ -1,5 +1,4 @@
 import { useProviderReadiness } from '../hooks/useProviderReadiness';
-import { SmallButton } from './settings/primitives';
 import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
 import type { WorktreeInfo } from '../types/electron';
 import { containDialogTab } from '../lib/dialogKeyboard';
@@ -29,6 +28,7 @@ import { claudeCatalogOptions, modelOptionCommand, type ModelOption } from '../l
 import { normalizeModelSelection } from '../../../main/shared/modelContextWindows';
 import { DEFAULT_CODEX_CONTEXT_WINDOW } from '../../../main/shared/providerContext';
 import { ModelContextPopover } from './ModelContextPopover';
+import './SpawnAgentDialog.css';
 
 /**
  * What a profile chip promises, in the vocabulary of the harness it belongs to.
@@ -166,8 +166,8 @@ interface ProviderModel {
 /**
  * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
  * workspace page — a blank agent about to be born — not a floating modal:
- * provider mark up top, a hero working-directory input, provider logo cards,
- * then the remaining knobs in a collapsible "advanced" card of labeled rows.
+ * the existing branded header above an F-line project rule and word controls.
+ * Less common launch options remain available through Advanced.
  */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   projects,
@@ -213,8 +213,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     setTransportTouched(true);
     setTransportChoice(t);
   };
-  // Detection drives BOTH the per-card dot and which cards exist at all: the
-  // picker offers only installed harnesses (see visibleProviders below).
+  // Detection drives availability feedback and which provider words appear:
+  // the picker offers installed harnesses (see visibleProviders below).
   const { detection, refresh: refreshDetection } = useProviderDetection();
   const providerDetection: ProviderDetection[] = detection ?? NO_DETECTION;
   const [customBinPath, setCustomBinPath] = useState('');
@@ -276,8 +276,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     }
   });
 
-  // Hero input focus — drives the underline accent (no :focus-within inline).
-  const [cwdFocus, setCwdFocus] = useState(false);
+  const providerChoicesRef = useRef<HTMLDivElement>(null);
 
   // Federation: peer hubs this one can spawn onto. The Machine row only
   // appears when at least one peer is connected; '' = this machine.
@@ -433,7 +432,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         const catalog = claudeCatalogOptions(res);
         setAliases(catalog.filter((option) => !option.seen));
         setSeen(catalog.filter((option) => option.seen));
-        // Seed the permission pill from the last spawn's saved mode, but only
+        // Seed the permission control from the last spawn's saved mode, but only
         // when it's valid for the pre-selected provider (the saved value is a
         // Claude-family mode; a managed provider keeps its own default). The
         // bypass default (below) still wins so an explicit "Full access" default
@@ -763,36 +762,22 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     : 'agent';
   const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
   const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
-  // Shared by the advanced header button and its attached panel so the two
-  // read as one card even when the bypass tint is on.
-  const advBorderColor = bypassSelected
-    ? 'color-mix(in srgb, var(--wks-error) 55%, var(--wks-border-input))'
-    : 'var(--wks-border-input)';
-  // Collapsed-advanced pills: one per knob that DEVIATES from its default. A
-  // stock spawn shows a quiet "defaults" header; anything non-default gets its
-  // own scannable pill (bypass in red) instead of one ellipsized sentence.
-  const pillModel = isClaude ? resolvedModel : resolvedProviderModel;
-  const permissionPillLabel = capsFor(provider).permissionModes.find(
-    (m) => m.id === permissionMode,
-  )?.label;
-  const defaultTransportHere = transportDefaultFor(provider);
-  const deviations: { key: string; label: string; danger?: boolean }[] = [];
+  // Keep hidden overrides visible after closing More, without repeating the
+  // model, permissions, transport and context already shown in the word strip.
+  const deviations: { key: string; label: string }[] = [];
   if (targetHub) deviations.push({ key: 'machine', label: `on ${targetHub}` });
-  if (pillModel) deviations.push({ key: 'model', label: pillModel });
+  if (name.trim()) deviations.push({ key: 'name', label: name.trim() });
+  const selectedProfile = eligibleProfiles.find((p) => p.id === profileId);
+  if (selectedProfile && !selectedProfile.isDefault)
+    deviations.push({ key: 'profile', label: selectedProfile.name });
+  if (launchIntegrationId)
+    deviations.push({
+      key: 'integration',
+      label:
+        eligibleLaunchPlugins.find((p) => p.id === launchIntegrationId)?.name ||
+        launchIntegrationId,
+    });
   if (effort) deviations.push({ key: 'effort', label: `${effort} effort` });
-  if ((isClaude || provider === 'codex') && transport !== defaultTransportHere) {
-    deviations.push({
-      key: 'transport',
-      label: transport === 'pty' ? (isClaude ? 'terminal' : 'hybrid') : 'headless',
-    });
-  }
-  if (permissionMode) {
-    deviations.push({
-      key: 'permissions',
-      label: bypassSelected ? 'full access' : (permissionPillLabel ?? permissionMode),
-      danger: bypassSelected,
-    });
-  }
   if (useWorktree && worktreeEligible) deviations.push({ key: 'worktree', label: 'worktree' });
   if (resumeSessionId) deviations.push({ key: 'resume', label: 'resume' });
   if (mcpSel.length) deviations.push({ key: 'mcp', label: `${mcpSel.length} MCP` });
@@ -840,7 +825,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       label: 'machine',
       title: 'Which hub runs this agent — its cwd, files and shell live there.',
       control: (
-        <select value={targetHub} onChange={(e) => setTargetHub(e.target.value)} style={rowSelect}>
+        <select
+          aria-label="Machine"
+          value={targetHub}
+          onChange={(e) => setTargetHub(e.target.value)}
+          style={rowSelect}
+        >
           <option value="">This machine</option>
           {connectedPeers.map((p) => (
             <option key={p.name} value={p.name}>
@@ -858,8 +848,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       label: 'model',
       control: (
         <>
-          <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={rowSelect}>
-            <option value="">Default (Claude Code setting)</option>
+          <select
+            aria-label="Model"
+            value={modelSel}
+            onChange={(e) => setModelSel(e.target.value)}
+            style={rowSelect}
+          >
+            <option value="">default model</option>
             {aliases.length > 0 && (
               <optgroup label="Latest">
                 {aliases.map((a) => (
@@ -883,6 +878,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           </select>
           {modelSel === CUSTOM && (
             <input
+              aria-label="Custom model"
               value={customModel}
               onChange={(e) => setCustomModel(e.target.value)}
               onKeyDown={keySubmit}
@@ -907,11 +903,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       control: (
         <>
           <select
+            aria-label="Model"
             value={providerSel}
             onChange={(e) => setProviderSel(e.target.value)}
             style={rowSelect}
           >
-            <option value="">Default ({providerLabel} setting)</option>
+            <option value="">default model</option>
             <optgroup label="Available">
               {providerModels.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -924,6 +921,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           </select>
           {providerSel === CUSTOM && (
             <input
+              aria-label="Custom model"
               value={providerCustom}
               onChange={(e) => setProviderCustom(e.target.value)}
               onKeyDown={keySubmit}
@@ -947,6 +945,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       label: 'model',
       control: (
         <input
+          aria-label="Custom model"
           value={providerCustom}
           onChange={(e) => setProviderCustom(e.target.value)}
           onKeyDown={keySubmit}
@@ -1013,7 +1012,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       key: 'effort',
       label: 'effort',
       control: (
-        <select value={effort} onChange={(e) => setEffort(e.target.value)} style={rowSelect}>
+        <select
+          aria-label="Effort"
+          value={effort}
+          onChange={(e) => setEffort(e.target.value)}
+          style={rowSelect}
+        >
           <option value="">Default ({providerLabel} setting)</option>
           {effortLevels.map((l) => (
             <option key={l.id} value={l.id}>
@@ -1038,7 +1042,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             ? 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
             : 'Headless app-server via claudemon — structured GUI only, no terminal view.',
       control: (
-        <div style={segGroup}>
+        <div className="spawn-transport">
           {(
             [
               { value: 'pty', label: isClaude ? 'terminal' : 'hybrid' },
@@ -1047,8 +1051,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           ).map((t) => (
             <button
               key={t.value}
+              aria-pressed={transport === t.value}
               onClick={() => setTransport(t.value)}
-              style={segBtn(transport === t.value)}
+              className="spawn-word"
             >
               {t.label}
             </button>
@@ -1102,6 +1107,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             <button
               key={String(w.value)}
               disabled={!worktreeEligible}
+              aria-pressed={(useWorktree && worktreeEligible) === w.value}
               onClick={() => setUseWorktree(w.value)}
               style={{
                 ...segBtn((useWorktree && worktreeEligible) === w.value),
@@ -1122,6 +1128,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       label: 'resume',
       control: (
         <select
+          aria-label="Resume session"
           value={resumeSessionId}
           onChange={(e) => setResumeSessionId(e.target.value)}
           style={rowSelect}
@@ -1148,6 +1155,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       control: (
         <div>
           <select
+            aria-label="Workspacer tools"
             value={toolScope}
             onChange={(e) => setToolScope(e.target.value as '' | 'view' | 'triage' | 'operator')}
             style={rowSelect}
@@ -1161,7 +1169,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             <div style={{ marginTop: 8 }}>
               <div
                 style={{
-                  fontSize: '0.68rem',
+                  fontSize: '0.66rem',
                   color: 'var(--wks-text-faint)',
                   marginBottom: 4,
                 }}
@@ -1174,6 +1182,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   return (
                     <button
                       key={pl.id}
+                      aria-pressed={on}
                       onClick={() =>
                         setPluginToolsSel((sel) =>
                           on ? sel.filter((id) => id !== pl.id) : [...sel, pl.id],
@@ -1184,7 +1193,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 6,
-                        fontSize: '0.7rem',
+                        fontSize: '0.72rem',
                         fontWeight: 500,
                         fontFamily: 'inherit',
                         padding: '4px 11px',
@@ -1208,7 +1217,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       >
                         {pl.name}
                       </span>
-                      <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+                      <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
                         {pl.tools}
                       </span>
                     </button>
@@ -1218,7 +1227,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
           {toolScope && mcpSel.length > 0 && (
-            <div style={{ marginTop: 6, fontSize: '0.68rem', color: 'var(--wks-text-faint)' }}>
+            <div style={{ marginTop: 6, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
               Workspacer tools replace the Library MCP selection — the {mcpSel.length} selected
               server{mcpSel.length === 1 ? '' : 's'} won't be loaded.
             </div>
@@ -1240,13 +1249,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               return (
                 <button
                   key={it.id}
+                  aria-pressed={on}
                   onClick={() => toggleMcp(it.id)}
                   title={it.description || it.id}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 6,
-                    fontSize: '0.7rem',
+                    fontSize: '0.72rem',
                     fontWeight: 500,
                     fontFamily: 'inherit',
                     padding: '4px 11px',
@@ -1270,14 +1280,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   >
                     {it.title}
                   </span>
-                  <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+                  <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
                     {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
                   </span>
                 </button>
               );
             })}
           </div>
-          <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.64rem', marginTop: 6 }}>
+          <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.66rem', marginTop: 6 }}>
             Only the checked servers are exposed to this session (--strict-mcp-config).
           </div>
         </div>
@@ -1285,9 +1295,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     });
   }
 
-  // Custom binary override lives here now — the below-the-cards diagnostics
-  // strip only appears when detection FAILS, so the healthy-path override
-  // needs a home. The detected path doubles as the placeholder.
+  // Keep the binary override in Advanced when healthy, and beside the
+  // diagnostic when missing. The detected path doubles as the placeholder.
   rows.push({
     key: 'binary',
     label: 'binary',
@@ -1314,10 +1323,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     ),
   });
 
-  // The two real per-spawn decisions render always-visible above the advanced
-  // card; everything else stays behind the fold.
-  const PRIMARY_KEYS = ['model', 'permissions'];
-  const primaryRows = rows.filter((r) => PRIMARY_KEYS.includes(r.key));
+  // The F-line strip exposes the common decisions; everything else stays behind More.
+  const PRIMARY_KEYS = ['model', 'permissions', 'transport', 'context'];
+  const primaryRows = PRIMARY_KEYS.flatMap((key) => rows.filter((r) => r.key === key));
   const advRows = rows.filter((r) => !PRIMARY_KEYS.includes(r.key));
 
   return (
@@ -1325,6 +1333,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       // The chord leader never arms from inside this dialog: mid-typing a
       // kickoff prompt, an armed layer would steal the following keystrokes
       // (useKeyboardNav's leaderSuppressed check).
+      className="spawn-screen"
       role="dialog"
       aria-modal="true"
       aria-label={hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
@@ -1357,710 +1366,384 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
       />
 
       <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
-        <fieldset
-          disabled={busy}
-          style={{
-            border: 0,
-            minWidth: 0,
-            width: '100%',
-            minHeight: '100%',
-            maxWidth: 660,
-            margin: '0 auto',
-            padding: '9vh 32px 40px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            boxSizing: 'border-box',
-          }}
-        >
-          {/* ── Centerpiece: the agent about to be born ─────────────────── */}
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: '1px solid var(--wks-border-input)',
-              background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
-              color: 'var(--wks-text-primary)',
-            }}
-          >
-            <AgentLogo provider={provider} size={30} />
-          </div>
-          <div
-            style={{
-              marginTop: 16,
-              fontSize: '1.05rem',
-              fontWeight: 650,
-              letterSpacing: '-0.01em',
-              color: 'var(--wks-text-primary)',
-            }}
-          >
-            {hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
-          </div>
-          <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
-            {hasTaskHandoff
-              ? 'Describe a task, choose its directory, and dispatch.'
-              : 'Choose an agent and directory, then start chatting.'}
-          </div>
-
-          {hasTaskHandoff && (
-            <div style={{ marginTop: 24, width: '100%', maxWidth: 560 }}>
-              <label htmlFor="first-task" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-                What should this agent do?
-              </label>
-              <textarea
-                id="first-task"
-                aria-required="true"
-                aria-describedby="spawn-task-help"
-                autoFocus
-                disabled={busy}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter writes a newline here (it's prose); ⌘/Ctrl+Enter is
-                  // the deliberate dispatch action.
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
-                }}
-                rows={3}
-                placeholder="What should this agent do first?"
-                style={{
-                  marginTop: 6,
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  resize: 'vertical',
-                  background: 'var(--wks-bg-input)',
-                  border: '1px solid var(--wks-border-input)',
-                  borderRadius: 'var(--wks-radius-md)',
-                  outline: 'none',
-                  padding: '8px 10px',
-                  fontFamily: 'inherit',
-                  fontSize: '0.76rem',
-                  lineHeight: 1.5,
-                  color: 'var(--wks-text-primary)',
-                }}
-              />
-              <div
-                id="spawn-task-help"
-                style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}
-              >
-                A task is required. Sent once when you dispatch. Your provider’s permission choices
-                apply.
-              </div>
-            </div>
-          )}
-
-          {/* ── Hero: working directory ─────────────────────────────────── */}
-          <div style={{ width: '100%', maxWidth: 560, marginTop: 40 }}>
-            <div style={quietLabel}>working directory</div>
+        <fieldset disabled={busy} className="spawn-page">
+          <header className="spawn-header">
+            {/* ── Centerpiece: the agent about to be born ─────────────────── */}
             <div
               style={{
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 10,
-                marginTop: 6,
-                paddingBottom: 7,
-                borderBottom: `1px solid ${
-                  cwdFocus ? 'var(--wks-accent)' : 'var(--wks-border-input)'
-                }`,
-                transition: 'border-color 0.15s',
+                justifyContent: 'center',
+                border: '1px solid var(--wks-border-input)',
+                background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+                color: 'var(--wks-text-primary)',
               }}
             >
-              <span
-                aria-hidden
-                style={{
-                  fontFamily: 'var(--wks-font-mono)',
-                  fontSize: '0.95rem',
-                  color: cwdFocus ? 'var(--wks-accent)' : 'var(--wks-text-faint)',
-                  userSelect: 'none',
-                  transition: 'color 0.15s',
-                }}
-              >
-                ❯
-              </span>
+              <AgentLogo provider={provider} size={30} />
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                fontSize: '1.05rem',
+                fontWeight: 650,
+                letterSpacing: '-0.01em',
+                color: 'var(--wks-text-primary)',
+              }}
+            >
+              {hasTaskHandoff ? 'Dispatch agent' : 'New Agent'}
+            </div>
+            <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
+              {hasTaskHandoff
+                ? 'Describe a task, choose its directory, and dispatch.'
+                : 'Choose an agent and directory, then start chatting.'}
+            </div>
+          </header>
+
+          <div className="spawn-form">
+            {hasTaskHandoff && (
+              <div className="spawn-task">
+                <label htmlFor="first-task" className="spawn-sr-only">
+                  What should this agent do?
+                </label>
+                <textarea
+                  id="first-task"
+                  aria-required="true"
+                  aria-describedby="spawn-task-help"
+                  autoFocus
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Prose keeps Enter; only an explicit chord dispatches it.
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+                  }}
+                  rows={2}
+                  placeholder="What should this agent do first?"
+                />
+                <div id="spawn-task-help" className="spawn-hint">
+                  A task is required. Sent once when you dispatch. Your provider’s permission
+                  choices apply.
+                </div>
+              </div>
+            )}
+
+            <div className="spawn-project-line">
+              {visibleProviders.length > 1 ? (
+                <button
+                  className="spawn-provider-mark"
+                  aria-label="Change provider"
+                  title={`${providerLabel} — choose a provider below`}
+                  onClick={() =>
+                    providerChoicesRef.current
+                      ?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
+                      ?.focus()
+                  }
+                >
+                  <AgentLogo provider={provider} size={22} />
+                </button>
+              ) : (
+                <span className="spawn-provider-mark" title={providerLabel}>
+                  <AgentLogo provider={provider} size={22} />
+                </span>
+              )}
               <input
                 aria-label="Working directory"
+                aria-describedby="spawn-folder-status"
+                aria-invalid={repoInfo?.directory === 'invalid' || undefined}
                 autoFocus={!hasTaskHandoff}
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
                 onKeyDown={keySubmit}
-                onFocus={() => setCwdFocus(true)}
-                onBlur={() => setCwdFocus(false)}
                 placeholder="/path/to/project"
                 spellCheck={false}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  fontFamily: 'var(--wks-font-mono)',
-                  fontSize: '0.98rem',
-                  color: 'var(--wks-text-primary)',
-                  padding: 0,
-                }}
               />
               <button
                 disabled={!!targetHub}
                 onClick={browse}
-                className="wks-composer-ctl"
-                style={ghostBtnSmall}
+                className="spawn-word"
+                title={
+                  targetHub
+                    ? 'Enter a path on the selected remote machine'
+                    : 'Browse for a project directory'
+                }
               >
                 Browse…
               </button>
             </div>
 
-            {/* Which project that path IS. A mistyped directory otherwise spawns
-                silently into the wrong place — or into a brand-new one — and
-                this is the last moment anyone would notice. The mark is the same
-                one the sidebar will draw for the agent, so the confirmation and
-                the result are visibly the same thing. */}
-            {cwd.trim() && !targetHub && (
+            {visibleProviders.length > 1 && (
               <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 7,
-                  marginTop: 8,
-                  fontSize: '0.72rem',
-                  color: 'var(--wks-text-muted)',
-                }}
+                ref={providerChoicesRef}
+                role="group"
+                aria-label="Provider"
+                className="spawn-words spawn-providers"
               >
-                <ProjectMark cwd={cwd.trim()} projects={projects} size={15} />
-                <span
-                  style={{
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {resolveProject(cwd.trim(), projects)?.label}
-                </span>
-                {!projects?.[projectKey(cwd.trim())] && (
-                  <span style={{ color: 'var(--wks-text-faint)' }}>· unregistered folder</span>
-                )}
-              </div>
-            )}
-
-            <div
-              id="spawn-folder-status"
-              aria-live="polite"
-              style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}
-            >
-              {folderDetail}
-              <SmallButton
-                onClick={() => setFolderCheck((n) => n + 1)}
-                label="Check folder again"
-              />
-            </div>
-            <div
-              id="spawn-runtime-status"
-              aria-live="polite"
-              style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}
-            >
-              {runtimeStatus.detail}
-              <SmallButton
-                onClick={() => void runtimeStatus.refresh()}
-                label="Check runtime again"
-              />
-            </div>
-
-            {/* Optional name — a ghost input, not a form row */}
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={keySubmit}
-              placeholder={`name it (optional) · ${placeholderName}`}
-              spellCheck={false}
-              style={{
-                marginTop: 10,
-                width: '100%',
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                fontFamily: 'var(--wks-font-mono)',
-                fontSize: '0.72rem',
-                color: 'var(--wks-text-tertiary)',
-                padding: 0,
-              }}
-            />
-          </div>
-
-          {/* ── Provider: a row of logo cards ───────────────────────────── */}
-          {/* One card is not a choice: on a machine with only Claude installed
-              the row is a decoration, so it collapses entirely. */}
-          {visibleProviders.length > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                gap: 8,
-                flexWrap: 'wrap',
-                marginTop: 24,
-                width: '100%',
-                maxWidth: 560,
-                justifyContent: 'center',
-              }}
-            >
-              {visibleProviders.map((p) => {
-                const active = provider === p.value;
-                const det = providerDetection.find((d) => d.provider === p.value);
-                const availability = providerAvailability(detection, p.value);
-                const dotColor =
-                  availability === 'unknown'
-                    ? 'var(--wks-text-disabled)'
-                    : availability === 'installed'
-                      ? 'var(--wks-success)'
-                      : 'var(--wks-error)';
-                return (
-                  <button
-                    key={p.value}
-                    aria-pressed={active}
-                    onClick={() => setProvider(p.value)}
-                    title={
-                      (availability === 'installed'
-                        ? `Found: ${det?.resolvedPath}`
-                        : availability === 'missing'
-                          ? 'Not found on PATH'
-                          : 'Availability unknown') +
-                      (p.value !== 'claude'
-                        ? ` — runs via claudemon's ${p.label} adapter; conversation and usage stream into the agent view.`
-                        : '')
-                    }
-                    style={{
-                      flex: '1 1 100px',
-                      maxWidth: 136,
-                      position: 'relative',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 7,
-                      padding: '14px 8px 11px',
-                      borderRadius: 'var(--wks-radius-md)',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      border: active
-                        ? '1px solid var(--wks-accent)'
-                        : '1px solid var(--wks-border-input)',
-                      background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                      transition: 'border-color 0.15s, background-color 0.15s',
-                    }}
-                  >
-                    <span
-                      aria-hidden
-                      style={{
-                        position: 'absolute',
-                        top: 8,
-                        right: 8,
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: dotColor,
-                      }}
-                    />
-                    <AgentLogo
-                      provider={p.value}
-                      size={20}
-                      style={{
-                        color: 'var(--wks-text-primary)',
-                        opacity: active ? 1 : 0.65,
-                        transition: 'opacity 0.15s',
-                      }}
-                    />
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 5,
-                        fontSize: '0.7rem',
-                        fontWeight: 600,
-                        color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
-                      }}
-                    >
-                      {p.label}
-                      {p.missing && (
-                        <span
-                          title="This CLI was not found — the card is only here because it is the current selection"
-                          style={{
-                            fontSize: '0.55rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.04em',
-                            lineHeight: 1,
-                            padding: '2px 3px',
-                            borderRadius: 3,
-                            color: 'var(--wks-error)',
-                            border: '1px solid var(--wks-error)',
-                          }}
-                        >
-                          NOT INSTALLED
-                        </span>
-                      )}
-                      {!p.missing && p.beta && (
-                        <span
-                          title="Beta — not yet thoroughly tested"
-                          style={{
-                            fontSize: '0.55rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.04em',
-                            lineHeight: 1,
-                            padding: '2px 3px',
-                            borderRadius: 3,
-                            color: 'var(--wks-warning)',
-                            border: '1px solid var(--wks-warning)',
-                            opacity: active ? 1 : 0.7,
-                          }}
-                        >
-                          BETA
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Installation and provider response are separate facts. Neither
-              successful inference nor unknown auth replaces the launch result. */}
-          <div
-            id="spawn-availability"
-            role="status"
-            style={{ marginTop: 12, fontSize: '0.72rem', maxWidth: 560 }}
-          >
-            {targetHub
-              ? 'Provider availability on the selected machine is unknown.'
-              : missingProvider
-                ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
-                : providerAvailability(detection, provider) === 'installed'
-                  ? `${providerLabel} CLI found.`
-                  : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
-            <span> {readiness.detail}</span>
-            <button
-              onClick={() => {
-                refreshDetection();
-                void readiness.refresh();
-              }}
-              style={ghostBtnSmall}
-            >
-              Check again
-            </button>
-          </div>
-          {missingProvider && (
-            <div style={{ width: '100%', maxWidth: 560, marginTop: 10, textAlign: 'center' }}>
-              <div
-                style={{
-                  color: 'var(--wks-error)',
-                  fontSize: '0.66rem',
-                  marginBottom: 6,
-                }}
-              >
-                Not found on PATH — set a custom path or install the CLI
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                }}
-              >
-                <input
-                  aria-label="Provider binary override"
-                  value={customBinPath}
-                  onChange={(e) => setCustomBinPath(e.target.value)}
-                  onBlur={(e) => saveCustomBin(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') saveCustomBin(customBinPath);
-                    if (e.key === 'Escape' && !submitting.current) onCancel();
-                  }}
-                  placeholder={`/usr/local/bin/${provider}`}
-                  spellCheck={false}
-                  style={{ ...inlineInput, flex: 1, minWidth: 0, maxWidth: 380 }}
-                />
-                <button
-                  onClick={browseCustomBin}
-                  className="wks-composer-ctl"
-                  style={ghostBtnSmall}
-                >
-                  Browse…
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Profiles: pick a preconfiguration, knobs become overrides ── */}
-          {eligibleProfiles.length > 0 && (
-            <div style={{ marginTop: 20, width: '100%', maxWidth: 560, textAlign: 'center' }}>
-              <div style={quietLabel}>profile</div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 6,
-                  justifyContent: 'center',
-                  marginTop: 8,
-                }}
-              >
-                {eligibleProfiles.map((p) => {
-                  const on = profileId === p.id;
+                {visibleProviders.map((p) => {
+                  const availability = providerAvailability(detection, p.value);
                   return (
                     <button
-                      key={p.id}
-                      onClick={() => setProfileId(p.id)}
-                      title={profileChipTitle(p, provider)}
-                      style={{
-                        fontSize: '0.7rem',
-                        fontWeight: 500,
-                        fontFamily: 'inherit',
-                        padding: '4px 11px',
-                        borderRadius: 'var(--wks-radius-pill)',
-                        cursor: 'pointer',
-                        maxWidth: 200,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        border: on
-                          ? '1px solid var(--wks-accent)'
-                          : '1px solid var(--wks-border-input)',
-                        background: on ? 'var(--wks-accent-bg)' : 'transparent',
-                        color: on ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
-                        transition: 'border-color 0.15s, color 0.15s',
-                      }}
+                      key={p.value}
+                      className="spawn-word"
+                      aria-pressed={provider === p.value}
+                      onClick={() => setProvider(p.value)}
+                      title={
+                        availability === 'installed'
+                          ? `Found: ${providerDetection.find((d) => d.provider === p.value)?.resolvedPath}`
+                          : availability === 'missing'
+                            ? 'Not found on PATH'
+                            : 'Availability unknown'
+                      }
                     >
-                      {p.name}
+                      {p.label}
+                      {p.missing ? (
+                        <span className="spawn-badge spawn-danger">NOT INSTALLED</span>
+                      ) : p.beta ? (
+                        <span className="spawn-badge">BETA</span>
+                      ) : null}
                     </button>
                   );
                 })}
               </div>
+            )}
+
+            <div className="spawn-words spawn-options" role="group" aria-label="Launch options">
+              {primaryRows.map((row) => (
+                <div
+                  key={row.key}
+                  className="spawn-option"
+                  role="group"
+                  aria-label={row.label}
+                  title={row.title}
+                >
+                  {row.control}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="spawn-word spawn-more"
+                aria-label="Advanced options"
+                aria-expanded={advancedOpen}
+                aria-controls="spawn-advanced"
+                onClick={toggleAdvanced}
+              >
+                more…{' '}
+                <ChevronDown
+                  size={12}
+                  aria-hidden
+                  style={{ transform: advancedOpen ? 'rotate(180deg)' : undefined }}
+                />
+              </button>
             </div>
-          )}
 
-          {eligibleLaunchPlugins.length > 0 && (
-            <div style={{ marginTop: 20, width: '100%', maxWidth: 560 }}>
-              <label htmlFor="launch-integration" style={quietLabel}>
-                Launch integration
-              </label>
-              <select
-                id="launch-integration"
-                value={launchIntegrationId}
-                onChange={(e) => setLaunchIntegrationId(e.target.value)}
-                style={{ ...rowSelect, width: '100%', marginTop: 8 }}
-              >
-                <option value="">None</option>
-                {eligibleLaunchPlugins.map((pl) => (
-                  <option key={pl.id} value={pl.id}>
-                    {pl.name || pl.id}
-                  </option>
-                ))}
-              </select>
-              <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)', marginTop: 6 }}>
-                Applies to this session and its resumes. The selected plugin must be ready before
-                launch.
-              </div>
-            </div>
-          )}
-
-          {/* ── The per-spawn decisions: model + permissions, no fold ────── */}
-          <div style={{ width: '100%', maxWidth: 620, marginTop: 24 }}>
-            {primaryRows.map((row, i) => (
-              <div
-                key={row.key}
-                title={row.title}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '96px minmax(0, 1fr)',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 14px',
-                  borderTop:
-                    i > 0
-                      ? '1px solid color-mix(in srgb, var(--wks-border-input) 55%, transparent)'
-                      : 'none',
-                }}
-              >
-                <span style={quietLabel}>{row.label}</span>
-                <div style={{ minWidth: 0 }}>{row.control}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* ── Advanced options — header button + attached row card ────── */}
-          <div style={{ width: '100%', maxWidth: 620, marginTop: 12 }}>
-            <button
-              type="button"
-              aria-expanded={advancedOpen}
-              onClick={toggleAdvanced}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '9px 12px',
-                borderRadius: advancedOpen
-                  ? 'var(--wks-radius-md) var(--wks-radius-md) 0 0'
-                  : 'var(--wks-radius-md)',
-                border: `1px solid ${advBorderColor}`,
-                background: bypassSelected
-                  ? 'color-mix(in srgb, var(--wks-error) 6%, transparent)'
-                  : 'transparent',
-                color: 'var(--wks-text-primary)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ ...quietLabel, color: 'var(--wks-text-muted)' }}>advanced</span>
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: 5,
-                }}
-              >
-                {deviations.length === 0 ? (
-                  <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)' }}>
-                    defaults
-                  </span>
-                ) : (
-                  deviations.map((d) => (
-                    <span key={d.key} style={devPill(d.danger)}>
-                      {d.label}
-                    </span>
-                  ))
-                )}
-              </span>
-              <ChevronDown
-                size={14}
-                aria-hidden
-                style={{
-                  flexShrink: 0,
-                  color: 'var(--wks-text-faint)',
-                  transform: advancedOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.15s',
-                }}
-              />
-            </button>
-
-            {advancedOpen && (
-              <div
-                style={{
-                  border: `1px solid ${advBorderColor}`,
-                  borderTop: 'none',
-                  borderRadius: '0 0 var(--wks-radius-md) var(--wks-radius-md)',
-                  padding: '2px 14px 4px',
-                }}
-              >
-                {advRows.map((row, i) => (
-                  <div
-                    key={row.key}
-                    title={row.title}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '96px minmax(0, 1fr)',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '10px 0',
-                      borderTop:
-                        i > 0
-                          ? '1px solid color-mix(in srgb, var(--wks-border-input) 55%, transparent)'
-                          : 'none',
-                    }}
-                  >
-                    <span style={quietLabel}>{row.label}</span>
-                    <div style={{ minWidth: 0 }}>{row.control}</div>
-                  </div>
+            {deviations.length > 0 && (
+              <div className="spawn-deviations" aria-label="Advanced overrides">
+                {deviations.map((d) => (
+                  <span key={d.key}>{d.label}</span>
                 ))}
               </div>
             )}
-          </div>
 
-          {/* Bypass danger note — always visible when a bypass mode is picked */}
-          {bypassSelected && (
-            <div
-              style={{
-                marginTop: 12,
-                fontSize: '0.7rem',
-                color: 'var(--wks-error)',
-                textAlign: 'center',
-              }}
-            >
-              {isClaude
-                ? 'Dangerous — bypasses all approval prompts (--dangerously-skip-permissions).'
-                : 'Dangerous — auto-approves every command and file change, no prompts.'}
-            </div>
-          )}
+            {advancedOpen && (
+              <div id="spawn-advanced" className="spawn-advanced">
+                <div className="spawn-advanced-row">
+                  <label htmlFor="spawn-name" style={quietLabel}>
+                    name
+                  </label>
+                  <input
+                    id="spawn-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={keySubmit}
+                    placeholder={`name it (optional) · ${placeholderName}`}
+                    spellCheck={false}
+                    style={{ ...inlineInput, width: '100%' }}
+                  />
+                </div>
+                {eligibleProfiles.length > 0 && (
+                  <div className="spawn-advanced-row">
+                    <span id="spawn-profile-label" style={quietLabel}>
+                      profile
+                    </span>
+                    <div className="spawn-words" role="group" aria-labelledby="spawn-profile-label">
+                      {eligibleProfiles.map((p) => (
+                        <button
+                          key={p.id}
+                          className="spawn-word"
+                          aria-pressed={profileId === p.id}
+                          onClick={() => setProfileId(p.id)}
+                          title={profileChipTitle(p, provider)}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {eligibleLaunchPlugins.length > 0 && (
+                  <div className="spawn-advanced-row">
+                    <label htmlFor="launch-integration" style={quietLabel}>
+                      Launch integration
+                    </label>
+                    <div>
+                      <select
+                        id="launch-integration"
+                        value={launchIntegrationId}
+                        onChange={(e) => setLaunchIntegrationId(e.target.value)}
+                        style={rowSelect}
+                      >
+                        <option value="">None</option>
+                        {eligibleLaunchPlugins.map((pl) => (
+                          <option key={pl.id} value={pl.id}>
+                            {pl.name || pl.id}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="spawn-hint">
+                        Applies to this session and its resumes. The selected plugin must be ready
+                        before launch.
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {advRows
+                  .filter((row) => row.key !== 'binary' || !missingProvider)
+                  .map((row) => (
+                    <div key={row.key} className="spawn-advanced-row" title={row.title}>
+                      <span style={quietLabel}>{row.label}</span>
+                      <div style={{ minWidth: 0 }}>{row.control}</div>
+                    </div>
+                  ))}
+              </div>
+            )}
 
-          {error && (
-            <div
-              role="alert"
-              ref={errorRef}
-              tabIndex={-1}
-              style={{
-                marginTop: 16,
-                color: 'var(--wks-error)',
-                fontSize: '0.8rem',
-                overflowWrap: 'anywhere',
-              }}
-            >
-              {error}
+            {bypassSelected && (
+              <div className="spawn-hint spawn-danger">
+                {isClaude
+                  ? 'Dangerous — bypasses all approval prompts (--dangerously-skip-permissions).'
+                  : 'Dangerous — auto-approves every command and file change, no prompts.'}
+              </div>
+            )}
+
+            <div id="spawn-availability" role="status" className="spawn-status">
+              <div className="spawn-status-line">
+                <span
+                  aria-hidden
+                  className={`spawn-dot ${missingProvider || runtimeStatus.blocked || repoInfo?.directory === 'invalid' ? 'spawn-dot-error' : ''}`}
+                />
+                {cwd.trim() && !targetHub && (
+                  <span className="spawn-project-identity">
+                    <ProjectMark cwd={cwd.trim()} projects={projects} size={12} />
+                    {resolveProject(cwd.trim(), projects)?.label}
+                    {!projects?.[projectKey(cwd.trim())] && <span> · unregistered folder</span>}
+                  </span>
+                )}
+                {repoInfo?.branch && <span>{repoInfo.branch}</span>}
+                {repoInfo?.directory === 'invalid' && (
+                  <span className="spawn-danger">Directory unavailable</span>
+                )}
+                {targetHub && <span>Remote folder unverified</span>}
+                {!targetHub && !repoInfo && <span>Folder unverified</span>}
+                <span>{runtimeStatus.detail.split('. ')[0]}</span>
+                <span>
+                  {targetHub
+                    ? 'Remote provider availability unknown'
+                    : missingProvider
+                      ? `${providerLabel} is not installed.`
+                      : providerAvailability(detection, provider) === 'installed'
+                        ? `${providerLabel} CLI found.`
+                        : `${providerLabel} availability is unknown.`}
+                </span>
+              </div>
+              {!['unchecked', 'unsupported', 'responding'].includes(readiness.status.state) && (
+                <div className="spawn-readiness-feedback">{readiness.detail}</div>
+              )}
+              <details className="spawn-status-details">
+                <summary>Status details</summary>
+                <div id="spawn-folder-status">
+                  {folderDetail}
+                  <button className="spawn-word" onClick={() => setFolderCheck((n) => n + 1)}>
+                    Check folder again
+                  </button>
+                </div>
+                <div id="spawn-runtime-status">
+                  {runtimeStatus.detail}
+                  <button className="spawn-word" onClick={() => void runtimeStatus.refresh()}>
+                    Check runtime again
+                  </button>
+                </div>
+                <div>
+                  {targetHub
+                    ? 'Provider availability on the selected machine is unknown.'
+                    : missingProvider
+                      ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
+                      : providerAvailability(detection, provider) === 'installed'
+                        ? `${providerLabel} CLI found.`
+                        : `${providerLabel} availability is unknown. You can try dispatching or check again.`}
+                </div>
+                {['unchecked', 'unsupported', 'responding'].includes(readiness.status.state) && (
+                  <div>{readiness.detail}</div>
+                )}
+              </details>
+              <button
+                className="spawn-word"
+                onClick={() => {
+                  refreshDetection();
+                  void readiness.refresh();
+                }}
+              >
+                Check again
+              </button>
             </div>
-          )}
-          {/* ── Launch ──────────────────────────────────────────────────── */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 38 }}>
-            <button
-              onClick={onCancel}
-              disabled={busy}
-              className="wks-composer-ctl"
-              style={{
-                fontSize: '0.78rem',
-                fontFamily: 'inherit',
-                fontWeight: 500,
-                cursor: 'pointer',
-                background: 'transparent',
-                color: 'var(--wks-text-muted)',
-                border: 'none',
-                borderRadius: 'var(--wks-radius-md)',
-                padding: '9px 16px',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={submit}
-              disabled={!canSubmit}
-              aria-describedby={`${hasTaskHandoff ? 'spawn-task-help ' : ''}spawn-availability spawn-runtime-status spawn-folder-status`}
-              style={{
-                fontSize: '0.82rem',
-                fontFamily: 'inherit',
-                fontWeight: 600,
-                cursor: !canSubmit ? 'default' : 'pointer',
-                background: !canSubmit ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-                color: !canSubmit ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent)',
-                border: 'none',
-                borderRadius: 'var(--wks-radius-md)',
-                padding: '9px 26px',
-              }}
-            >
-              {busy
-                ? 'Starting…'
-                : error
-                  ? hasTaskHandoff
-                    ? 'Retry dispatch'
-                    : 'Retry launch'
-                  : hasTaskHandoff
-                    ? 'Dispatch agent'
-                    : 'Create agent'}
-            </button>
-          </div>
-          <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
-            {hasTaskHandoff
-              ? '⌘/ctrl+enter to dispatch · esc to cancel'
-              : 'enter to create · esc to cancel'}
+
+            {missingProvider && (
+              <div className="spawn-missing">
+                <div className="spawn-hint spawn-danger">
+                  Not found on PATH — set a custom path or install the CLI
+                </div>
+                {rows.find((row) => row.key === 'binary')?.control}
+              </div>
+            )}
+            {error && (
+              <div role="alert" ref={errorRef} tabIndex={-1} className="spawn-error">
+                {error}
+              </div>
+            )}
+
+            <div className="spawn-actions">
+              <button
+                onClick={submit}
+                disabled={!canSubmit}
+                className="spawn-start"
+                aria-describedby={`${hasTaskHandoff ? 'spawn-task-help ' : ''}spawn-availability spawn-runtime-status spawn-folder-status`}
+              >
+                {busy
+                  ? 'Starting…'
+                  : error
+                    ? hasTaskHandoff
+                      ? 'Retry dispatch'
+                      : 'Retry launch'
+                    : hasTaskHandoff
+                      ? 'Dispatch agent'
+                      : 'Start agent'}
+              </button>
+              <button onClick={onCancel} disabled={busy} className="spawn-word">
+                Cancel
+              </button>
+              <div className="spawn-shortcuts spawn-hint">
+                {hasTaskHandoff ? (
+                  <>
+                    <kbd>⌘/ctrl+enter</kbd> dispatch
+                  </>
+                ) : (
+                  <>
+                    <kbd>↵</kbd> start
+                  </>
+                )}{' '}
+                · <kbd>esc</kbd> cancel
+              </div>
+            </div>
           </div>
         </fieldset>
       </div>
@@ -2082,7 +1765,7 @@ function relTime(iso: string): string {
 }
 
 const quietLabel: React.CSSProperties = {
-  fontSize: '0.62rem',
+  fontSize: '0.66rem',
   fontWeight: 600,
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
@@ -2098,7 +1781,7 @@ const rowSelect: React.CSSProperties = {
   borderRadius: 'var(--wks-radius-sm)',
   padding: '3px 2px',
   fontSize: '0.72rem',
-  fontWeight: 600,
+  fontWeight: 400,
   fontFamily: 'inherit',
   color: 'var(--wks-text-primary)',
   cursor: 'pointer',
@@ -2106,40 +1789,23 @@ const rowSelect: React.CSSProperties = {
   textOverflow: 'ellipsis',
 };
 
-/** Collapsed-advanced deviation pill — one non-default value, red for bypass. */
-const devPill = (danger?: boolean): React.CSSProperties => ({
-  fontSize: '0.64rem',
-  fontWeight: 600,
-  padding: '2px 8px',
-  borderRadius: 'var(--wks-radius-pill)',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  maxWidth: 180,
-  border: `1px solid ${
-    danger ? 'color-mix(in srgb, var(--wks-error) 55%, transparent)' : 'var(--wks-border-input)'
-  }`,
-  color: danger ? 'var(--wks-error)' : 'var(--wks-text-muted)',
-  background: danger ? 'color-mix(in srgb, var(--wks-error) 8%, transparent)' : 'transparent',
-});
-
-/** Container for a two-option segmented toggle (transport, worktree). */
+/** Worktree isolation toggle in Advanced. */
 const segGroup: React.CSSProperties = {
   display: 'inline-flex',
   gap: 2,
   padding: 2,
   border: '1px solid var(--wks-border-input)',
-  borderRadius: 999,
+  borderRadius: 'var(--wks-radius-pill)',
 };
 
-/** Segmented toggle button (transport, worktree). */
+/** Worktree isolation choice. */
 const segBtn = (active: boolean): React.CSSProperties => ({
-  fontSize: '0.7rem',
+  fontSize: '0.72rem',
   fontWeight: 600,
   fontFamily: 'inherit',
   cursor: 'pointer',
   padding: '3px 10px',
-  borderRadius: 999,
+  borderRadius: 'var(--wks-radius-pill)',
   border: 'none',
   background: active ? 'var(--wks-accent-bg)' : 'transparent',
   color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-muted)',
@@ -2153,7 +1819,7 @@ const inlineInput: React.CSSProperties = {
   outline: 'none',
   borderBottom: '1px solid var(--wks-border-input)',
   fontFamily: 'var(--wks-font-mono)',
-  fontSize: '0.7rem',
+  fontSize: '0.72rem',
   color: 'var(--wks-text-primary)',
   padding: '2px 2px 4px',
   boxSizing: 'border-box',
@@ -2161,7 +1827,7 @@ const inlineInput: React.CSSProperties = {
 
 /** Small ghost button (Browse…) — flat, rounds via the composer hover class. */
 const ghostBtnSmall: React.CSSProperties = {
-  fontSize: '0.7rem',
+  fontSize: '0.72rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   cursor: 'pointer',

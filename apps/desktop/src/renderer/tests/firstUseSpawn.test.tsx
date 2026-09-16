@@ -125,7 +125,7 @@ it('creates ordinary agents without a task input or initial message', () => {
   expect(screen.queryByLabelText('What should this agent do?')).not.toBeInTheDocument();
   expect(screen.queryByLabelText(/Allow an empty session/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Working directory')).toHaveFocus();
-  fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Start agent' }));
   expect(onSpawn).toHaveBeenCalledTimes(1);
   expect(onSpawn.mock.calls[0][0]).not.toHaveProperty('kickoffMessage');
   expect(onSpawn.mock.calls[0][0]).not.toHaveProperty('initialPrompt');
