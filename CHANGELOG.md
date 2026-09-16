@@ -7,8 +7,6 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
-
 ## [0.166.0] - 2026-09-15
 
 ### Removed
