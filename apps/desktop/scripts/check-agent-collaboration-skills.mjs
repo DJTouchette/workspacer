@@ -1,0 +1,56 @@
+// Verify source assets, the generated bundle, and tsc's emitted runtime copy.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const desktop = fileURLToPath(new URL('../', import.meta.url));
+const scratch = mkdtempSync(join(desktop, '.agent-collaboration-skills-'));
+try {
+  const generated = JSON.parse(
+    readFileSync(
+      join(desktop, 'src/main/services/agentCollaborationSkills.generated.json'),
+      'utf8',
+    ),
+  );
+  for (const name of ['project-brief', 'spawn-agent']) {
+    assert.equal(
+      generated[`${name}/SKILL.md`],
+      readFileSync(join(desktop, 'assets/skills', name, 'SKILL.md'), 'utf8'),
+      `Regenerate agentCollaborationSkills.generated.json after changing ${name}`,
+    );
+  }
+  const dist = join(scratch, 'dist');
+  execFileSync(
+    process.execPath,
+    [
+      join(desktop, 'node_modules/typescript/bin/tsc'),
+      '-p',
+      join(desktop, 'tsconfig.main.json'),
+      '--outDir',
+      dist,
+    ],
+    { stdio: 'inherit' },
+  );
+  assert.deepEqual(
+    require(join(dist, 'services/agentCollaborationSkills.generated.json')),
+    generated,
+  );
+  const project = join(scratch, 'project');
+  mkdirSync(project);
+  const { installAgentCollaborationSkills } = require(
+    join(dist, 'services/agentCollaborationSkills.js'),
+  );
+  assert.equal(installAgentCollaborationSkills('claude', project), '');
+  assert.equal(
+    readFileSync(join(project, '.claude/skills/spawn-agent/SKILL.md'), 'utf8'),
+    generated['spawn-agent/SKILL.md'],
+  );
+  assert.equal(installAgentCollaborationSkills('pi', project), '');
+  console.log('Emitted ordinary-agent skills and compiled installer: passed.');
+} finally {
+  rmSync(scratch, { recursive: true, force: true });
+}

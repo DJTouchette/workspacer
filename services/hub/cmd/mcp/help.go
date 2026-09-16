@@ -69,10 +69,12 @@ spawn_agent starts a new coding-agent session and returns its sessionId.
   agent coming up. Host contracts land through a separate instruction channel,
   not inside this user-visible task, and reach the agent's first turn even when
   message is omitted. Use send_message for anything AFTER that first turn.
-- Pass label (short human name) and parentSessionId (your own session id) so
-  the new agent nests under you in the UI. That parent metadata, together with
-  the manager flag, is also what identifies a real fleet worker; ordinary panes,
-  managers, tours, and unmanaged sessions do not receive worker contracts.
+- Pass label (a short human name). For a session-authenticated caller, the host
+  derives parentSessionId from your credential and overwrites any conflicting
+  value, so the new agent nests under you and its direct wakes return to you.
+  Static controllers may still pass parentSessionId explicitly. A manager flag
+  remains separate: it controls fleet-wide broadcasts and task ownership, not
+  whether an ordinary parent receives its own child's wake.
 - Give the new agent workspacer tools only when it needs them, at the LOWEST
   tier that works: toolScope "view" for summarizer/reader workers, "triage" to
   also approve/reply/interrupt, "operator" for everything (spawning included).

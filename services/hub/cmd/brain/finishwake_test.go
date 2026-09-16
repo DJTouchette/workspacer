@@ -336,21 +336,25 @@ func TestMalformedAndProseOnlyEscalationsStayOrdinaryHeadlessCompletions(t *test
 	}
 }
 
-// A parent that is not a MANAGER is not a wake target. `manager: true` at spawn
-// is the only thing that sets isWakeTarget, and without it the finish is
-// dropped — the same rule the desktop enforces.
-func TestAFinishIsDroppedWhenTheParentIsNotAManager(t *testing.T) {
+// An ordinary agent receives its own direct child's finish without becoming a
+// Fleet Manager or a global wake target.
+func TestAFinishWakesAnOrdinaryDirectParent(t *testing.T) {
 	r := newWakeRig(t)
 	r.spawnMetaFor("plain", spawnMeta{Label: "not a manager"})
+	r.spawnMetaFor("unrelated", spawnMeta{Label: "unrelated ordinary agent"})
 	r.spawnMetaFor("w1", spawnMeta{ParentSessionID: "plain"})
 	r.update("plain", "/work", "input")
+	r.update("unrelated", "/elsewhere", "input")
 	r.update("w1", "/work/p", "responding")
 	r.d.setConv("w1", dispatched("done"))
 
 	r.update("w1", "/work/p", "input")
 	r.closeWindows()
-	if n := len(r.d.to("plain")); n != 0 {
-		t.Errorf("a non-manager parent received %d wakes", n)
+	if n := len(r.d.to("plain")); n != 1 {
+		t.Errorf("an ordinary direct parent received %d wakes, want 1", n)
+	}
+	if n := len(r.d.to("unrelated")); n != 0 {
+		t.Errorf("an unrelated ordinary agent received %d wakes", n)
 	}
 }
 
@@ -493,9 +497,8 @@ func TestAWorkerThatResumedWorkingInsideTheWindowIsNotReported(t *testing.T) {
 	}
 }
 
-// The PARENT is re-checked too. It can end, be closed, or be reparented out of
-// manager-hood inside the 1.5s window, and a wake to a session that is no longer
-// a manager is a wake nobody reads.
+// The PARENT is re-checked too. It can end or be closed inside the 1.5s window,
+// and a wake to a session that is no longer live is a wake nobody reads.
 func TestAManagerThatEndedInsideTheWindowIsNotWoken(t *testing.T) {
 	r := newWakeRig(t)
 	r.fleet()
@@ -729,6 +732,21 @@ func TestTheBackstopCatchesAFinishWhoseWakeNeverLanded(t *testing.T) {
 	}
 	if !strings.Contains(wakes[0], "rust worker (session:w1, cwd /work/proj)") {
 		t.Errorf("the catch-up bullet is wrong:\n%s", wakes[0])
+	}
+}
+
+func TestTheBackstopAlsoCatchesAnOrdinaryParentsMissedFinish(t *testing.T) {
+	r := newWakeRig(t)
+	now := time.Now()
+	r.spawnMetaFor("plain", spawnMeta{Label: "ordinary parent"})
+	r.spawnMetaFor("w1", spawnMeta{Label: "worker", ParentSessionID: "plain"})
+	r.store.set("plain", json.RawMessage(atTime("plain", "/work", "input", now.Add(-30*time.Minute))))
+	r.store.set("w1", json.RawMessage(atTime("w1", "/work/p", "input", now.Add(-10*time.Minute))))
+	r.d.setConv("w1", dispatched("done"))
+
+	r.fin.sweepMissedFinishes(context.Background(), now)
+	if n := len(r.d.to("plain")); n != 1 {
+		t.Fatalf("ordinary parent's catch-up count = %d, want 1", n)
 	}
 }
 

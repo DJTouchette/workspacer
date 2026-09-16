@@ -960,6 +960,14 @@ func addSpawnTool(b *build, name, desc, method string) {
 // original's recorded permission mode and forward it without the grant check
 // this function performs.
 func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgentIn) (*mcp.CallToolResult, any, error) {
+	// A session-authenticated caller can only create its own direct child. The
+	// token label is host-issued, while parentSessionId is model-authored input;
+	// always prefer the former, including when the caller supplied a conflicting
+	// value. Static/untokened operator clients have no session identity to derive
+	// and retain the explicit parent behavior used by external controllers.
+	if caller := callerSessionID(ctx); caller != "" {
+		in.ParentSessionId = caller
+	}
 	if in.TrackTask != nil && !*in.TrackTask && (in.TaskID != "" || in.WorkflowStepID != "" || in.AfterDispatchID != "" || in.RetrySourceSessionID != "") {
 		return toolError("trackTask:false must omit task, workflow and retry links")
 	}
@@ -1622,7 +1630,7 @@ type spawnAgentIn struct {
 	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
 	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
-	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
+	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"parent session for static/non-session controllers. Session-authenticated callers are always recorded as the parent by the host; a conflicting value is ignored"`
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
 	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`

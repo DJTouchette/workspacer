@@ -45,6 +45,10 @@ vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunch
 const assertSpawnCwdMock = vi.fn();
 const cardSkill = vi.hoisted(() => vi.fn(() => ''));
 vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
+const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
+vi.mock('./agentCollaborationSkills', () => ({
+  installAgentCollaborationSkills: collaborationSkills,
+}));
 
 vi.mock('../lib/spawnCwd', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/spawnCwd')>()),
@@ -149,7 +153,24 @@ function lastMeta(): Payload {
 beforeEach(() => {
   vi.clearAllMocks();
   cardSkill.mockReturnValue('');
+  collaborationSkills.mockReturnValue('');
   mockConfig = {};
+});
+
+describe('spawnManagedAgent — ordinary collaboration skills', () => {
+  it.each(['claude', 'codex', 'copilot', 'opencode', 'pi'] as const)(
+    'runs the provider-aware installer for %s spawns',
+    async (provider) => {
+      await spawnManagedAgent({ provider, cwd: '/proj', transport: 'stream' });
+      expect(collaborationSkills).toHaveBeenCalledWith(provider, '/proj');
+    },
+  );
+
+  it('carries the fallback pointer in the managed instruction channel', async () => {
+    collaborationSkills.mockReturnValue('READ THE ORDINARY AGENT SKILLS');
+    await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
+    expect(lastManaged().instructions).toContain('READ THE ORDINARY AGENT SKILLS');
+  });
 });
 
 /**

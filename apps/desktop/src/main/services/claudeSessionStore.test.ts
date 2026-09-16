@@ -49,6 +49,7 @@ vi.mock('./sessionStore/usageAccumulator', () => ({
 vi.mock('./sessionStore/analyticsWriter', () => ({ writeHistory: vi.fn() }));
 
 import { claudeSessionStore, contextTokensFromStatusLine } from './claudeSessionStore';
+import { supervisorNudge } from './supervisorNudge';
 import { writeHistory } from './sessionStore/analyticsWriter';
 
 const writeHistoryMock = vi.mocked(writeHistory);
@@ -154,6 +155,60 @@ describe('Stop → analytics snapshot re-arms each turn', () => {
     hook(sid, 'Stop');
     vi.advanceTimersByTime(1600);
     expect(writeHistoryMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ordinary-agent child wakes', () => {
+  it('routes a direct child finish to a live ordinary parent', () => {
+    const parent = uniqueId();
+    const child = uniqueId();
+    hook(parent, 'SessionStart');
+    claudeSessionStore.setSpawnMeta(child, { parentSessionId: parent });
+    hook(child, 'UserPromptSubmit');
+    vi.mocked(supervisorNudge.onFinished).mockClear();
+
+    hook(child, 'Stop');
+
+    expect(supervisorNudge.onFinished).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: child, parentSessionId: parent }),
+      parent,
+      '',
+    );
+  });
+
+  it('refuses a finish wake when the ordinary parent has ended', () => {
+    const parent = uniqueId();
+    const child = uniqueId();
+    hook(parent, 'SessionStart');
+    hook(parent, 'SessionEnd');
+    claudeSessionStore.setSpawnMeta(child, { parentSessionId: parent });
+    hook(child, 'UserPromptSubmit');
+    vi.mocked(supervisorNudge.onFinished).mockClear();
+
+    hook(child, 'Stop');
+
+    expect(supervisorNudge.onFinished).not.toHaveBeenCalled();
+  });
+
+  it('routes a child block to its ordinary parent and managers, not unrelated agents', () => {
+    const parent = uniqueId();
+    const unrelated = uniqueId();
+    const manager = uniqueId();
+    const child = uniqueId();
+    hook(parent, 'SessionStart');
+    hook(unrelated, 'SessionStart');
+    claudeSessionStore.setSpawnMeta(manager, { isWakeTarget: true });
+    hook(manager, 'SessionStart');
+    claudeSessionStore.setSpawnMeta(child, { parentSessionId: parent });
+    hook(child, 'UserPromptSubmit');
+    vi.mocked(supervisorNudge.onBlock).mockClear();
+
+    hook(child, 'PermissionRequest');
+
+    const recipients = vi.mocked(supervisorNudge.onBlock).mock.calls[0]?.[2] ?? [];
+    expect(recipients).toContain(parent);
+    expect(recipients).toContain(manager);
+    expect(recipients).not.toContain(unrelated);
   });
 });
 

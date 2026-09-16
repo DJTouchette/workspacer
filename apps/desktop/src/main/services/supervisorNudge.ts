@@ -3,9 +3,9 @@ import { workflowWakeInstructions, workflowResultSchema } from './fleetWorkflowR
 import { dispatchHistoryStore } from './dispatchHistoryStore';
 /**
  * Event-driven supervisor wake. When an agent transitions *into* a blocked
- * state (pending approval / question), nudge every live supervisor session with
- * a short message so it runs a /supervise pass and surfaces the decision
- * immediately — instead of waiting up to a poll interval.
+ * state (pending approval / question), nudge every live manager plus the
+ * agent's live direct parent so the decision is surfaced immediately instead
+ * of waiting up to a poll interval.
  *
  * Fully optional: if no session is marked a supervisor, this is a no-op. A
  * supervisor is never nudged about its own block, and nudges are coalesced per
@@ -148,7 +148,8 @@ class SupervisorNudge {
 
   /**
    * Call when a session has just transitioned into a needs-you state. `kind`
-   * is what it's blocked on; `supervisorIds` is every live supervisor session.
+   * is what it is blocked on; `recipientIds` is every live manager plus the
+   * blocked session's live direct parent, if it has one.
    *
    * Debounced: the broadcast (and its own COALESCE_MS coalescing) only fires
    * if the block is still open BLOCK_DEBOUNCE_MS later — see onBlockCleared,
@@ -161,17 +162,17 @@ class SupervisorNudge {
   onBlock(
     session: PendingReadOnlySession,
     kind: 'approval' | 'question',
-    supervisorIds: string[],
+    recipientIds: string[],
   ): void {
-    const supervisors = supervisorIds.filter((id) => id !== session.sessionId);
-    if (supervisors.length === 0) return; // no supervisor → optional, nothing to do
+    const recipients = recipientIds.filter((id) => id !== session.sessionId);
+    if (recipients.length === 0) return;
 
     const existing = this.pendingBlocks.get(session.sessionId);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(() => {
       this.pendingBlocks.delete(session.sessionId);
-      this.broadcastBlock(session, kind, supervisors);
+      this.broadcastBlock(session, kind, recipients);
     }, BLOCK_DEBOUNCE_MS);
     timer.unref?.();
     this.pendingBlocks.set(session.sessionId, timer);
@@ -198,7 +199,7 @@ class SupervisorNudge {
   private broadcastBlock(
     session: PendingReadOnlySession,
     kind: 'approval' | 'question',
-    supervisors: string[],
+    recipients: string[],
   ): void {
     const blockedEntry: FleetMessageEntry = {
       label: session.label || agentLabel(session.cwd),
@@ -206,7 +207,7 @@ class SupervisorNudge {
       blockedOn: kind,
     };
     for (const supId of new Set(
-      [...supervisors, ...(session.parentSessionId ? [session.parentSessionId] : [])]
+      recipients
         .filter((id) => !managerReplacementState.parkedSuccessor(id))
         .map((id) => managerReplacementState.automaticWakeTarget(id)),
     )) {
@@ -319,13 +320,11 @@ class SupervisorNudge {
   }
 
   /**
-   * BACKSTOP for a dropped wake (the "dark manager" failure): the onFinished
-   * path is best-effort — if its message never lands, or a working→idle edge
-   * was never observed, a manager can sit idle forever while a dispatched
-   * worker has finished. Run periodically over all sessions; for each LIVE,
-   * IDLE manager, find children that have finished (idle/ended) AFTER the
-   * manager last acted and long enough ago that a normal wake would have
-   * landed, and re-nudge.
+   * BACKSTOP for a dropped wake: the onFinished path is best-effort — if its
+   * message never lands, or a working→idle edge was never observed, any parent
+   * can sit idle forever while its direct child has finished. Run periodically
+   * over all sessions; for each live idle session that has children, find
+   * children that finished after it last acted and re-nudge.
    *
    * The dedup is implicit and exact: the moment the manager acts on the wake it
    * reports and its lastActivity advances PAST the child's finish, so the
@@ -344,12 +343,17 @@ class SupervisorNudge {
     >,
     now: number,
   ): void {
-    const managers = sessions.filter(
-      (s) => s.isWakeTarget && s.status !== 'ended' && s.ambientState === 'idle',
+    const parentIds = new Set(
+      sessions.flatMap((s) =>
+        s.parentSessionId && s.parentSessionId !== s.sessionId ? [s.parentSessionId] : [],
+      ),
     );
-    if (managers.length === 0) return;
-    for (const manager of managers) {
-      if (managerReplacementState.held(manager.sessionId)) continue;
+    const parents = sessions.filter(
+      (s) => parentIds.has(s.sessionId) && s.status !== 'ended' && s.ambientState === 'idle',
+    );
+    if (parents.length === 0) return;
+    for (const manager of parents) {
+      if (manager.isWakeTarget && managerReplacementState.held(manager.sessionId)) continue;
       const missed = sessions.filter(
         (c) =>
           c.parentSessionId === manager.sessionId &&

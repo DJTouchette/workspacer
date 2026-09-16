@@ -80,9 +80,9 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
   it('wakes the codex manager when a codex worker completes a turn', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    // `manager: true` on the spawn is what sets isWakeTarget — the flag the IPC
-    // managed branch used to drop. Without it nudgeParentOnFinish bails and no
-    // wake is ever routed here, which is the whole bug.
+    // `manager: true` on the spawn sets isWakeTarget. Direct-child finishes no
+    // longer require it, but the flag still makes this session a Fleet Manager
+    // for global blockers and the rest of manager ownership.
     register(mgr, { label: 'Fleet Manager', isWakeTarget: true });
     register(child, { label: 'alpha: fix tests', parentSessionId: mgr });
 
@@ -127,13 +127,10 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
     expect(mine![1]).toContain(child);
   });
 
-  it('does NOT wake a manager that was spawned without the manager flag', async () => {
-    // The pre-fix shape, pinned so it cannot come back silently: the session is
-    // there, the parent link is there, the worker finishes — and the manager
-    // hears nothing, because isWakeTarget was never set.
+  it('wakes an ordinary codex parent for its own direct child without the manager flag', async () => {
     const mgr = uid('mgr');
     const child = uid('child');
-    register(mgr, { label: 'Fleet Manager' }); // no isWakeTarget
+    register(mgr, { label: 'Ordinary agent' }); // no isWakeTarget
     register(child, { label: 'gamma: docs', parentSessionId: mgr });
 
     say(child, 'user', 'update the docs');
@@ -142,6 +139,8 @@ describe('a codex Fleet Manager receives its workers’ finish wakes', () => {
     mode(child, 'input');
     await vi.advanceTimersByTimeAsync(3000);
 
-    expect(message).not.toHaveBeenCalled();
+    expect(message).toHaveBeenCalledTimes(1);
+    expect(message.mock.calls[0]?.[0]).toBe(mgr);
+    expect(message.mock.calls[0]?.[1]).toContain(child);
   });
 });

@@ -124,7 +124,8 @@ const (
 	// are paragraphs, and it stays that way: it is the desktop's byte-exact
 	// string, and the manager agent has to read the same instruction whichever
 	// host composed the wake.
-	fleetBlockedTail = "Run a /supervise pass: gather the context and notify me with a recommendation."
+	fleetBlockedTail = "Inspect the blocked agent's context. Resolve an in-scope decision with send_message; " +
+		"otherwise surface the exact decision needed, then stop without polling."
 )
 
 // fleetFailedNote / fleetStoppedNote are the plain (non-bullet) blocks a wake

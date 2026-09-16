@@ -69,7 +69,7 @@ export function managedFacadeInstructions(opts: {
   // idNote); this path didn't, so a stream-transport manager had to HUNT for
   // itself via list_agents before it could set parentSessionId on a dispatch.
   const idNote = opts.sessionId
-    ? ` Your own workspacer session id is ${opts.sessionId} — pass it as parentSessionId when you spawn agents so they nest under you, and never target it with send_message/approve/signal.`
+    ? ` Your own workspacer session id is ${opts.sessionId}. The host records you as the parent of agents you spawn; never target your own id with send_message/approve/signal.`
     : '';
   const prefixNote =
     ' Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.';

@@ -980,11 +980,27 @@ class ClaudeSessionStore {
     }
   }
 
-  /** Session ids currently marked as supervisors (live sessions only). */
+  /** Session ids currently marked as managers (live local sessions only). */
   supervisorSessionIds(): string[] {
     const ids: string[] = [];
-    for (const s of this.sessions.values()) if (s.isWakeTarget) ids.push(s.sessionId);
+    for (const s of this.sessions.values())
+      if (s.isWakeTarget && s.status !== 'ended' && !s.hub) ids.push(s.sessionId);
     return ids;
+  }
+
+  /** Managers receive every local block. An ordinary parent receives only the
+   * block of the direct child it spawned, without becoming a wake target. */
+  private blockWakeRecipientIds(session: ClaudeSessionState): string[] {
+    const ids = new Set(this.supervisorSessionIds());
+    const parent = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined;
+    if (
+      parent &&
+      parent.status !== 'ended' &&
+      !parent.hub &&
+      parent.sessionId !== session.sessionId
+    )
+      ids.add(parent.sessionId);
+    return [...ids];
   }
 
   /**
@@ -1302,8 +1318,9 @@ class ClaudeSessionStore {
    * the dispatch came home. Called at every ambient-transition site right
    * after notifyOnTransition, which uses the same working→idle edge for the
    * user's own "finished" notification; blocks stay on onBlock's broadcast
-   * path. The parent must be LIVE and marked isWakeTarget (managers set the
-   * same flag) — a worker whose parent ended just goes quiet.
+   * path. The parent must be a live local session. Ordinary agents may receive
+   * their own direct children's wakes without becoming fleet-wide wake
+   * targets; a worker whose parent ended just goes quiet.
    */
   private nudgeParentOnFinish(session: ClaudeSessionState, prevAmbient: SessionAmbientState): void {
     const wasWorking =
@@ -1321,7 +1338,7 @@ class ClaudeSessionStore {
         session.status === 'ended',
       );
     const parent = this.sessions.get(parentId);
-    if (!parent?.isWakeTarget || parent.status === 'ended') return;
+    if (!parent || parent.status === 'ended' || parent.hub) return;
     supervisorNudge.onFinished(session, parentId, lastReply);
   }
 
@@ -1497,7 +1514,7 @@ class ClaudeSessionStore {
       supervisorNudge.onBlock(
         session,
         session.pendingApproval ? 'approval' : 'question',
-        this.supervisorSessionIds(),
+        this.blockWakeRecipientIds(session),
       );
     } else if (!isBlocked(session.ambientState) && isBlocked(prevAmbient)) {
       supervisorNudge.onBlockCleared(session.sessionId);
@@ -1630,7 +1647,7 @@ class ClaudeSessionStore {
         supervisorNudge.onBlock(
           session,
           next === 'waiting_approval' ? 'approval' : 'question',
-          this.supervisorSessionIds(),
+          this.blockWakeRecipientIds(session),
         );
       } else if (!isBlocked(next) && isBlocked(prevAmbient)) {
         supervisorNudge.onBlockCleared(session.sessionId);

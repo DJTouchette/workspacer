@@ -216,8 +216,8 @@ func (b *blockWatcher) onBlocked(ctx context.Context, sessionID string) {
 	if sessionID == "" {
 		return
 	}
-	if !b.anyWakeTargetBesides(ctx, sessionID) {
-		return // no manager → this wake is optional, nothing to do
+	if !b.anyWakeRecipientBesides(ctx, sessionID) {
+		return
 	}
 
 	b.mu.Lock()
@@ -298,14 +298,20 @@ func (b *blockWatcher) forget(sessionID string) {
 	}
 }
 
-// anyWakeTargetBesides is the cheap gate: is there any live manager at all that
-// is not the blocked session itself?
-func (b *blockWatcher) anyWakeTargetBesides(ctx context.Context, sessionID string) bool {
+// anyWakeRecipientBesides is the cheap gate: a remote origin, any live
+// manager, or the blocked session's own live direct parent can receive it.
+func (b *blockWatcher) anyWakeRecipientBesides(ctx context.Context, sessionID string) bool {
 	if b.reg.remoteDispatchID(sessionID) != "" {
 		return true
 	}
-	for _, s := range b.reg.fleetSessions(ctx) {
+	all := b.reg.fleetSessions(ctx)
+	blocked, _ := findFleetSession(all, sessionID)
+	for _, s := range all {
 		if s.IsWakeTarget && !s.ended() && s.SessionID != sessionID {
+			return true
+		}
+		if blocked.ParentSessionID != "" && s.SessionID == blocked.ParentSessionID &&
+			!s.ended() && s.SessionID != sessionID {
 			return true
 		}
 	}
@@ -346,15 +352,24 @@ func (b *blockWatcher) broadcast(ctx context.Context, blockedID string) {
 		}, false)
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	recipients := map[string]bool{}
 	for _, m := range all {
 		// A manager is never told about its OWN block: it cannot gather context
 		// on a decision it is itself sitting on.
 		if !m.IsWakeTarget || m.ended() || m.SessionID == blockedID {
 			continue
 		}
-		b.addLocked(ctx, m.SessionID, blockedID)
+		recipients[m.SessionID] = true
+	}
+	if blocked.ParentSessionID != "" && blocked.ParentSessionID != blockedID {
+		if parent, found := findFleetSession(all, blocked.ParentSessionID); found && !parent.ended() {
+			recipients[parent.SessionID] = true
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for recipientID := range recipients {
+		b.addLocked(ctx, recipientID, blockedID)
 	}
 }
 
@@ -399,7 +414,7 @@ func (b *blockWatcher) flush(ctx context.Context, recipientID string) {
 func (b *blockWatcher) send(ctx context.Context, recipientID string, blockedIDs []string) {
 	all := b.reg.fleetSessions(ctx)
 	recipient, ok := findFleetSession(all, recipientID)
-	if !ok || recipient.ended() || !recipient.IsWakeTarget {
+	if !ok || recipient.ended() {
 		return
 	}
 
@@ -408,6 +423,11 @@ func (b *blockWatcher) send(ctx context.Context, recipientID string, blockedIDs 
 		s, ok := findFleetSession(all, id)
 		if !ok || s.ended() || !isBlockedAmbient(s.AmbientState) {
 			continue // answered, ended or closed inside the window
+		}
+		// Managers keep the fleet-wide broadcast. An ordinary session only ever
+		// receives blockers from its own direct children.
+		if !recipient.IsWakeTarget && s.ParentSessionID != recipientID {
+			continue
 		}
 		// A blocked bullet carries no cwd: the parser's `where` slot holds
 		// EITHER a cwd or the block kind, never both.

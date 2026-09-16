@@ -170,7 +170,7 @@ describe('supervisorNudge.onBlock', () => {
     const [target, text] = message.mock.calls[0] as [string, string];
     expect(target).toBe('sup');
     expect(text).toContain('[supervisor]');
-    expect(text).toContain('/supervise');
+    expect(text).toContain("Inspect the blocked agent's context");
     expect(parseFleetMessage(text)).toEqual({
       kind: 'blocked',
       entries: [{ label: 'alpha: fix tests', sessionId: 'w1', blockedOn: 'approval' }],
@@ -241,6 +241,23 @@ describe('supervisorNudge.sweepMissedFinishes (dropped-wake backstop)', () => {
     expect(text).toContain('Catch-up');
     expect(text).toContain('session:w1');
     expect(parseFleetMessage(text)?.kind).toBe('catch-up');
+  });
+
+  it('re-nudges an idle ordinary parent for its own child without a manager flag', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes([mgr({ isWakeTarget: false }), child()], now);
+    expect(message).toHaveBeenCalledTimes(1);
+    expect(message.mock.calls[0]?.[0]).toBe('mgr');
+  });
+
+  it('does not treat an unrelated ordinary session as a catch-up recipient', () => {
+    const now = 10_000 + GRACE + 1;
+    supervisorNudge.sweepMissedFinishes(
+      [mgr({ isWakeTarget: false }), mgr({ sessionId: 'unrelated', isWakeTarget: false }), child()],
+      now,
+    );
+    expect(message).toHaveBeenCalledTimes(1);
+    expect(message.mock.calls[0]?.[0]).toBe('mgr');
   });
 
   it('does NOT nudge inside the grace window (a normal wake may still be in flight)', () => {

@@ -27,6 +27,10 @@ vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunch
 
 const cardSkill = vi.hoisted(() => vi.fn(() => ''));
 vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
+const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
+vi.mock('./agentCollaborationSkills', () => ({
+  installAgentCollaborationSkills: collaborationSkills,
+}));
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -155,12 +159,20 @@ function lastSpawn(): {
 beforeEach(() => {
   vi.clearAllMocks();
   cardSkill.mockReturnValue('');
+  collaborationSkills.mockReturnValue('');
   mockConfig = {};
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
   buildSessionMcpConfig.mockReturnValue({
     path: '/cfg/session-mcp/srv.json',
     toolNames: ['mcp__srv1'],
+  });
+});
+
+describe('spawnClaudeAgent — ordinary collaboration skills', () => {
+  it('installs them for every Claude PTY spawn', async () => {
+    await spawnClaudeAgent({ cwd: '/proj' });
+    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj');
   });
 });
 

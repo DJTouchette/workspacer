@@ -467,21 +467,28 @@ func TestBlocksArrivingTogetherCoalesceIntoOneWake(t *testing.T) {
 
 // ── who is a recipient ──────────────────────────────────────────────────────
 
-// No manager anywhere → nothing is armed. The broadcast is optional machinery:
-// on a node running no Fleet Manager it must cost nothing at all.
-func TestABlockWithNoManagerAnywhereArmsNothing(t *testing.T) {
+// No manager is needed for a direct parent to hear about its own child's block.
+// Unrelated ordinary agents still receive nothing.
+func TestABlockWakesOnlyItsOrdinaryDirectParent(t *testing.T) {
 	r := newWakeRig(t)
 	r.spawnMetaFor("plain", spawnMeta{Label: "not a manager"})
+	r.spawnMetaFor("unrelated", spawnMeta{Label: "another ordinary agent"})
 	r.spawnMetaFor("w1", spawnMeta{ParentSessionID: "plain"})
 	r.update("plain", "/work", "input")
+	r.update("unrelated", "/elsewhere", "input")
 	r.update("w1", "/work/p", "responding")
 
 	r.update("w1", "/work/p", "approval")
-	if n := r.count("block-debounce"); n != 0 {
-		t.Errorf("a block with no manager anywhere armed %d timers", n)
+	if n := r.count("block-debounce"); n != 1 {
+		t.Fatalf("ordinary child's block armed %d timers, want 1", n)
 	}
-	if n := len(r.d.to("plain")); n != 0 {
-		t.Errorf("a non-manager received %d wakes", n)
+	surviveDebounce(r)
+	deliver(r)
+	if n := len(r.d.to("plain")); n != 1 {
+		t.Errorf("ordinary direct parent received %d blocker wakes, want 1", n)
+	}
+	if n := len(r.d.to("unrelated")); n != 0 {
+		t.Errorf("unrelated ordinary agent received %d blocker wakes", n)
 	}
 }
 

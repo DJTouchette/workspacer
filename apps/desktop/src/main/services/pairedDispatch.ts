@@ -58,8 +58,11 @@ export function startPairedDispatch(): void {
   if (started) return;
   registry.start(path.join(getConfigDir(), 'remote-dispatches.json'), (id) => {
     const target = managerReplacementState.automaticWakeTarget(id);
-    const manager = claudeSessionStore.getSnapshot(target);
-    return manager?.isWakeTarget && !manager.hub && manager.status !== 'ended' ? target : null;
+    const parent = claudeSessionStore.getSnapshot(target);
+    // Remote results follow the same rule as local ones: any live local parent
+    // receives its own child's wake. Manager succession may rewrite `target`,
+    // but ordinary parents never become global wake targets.
+    return parent && !parent.hub && parent.status !== 'ended' ? target : null;
   });
   started = true;
   connection.onDisconnected = () => claudeSessionStore.markHubPeerOffline('@paired');

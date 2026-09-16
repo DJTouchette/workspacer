@@ -42,6 +42,7 @@ import {
 } from '../lib/roleModels';
 import { installManagerSkills } from './managerSkills';
 import { installResponseCardSkill } from './responseCardSkill';
+import { installAgentCollaborationSkills } from './agentCollaborationSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
 import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
@@ -287,6 +288,7 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   const cardCwd = normalizeSpawnCwd(opts.cwd);
   assertSpawnCwd(cardCwd);
   const cardInstruction = installResponseCardSkill('claude', cardCwd);
+  const collaborationInstruction = installAgentCollaborationSkills('claude', cardCwd);
 
   // The facade fragment is built BEFORE the argv so the structured-result
   // contract can be appended to its --append-system-prompt instead of racing it
@@ -327,6 +329,7 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     escalationContract,
     resultContract,
     cardInstruction,
+    collaborationInstruction,
   ]
     .filter(Boolean)
     .join('\n\n');

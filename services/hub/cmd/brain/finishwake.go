@@ -226,10 +226,11 @@ func (w *finishWatcher) observe(ctx context.Context, snap json.RawMessage) {
 		return
 	}
 	// Cheap trigger-time gate — the authoritative one runs again at delivery.
-	// It is here only so a finish with no manager behind it never arms a timer.
+	// Any live direct parent may receive its own child's wake; IsWakeTarget stays
+	// reserved for manager-wide behavior and succession.
 	all := w.reg.fleetSessions(ctx)
 	parent, ok := findFleetSession(all, parentID)
-	if !ok || parent.ended() || !parent.IsWakeTarget {
+	if !ok || parent.ended() {
 		return
 	}
 	w.schedule(ctx, parentID, s.SessionID)
@@ -307,7 +308,7 @@ func (w *finishWatcher) forgetWorker(sessionID string) {
 func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, workerIDs []string) {
 	all := w.reg.fleetSessions(ctx)
 	parent, ok := findFleetSession(all, parentID)
-	if !ok || parent.ended() || !parent.IsWakeTarget {
+	if !ok || parent.ended() {
 		return
 	}
 
@@ -546,8 +547,14 @@ func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) 
 		}
 		w.sendRemoteFinished(ctx, dispatchID, worker.SessionID)
 	}
+	parentIDs := map[string]bool{}
+	for _, child := range all {
+		if child.ParentSessionID != "" && child.ParentSessionID != child.SessionID {
+			parentIDs[child.ParentSessionID] = true
+		}
+	}
 	for _, manager := range all {
-		if !manager.IsWakeTarget || manager.ended() || manager.AmbientState != "idle" {
+		if !parentIDs[manager.SessionID] || manager.ended() || manager.AmbientState != "idle" {
 			continue
 		}
 		var entries []fleetEntry
