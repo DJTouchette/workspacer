@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -15,8 +16,8 @@ func TestHeadlessAgentCollaborationSkillsInstallImmutablePointerOnly(t *testing.
 	cwd := t.TempDir()
 	note := installHeadlessAgentCollaborationSkills("codex", cwd, false)
 	root := filepath.Join(cwd, ".workspacer", "skills", headlessAgentCollaborationSkillsVersion)
-	if !strings.Contains(note, filepath.Join(root, "spawn-agent", "SKILL.md")) ||
-		!strings.Contains(note, filepath.Join(root, "project-brief", "SKILL.md")) {
+	if !strings.Contains(note, strconv.Quote(filepath.Join(root, "spawn-agent", "SKILL.md"))) ||
+		!strings.Contains(note, strconv.Quote(filepath.Join(root, "project-brief", "SKILL.md"))) {
 		t.Fatalf("pointer note = %q", note)
 	}
 	if strings.Contains(note, "# Spawn an agent") || strings.Contains(note, "---\nname:") {
@@ -60,6 +61,7 @@ func TestHeadlessAgentCollaborationSkillsRefuseUnsafeRootsAndCollisions(t *testi
 	t.Run("home", func(t *testing.T) {
 		cwd := t.TempDir()
 		t.Setenv("HOME", cwd)
+		t.Setenv("USERPROFILE", cwd)
 		if got := installHeadlessAgentCollaborationSkills("codex", cwd, false); got != "" {
 			t.Fatalf("home accepted: %q", got)
 		}

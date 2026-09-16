@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -311,7 +312,15 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 				t.Fatalf("non-worker received fleet escalation contract: %q", instructions)
 			}
 			if tc.name == "ordinary pane" {
-				if !strings.Contains(instructions, ".workspacer") || !strings.Contains(instructions, "spawn-agent/SKILL.md") || !strings.Contains(instructions, "project-brief/SKILL.md") {
+				var input struct {
+					Cwd string `json:"cwd"`
+				}
+				if err := json.Unmarshal([]byte(params), &input); err != nil {
+					t.Fatal(err)
+				}
+				root := filepath.Join(filepath.Clean(input.Cwd), ".workspacer", "skills", headlessAgentCollaborationSkillsVersion)
+				if !strings.Contains(instructions, strconv.Quote(filepath.Join(root, "spawn-agent", "SKILL.md"))) ||
+					!strings.Contains(instructions, strconv.Quote(filepath.Join(root, "project-brief", "SKILL.md"))) {
 					t.Fatalf("ordinary agent missed collaboration skills: %q", instructions)
 				}
 				if strings.Contains(instructions, "# Spawn an agent") || strings.Contains(instructions, "---\nname:") {

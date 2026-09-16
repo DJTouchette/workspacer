@@ -150,11 +150,11 @@ test("Codex refuses missing routing, credential URLs, and proxy loops before pro
   }
 });
 
-test("uses only the scoped plugin token supplied by the supervisor", () => {
+test("uses only the authenticated plugin token supplied by the supervisor", () => {
   const saved = process.env.HUB_TOKEN;
   try {
     delete process.env.HUB_TOKEN;
-    assert.throws(() => hubURL({}), /scoped hub token/);
+    assert.throws(() => hubURL({}), /authenticated plugin token/);
     process.env.HUB_TOKEN = "plugin-only";
     assert.equal(new URL(hubURL({})).searchParams.get("token"), "plugin-only");
     assert.throws(() => hubURL({ hubUrl: "ws://example.com/bus" }), /loopback/);

@@ -160,7 +160,7 @@ func TestActivePathContractCases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected refusal: %v\nwhy: %s", err, c.Why)
 			}
-			if want := sub(c.ResolvesTo); got != want {
+			if want := filepath.Clean(filepath.FromSlash(sub(c.ResolvesTo))); got != want {
 				t.Fatalf("resolved %q, want %q\nwhy: %s", got, want, c.Why)
 			}
 		})
