@@ -76,21 +76,11 @@ export interface RemoteTokenRecord {
   scope: RemoteTokenScope;
   label?: string;
   created: string;
-  /** Plugin ids whose contributed MCP-facade tools this token may use (opt-in
-   *  per token; absent = none). Read by the facade only — the hub bus ignores
-   *  it. TWIN: authtoken.Record.Plugins (services/hub/internal/authtoken). */
+  /** Legacy plugin-selection field. Parsed and preserved, never consulted. */
   plugins?: string[];
-  /** Claude profile ids this token's session may DISPATCH workers under
-   *  (fleet-manager grant). Exact ids only — no wildcard is honored anywhere.
-   *  Enforced by the facade's spawn tool and the hub router's
-   *  sanitizeSpawnParams (which stamps profileGranted for the provider).
-   *  TWIN: authtoken.Record.ProfilesAllowed. */
+  /** Legacy profile-selection field. Parsed and preserved, never consulted. */
   profilesAllowed?: string[];
-  /** Full-access dispatch grant (fleet-manager, config agents.fleetFullAccess):
-   *  when true, workers this session spawns may run with permissions bypassed.
-   *  The hub verifies this and stamps yoloGranted on the worker spawn — a bus
-   *  spawn's skipPermissions is otherwise clamped off. Absent = no grant.
-   *  TWIN: authtoken.Record.YoloAllowed. */
+  /** Legacy full-access record field. Parsed and preserved, never consulted. */
   yoloAllowed?: boolean;
   /** Owner-provisioned MCP service identity delegation. Never a pairing grant.
    * TWIN: authtoken.Record.FacadeAuthority. */
@@ -103,13 +93,7 @@ export interface RemoteTokenRecord {
    *  token the desktop mints.
    *  TWIN: authtoken.Record.Provides (services/hub/internal/authtoken). */
   provides?: string[];
-  /** Role of the session this token was minted for. Written at mint so the
-   *  full-access grant reconciler (services/fullAccessGrants) can find exactly
-   *  the manager session tokens when agents.fleetFullAccess flips — the
-   *  facade re-reads the record per request,
-   *  so updating yoloAllowed here applies the flip live, both directions.
-   *  Absent on plain facade workers and remote pairings.
-   *  TWIN: authtoken.Record.Role (preserved by the Go CLI's rewrites). */
+  /** Legacy session role tag. Parsed and preserved, never consulted. */
   role?: 'manager';
 }
 
@@ -514,13 +498,7 @@ export interface ProjectIdentity {
    * Absent = 'pr'. Advisory to the manager, not a hard gate.
    */
   delivery?: 'pr' | 'local';
-  /**
-   * Per-project full-access: workers the Fleet Manager dispatches INTO this
-   * project run with permissions bypassed. The narrower, per-repo form of
-   * agents.fleetFullAccess: when ANY project sets it, the manager's session
-   * token needs the hub-verified yolo grant (services/fullAccessGrants), and
-   * the manager bypasses only for the flagged project (doctrine-enforced).
-   */
+  /** Legacy per-project permission hint. Parsed and preserved, never enforced. */
   yolo?: boolean;
   /** Epoch ms this project was last opened. Absent falls back to the legacy
    *  `directories.recent` ordering. */

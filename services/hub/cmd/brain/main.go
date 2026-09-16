@@ -91,6 +91,11 @@ func main() {
 		fin := newFinishWatcher(reg)
 		reg.fin = fin
 		store.onSeed = fin.prime
+		store.onEnd = func(id string) {
+			if err := revokeSessionFacadeToken(id); err != nil {
+				log.Printf("brain: facade token revoke failed for ended session %s: %v", id, err)
+			}
+		}
 		store.onChange = func(_ string, snap json.RawMessage) {
 			fin.observe(ctx, snap)
 			if !vis.visible(context.Background(), snap) {

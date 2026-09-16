@@ -19,6 +19,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 
+const revokeSessionFacadeTokens = vi.hoisted(() => vi.fn());
+vi.mock('./remoteTokens', () => ({ revokeSessionFacadeTokens }));
+
 vi.mock('electron', () => ({ BrowserWindow: class {} }));
 vi.mock('./agentNotifier', () => ({ agentNotifier: { notifyOnTransition: vi.fn() } }));
 vi.mock('./supervisorNudge', () => ({
@@ -173,6 +176,7 @@ describe('ordinary-agent child wakes', () => {
       expect.objectContaining({ sessionId: child, parentSessionId: parent }),
       parent,
       '',
+      false,
     );
   });
 
@@ -966,6 +970,17 @@ describe('closeSession — dismissal is a verb', () => {
     hook(sid, 'SessionStart');
     vi.advanceTimersByTime(31_000);
     expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
+  });
+
+  it('revokes a successful spawn token exactly once across close and delayed eviction', () => {
+    const sid = uniqueId();
+    revokeSessionFacadeTokens.mockClear();
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    claudeSessionStore.closeSession(sid);
+    vi.advanceTimersByTime(31_000);
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledWith(sid);
   });
 });
 

@@ -87,9 +87,7 @@ import {
   getOrCreateRemoteToken,
   listRemoteTokens,
   revokeRemoteToken,
-  reconcileSessionFacadeToken,
 } from './services/remoteTokens';
-import { desiredSessionGrants } from './services/fullAccessGrants';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { TASK_INSPECTOR_UNAVAILABLE } from './shared/dispatchHistory';
 import { isRemoteClientMode, setRemoteServer } from './services/remoteServer';
@@ -562,15 +560,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     (_event, scope: RemoteTokenScope, label?: string) => getOrCreateRemoteToken(scope, label),
   );
   ipcMain.handle(IPC.HUB_REMOTE_TOKEN_REVOKE, (_event, token: string) => revokeRemoteToken(token));
-  // Re-align one live manager session token's full-access grant
-  // (and its role tag — tokens minted before roles existed adopt it here)
-  // with current config. Called when the renderer REUSES a running Fleet
-  // Manager instead of spawning one, so a flag flipped since its spawn isn't
-  // frozen into its token; the config-change sync (fullAccessGrants) covers
-  // flips while it keeps running.
+  // Legacy compatibility endpoint. Grant fields are parse-only and inert.
   ipcMain.handle(IPC.HUB_SESSION_GRANT_RECONCILE, (_event, sessionId: string, role: 'manager') => {
-    if (role !== 'manager' || !sessionId?.trim()) return false;
-    return reconcileSessionFacadeToken(sessionId, role, desiredSessionGrants()[role]);
+    void sessionId;
+    void role;
+    return false;
   });
   // "Connect to remote server" (client mode): persist/clear the target. Takes
   // effect on relaunch — the local-vs-remote decision is made once at startup
@@ -1130,10 +1124,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         if (delivery) {
           try {
             const content = delivery.bootstrap
-              ? buildManagerKickoff(
-                  delivery.text,
-                  !!configService.getConfig().agents?.fleetFullAccess,
-                )
+              ? buildManagerKickoff(delivery.text, false)
               : delivery.text;
             await claudemonSessionClient.message(target, content, undefined, {
               requestId,

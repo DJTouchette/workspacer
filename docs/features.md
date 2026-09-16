@@ -63,8 +63,8 @@ remote/web/phone clients all view and drive the same fleet.
 | Library | CRUD for reusable prompts / skills / agents | 🔵 Working |
 | Analytics | Cost/token totals, by-project/by-model, recent sessions | 🔵 Working |
 | Overview | Cross-agent stats + rate-limit card + recent/favourite dirs to spawn | 🔵 Working |
-| Ask ("Ask the fleet") | Spawn a plain agent at the triage tool tier from a question, with preset chips | 🔵 Working |
-| Editor | Sandboxed CodeMirror plugin (default) or a configured terminal editor in a PTY (`editor.engine`; `editor.terminalCommand`, default `nvim`) | 🔵 Working |
+| Ask ("Ask the fleet") | Spawn a plain agent with the ambient Workspacer + enabled-plugin tool surface, with preset chips | 🔵 Working |
+| Editor | CodeMirror plugin (default) or a configured terminal editor in a PTY (`editor.engine`; `editor.terminalCommand`, default `nvim`) | 🔵 Working |
 | Agents / agent watch | Fleet monitor of a session's subagents; click-through watch panes for live subagents & workflow runs; pinnable inspector pane | 🔵 Working |
 | Markdown preview | Read-only rendered markdown (`mdpreview`), opened from file links in chat | 🔵 Working |
 | Plugins Manager | List/install/remove plugins with sidecar health | 🔵 Working |
@@ -177,8 +177,8 @@ remote/web/phone clients all view and drive the same fleet.
 | Feature | What it does | Maturity |
 |---|---|---|
 | MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` MCP clients | 🟢 Solid |
-| MCP tools (~50, tiered) | The driving set (list_agents, get_transcript, spawn_agent, create_terminal, send_message, approve, answer, signal, terminal_input, notify) plus snapshots/conversations, config/profiles, saved sessions/layouts, library, analytics, path-scoped fs/search, a per-tier `help` tool, and UI navigation (focus_agent/open_pane/open_browser/open_plugin/open_spawn_dialog, triage+) | 🟢 Solid |
-| Tool tiers (toolScope) | Spawn-time view/triage/operator tiers: the desktop mints a per-session scoped token (tokens.json), the facade filters tools/list + calls per request token, revokes at session end + boot sweep. Credential-less loopback requests are refused (`facade.untokenedAccess: deny`, the shipped default; `view`/`operator` are opt-in) | 🟢 Solid |
+| MCP tools (~50 core) | Supported spawned agents receive the full driving set plus enabled-plugin tools. View/triage/operator scopes remain for manual and remote pairing credentials, not as spawn-time agent grants. | 🟢 Solid |
+| Agent tool surface | Supported agents automatically receive the full Workspacer surface plus every enabled plugin tool. Per-session tokens provide identity and lifecycle revocation, not grants. Legacy `toolScope`, plugin-selection, profile-grant, and yolo-grant fields are inert. Pi is unsupported because it has no MCP bridge. | 🟢 Solid |
 | Plugin-contributed tools | Manifest `tools` (bound to consent-pinned `provides`) → hub-local `plugins.tools` → facade polls + grafts per-token; strictly opt-in per session (`pluginTools`, spawn-dialog pills) | 🟢 Solid |
 | Per-method capability tokens | Enforced: view/triage/operator grant sets at the router's dispatch seam (see §8); the facade's own inbound tiers derive from the same allowlists | 🟢 Solid |
 

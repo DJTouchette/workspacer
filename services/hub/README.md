@@ -27,12 +27,11 @@ model.
   owning provider and the reply back, correlating by a global id. Handles no-
   provider, provider-error, provider-disconnect, and timeout. The hub never
   *executes* a capability — it routes. (This is the seam the MCP facade plugs
-  into.) Authorization is enforced per-connection: a per-plugin token may only
-  `call` the capabilities its manifest declared (path-scoped ones confined to
-  granted roots), `publish` the event types it declared in `emits`, receive only
-  those in `consumes`, and `register` as a provider only for methods in
-  `provides`. The host token is trusted (full access). See "Plugin
-  authorization" below.
+  into.) Enabled plugins are trusted local code running as the Workspacer user;
+  manifest capability/path declarations are descriptive routing metadata, not
+  an OS sandbox or grant boundary. Authentication, provider provenance,
+  single-owner method registration, webview-origin isolation, and install
+  archive integrity checks remain enforced.
 
 All tested with unit + end-to-end tests, clean under `-race`. `integration`
 proves the full event spine (claudemon SSE → bridge → broker → bus → client);
@@ -51,27 +50,17 @@ proves the full event spine (claudemon SSE → bridge → broker → bus → cli
   the same values live via `window.__WKS_SETTINGS__` / the
   `plugin.settings.changed` event instead).
 
-### Plugin authorization
+### Plugin trust model
 
-A plugin only gets what its manifest declares — the same "ask for it to be
-granted it" model on every bus verb. Each plugin connects with its own token
-(the host/main-process link is *trusted* and bypasses all of this); an untrusted
-connection is confined by four manifest fields:
-
-| Manifest field | Grants | Bus verb enforced |
-| --- | --- | --- |
-| `capabilities` | methods it may **call** (path-scoped ones confined to declared roots, canonicalize-then-contain) | `call` |
-| `provides` | methods it may **answer** as a provider | `register` (disallowed methods dropped; ack lists what registered) |
-| `emits` | event types it may **publish** | `publish` (undeclared type → error) |
-| `consumes` | event types it may **receive** | delivery (a broad `subscribe`, even `"*"`, is capped to these) |
-
-Patterns use the bus topic syntax — exact, `prefix.*`, or `*` — matched by
-`internal/event.Matches`. Everything fails closed: a field left empty grants
-nothing. In particular a plugin cannot drive the app by publishing a `command.*`
-event unless it declared that emit — commands normally go through a granted
-`call`. Grants are built by the plugin loader (`grantsFor` / `eventGrantsFor`)
-and enforced in the bus (`conn.mayCall`/`authorize`, `mayPublish`, `mayConsume`,
-`mayProvide`). Tested in `bus/event_authz_test.go` + `bus/rpc_test.go`.
+Installing and enabling a plugin is the trust decision. Sidecars and install
+steps run as the Workspacer user and may access the machine; Workspacer does not
+enforce manifest-declared method or filesystem grants. The manifest still
+describes calls, provided methods, and events for discovery and routing, and
+each plugin keeps a distinct authenticated identity so logs and provider
+ownership retain provenance. Archive extraction remains zip-slip guarded,
+provider registration remains single-owner, and plugin webviews retain their
+origin/CSP isolation from the app document. These are real boundaries, but they
+do not turn plugin code into a filesystem sandbox.
 
 Wired into the app: Electron main spawns the hub, connects as a client,
 forwards events to the renderer, **provides** capabilities (`agents.list`,
@@ -241,9 +230,9 @@ already-open connection keeps its grants until it drops).
 **Backward compatibility:** the persisted `remote-token` (and any token passed
 via `--token`/`$HUB_TOKEN`) has no scope record and stays fully trusted —
 implicit operator — so the desktop app, brain, TUI, MCP facade, and existing
-phone pairings are untouched. Per-plugin tokens keep their manifest-declared
-scoping (a manifest that declares no capabilities can call nothing — that
-stays deny-all, deliberately stricter than operator).
+phone pairings are untouched. Plugin identities remain authenticated and
+provenance-stamped, but enabled plugins are trusted and are not confined by
+manifest method/path grants.
 
 ## Headless brain (`cmd/brain`)
 

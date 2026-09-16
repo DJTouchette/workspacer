@@ -213,7 +213,7 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     });
   });
 
-  it('on→off REVOKES a live manager grant; off→on grants it — other tokens untouched', () => {
+  it('legacy grant reconciliation APIs are inert and preserve every token byte-for-byte', () => {
     const mgr = mintSessionFacadeToken(
       'mgr-1',
       'operator',
@@ -225,56 +225,29 @@ describe('full-access grant reconciliation (config flips applied live)', () => {
     const worker = mintSessionFacadeToken('wkr-1', 'view');
     const pairing = getOrCreateRemoteToken('operator', 'Laptop');
 
-    // The flag flipped OFF: the role token loses the grant, one write. The
-    // return names each session that MOVED — that set is what the desktop
-    // announces to the user, so it must carry the session id and direction,
-    // not just a count.
-    expect(reconcileSessionFacadeGrants({ manager: false })).toEqual([
-      { sessionId: 'mgr-1', role: 'manager', yoloAllowed: false },
-    ]);
-    let raw = rawTokens();
-    expect(raw.find((r) => r.token === mgr.token)).not.toHaveProperty('yoloAllowed');
-    // …and the manager keeps its OTHER grants (profiles) + role.
+    const before = fs.readFileSync(tokensFile(), 'utf8');
+    expect(reconcileSessionFacadeGrants({ manager: false })).toEqual([]);
+    expect(reconcileSessionFacadeGrants({ manager: true })).toEqual([]);
+    expect(fs.readFileSync(tokensFile(), 'utf8')).toBe(before);
+    const raw = rawTokens();
     expect(raw.find((r) => r.token === mgr.token)).toMatchObject({
       role: 'manager',
       profilesAllowed: ['default'],
+      yoloAllowed: true,
     });
-    // Role-less session tokens and remote pairings are never touched.
     expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
     expect(raw.find((r) => r.token === pairing.token)).toEqual(
       expect.objectContaining({ label: 'Laptop' }),
     );
-
-    // Manager flag back ON: the manager token regains the grant.
-    expect(reconcileSessionFacadeGrants({ manager: true })).toEqual([
-      { sessionId: 'mgr-1', role: 'manager', yoloAllowed: true },
-    ]);
-    raw = rawTokens();
-    expect(raw.find((r) => r.token === mgr.token)).toMatchObject({ yoloAllowed: true });
-    expect(raw.find((r) => r.token === worker.token)).not.toHaveProperty('yoloAllowed');
-
-    // Already in line → no write, nothing to announce.
-    expect(reconcileSessionFacadeGrants({ manager: true })).toEqual([]);
   });
 
-  it('reconcileSessionFacadeToken stamps the role onto a legacy token and sets the grant both ways', () => {
-    // A manager token minted before roles existed: no role, no grant.
+  it('single-session legacy reconcile is also inert', () => {
     const legacy = mintSessionFacadeToken('mgr-old', 'operator', undefined, ['default']);
     expect(rawTokens().find((r) => r.token === legacy.token)).not.toHaveProperty('role');
-
-    expect(reconcileSessionFacadeToken('mgr-old', 'manager', true)).toBe(true);
-    expect(rawTokens().find((r) => r.token === legacy.token)).toMatchObject({
-      role: 'manager',
-      yoloAllowed: true,
-    });
-
-    // Revocation direction.
-    expect(reconcileSessionFacadeToken('mgr-old', 'manager', false)).toBe(true);
-    expect(rawTokens().find((r) => r.token === legacy.token)).not.toHaveProperty('yoloAllowed');
-
-    // Idempotent, and a no-op for a session with no token.
+    const before = fs.readFileSync(tokensFile(), 'utf8');
+    expect(reconcileSessionFacadeToken('mgr-old', 'manager', true)).toBe(false);
     expect(reconcileSessionFacadeToken('mgr-old', 'manager', false)).toBe(false);
-    expect(reconcileSessionFacadeToken('nope', 'manager', true)).toBe(false);
+    expect(fs.readFileSync(tokensFile(), 'utf8')).toBe(before);
   });
 });
 

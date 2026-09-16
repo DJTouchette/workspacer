@@ -30,7 +30,6 @@ import { getRemoteServer } from './services/remoteServer';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { listLiveSessionIds } from './services/recentSessions';
 import { sweepSessionFacadeTokens } from './services/remoteTokens';
-import { reconcileFullAccessGrants, startFullAccessGrantSync } from './services/fullAccessGrants';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { startPairedDispatch } from './services/pairedDispatch';
 import { startFederationBridge, stopFederationBridge } from './services/federationBridge';
@@ -446,16 +445,8 @@ function createWindow(): void {
                 if (!live) return;
                 const n = sweepSessionFacadeTokens(live);
                 if (n) console.log(`[main] swept ${n} stale session facade token(s)`);
-                // Then bring surviving manager/supervisor tokens' full-access
-                // grants in line with config — a flag flipped while the
-                // desktop wasn't running must land on the still-live sessions.
-                reconcileFullAccessGrants();
               })
               .catch((err) => console.warn('[main] facade token sweep failed:', err));
-            // …and keep them in line from here on: any config change (Settings,
-            // the brain, a hand edit) re-reconciles, applying full-access flips
-            // to running managers/supervisors live in both directions.
-            startFullAccessGrantSync();
           })
           .catch((err) => {
             noteRuntimePhase('facade', 'failed'); // dependency failed; no facade start remains queued

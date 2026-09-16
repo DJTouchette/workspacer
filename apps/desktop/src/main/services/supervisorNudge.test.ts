@@ -47,6 +47,15 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('supervisorNudge.onFinished', () => {
+  it('does not append Fleet workflow doctrine to an ordinary parent wake', async () => {
+    supervisorNudge.onFinished(worker(), 'ordinary-parent', 'done', false);
+    await vi.advanceTimersByTimeAsync(2000);
+    const [, text] = message.mock.calls[0] as [string, string];
+    expect(text).toContain('[fleet] Worker finished');
+    expect(text).not.toContain('manager_context');
+    expect(text).not.toContain('Fleet event, not a new user request');
+  });
+
   it('wakes the parent with label, session ref, excerpt AND the complete final message', async () => {
     supervisorNudge.onFinished(worker(), 'mgr', 'All 42 tests pass.\nDone.');
     await vi.advanceTimersByTimeAsync(2000);

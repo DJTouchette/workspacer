@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +21,17 @@ try {
       generated[`${name}/SKILL.md`],
       readFileSync(join(desktop, 'assets/skills', name, 'SKILL.md'), 'utf8'),
       `Regenerate agentCollaborationSkills.generated.json after changing ${name}`,
+    );
+  }
+  const headless = readFileSync(
+    resolve(desktop, '../../services/hub/cmd/brain/agent_collaboration_skills_generated.go'),
+    'utf8',
+  );
+  for (const name of ['project-brief', 'spawn-agent']) {
+    const escaped = JSON.stringify(`Skill ${name}/SKILL.md:\n${generated[`${name}/SKILL.md`]}`);
+    assert.ok(
+      headless.includes(escaped.slice(1, -1)),
+      `Regenerate headless collaboration guidance after changing ${name}`,
     );
   }
   const dist = join(scratch, 'dist');

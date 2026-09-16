@@ -107,15 +107,15 @@ func TestPluginToolBridge(t *testing.T) {
 	go client.Run(ctx)
 
 	catalog := newPluginCatalog(client)
-	// Deterministic: one refresh instead of the poll loop. The provider may
-	// still be registering, so retry briefly.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		catalog.refresh(ctx)
-		if byID, _ := catalog.snapshot(); len(byID) > 0 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	// The facade uses this same gate before it reports ready, so the first
+	// tools/list cannot race an empty catalog.
+	readyCtx, cancelReady := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelReady()
+	if err := catalog.waitInitial(readyCtx); err != nil {
+		t.Fatalf("initial catalog sync: %v", err)
+	}
+	if !catalog.isReady() {
+		t.Fatal("catalog did not mark readiness after a successful initial sync")
 	}
 	if byID, _ := catalog.snapshot(); len(byID) == 0 {
 		t.Fatal("catalog never loaded from plugins.tools")

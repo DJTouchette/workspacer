@@ -4,7 +4,6 @@ package main
 // No method is registered on the hub bus. The child journal owns the handoff;
 // Go owns daemon identity, actual launches, metadata and transport ACKs.
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
@@ -29,24 +27,15 @@ func managerGrantFingerprint(id string) (string, error) {
 		if r.Label != sessionFacadeTokenLabelPrefix+id || r.Scope != authtoken.ScopeOperator || r.Role != "manager" {
 			continue
 		}
-		plugins := append([]string{}, r.Plugins...)
-		profiles := append([]string{}, r.ProfilesAllowed...)
-		sort.Strings(plugins)
-		sort.Strings(profiles)
 		value := struct {
-			Scope    string   `json:"scope"`
-			Role     string   `json:"role"`
-			Plugins  []string `json:"plugins"`
-			Profiles []string `json:"profilesAllowed"`
-			Yolo     bool     `json:"yoloAllowed"`
-		}{"operator", "manager", plugins, profiles, r.YoloAllowed}
-		var buffer bytes.Buffer
-		encoder := json.NewEncoder(&buffer)
-		encoder.SetEscapeHTML(false)
-		if err := encoder.Encode(value); err != nil {
+			Scope string `json:"scope"`
+			Role  string `json:"role"`
+		}{"operator", "manager"}
+		buffer, err := json.Marshal(value)
+		if err != nil {
 			return "", err
 		}
-		sum := sha256.Sum256(bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'}))
+		sum := sha256.Sum256(buffer)
 		return hex.EncodeToString(sum[:]), nil
 	}
 	return "", fmt.Errorf("manager operator grant unavailable")
@@ -268,10 +257,16 @@ func revokeSessionFacadeToken(id string) error {
 		return err
 	}
 	kept := make([]authtoken.Record, 0, len(rows))
+	removed := false
 	for _, row := range rows {
 		if row.Label != sessionFacadeTokenLabelPrefix+id {
 			kept = append(kept, row)
+		} else {
+			removed = true
 		}
+	}
+	if !removed {
+		return nil
 	}
 	return authtoken.Save(file, kept)
 }

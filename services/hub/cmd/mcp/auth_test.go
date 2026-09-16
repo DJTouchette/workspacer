@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -257,9 +258,16 @@ func TestMuxUntokenedDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("health GET: %v", err)
 	}
+	var health map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/health status = %d, want 200 (stays open under deny)", resp.StatusCode)
+	}
+	if health["service"] != "workspacer-mcp-facade" || health["hubConnected"] != false || health["pluginCatalogReady"] != false {
+		t.Fatalf("facade health identity/readiness = %#v", health)
 	}
 
 	resp, err = http.Get(srv.URL + "/mcp")

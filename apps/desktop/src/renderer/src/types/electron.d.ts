@@ -174,19 +174,14 @@ export interface ElectronAPI extends RoutingAPI {
     rows?: number;
     /** Fleet Manager: nudge-eligible parent without the /supervise loop. */
     manager?: boolean;
-    /** Manager full-access hint; the token's yolo grant is config-resolved in
-     *  main (services/fullAccessGrants), this is record fidelity only. */
+    /** Legacy compatibility field; Workspacer does not enforce child grants. */
     fleetFullAccess?: boolean;
     label?: string;
     parentSessionId?: string;
     mcpItemIds?: string[];
-    /**
-     * Grant the workspacer MCP tools at a tier: 'view' (observe-only),
-     * 'triage' (view + approve/reply/interrupt), or 'operator' (everything).
-     * Mints a per-session scoped token; the facade serves only that tier.
-     */
+    /** Legacy compatibility field; supported agents always receive operator tools. */
     toolScope?: 'view' | 'triage' | 'operator';
-    /** Plugin ids whose contributed facade tools the agent may use (needs toolScope). */
+    /** Legacy compatibility list; enabled plugin tools are ambient. */
     pluginTools?: string[];
     /** Federation: spawn on this peer hub instead of locally. */
     targetHub?: string;
@@ -551,8 +546,7 @@ export interface ElectronAPI extends RoutingAPI {
   remoteTokensList?: () => Promise<RemoteTokenRecord[]>;
   remoteTokenGetOrCreate?: (scope: RemoteTokenScope, label?: string) => Promise<RemoteTokenRecord>;
   remoteTokenRevoke?: (token: string) => Promise<RemoteTokenRecord>;
-  /** Re-align a live manager session token's full-access grant with
-   *  current config (used when reusing a running Fleet Manager). Desktop-only. */
+  /** Legacy compatibility no-op; session grant records are inert. */
   sessionGrantReconcile?: (sessionId: string, role: 'manager') => Promise<boolean>;
   /** Persist/clear the "connect to remote server" target (client mode). Takes
    *  effect on relaunch — pair with appRelaunch(). Desktop-only. */

@@ -21,6 +21,9 @@ type sessionStore struct {
 
 	// onChange is invoked (outside the lock) after a set, to publish the update.
 	onChange func(id string, snap json.RawMessage)
+	// onEnd is invoked once per live→ended lifecycle (and for ended rows first
+	// observed during seed), so per-session credentials can be revoked promptly.
+	onEnd func(id string)
 	// enrich, if set, overlays name/parent/etc. onto each snapshot as it lands.
 	enrich func(json.RawMessage) json.RawMessage
 	// onSeed is invoked (outside the lock) with the whole seeded set, which
@@ -60,9 +63,17 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 	}
 	s.m = enriched
 	cb := s.onSeed
+	onEnd := s.onEnd
 	s.mu.Unlock()
 	if cb != nil {
 		cb(enriched)
+	}
+	if onEnd != nil {
+		for id, snap := range enriched {
+			if snapshotEnded(snap) {
+				onEnd(id)
+			}
+		}
 	}
 }
 
@@ -70,13 +81,27 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 func (s *sessionStore) set(id string, snap json.RawMessage) {
 	snap = s.applyEnrich(snap)
 	s.mu.Lock()
+	previous, existed := s.m[id]
 	snap = s.mergeDesktopLocked(id, snap)
 	s.m[id] = snap
 	cb := s.onChange
+	onEnd := s.onEnd
+	becameEnded := snapshotEnded(snap) && (!existed || !snapshotEnded(previous))
 	s.mu.Unlock()
 	if cb != nil {
 		cb(id, snap)
 	}
+	if becameEnded && onEnd != nil {
+		onEnd(id)
+	}
+}
+
+func snapshotEnded(raw json.RawMessage) bool {
+	var row struct {
+		Mode   string `json:"mode"`
+		Status string `json:"status"`
+	}
+	return json.Unmarshal(raw, &row) == nil && (row.Mode == "stopped" || row.Status == "ended")
 }
 
 // updateStatusLine merges a fresh status_line into a known session's snapshot,

@@ -537,9 +537,7 @@ export async function desktopHostCall(
       if (!delivery) return null;
       return {
         ...delivery,
-        text: delivery.bootstrap
-          ? buildManagerKickoff(delivery.text, !!configService.getConfig().agents?.fleetFullAccess)
-          : delivery.text,
+        text: delivery.bootstrap ? buildManagerKickoff(delivery.text, false) : delivery.text,
       };
     }
     case 'internal.finishDelivery':

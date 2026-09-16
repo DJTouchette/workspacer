@@ -750,11 +750,12 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
   check('the replacement model is what the PERMITTED capability resolves to', got.model === 'sonnet', JSON.stringify(got));
   check('the replacement carries its own effort', got.effort === 'high', JSON.stringify(got));
   check('the clamp did not swap the harness the spawn was for', got.provider === 'claude', JSON.stringify(got));
-  check('the tool tier was clamped to the directory ceiling', got.toolScope === 'triage', JSON.stringify(got));
+  check('legacy toolScope is preserved but cannot narrow ambient tools', got.toolScope === 'operator', JSON.stringify(got));
   check(
-    'the downgrade is named in escalationScrubbed (no silent downgrades)',
+    'only active routing fields are named in escalationScrubbed',
     Array.isArray(got.escalationScrubbed) &&
-      ['capability', 'model', 'effort', 'toolScope'].every((f) => got.escalationScrubbed.includes(f)),
+      ['capability', 'model', 'effort'].every((f) => got.escalationScrubbed.includes(f)) &&
+      !got.escalationScrubbed.includes('toolScope'),
     JSON.stringify(got),
   );
   check('the recorded routing metadata rode through untouched', got.role === 'judge' && got.decisionId === decisionId, JSON.stringify(got));
@@ -796,7 +797,7 @@ async function runSpawnBindingAssertions(hubPort, decisionId) {
     await operator.call('agents.spawn', { cwd: link, capability: 'frontier_plus', model: 'fable', toolScope: 'operator' });
     const viaLink = seen[seen.length - 1] ?? {};
     check('a SYMLINK to the capped directory does not walk around its ceiling', viaLink.capability === 'balanced' && viaLink.model === 'sonnet', JSON.stringify(viaLink));
-    check('the symlinked spawn is also tier-clamped', viaLink.toolScope === 'triage', JSON.stringify(viaLink));
+    check('the symlinked spawn also keeps inert toolScope', viaLink.toolScope === 'operator', JSON.stringify(viaLink));
   } catch (err) {
     check('symlink case ran', false, `could not create ${link}: ${err?.message ?? err}`);
   }

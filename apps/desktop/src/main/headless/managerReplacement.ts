@@ -12,7 +12,6 @@ import { managerLaunchConfiguration } from '../services/managerLaunchConfigurati
 import { sessionFacadeGrantFingerprint } from '../services/remoteTokens';
 import { dispatchHistoryStore } from '../services/dispatchHistoryStore';
 import { managerRequests } from '../services/managerRequestService';
-import { configService } from '../services/configService';
 import { buildManagerKickoff } from '../shared/managerDoctrine';
 import { normalizeModelSelection } from '../shared/modelContextWindows';
 import {
@@ -29,9 +28,6 @@ const inFlight = new Map<
 >();
 let ready = false;
 const snapshot = (id: string) => snapshots.find((s) => s.sessionId === id);
-const fullAccess = () =>
-  configService.getConfig().agents?.fleetFullAccess === true ||
-  Object.values(configService.getConfig().projects ?? {}).some((p) => p.yolo === true);
 async function refresh(receiptSessionId?: string): Promise<string> {
   const result = await hostCall('replacement.refresh', { receiptSessionId });
   snapshots = result.snapshots;
@@ -125,7 +121,7 @@ async function send(
     if (request.userContent === undefined)
       throw new Error('Unresolved request content unavailable');
     text = request.bootstrap
-      ? buildManagerKickoff(request.userContent, fullAccess())
+      ? buildManagerKickoff(request.userContent, false)
       : request.userContent;
     managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'unknown');
   }
@@ -244,7 +240,7 @@ const service = new ManagerReplacementService(state, {
   kickoff: (op) =>
     buildManagerKickoff(
       `HOST-OWNED MANAGER HANDOFF ${op.operationId}. Your fresh manager session is ${op.successorSessionId}; predecessor ${op.sourceSessionId} is audit history only. The host committed worker AND task ownership. Do not adopt workers, resume or terminate the predecessor, or use a shared handoff.md. Use this validated handoff (retained at ${op.sealedArtifactPath ?? op.artifactPath}, SHA-256 ${op.artifactHash}). Preserve pending decisions; take the stated next action within existing authority.\n${op.artifact}`,
-      fullAccess(),
+      false,
     ),
   recoverFinishes: () => {}, // Saved completion deliveries are already journaled by holdMessage.
   async flushFinishes(ids) {

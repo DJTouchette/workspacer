@@ -152,38 +152,21 @@ export function mintSessionFacadeToken(
   const next: RemoteTokenRecord = {
     ...mint(normalizeScope(scope), label),
     ...(plugins && plugins.length && { plugins }),
-    // Fleet-manager dispatch grant: exact profile ids this session may spawn
-    // workers under. Omitted when empty (wire-shape twin of `plugins`; pinned
-    // Go-side by TestProfilesAllowedWireShape).
+    // Legacy profile selection preserved only for wire compatibility.
     ...(profilesAllowed && profilesAllowed.length && { profilesAllowed }),
-    // Fleet-manager full-access grant: omitted when false, same omitempty
-    // wire shape (TWIN: authtoken.Record.YoloAllowed).
+    // Legacy full-access field preserved only for wire compatibility.
     ...(yoloAllowed && { yoloAllowed: true as const }),
-    // Session-role tag so a later config flip can find and re-grant/revoke
-    // exactly this kind of token (see reconcileSessionFacadeGrants).
+    // Legacy role tag preserved only for wire compatibility.
     ...(role && { role }),
   };
   writeTokens([...records, next]);
   return next;
 }
 
-/** Session roles whose tokens carry a config-governed full-access grant. */
+/** Legacy role vocabulary preserved in tokens.json for lossless upgrades. */
 export type SessionTokenRole = 'manager';
 
-/**
- * Bring every role-tagged session token's full-access grant in line with the
- * config that governs it (manager: agents.fleetFullAccess / per-project yolo —
- * resolved by the caller, this just applies). The MCP facade re-reads the token
- * record per request, so this IS the live apply: flipping a flag re-grants or
- * REVOKES a running manager's dispatch bypass immediately, no respawn. Only
- * session tokens
- * with a role are touched — remote pairings and plain facade workers never
- * carried the grant vocabulary and are left alone. Returns one entry per record
- * that actually CHANGED — a live session whose dispatch bypass just appeared or
- * vanished, which is exactly the set worth telling the user about (see
- * fullAccessGrants' announce step); an empty array means the flip touched
- * nothing live.
- */
+/** @deprecated Grant fields are inert; retained as a no-op compatibility API. */
 export interface SessionGrantFlip {
   sessionId: string;
   role: SessionTokenRole;
@@ -192,49 +175,18 @@ export interface SessionGrantFlip {
 }
 
 export function reconcileSessionFacadeGrants(
-  desired: Record<SessionTokenRole, boolean>,
+  _desired: Record<SessionTokenRole, boolean>,
 ): SessionGrantFlip[] {
-  const records = readTokens();
-  const flips: SessionGrantFlip[] = [];
-  const next = records.map((r) => {
-    if (!isSessionToken(r) || !r.role) return r;
-    const want = desired[r.role];
-    if (want === (r.yoloAllowed === true)) return r;
-    flips.push({
-      // isSessionToken already proved the prefix, but `label` is optional on
-      // the record type — read it defensively rather than assert.
-      sessionId: (r.label ?? '').slice(SESSION_LABEL_PREFIX.length),
-      role: r.role,
-      yoloAllowed: want,
-    });
-    const { yoloAllowed: _dropped, ...rest } = r;
-    return want ? { ...rest, yoloAllowed: true as const } : rest;
-  });
-  if (flips.length) writeTokens(next);
-  return flips;
+  return [];
 }
 
-/**
- * Reconcile ONE session's facade token: stamp its role (tokens minted before
- * roles existed have none — this is how a reused live manager adopts the tag)
- * and set its full-access grant to `yoloAllowed`. Returns whether the record
- * changed. No-op when the session has no token.
- */
+/** @deprecated Grant fields are inert; retained as a no-op compatibility API. */
 export function reconcileSessionFacadeToken(
-  sessionId: string,
-  role: SessionTokenRole,
-  yoloAllowed: boolean,
+  _sessionId: string,
+  _role: SessionTokenRole,
+  _yoloAllowed: boolean,
 ): boolean {
-  const label = SESSION_LABEL_PREFIX + sessionId;
-  const records = readTokens();
-  const idx = records.findIndex((r) => r.label === label);
-  if (idx < 0) return false;
-  const r = records[idx];
-  if (r.role === role && (r.yoloAllowed === true) === yoloAllowed) return false;
-  const { yoloAllowed: _dropped, ...rest } = r;
-  records[idx] = { ...rest, role, ...(yoloAllowed && { yoloAllowed: true as const }) };
-  writeTokens(records);
-  return true;
+  return false;
 }
 
 /** Revoke a session's facade token(s). No-op when none exist. */
@@ -286,20 +238,12 @@ export function revokeRemoteToken(token: string): RemoteTokenRecord {
   return removed;
 }
 
-/** Non-secret launch invariant. Never return or journal the bearer token. */
+/** Non-secret launch invariant. Legacy selection/grant fields are omitted. */
 export function sessionFacadeGrantFingerprint(sessionId: string): string | undefined {
   const r = readTokens().find((r) => r.label === SESSION_LABEL_PREFIX + sessionId);
   if (!r || r.scope !== 'operator' || r.role !== 'manager') return undefined;
   return crypto
     .createHash('sha256')
-    .update(
-      JSON.stringify({
-        scope: r.scope,
-        role: r.role,
-        plugins: [...(r.plugins ?? [])].sort(),
-        profilesAllowed: [...(r.profilesAllowed ?? [])].sort(),
-        yoloAllowed: !!r.yoloAllowed,
-      }),
-    )
+    .update(JSON.stringify({ scope: r.scope, role: r.role }))
     .digest('hex');
 }

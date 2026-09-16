@@ -1,7 +1,11 @@
 import { buildManagerInstructions } from '../shared/managerDoctrine';
 import { managerReplacementState } from './managerReplacementState';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
-import { sessionFacadeGrantFingerprint } from './remoteTokens';
+import {
+  mintSessionFacadeToken,
+  revokeSessionFacadeTokens,
+  sessionFacadeGrantFingerprint,
+} from './remoteTokens';
 import { prepareLaunchIntegration } from './launchIntegrations';
 /**
  * Shared managed-provider (Tier-2) spawn dispatch.
@@ -38,7 +42,6 @@ import {
   facadeUrlWithToken,
   type SessionMcpServer,
 } from './mcpConfig';
-import { mintSessionFacadeToken } from './remoteTokens';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import {
@@ -125,12 +128,7 @@ export interface ManagedSpawnOptions {
   /** Strip any permission bypass the chosen PROFILE carries — set on untrusted
    *  boundaries (the hub/remote spawn capability). See scrubBypassArgs. */
   scrubProfileBypass?: boolean;
-  /** The hub verified this spawn's caller holds a token whose profilesAllowed
-   *  grant names this profileId (fleet-manager dispatch). Softens the scrub to
-   *  scrubRemoteGrantedProfile — configDir kept, bypass args and mcpItemIds
-   *  still stripped. Only hubCapabilities sets it, from the hub-STAMPED param
-   *  (sanitizeSpawnParams deletes any caller-supplied copy). Meaningless
-   *  without scrubProfileBypass. */
+  /** Legacy compatibility field; profile grants are not enforced. */
   profileGranted?: boolean;
   /** A profile of THIS provider's harness: its config root (CLAUDE_CONFIG_DIR /
    *  CODEX_HOME / COPILOT_HOME) + extraArgs + any native preset — same
@@ -149,24 +147,13 @@ export interface ManagedSpawnOptions {
    *  route to it) — its doctrine rides its kickoff message. Callers pair it
    *  with toolScope 'operator'. */
   manager?: boolean;
-  /** Manager full-access HINT from the caller. The token's actual yolo grant
-   *  is config-resolved at mint (services/fullAccessGrants), so this flag no
-   *  longer decides anything here; it
-   *  is kept on the wire for record fidelity (the renderer persists it on the
-   *  agent card and re-passes it on respawn). */
+  /** Legacy compatibility field; never consulted as an authority grant. */
   fleetFullAccess?: boolean;
-  /** Wire the facade tools at the legacy operator tier — prefer `toolScope`. */
+  /** Legacy compatibility field; supported agents always receive the facade. */
   mcpFacade?: boolean;
-  /**
-   * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
-   * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
-   * 'operator' (everything). Mints a per-session scoped token the facade
-   * enforces, so the agent sees (and pays context for) only its tier's tools.
-   * Implies the facade; `mcpFacade` without it means 'operator'.
-   */
+  /** Legacy compatibility field; supported agents always receive operator tools. */
   toolScope?: RemoteTokenScope;
-  /** Plugin ids whose contributed facade tools this session may use (opt-in;
-   *  recorded on the session token — see authtoken.Record.Plugins). */
+  /** Legacy compatibility list; every enabled plugin is ambient. */
   pluginTools?: string[];
   label?: string;
   parentSessionId?: string;
@@ -373,257 +360,277 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     undefined,
     opts.manager ? 'manager' : undefined,
   ).token;
-  // Permission-mode vocabulary differs by family: Claude keeps its full mode
-  // set (an explicit mode wins; the legacy boolean maps to bypass — same
-  // resolution as the PTY path), managed providers are just ask/yolo.
-  const permissionMode = isClaudeStream
-    ? (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
-    : skipPermissions
-      ? 'yolo'
-      : 'ask';
-  const yolo = isClaudeStream
-    ? skipPermissions || permissionMode === 'bypassPermissions'
-    : skipPermissions;
-  // A profile maps to its harness's CONFIG ROOT plus its extra argv. The root
-  // is Claude-specific only by history — every harness with profiles has one
-  // (CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME, PROFILE_CAPS) — so the
-  // lookup is no longer gated on Claude. Library MCP selections stay Claude's
-  // alone: they become a session-scoped --mcp-config with --strict-mcp-config +
-  // pre-allowed tools, and managed providers register servers their own way.
-  // Facade sessions take the facade MCP config instead of the user's library
-  // servers, as on the PTY path.
-  //
-  // profileAppliesTo re-checks the harness even though both pickers filter on
-  // it: this dispatch is reachable from the hub bus, where no picker ran, and a
-  // Claude profile applied to a Codex spawn would point CODEX_HOME at a Claude
-  // config root — a broken session that looks like a working one.
-  const picked =
-    opts.profileId && providerTakesProfiles(provider)
-      ? claudeProfiles.getProfile(opts.profileId)
-      : undefined;
-  const rawProfile = profileAppliesTo(picked, provider) ? picked : undefined;
-  if (opts.profileId && picked && !rawProfile) {
-    console.warn(
-      `[managedSpawn] ignoring profile '${picked.name}' — it configures ` +
-        `${picked.provider ?? 'claude'}, not ${provider}`,
+  let facadeTokenOwnedByLaunch = true;
+  try {
+    // Permission-mode vocabulary differs by family: Claude keeps its full mode
+    // set (an explicit mode wins; the legacy boolean maps to bypass — same
+    // resolution as the PTY path), managed providers are just ask/yolo.
+    const permissionMode = isClaudeStream
+      ? (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
+      : skipPermissions
+        ? 'yolo'
+        : 'ask';
+    const yolo = isClaudeStream
+      ? skipPermissions || permissionMode === 'bypassPermissions'
+      : skipPermissions;
+    // A profile maps to its harness's CONFIG ROOT plus its extra argv. The root
+    // is Claude-specific only by history — every harness with profiles has one
+    // (CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME, PROFILE_CAPS) — so the
+    // lookup is no longer gated on Claude. Library MCP selections stay Claude's
+    // alone: they become a session-scoped --mcp-config with --strict-mcp-config +
+    // pre-allowed tools, and managed providers register servers their own way.
+    // Facade sessions take the facade MCP config instead of the user's library
+    // servers, as on the PTY path.
+    //
+    // profileAppliesTo re-checks the harness even though both pickers filter on
+    // it: this dispatch is reachable from the hub bus, where no picker ran, and a
+    // Claude profile applied to a Codex spawn would point CODEX_HOME at a Claude
+    // config root — a broken session that looks like a working one.
+    const picked =
+      opts.profileId && providerTakesProfiles(provider)
+        ? claudeProfiles.getProfile(opts.profileId)
+        : undefined;
+    const rawProfile = profileAppliesTo(picked, provider) ? picked : undefined;
+    if (opts.profileId && picked && !rawProfile) {
+      console.warn(
+        `[managedSpawn] ignoring profile '${picked.name}' — it configures ` +
+          `${picked.provider ?? 'claude'}, not ${provider}`,
+      );
+    }
+    const profile = rawProfile;
+    // The config root, plus (Copilot) the auth token the profile REFERENCES by
+    // variable name — resolved from this process's environment here, at spawn,
+    // and never stored. An unset name contributes nothing rather than an empty
+    // token that would out-rank copilot's own stored credential.
+    const env: Record<string, string> = {
+      ...profileConfigEnv(profile, os.homedir()),
+      ...profileTokenEnv(profile, process.env),
+    };
+    if (env.CLAUDE_CONFIG_DIR) {
+      // A Claude profile spawn inherits the primary login's trust for this folder
+      // — without it the account's own .claude.json (unlinked by design, and
+      // seeded empty by the old wrong-path read) gates the spawn on a trust
+      // dialog no headless/GUI surface ever renders. Claude-only because the
+      // trust map is a Claude file; the other harnesses have no equivalent.
+      syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
+    }
+    // extraArgs plus the harness's native preset flag (`codex -p <name>`) when
+    // the profile set one — see profileSpawnArgs for why the preset is appended
+    // after extraArgs.
+    const extraArgs: string[] = profileSpawnArgs(profile);
+    // Overlay settings (hooks + statusLine) so stream sessions carry our hooks
+    // without mutating the user's global settings.json — the stream analogue of
+    // the PTY path's `--settings` in buildClaudeArgv.
+    if (isClaudeStream && claudeSettingsOverlayEnabled()) {
+      extraArgs.push('--settings', claudemonOverlayPath());
+    }
+    // The Fleet Manager gets its own invocable skills (/standup, /checkpoint,
+    // /handoff) — the considered counterpart to its reactive brief doctrine.
+    // The install is routed to the directory THIS harness reads
+    // (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format).
+    if (opts.manager) {
+      if (opts.replacementSessionId) installManagerSkills(provider, true);
+      else installManagerSkills(provider);
+    }
+    // Response cards are a capability of the app, not of one role, so every
+    // managed session gets the skill — discovered natively where the harness has
+    // a skills root, and pointed at by one line of instructions where it does not
+    // (see responseCardSkill for why the split, and why nothing is pasted).
+    const cardInstruction = installResponseCardSkill(provider, cwd);
+    const collaborationInstruction = installAgentCollaborationSkills(provider, cwd);
+    // Claude stream + facade: the per-session config file (token as an
+    // Authorization header — a file path on argv, never the token itself, since
+    // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
+    // facadeSpawnArgs; pre-allowing mcp__workspacer matches it.
+    let userMcpServers: SessionMcpServer[] = [];
+    if (isClaudeStream && opts.mcpItemIds && opts.mcpItemIds.length) {
+      const wanted = new Set(opts.mcpItemIds);
+      // listWithSecrets, not list(): the config written below is what the CLI
+      // actually authenticates with, and list() masks MCP env/headers. The real
+      // values never leave main — the renderer sent only `mcpItemIds`.
+      userMcpServers = libraryService
+        .listWithSecrets(opts.cwd)
+        .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
+        .map((it) => ({ id: it.id, mcp: it.mcp! }));
+    }
+    if (isClaudeStream && facadeToken) {
+      extraArgs.push(
+        '--mcp-config',
+        facadeSessionMcpConfig(managedId, facadeToken, userMcpServers),
+      );
+      if (userMcpServers.length) extraArgs.push('--strict-mcp-config');
+      extraArgs.push(
+        '--allowedTools',
+        ['mcp__workspacer', ...userMcpServers.map((server) => `mcp__${server.id}`)].join(','),
+      );
+    }
+    const prepared = await prepareLaunchIntegration(
+      opts.launchIntegrationId,
+      { agent: provider, cwd, model: serializedModel, resume: !!opts.resumeSessionId },
+      { env, args: extraArgs, bin },
     );
-  }
-  const profile = rawProfile;
-  // The config root, plus (Copilot) the auth token the profile REFERENCES by
-  // variable name — resolved from this process's environment here, at spawn,
-  // and never stored. An unset name contributes nothing rather than an empty
-  // token that would out-rank copilot's own stored credential.
-  const env: Record<string, string> = {
-    ...profileConfigEnv(profile, os.homedir()),
-    ...profileTokenEnv(profile, process.env),
-  };
-  if (env.CLAUDE_CONFIG_DIR) {
-    // A Claude profile spawn inherits the primary login's trust for this folder
-    // — without it the account's own .claude.json (unlinked by design, and
-    // seeded empty by the old wrong-path read) gates the spawn on a trust
-    // dialog no headless/GUI surface ever renders. Claude-only because the
-    // trust map is a Claude file; the other harnesses have no equivalent.
-    syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
-  }
-  // extraArgs plus the harness's native preset flag (`codex -p <name>`) when
-  // the profile set one — see profileSpawnArgs for why the preset is appended
-  // after extraArgs.
-  const extraArgs: string[] = profileSpawnArgs(profile);
-  // Overlay settings (hooks + statusLine) so stream sessions carry our hooks
-  // without mutating the user's global settings.json — the stream analogue of
-  // the PTY path's `--settings` in buildClaudeArgv.
-  if (isClaudeStream && claudeSettingsOverlayEnabled()) {
-    extraArgs.push('--settings', claudemonOverlayPath());
-  }
-  // The Fleet Manager gets its own invocable skills (/standup, /checkpoint,
-  // /handoff) — the considered counterpart to its reactive brief doctrine.
-  // The install is routed to the directory THIS harness reads
-  // (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format).
-  if (opts.manager) {
-    if (opts.replacementSessionId) installManagerSkills(provider, true);
-    else installManagerSkills(provider);
-  }
-  // Response cards are a capability of the app, not of one role, so every
-  // managed session gets the skill — discovered natively where the harness has
-  // a skills root, and pointed at by one line of instructions where it does not
-  // (see responseCardSkill for why the split, and why nothing is pasted).
-  const cardInstruction = installResponseCardSkill(provider, cwd);
-  const collaborationInstruction = installAgentCollaborationSkills(provider, cwd);
-  // Claude stream + facade: the per-session config file (token as an
-  // Authorization header — a file path on argv, never the token itself, since
-  // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
-  // facadeSpawnArgs; pre-allowing mcp__workspacer matches it.
-  let userMcpServers: SessionMcpServer[] = [];
-  if (isClaudeStream && opts.mcpItemIds && opts.mcpItemIds.length) {
-    const wanted = new Set(opts.mcpItemIds);
-    // listWithSecrets, not list(): the config written below is what the CLI
-    // actually authenticates with, and list() masks MCP env/headers. The real
-    // values never leave main — the renderer sent only `mcpItemIds`.
-    userMcpServers = libraryService
-      .listWithSecrets(opts.cwd)
-      .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
-      .map((it) => ({ id: it.id, mcp: it.mcp! }));
-  }
-  if (isClaudeStream && facadeToken) {
-    extraArgs.push('--mcp-config', facadeSessionMcpConfig(managedId, facadeToken, userMcpServers));
-    if (userMcpServers.length) extraArgs.push('--strict-mcp-config');
-    extraArgs.push(
-      '--allowedTools',
-      ['mcp__workspacer', ...userMcpServers.map((server) => `mcp__${server.id}`)].join(','),
-    );
-  }
-  const prepared = await prepareLaunchIntegration(
-    opts.launchIntegrationId,
-    { agent: provider, cwd, model: serializedModel, resume: !!opts.resumeSessionId },
-    { env, args: extraArgs, bin },
-  );
-  claudeSessionStore.setSpawnMeta(managedId, {
-    cwd,
-    label: opts.label,
-    parentSessionId: opts.parentSessionId,
-    // This flag remains the Fleet Manager/global-broadcast marker. Ordinary
-    // parents receive only their own direct-child wakes via parentSessionId.
-    isWakeTarget: opts.manager,
-    provider,
-    ...(resultSchema && { resultSchema }),
-    ...(opts.routing && { routing: opts.routing }),
-    // What the CARD believes before the daemon's first frame arrives. Codex
-    // states both shapes (never just 'stream'-or-absent): 'pty' is now a real
-    // choice a caller can have made, and an absent key would read as "unknown"
-    // to a pane deciding whether to grow a Term view.
-    ...(isClaudeStream && { transport: 'stream' as const }),
-    ...(provider === 'codex' && { transport }),
-    settings: {
+    claudeSessionStore.setSpawnMeta(managedId, {
+      cwd,
+      label: opts.label,
+      parentSessionId: opts.parentSessionId,
+      // This flag remains the Fleet Manager/global-broadcast marker. Ordinary
+      // parents receive only their own direct-child wakes via parentSessionId.
+      isWakeTarget: opts.manager,
+      provider,
+      ...(resultSchema && { resultSchema }),
+      ...(opts.routing && { routing: opts.routing }),
+      // What the CARD believes before the daemon's first frame arrives. Codex
+      // states both shapes (never just 'stream'-or-absent): 'pty' is now a real
+      // choice a caller can have made, and an absent key would read as "unknown"
+      // to a pane deciding whether to grow a Term view.
+      ...(isClaudeStream && { transport: 'stream' as const }),
+      ...(provider === 'codex' && { transport }),
+      settings: {
+        model: serializedModel,
+        contextWindow: effectiveContextWindow,
+        effort: spawnEffort,
+        permissionMode,
+        // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
+        // adapter puts on the argv, and Claude gates live switches *to*
+        // bypassPermissions on it (the control protocol refuses otherwise). The
+        // managed providers have no such mode, so the field stays absent for them.
+        ...(isClaudeStream && {
+          bypassAvailable: yolo || extraArgs.includes('--dangerously-skip-permissions'),
+          // Claude reports its effective effort nowhere, so what an absent
+          // `--effort` resolves to is read from the settings chain at spawn (the
+          // stream argv takes the same flag as the PTY one). Codex's default comes
+          // from its live model catalog instead — the composer reads it there.
+          ...(!spawnEffort?.trim() && {
+            defaultEffort: resolveClaudeDefaultEffort(cwd, profile?.configDir),
+          }),
+        }),
+      },
+    });
+    const instructions = [
+      // An empty open starts no turn. Keep doctrine in the daemon's deferred
+      // instructions so the first real composer request still has the role.
+      opts.manager && !opts.resumeSessionId && !opts.firstMessage
+        ? buildManagerInstructions(false)
+        : '',
+      wantsFacade
+        ? managedFacadeInstructions({
+            scope: facadeScope,
+            sessionId: managedId,
+          })
+        : '',
+      isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
+      resultSchema ? buildResultContract(resultSchema) : '',
+      cardInstruction,
+      collaborationInstruction,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const sessionId = await claudemonSessionClient.spawnManaged({
+      provider,
+      cwd,
       model: serializedModel,
+      modelIdentity: modelSelection?.model,
       contextWindow: effectiveContextWindow,
       effort: spawnEffort,
-      permissionMode,
-      // Claude only: `yolo` is exactly the `--dangerously-skip-permissions` the
-      // adapter puts on the argv, and Claude gates live switches *to*
-      // bypassPermissions on it (the control protocol refuses otherwise). The
-      // managed providers have no such mode, so the field stays absent for them.
+      bin,
+      yolo,
+      sessionId: managedId,
+      // STATED, not implied. The daemon reads an absent key as "hybrid", which is
+      // the same thing a dropped field looks like — so a codex spawn always says
+      // which of its two shapes it is, and a wire capture is enough to tell a
+      // defaulted headless spawn from a downgraded one.
+      ...(provider === 'codex' && { transport }),
+      // Codex resume: claudemon rejoins the prior life's app-server thread and
+      // replays its rollout (headless-only; the daemon forces stream transport).
+      ...(provider === 'codex' &&
+        opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
+      // Claude stream adapter extras: the full permission mode and (on a
+      // respawn) the prior conversation to `--resume`.
       ...(isClaudeStream && {
-        bypassAvailable: yolo || extraArgs.includes('--dangerously-skip-permissions'),
-        // Claude reports its effective effort nowhere, so what an absent
-        // `--effort` resolves to is read from the settings chain at spawn (the
-        // stream argv takes the same flag as the PTY one). Codex's default comes
-        // from its live model catalog instead — the composer reads it there.
-        ...(!spawnEffort?.trim() && {
-          defaultEffort: resolveClaudeDefaultEffort(cwd, profile?.configDir),
+        permissionMode,
+        ...(opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
+      }),
+      // The profile's config-root env and its extra argv. Sent for EVERY harness
+      // that takes profiles, not just Claude: `CODEX_HOME` / `COPILOT_HOME` are
+      // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
+      // the same argv channel. Both keys stay off the payload when empty, so a
+      // profile-less spawn is byte-identical to what it sent before.
+      ...(prepared.args.length && { extraArgs: prepared.args }),
+      ...(Object.keys(prepared.env).length && { env: prepared.env }),
+      ...(wantsFacade && {
+        // Claude stream carries the facade via the --mcp-config file above, so
+        // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
+        // override / opencode.json) and cannot send headers, so their token
+        // rides a `?t=` query param the facade also accepts. Pi is refused at
+        // the public boundary because it has no MCP client.
+        ...(!isClaudeStream && {
+          mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
         }),
       }),
-    },
-  });
-  const instructions = [
-    // An empty open starts no turn. Keep doctrine in the daemon's deferred
-    // instructions so the first real composer request still has the role.
-    opts.manager && !opts.resumeSessionId && !opts.firstMessage
-      ? buildManagerInstructions(configService.getConfig().agents?.fleetFullAccess === true)
-      : '',
-    wantsFacade
-      ? managedFacadeInstructions({
-          scope: facadeScope,
-          sessionId: managedId,
-        })
-      : '',
-    isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
-    resultSchema ? buildResultContract(resultSchema) : '',
-    cardInstruction,
-    collaborationInstruction,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
-  const sessionId = await claudemonSessionClient.spawnManaged({
-    provider,
-    cwd,
-    model: serializedModel,
-    modelIdentity: modelSelection?.model,
-    contextWindow: effectiveContextWindow,
-    effort: spawnEffort,
-    bin,
-    yolo,
-    sessionId: managedId,
-    // STATED, not implied. The daemon reads an absent key as "hybrid", which is
-    // the same thing a dropped field looks like — so a codex spawn always says
-    // which of its two shapes it is, and a wire capture is enough to tell a
-    // defaulted headless spawn from a downgraded one.
-    ...(provider === 'codex' && { transport }),
-    // Codex resume: claudemon rejoins the prior life's app-server thread and
-    // replays its rollout (headless-only; the daemon forces stream transport).
-    ...(provider === 'codex' && opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
-    // Claude stream adapter extras: the full permission mode and (on a
-    // respawn) the prior conversation to `--resume`.
-    ...(isClaudeStream && {
-      permissionMode,
-      ...(opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
-    }),
-    // The profile's config-root env and its extra argv. Sent for EVERY harness
-    // that takes profiles, not just Claude: `CODEX_HOME` / `COPILOT_HOME` are
-    // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
-    // the same argv channel. Both keys stay off the payload when empty, so a
-    // profile-less spawn is byte-identical to what it sent before.
-    ...(prepared.args.length && { extraArgs: prepared.args }),
-    ...(Object.keys(prepared.env).length && { env: prepared.env }),
-    ...(wantsFacade && {
-      // Claude stream carries the facade via the --mcp-config file above, so
-      // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
-      // override / opencode.json) and cannot send headers, so their token
-      // rides a `?t=` query param the facade also accepts. Pi is refused at
-      // the public boundary because it has no MCP client.
-      ...(!isClaudeStream && {
-        mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
-      }),
-    }),
-    // First-turn instructions: the facade role note (when this session has the
-    // facade), the fleet-worker terminal escalation contract, and the optional
-    // structured-result contract, joined so none overwrites another — the
-    // daemon takes ONE instructions string. Fleet workers get escalation even
-    // when no facade or resultSchema was requested.
-    ...(instructions && { instructions }),
-    // The dispatch prompt itself — a SEPARATE field, never folded into
-    // `instructions` above, because `instructions` alone never starts a turn
-    // (see ManagedSpawnOptions.firstMessage). The daemon prepends one to the
-    // other, so the contract still lands ahead of the task.
-    ...(opts.firstMessage && { firstMessage: opts.firstMessage }),
-  });
-  // The adapter emits no conversation delta until the agent first produces
-  // output, and managed backends fire no Claude hooks — so register the session
-  // now, or its GUI pane would sit on the empty "connecting" state (showing
-  // "no session") until the first message. The conversation/statusline streams
-  // enrich this entry as the agent runs. (Stream-transport Claude *does* fire
-  // hooks, but only after the first turn starts — same gap, same fix.)
-  claudeSessionStore.ensureManagedSession(sessionId, cwd);
-  if (opts.manager && facadeScope === 'operator') {
-    const grants = sessionFacadeGrantFingerprint(sessionId);
-    if (grants) {
-      const {
-        firstMessage: _message,
-        resumeSessionId: _resume,
-        replacementSessionId: _replacement,
-        ...record
-      } = opts;
-      try {
-        managerReplacementState.rememberLaunch(sessionId, {
-          options: {
-            ...record,
-            cwd,
-            transport,
-            model: serializedModel,
-            modelIdentity: modelSelection?.model,
-            contextWindow: effectiveContextWindow,
-            effort: spawnEffort,
-            permissionMode,
-            skipPermissions: yolo,
-          },
-          grants,
-          configuration: managerLaunchConfiguration(opts),
-        });
-      } catch (error) {
-        console.warn('[manager-handoff] launch provenance unavailable', error);
+      // First-turn instructions: the facade role note (when this session has the
+      // facade), the fleet-worker terminal escalation contract, and the optional
+      // structured-result contract, joined so none overwrites another — the
+      // daemon takes ONE instructions string. Fleet workers get escalation even
+      // when no facade or resultSchema was requested.
+      ...(instructions && { instructions }),
+      // The dispatch prompt itself — a SEPARATE field, never folded into
+      // `instructions` above, because `instructions` alone never starts a turn
+      // (see ManagedSpawnOptions.firstMessage). The daemon prepends one to the
+      // other, so the contract still lands ahead of the task.
+      ...(opts.firstMessage && { firstMessage: opts.firstMessage }),
+    });
+    facadeTokenOwnedByLaunch = false; // the live session store owns revocation
+    // The adapter emits no conversation delta until the agent first produces
+    // output, and managed backends fire no Claude hooks — so register the session
+    // now, or its GUI pane would sit on the empty "connecting" state (showing
+    // "no session") until the first message. The conversation/statusline streams
+    // enrich this entry as the agent runs. (Stream-transport Claude *does* fire
+    // hooks, but only after the first turn starts — same gap, same fix.)
+    claudeSessionStore.ensureManagedSession(sessionId, cwd);
+    if (opts.manager && facadeScope === 'operator') {
+      const grants = sessionFacadeGrantFingerprint(sessionId);
+      if (grants) {
+        const {
+          firstMessage: _message,
+          resumeSessionId: _resume,
+          replacementSessionId: _replacement,
+          ...record
+        } = opts;
+        try {
+          managerReplacementState.rememberLaunch(sessionId, {
+            options: {
+              ...record,
+              cwd,
+              transport,
+              model: serializedModel,
+              modelIdentity: modelSelection?.model,
+              contextWindow: effectiveContextWindow,
+              effort: spawnEffort,
+              permissionMode,
+              skipPermissions: yolo,
+            },
+            grants,
+            configuration: managerLaunchConfiguration(opts),
+          });
+        } catch (error) {
+          console.warn('[manager-handoff] launch provenance unavailable', error);
+        }
       }
     }
+    return sessionId;
+  } catch (error) {
+    if (facadeTokenOwnedByLaunch) {
+      try {
+        revokeSessionFacadeTokens(managedId);
+      } catch (cleanupError) {
+        console.error(
+          `[managedSpawn] failed to revoke token for failed spawn ${managedId}:`,
+          cleanupError,
+        );
+      }
+    }
+    throw error;
   }
-  return sessionId;
 }
 
 /**
@@ -683,89 +690,105 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     undefined,
     opts.manager ? 'manager' : undefined,
   ).token;
-  const facadeUrl = facadeUrlWithToken(facadeToken);
-  // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
-  // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
-  // approval/sandbox prompts so the TUI doesn't block on them.
-  const model = spawnModel;
-  const effort = spawnEffort;
-  const argv = [
-    bin,
-    ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
-    ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
-    ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
-    '-c',
-    `mcp_servers.workspacer.url=${JSON.stringify(facadeUrl)}`,
-    // Codex has a real hidden instruction channel even on this PTY-only
-    // rollout path. Keep the task as the user turn (so transcript
-    // reconstruction never displays host contract text), while the contract
-    // remains present before and without a firstMessage.
-    '-c',
-    `developer_instructions=${JSON.stringify(
-      [
-        managedFacadeInstructions({ sessionId }),
-        isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
-        cardInstruction,
-        collaborationInstruction,
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-    )}`,
-    ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
-  ];
-  const picked = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
-  const rawProfile = profileAppliesTo(picked, 'codex') ? picked : undefined;
-  const profile = rawProfile;
-  const prepared = await prepareLaunchIntegration(
-    opts.launchIntegrationId,
-    { agent: 'codex', cwd, model: spawnModel, resume: !!opts.resumeSessionId },
-    {
+  let facadeTokenOwnedByLaunch = true;
+  try {
+    const facadeUrl = facadeUrlWithToken(facadeToken);
+    // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
+    // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
+    // approval/sandbox prompts so the TUI doesn't block on them.
+    const model = spawnModel;
+    const effort = spawnEffort;
+    const argv = [
       bin,
-      env: profileConfigEnv(profile, os.homedir()),
-      args: [...argv.slice(1), ...profileSpawnArgs(profile)],
-    },
-  );
-  claudeSessionStore.setSpawnMeta(sessionId, {
-    cwd,
-    label: opts.label,
-    parentSessionId: opts.parentSessionId,
-    // Fleet Manager/global-broadcast marker; direct-child wakes do not require it.
-    isWakeTarget: opts.manager,
-    provider: 'codex',
-    // The hybrid branch records routing too: it is reached through
-    // spawnManagedAgent (codex on transport 'pty'), so the same dispatch can
-    // land here, and a routed worker whose snapshot forgot its role is exactly
-    // the silent loss this field exists to prevent.
-    ...(opts.routing && { routing: opts.routing }),
-    // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
-    // it says so rather than leaving the field absent: with codex defaulting to
-    // headless, "no transport recorded" would read as the default, not as this.
-    transport: 'pty' as const,
-    settings: {
+      ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
+      ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+      ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
+      '-c',
+      `mcp_servers.workspacer.url=${JSON.stringify(facadeUrl)}`,
+      // Codex has a real hidden instruction channel even on this PTY-only
+      // rollout path. Keep the task as the user turn (so transcript
+      // reconstruction never displays host contract text), while the contract
+      // remains present before and without a firstMessage.
+      '-c',
+      `developer_instructions=${JSON.stringify(
+        [
+          managedFacadeInstructions({ sessionId }),
+          isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
+          cardInstruction,
+          collaborationInstruction,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      )}`,
+      ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
+    ];
+    const picked = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+    const rawProfile = profileAppliesTo(picked, 'codex') ? picked : undefined;
+    const profile = rawProfile;
+    const prepared = await prepareLaunchIntegration(
+      opts.launchIntegrationId,
+      { agent: 'codex', cwd, model: spawnModel, resume: !!opts.resumeSessionId },
+      {
+        bin,
+        env: profileConfigEnv(profile, os.homedir()),
+        args: [...argv.slice(1), ...profileSpawnArgs(profile)],
+      },
+    );
+    claudeSessionStore.setSpawnMeta(sessionId, {
+      cwd,
+      label: opts.label,
+      parentSessionId: opts.parentSessionId,
+      // Fleet Manager/global-broadcast marker; direct-child wakes do not require it.
+      isWakeTarget: opts.manager,
+      provider: 'codex',
+      // The hybrid branch records routing too: it is reached through
+      // spawnManagedAgent (codex on transport 'pty'), so the same dispatch can
+      // land here, and a routed worker whose snapshot forgot its role is exactly
+      // the silent loss this field exists to prevent.
+      ...(opts.routing && { routing: opts.routing }),
+      // This branch IS a PTY session (codex's own TUI + a transcript tailer), so
+      // it says so rather than leaving the field absent: with codex defaulting to
+      // headless, "no transport recorded" would read as the default, not as this.
+      transport: 'pty' as const,
+      settings: {
+        model: spawnModel,
+        contextWindow: hybridContextWindow,
+        effort: spawnEffort,
+        permissionMode: skipPermissions ? 'yolo' : 'ask',
+      },
+    });
+    // Show the card immediately; the rollout tailer + conversation stream enrich it.
+    claudeSessionStore.ensureManagedSession(sessionId, cwd);
+    await claudemonSessionClient.spawn({
+      argv: [bin, ...prepared.args],
+      env: prepared.env,
+      cwd,
+      // Explicit, not sniffed off the argv: the daemon records the requested
+      // model from this field, and a Codex resume puts nothing on the argv.
       model: spawnModel,
+      modelIdentity: hybridSelection?.model,
       contextWindow: hybridContextWindow,
-      effort: spawnEffort,
-      permissionMode: skipPermissions ? 'yolo' : 'ask',
-    },
-  });
-  // Show the card immediately; the rollout tailer + conversation stream enrich it.
-  claudeSessionStore.ensureManagedSession(sessionId, cwd);
-  await claudemonSessionClient.spawn({
-    argv: [bin, ...prepared.args],
-    env: prepared.env,
-    cwd,
-    // Explicit, not sniffed off the argv: the daemon records the requested
-    // model from this field, and a Codex resume puts nothing on the argv.
-    model: spawnModel,
-    modelIdentity: hybridSelection?.model,
-    contextWindow: hybridContextWindow,
-    cols: opts.cols ?? 120,
-    rows: opts.rows ?? 32,
-    sessionId,
-    rolloutProvider: 'codex',
-    // The hidden developer_instructions config above carries host contracts;
-    // this remains exactly the user's task and therefore reconstructs cleanly.
-    firstMessage: opts.firstMessage,
-  });
-  return sessionId;
+      cols: opts.cols ?? 120,
+      rows: opts.rows ?? 32,
+      sessionId,
+      rolloutProvider: 'codex',
+      // The hidden developer_instructions config above carries host contracts;
+      // this remains exactly the user's task and therefore reconstructs cleanly.
+      firstMessage: opts.firstMessage,
+    });
+    facadeTokenOwnedByLaunch = false; // the live session store owns revocation
+    return sessionId;
+  } catch (error) {
+    if (facadeTokenOwnedByLaunch) {
+      try {
+        revokeSessionFacadeTokens(sessionId);
+      } catch (cleanupError) {
+        console.error(
+          `[managedSpawn] failed to revoke token for failed spawn ${sessionId}:`,
+          cleanupError,
+        );
+      }
+    }
+    throw error;
+  }
 }

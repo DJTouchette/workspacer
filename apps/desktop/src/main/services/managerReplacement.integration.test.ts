@@ -410,7 +410,9 @@ it('runs the real local transaction without resuming, transferring both task kin
       ([id, text]) => id === op.successorSessionId && text.includes('Second result'),
     ),
   ).toHaveLength(1);
-  for (const fault of ['identity', 'cwd', 'provider', 'grants']) {
+  // Legacy plugin/profile/yolo fields are intentionally excluded: they no
+  // longer participate in identity or handoff readiness.
+  for (const fault of ['identity', 'cwd', 'provider']) {
     rig.fault = fault;
     const refused = await managerReplacementService.request({
       action: 'start',

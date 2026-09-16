@@ -43,7 +43,7 @@ import {
 import { installManagerSkills } from './managerSkills';
 import { installResponseCardSkill } from './responseCardSkill';
 import { installAgentCollaborationSkills } from './agentCollaborationSkills';
-import { mintSessionFacadeToken } from './remoteTokens';
+import { mintSessionFacadeToken, revokeSessionFacadeTokens } from './remoteTokens';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
@@ -72,12 +72,7 @@ export interface ClaudeSpawnOptions {
    *  request's own fields is not enough when a profile can smuggle the same
    *  flag in through extraArgs. */
   scrubProfileBypass?: boolean;
-  /** The hub verified this spawn's caller holds a token whose profilesAllowed
-   *  grant names this profileId (fleet-manager dispatch). Softens the scrub to
-   *  scrubRemoteGrantedProfile — configDir kept, bypass args and mcpItemIds
-   *  still stripped. Only hubCapabilities sets it, from the hub-STAMPED param
-   *  (sanitizeSpawnParams deletes any caller-supplied copy). Meaningless
-   *  without scrubProfileBypass. */
+  /** Legacy compatibility field; profile grants are not enforced. */
   profileGranted?: boolean;
   /** YOLO / `--dangerously-skip-permissions`. */
   skipPermissions?: boolean;
@@ -86,24 +81,13 @@ export interface ClaudeSpawnOptions {
   /** Fleet Manager: nudge-eligible parent (isWakeTarget spawn meta) — see
    *  managedSpawn's twin field. */
   manager?: boolean;
-  /** Manager full-access HINT from the caller. The token's actual yolo grant
-   *  is config-resolved at mint (services/fullAccessGrants), so this flag no
-   *  longer decides anything here; it
-   *  is kept on the wire for record fidelity (the renderer persists it on the
-   *  agent card and re-passes it on respawn). */
+  /** Legacy compatibility field; never consulted as an authority grant. */
   fleetFullAccess?: boolean;
-  /** Wire the facade tools at the legacy operator tier — prefer `toolScope`. */
+  /** Legacy compatibility field; supported agents always receive the facade. */
   mcpFacade?: boolean;
-  /**
-   * Grant the workspacer facade tools at a TIER: 'view' (observe-only — right
-   * for summarizer workers), 'triage' (view + approve/reply/interrupt), or
-   * 'operator' (everything). Mints a per-session scoped token the facade
-   * enforces, so the agent sees (and pays context for) only its tier's tools.
-   * Implies the facade; `mcpFacade` without it means 'operator'.
-   */
+  /** Legacy compatibility field; supported agents always receive operator tools. */
   toolScope?: RemoteTokenScope;
-  /** Plugin ids whose contributed facade tools this session may use (opt-in;
-   *  recorded on the session token — see authtoken.Record.Plugins). */
+  /** Legacy compatibility list; every enabled plugin is ambient. */
   pluginTools?: string[];
   label?: string;
   parentSessionId?: string;
@@ -294,113 +278,132 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   // second spread would silently drop whichever key lost. A non-facade worker
   // (the common ship-task dispatch) gets the contract as its only appended
   // prompt.
-  const facadeArgs =
-    wantsFacade &&
-    facadeSpawnArgs({
-      sessionId,
-      additionalServers: userMcpServers,
-      // The token identifies and revokes this session. Operator authority and
-      // enabled-plugin tools are ambient; legacy profile/yolo grant fields are
-      // intentionally absent.
-      token: mintSessionFacadeToken(
-        sessionId,
-        'operator',
-        ['*'],
-        undefined,
-        undefined,
-        opts.manager ? 'manager' : undefined,
-      ).token,
-    });
-  const resultContract = resultSchema ? buildResultContract(resultSchema) : '';
-  const escalationContract = isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '';
-  const appendSystemPrompt = [
-    facadeArgs ? facadeArgs.appendSystemPrompt : '',
-    escalationContract,
-    resultContract,
-    cardInstruction,
-    collaborationInstruction,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
-
-  const argv = buildClaudeArgv({
-    extraArgs: profile?.extraArgs,
-    resumeSessionId: opts.resumeSessionId,
-    model,
-    contextWindow: modelSelection?.contextWindow,
-    effort,
-    settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
-    skipPermissions,
-    permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
+  let facadeTokenMinted = false;
+  const facadeToken = mintSessionFacadeToken(
     sessionId,
-    // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
-    // The per-session token pins
-    // the tier server-side — the facade refuses calls outside it even if the
-    // agent guesses tool names. Built above so the structured-result contract
-    // can share the one --append-system-prompt.
-    ...(facadeArgs && {
-      mcpConfig: facadeArgs.mcpConfig,
-      allowedTools: facadeArgs.allowedTools,
-      ...(userMcpServers.length && { strictMcpConfig: true }),
-    }),
-    ...(appendSystemPrompt && { appendSystemPrompt }),
-  });
-  // The cwd is used exactly as written — normalizeSpawnCwd trims and nothing
-  // more, deliberately (BINDING DECISION 1:
-  // no layer on a caller's path expands '~'). Which is why the pre-flight below
-  // has to exist: a path that cannot be a working directory must fail HERE,
-  // where the user is told, rather than as a session claudemon registers and
-  // then stops the instant the child fails to launch.
-  let cwd = normalizeSpawnCwd(opts.cwd);
-  assertSpawnCwd(cwd);
-  // A profile spawn inherits the primary login's trust for this folder, or a
-  // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
-  if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
-  const prepared = await prepareLaunchIntegration(
-    opts.launchIntegrationId,
-    { agent: 'claude', cwd, model, resume: !!opts.resumeSessionId },
-    { env, args: argv.slice(1) },
-  );
-  // Record name/parent before the session registers so adopted cards are
-  // enriched from the very first hook event.
-  claudeSessionStore.setSpawnMeta(sessionId, {
-    cwd,
-    label: opts.label,
-    parentSessionId: opts.parentSessionId,
-    isWakeTarget: opts.manager,
-    provider: 'claude',
-    ...(resultSchema && { resultSchema }),
-    ...(opts.routing && { routing: opts.routing }),
-    settings: {
-      model: serializedModel,
-      // Requested/provisional. Provider telemetry later owns
-      // resolvedContextWindow and may correct this without rewriting history.
+    'operator',
+    ['*'],
+    undefined,
+    undefined,
+    opts.manager ? 'manager' : undefined,
+  ).token;
+  facadeTokenMinted = true;
+  try {
+    const facadeArgs =
+      wantsFacade &&
+      facadeSpawnArgs({
+        sessionId,
+        additionalServers: userMcpServers,
+        // The token identifies and revokes this session. Operator authority and
+        // enabled-plugin tools are ambient; legacy profile/yolo grant fields are
+        // intentionally absent.
+        token: facadeToken,
+      });
+    const resultContract = resultSchema ? buildResultContract(resultSchema) : '';
+    const escalationContract = isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '';
+    const appendSystemPrompt = [
+      facadeArgs ? facadeArgs.appendSystemPrompt : '',
+      escalationContract,
+      resultContract,
+      cardInstruction,
+      collaborationInstruction,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const argv = buildClaudeArgv({
+      extraArgs: profile?.extraArgs,
+      resumeSessionId: opts.resumeSessionId,
+      model,
       contextWindow: modelSelection?.contextWindow,
       effort,
-      permissionMode,
-      bypassAvailable,
-      // What an absent `--effort` resolves to, so the pill can name the level
-      // instead of the word "Default". The CLI reports it nowhere.
-      ...(!effort?.trim() && {
-        defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
+      settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
+      skipPermissions,
+      permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
+      sessionId,
+      // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
+      // The per-session token pins
+      // the tier server-side — the facade refuses calls outside it even if the
+      // agent guesses tool names. Built above so the structured-result contract
+      // can share the one --append-system-prompt.
+      ...(facadeArgs && {
+        mcpConfig: facadeArgs.mcpConfig,
+        allowedTools: facadeArgs.allowedTools,
+        ...(userMcpServers.length && { strictMcpConfig: true }),
       }),
-    },
-  });
+      ...(appendSystemPrompt && { appendSystemPrompt }),
+    });
+    // The cwd is used exactly as written — normalizeSpawnCwd trims and nothing
+    // more, deliberately (BINDING DECISION 1:
+    // no layer on a caller's path expands '~'). Which is why the pre-flight below
+    // has to exist: a path that cannot be a working directory must fail HERE,
+    // where the user is told, rather than as a session claudemon registers and
+    // then stops the instant the child fails to launch.
+    let cwd = normalizeSpawnCwd(opts.cwd);
+    assertSpawnCwd(cwd);
+    // A profile spawn inherits the primary login's trust for this folder, or a
+    // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
+    if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
+    const prepared = await prepareLaunchIntegration(
+      opts.launchIntegrationId,
+      { agent: 'claude', cwd, model, resume: !!opts.resumeSessionId },
+      { env, args: argv.slice(1) },
+    );
+    // Record name/parent before the session registers so adopted cards are
+    // enriched from the very first hook event.
+    claudeSessionStore.setSpawnMeta(sessionId, {
+      cwd,
+      label: opts.label,
+      parentSessionId: opts.parentSessionId,
+      isWakeTarget: opts.manager,
+      provider: 'claude',
+      ...(resultSchema && { resultSchema }),
+      ...(opts.routing && { routing: opts.routing }),
+      settings: {
+        model: serializedModel,
+        // Requested/provisional. Provider telemetry later owns
+        // resolvedContextWindow and may correct this without rewriting history.
+        contextWindow: modelSelection?.contextWindow,
+        effort,
+        permissionMode,
+        bypassAvailable,
+        // What an absent `--effort` resolves to, so the pill can name the level
+        // instead of the word "Default". The CLI reports it nowhere.
+        ...(!effort?.trim() && {
+          defaultEffort: resolveClaudeDefaultEffort(opts.cwd, profile?.configDir),
+        }),
+      },
+    });
 
-  return claudemonSessionClient.spawn({
-    argv: [argv[0], ...prepared.args],
-    cwd,
-    cols: opts.cols,
-    rows: opts.rows,
-    env: prepared.env,
-    sessionId,
-    // Explicitly, not only via `--model` on the argv: a resume re-uses the
-    // prior life's model without re-stating it, and the daemon's argv sniffing
-    // would find nothing to record for exactly the sessions that have the most
-    // history to mis-measure.
-    model: serializedModel,
-    modelIdentity: modelSelection?.model,
-    contextWindow: modelSelection?.contextWindow,
-    firstMessage: opts.firstMessage,
-  });
+    const launched = await claudemonSessionClient.spawn({
+      argv: [argv[0], ...prepared.args],
+      cwd,
+      cols: opts.cols,
+      rows: opts.rows,
+      env: prepared.env,
+      sessionId,
+      // Explicitly, not only via `--model` on the argv: a resume re-uses the
+      // prior life's model without re-stating it, and the daemon's argv sniffing
+      // would find nothing to record for exactly the sessions that have the most
+      // history to mis-measure.
+      model: serializedModel,
+      modelIdentity: modelSelection?.model,
+      contextWindow: modelSelection?.contextWindow,
+      firstMessage: opts.firstMessage,
+    });
+    facadeTokenMinted = false; // the session store owns revocation from here
+    return launched;
+  } catch (error) {
+    if (facadeTokenMinted) {
+      try {
+        revokeSessionFacadeTokens(sessionId);
+      } catch (cleanupError) {
+        console.error(
+          `[claudeSpawn] failed to revoke token for failed spawn ${sessionId}:`,
+          cleanupError,
+        );
+      }
+    }
+    throw error;
+  }
 }

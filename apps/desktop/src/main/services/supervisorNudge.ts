@@ -81,6 +81,8 @@ export type RemoteWakeKind = 'worker-finished' | 'worker-escalated' | 'blocked' 
 
 interface PendingFinish {
   timer: NodeJS.Timeout;
+  /** Only Fleet Managers receive task/workflow continuation doctrine. */
+  parentIsWakeTarget: boolean;
   /** Scheduled entry + the live session it was built from, per worker id. */
   workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>;
 }
@@ -240,7 +242,12 @@ class SupervisorNudge {
    * its live session when the coalesce window closes (see sendFinished) so an
    * idle blip mid-stream never reports a half-done result as final.
    */
-  onFinished(session: PendingReadOnlySession, parentId: string, lastReply: string): void {
+  onFinished(
+    session: PendingReadOnlySession,
+    parentId: string,
+    lastReply: string,
+    parentIsWakeTarget = true,
+  ): void {
     if (parentId === session.sessionId) return;
     // Misfire guard: a freshly spawned worker idles once BEFORE the parent's
     // task message is delivered — that boot idle is not a finish.
@@ -260,15 +267,16 @@ class SupervisorNudge {
     const pending = this.pendingFinished.get(parentId);
     if (pending) {
       pending.workers.set(session.sessionId, { entry: finishedEntry, session });
+      pending.parentIsWakeTarget ||= parentIsWakeTarget;
       return;
     }
     const workers = new Map([[session.sessionId, { entry: finishedEntry, session }]]);
     const timer = setTimeout(() => {
       this.pendingFinished.delete(parentId);
-      void this.sendFinished(parentId, workers);
+      void this.sendFinished(parentId, workers, parentIsWakeTarget);
     }, COALESCE_MS);
     timer.unref?.();
-    this.pendingFinished.set(parentId, { timer, workers });
+    this.pendingFinished.set(parentId, { timer, workers, parentIsWakeTarget });
   }
 
   /**
@@ -308,15 +316,20 @@ class SupervisorNudge {
     const existing = this.pendingFinished.get(newParentId);
     if (existing) {
       for (const [workerId, worker] of pending.workers) existing.workers.set(workerId, worker);
+      existing.parentIsWakeTarget ||= pending.parentIsWakeTarget;
       return;
     }
     const workers = pending.workers;
     const timer = setTimeout(() => {
       this.pendingFinished.delete(newParentId);
-      void this.sendFinished(newParentId, workers);
+      void this.sendFinished(newParentId, workers, pending.parentIsWakeTarget);
     }, COALESCE_MS);
     timer.unref?.();
-    this.pendingFinished.set(newParentId, { timer, workers });
+    this.pendingFinished.set(newParentId, {
+      timer,
+      workers,
+      parentIsWakeTarget: pending.parentIsWakeTarget,
+    });
   }
 
   /**
@@ -385,7 +398,7 @@ class SupervisorNudge {
         attachWorkerEscalation(entry, reply);
         return entry;
       });
-      void this.sendCatchUp(manager.sessionId, entries);
+      void this.sendCatchUp(manager.sessionId, entries, manager.isWakeTarget === true);
     }
   }
 
@@ -406,7 +419,11 @@ class SupervisorNudge {
     return reported === finishSignature(entry, reply);
   }
 
-  private async sendCatchUp(parentId: string, entries: FleetMessageEntry[]): Promise<void> {
+  private async sendCatchUp(
+    parentId: string,
+    entries: FleetMessageEntry[],
+    parentIsWakeTarget: boolean,
+  ): Promise<void> {
     const escalated = entries.filter((entry) => entry.escalation);
     const completed = entries.filter((entry) => !entry.escalation);
     for (const [kind, group] of [
@@ -417,7 +434,8 @@ class SupervisorNudge {
       try {
         await claudemonSessionClient.message(
           parentId,
-          buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId)),
+          buildFleetMessage(kind, group) +
+            (parentIsWakeTarget ? workflowWakeInstructions(group.map((e) => e.sessionId)) : ''),
         );
       } catch {
         /* still unreachable — the next sweep retries */
@@ -441,9 +459,10 @@ class SupervisorNudge {
   private sendFinished(
     parentId: string,
     workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
+    parentIsWakeTarget: boolean,
   ): Promise<void> {
     const pending = this.inFlightFinished.get(parentId) ?? new Set<Promise<void>>();
-    const sending = this.deliverFinished(parentId, workers).finally(() => {
+    const sending = this.deliverFinished(parentId, workers, parentIsWakeTarget).finally(() => {
       pending.delete(sending);
       if (!pending.size) this.inFlightFinished.delete(parentId);
     });
@@ -460,7 +479,7 @@ class SupervisorNudge {
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingFinished.delete(id);
-        await this.sendFinished(id, pending.workers);
+        await this.sendFinished(id, pending.workers, pending.parentIsWakeTarget);
       }
       await Promise.all([...(this.inFlightFinished.get(id) ?? [])]);
     }
@@ -469,6 +488,7 @@ class SupervisorNudge {
   private async deliverFinished(
     parentId: string,
     workers: Map<string, { entry: FleetMessageEntry; session: FinishedWorker }>,
+    parentIsWakeTarget: boolean,
   ): Promise<void> {
     const entries: FleetMessageEntry[] = [];
     /** Signatures to book as reported — applied only after the send lands. */
@@ -604,7 +624,8 @@ class SupervisorNudge {
     for (const { kind, group, target } of batches) {
       if (group.length === 0) continue;
       const text =
-        buildFleetMessage(kind, group) + workflowWakeInstructions(group.map((e) => e.sessionId));
+        buildFleetMessage(kind, group) +
+        (parentIsWakeTarget ? workflowWakeInstructions(group.map((e) => e.sessionId)) : '');
       const pairs = group.map(
         (e) => [e.sessionId, signatureById.get(e.sessionId)!] as [string, string],
       );

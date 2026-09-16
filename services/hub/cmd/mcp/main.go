@@ -98,8 +98,14 @@ func main() {
 	// Plugin-contributed tools: poll the hub's enabled surface and graft every
 	// tool onto every authenticated agent server.
 	catalog := newPluginCatalog(client)
+	if err := catalog.waitInitial(ctx); err != nil {
+		log.Fatalf("mcp: initial plugin catalog synchronization failed: %v", err)
+	}
 	go catalog.run(ctx)
-	mux := newMux(newServerCache(client, catalog, tierServers(client)), client, gate)
+	mux := newMux(newServerCache(client, catalog, tierServers(client)), client, gate, facadeHealthMeta{
+		ListenAddr: *addr,
+		HubURL:     *hubURL,
+	})
 
 	httpSrv := &http.Server{Addr: *addr, Handler: servedHandler(*addr, mux)}
 	go func() {
@@ -123,7 +129,16 @@ func main() {
 // server — the tier (view/triage/operator), plus every enabled plugin tool;
 // /health stays open (unauthenticated) so liveness probes work without
 // a secret.
-func newMux(cache *serverCache, client *busclient.Client, gate *authGate) *http.ServeMux {
+type facadeHealthMeta struct {
+	ListenAddr string
+	HubURL     string
+}
+
+func newMux(cache *serverCache, client *busclient.Client, gate *authGate, metas ...facadeHealthMeta) *http.ServeMux {
+	var meta facadeHealthMeta
+	if len(metas) > 0 {
+		meta = metas[0]
+	}
 	getServer := func(r *http.Request) *mcp.Server {
 		rec, ok := gate.resolveRecord(r)
 		if !ok {
@@ -152,8 +167,12 @@ func newMux(cache *serverCache, client *busclient.Client, gate *authGate) *http.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":       "ok",
-			"hubConnected": client.Ready(),
+			"status":             "ok",
+			"service":            "workspacer-mcp-facade",
+			"hubConnected":       client.Ready(),
+			"pluginCatalogReady": cache.catalog.isReady(),
+			"listenAddr":         meta.ListenAddr,
+			"hubUrl":             meta.HubURL,
 		})
 	})
 	return mux

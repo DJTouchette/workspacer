@@ -39,7 +39,6 @@ import { app } from 'electron';
 import {
   killStaleListener,
   waitForHealth,
-  probeHealth,
   PORTS,
   RestartBackoff,
   daemonSpawnOptions,
@@ -51,6 +50,38 @@ import { configService } from './configService';
 const PORT = PORTS.mcpFacade;
 const ADDR = `127.0.0.1:${PORT}`;
 const HEALTH_TIMEOUT_MS = 5000;
+
+interface FacadeHealth {
+  status: 'ok';
+  service: 'workspacer-mcp-facade';
+  hubConnected: true;
+  pluginCatalogReady: true;
+  listenAddr: string;
+  hubUrl: string;
+}
+
+/** A 200 from an arbitrary/disconnected listener is not an adoptable facade. */
+async function probeFacadeHealth(url: string, timeoutMs = 1200): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: ctl.signal });
+    if (!response.ok) return false;
+    const health = (await response.json()) as Partial<FacadeHealth>;
+    return (
+      health.status === 'ok' &&
+      health.service === 'workspacer-mcp-facade' &&
+      health.hubConnected === true &&
+      health.pluginCatalogReady === true &&
+      health.listenAddr === ADDR &&
+      health.hubUrl === hubBusUrl()
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
@@ -81,7 +112,7 @@ export function startMcpFacade(): Promise<void> {
       // `workspacer serve` may already own the canonical facade. Adopt a
       // healthy listener before considering stale-port cleanup; otherwise the
       // desktop kills the CLI's child and two supervisors fight over :7897.
-      if (await probeHealth(`http://${ADDR}/health`)) {
+      if (await probeFacadeHealth(`http://${ADDR}/health`)) {
         adoptedExternal = true;
         backoff.reset();
         console.log(`[mcp] adopted healthy external facade at ${ADDR}`);
@@ -195,11 +226,21 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  return waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal).then(
-    () => {
+  return (async () => {
+    try {
+      await waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal);
+      if (!(await probeFacadeHealth(`http://${ADDR}/health`))) {
+        throw new Error('mcp facade health did not confirm hub and plugin catalog readiness');
+      }
       backoff.reset();
-    },
-  );
+    } catch (error) {
+      // A process that merely bound the port but never became our connected,
+      // catalog-ready facade is not adoptable. Tear down the process we own;
+      // the exit handler retains the normal restart/backoff policy.
+      await gracefulStop(child, 'mcp');
+      throw error;
+    }
+  })();
 }
 
 /** Respawn after an unexpected exit, with exponential backoff. */

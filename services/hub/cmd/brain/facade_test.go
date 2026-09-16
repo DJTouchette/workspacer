@@ -281,6 +281,79 @@ func TestSpawnManagerFacadeTokenHasAmbientOperatorAuthorityWithoutLegacyGrants(t
 	}
 }
 
+func TestFailedHeadlessSpawnsRevokeMintedFacadeToken(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, endpoint string
+	}{
+		{"managed", "codex", "/sessions/spawn-managed"},
+		{"pty", "claude", "/sessions/spawn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder()
+			rec.status[tc.endpoint] = 500
+			srv := rec.server()
+			defer srv.Close()
+			reg := newSpawnTestRegistry(t, srv.URL)
+			reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
+			transport := "stream"
+			if tc.name == "pty" {
+				transport = "pty"
+			}
+			_, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"`+tc.provider+`","transport":"`+transport+`","cwd":"/tmp/proj"}`))
+			if err == nil {
+				t.Fatal("daemon failure unexpectedly launched")
+			}
+			calls := rec.calls(tc.endpoint)
+			if len(calls) != 1 {
+				t.Fatalf("spawn calls = %d, want 1", len(calls))
+			}
+			sessionID, _ := calls[0].body["session_id"].(string)
+			for _, token := range mustLoadTokens(t) {
+				if token.Label == sessionFacadeTokenLabelPrefix+sessionID {
+					t.Fatalf("failed spawn leaked facade token for %s", sessionID)
+				}
+			}
+		})
+	}
+}
+
+func TestHeadlessSessionEndRevokesFacadeTokenOncePerLifecycle(t *testing.T) {
+	reg := newRegistry(newClaudemonClient("http://127.0.0.1:0"))
+	rec, err := mintSessionFacadeToken("lifecycle", authtoken.ScopeOperator, []string{"*"}, nil, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newSessionStore()
+	revokes := 0
+	store.onEnd = func(id string) {
+		revokes++
+		if err := revokeSessionFacadeToken(id); err != nil {
+			t.Errorf("revoke: %v", err)
+		}
+	}
+	reg.store = store
+	store.set("lifecycle", json.RawMessage(`{"session_id":"lifecycle","mode":"input"}`))
+	store.set("lifecycle", json.RawMessage(`{"session_id":"lifecycle","mode":"stopped"}`))
+	store.set("lifecycle", json.RawMessage(`{"session_id":"lifecycle","mode":"stopped"}`))
+	if revokes != 1 {
+		t.Fatalf("end revokes = %d, want exactly 1", revokes)
+	}
+	for _, row := range mustLoadTokens(t) {
+		if row.Token == rec.Token {
+			t.Fatal("ended lifecycle retained facade token")
+		}
+	}
+}
+
+func mustLoadTokens(t *testing.T) []authtoken.Record {
+	t.Helper()
+	records, err := authtoken.Load(authtoken.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return records
+}
+
 func loadSessionToken(t *testing.T, sessionID string) authtoken.Record {
 	t.Helper()
 	records, err := authtoken.Load(authtoken.DefaultPath())

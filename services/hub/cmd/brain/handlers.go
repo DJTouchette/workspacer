@@ -768,7 +768,7 @@ type desktopSpawnMetadata struct {
 	ReplacementID string
 }
 
-func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop ...desktopSpawnMetadata) (json.RawMessage, error) {
+func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop ...desktopSpawnMetadata) (out json.RawMessage, retErr error) {
 	var p spawnParams
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -919,6 +919,13 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if retErr != nil && facade != nil {
+			if cleanupErr := revokeSessionFacadeToken(sessionID); cleanupErr != nil {
+				retErr = fmt.Errorf("%w (also failed to revoke facade token: %v)", retErr, cleanupErr)
+			}
+		}
+	}()
 
 	// Record spawn metadata before the session registers, so the live store's
 	// enricher picks up the name/parent the moment claudemon reports SessionStart.
@@ -1098,7 +1105,7 @@ func (r *registry) noteLaunch(sessionID, provider string, p spawnParams) {
 // profile's env/extra argv and — deliberately — no wire `transport` key
 // (spawn-managed claude IS the stream adapter). Provider permission modes flow
 // through without a separate Workspacer grant.
-func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
+func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (out json.RawMessage, retErr error) {
 	isClaudeStream := provider == "claude"
 	// Codex's shape is RESOLVED, never inferred from the presence of a key: a
 	// bus spawn that names no transport (which is most of them — the MCP facade
@@ -1125,6 +1132,13 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			return nil, err
 		}
 	}
+	defer func() {
+		if retErr != nil && facade != nil {
+			if cleanupErr := revokeSessionFacadeToken(sessionID); cleanupErr != nil {
+				retErr = fmt.Errorf("%w (also failed to revoke facade token: %v)", retErr, cleanupErr)
+			}
+		}
+	}()
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed() || p.desktopContract != "") {
 		r.meta.set(sessionID, spawnMeta{
 			Label: p.Label, ParentSessionID: p.ParentSessionID, IsWakeTarget: p.isWakeTarget(),

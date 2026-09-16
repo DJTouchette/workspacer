@@ -1339,7 +1339,7 @@ class ClaudeSessionStore {
       );
     const parent = this.sessions.get(parentId);
     if (!parent || parent.status === 'ended' || parent.hub) return;
-    supervisorNudge.onFinished(session, parentId, lastReply);
+    supervisorNudge.onFinished(session, parentId, lastReply, parent.isWakeTarget === true);
   }
 
   setMainWindow(win: BrowserWindow): void {

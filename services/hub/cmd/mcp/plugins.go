@@ -53,10 +53,11 @@ const catalogPollInterval = 15 * time.Second
 type pluginCatalog struct {
 	c *busclient.Client
 
-	mu   sync.Mutex
-	gen  int
-	raw  string // last marshaled surface, for change detection
-	byID map[string][]pluginToolDef
+	mu    sync.Mutex
+	gen   int
+	raw   string // last marshaled surface, for change detection
+	byID  map[string][]pluginToolDef
+	ready bool
 }
 
 func newPluginCatalog(c *busclient.Client) *pluginCatalog {
@@ -79,16 +80,32 @@ func (pc *pluginCatalog) run(ctx context.Context) {
 	}
 }
 
-func (pc *pluginCatalog) refresh(ctx context.Context) {
+// waitInitial blocks facade readiness until the first complete enabled-plugin
+// catalog has been read from the hub. This prevents an agent's first
+// tools/list from racing startup and caching a core-only surface.
+func (pc *pluginCatalog) waitInitial(ctx context.Context) error {
+	for {
+		if pc.refresh(ctx) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (pc *pluginCatalog) refresh(ctx context.Context) bool {
 	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	res, err := pc.c.Call(callCtx, "plugins.tools", nil)
 	if err != nil {
-		return
+		return false
 	}
 	var list []pluginTools
 	if json.Unmarshal(res, &list) != nil {
-		return
+		return false
 	}
 	byID := make(map[string][]pluginToolDef, len(list))
 	for _, p := range list {
@@ -104,7 +121,15 @@ func (pc *pluginCatalog) refresh(ctx context.Context) {
 		pc.gen++
 		log.Printf("plugin tool catalog updated: %d plugin(s)", len(byID))
 	}
+	pc.ready = true
 	pc.mu.Unlock()
+	return true
+}
+
+func (pc *pluginCatalog) isReady() bool {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	return pc.ready
 }
 
 // snapshot returns the current surface and its generation.

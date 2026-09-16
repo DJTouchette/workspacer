@@ -15,14 +15,21 @@ import { EventEmitter } from 'events';
 
 const killStaleListener = vi.fn();
 const waitForHealth = vi.fn().mockResolvedValue(undefined);
-const probeHealth = vi.fn().mockResolvedValue(false);
+const facadeHealth = {
+  status: 'ok',
+  service: 'workspacer-mcp-facade',
+  hubConnected: true,
+  pluginCatalogReady: true,
+  listenAddr: '127.0.0.1:7897',
+  hubUrl: 'ws://127.0.0.1:7895/bus',
+};
+const fetchMock = vi.fn();
 const gracefulStop = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../lib/daemonUtils', () => ({
   killStaleListener: (...a: unknown[]) => killStaleListener(...a),
   waitForHealth: (...a: unknown[]) => waitForHealth(...a),
   gracefulStop: (...a: unknown[]) => gracefulStop(...a),
-  probeHealth: (...a: unknown[]) => probeHealth(...a),
   daemonSpawnOptions: (extraEnv?: Record<string, string>) => ({
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...extraEnv },
@@ -80,14 +87,20 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   killStaleListener.mockClear();
   spawnMock.mockClear();
-  probeHealth.mockReset().mockResolvedValue(false);
+  fetchMock.mockReset();
+  // First probe sees no adoptable listener; the post-launch readiness probe
+  // sees this facade's identity + connected hub + synchronized catalog.
+  fetchMock
+    .mockRejectedValueOnce(new Error('connection refused'))
+    .mockResolvedValue({ ok: true, json: async () => facadeHealth });
+  vi.stubGlobal('fetch', fetchMock);
   gracefulStop.mockClear();
   mockConfig = {};
 });
 
 describe('mcp facade spawn', () => {
   it('adopts a healthy externally supervised facade and leaves it running on stop', async () => {
-    probeHealth.mockResolvedValue(true);
+    fetchMock.mockReset().mockResolvedValue({ ok: true, json: async () => facadeHealth });
     const mod = await loadModule();
     await mod.startMcpFacade();
 
@@ -95,6 +108,35 @@ describe('mcp facade spawn', () => {
     expect(killStaleListener).not.toHaveBeenCalled();
     await mod.stopMcpFacade();
     expect(gracefulStop).toHaveBeenCalledWith(null, 'mcp');
+  });
+
+  it.each([
+    { status: 'ok' },
+    { ...facadeHealth, service: 'some-other-daemon' },
+    { ...facadeHealth, hubConnected: false },
+    { ...facadeHealth, pluginCatalogReady: false },
+    { ...facadeHealth, listenAddr: '127.0.0.1:9999' },
+    { ...facadeHealth, hubUrl: 'ws://127.0.0.1:9998/bus' },
+  ])('does not adopt a 200 response without facade readiness: %j', async (body) => {
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => body })
+      .mockResolvedValue({ ok: true, json: async () => facadeHealth });
+    const mod = await loadModule();
+    await mod.startMcpFacade();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(killStaleListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up an owned process whose facade-specific readiness fails', async () => {
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new Error('connection refused')).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ...facadeHealth, hubConnected: false }),
+    });
+    const mod = await loadModule();
+    await expect(mod.startMcpFacade()).rejects.toThrow(/hub and plugin catalog readiness/);
+    expect(gracefulStop).toHaveBeenCalledWith(expect.anything(), 'mcp');
   });
 
   it('gives the facade the bus token in the environment', async () => {

@@ -407,9 +407,6 @@ func (r *registry) runDesktopObservations(ctx context.Context) {
 			if !r.desktopServices.available() {
 				continue
 			}
-			if _, err := r.reconcileManagerGrants(""); err != nil {
-				log.Printf("brain: manager grant sync failed: %v", err)
-			}
 			callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			_, err := r.desktopInternalCall(callCtx, "internal.observe", nil)
 			cancel()

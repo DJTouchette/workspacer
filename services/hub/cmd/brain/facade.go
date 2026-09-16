@@ -73,6 +73,7 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	}
 	u, err := facadeURLWithToken(baseURL, rec.Token)
 	if err != nil {
+		_ = revokeSessionFacadeToken(sessionID)
 		return nil, err
 	}
 	mcpIDs := append([]string{}, p.MCPItemIDs...)
@@ -310,6 +311,7 @@ func sessionFacadeInstructions(sessionID string, p spawnParams) string {
 		fmt.Sprintf("You are running inside Workspacer session %s with access to the local workspacer MCP facade.", sessionID),
 		fmt.Sprintf("Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is %s.", scope),
 	}
+	parts = append(parts, headlessAgentCollaborationInstructions)
 	if scope == string(authtoken.ScopeView) {
 		parts = append(parts, "Treat workspacer tools as read-only unless another tool separately permits a change.")
 	}
@@ -344,69 +346,10 @@ func localProfileIDs() []string {
 	return cleanStringList(out)
 }
 
-func (r *registry) managerFullAccessFromConfig() bool {
-	cfg := r.cfg.get()
-	if configBool(cfg, "agents", "fleetFullAccess") {
-		return true
-	}
-	projects, ok := cfg["projects"].(map[string]any)
-	if !ok {
-		return false
-	}
-	for _, raw := range projects {
-		project, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if yolo, ok := project["yolo"].(bool); ok && yolo {
-			return true
-		}
-	}
-	return false
-}
-
-func configBool(cfg map[string]any, section string, key string) bool {
-	rawSection, ok := cfg[section].(map[string]any)
-	if !ok {
-		return false
-	}
-	v, ok := rawSection[key].(bool)
-	return ok && v
-}
-
-// Same config policy as minting: changing settings updates future manager
-// dispatches, without restarting the manager or changing existing workers.
+// Legacy compatibility shim. Grant fields in config and tokens.json remain
+// parseable for lossless upgrades, but supported agents always receive the
+// ambient operator facade and these fields are never consulted or rewritten.
 func (r *registry) reconcileManagerGrants(sessionID string) (bool, error) {
-	desired := r.managerFullAccessFromConfig()
-	sessionFacadeTokenMu.Lock()
-	defer sessionFacadeTokenMu.Unlock()
-	file := authtoken.DefaultPath()
-	rows, err := authtoken.Load(file)
-	if err != nil {
-		return false, err
-	}
-	changed := false
-	for i, rec := range rows {
-		if rec.Scope != authtoken.ScopeOperator || !strings.HasPrefix(rec.Label, sessionFacadeTokenLabelPrefix) {
-			continue
-		}
-		if sessionID != "" {
-			if rec.Label != sessionFacadeTokenLabelPrefix+sessionID {
-				continue
-			}
-		} else if rec.Role != "manager" {
-			continue
-		}
-		if rec.Role != "manager" || rec.YoloAllowed != desired {
-			rows[i].Role = "manager"
-			rows[i].YoloAllowed = desired
-			changed = true
-		}
-	}
-	if changed {
-		if err := authtoken.Save(file, rows); err != nil {
-			return false, err
-		}
-	}
-	return changed, nil
+	_ = sessionID
+	return false, nil
 }

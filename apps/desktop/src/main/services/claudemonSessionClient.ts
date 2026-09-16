@@ -3,7 +3,6 @@ import { ManagerDeliveryRejected } from '../shared/managerReplacement';
 import { managerReplacementState } from './managerReplacementState';
 import { managerRequests } from './managerRequestService';
 import { buildManagerKickoff } from '../shared/managerDoctrine';
-import { configService } from './configService';
 type SourceRequest = import('../shared/managerReplacement').ReplacementDelivery['sourceRequest'];
 /**
  * Main-process proxy between the renderer and the claudemon daemon.
@@ -649,9 +648,7 @@ class ClaudemonSessionClient {
       // The handoff journal stores references only, so resolving an inbox
       // request does not leave another private copy of its original content.
       if (!text) {
-        text = r.bootstrap
-          ? buildManagerKickoff(r.userContent, !!configService.getConfig().agents?.fleetFullAccess)
-          : r.userContent;
+        text = r.bootstrap ? buildManagerKickoff(r.userContent, false) : r.userContent;
       }
       managerRequests().finishDelivery(
         sourceRequest.requestId,

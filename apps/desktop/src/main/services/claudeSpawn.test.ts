@@ -120,8 +120,10 @@ const mintSessionFacadeToken = vi.fn(() => ({
   scope: 'operator',
   created: '2026-01-01T00:00:00.000Z',
 }));
+const revokeSessionFacadeTokens = vi.fn();
 vi.mock('./remoteTokens', () => ({
   mintSessionFacadeToken: (...a: unknown[]) => mintSessionFacadeToken(...a),
+  revokeSessionFacadeTokens: (...a: unknown[]) => revokeSessionFacadeTokens(...a),
   // Imported by the REAL fullAccessGrants module (the config-resolved grant
   // formula under test); never called by a spawn.
   reconcileSessionFacadeGrants: vi.fn(() => []),
@@ -801,7 +803,9 @@ describe('spawnClaudeAgent — clean-profile retry boundary', () => {
     };
     spawnMock.mockRejectedValueOnce(new Error('fixture provider unavailable'));
     await expect(spawnClaudeAgent(options)).rejects.toThrow('fixture provider unavailable');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledWith(mintSessionFacadeToken.mock.calls[0][0]);
     await spawnClaudeAgent(options);
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
     expect(spawnMock).toHaveBeenCalledTimes(2);
     const launches = spawnMock.mock.calls as unknown as Array<[Record<string, any>]>;
     expect(launches.map(([payload]) => payload.firstMessage)).toEqual([

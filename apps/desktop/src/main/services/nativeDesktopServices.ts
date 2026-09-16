@@ -1,8 +1,6 @@
 /** Browser owner requests hosted by a running native desktop. The headless
  * process uses the same service implementations with its own lifecycle source.
  */
-import { reconcileSessionFacadeToken } from './remoteTokens';
-import { desiredSessionGrants } from './fullAccessGrants';
 import { requestManagerReplacement } from './managerReplacement';
 import { setManagerViewerBindings } from './managerViewerBindings';
 import {
@@ -20,7 +18,6 @@ import { managerRequests } from './managerRequestService';
 import { managerReplacementState } from './managerReplacementState';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildManagerKickoff } from '../shared/managerDoctrine';
-import { configService } from './configService';
 import './briefBoardService'; // installs the native SQLite recent-directory source
 
 configureNativeDesktopRuntime(
@@ -37,11 +34,9 @@ export async function nativeDesktopService(
   const p = (raw ?? {}) as Record<string, unknown>;
   switch (method) {
     case 'desktop.sessionGrantReconcile': {
-      const session =
-        typeof p.sessionId === 'string' ? claudeSessionStore.getSnapshot(p.sessionId) : undefined;
-      return p.role === 'manager' && session?.isWakeTarget && session.status !== 'ended'
-        ? reconcileSessionFacadeToken(session.sessionId, 'manager', desiredSessionGrants().manager)
-        : false;
+      // Legacy RPC retained for older clients. Session grants are inert and
+      // never reconciled or rewritten.
+      return false;
     }
     case 'desktop.managerReplacement':
       setManagerViewerBindings(p.bindings);
@@ -73,10 +68,7 @@ export async function nativeDesktopService(
       if (delivery) {
         try {
           const content = delivery.bootstrap
-            ? buildManagerKickoff(
-                delivery.text,
-                !!configService.getConfig().agents?.fleetFullAccess,
-              )
+            ? buildManagerKickoff(delivery.text, false)
             : delivery.text;
           await claudemonSessionClient.message(target, content, undefined, {
             requestId: p.requestId,

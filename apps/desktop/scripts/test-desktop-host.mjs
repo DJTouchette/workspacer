@@ -7,93 +7,252 @@ import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 
-test('shared desktop services over the production private protocol', { timeout: 30_000 }, async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspacer-desktop-host-'));
-  const home = path.join(root, 'home');
-  const repo = path.join(home, 'project');
-  fs.mkdirSync(repo, { recursive: true });
-  const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(root,'config'), XDG_CONFIG_HOME: path.join(root,'config'), XDG_DATA_HOME: path.join(root,'data'), XDG_CACHE_HOME: path.join(root,'cache'), CLAUDE_CONFIG_DIR: path.join(home,'.claude'), GIT_CONFIG_NOSYSTEM: '1' };
-  delete env.HUB_TOKEN;
-  const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding:'utf8' }).trim();
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.name', 'Test'); git(repo, 'config', 'user.email', 'test@example.invalid');
-  git(repo, 'config', 'commit.gpgsign', 'false');
-  fs.writeFileSync(path.join(repo,'a.txt'), 'original\n'); git(repo,'add','a.txt'); git(repo,'commit','-qm','initial');
-  // Upgrading must never open, migrate or remove the retired feature's data.
-  const configDir = path.join(root, 'config', 'workspacer');
-  fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(path.join(configDir, 'config.yaml'), 'ui:\n  mode: focus\n  intentWorkspaces: true\n');
-  const legacyPath = path.join(configDir, 'intent-workspaces.sqlite');
-  const legacyDb = new DatabaseSync(legacyPath);
-  legacyDb.exec("CREATE TABLE intent_workspaces (id TEXT PRIMARY KEY, snapshot TEXT); INSERT INTO intent_workspaces VALUES ('legacy', '{\"title\":\"Retained work\"}'); PRAGMA user_version=10;");
-  legacyDb.close();
-  const legacyBytes = fs.readFileSync(legacyPath);
-  const artifactPath = path.join(configDir, 'intent-artifacts', 'legacy.txt');
-  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-  fs.writeFileSync(artifactPath, 'Retained user artifact');
-  const child = spawn(process.execPath, ['dist/headless/desktop-host.cjs'], { env, stdio:['pipe','pipe','pipe'] });
-  let logs = ''; child.stderr.on('data', (chunk) => { logs += chunk; });
-  t.after(async () => { child.kill(); await new Promise((r)=>child.once('close',r)); fs.rmSync(root,{recursive:true,force:true}); });
-  const pending = new Map(); let seq = 0;
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    const response = JSON.parse(line); const entry = pending.get(response.id);
-    if (!entry) throw new Error('Unsolicited protocol response');
-    pending.delete(response.id);
-    response.error ? entry.reject(new Error(response.error)) : entry.resolve(response.result);
-  });
-  child.on('exit', () => { for (const entry of pending.values()) entry.reject(new Error('Host exited: '+logs)); pending.clear(); });
-  const owner = { sessionId:'manager', cwd:repo, status:'active', isWakeTarget:true, label:'Manager', startedAt:1 };
-  const context = { workspaceRoots:[home], setupRoots:[home], snapshots:[owner], templates:[], recent:[{cwd:repo}] };
-  const call = (method, params={}) => new Promise((resolve,reject) => {
-    const id = String(++seq); pending.set(id,{resolve,reject});
-    child.stdin.write(JSON.stringify({id,method,params,context})+'\n');
-  });
-  assert.equal((await call('desktop.worktreeInfo',{cwd:repo})).isRepo,true);
-  await assert.rejects(call('desktop.intentWorkspaceRequest', { request: { action: 'list' } }), /[Uu]nknown|[Uu]nsupported/);
-  assert.deepEqual(fs.readFileSync(legacyPath), legacyBytes);
-  assert.equal(fs.readFileSync(artifactPath, 'utf8'), 'Retained user artifact');
-  assert.equal(fs.existsSync(legacyPath + '-wal'), false);
-  assert.equal((await call('desktop.worktreeInfo',{cwd:root,context:{setupRoots:[root]}})).isRepo,false);
-  const font = Buffer.from('0001000000000000', 'hex');
-  const installed = await call('desktop.installUiFont', {name:'Fixture.ttf',dataBase64:font.toString('base64')});
-  assert.equal(installed.file, 'Fixture.ttf');
-  assert.ok((await call('ui.fonts')).some(row => row.file === installed.file));
-  assert.equal((await call('ui.asset', {kind:'font',file:installed.file})).dataBase64, font.toString('base64'));
-  await assert.rejects(call('ui.asset', {kind:'font',file:'../secret.ttf'}), /filename/);
-  await assert.rejects(call('desktop.installUiFont', {name:'fake.ttf',dataBase64:Buffer.from('not a font').toString('base64')}), /supported font/);
-  const outsideFont = path.join(root, 'outside.ttf'); fs.writeFileSync(outsideFont, font);
-  fs.symlinkSync(outsideFont, path.join(home,'.workspacer','fonts','escape.ttf'));
-  await assert.rejects(call('ui.asset', {kind:'font',file:'escape.ttf'}), /outside/);
-  assert.equal(Buffer.from((await call('desktop.readFileBytes',{path:path.join(repo,'a.txt')})).dataBase64,'base64').toString(),'original\n');
-  assert.equal((await call('desktop.readFileBytes',{path:path.join(root,'outside.ttf')})).dataBase64,font.toString('base64'));
-  const rates = await call('desktop.pricingGetRates'); assert.ok(Object.keys(rates.defaults).length > 5);
-  await call('desktop.pricingSaveOverrides',{overrides:{'fixture-model':{input:1,output:2}}});
-  assert.deepEqual((await call('desktop.pricingGetRates')).overrides['fixture-model'],{input:1,output:2});
-  await assert.rejects(call('desktop.pricingSaveOverrides',{overrides:{bad:{input:-1,output:2}}}),/nonnegative/);
-  const account = await call('desktop.claudeProfilesAddAccount',{name:'Second'});
-  assert.ok(account.profile.configDir.startsWith(path.join(home,'.claude')));
-  assert.ok((await call('desktop.claudeProfilesAccounts'))[account.profile.id]);
-  const capture = await call('desktop.managerRequestPrepare',{sessionId:'manager',text:'Build the thing'});
-  assert.equal(capture.available,true);
-  const delivery = await call('internal.beginDelivery',{sessionId:'manager',requestId:capture.requestId});
-  assert.equal(delivery.text,'Build the thing');
-  assert.equal(await call('internal.beginDelivery',{sessionId:'manager',requestId:capture.requestId}),null,'pending delivery must not replay');
-  await call('internal.finishDelivery',{requestId:capture.requestId,deliveryId:delivery.deliveryId,status:'accepted'});
-  assert.equal((await call('internal.requestReceipt',{sessionId:'manager',requestId:capture.requestId})).delivery,'accepted');
-  const prepared = await call('internal.prepareSpawn',{spawn:{cwd:repo,label:'Worker',parentSessionId:'manager',dispatchOwnerSessionId:'manager',provider:'claude',worktree:true}});
-  assert.notEqual(prepared.cwd,repo); assert.equal(prepared.worktree.allocated,true);
-  const accepted = await call('internal.acceptSpawn',{token:prepared.token,sessionId:'worker'}); assert.ok(accepted.taskId);
-  fs.writeFileSync(path.join(prepared.cwd,'a.txt'),'committed worker result\n');git(prepared.cwd,'add','a.txt');git(prepared.cwd,'commit','-qm','worker result');
-  context.snapshots.push({sessionId:'worker',cwd:prepared.cwd,status:'ended',ambientState:'idle',provider:'claude'});
-  await call('internal.observe');
-  const result = await call('internal.finishWorker',{sessionId:'worker',reply:'Completed the work.'});
-  await call('internal.commitWorkerResult',{token:result.token});
-  const history = await call('desktop.dispatchHistoryRead'); assert.equal(history.available,true);assert.equal(history.tasks.length,1);
-  const attempt = history.tasks[0].attempts[0]; assert.equal(attempt.lifecycle,'ended');assert.ok(attempt.reviewEvidenceId);
-  const selector = {ownerSessionId:'manager',workerSessionId:'worker',evidenceId:attempt.reviewEvidenceId,file:'a.txt'};
-  const review = await call('desktop.fleetReviewRead',{request:selector});assert.equal(review.ok,true);assert.match(review.evidence.files[0].diff,/committed worker result/);
-  assert.equal((await call('desktop.fleetReviewRead',{request:{...selector,ownerSessionId:'forged'}})).ok,false);
-  assert.equal((await call('desktop.worktreeRemove',{cwd:prepared.cwd})).ok,true);
-  assert.equal((await call('desktop.fleetReviewRead',{request:selector})).ok,true,'captured evidence survives worktree cleanup');
-  const board=await call('desktop.loadBriefBoard');assert.ok(board.lanes.length>=1);
-});
+test(
+  'shared desktop services over the production private protocol',
+  { timeout: 30_000 },
+  async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspacer-desktop-host-'));
+    const home = path.join(root, 'home');
+    const repo = path.join(home, 'project');
+    fs.mkdirSync(repo, { recursive: true });
+    const env = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      APPDATA: path.join(root, 'config'),
+      XDG_CONFIG_HOME: path.join(root, 'config'),
+      XDG_DATA_HOME: path.join(root, 'data'),
+      XDG_CACHE_HOME: path.join(root, 'cache'),
+      CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+      GIT_CONFIG_NOSYSTEM: '1',
+    };
+    delete env.HUB_TOKEN;
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.name', 'Test');
+    git(repo, 'config', 'user.email', 'test@example.invalid');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'original\n');
+    git(repo, 'add', 'a.txt');
+    git(repo, 'commit', '-qm', 'initial');
+    // Upgrading must never open, migrate or remove the retired feature's data.
+    const configDir = path.join(root, 'config', 'workspacer');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, 'config.yaml'),
+      'ui:\n  mode: focus\n  intentWorkspaces: true\n',
+    );
+    const legacyPath = path.join(configDir, 'intent-workspaces.sqlite');
+    const legacyDb = new DatabaseSync(legacyPath);
+    legacyDb.exec(
+      'CREATE TABLE intent_workspaces (id TEXT PRIMARY KEY, snapshot TEXT); INSERT INTO intent_workspaces VALUES (\'legacy\', \'{"title":"Retained work"}\'); PRAGMA user_version=10;',
+    );
+    legacyDb.close();
+    const legacyBytes = fs.readFileSync(legacyPath);
+    const artifactPath = path.join(configDir, 'intent-artifacts', 'legacy.txt');
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, 'Retained user artifact');
+    const child = spawn(process.execPath, ['dist/headless/desktop-host.cjs'], {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let logs = '';
+    child.stderr.on('data', (chunk) => {
+      logs += chunk;
+    });
+    t.after(async () => {
+      child.kill();
+      await new Promise((r) => child.once('close', r));
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+    const pending = new Map();
+    let seq = 0;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const response = JSON.parse(line);
+      const entry = pending.get(response.id);
+      if (!entry) throw new Error('Unsolicited protocol response');
+      pending.delete(response.id);
+      response.error ? entry.reject(new Error(response.error)) : entry.resolve(response.result);
+    });
+    child.on('exit', () => {
+      for (const entry of pending.values()) entry.reject(new Error('Host exited: ' + logs));
+      pending.clear();
+    });
+    const owner = {
+      sessionId: 'manager',
+      cwd: repo,
+      status: 'active',
+      isWakeTarget: true,
+      label: 'Manager',
+      startedAt: 1,
+    };
+    const context = {
+      workspaceRoots: [home],
+      setupRoots: [home],
+      snapshots: [owner],
+      templates: [],
+      recent: [{ cwd: repo }],
+    };
+    const call = (method, params = {}) =>
+      new Promise((resolve, reject) => {
+        const id = String(++seq);
+        pending.set(id, { resolve, reject });
+        child.stdin.write(JSON.stringify({ id, method, params, context }) + '\n');
+      });
+    assert.equal((await call('desktop.worktreeInfo', { cwd: repo })).isRepo, true);
+    await assert.rejects(
+      call('desktop.intentWorkspaceRequest', { request: { action: 'list' } }),
+      /[Uu]nknown|[Uu]nsupported/,
+    );
+    assert.deepEqual(fs.readFileSync(legacyPath), legacyBytes);
+    assert.equal(fs.readFileSync(artifactPath, 'utf8'), 'Retained user artifact');
+    assert.equal(fs.existsSync(legacyPath + '-wal'), false);
+    assert.equal(
+      (await call('desktop.worktreeInfo', { cwd: root, context: { setupRoots: [root] } })).isRepo,
+      false,
+    );
+    const font = Buffer.from('0001000000000000', 'hex');
+    const installed = await call('desktop.installUiFont', {
+      name: 'Fixture.ttf',
+      dataBase64: font.toString('base64'),
+    });
+    assert.equal(installed.file, 'Fixture.ttf');
+    assert.ok((await call('ui.fonts')).some((row) => row.file === installed.file));
+    assert.equal(
+      (await call('ui.asset', { kind: 'font', file: installed.file })).dataBase64,
+      font.toString('base64'),
+    );
+    await assert.rejects(call('ui.asset', { kind: 'font', file: '../secret.ttf' }), /filename/);
+    await assert.rejects(
+      call('desktop.installUiFont', {
+        name: 'fake.ttf',
+        dataBase64: Buffer.from('not a font').toString('base64'),
+      }),
+      /supported font/,
+    );
+    const outsideFont = path.join(root, 'outside.ttf');
+    fs.writeFileSync(outsideFont, font);
+    fs.symlinkSync(outsideFont, path.join(home, '.workspacer', 'fonts', 'escape.ttf'));
+    await assert.rejects(call('ui.asset', { kind: 'font', file: 'escape.ttf' }), /outside/);
+    assert.equal(
+      Buffer.from(
+        (await call('desktop.readFileBytes', { path: path.join(repo, 'a.txt') })).dataBase64,
+        'base64',
+      ).toString(),
+      'original\n',
+    );
+    assert.equal(
+      (await call('desktop.readFileBytes', { path: path.join(root, 'outside.ttf') })).dataBase64,
+      font.toString('base64'),
+    );
+    const rates = await call('desktop.pricingGetRates');
+    assert.ok(Object.keys(rates.defaults).length > 5);
+    await call('desktop.pricingSaveOverrides', {
+      overrides: { 'fixture-model': { input: 1, output: 2 } },
+    });
+    assert.deepEqual((await call('desktop.pricingGetRates')).overrides['fixture-model'], {
+      input: 1,
+      output: 2,
+    });
+    await assert.rejects(
+      call('desktop.pricingSaveOverrides', { overrides: { bad: { input: -1, output: 2 } } }),
+      /nonnegative/,
+    );
+    const account = await call('desktop.claudeProfilesAddAccount', { name: 'Second' });
+    assert.ok(account.profile.configDir.startsWith(path.join(home, '.claude')));
+    assert.ok((await call('desktop.claudeProfilesAccounts'))[account.profile.id]);
+    const capture = await call('desktop.managerRequestPrepare', {
+      sessionId: 'manager',
+      text: 'Build the thing',
+    });
+    assert.equal(capture.available, true);
+    const delivery = await call('internal.beginDelivery', {
+      sessionId: 'manager',
+      requestId: capture.requestId,
+    });
+    assert.equal(delivery.text, 'Build the thing');
+    assert.equal(
+      await call('internal.beginDelivery', { sessionId: 'manager', requestId: capture.requestId }),
+      null,
+      'pending delivery must not replay',
+    );
+    await call('internal.finishDelivery', {
+      requestId: capture.requestId,
+      deliveryId: delivery.deliveryId,
+      status: 'accepted',
+    });
+    assert.equal(
+      (
+        await call('internal.requestReceipt', {
+          sessionId: 'manager',
+          requestId: capture.requestId,
+        })
+      ).delivery,
+      'accepted',
+    );
+    const prepared = await call('internal.prepareSpawn', {
+      spawn: {
+        cwd: repo,
+        label: 'Worker',
+        parentSessionId: 'manager',
+        dispatchOwnerSessionId: 'manager',
+        provider: 'claude',
+        worktree: true,
+      },
+    });
+    assert.notEqual(prepared.cwd, repo);
+    assert.equal(prepared.worktree.allocated, true);
+    const accepted = await call('internal.acceptSpawn', {
+      token: prepared.token,
+      sessionId: 'worker',
+    });
+    assert.ok(accepted.taskId);
+    fs.writeFileSync(path.join(prepared.cwd, 'a.txt'), 'committed worker result\n');
+    git(prepared.cwd, 'add', 'a.txt');
+    git(prepared.cwd, 'commit', '-qm', 'worker result');
+    context.snapshots.push({
+      sessionId: 'worker',
+      cwd: prepared.cwd,
+      status: 'ended',
+      ambientState: 'idle',
+      provider: 'claude',
+    });
+    await call('internal.observe');
+    const result = await call('internal.finishWorker', {
+      sessionId: 'worker',
+      reply: 'Completed the work.',
+    });
+    await call('internal.commitWorkerResult', { token: result.token });
+    const history = await call('desktop.dispatchHistoryRead');
+    assert.equal(history.available, true);
+    assert.equal(history.tasks.length, 1);
+    const attempt = history.tasks[0].attempts[0];
+    assert.equal(attempt.lifecycle, 'ended');
+    assert.ok(attempt.reviewEvidenceId);
+    const selector = {
+      ownerSessionId: 'manager',
+      workerSessionId: 'worker',
+      evidenceId: attempt.reviewEvidenceId,
+      file: 'a.txt',
+    };
+    const review = await call('desktop.fleetReviewRead', { request: selector });
+    assert.equal(review.ok, true);
+    assert.match(review.evidence.files[0].diff, /committed worker result/);
+    assert.equal(
+      (
+        await call('desktop.fleetReviewRead', {
+          request: { ...selector, ownerSessionId: 'forged' },
+        })
+      ).ok,
+      false,
+    );
+    assert.equal((await call('desktop.worktreeRemove', { cwd: prepared.cwd })).ok, true);
+    assert.equal(
+      (await call('desktop.fleetReviewRead', { request: selector })).ok,
+      true,
+      'captured evidence survives worktree cleanup',
+    );
+    const board = await call('desktop.loadBriefBoard');
+    assert.ok(board.lanes.length >= 1);
+  },
+);
