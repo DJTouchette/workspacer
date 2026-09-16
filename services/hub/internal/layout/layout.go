@@ -181,8 +181,8 @@ var spawnEscalationKeys = []string{"skipPermissions", "permissionMode", "profile
 // nothing, unlike the bus's terminals.create); its `initialCommand` is typed
 // into the ready PTY with a trailing CR, i.e. arbitrary shell text auto-run on
 // restore. A restored `plugin` pane's `pluginId` makes PluginPane MINT a live
-// plugin-scoped bus token and splice it onto the pane's `url`, so a bus writer
-// could have the host hand a fresh capability to an attacker origin. Same
+// authenticated plugin-identity bus token and splice it onto the pane's `url`,
+// so a bus writer could have the host hand a fresh bearer to an attacker origin. Same
 // "description becomes an argument one launch later" hazard as the agent-level
 // keys, reached through a pane instead of the agent record. Held equal to
 // cmd/brain's paneEscalationKeys and bootDocumentScrub.ts's PANE_ESCALATION_KEYS

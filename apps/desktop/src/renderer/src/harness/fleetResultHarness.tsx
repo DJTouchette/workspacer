@@ -119,7 +119,7 @@ const CASES: Array<{ title: string; note: string; entry: FleetMessageEntry }> = 
         pluginsChecked: 30,
         checksRun: Array.from(
           { length: 30 },
-          (_, i) => `plugin ${i + 1}: manifest version present, tools declared, sandbox scoped`,
+          (_, i) => `plugin ${i + 1}: manifest version present, tools declared, identity verified`,
         ),
         caveats: 'Three catalog repos were unreachable and were skipped rather than guessed at.',
       }),

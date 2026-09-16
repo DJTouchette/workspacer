@@ -1082,7 +1082,7 @@
     <p class="sec-sub">Everything an agent needs around it, in the same window. Each agent keeps its own tabs and panes in the daemon, separate from the window, so you can close the app and nothing dies.</p>
   </div>
   <div class="tile tree">
-    <div class="row"><span class="name">terminal</span><span class="desc">a real xterm and PTY shell scoped to the agent cwd</span></div>
+    <div class="row"><span class="name">terminal</span><span class="desc">a real xterm and PTY shell that starts in the agent cwd</span></div>
     <div class="row"><span class="name">editor</span><span class="desc">origin-isolated CodeMirror with project search, optional vim mode, and a file tree, or your own <code>$EDITOR</code> in a terminal pane</span></div>
     <div class="row"><span class="name">review</span><span class="desc">git status, diff, stage, commit, and push in the app</span></div>
     <div class="row"><span class="name">board</span><span class="desc">every brief the fleet keeps as topic cards, one lane per project. The drag does the work: dropping a card on Archive moves it out of the brief and into <code>brief.archive.md</code></span></div>
@@ -1145,7 +1145,7 @@
       <h3>Or drive it from a tool</h3>
       <ul>
         <li><b>The whole fleet over MCP.</b> List agents, read transcripts, dispatch, prompt, approve, answer, append to a brief, even navigate the app. Any MCP client can run the place. This is the same facade the manager holds, and you can hand it to anything.</li>
-        <li><b>Scoped, per session.</b> Every agent that gets the tools gets them at a tier: <em>view</em> to observe, <em>triage</em> to clear approvals, <em>operator</em> to dispatch. The hub enforces the tier on every call, so the prompt never has to. Plugins can contribute tools of their own.</li>
+        <li><b>Ready in every agent.</b> Workspacer-spawned agents receive the full control plane and every enabled plugin tool automatically. Session credentials still identify and revoke each agent. Separately minted remote-client tokens can remain <em>view</em>, <em>triage</em>, or <em>operator</em>.</li>
         <li><b>Jobs that run without you.</b> Recurring or one-off: dispatch an agent with a prompt, run a command, or call a capability. Fire it on a timer, at a time of day, or once. A job can run a script <em>first</em> and hand the output to the agent, and skip waking a model at all when the script finds nothing. The hub owns them, so they keep firing with the app closed. <a href="docs.html#jobs">Docs &rarr;</a></li>
         <li><b>Or skip the GUI.</b> <code>wks-tui</code> is a Rust client on the same bus, with a ctrl-k palette and vim keys.</li>
       </ul>

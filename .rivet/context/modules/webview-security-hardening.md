@@ -30,7 +30,7 @@ Workspacer's main `BrowserWindow` enables `webviewTag: true` (`apps/desktop/src/
   - Also owns `webPreferences: { preload, contextIsolation: true, nodeIntegration: false, webviewTag: true }` on the top-level `BrowserWindow` itself (this is the host window's own prefs, separate from what the guard forces onto each `<webview>` guest).
 - `apps/desktop/src/main/lib/webviewGuard.test.ts` — pins the policy: strips preload/forces safe defaults even when the tag "requested nothing"; allows `https://google.com`, the plugin sidecar (`http://127.0.0.1:7895/plugins/ui/foo/`), and hub dev origins (`http://localhost:5173`); blocks `file://`, `chrome:`, `devtools:`, `data:`, non-blank `about:` URLs, and unparseable src (`http://[::bad`).
 - `apps/desktop/src/renderer/src/panes/BrowserPane.tsx` — the single, shared `<webview>` implementation for **both** arbitrary browsing and plugin/hub-UI panes. Renders `<webview ref=... src={startUrl} partition="persist:browser" allowpopups="true" />`. Owns `normalizeUrl()` (the omnibox parser — UX only, not a security boundary; see Gotchas), the theme-injection bridge (`webviewThemeCSS`/`webviewThemeJS` from `../lib/webviewTheme`, applied only when `appMode` is true), the settings-injection bridge (`webviewSettingsJS` from `../lib/webviewSettings`, applied only when `appMode && pluginId`), and a keyboard-shortcut forwarder (`before-input-event` + a `console-message`-based fallback that injects a `__WKS_KEY__`-prefixed `console.log` listener into the guest page).
-- `apps/desktop/src/renderer/src/panes/PluginPane.tsx` — a thin wrapper, not a second webview implementation. For agent-scoped panes (`pluginId` + `cwd` both present) it mints an ephemeral, directory-scoped `busToken` via `window.electronAPI.pluginPaneToken(pluginId, cwd)` (hub round-trip) and swaps it into the URL's `busToken` query param before rendering; revokes the token on unmount via `revokePluginPaneToken`. Falls back to the URL's baked-in static per-plugin token if minting is unavailable (web build, hub momentarily down) or fails — the webview always loads, scoping is best-effort. Ultimately renders `<BrowserPane initialUrl={resolvedUrl} appMode={true} pluginId={pluginId} .../>`, so it goes through the exact same `will-attach-webview`/`will-navigate` guard as general browsing.
+- `apps/desktop/src/renderer/src/panes/PluginPane.tsx` — a thin wrapper, not a second webview implementation. For agent-associated panes (`pluginId` + `cwd` both present) it mints an ephemeral, revocable plugin-identity `busToken` via `window.electronAPI.pluginPaneToken(pluginId, cwd)` (hub round-trip) and swaps it into the URL's `busToken` query param before rendering; revokes the token on unmount via `revokePluginPaneToken`. Enabled plugins have ambient ordinary bus and filesystem access, so `cwd` is routing context rather than an authorization root. The pane falls back to the URL's baked-in static per-plugin token if ephemeral minting is unavailable or fails. Ultimately it renders `<BrowserPane initialUrl={resolvedUrl} appMode={true} pluginId={pluginId} .../>`, so it goes through the same `will-attach-webview`/`will-navigate` scheme and origin guard as general browsing.
 - `apps/desktop/src/main/services/chromeCookieImport.ts` — imports the user's local Chrome cookies into the `persist:browser` partition (`PARTITION = 'persist:browser'`) to work around Microsoft/Google's embedded-webview OAuth blocks; shares the same partition that `BrowserPane` and every `PluginPane` webview live in.
 - `apps/desktop/src/main/lib/webviewGuard.ts` — the policy and its reasoning in the file header: the threat model (renderer content or a compromised plugin webview escalating via `<webview>`), and why forcing the scheme allowlist is behavior-preserving for the real panes (no legitimate webview uses `file://` or other local schemes).
 
@@ -40,7 +40,7 @@ Workspacer's main `BrowserWindow` enables `webviewTag: true` (`apps/desktop/src/
 - **Navigation blocked**: after a legitimate attach, a subsequent `will-navigate` or `will-redirect` to a disallowed scheme is prevented the same way; console warning `[main] blocking <webview> navigation to disallowed url: ${url}`. The guest stays on its last allowed page.
 - **Unparseable `src`**: `isWebviewSrcAllowed` fails closed — `new URL(src)` throwing (malformed string, e.g. `http://[::bad`) returns `false`, not `true`. Any parse ambiguity denies rather than allows.
 - **`about:` URLs beyond `about:blank`**: rejected outright (`about:version`, `about:config`, `about:srcdoc`, and even `about:blank#x`/`about:blank?y` — only the exact literal string `'about:blank'` matches the allow-list, not the `about:blank` origin family).
-- **PluginPane token mint failure**: if `window.electronAPI.pluginPaneToken` is unavailable (web/browser build) or the hub round-trip fails/rejects, `PluginPane` silently falls back to the URL's static baked-in token rather than blocking — this is a scoping *degradation*, not a webview-attach security failure; the `will-attach-webview` guard still applies to whatever URL is ultimately used.
+- **PluginPane token mint failure**: if `window.electronAPI.pluginPaneToken` is unavailable (web/browser build) or the hub round-trip fails/rejects, `PluginPane` silently falls back to the URL's static baked-in plugin identity rather than blocking. The `will-attach-webview` guard still applies to whatever URL is ultimately used.
 - **Theme/settings injection failure**: `applyWebviewTheme`/`applyWebviewSettings` in `BrowserPane.tsx` swallow errors from `wv.insertCSS`/`wv.executeJavaScript` (e.g. webview mid-navigation or destroyed) with an empty catch and a comment that the next `dom-ready` will re-apply — not a security issue, just a UX no-op on transient failure.
 
 ## Gotchas
@@ -67,7 +67,7 @@ a different problem with the same panes, and the two are easy to conflate.
     `/plugins/ui/<id>/`, which is the **SAME ORIGIN** as `/app`. Framed with
     `allow-same-origin` its page can read `parent.document`, call
     `parent.window.electronAPI.*`, and **lift the hub's full host token out of
-    sessionStorage** — escalating past the scoped per-pane token `PluginPane`
+    sessionStorage** — stealing the authenticated plugin identity `PluginPane`
     mints. Mutation-verified in Chromium: the frame reported
     `hostToken:<host token>`, and `iframe.contentDocument` was readable both with
     no sandbox and with `allow-scripts allow-same-origin`.
@@ -87,8 +87,9 @@ a different problem with the same panes, and the two are easy to conflate.
   loopback) is the only way a browser-framed plugin keeps its bus link, and it
   **loosens nothing** — the browser's own same-origin policy becomes the wall.
   Verified: at a distinct origin the frame connects to `/bus`, keeps storage, and
-  still reports parentDoc/hostToken/electronAPI BLOCKED, while every capability
-  outside its manifest is refused by the pane token.
+  still reports parentDoc/hostToken/electronAPI BLOCKED. Enabled plugins have
+  ambient ordinary capabilities, while host-owned event provenance and
+  administrative/external operations remain unavailable to the pane token.
   **Anyone extending the `/app` iframe fallback will be tempted to "just add
   allow-same-origin" when a hub-served plugin's bus link fails, or to make
   `originAllowed` accept null. Both were declined deliberately** — either silently

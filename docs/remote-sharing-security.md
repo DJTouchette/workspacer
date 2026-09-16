@@ -33,8 +33,8 @@ the entire footprint until you explicitly opt in.
 
 A bus token is still created and required even in this default mode (see §4), but
 its job there is internal: it lets the bus distinguish the trusted host process
-from plugin sidecars and webviews, each of which carries its own narrower
-per-plugin token. Loopback binding, not the token, is what keeps the default
+from authenticated plugin sidecars and webviews, each of which carries its own
+revocable plugin identity. Loopback binding, not the token, is what keeps the default
 posture closed to the network.
 
 The **MCP facade** (`services/hub/cmd/mcp`, `127.0.0.1:7897`) is always
@@ -212,15 +212,16 @@ reach a method outside its tier.
     pinning each of those methods (and any future unknown method) as denied to
     the scoped tiers — so a future edit can't quietly leak spawn into a lower
     tier. (`cmd/brain/capspec_guard_test.go::TestSpawnStaysDeliberatelyUnscoped`
-    guards something different: that `agents.spawn` stays un-path-scoped in
-    capspec, the plugin argument-scoping model, not tier membership.)
+    guards something different: that `agents.spawn` stays an identity-gated,
+    unconfined process launch rather than acquiring path semantics.)
 - **Minting / revoking.** `workspacer token create --scope view|triage|operator`,
   `workspacer token list`, `workspacer token revoke` (`cmd/workspacer/tokencmd.go`);
   tokens persist in `tokens.json` in the workspacer config dir, next to the host
   `remote-token` (`0o600`), and are reloaded live on file change.
-- **Known limits (see §5 and the exposure section).** Scoped user tokens are
-  tiered **by verb only** — no per-path/per-argument confinement (that finer model
-  exists only for *plugin* capabilities), and there is **no TTL/expiry** (a token
+- **Known limits (see §5 and the exposure section).** Scoped remote-user tokens are
+  tiered **by verb only**. Workspacer-spawned agents and enabled plugins use the
+  ambient local capability surface and are not confined per path or manifest.
+  There is **no TTL/expiry** (a token
   lives until revoked). The default remote-share QR/link still embeds the host
   (operator) token, so scoping is something you opt into by minting and handing
   out a scoped token instead of the default link.

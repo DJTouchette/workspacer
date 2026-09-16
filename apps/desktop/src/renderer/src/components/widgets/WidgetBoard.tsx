@@ -313,8 +313,8 @@ const WidgetCell: React.FC<{
  * private — real but affordable at a board-sized count, and reclaimed entirely
  * when the rail closes and this unmounts.
  *
- * The cwd rides in the query so a widget can scope itself to the project without
- * a bus round-trip; the busToken is what the hub keys its capability grant on.
+ * The cwd rides in the query as project context without a bus round-trip; the
+ * busToken authenticates the enabled plugin's identity and remains revocable.
  */
 const PluginWidgetView: React.FC<{ widget: PluginWidget; cwd: string }> = ({ widget, cwd }) => {
   const ref = useRef<HTMLElement | null>(null);

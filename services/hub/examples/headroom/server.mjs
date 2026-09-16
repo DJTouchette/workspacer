@@ -19,7 +19,7 @@ export function hubURL(config) {
   }
   if (!process.env.HUB_TOKEN)
     throw new Error(
-      "Start this plugin through Workspacer to receive its scoped hub token",
+      "Start this plugin through Workspacer to receive its authenticated plugin token",
     );
   url.searchParams.set("token", process.env.HUB_TOKEN);
   return url.toString();

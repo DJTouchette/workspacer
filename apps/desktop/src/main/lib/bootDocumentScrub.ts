@@ -70,11 +70,11 @@ export const SPAWN_ESCALATION_KEYS = [
  *   TEXT auto-executed on restore — no binary needs planting at all.
  * - `pluginId` is a CREDENTIAL sink, not an argv one. A restored `plugin` pane
  *   whose `pluginId` names a loaded plugin makes PluginPane MINT a live
- *   plugin-scoped hub-bus token (`window.electronAPI.pluginPaneToken(pluginId,
+ *   authenticated plugin-identity hub-bus token (`window.electronAPI.pluginPaneToken(pluginId,
  *   cwd)`) and splice it onto the pane's `url` (`u.searchParams.set('busToken',
  *   token)`) before loading it in the webview. A bus writer that set both
  *   `url:'https://attacker/x'` and `pluginId:'<loaded-plugin>'` would have the
- *   host hand a fresh authenticated capability to an attacker origin on restore.
+ *   host hand a fresh authenticated plugin identity to an attacker origin on restore.
  *   Dropping `pluginId` makes `canMint` false, so no token is minted for any
  *   bus-restored pane; the surviving `url` then loads UNauthenticated, at parity
  *   with a browser pane. `url` itself is left alone because it is shared with

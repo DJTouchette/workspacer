@@ -243,7 +243,7 @@ function launch(bin: string, launchGeneration: number): Promise<void> {
   //
   // WKS_MCP_TOKEN is deliberately NOT set: credential-less callers are already
   // refused by the binary's `-untokened deny` default, and every session this
-  // app spawns presents its own scoped token, so a shared static secret would
+  // app spawns presents its own authenticated, revocable token, so a shared static secret would
   // add authority without closing anything. See getMcpFacadeToken.
   //
   // No --untokened flag either, unless the user set facade.untokenedAccess: the

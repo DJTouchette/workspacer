@@ -124,7 +124,7 @@ var httpRoutes = []HTTPRoute{
 	// ---- the hub: the bus itself ----------------------------------------
 	{
 		Server: "hub", Pattern: "/bus", Disposition: RouteGuarded,
-		Reason:   "the bus handshake. Classifies the presented token (per-plugin token → that plugin's caps, host/empty token → trusted, scoped token → its tier's method allowlist, else 401) and then runs mayCall/mayPublish/mayConsume per frame. Every other classification in this package is enforced through this route",
+		Reason:   "the bus handshake. Classifies the presented token (plugin token → authenticated plugin identity with ambient ordinary calls, host/empty token → trusted, scoped remote-client token → its tier's method allowlist, else 401) and then runs call plus event-provenance checks per frame. Every other classification in this package is enforced through this route",
 		Twin:     "*",
 		TwinKind: TwinMethod,
 	},

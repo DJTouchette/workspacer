@@ -25,7 +25,9 @@ func configDir() string {
 // loadOrCreateToken returns the hub bus token, minting + persisting one on
 // first use. The hub requires no token by default (loopback trust), but a
 // headless server needs one: it's the pairing credential for /remote, /m and
-// the bus, and the basis of plugin capability scoping. We reuse the exact file
+// the bus, and the root identity used to authenticate local plugin processes.
+// Enabled plugins receive ambient ordinary capabilities; their tokens remain
+// useful for identity, provenance, revocation and host-only route separation. We reuse the exact file
 // the desktop app persists (<config>/remote-token) so a phone paired against
 // the desktop keeps working against `workspacer serve` and vice versa.
 func loadOrCreateToken(dir string) (string, error) {
@@ -36,8 +38,8 @@ func loadOrCreateToken(dir string) (string, error) {
 // explicit.
 //
 // MINTING A FRESH TOKEN IS NOT A RECOVERY, IT IS A NEW IDENTITY. The token is
-// the pairing credential: the bearer secret on /bus, /remote and /m, the basis
-// of plugin capability scoping, and the value a federating hub presents to reach
+// the pairing credential: the bearer secret on /bus, /remote and /m, the root
+// identity used to authenticate plugin processes, and the value a federating hub presents to reach
 // this machine. Re-minting it does not restore service — it revokes every
 // existing pairing at once — and the process that did it goes on to print a
 // perfectly healthy ready banner. A phone that stops working, a peer stuck on

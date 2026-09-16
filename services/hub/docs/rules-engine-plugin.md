@@ -397,7 +397,7 @@ workspacer-plugins repos.
 ## References
 
 - `hub/README.md` — bus protocol + plugin status overview.
-- `hub/examples/editor/` — bus-native, capability-scoped webview plugin to copy.
+- `hub/examples/editor/` — bus-native, origin-isolated webview plugin to copy.
 - `hub/examples/clock-plugin/` — minimal self-contained plugin (manifest + static webview).
 - `hub/internal/bus/` — `bus.go` (frames, `/bus`, `/health`), `rpc.go` (capability router), `bench_test.go` / `rpc_test.go` (test patterns).
 - `hub/internal/claudemon/bridge.go` — source of `agent.state_changed` (shows exact payload mapping).

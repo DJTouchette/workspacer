@@ -16,7 +16,10 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
-func managerGrantFingerprint(id string) (string, error) {
+// managerIdentityFingerprint proves that the replacement target is the same
+// live manager-role session. The journal's wire field is still named `grants`
+// for mixed-version compatibility; it no longer represents a capability grant.
+func managerIdentityFingerprint(id string) (string, error) {
 	sessionFacadeTokenMu.Lock()
 	defer sessionFacadeTokenMu.Unlock()
 	records, err := authtoken.Load(authtoken.DefaultPath())
@@ -38,12 +41,12 @@ func managerGrantFingerprint(id string) (string, error) {
 		sum := sha256.Sum256(buffer)
 		return hex.EncodeToString(sum[:]), nil
 	}
-	return "", fmt.Errorf("manager operator grant unavailable")
+	return "", fmt.Errorf("manager lifecycle identity unavailable")
 }
 
 type replacementLaunch struct {
 	Options json.RawMessage `json:"options"`
-	Grants  string          `json:"grants"`
+	Grants  string          `json:"grants"` // legacy wire name: manager identity fingerprint
 }
 type replacementMetadata struct {
 	SessionID    string          `json:"sessionId"`
@@ -138,9 +141,9 @@ func (r *registry) replacementHostCall(ctx context.Context, method string, param
 		if err := validateSessionConfigName(p.SessionID); err != nil {
 			return nil, err
 		}
-		fingerprint, err := managerGrantFingerprint(p.SourceSessionID)
+		fingerprint, err := managerIdentityFingerprint(p.SourceSessionID)
 		if err != nil || fingerprint != p.Launch.Grants {
-			return nil, fmt.Errorf("source manager grants changed")
+			return nil, fmt.Errorf("source manager lifecycle identity changed")
 		}
 		var options spawnParams
 		if err := json.Unmarshal(p.Launch.Options, &options); err != nil {
@@ -196,9 +199,9 @@ func (r *registry) replacementHostCall(ctx context.Context, method string, param
 			return nil, fmt.Errorf("too much replacement metadata")
 		}
 		if method == "replacement.transfer" {
-			fingerprint, err := managerGrantFingerprint(p.Successor)
+			fingerprint, err := managerIdentityFingerprint(p.Successor)
 			if err != nil || fingerprint != p.Launch.Grants {
-				return nil, fmt.Errorf("successor grants changed before transfer")
+				return nil, fmt.Errorf("successor lifecycle identity changed before transfer")
 			}
 			body, err := r.cm.getSession(ctx, p.Successor)
 			if err != nil {

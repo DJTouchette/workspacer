@@ -947,7 +947,8 @@ function App() {
         return;
       }
 
-      // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
+      // Default: the editor plugin. PluginPane mints a revocable plugin identity;
+      // `dir` is project context, not an authorization root.
       const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
       if (!editorPane || !editorPane.url) {
         // The editor plugin isn't loaded (not installed, or the hub is down /
@@ -1313,8 +1314,8 @@ function App() {
     const plug = pluginPanesRef.current.find((p) => p.pluginId === 'djtouchette.analytics');
     let tabId: string;
     if (plug) {
-      // Bake in the static per-plugin bus token: this is a global-scope pane
-      // (no cwd), so PluginPane won't mint an ephemeral one — without the token
+      // Bake in the static per-plugin bus token: this is a global pane (no cwd),
+      // so PluginPane won't mint an ephemeral identity — without the token
       // the webview connects to /bus unauthenticated and shows "Bus disconnected".
       const params = new URLSearchParams();
       if (plug.busToken) params.set('busToken', plug.busToken);
