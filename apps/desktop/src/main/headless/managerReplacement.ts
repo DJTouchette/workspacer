@@ -120,9 +120,7 @@ async function send(
     if (attempt.status === 'unknown') throw new Error('Unknown request delivery must not replay');
     if (request.userContent === undefined)
       throw new Error('Unresolved request content unavailable');
-    text = request.bootstrap
-      ? buildManagerKickoff(request.userContent, false)
-      : request.userContent;
+    text = request.bootstrap ? buildManagerKickoff(request.userContent) : request.userContent;
     managerRequests().finishDelivery(sourceRequest.requestId, sourceRequest.deliveryId, 'unknown');
   }
   const result = await hostCall('replacement.send', { sessionId: id, text });
@@ -240,7 +238,6 @@ const service = new ManagerReplacementService(state, {
   kickoff: (op) =>
     buildManagerKickoff(
       `HOST-OWNED MANAGER HANDOFF ${op.operationId}. Your fresh manager session is ${op.successorSessionId}; predecessor ${op.sourceSessionId} is audit history only. The host committed worker AND task ownership. Do not adopt workers, resume or terminate the predecessor, or use a shared handoff.md. Use this validated handoff (retained at ${op.sealedArtifactPath ?? op.artifactPath}, SHA-256 ${op.artifactHash}). Preserve pending decisions; take the stated next action within existing authority.\n${op.artifact}`,
-      false,
     ),
   recoverFinishes: () => {}, // Saved completion deliveries are already journaled by holdMessage.
   async flushFinishes(ids) {

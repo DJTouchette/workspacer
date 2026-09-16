@@ -509,9 +509,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     const instructions = [
       // An empty open starts no turn. Keep doctrine in the daemon's deferred
       // instructions so the first real composer request still has the role.
-      opts.manager && !opts.resumeSessionId && !opts.firstMessage
-        ? buildManagerInstructions(false)
-        : '',
+      opts.manager && !opts.resumeSessionId && !opts.firstMessage ? buildManagerInstructions() : '',
       wantsFacade
         ? managedFacadeInstructions({
             scope: facadeScope,

@@ -67,9 +67,7 @@ export async function nativeDesktopService(
       const delivery = service.beginDelivery(target, p.requestId);
       if (delivery) {
         try {
-          const content = delivery.bootstrap
-            ? buildManagerKickoff(delivery.text, false)
-            : delivery.text;
+          const content = delivery.bootstrap ? buildManagerKickoff(delivery.text) : delivery.text;
           await claudemonSessionClient.message(target, content, undefined, {
             requestId: p.requestId,
             deliveryId: delivery.deliveryId,

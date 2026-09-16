@@ -13,7 +13,7 @@
 ## What Workspacer is
 
 A local-first cockpit for running **many long-lived coding agents side by
-side** — Claude Code, Codex, OpenCode, and Pi (beta). An Electron + React
+side** — Claude Code, Codex, GitHub Copilot, and OpenCode. An Electron + React
 desktop app is the primary client; a Rust daemon (`claudemon`) owns the
 sessions/PTYs and runs the per-provider managed adapters; a Go control-plane
 (`hub`) is an event bus + MCP facade that lets plugins, a Rust TUI, and
@@ -26,7 +26,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Feature | What it does | Maturity |
 |---|---|---|
 | Agent workspaces | Each agent = one long-lived claudemon session (by cwd) with its own tabs/panes; lives in the daemon independent of the UI | 🟢 Solid |
-| Spawn agent | Pick cwd / backend (Claude, Codex, OpenCode, Pi) / model / profile / permission mode / transport, plus resume-in-cwd and git-worktree isolation; initial prompts are seeded by the flows that need them (Ask, library items, handoff) | 🔵 Working |
+| Spawn agent | Pick cwd / supported backend (Claude, Codex, Copilot, OpenCode) / model / profile / permission mode / transport, plus resume-in-cwd and git-worktree isolation. Pi is refused because it has no MCP bridge for the required tools. | 🔵 Working |
 | Worktree setup hooks | Fresh agent worktrees auto-symlink the source checkout's `node_modules`, then run the project's `projects[<dir>].worktreeSetup` commands in order (cwd = worktree; `$SOURCE`/`$WORKTREE` substituted + exported; `script:<name>` runs a project script; 5 min/command; first failure logged + skips the rest, spawn proceeds). Edited per project in Settings → Projects | 🔵 Working |
 | Auto-adopt | Sessions spawned externally (MCP, another agent) appear as cards automatically | 🔵 Working |
 | Fleet Manager | Dispatch a Fleet Manager (Claude, Codex or GitHub Copilot) with the workspacer MCP facade attached to hand work out and coordinate the rest of the fleet; rendered nested under its parent | 🔵 Working |
@@ -41,9 +41,9 @@ remote/web/phone clients all view and drive the same fleet.
 | Agent pane — terminal mode | Live PTY view of a terminal-transport Claude session | 🔵 Working |
 | Agent pane — GUI mode | Rich conversation view: approve/deny, answer questions, inline diffs, work log, per-turn changed-files cards | 🔵 Working |
 | Claude stream transport | Headless `--print` stream-json adapter (`claude_stream.rs`) behind `claude.transport` (shipped default `stream`); control-protocol approvals/questions/model/mode | 🔵 Working |
-| Managed providers | Codex (`codex app-server`), OpenCode (`opencode serve` + SSE), Pi (`pi --mode rpc`, beta) driven natively by claudemon adapters; all get GUI approval/question cards, structural turn-interrupt, and live token/cost | 🔵 Working |
+| Managed providers | Codex (`codex app-server`), Copilot, and OpenCode (`opencode serve` + SSE) are supported. A Pi adapter exists experimentally but is not admitted through Workspacer spawn without an MCP bridge. | 🔵 Working |
 | Codex stream transport | Spawn dialog offers `hybrid` (native Codex TUI + GUI, one thread) or `headless` (`transport:"stream"` — daemon-owned `thread/start`, GUI-only); restart preserves the transport | 🔵 Working |
-| Shared context control | A compact Context popover accompanies the model control for every provider. Claude keeps its validated 200K/1M variants; fresh Codex sessions request 1M by default and accept a numeric spawn override. Copilot, OpenCode and Pi are visibly provider-managed. Active-context bars wait for the runtime-confirmed effective window and label cumulative billed tokens separately. | 🔵 Working |
+| Shared context control | A compact Context popover accompanies the model control for supported providers. Claude keeps validated 200K/1M variants; fresh Codex sessions request 1M by default. Copilot and OpenCode are provider-managed. | 🔵 Working |
 | Inspector rail | Files / Plan / Workflows / Subagents / Usage (5h / 7d / monthly rate windows) for the active session | 🔵 Working |
 | Composer | Send messages with file attach (drag / paste / picker); streaming + cancel; model / effort / permission-mode pills | 🔵 Working |
 | Live model & mode switching | Switch model and permission mode mid-session without a respawn (PTY-verified or control-protocol per transport) | 🔵 Working |
@@ -154,7 +154,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Federation links | peers.json (0600) → outbound busclient per peer; curated forward list (agent.*, workflow.*); Envelope.Hub stamp; tree invariant; hub.peer.* lifecycle | 🔵 Working |
 | Qualified calls | `hub:<peer>/<method>` — tier check on bare method, plugins refused, 25s budget, peer-side confinement | 🔵 Working |
 | Client coverage | Desktop (badges/tombstones/pane gating/Machine picker), web /app, /m PWA (incl. cross-machine push), wks-tui — all merged-fleet; /remote deliberately local-only | 🔵 Working |
-| Security | Remote cwds grant no local fs roots (snapshotGrantsFsRoot fail-closed); peer tokens are the link ceiling | 🔵 Working |
+| Security | Remote sessions do not imply local filesystem ownership; authenticated peer identity and host-side provenance gates remain the link boundary | 🔵 Working |
 | Known limits | Headless-brain-only peers invisible to desktop/TUI (sparse rows); desktop remote chat renders snapshot window only; no nested federation; a peer's remote worker nodes (e.g. Fly nodes) do not forward and are silently invisible, connect via remote-client mode to see them | 🔵 Working |
 
 ## 9c. Limit-aware agent routing (hub)
@@ -166,7 +166,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Window currency | A reading is used only while its reset is still in the future; an expired window yields UNKNOWN, never a stale percentage or a negative time-to-reset. Enforced by type in `internal/limits/window.go` | 🟢 Solid |
 | Modes | `normal` / `conserve` / `spend_down` from the thresholds, or pinned per provider in `modes:`. `mode_shifts:` moves a role's capability; a cross-provider shift reads the landing provider's own capacity and is refused if that one is conserving | 🔵 Working |
 | `routing.select` | The one method the layer registers, read-only; `select_model` in the MCP facade, operator tier only. Publishes `routing.decision` (no cwd, no account) | 🔵 Working |
-| Per-directory ceilings | `ceilings:` caps capability and tool scope by absolute directory, longest ancestor wins, matched on the canonicalized path. Clamped in `sanitizeSpawnParams` so the federated hop is covered; `routing.select` applies the same function so it never advises what the gate refuses. Unreadable ceiling value denies rather than skips | 🟢 Solid |
+| Per-directory ceilings | `ceilings:` caps model capability by absolute directory, longest ancestor wins, matched on the canonicalized path. Clamped in `sanitizeSpawnParams` so the federated hop is covered; `routing.select` applies the same function so it never advises what the gate refuses. Legacy `max_tool_scope` parses but is ignored. | 🟢 Solid |
 | `fresh` enforcement | A spawn declaring a `role` or `capability` whose active-profile entry is `fresh: true` may not carry a `resumeSessionId`; refused rather than stripped, so a resume never becomes a silent new session. Same `sanitizeSpawnParams` site as the ceilings, so the federated hop is covered. A role is judged at its strongest reading, mode shifts included; declaring neither a role nor a capability resumes normally. **Solid as code and proven by the runtime harness, not yet reachable from a shipped caller:** the facade's `spawn_agent` has no `resumeSessionId` field to send, and the callers that do send one (the desktop provider's `agents.spawn`, reached by the web `/app` and `/m` resume paths) declare no role, which is correctly read as no freshness claim. The rule goes live for the fleet as managers start declaring roles | 🔵 Working |
 | Decision log | `routing-decisions.jsonl` beside the matrix, 0600, append-only, rotates at 8 MiB. `decision` + `spawn` rows joined by `decisionId`; the only record on a headless node | 🔵 Working |
 | Runtime harness | `make test-routing-harness`: a real hub + fake claudemon over stale/boundary/403/absent usage states, plus ceiling, symlink and freshness-refusal cases | 🟢 Solid |
@@ -179,7 +179,7 @@ remote/web/phone clients all view and drive the same fleet.
 | MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` MCP clients | 🟢 Solid |
 | MCP tools (~50 core) | Supported spawned agents receive the full driving set plus enabled-plugin tools. View/triage/operator scopes remain for manual and remote pairing credentials, not as spawn-time agent grants. | 🟢 Solid |
 | Agent tool surface | Supported agents automatically receive the full Workspacer surface plus every enabled plugin tool. Per-session tokens provide identity and lifecycle revocation, not grants. Legacy `toolScope`, plugin-selection, profile-grant, and yolo-grant fields are inert. Pi is unsupported because it has no MCP bridge. | 🟢 Solid |
-| Plugin-contributed tools | Manifest `tools` (bound to consent-pinned `provides`) → hub-local `plugins.tools` → facade polls + grafts per-token; strictly opt-in per session (`pluginTools`, spawn-dialog pills) | 🟢 Solid |
+| Plugin-contributed tools | Manifest `tools` (bound to the plugin's own-namespace `provides`) → hub-local `plugins.tools` → facade polling → every supported agent while enabled. Server catalogs refresh; MCP clients caching `tools/list` may need reconnect/refresh because no list-changed notification is emitted. | 🟢 Solid |
 | Per-method capability tokens | Enforced: view/triage/operator grant sets at the router's dispatch seam (see §8); the facade's own inbound tiers derive from the same allowlists | 🟢 Solid |
 
 ## 11. Terminal client — `wks-tui` (Rust)
@@ -198,8 +198,8 @@ remote/web/phone clients all view and drive the same fleet.
 | Feature | What it does | Maturity |
 |---|---|---|
 | Hook intake | Receives all Claude Code hook events; deferred-hook approval gate | 🟢 Solid |
-| Managed provider adapters | `claude_stream` / `codex` / `opencode` / `pi`: pure per-provider `translate()` + shared `apply_updates`, spawned via `POST /sessions/spawn-managed` | 🟢 Solid |
-| AskUserQuestion shim | `POST /mcp/ask/:session_id` — a minimal MCP endpoint that parks the session in Question until `/answer`; Codex mounts it as an MCP config override, OpenCode as a remote MCP entry, Pi via a generated extension | 🔵 Working |
+| Managed provider adapters | Supported `claude_stream` / `codex` / `copilot` / `opencode` adapters use shared state updates; Pi remains experimental daemon substrate, not a supported Workspacer spawn | 🟢 Solid |
+| AskUserQuestion shim | `POST /mcp/ask/:session_id` parks a supported managed session in Question until `/answer`; Codex/OpenCode/Copilot mount it through their MCP integrations | 🔵 Working |
 | Codex restart durability + resume | Session→thread sidecar under `~/.workspacer/codex-threads`; a restarted daemon lazily replays the thread's rollout into the conversation, and spawn-managed resume rejoins via `thread/resume` | 🔵 Working |
 | Session state machine | In-memory per-session mode/state, broadcast over SSE | 🟢 Solid |
 | Session/PTY APIs | input/output/stream/message/approve/answer/decide/gate/resize/spawn | 🟢 Solid |

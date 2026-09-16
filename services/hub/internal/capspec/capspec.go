@@ -1,8 +1,6 @@
 // Package capspec is the small, dependency-free vocabulary shared between the
-// bus (which enforces capability grants) and the plugin loader (which validates
-// manifests and translates them into grants). Keeping it here avoids a bus↔plugin
-// import cycle and keeps the list of filesystem-scoped capabilities in exactly
-// one place, so enforcement and validation can never drift apart.
+// bus and plugin loader. Historical grant/path metadata remains parse-compatible;
+// enabled plugins are trusted local code and are not confined by it.
 package capspec
 
 import (
@@ -13,9 +11,8 @@ import (
 )
 
 // PathParam maps a capability method to the params field that carries the
-// filesystem path it operates on. A method present here is "path-scoped": a
-// plugin must declare path roots to be granted it, and the bus confines each
-// call to those roots (see the bus's path-containment policy).
+// filesystem path it operates on. The mapping still supports host-side remote
+// client policy and legacy manifest validation; it is not a plugin sandbox.
 //
 // This is the single source of truth for "which capabilities touch the
 // filesystem". Add a method here the moment it grows a path argument, or it will
@@ -95,7 +92,7 @@ var unscopedByDecision = map[string]string{
 	"remote.tokenRevoke":           "remotePairingTrusted requires authenticated host authority; exact token selects only a Remote Control pairing in the configured store. Host, provider and session credentials cannot be revoked here.",
 	"machine.stop":                 "Operator-only self stop through a configured power provider. No caller coordinates, paths, tokens or commands; external HTTP wake must be configured by the host.",
 	"agents.dispatchPrepare":       "Operator-only remote admission: cwd must exactly match this host discovery and canonical filesystem, provider must be authenticated here. Allocates a fresh isolated worktree under this host config root with no repository clone or setup hook. The authenticated origin credential and nonce bind its expiring, single-use lease.",
-	"fleet.selectDispatchModel":    "Operator-only explicit paired routing. The host forwards a routing request over its stored pairing connection and the remote host applies its own provider readiness and routing policy. No local credential or local full-access grant is forwarded.",
+	"fleet.selectDispatchModel":    "Operator-only explicit paired routing. The host forwards a routing request over its stored pairing connection and the remote host applies its own provider readiness and routing policy. No local credential is forwarded.",
 	"routing.preferences.validate": "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
 	"routing.preferences.save":     "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
 	"routing.preferences.reset":    "Typed allowlisted model policy only, fixed hub-owned sidecar, combined host/sidecar revision CAS. routingPreferencesTrusted requires an authenticated host-token operator connection, excluding scoped operator tokens, untokened and peer links. No caller paths, raw YAML, capability ranks, ceilings or tool scope. Host classifications and freshness floors cannot be weakened; canonical spawn enforcement remains authoritative.",
@@ -1304,41 +1301,18 @@ func MissingSpec(method string) bool {
 	return LooksPathBearing(method)
 }
 
-// Grant is one capability a plugin token may call, with optional filesystem
-// scoping. FSRoots, when set, restricts a path-scoped call to targets within one
-// of the (canonical, absolute) roots; it is empty for non-path methods. Defined
-// here — not in the bus — so the plugin loader can build grants without importing
-// the bus, and the bus can accept them without importing the loader.
+// Grant is a legacy manifest shape retained for source and wire compatibility.
 type Grant struct {
 	Method  string
 	FSRoots []string
-	// ChildToolScope is the CHILD-DELEGATION grant, and it is meaningful on
-	// exactly one method: agents.spawn. It names the highest facade tier
-	// (view/triage/operator) a spawn this plugin starts may hand its child.
-	//
-	// EMPTY MEANS NONE, and that is the whole point. Consent to call
-	// agents.spawn says "this plugin may start an agent"; it does not say "this
-	// plugin may mint an agent holding first-party operator tools". A plugin has
-	// no rung on the view/triage/operator ladder, so there was nothing to clamp
-	// it against and it was left unclamped — a plugin could request
-	// `mcpFacade: true` (whose legacy meaning is OPERATOR) and get a child with
-	// far more authority than its own token holds. This field is the rung: an
-	// explicit, separately-consented declaration, absent by default.
+	// ChildToolScope is a legacy ignored field. Supported children receive the
+	// ambient Workspacer and enabled-plugin tools.
 	ChildToolScope string
 }
 
-// EventGrants is a plugin token's pub/sub + provider surface — the event side of
-// the same "declare it in the manifest to be allowed it" model that [Grant]
-// gives capability calls:
-//
-//   - Emits: event types the plugin may publish on the bus.
-//   - Consumes: event types it may receive (delivery of anything else is dropped).
-//   - Provides: capability method names it may register as a provider of.
-//
-// Patterns use the bus topic syntax — exact, "prefix.*", or "*" — matched by
-// internal/event.Matches. Empty means none: a plugin that declared nothing can
-// neither publish, receive, nor provide, matching the fail-closed stance of
-// capability calls. Trusted connections (the host) bypass all of this.
+// EventGrants is the legacy manifest event shape. Emits/Consumes are advisory
+// discovery metadata for enabled plugins. Provides remains an enforced
+// own-namespace provider-identity boundary.
 type EventGrants struct {
 	Emits    []string
 	Consumes []string

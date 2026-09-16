@@ -269,37 +269,18 @@ type Record struct {
 	// compatibility. The facade ignores it: every authenticated agent receives
 	// tools from every enabled plugin.
 	Plugins []string `json:"plugins,omitempty"`
-	// ProfilesAllowed lists the Claude profile ids this token may dispatch
-	// agents under: an agents.spawn naming a profileId in this list keeps it
-	// (the hub stamps `profileGranted` beside it); any other profileId is
-	// stripped before the call reaches a provider. Same philosophy as Plugins —
-	// a grant recorded at mint time by the host user (the desktop's
-	// fleet-manager spawn path), never claimable by the caller itself. Exact
-	// ids only, deliberately no "*": blessing a manager means naming the
-	// accounts it may burn. Enforced in BOTH places tokens are verifiable: the
-	// hub router (scoped bus connections) and the MCP facade (per-session
-	// records multiplexed over the facade's own trusted connection).
+	// ProfilesAllowed is legacy persisted metadata. It is retained for lossless
+	// mixed-version upgrades but is ignored by current spawn authorization.
 	ProfilesAllowed []string `json:"profilesAllowed,omitempty"`
-	// YoloAllowed is the full-access grant: an agents.spawn from this token may
-	// have its `skipPermissions` request HONORED (--dangerously-skip-permissions
-	// / a bypass permissionMode) instead of clamped. Like ProfilesAllowed, it is
-	// recorded at mint time by the host user (the desktop's fleet-manager spawn
-	// path, gated by the agents.fleetFullAccess setting), never claimable by the
-	// caller itself. The hub router is the sole stamper: sanitizeSpawnParams
-	// deletes any incoming `yoloGranted` and re-adds it only for a verified
-	// grant (or the trusted host), so a provider seeing the stamp knows the hub
-	// judged the caller — the stamp says the request MAY be honored, it does not
-	// itself request the bypass.
+	// YoloAllowed is legacy persisted metadata. Provider permission modes now
+	// flow through without a Workspacer token grant.
 	YoloAllowed bool `json:"yoloAllowed,omitempty"`
 	// FacadeAuthority lets an explicitly provisioned operator MCP multiplexer
 	// assert authenticated local session provenance. It grants no owner-only
 	// methods, profile accounts, full-access bypass, or federation authority.
 	FacadeAuthority bool `json:"facadeAuthority,omitempty"`
-	// Role tags a session token with the role of the session it was minted for
-	// ("manager"). Written by the desktop's mint path and read back by its
-	// grant reconciler (a config full-access flip updates exactly the manager
-	// session tokens, live, in both directions). The Go
-	// side never acts on it — the field exists here so the CLI's Load→Save
+	// Role is legacy session metadata. The Go side never acts on it; the field
+	// exists so the CLI's Load→Save
 	// rewrites (token create/revoke) preserve it instead of silently stripping
 	// every session token's role. TWIN: RemoteTokenRecord.role (ipcTypes.ts).
 	Role string `json:"role,omitempty"`
@@ -457,21 +438,8 @@ func Mint(path string, scope Scope, label string) (Record, error) {
 	return MintGranted(path, scope, label, false)
 }
 
-// MintGranted is [Mint] with the full-access grant decided at mint time.
-//
-// `yoloAllowed` is the ONLY way to hand a credential the right to spawn agents
-// that skip approvals, and it exists as a mint-time argument because the two
-// callers that need it cannot use the desktop's fleet-manager mint path:
-//
-//   - a FEDERATION LINK's token. A peer link inherits no host trust (see
-//     bus.conn.mayBypassPermissions), so a hub that wants its peer to dispatch
-//     full-access work must mint the link a token that SAYS so and put that
-//     token in the peer's peers.json entry.
-//   - a headless node with no desktop attached, where there is no
-//     agents.fleetFullAccess UI to flip.
-//
-// It is deliberately not settable by the holder, and never inferred: a token
-// carries the grant because a human at this machine typed the flag.
+// MintGranted is retained for source compatibility. yoloAllowed is persisted
+// as legacy metadata only and is ignored by current spawn authorization.
 func MintGranted(path string, scope Scope, label string, yoloAllowed bool) (Record, error) {
 	if _, err := ParseScope(string(scope)); err != nil {
 		return Record{}, err

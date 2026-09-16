@@ -2,7 +2,7 @@
 //
 // Installed workspacer plugins may declare `tools` in their manifest — MCP
 // tool definitions bound to bus methods the plugin itself answers (its
-// `provides`). The hub serves the CONSENTED surface via the hub-local
+// `provides`). The hub serves the enabled surface via the hub-local
 // `plugins.tools` method. This file polls that catalog and grafts every enabled
 // plugin tool onto every authenticated agent server. Plugin installation and
 // enablement are the user's trust decision; the legacy per-session `plugins`
@@ -41,9 +41,9 @@ type pluginTools struct {
 }
 
 // catalogPollInterval is how often the facade re-asks the hub for the
-// enabled tool surface. Install/enable/reload of a plugin shows up within
-// one interval; a token's plugin GRANTS apply instantly (they live in
-// tokens.json, resolved per request).
+// enabled tool surface. Install/enable/reload of a plugin shows up within one
+// interval. Existing MCP clients may cache tools/list and need a reconnect or
+// explicit refresh because the facade emits no list-changed notification.
 const catalogPollInterval = 15 * time.Second
 
 // pluginCatalog is the facade's view of the hub's enabled plugin-tool
@@ -199,7 +199,7 @@ func enabledPlugins(byID map[string][]pluginToolDef) []string {
 	return out
 }
 
-// grantedPluginTools is one plugin's tools as granted to a specific token.
+// grantedPluginTools is a legacy type name for one enabled plugin's ambient tools.
 type grantedPluginTools struct {
 	PluginID string
 	Tools    []pluginToolDef

@@ -441,7 +441,11 @@ func (b *blockWatcher) send(ctx context.Context, recipientID string, blockedIDs 
 		return
 	}
 
-	text := buildFleetMessage(fleetBlockedHeader, fleetBlockedTail, entries)
+	tail := fleetBlockedTail
+	if !recipient.IsWakeTarget {
+		tail = ordinaryBlockedTail
+	}
+	text := buildFleetMessageForAudience(fleetBlockedHeader, tail, entries, !recipient.IsWakeTarget)
 	if err := b.reg.deliverFleetWake(ctx, recipientID, text); err != nil {
 		// Best-effort, and deliberately terminal for THIS recipient only: the
 		// manager may have ended between the check above and the send. Nothing

@@ -732,6 +732,11 @@ class ClaudeSessionStore {
   // an uncancellable timer scheduled by the dying life fires 30 s into the
   // successor's life and deletes a session that is running. See cancelEviction.
   private evictionTimers = new Map<string, NodeJS.Timeout>();
+  // A facade bearer is a launch-lifetime credential, not a card-lifetime one.
+  // SessionEnd keeps the card around for the transcript grace period, but the
+  // token must stop working on that edge. This set makes the later close/evict
+  // teardown idempotent. It is cleared only when the id starts a new life.
+  private facadeTokenRevoked = new Set<string>();
   // Debounce: per-managed-session analytics snapshot timers. Managed (codex /
   // opencode) sessions don't fire Claude Stop/SessionEnd hooks, so we snapshot
   // their history off the conversation stream instead (see scheduleManagedHistory).
@@ -768,6 +773,7 @@ class ClaudeSessionStore {
     // A spawn onto this id supersedes whatever life scheduled an eviction for
     // it; this is the earliest point in a restart, before any hook has landed.
     this.cancelEviction(sessionId);
+    this.facadeTokenRevoked.delete(sessionId);
     if (meta.cwd && (meta.parentSessionId || meta.isWakeTarget))
       managerReplacementState.rememberChild({ sessionId, ...meta, cwd: meta.cwd });
     this.spawnMeta.set(sessionId, meta);
@@ -990,8 +996,15 @@ class ClaudeSessionStore {
 
   /** Managers receive every local block. An ordinary parent receives only the
    * block of the direct child it spawned, without becoming a wake target. */
-  private blockWakeRecipientIds(session: ClaudeSessionState): string[] {
-    const ids = new Set(this.supervisorSessionIds());
+  private blockWakeRecipients(
+    session: ClaudeSessionState,
+  ): Array<{ sessionId: string; isWakeTarget: boolean }> {
+    const recipients = new Map(
+      this.supervisorSessionIds().map((sessionId) => [
+        sessionId,
+        { sessionId, isWakeTarget: true },
+      ]),
+    );
     const parent = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined;
     if (
       parent &&
@@ -999,8 +1012,11 @@ class ClaudeSessionStore {
       !parent.hub &&
       parent.sessionId !== session.sessionId
     )
-      ids.add(parent.sessionId);
-    return [...ids];
+      recipients.set(parent.sessionId, {
+        sessionId: parent.sessionId,
+        isWakeTarget: parent.isWakeTarget === true,
+      });
+    return [...recipients.values()];
   }
 
   /**
@@ -1396,6 +1412,9 @@ class ClaudeSessionStore {
       // name work instead of sticking to the empty string forever.
       session.cwd = cwd;
     }
+    if (hookName !== 'SessionEnd' && session.status === 'ended') {
+      this.facadeTokenRevoked.delete(sessionId);
+    }
 
     // Live cwd: hooks carry the session's *current* working directory on
     // every event, and it moves when the agent enters/exits a git worktree
@@ -1457,6 +1476,7 @@ class ClaudeSessionStore {
       }, 1500);
     } else if (hookName === 'SessionEnd') {
       applySessionEndEvent(session);
+      this.revokeFacadeTokenOnce(sessionId);
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
       managerReplacementState.forgetUnclaimedMetadata(sessionId);
@@ -1514,7 +1534,7 @@ class ClaudeSessionStore {
       supervisorNudge.onBlock(
         session,
         session.pendingApproval ? 'approval' : 'question',
-        this.blockWakeRecipientIds(session),
+        this.blockWakeRecipients(session),
       );
     } else if (!isBlocked(session.ambientState) && isBlocked(prevAmbient)) {
       supervisorNudge.onBlockCleared(session.sessionId);
@@ -1647,7 +1667,7 @@ class ClaudeSessionStore {
         supervisorNudge.onBlock(
           session,
           next === 'waiting_approval' ? 'approval' : 'question',
-          this.blockWakeRecipientIds(session),
+          this.blockWakeRecipients(session),
         );
       } else if (!isBlocked(next) && isBlocked(prevAmbient)) {
         supervisorNudge.onBlockCleared(session.sessionId);
@@ -2310,15 +2330,11 @@ class ClaudeSessionStore {
     this.watcherUpdates.delete(sessionId);
     this.resyncing.delete(sessionId);
     this.spawnMeta.delete(sessionId);
-    // The session's MCP-facade token (if it had one) is a live bearer secret in
-    // tokens.json; the session is over, so cut it off. A respawn onto this id
-    // re-mints. Boot-time sweepSessionFacadeTokens catches sessions that ended
-    // while the desktop wasn't running.
-    try {
-      revokeSessionFacadeTokens(sessionId);
-    } catch (err) {
-      console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
-    }
+    // SessionEnd normally revoked this immediately. close_session can also be
+    // the first terminal edge (managed crash/no hook), so keep the same
+    // idempotent cleanup here without delaying ordinary revocation for 30s.
+    this.revokeFacadeTokenOnce(sessionId);
+    this.facadeTokenRevoked.delete(sessionId);
     for (const timers of [this.statusLineTimers, this.managedHistoryTimers, this.pendingFlush]) {
       const t = timers.get(sessionId);
       if (t) {
@@ -2389,9 +2405,20 @@ class ClaudeSessionStore {
     this.evictionTimers.delete(sessionId);
   }
 
+  private revokeFacadeTokenOnce(sessionId: string): void {
+    if (this.facadeTokenRevoked.has(sessionId)) return;
+    this.facadeTokenRevoked.add(sessionId);
+    try {
+      revokeSessionFacadeTokens(sessionId);
+    } catch (err) {
+      console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
+    }
+  }
+
   private createSession(sessionId: string, cwd: string): PendingFencedSession {
     // A reused id means the previous life's eviction is still armed.
     this.cancelEviction(sessionId);
+    this.facadeTokenRevoked.delete(sessionId);
     // Typed without the pending slot for the same reason the remote rows are:
     // the fields cannot be named here, so `bornWithEmptyPending` below is the
     // only statement in this file of what a new row's slot holds.

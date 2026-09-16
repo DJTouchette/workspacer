@@ -205,7 +205,7 @@ var compositions = []Composition{
 		A:        "jobs.upsert",
 		B:        "jobs.run",
 		Crossing: "the job spec is BUILT to be interpreted: a shell action's `command` goes to /bin/sh -c on the hub's machine, a spawn action re-enters agents.spawn with a cwd and a prompt, and the trigger fires with nobody watching. Storage is the hub-owned 0600 jobs.json — deliberately NOT the library (agent-writable) or the layout (world-readable, broadcast) — so the file itself is out of reach; the bus surface is the remaining door.",
-		ClosedBy: "identity, not paths — jobsTrusted: there is no subtree to confine a shell command to (the terminals.create argument), so every jobs.* handler in cmd/hub refuses non-trusted callers via jobsTrusted called with the method's own name — plugin tokens and view/triage tiers never reach the store. A spawn action's second hop re-enters agents.spawn as a bus caller and inherits its clamps (no bypass, no mcpItemIds, profile configDir scrubbed).",
+		ClosedBy: "identity, not paths — jobsTrusted refuses non-trusted callers. Spawn actions re-enter the ordinary agents.spawn path with provider permission choices passed through.",
 		Bearings: []Bearing{
 			argBearing("jobsTrusted", "jobs.upsert", hubMainFile),
 			argBearing("jobsTrusted", "jobs.run", hubMainFile),

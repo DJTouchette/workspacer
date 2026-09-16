@@ -193,7 +193,6 @@
     "defaultProvider": "claude",
     "defaultCwd": "",
     "fleetRoot": "",
-    "fleetFullAccess": false,
     "managerProvider": "claude",
     "checkProviderOnStartup": true,
     "binaries": {

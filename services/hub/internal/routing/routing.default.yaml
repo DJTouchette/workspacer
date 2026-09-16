@@ -740,10 +740,8 @@ modes:
 # keyed by project directory, whatever the caller asks for.
 #
 #   max_capability  the highest capability a spawn there may resolve to.
-#   max_tool_scope  the highest authority tier a worker there may be handed:
-#                   view | triage | operator. ("tier" already means AUTHORITY in
-#                   this codebase, which is why the model axis is called
-#                   `capability` everywhere above.)
+#   max_tool_scope  legacy ignored field retained for older routing files.
+#                   Supported agents receive ambient Workspacer tools.
 #
 # The `default` key applies to any directory with no entry of its own; the
 # longest matching ancestor directory wins over it.

@@ -126,6 +126,19 @@ const (
 	// host composed the wake.
 	fleetBlockedTail = "Inspect the blocked agent's context. Resolve an in-scope decision with send_message; " +
 		"otherwise surface the exact decision needed, then stop without polling."
+
+	// Ordinary direct parents receive lifecycle wakes without becoming Fleet
+	// Managers. Keep their guidance free of task/workflow ledgers, resultSchema
+	// bookkeeping, manager_context, and fleet-wide actions.
+	ordinaryWorkerFinishedTail = "Inspect the child's final result and continue your own task. Use project-brief for " +
+		"durable project knowledge, and spawn further work with spawn-agent if useful."
+	ordinaryWorkerEscalatedTail = "The child is blocked and did not complete. Inspect its escalation, resolve the decision " +
+		"if it is within your task, then continue your own work. Use project-brief for durable " +
+		"knowledge and spawn-agent for any follow-up."
+	ordinaryCatchUpTail = "Inspect each child's result and continue your own task. Use project-brief for durable " +
+		"project knowledge, and spawn further work with spawn-agent if useful."
+	ordinaryBlockedTail = "Inspect your blocked child's context and answer it if the decision is within your task; " +
+		"otherwise surface the exact decision you need. Then continue your own work."
 )
 
 // fleetFailedNote / fleetStoppedNote are the plain (non-bullet) blocks a wake
@@ -141,6 +154,9 @@ const (
 
 	fleetStoppedNote = "A \"stopped/killed\" entry's session ENDED (killed or exited) rather than going idle — " +
 		"treat its last reply as possibly incomplete, not as a clean finish."
+
+	ordinaryFailedNote = "A \"FAILED\" child did not complete its task. Inspect the reported error, then adjust the " +
+		"task or start a focused follow-up with spawn-agent."
 )
 
 // fleetCreditBalanceNotePrefix + creditBalanceRemedy is CREDIT_BALANCE_NOTE in
@@ -344,6 +360,10 @@ func formatFleetEntry(e fleetEntry) string {
 // A progress or threshold entry sets none of these fields, so this composes the
 // byte-identical no-extras string those two kinds always produced.
 func buildFleetMessage(header, tail string, entries []fleetEntry) string {
+	return buildFleetMessageForAudience(header, tail, entries, false)
+}
+
+func buildFleetMessageForAudience(header, tail string, entries []fleetEntry, ordinaryParent bool) string {
 	bullets := make([]string, 0, len(entries))
 	for _, e := range entries {
 		bullets = append(bullets, "- "+formatFleetEntry(e))
@@ -351,14 +371,20 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 	head := header + "\n" + strings.Join(bullets, "\n")
 
 	var extras []string
-	for _, e := range entries {
-		if e.ReviewEvidenceID != "" {
-			extras = append(extras, fmt.Sprintf("Review evidence — session:%s: %s", e.SessionID, e.ReviewEvidenceID))
+	if !ordinaryParent {
+		for _, e := range entries {
+			if e.ReviewEvidenceID != "" {
+				extras = append(extras, fmt.Sprintf("Review evidence — session:%s: %s", e.SessionID, e.ReviewEvidenceID))
+			}
 		}
 	}
 	for _, e := range entries {
 		if e.Failed != "" {
-			extras = append(extras, fleetFailedNote)
+			if ordinaryParent {
+				extras = append(extras, ordinaryFailedNote)
+			} else {
+				extras = append(extras, fleetFailedNote)
+			}
 			break
 		}
 	}
@@ -377,11 +403,13 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 			break
 		}
 	}
-	for _, e := range entries {
-		if e.Result != "" {
-			extras = append(extras, fmt.Sprintf("Structured result — %s (session:%s):\n%s", e.Label, e.SessionID, e.Result))
-		} else if e.ResultError != "" {
-			extras = append(extras, fmt.Sprintf("Structured result MISSING — %s (session:%s): %s. Read the prose report below/above instead.", e.Label, e.SessionID, e.ResultError))
+	if !ordinaryParent {
+		for _, e := range entries {
+			if e.Result != "" {
+				extras = append(extras, fmt.Sprintf("Structured result — %s (session:%s):\n%s", e.Label, e.SessionID, e.Result))
+			} else if e.ResultError != "" {
+				extras = append(extras, fmt.Sprintf("Structured result MISSING — %s (session:%s): %s. Read the prose report below/above instead.", e.Label, e.SessionID, e.ResultError))
+			}
 		}
 	}
 	for _, e := range entries {
@@ -400,9 +428,11 @@ func buildFleetMessage(header, tail string, entries []fleetEntry) string {
 				e.Label, e.SessionID, renderFullReply(e.FullReply)))
 		}
 	}
-	for _, e := range entries {
-		if e.WorkflowInstructions != "" {
-			extras = append(extras, e.WorkflowInstructions)
+	if !ordinaryParent {
+		for _, e := range entries {
+			if e.WorkflowInstructions != "" {
+				extras = append(extras, e.WorkflowInstructions)
+			}
 		}
 	}
 	if len(extras) == 0 {

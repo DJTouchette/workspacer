@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>work{spacer} :: a manager agent for your coding fleet</title>
-<meta name="description" content="One manager agent dispatches Claude Code, Codex, GitHub Copilot, OpenCode and Pi across your repos, then writes what the fleet learns into a brief that stays in the project. Local-first, MIT, alpha." />
+<meta name="description" content="One manager agent dispatches Claude Code, Codex, GitHub Copilot and OpenCode across your repos, then writes what the fleet learns into a brief that stays in the project. Local-first, MIT, alpha." />
 <link rel="canonical" href="https://www.workspacer.app/" />
 
 <!-- Social cards. og:image must be an absolute URL or nothing unfurls it. -->
@@ -1056,21 +1056,21 @@
     </div>
     <div class="harness">
       <span class="harness-mark mono" style="font-size:21px;color:var(--fg-muted);">π</span>
-      <div><div class="harness-name">Pi</div><div class="harness-tag">beta</div></div>
+      <div><div class="harness-name">Pi</div><div class="harness-tag">not supported</div></div>
     </div>
   </div>
   <div class="harness-footer">
-    <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Approval cards, the question picker, and one workspace per agent on all five</span>
+    <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Approval cards, the question picker, and one workspace per supported agent</span>
     <span><svg class="tick" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4"/></svg> Your CLIs, your subscriptions, your machine. Nothing is proxied through us</span>
     <!-- The old copy here claimed live token cost on every provider. It isn't
          true, and a page that overclaims the boring parts doesn't get believed
          about the interesting ones. -->
-    <span class="caveat"><svg class="warn" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 2.5 15 14H1L8 2.5Z" stroke-linejoin="round"/><path d="M8 6.6v3.2M8 11.6v.5"/></svg> Not at parity, and we won't pretend: cost on Codex and GitHub Copilot is a pricing-table estimate rather than a wire figure (Copilot bills in AI credits, and no dollar amount reaches us at all), Copilot's non-interactive mode cannot ask you for an approval — it confines tools to the agent's directory instead — and Pi ships no MCP client at all, so a Pi worker gets none of the work{spacer} tools. Claude Code is the most complete of the five, and the manager itself runs on Claude, Codex or GitHub Copilot. It <em>dispatches</em> to all five.</span>
+    <span class="caveat"><svg class="warn" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 2.5 15 14H1L8 2.5Z" stroke-linejoin="round"/><path d="M8 6.6v3.2M8 11.6v.5"/></svg> Not at parity, and we won't pretend: Codex and GitHub Copilot cost figures are estimates, organization policy may block Copilot MCP servers, and Pi is not offered because its CLI has no MCP bridge. The manager runs on Claude, Codex or GitHub Copilot and dispatches to the four supported backends.</span>
   </div>
   <div class="showcase">
     <a class="frame" href="shots/spawn-dialog.webp" target="_blank">
       <img width="1600" height="862" src="shots/spawn-dialog.webp" loading="lazy"
-        alt="The spawn dialog: pick Claude Code, Codex, OpenCode, or Pi, a model, terminal or headless transport, and a permission mode" />
+        alt="The spawn dialog: pick Claude Code, Codex, GitHub Copilot, or OpenCode, a model, transport, and permission mode" />
       <div class="frame-cap">one dispatch dialog for four providers, with model, transport and permissions up front</div>
     </a>
   </div>
@@ -1095,8 +1095,8 @@
   <div class="gallery">
     <a class="frame" href="shots/editor.webp" target="_blank">
       <img width="1600" height="862" src="shots/editor.webp" loading="lazy"
-        alt="The sandboxed editor plugin: project file tree beside a CodeMirror editor with syntax highlighting" />
-      <div class="frame-cap">the editor plugin, a sandboxed sidecar with your project tree and theme</div>
+        alt="The trusted editor plugin: project file tree beside a CodeMirror editor with syntax highlighting" />
+      <div class="frame-cap">the editor plugin, trusted local code with your project tree and theme</div>
     </a>
     <a class="frame" href="shots/overview.webp" target="_blank">
       <img width="1600" height="862" src="shots/overview.webp" loading="lazy"
@@ -1168,10 +1168,10 @@
     <div class="fact"><b>Alpha, and it means it.</b> Sharp edges, breaking changes between releases, and features that land faster than the docs describing them.</div>
     <div class="fact"><b>The builds are unsigned.</b> There is no code-signing certificate yet. Windows warns you and lets you click through; macOS is stricter, and you have to clear the quarantine flag by hand before the app will open. The <a href="#get">download section</a> has the command.</div>
     <div class="fact"><b>It's for one person on their own machine.</b> No accounts, no multi-user model, no client separation. The tokens are capabilities, not logins. Federation joins <em>your</em> desktop and <em>your</em> laptop, not a team.</div>
-    <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, GitHub Copilot, OpenCode and Pi. It doesn't replace them, resell them, or proxy them.</div>
+    <div class="fact"><b>Bring your own CLIs and subscriptions.</b> work{spacer} drives Claude Code, Codex, GitHub Copilot and OpenCode. It doesn't replace them, resell them, or proxy them.</div>
     <div class="fact"><b>Nothing runs while your machine is off.</b> <code>workspacer serve</code> is headless, but something still has to be powered on. Your coding tools still communicate with the model providers you configure.</div>
     <div class="fact"><b>Worktrees isolate branches, not environments.</b> Agents share your machine, dependencies, ports and network. If you need a sandbox, this isn't one.</div>
-    <div class="fact"><b>The harnesses aren't at parity.</b> Codex and GitHub Copilot cost figures are estimates, Pi gets no work{spacer} tools, and Claude Code is where the deepest integration lives.</div>
+    <div class="fact"><b>The harnesses aren't at parity.</b> Codex and GitHub Copilot cost figures are estimates, Pi is unsupported without an MCP bridge, and Claude Code is where the deepest integration lives.</div>
     <div class="fact"><b>The manager→worker graph doesn't survive a restart.</b> Sessions do, and the briefs do; the parentage is re-established by hand or by a successor adopting.</div>
     <div class="fact"><b>Delivery mode is advisory,</b> not a gate. It tells the manager how to land work; it does not stop a worker from doing something else.</div>
     <div class="fact"><b>Push notifications are still being hardened.</b> The phone PWA can wake you when an agent needs you, but don't bet the farm on the delivery yet.</div>

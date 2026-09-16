@@ -648,7 +648,7 @@ class ClaudemonSessionClient {
       // The handoff journal stores references only, so resolving an inbox
       // request does not leave another private copy of its original content.
       if (!text) {
-        text = r.bootstrap ? buildManagerKickoff(r.userContent, false) : r.userContent;
+        text = r.bootstrap ? buildManagerKickoff(r.userContent) : r.userContent;
       }
       managerRequests().finishDelivery(
         sourceRequest.requestId,

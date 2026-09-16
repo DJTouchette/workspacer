@@ -6,7 +6,7 @@
  * than reaching it through a capability handler. Two other copies implement the
  * same algorithm: the Go brain (cmd/brain/fsguard.go), which is the DEFAULT
  * answerer for the fs.* and library.* methods under DELEGATE_CATALOG_TO_BRAIN,
- * and the bus's per-plugin grant confinement (internal/bus/policy.go). The three
+ * and the bus's legacy containment copy (internal/bus/policy.go). The three
  * copies must agree;
  * the fixture is what keeps them agreeing.
  *

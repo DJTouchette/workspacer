@@ -563,9 +563,9 @@ test('Fleet Manager failure retains the ask and succeeds on retry', async ({ pag
   expect(spawns).toHaveLength(2);
   expect(spawns[1].args[0]).toMatchObject({
     manager: true,
-    fleetFullAccess: false,
     transport: 'stream',
   });
+  expect(spawns[1].args[0].fleetFullAccess).toBeUndefined();
   expect(spawns[1].args[0].message).toBeUndefined();
   await expect
     .poll(async () => (await calls(page)).filter((c: any) => c.method === 'claudeMessage').length)

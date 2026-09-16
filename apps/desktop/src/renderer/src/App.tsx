@@ -1794,11 +1794,6 @@ function App() {
           Object.keys(config.projects ?? {}),
           home || appCwdRef.current || '/',
         );
-        const fullAccess = config.agents?.fleetFullAccess === true;
-        // The token needs the yolo grant if global full-access is on OR any
-        // project opts into per-project yolo — else rule 7's per-project
-        // skipPermissions would be clamped for want of the grant.
-        const anyProjectYolo = Object.values(config.projects ?? {}).some((p) => p?.yolo === true);
         // Which harness the manager itself runs on (Settings → Fleet Manager →
         // Fleet Manager). Everything the role needs is provider-blind below
         // this call; only the entry point ever hardcoded 'claude'.
@@ -1815,16 +1810,7 @@ function App() {
           provider,
           managerContextPreference(provider, config.agents?.managerContextWindows),
         );
-        await spawnFleetManager(
-          ask,
-          root,
-          fullAccess,
-          fullAccess || anyProjectYolo,
-          provider,
-          model,
-          contextWindow,
-          effort,
-        );
+        await spawnFleetManager(ask, root, false, false, provider, model, contextWindow, effort);
         setViewLevel('piloting');
       })().then(
         () => {
@@ -1854,7 +1840,6 @@ function App() {
     return () => window.removeEventListener('fleet-manager:ask', handler);
   }, [
     config.agents?.fleetRoot,
-    config.agents?.fleetFullAccess,
     config.agents?.managerProvider,
     config.agents?.managerModels,
     config.agents?.managerEfforts,

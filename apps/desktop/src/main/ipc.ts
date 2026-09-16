@@ -336,8 +336,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // can't diverge (see managedSpawn.ts). The request→options translation
       // lives in lib/managedSpawnOptions so it is TOTAL over the request
       // shape: this branch used to hand-copy fields and silently lost
-      // `manager`/`fleetFullAccess`, which is exactly what made a Fleet
-      // Manager on Codex impossible (no isWakeTarget = no worker wakes).
+      // `manager`, which made a Fleet Manager on Codex impossible
+      // (no isWakeTarget = no worker wakes). Legacy fields remain forwarded
+      // only for mixed-version compatibility.
       return spawnManagedAgent(managedOptionsFromRequest(provider, opts));
     }
     // Claude on the 'stream' transport is also managed — claudemon's
@@ -1123,9 +1124,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         const delivery = service.beginDelivery(target, requestId);
         if (delivery) {
           try {
-            const content = delivery.bootstrap
-              ? buildManagerKickoff(delivery.text, false)
-              : delivery.text;
+            const content = delivery.bootstrap ? buildManagerKickoff(delivery.text) : delivery.text;
             await claudemonSessionClient.message(target, content, undefined, {
               requestId,
               deliveryId: delivery.deliveryId,

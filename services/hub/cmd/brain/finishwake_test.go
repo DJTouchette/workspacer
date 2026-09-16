@@ -350,8 +350,21 @@ func TestAFinishWakesAnOrdinaryDirectParent(t *testing.T) {
 
 	r.update("w1", "/work/p", "input")
 	r.closeWindows()
-	if n := len(r.d.to("plain")); n != 1 {
+	wakes := r.d.to("plain")
+	if n := len(wakes); n != 1 {
 		t.Errorf("an ordinary direct parent received %d wakes, want 1", n)
+	}
+	if len(wakes) == 1 {
+		for _, want := range []string{"Inspect the child's final result", "project-brief", "spawn-agent"} {
+			if !strings.Contains(wakes[0], want) {
+				t.Errorf("ordinary wake missing %q:\n%s", want, wakes[0])
+			}
+		}
+		for _, forbidden := range []string{"resultSchema", "manager_context", "## Recently", "respawn_with"} {
+			if strings.Contains(wakes[0], forbidden) {
+				t.Errorf("ordinary wake contains manager-only %q:\n%s", forbidden, wakes[0])
+			}
+		}
 	}
 	if n := len(r.d.to("unrelated")); n != 0 {
 		t.Errorf("an unrelated ordinary agent received %d wakes", n)
@@ -745,8 +758,12 @@ func TestTheBackstopAlsoCatchesAnOrdinaryParentsMissedFinish(t *testing.T) {
 	r.d.setConv("w1", dispatched("done"))
 
 	r.fin.sweepMissedFinishes(context.Background(), now)
-	if n := len(r.d.to("plain")); n != 1 {
+	wakes := r.d.to("plain")
+	if n := len(wakes); n != 1 {
 		t.Fatalf("ordinary parent's catch-up count = %d, want 1", n)
+	}
+	if !strings.HasSuffix(wakes[0], ordinaryCatchUpTail) || strings.Contains(wakes[0], "## Recently") {
+		t.Fatalf("ordinary catch-up carried manager doctrine:\n%s", wakes[0])
 	}
 }
 

@@ -1398,19 +1398,9 @@ export function registerHubCapabilities(): void {
   // the switch, and the snapshot store is updated the same way so remote and
   // desktop pills stay in sync.
   //
-  // SECURITY: this is agents.spawn's clamp arriving after the fact, and it was
-  // missing. `mode` was validated as `typeof mode === 'string' && mode` and
-  // forwarded verbatim to POST /sessions/:id/permission-mode, which accepts
-  // 'bypassPermissions' on a PTY claude session (the daemon cycles Shift+Tab to
-  // the bypass footer and verifies it landed) and 'yolo' on every managed
-  // provider (the adapter's auto-approve flag). The sessionId is not
-  // ownership-checked on either provider, so the target could be an agent the
-  // LOCAL user started in ask mode — and the spawn-time clamp that refuses to
-  // start a bypassing agent for a bus caller was defeated by one extra call,
-  // followed by agents.sendMessage. Only the REVERSE direction (yolo→ask on a
-  // session spawned in bypass) was ever gated, by claudemon, for a different
-  // reason. De-escalating and neutral modes stay open: tightening is not an
-  // escalation, and the remote pill needs them.
+  // Provider-native permission choices flow through unchanged. Workspacer's
+  // capability authentication controls who may call this method; it does not
+  // add a second permission-grant system.
   registerCapability('claude.setPermissionMode', async (params: unknown) => {
     const { sessionId, mode } = (params ?? {}) as { sessionId?: string; mode?: string };
     if (!sessionId || typeof mode !== 'string' || !mode) {
@@ -2235,7 +2225,7 @@ export function registerHubCapabilities(): void {
   // the worker telling its manager something only the worker knows: "the
   // approach you gave me is wrong", "phase 1 landed", "I am reading far more
   // than I expected". Before it, the only way a worker could reach its manager
-  // mid-task was to be dispatched at toolScope triage/operator — tiers that
+  // mid-task required a broader tool tier. The surface is now ambient, but
   // also hand it approve/interrupt/reply over OTHER sessions. See
   // services/progressReports.ts for the bounds (rate, lifetime cap, duplicate
   // and length refusals, all loud rather than silent).

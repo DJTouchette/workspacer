@@ -55,7 +55,6 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   // ── Fleet Manager ─────────────────────────────────────────────────────────
   const agents = config.agents ?? {};
   const fleetRoot = agents.fleetRoot ?? '';
-  const fleetFullAccess = agents.fleetFullAccess === true;
   const managerProvider: AgentProvider = agents.managerProvider ?? 'claude';
   const visibleManagerProviders = visibleProviderOptions(MANAGER_PROVIDERS, detection, [
     managerProvider,
@@ -280,28 +279,13 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         <code>~/</code>; anything else is taken literally.
       </div>
 
-      <CheckRow
-        label="Full access — agents the manager dispatches skip approvals"
-        checked={fleetFullAccess}
-        onChange={(v) => patchAgents({ fleetFullAccess: v })}
-      />
-      <div style={hintStyle}>
-        When on, the agents the manager dispatches run with permissions bypassed — no per-action
-        approval prompts, even when the dispatch does not ask for one. Faster and hands-off, but
-        there is no human gate on each command. The manager still asks you before anything
-        destructive or cross-repo. Off by default.{' '}
-        <strong>Takes effect for newly spawned sessions.</strong> A running manager picks this up
-        immediately for agents it dispatches from now on, but its OWN tool calls keep the permission
-        mode it was started with — a session’s bypass is fixed when it spawns — so respawn it to
-        change that. Workspacer tells you when a running manager is affected.
-      </div>
-
       <div style={{ ...hintStyle, marginTop: 22, lineHeight: 1.5 }}>
-        <strong>Not set here.</strong> The manager runs with the full set of workspacer tools (the
-        “operator” tier) — that is what lets it see and act on the fleet, and it is not adjustable.
-        It opens in the projects root above. Whether a Claude or Codex session runs as a visible
-        terminal or as chat only follows that CLI’s own setting under Settings → Session, and the
-        CLI path it uses follows Settings → Session → Tool paths.
+        <strong>Tool access is automatic.</strong> The manager runs with the full Workspacer tool
+        surface, and agents it starts receive the same ambient Workspacer and enabled-plugin tools.
+        Provider-native permission modes still control command approvals; Workspacer adds no child
+        grant layer. It opens in the projects root above. Whether a Claude or Codex session runs as
+        a visible terminal or as chat only follows that CLI’s own setting under Settings → Session,
+        and the CLI path it uses follows Settings → Session → Tool paths.
       </div>
       <FleetWorkflowsSection />
     </Section>

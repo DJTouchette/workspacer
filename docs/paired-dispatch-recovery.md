@@ -28,7 +28,7 @@ local manager's task. Ordinary spawns without an execution target are unchanged.
   lease is durably claimed before provider launch. Uncertain admission is never
   retried as a new spawn. Unclaimed leases expire; claimed/unknown work is retained.
 - Only supported execution metadata and the rendered task cross the boundary.
-  Local workflow/request records and local full-access grants do not. Remote
+  Local workflow/request records and legacy local grant metadata do not. Remote
   token grants and routing ceilings remain authoritative; paired workers request
   approvals on. Remote session facades mint their own scoped credentials.
 - Progress, blocks and final results return over the outbound authenticated

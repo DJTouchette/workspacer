@@ -47,6 +47,9 @@ const MISSED_WAKE_GRACE_MS = 3 * 60_000;
 
 interface PendingNudge {
   timer: NodeJS.Timeout;
+  /** True only for Fleet Manager recipients; ordinary parents get a concise
+   * child-oriented tail rather than manager workflow doctrine. */
+  recipientIsWakeTarget: boolean;
   /** Entries accumulated during this window, deduped by worker session id.
    *  Structured (not preformatted text) so the wake goes out through the
    *  shared fleetMessages builder — the format the GUI's card parser pins. */
@@ -164,17 +167,21 @@ class SupervisorNudge {
   onBlock(
     session: PendingReadOnlySession,
     kind: 'approval' | 'question',
-    recipientIds: string[],
+    recipients: Array<string | { sessionId: string; isWakeTarget: boolean }>,
   ): void {
-    const recipients = recipientIds.filter((id) => id !== session.sessionId);
-    if (recipients.length === 0) return;
+    const targets = recipients
+      .map((recipient) =>
+        typeof recipient === 'string' ? { sessionId: recipient, isWakeTarget: true } : recipient,
+      )
+      .filter((recipient) => recipient.sessionId !== session.sessionId);
+    if (targets.length === 0) return;
 
     const existing = this.pendingBlocks.get(session.sessionId);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(() => {
       this.pendingBlocks.delete(session.sessionId);
-      this.broadcastBlock(session, kind, recipients);
+      this.broadcastBlock(session, kind, targets);
     }, BLOCK_DEBOUNCE_MS);
     timer.unref?.();
     this.pendingBlocks.set(session.sessionId, timer);
@@ -201,30 +208,34 @@ class SupervisorNudge {
   private broadcastBlock(
     session: PendingReadOnlySession,
     kind: 'approval' | 'question',
-    recipients: string[],
+    recipients: Array<{ sessionId: string; isWakeTarget: boolean }>,
   ): void {
     const blockedEntry: FleetMessageEntry = {
       label: session.label || agentLabel(session.cwd),
       sessionId: session.sessionId,
       blockedOn: kind,
     };
-    for (const supId of new Set(
-      recipients
-        .filter((id) => !managerReplacementState.parkedSuccessor(id))
-        .map((id) => managerReplacementState.automaticWakeTarget(id)),
-    )) {
+    const routed = new Map<string, boolean>();
+    for (const recipient of recipients) {
+      if (managerReplacementState.parkedSuccessor(recipient.sessionId)) continue;
+      const target = managerReplacementState.automaticWakeTarget(recipient.sessionId);
+      routed.set(target, (routed.get(target) ?? false) || recipient.isWakeTarget);
+    }
+    for (const [supId, recipientIsWakeTarget] of routed) {
       const entry = this.pending.get(supId);
       if (entry) {
         entry.entries.set(session.sessionId, blockedEntry);
+        entry.recipientIsWakeTarget ||= recipientIsWakeTarget;
         continue;
       }
       const entries = new Map([[session.sessionId, blockedEntry]]);
       const timer = setTimeout(() => {
+        const current = this.pending.get(supId);
         this.pending.delete(supId);
-        void this.send(supId, entries);
+        void this.send(supId, entries, current?.recipientIsWakeTarget ?? recipientIsWakeTarget);
       }, COALESCE_MS);
       timer.unref?.();
-      this.pending.set(supId, { timer, entries });
+      this.pending.set(supId, { timer, entries, recipientIsWakeTarget });
     }
   }
 
@@ -303,10 +314,10 @@ class SupervisorNudge {
       else {
         const timer = setTimeout(() => {
           this.pending.delete(newParentId);
-          void this.send(newParentId, block.entries);
+          void this.send(newParentId, block.entries, block.recipientIsWakeTarget);
         }, COALESCE_MS);
         timer.unref?.();
-        this.pending.set(newParentId, { timer, entries: block.entries });
+        this.pending.set(newParentId, { ...block, timer, entries: block.entries });
       }
     }
     const pending = this.pendingFinished.get(oldParentId);
@@ -434,7 +445,7 @@ class SupervisorNudge {
       try {
         await claudemonSessionClient.message(
           parentId,
-          buildFleetMessage(kind, group) +
+          buildFleetMessage(kind, group, parentIsWakeTarget ? 'manager' : 'ordinary-parent') +
             (parentIsWakeTarget ? workflowWakeInstructions(group.map((e) => e.sessionId)) : ''),
         );
       } catch {
@@ -624,7 +635,7 @@ class SupervisorNudge {
     for (const { kind, group, target } of batches) {
       if (group.length === 0) continue;
       const text =
-        buildFleetMessage(kind, group) +
+        buildFleetMessage(kind, group, parentIsWakeTarget ? 'manager' : 'ordinary-parent') +
         (parentIsWakeTarget ? workflowWakeInstructions(group.map((e) => e.sessionId)) : '');
       const pairs = group.map(
         (e) => [e.sessionId, signatureById.get(e.sessionId)!] as [string, string],
@@ -693,7 +704,7 @@ class SupervisorNudge {
       void this.sendRemote(target, kind, entries);
     }, COALESCE_MS);
     timer.unref?.();
-    this.pendingRemote.set(key, { timer, entries });
+    this.pendingRemote.set(key, { timer, entries, recipientIsWakeTarget: true });
   }
 
   private async sendRemote(
@@ -737,8 +748,16 @@ class SupervisorNudge {
     this.lastReportedReply.delete(sessionId);
   }
 
-  private async send(supervisorId: string, entries: Map<string, FleetMessageEntry>): Promise<void> {
-    const text = buildFleetMessage('blocked', Array.from(entries.values()));
+  private async send(
+    supervisorId: string,
+    entries: Map<string, FleetMessageEntry>,
+    recipientIsWakeTarget: boolean,
+  ): Promise<void> {
+    const text = buildFleetMessage(
+      'blocked',
+      Array.from(entries.values()),
+      recipientIsWakeTarget ? 'manager' : 'ordinary-parent',
+    );
     try {
       // claudemon's /message queues while the supervisor is busy (or a dialog
       // is up) and delivers once its prompt settles — no raw-PTY fallback

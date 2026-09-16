@@ -260,7 +260,6 @@ export const managerReplacementService = new ManagerReplacementService(managerRe
       `HOST-OWNED MANAGER HANDOFF ${op.operationId}. Your fresh manager session is ${op.successorSessionId}; predecessor ${op.sourceSessionId} is audit history only. ` +
         `The host has committed worker AND task ownership and replaced the same pane. Do not adopt workers, resume or terminate the predecessor, or use any shared handoff.md. ` +
         `Use this validated handoff (also retained at ${op.sealedArtifactPath ?? op.artifactPath}, SHA-256 ${op.artifactHash}). Preserve pending decisions; take the stated next action within existing authority.\n${op.artifact}`,
-      false,
     ),
   flushFinishes: async (ids) => {
     await supervisorNudge.flushReplacementFinishes(ids);

@@ -770,14 +770,14 @@ not raise for itself.**
 
 ```yaml
 ceilings:
-  default: { max_capability: frontier, max_tool_scope: operator }
-  /home/you/Work/some-client-repo: { max_capability: balanced, max_tool_scope: triage }
+  default: { max_capability: frontier }
+  /home/you/Work/some-client-repo: { max_capability: balanced }
 ```
 
 - `max_capability` is the highest capability a spawn there may resolve to.
-- `max_tool_scope` is the highest authority tier a worker there may hold:
-  `view`, `triage` or `operator`. ("Tier" already means authority in this
-  codebase, which is why the model axis is called capability everywhere else.)
+- `max_tool_scope`, if present in an older file, is accepted and ignored.
+  Workspacer no longer uses spawn-time tool grants; supported agents receive
+  the ambient Workspacer and enabled-plugin tool surface.
 
 Keys are absolute directories. An exact match wins, then the **longest matching
 ancestor**, then `default`, so one entry covers a whole tree. The match is
@@ -796,7 +796,7 @@ the spawn's own answer (`escalationScrubbed`), and the replacement model is
 named rather than deleted, because an omitted model is not a weak model, it is
 whatever the provider defaults to below where any ceiling can see.
 
-`routing.select` applies the same ceiling through the same function before it
+`routing.select` applies the capability ceiling through the same function before it
 answers, so it cannot advise a model the gate would then take away. The gate
 still clamps independently, because it is the security boundary and must refuse a
 caller that ignored routing entirely.
@@ -821,21 +821,16 @@ verbatim, so the replacement runs the window **its own** entry asks for rather
 than inheriting the refused model's; if that drops a `[1m]`, the refusal says
 so.
 
-A ceiling value the file cannot read **denies** the spawn rather than being
-skipped: a `max_capability` that `capability_ranks:` does not rank, or a
-`max_tool_scope` that is not one of the three tiers. A typo in a policy file must
-not be the quietest possible way to delete the policy. An omitted key is
-different and still means "this row does not cap that axis".
+A `max_capability` value the file cannot rank **denies** the spawn rather than
+being skipped. A typo in active model policy must not silently delete it.
 
-Two honest limits. The local desktop spawn dialog is deliberately not clamped,
-because that is a human at the machine clicking Spawn. And a ceiling is enforced
-exactly as strongly as the Fleet Manager's own permission mode: it closes every
-capability door, so with approvals on an edit to the file raises a prompt you
-see, and with full access on it does not. A ceiling is not a sandbox.
+Two honest limits. The local desktop spawn dialog is deliberately not model-
+clamped because that is a person at the machine clicking Spawn. And a model
+ceiling is not a permission or filesystem sandbox.
 
 ### What the shipped default does and does not cap
 
-`default: { max_capability: frontier, max_tool_scope: operator }`.
+`default: { max_capability: frontier }`.
 
 It caps the **model axis at `frontier`** for every directory with no entry of its
 own. `frontier_plus` is refused everywhere by default, and so is `frontier_max`,
@@ -869,7 +864,7 @@ To get Fable for the judge, raise the ceiling. Either globally:
 
 ```yaml
 ceilings:
-  default: { max_capability: frontier_plus, max_tool_scope: operator }
+  default: { max_capability: frontier_plus }
 ```
 
 or, better, for the one tree where you want it:
@@ -893,7 +888,7 @@ It has two row kinds joined by a `decisionId`:
   reason list.
 - `kind: "spawn"` is one `agents.spawn` as the gate saw it: the role and
   capability declared, the canonical cwd the ceiling was looked up on, the
-  provider, model, effort and tool scope, the caller's tier and credential
+  provider, model and effort, plus legacy tool-scope metadata, the caller's tier and credential
   fingerprint (never the token), the ceiling verdict, and what was scrubbed.
 
 It exists for three things. **Audit**: a routing decision commits an hour of a
@@ -1006,7 +1001,7 @@ policy. It does not overwrite a host override to simulate factory defaults.
 
 Patch keys are typed and sparse. Arrays (including alternatives) replace the
 whole array. Unknown fields, null, duplicate keys, caller paths, raw YAML, new
-profiles/roles/capabilities, ranks, ceilings, tool scopes and arbitrary nodes
+profiles/roles/capabilities, ranks, ceilings, legacy tool-scope fields and arbitrary nodes
 are rejected. Existing host-defined profiles and roles can be edited. A patch
 can map a role only to an existing capability. Unedited fields survive every
 save. Manual modes use a closed enum; forecast weights must be between 0 and
@@ -1033,7 +1028,7 @@ an unspecified effort uses the strongest reading. The immutable host model
 classification is retained even when managed rows replace every reference to a
 strong tuple. Host freshness requirements and minimum effort floors cannot be
 lowered. The existing canonical `CheckSpawn` clamp remains authoritative for
-capability, provider/model/effort, tool scope and fresh-context refusal.
+capability, provider/model/effort and fresh-context refusal. Legacy tool scope is ignored.
 
 ### Authority and ownership
 

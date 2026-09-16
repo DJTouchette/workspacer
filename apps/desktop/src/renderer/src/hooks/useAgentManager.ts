@@ -290,9 +290,9 @@ export function useAgentManager() {
       skipPermissions?: boolean;
       /** Library item ids (kind 'mcp') to load for this session. */
       mcpItemIds?: string[];
-      /** Workspacer MCP tool tier (view/triage/operator); omitted = none. */
+      /** Legacy compatibility field; supported agents receive ambient tools. */
       toolScope?: 'view' | 'triage' | 'operator';
-      /** Plugin ids whose contributed facade tools the agent may use. */
+      /** Legacy compatibility field; every enabled plugin is ambient. */
       pluginTools?: string[];
       initialPrompt?: string;
       /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
@@ -303,8 +303,7 @@ export function useAgentManager() {
        *  (isWakeTarget spawn meta) — its role rides the kickoff message.
        *  Implies toolScope operator. */
       manager?: boolean;
-      /** Manager only: grant its token full-access dispatch (config
-       *  agents.fleetFullAccess) so its workers run with permissions bypassed. */
+      /** Legacy compatibility field; ignored by Workspacer. */
       fleetFullAccess?: boolean;
       /** A first message AUTO-SENT with the spawn. It rides the spawn payload
        *  now (`message`), so claudemon queues it BEFORE handing back the id and
@@ -762,8 +761,10 @@ export function useAgentManager() {
     async (
       ask: string,
       root: string,
-      fullAccess = false,
-      grantYolo = false,
+      // Positional compatibility for older renderer call sites. These flags
+      // are intentionally ignored; Workspacer no longer maintains child grants.
+      _legacyFullAccess = false,
+      _legacyGrantYolo = false,
       provider: AgentProvider = 'claude',
       model?: string,
       contextWindow?: number | null,
@@ -781,9 +782,7 @@ export function useAgentManager() {
               : await window.electronAPI.managerRequestPrepare?.(id, ask, bootstrap);
           if (capture?.available)
             managerAskRetry.current = { sessionId: id, ask, requestId: capture.requestId };
-          const message = bootstrap
-            ? buildManagerKickoff(ask, fullAccess)
-            : buildManagerWorkflowAsk(ask);
+          const message = bootstrap ? buildManagerKickoff(ask) : buildManagerWorkflowAsk(ask);
           const result = capture?.available
             ? await window.electronAPI.claudeMessage(id, message, capture.requestId)
             : await window.electronAPI.claudeMessage(id, message);
@@ -802,16 +801,6 @@ export function useAgentManager() {
           if (!ask.trim()) {
             setActiveAgentId(live.id);
             return live.sessionId;
-          }
-          // Reusing a running manager: re-align its facade token's full-access
-          // grant with CURRENT config before handing it the ask — the grant was
-          // minted at its original spawn and the flag may have flipped since
-          // (either direction). Main resolves the desired value from config; the
-          // config-change sync covers flips while it keeps running.
-          try {
-            await window.electronAPI.sessionGrantReconcile?.(live.sessionId, 'manager');
-          } catch (err) {
-            console.warn('[fleet-manager] token grant reconcile failed:', err);
           }
           await sendAsk(live.sessionId);
           setActiveAgentId(live.id);
@@ -834,7 +823,7 @@ export function useAgentManager() {
         if (stopped) {
           // Heal a record from before the role flags were persisted: it IS the
           // manager (found by its fixed name), so respawn it as one — else the
-          // revived session re-mints a bare facade token with no manager grants.
+          // revived session keeps manager wake routing and role instructions.
           const record: AgentWorkspace = stopped.manager
             ? stopped
             : { ...stopped, manager: true, toolScope: 'operator' };
@@ -858,9 +847,8 @@ export function useAgentManager() {
           name: FLEET_MANAGER_NAME,
           // The harness the manager itself runs on (config agents.managerProvider).
           // Everything the role needs below this line is provider-blind: the MCP
-          // facade attaches at the operator tier for managed providers too, the
-          // grant chain knows codex's 'yolo' spelling, and the worker-finished
-          // wake routes on the isWakeTarget flag `manager: true` sets.
+          // facade attaches automatically for managed providers too, and the
+          // worker-finished wake routes on the isWakeTarget flag `manager: true` sets.
           provider,
           // The manager's own coordinator model for THIS harness
           // (agents.managerModels). Passed explicitly so the model lands on the
@@ -878,17 +866,10 @@ export function useAgentManager() {
           transport: 'stream',
           toolScope: 'operator',
           manager: true,
-          // The token's yolo grant is minted when EITHER global full-access is on
-          // OR any project is flagged yolo (per-project autonomy) — that is what
-          // lets the manager dispatch a bypassed worker at all. But the manager's
-          // OWN bypass and the full-access doctrine note ride only global
-          // full-access; per-project yolo is applied per dispatch by doctrine.
-          fleetFullAccess: grantYolo,
-          ...(fullAccess && { permissionMode: 'bypassPermissions', skipPermissions: true }),
           ...(ask.trim() &&
             (window.electronAPI.managerRequestPrepare
               ? { onSessionReady: (id: string) => sendAsk(id, true) }
-              : { kickoffMessage: buildManagerKickoff(ask, fullAccess) })),
+              : { kickoffMessage: buildManagerKickoff(ask) })),
         }).then((id) => id ?? undefined);
       } finally {
         managerOpening.current = false;

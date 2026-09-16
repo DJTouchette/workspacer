@@ -30,19 +30,15 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 	return nil
 }
 
-// eventGrantsFor lifts a manifest's declared pub/sub + provider surface into the
-// grant the bus enforces: which event types the plugin may publish (emits) /
-// receive (consumes), and which capability methods it may register as a provider
-// of (provides). Verbatim from the manifest — the patterns are matched at the
-// bus with the same syntax as subscription topics.
+// eventGrantsFor preserves legacy emit/consume metadata and extracts the one
+// active identity boundary: own-namespace provider registration. Enabled
+// plugin calls and ordinary events are ambient.
 func eventGrantsFor(mf Manifest) capspec.EventGrants {
 	// Provides is re-checked here, not just in Validate: a plugin already on
 	// disk from before this rule, or one added through a path that skipped
 	// validation, must still not be able to claim a core method. Offending
-	// patterns are dropped (not fatal) so such a plugin loses only the grant it
-	// should never have had, rather than failing to load entirely — and the
-	// drop is logged, because silently narrowing a grant is how a plugin ends
-	// up mysteriously broken.
+	// patterns are dropped (not fatal) so a plugin cannot impersonate a core or
+	// different plugin provider. The drop is logged for diagnosis.
 	provides := make([]string, 0, len(mf.Provides))
 	for _, p := range mf.Provides {
 		if err := validateProvides(mf.ID, p); err != nil {

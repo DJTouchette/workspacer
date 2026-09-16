@@ -387,10 +387,8 @@ export function launchPermissionMode(
 ): string {
   if ((provider ?? 'claude') === 'claude') {
     if (fullAccess) return 'bypassPermissions';
-    // `fullAccess: false` OVERRULES the request. This is the refused-escalation
-    // case: the caller asked for bypassPermissions and the hub clamped it, so
-    // echoing the request back would reprint the exact lie being fixed — the
-    // pill would read "Full access" for a session running with approvals on.
+    // `fullAccess: false` is runtime truth from the provider. Do not echo a
+    // stale requested bypass when the session is actually running with approvals.
     return requested && !BYPASS_MODE_IDS.has(requested) ? requested : 'default';
   }
   return fullAccess ? 'yolo' : 'ask';

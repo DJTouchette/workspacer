@@ -10,21 +10,16 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
-// Filesystem path confinement for plugin capability grants.
-//
-// A plugin granted a path-scoped capability (fs.read, fs.write, search.project,
-// …) may only touch paths inside the roots its grant declares. The trick that
-// makes this safe is *canonicalize then contain*: resolve `..` and symlinks on
-// both the target and the roots before the prefix check, so neither directory
-// traversal nor a symlink pointing out of the root can escape. A purely textual
-// prefix check would be fooled by either.
+// Legacy filesystem containment algorithm retained for compatibility tests and
+// non-plugin host policy. Enabled plugin processes are trusted local code and
+// are not confined by manifest roots.
 //
 // TWINS. This predicate ships three times and the copies must agree case for
 // case; contracts/path-containment-cases.json is what enforces that:
 //
 //	services/hub/cmd/brain/fsguard.go        (Go, answers fs.*/library.* by default)
 //	apps/desktop/src/main/lib/pathConfinement.ts (TypeScript, the killswitch path)
-//	this file                                (per-plugin grant confinement)
+//	this file                                (legacy containment implementation)
 //
 // Note the argument orders DIFFER on purpose and each file keeps its own local
 // convention: here it is within(root, target); the brain spells the same
@@ -739,7 +734,7 @@ func pathWithinRoots(roots []string, target string) (bool, error) {
 // canonicalize owns what a leading space in a real filename means.
 //
 // A CASE-VARIANT DUPLICATE of the field is refused outright, and that is not
-// pedantry — it was a complete bypass of every per-plugin grant. This lookup is
+// pedantry — it was a complete bypass of the legacy root check. This lookup is
 // byte-exact (`m[field]`), but the providers on the other end are Go structs and
 // encoding/json falls back to a CASE-INSENSITIVE field match, so a later "Path"
 // overwrites the "path" this function read. `{"path":"<pluginDir>/ok.txt",

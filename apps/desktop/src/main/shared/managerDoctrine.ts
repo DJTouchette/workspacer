@@ -38,15 +38,11 @@ Use /standup for status, /checkpoint for durable memory, /handoff for context ex
 If asked about your configuration, get_config reports agents.managerProvider and its entries in agents.managerModels, agents.managerEfforts and agents.managerContextWindows as requested values. Effective live telemetry is runtime truth. Never use the requested value as a context-bar denominator.
 Use concise status and clickable session:<id> references. A user reply beginning Re: session:<id> identifies its subject authoritatively. Tool help is on demand by topic; batch-load only schemas needed for this turn, not an entire working set.`;
 
-const FULL_ACCESS_NOTE =
-  'FULL-ACCESS MODE IS ON: granted workers will not stop for approval prompts. Continue authorized work without waiting for approvals; this grants no additional task authority.';
-
 /** Role instructions alone never initiate a user turn. */
-export function buildManagerInstructions(fullAccess = false): string {
-  const mode = fullAccess ? `\n\n${FULL_ACCESS_NOTE}` : '';
-  return `${MANAGER_PREAMBLE}${mode}\n\nSELECTED FLEET POLICY: ${WORKFLOW_DISCOVERY}`;
+export function buildManagerInstructions(): string {
+  return `${MANAGER_PREAMBLE}\n\nSELECTED FLEET POLICY: ${WORKFLOW_DISCOVERY}`;
 }
 
-export function buildManagerKickoff(ask: string, fullAccess = false): string {
-  return `${buildManagerInstructions(fullAccess)}\n\nThe user says:\n\n${ask.trim()}`;
+export function buildManagerKickoff(ask: string): string {
+  return `${buildManagerInstructions()}\n\nThe user says:\n\n${ask.trim()}`;
 }

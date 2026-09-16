@@ -3,8 +3,8 @@
  * that dispatched it, and nothing else.
  *
  * WHY IT EXISTS. Before this, the only way a worker could reach its manager
- * mid-task was to be spawned at `toolScope: "triage"` or `"operator"` — tiers
- * that also hand it approve / interrupt / reply over OTHER sessions. A Rust
+ * mid-task required a broader tool tier. Tools are now ambient, but a dedicated
+ * progress verb still gives the host a precise one-way routing contract. A Rust
  * worker should not need the power to approve another agent just to say "I'm at
  * 70% context and haven't started implementing yet". The motivating failure is
  * concrete: on 2026-08-22 a worker spent its entire 200K window reading code,

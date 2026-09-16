@@ -105,10 +105,7 @@ type pluginIdent struct {
 // remain parse-compatible. RegisterPluginToken does not populate it.
 type capGrant struct {
 	fsRoots []string
-	// childToolScope is the CHILD-DELEGATION grant, meaningful only on
-	// agents.spawn: the highest facade tier a worker this plugin spawns may be
-	// handed. Empty means NONE — the spawn still runs, but its toolScope,
-	// mcpFacade and pluginTools are stripped. See callerToolScopeCeiling.
+	// Legacy manifest field; current child tools are ambient.
 	childToolScope string
 }
 
@@ -126,16 +123,10 @@ type ScopedIdent struct {
 	// finding a compromised node and reading "403" forever. It authorizes
 	// nothing and is never echoed to the caller.
 	Label string
-	// ProfilesAllowed is the token record's profile-dispatch grant
-	// (authtoken.Record.ProfilesAllowed): the Claude profile ids an
-	// agents.spawn from this connection may keep. The router strips profileId
-	// from a spawn whose caller lacks the grant — see sanitizeSpawnParams.
+	// Legacy token metadata, retained across mixed-version connections but not
+	// consulted by current spawn authorization.
 	ProfilesAllowed []string
-	// YoloAllowed is the token record's full-access grant
-	// (authtoken.Record.YoloAllowed): whether an agents.spawn from this
-	// connection may have its skipPermissions request honored. The router
-	// stamps hub-only `yoloGranted` for a granted caller — see
-	// sanitizeSpawnParams.
+	// Legacy token metadata; provider permission modes flow independently.
 	YoloAllowed     bool
 	FacadeAuthority bool
 	// Provides is the token record's REGISTER grant
@@ -1215,9 +1206,8 @@ type conn struct {
 	ctx     context.Context
 	writeMu sync.Mutex
 
-	// Capability authorization, set at handshake. A trusted conn (host token) may
-	// call anything; a plugin conn may call only the methods it was granted, and
-	// path-scoped ones only within their granted roots.
+	// Capability authorization for host/scoped user credentials. Enabled plugin
+	// calls are ambient; caps remains a legacy compatibility shape.
 	authenticatedHost bool
 	trusted           bool
 	caps              map[string]capGrant
@@ -1232,20 +1222,14 @@ type conn struct {
 	// viaScopedToken marks a connection authenticated from tokens.json —
 	// INCLUDING an operator-tier record, which `trusted` alone cannot
 	// distinguish from the host token. The distinction matters exactly once:
-	// profile dispatch. A host-token conn is the control plane itself (the
-	// desktop, the MCP facade, the brain — processes that could rewrite
-	// tokens.json anyway), so it may name any profile; a scoped record, even an
-	// operator one, may only name the ids in its own profilesAllowed grant.
+	// provenance and live revocation still distinguish it from the host token.
 	viaScopedToken bool
 	// An owner-provisioned MCP multiplexer may assert local session identity;
 	// this is independent of authenticatedHost and all permission grants.
 	facadeAuthority bool
-	// profilesAllowed is the scoped record's profile-dispatch grant, snapshotted
-	// at handshake (revalidateScoped closes the socket if the record's grant
-	// changes, so the snapshot cannot go stale while live).
+	// Legacy metadata retained for wire compatibility.
 	profilesAllowed []string
-	// yoloAllowed is the scoped record's full-access grant, snapshotted at
-	// handshake under the same revalidation contract as profilesAllowed.
+	// Legacy metadata retained for wire compatibility.
 	yoloAllowed bool
 	// federated marks a connection opened by another hub's FEDERATION LINK
 	// (internal/federation dials with ?peer=1). It is a DOWNGRADE-ONLY bit and
@@ -1400,7 +1384,7 @@ func (cn *conn) identity() CallerIdentity {
 // they are the same authority, and an operator record is promoted to trusted at
 // the handshake, so the tier name is not otherwise recoverable here.
 func (cn *conn) helloFrame() Frame {
-	f := Frame{Op: "hello", SpawnFullAccess: cn.mayBypassPermissions() && cn.trusted}
+	f := Frame{Op: "hello", SpawnFullAccess: cn.mayBypassPermissions()}
 	switch {
 	case cn.trusted:
 		f.Scope, f.Methods = "operator", []string{"*"}
@@ -1487,10 +1471,8 @@ func (cn *conn) mayPublish(typ string) bool {
 
 // mayConsume reports whether an event of the given type may be delivered to this
 // connection. Trusted conns receive everything they subscribed to; a scoped user
-// token likewise (event/stream subscriptions are part of even the view tier)
-// EXCEPT for topics that carry a capability's output, which require that
-// capability; a plugin only receives types matched by its manifest's `consumes`,
-// so a broad `subscribe` can never widen its reach past what it declared.
+// token likewise according to its tier. Enabled plugins receive ordinary event
+// topics ambiently; classified host-only provenance remains protected.
 //
 // The middle clause used to be unconditional, and that made the two
 // authorization planes disagree about the same credential. The capability plane
@@ -1550,7 +1532,7 @@ func (cn *conn) mayConsume(typ string) bool {
 		// The floor for this being free rather than a limitation: cmd/brain
 		// contains no `subscribe` frame at all. If a headless provider ever
 		// needs a topic, that is an explicit consumes grant on the record and a
-		// decision made then, not a default granted now.
+		// explicit provider policy decision, not an agent/plugin grant.
 		return false
 	}
 	spec, classified := capspec.EventTopicSpec(typ)

@@ -4,15 +4,15 @@ package bus
 // matching SOUND rather than merely conventional.
 //
 // THE BUG THIS EXISTS TO CLOSE. sanitizeSpawnParams reads params as a
-// map[string]json.RawMessage and strips, stamps and clamps EXACT lower-camel
-// keys: `yoloGranted`, `profileId`, `mcpFacade`, `toolScope`, `capability`,
+// map[string]json.RawMessage and handles EXACT lower-camel keys such as
+// `yoloGranted`, `profileId`, `mcpFacade`, `toolScope`, `capability`,
 // `model`, `effort`. Every provider on the far side of that map decodes it with
 // `encoding/json` into a tagged struct — and encoding/json matches field tags
 // CASE-INSENSITIVELY. So `{"YoloGranted":true}` survives a sanitizer that
 // deletes `yoloGranted`, and binds to spawnParams.YoloGranted anyway. One
 // capital letter and the hub's single spawn-authority gate is a no-op: the
-// full-access stamp, the tool-tier clamp and the capability ceiling are all
-// walked around at once, on a fleet whose agents run with permissions bypassed.
+// retired stamps and the active capability ceiling could otherwise be decoded
+// differently by the provider.
 //
 // WHY THE FIX IS HERE AND NOT IN THE PROVIDER. The Go brain has carried its own
 // guard (rejectCaseVariantKeys) since b4309a45, but it only fires when BOTH
@@ -145,7 +145,7 @@ func SpawnParamKeys() []string {
 //  1. TWO KEYS THAT FOLD TOGETHER — of any spelling, known or not. The guard
 //     would read one and encoding/json would read whichever it saw last.
 //  2. A KEY THAT FOLDS TO A KNOWN SPAWN PARAM BUT IS NOT SPELLED AS ONE. This is
-//     the authority bypass: `YoloGranted`, `Capability`, `MCPFacade`, `ToolScope`.
+//     the decoder ambiguity: `YoloGranted`, `Capability`, `MCPFacade`, `ToolScope`.
 //
 // Keys sorted before judging so the error names the same key every run — an
 // authority refusal that reports a different field per invocation is one nobody
@@ -177,7 +177,7 @@ func rejectAliasedSpawnKeys(m map[string]json.RawMessage) error {
 		}
 		return fmt.Errorf(
 			"agents.spawn: params name %q, which is not how this field is spelled — it is %q. "+
-				"The hub's spawn-authority gate (the full-access stamp, the tool-tier clamp, the capability ceiling) "+
+				"The hub's canonical spawn-field handling (retired stamps and the capability ceiling) "+
 				"matches field names EXACTLY, while a provider's JSON decoder matches them case-insensitively, so a "+
 				"variant spelling would bind on the provider having been invisible to the gate. Refused rather than "+
 				"quietly rewritten: an authority assertion is not something to repair on the caller's behalf",

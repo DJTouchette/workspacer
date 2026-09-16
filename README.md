@@ -1,7 +1,7 @@
 # Workspacer
 
 **A control plane and IDE for coding agents.** Run a whole fleet of
-long-lived coding agents — Claude Code, Codex, OpenCode, and Pi — side by side
+long-lived coding agents — Claude Code, Codex, GitHub Copilot, and OpenCode — side by side
 in one local-first desktop app. Watch every agent's state at a glance, step in
 only when one actually needs you, and review and ship the code they write
 without leaving the window.
@@ -49,7 +49,7 @@ rest of the fleet; clear approvals and questions from your phone.
 
 - **Multi-agent workspaces** — one agent = one long-lived session = one
   workspace, keyed by working directory, with its own tabs and panes.
-- **Four agent backends** — Claude Code, Codex, OpenCode, and Pi (beta), all
+- **Four agent backends** — Claude Code, Codex, GitHub Copilot, and OpenCode, all
   landing in the same fleet with the same state, telemetry, and approval
   prompts.
 - **A real GUI for each agent** — approve/deny in one key, answer questions
@@ -92,7 +92,7 @@ supervises the `claudemon` and `hub` daemons as child processes. `./dev` is a
 thin wrapper around the same npm script.
 
 The app wires Claude's hooks into `~/.claude/settings.json` automatically on
-launch (that's how it observes Claude Code agents); Codex, OpenCode, and Pi
+launch (that's how it observes Claude Code agents); Codex, Copilot, and OpenCode
 agents are driven directly and need no hook wiring. For headless or custom
 setups the manual CLI still exists: `claudemon init` (`--dry-run` to preview).
 

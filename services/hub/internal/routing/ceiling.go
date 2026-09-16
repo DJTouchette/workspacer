@@ -27,10 +27,9 @@ import (
 	"strings"
 )
 
-// ToolScopeRank orders the AUTHORITY tiers. Unlike the capability ladder this is
-// a closed, three-valued vocabulary defined by the security model
-// (internal/authtoken), not by the matrix, so it is not configuration: a
-// routing.yaml that could invent a fourth tier would be inventing a token scope.
+// ToolScopeRank parses the retired spawn-time tool-scope vocabulary for legacy
+// config and log compatibility. Current agent tools are ambient; this rank is
+// not consulted by CheckSpawn and grants or clamps nothing.
 func ToolScopeRank(scope string) (int, bool) {
 	switch strings.ToLower(strings.TrimSpace(scope)) {
 	case "view":
@@ -86,8 +85,7 @@ type SpawnRequest struct {
 	// asked to inherit.
 	Resuming        bool
 	ResumeSessionID string
-	// ToolScope is the AUTHORITY tier the spawn asks for the child to hold, or
-	// "operator" spelled as the legacy `mcpFacade: true`.
+	// ToolScope is a legacy audit field. It is recorded but ignored.
 	ToolScope string
 	// Provider / Model / Effort are what the spawn actually names. They exist
 	// here for the arm that catches a spawn declaring a modest capability while
@@ -121,20 +119,18 @@ type CeilingVerdict struct {
 	// Key is the `ceilings:` entry that matched — "default", an ancestor
 	// directory, or "" when the matrix carries no ceiling at all.
 	Key string `json:"key,omitempty"`
-	// MaxCapability / MaxToolScope are that entry's limits, echoed so the log and
-	// the caller-facing sentence quote the file rather than a paraphrase.
+	// MaxCapability is the active model limit. MaxToolScope is retained only to
+	// parse and echo old routing files; agent tool access is ambient.
 	MaxCapability string `json:"maxCapability,omitempty"`
 	MaxToolScope  string `json:"maxToolScope,omitempty"`
 
 	// CapabilityRefused is true when the spawn asks for more model capability
 	// than this directory allows. Capability then holds what it is clamped TO.
 	CapabilityRefused bool `json:"capabilityRefused,omitempty"`
-	// ToolScopeRefused is true when the spawn asks for more AUTHORITY than this
-	// directory allows. ToolScope then holds what it is clamped TO.
+	// ToolScopeRefused is a retired compatibility field and is never set.
 	ToolScopeRefused bool `json:"toolScopeRefused,omitempty"`
 
-	// Capability / ToolScope are the clamped values, set only on the
-	// corresponding Refused arm.
+	// Capability is the active clamped value. ToolScope is legacy-only.
 	Capability string `json:"capability,omitempty"`
 	ToolScope  string `json:"toolScope,omitempty"`
 
@@ -262,32 +258,10 @@ func (m *Matrix) CheckSpawn(req SpawnRequest) CeilingVerdict {
 	return v
 }
 
+// checkToolScope remains for source compatibility with older tests/readers but
+// is intentionally never called: max_tool_scope is inert.
 func (m *Matrix) checkToolScope(req SpawnRequest, ceiling Ceiling, v *CeilingVerdict) {
-	want, wantOK := ToolScopeRank(req.ToolScope)
-	if !wantOK {
-		return // nothing asked for, or a spelling the security model does not have
-	}
-	max, maxOK := ToolScopeRank(ceiling.MaxToolScope)
-	if !maxOK {
-		if strings.TrimSpace(ceiling.MaxToolScope) != "" {
-			// FAIL CLOSED. The row exists, it names a tier, and the tier is not
-			// one — so this directory HAS a policy and the policy is unreadable.
-			// Waving the spawn through would make a typo the most effective way
-			// to remove a ceiling, and it would look identical to working.
-			v.Denied = true
-			v.Because = append(v.Because, fmt.Sprintf(
-				"ceilings.%s.max_tool_scope is %q, which is not an authority tier (view, triage, operator) — this spawn is REFUSED rather than admitted, because a ceiling that cannot be read is not a ceiling that does not exist. Fix the value in ~/.config/workspacer-hub/routing.yaml; there is no bus call that can",
-				v.Key, ceiling.MaxToolScope))
-		}
-		return
-	}
-	if want <= max {
-		return
-	}
-	v.ToolScopeRefused, v.ToolScope = true, strings.ToLower(strings.TrimSpace(ceiling.MaxToolScope))
-	v.Because = append(v.Because, fmt.Sprintf(
-		"this spawn asked for the %s tool tier in %s, and routing.yaml's ceilings.%s caps that directory at %s — the tier is clamped to %s. Raise it by editing ceilings: in ~/.config/workspacer-hub/routing.yaml; there is no bus call that can",
-		strings.ToLower(strings.TrimSpace(req.ToolScope)), req.CanonicalCwd, v.Key, v.MaxToolScope, v.MaxToolScope))
+	_, _, _ = req, ceiling, v
 }
 
 func (m *Matrix) checkCapability(req SpawnRequest, ceiling Ceiling, v *CeilingVerdict) {

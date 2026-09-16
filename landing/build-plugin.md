@@ -378,14 +378,14 @@ by the user. See [setup](docs.html#launch-integrations) and the
 Webviews should reach for the injected `window.workspacer` SDK (see "your first plugin") rather than these raw frames, but this is the protocol it speaks under the hood, and the one a sidecar (or the `wks.js` twin above) talks directly. Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to `ws://127.0.0.1:7895/bus?token=<busToken>` (webviews get the token in the pane URL as `?busToken=`; sidecars get theirs in the `HUB_TOKEN` environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:
 
 ```js
-// subscribe to events (topics you declared in "consumes")
+// subscribe to events
 ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.*', 'ui.*'] }));
 
-// publish an event (a type you declared in "emits")
+// publish an ordinary plugin event
 ws.send(JSON.stringify({ op: 'publish',
   event: { type: 'command.focus_agent', source: 'example.hello', data: { sessionId } } }));
 
-// call a capability (a method you declared in "capabilities"); reply comes back as op:'result'
+// call a capability; reply comes back as op:'result'
 ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {} }));
 
 // register methods you answer (declared in "provides"); calls arrive as op:'call'
@@ -394,15 +394,15 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));
 
 An incoming event is `{"op":"event","event":{ id, type, source, time, data }}`. The hub stamps `id`/`time` if you leave them blank. A reply to your `call` comes back as `{"op":"result","id":"c1","result":{…}}`, or `{"op":"error","id":"c1","error":"…"}`. When you `provide`, a caller's request arrives as an `op:'call'` frame you answer with an `op:'result'` carrying the same id.
 
-Two rules the bus enforces against your declared grants: you can only `call` a method you listed in `capabilities`, and you can only `publish` a type you listed in `emits`. An undeclared call or publish is refused. Topic patterns (in `subscribe`, `consumes`, `emits`) are exact (`agent.state_changed`), namespace wildcard (`agent.*`), or all (`*`). The router is **single-owner per method**, so when you `provide`, pick a namespace nobody else claims.
+Installing and enabling a plugin is the trust decision. Manifest `capabilities`, `emits`, and `consumes` document and route the integration; they are not grants or an OS sandbox. Authentication, plugin identity/provenance, host-owned event protection, and the router's **single-owner per method** rule remain enforced, so when you `provide`, pick your plugin's own namespace.
 
 ## Capabilities & permissions
 
-Capabilities are request/reply methods. List the ones you **call** in `capabilities`; register the ones you **answer** in `provides`. The whole model is **fail-closed**: a plugin gets exactly the grants its manifest declares and nothing more, and an undeclared call is refused at the bus.
+Capabilities are request/reply methods. List the ones you expect to **call** in `capabilities`; register the ones you **answer** in `provides`. Enabled plugin code runs with the Workspacer user's machine access. These declarations support discovery, routing, and provenance; they do not confine the process.
 
-### the path-scoped rule
+### documented filesystem roots
 
-Filesystem and project-search methods (`fs.*`, `search.project`) are the only ones that **must** use the object form and declare `paths`, or the loader rejects them. A plugin can never get unrestricted host filesystem access:
+The object form can document intended roots for host filesystem methods:
 
 ```json
 "capabilities": [
@@ -412,7 +412,7 @@ Filesystem and project-search methods (`fs.*`, `search.project`) are the only on
 ]
 ```
 
-Path tokens: `${pluginDir}` (your own folder), `${agentCwd}`, or an absolute path. `${agentCwd}` only resolves on a **per-pane webview token** for an agent-scoped pane (the pane mints an ephemeral token confined to that agent's directory on mount and revokes it on unmount); it grants nothing on a static per-plugin or sidecar token. Anything unresolved grants nothing.
+Path tokens such as `${pluginDir}` and `${agentCwd}` remain useful routing placeholders. They are not a security boundary: a sidecar may access anything available to the Workspacer user. Plugin webviews remain isolated from the app document by their origin/CSP and keep a distinct authenticated identity for provenance.
 
 ### common host capabilities
 
@@ -450,9 +450,9 @@ wks.provide('myorg.jira.search', async (params) => {
 });
 ```
 
-The workspacer MCP facade picks the tool up (within ~15s of the plugin loading) and exposes it as `mcp__workspacer__myorg_jira_search`, but **only to sessions that were granted it**: a spawn must pass `pluginTools: ["myorg.jira"]` (plus a `toolScope`) for your tools to appear in that agent's tool list. Tools are never ambient; installing a plugin does not tax every agent's context.
+The Workspacer MCP facade picks the tool up (normally within ~15s) and exposes it as `mcp__workspacer__myorg_jira_search` to every supported agent while the plugin is enabled. The server catalog refreshes, but MCP clients that cache `tools/list` may need to reconnect or refresh because Workspacer does not currently emit a list-changed notification.
 
-Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line; it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your `provides`, which, like every other declaration, is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
+Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line; it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your own-namespace `provides`. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
 
 > **Source of truth.** The exact params/return shape of each host capability isn't a frozen public API yet. Treat `apps/desktop/src/main/services/hubCapabilities.ts` and `services/hub/examples/` as authoritative for field names, and the MCP tool list (`cmd/mcp/main.go`) for the stable subset.
 

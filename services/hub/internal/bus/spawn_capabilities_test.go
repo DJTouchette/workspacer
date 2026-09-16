@@ -2,7 +2,7 @@ package bus
 
 import "testing"
 
-func TestHelloAdvertisesActualFullAccessAuthority(t *testing.T) {
+func TestHelloAdvertisesProviderPermissionPassThroughToSpawnCapableCallers(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		conn *conn
@@ -11,8 +11,8 @@ func TestHelloAdvertisesActualFullAccessAuthority(t *testing.T) {
 		{"host", &conn{trusted: true}, true},
 		{"operator", &conn{trusted: true, viaScopedToken: true}, true},
 		{"triage", &conn{scope: "triage", scopeMethods: []string{"agents.sendMessage"}, viaScopedToken: true}, false},
-		{"plugin", &conn{pluginID: "p"}, false},
-		{"peer without grant", &conn{trusted: true, federated: true}, false},
+		{"enabled plugin", &conn{pluginID: "p"}, true},
+		{"peer without legacy grant", &conn{trusted: true, federated: true}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.conn.helloFrame().SpawnFullAccess; got != tc.want {

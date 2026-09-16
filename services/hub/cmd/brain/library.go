@@ -150,7 +150,7 @@ func allowAnyLibraryFile(path string) (string, bool) { return path, true }
 // <configDir>/sessions, on the copy that actually answers under
 // DELEGATE_CATALOG_TO_BRAIN — while the desktop refused the identical call. The
 // bus's own scoping makes it worse rather than better: capspec.PathParam
-// ["library.save"] is "cwd", so a plugin granted paths:[<projA>] is authorized
+// ["library.save"] is "cwd", so the legacy containment corpus can evaluate
 // on the cwd alone and everything past it is the provider's job.
 //
 // It also left the brain disagreeing with ITSELF: save wrote items that its own

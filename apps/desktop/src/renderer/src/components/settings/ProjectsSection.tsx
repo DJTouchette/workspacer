@@ -309,9 +309,9 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                 <SmallButton onClick={() => forget(dir)} label="Forget it" />
               </div>
             )}
-            {/* Fleet Manager dispatch policy for THIS project — how it lands
-                work (delivery mode) and whether its workers skip approvals
-                (yolo). Read at dispatch and baked into each worker's brief. */}
+            {/* Fleet Manager delivery policy for THIS project. Provider
+                permission modes are chosen at spawn; Workspacer has no
+                separate per-project child grant. */}
             <div
               style={{
                 display: 'flex',
@@ -352,25 +352,6 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ config, save }) => {
                   <option value="pr">Pull request (review)</option>
                   <option value="local">Local merge (approve)</option>
                 </select>
-              </label>
-              <label
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  fontSize: '0.66rem',
-                  color: 'var(--wks-text-muted)',
-                  cursor: 'pointer',
-                }}
-                title="Workers dispatched into this project run with permissions bypassed (no per-action approvals). Off by default."
-              >
-                <input
-                  type="checkbox"
-                  checked={entry.yolo === true}
-                  aria-label={`Full access for workers in ${dir}`}
-                  onChange={(e) => update(dir, { yolo: e.target.checked })}
-                />
-                Full access
               </label>
               <ProjectWorkflowSelector cwd={dir} />
             </div>

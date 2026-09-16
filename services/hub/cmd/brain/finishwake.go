@@ -350,14 +350,14 @@ func (w *finishWatcher) sendFinished(ctx context.Context, parentID string, worke
 		name, header, tail string
 		entries            []fleetEntry
 	}{
-		{"worker-escalated", fleetWorkerEscalatedHeader, fleetWorkerEscalatedTail, escalated},
-		{"worker-finished", fleetWorkerFinishedHeaderFor(completed), fleetWorkerFinishedTail, completed},
+		{"worker-escalated", fleetWorkerEscalatedHeader, map[bool]string{true: ordinaryWorkerEscalatedTail, false: fleetWorkerEscalatedTail}[!parent.IsWakeTarget], escalated},
+		{"worker-finished", fleetWorkerFinishedHeaderFor(completed), map[bool]string{true: ordinaryWorkerFinishedTail, false: fleetWorkerFinishedTail}[!parent.IsWakeTarget], completed},
 	}
 	for _, group := range groups {
 		if len(group.entries) == 0 {
 			continue
 		}
-		text := buildFleetMessage(group.header, group.tail, group.entries)
+		text := buildFleetMessageForAudience(group.header, group.tail, group.entries, !parent.IsWakeTarget)
 		if err := w.reg.deliverFleetWake(ctx, parentID, text); err != nil {
 			// Best-effort: book only the group whose distinct wake actually
 			// landed. A failed send remains eligible for the next identical edge.
@@ -615,10 +615,18 @@ func (w *finishWatcher) sweepMissedFinishes(ctx context.Context, now time.Time) 
 			}
 		}
 		if len(escalated) > 0 {
-			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessage(fleetWorkerEscalatedHeader, fleetWorkerEscalatedTail, escalated))
+			tail := fleetWorkerEscalatedTail
+			if !manager.IsWakeTarget {
+				tail = ordinaryWorkerEscalatedTail
+			}
+			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessageForAudience(fleetWorkerEscalatedHeader, tail, escalated, !manager.IsWakeTarget))
 		}
 		if len(completed) > 0 {
-			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessage(fleetCatchUpHeader, fleetCatchUpTail, completed))
+			tail := fleetCatchUpTail
+			if !manager.IsWakeTarget {
+				tail = ordinaryCatchUpTail
+			}
+			_ = w.reg.deliverFleetWake(ctx, manager.SessionID, buildFleetMessageForAudience(fleetCatchUpHeader, tail, completed, !manager.IsWakeTarget))
 		}
 	}
 }

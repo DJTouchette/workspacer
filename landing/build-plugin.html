@@ -377,7 +377,7 @@ function connect(opts = {}) {
 }
 
 module.exports = { connect };</code></pre>
-<p>Your <code>server.js</code> then reads like the webview client, with the same <code>ready</code> / <code>on</code> / <code>call</code> / <code>publish</code> / <code>settings</code> surface, and it mirrors the live connection status too (<code>.connected</code> and <code>onStatus(connected =&gt; …)</code>, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):</p>
+<p>Your <code>server.js</code> then reads like the webview client, with the same <code>ready</code> / <code>on</code> / <code>call</code> / <code>publish</code> / <code>settings</code> surface, and it mirrors live connection status. Enabling the plugin is the trust decision; manifest declarations support routing and discovery rather than sandboxing the process.</p>
 <pre><code>// server.js
 const { connect } = require('./wks.js');
 const wks = connect();
@@ -494,7 +494,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
 <li><code>notifications.post</code>, notify the user (<code>{ title, body }</code> at minimum). Every call lands in the in-app notification center (the bell in the top bar) and, unless the user disabled OS notifications or you pass <code>inAppOnly: true</code>, also shows a clickable desktop notification. Optional: <code>level</code> (<code>info</code>|<code>success</code>|<code>warn</code>|<code>error</code>), <code>source</code> (shown in the center, e.g. <code>"plugin:ci"</code>), a click target (<code>sessionId</code> to focus that agent, <code>paneType</code> to open your pane, or <code>url</code>), <code>key</code> (same-key replaces instead of stacking), <code>silent</code> (no toast, history only).</li>
 <li><code>claude.approve</code> / <code>claude.answer</code> / <code>claude.signal</code>, resolve an approval, answer an AskUserQuestion, send a signal.</li>
 <li><code>sessions.snapshot</code> / <code>sessions.transcript</code> / <code>sessions.conversation</code>, live session state and history.</li>
-<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.watch</code> / <code>search.project</code>, path-scoped file I/O and ripgrep search (object form, <code>paths</code> required).</li>
+<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.watch</code> / <code>search.project</code>, host file I/O and search. Manifest paths document intended use but do not sandbox enabled code.</li>
 </ul>
 <p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call. A bridge sidecar, for instance, can consume an external MCP server and re-expose its tools as hub capabilities.</p>
 <h3>agent tools</h3>
@@ -512,7 +512,7 @@ wks.provide('myorg.jira.search', async (params) =&gt; {
   return { issues }; // raw data — the caller is a model, not your pane
 });</code></pre>
 <p>The Workspacer MCP facade exposes the tool as <code>mcp__workspacer__myorg_jira_search</code> to every supported agent while the plugin is enabled. The initial catalog is loaded before the facade reports ready; later changes are polled (normally within ~15s). Clients that cache <code>tools/list</code> may need to reconnect or refresh because no list-changed notification is currently emitted.</p>
-<p>Rules, all enforced at load or serve time: the tool <code>name</code> is lowercase <code>[a-z0-9_]</code> starting with a letter; <code>description</code> is required (keep it to a line, since it's what the model reads); <code>inputSchema</code>, when present, must be a JSON Schema <strong>object</strong>; and <code>method</code> must be covered by your <code>provides</code>, which is consent-pinned, so a tool added after install stays withheld until the user reinstalls or explicitly reloads the plugin. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.</p>
+<p>Rules, all enforced at load or serve time: the tool <code>name</code> is lowercase <code>[a-z0-9_]</code> starting with a letter; <code>description</code> is required; <code>inputSchema</code> must be a JSON Schema object; and <code>method</code> must be covered by the plugin's own-namespace <code>provides</code>. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.</p>
 <div class="callout"><strong>Source of truth.</strong> The exact params/return shape of each host capability isn't a frozen public API yet. Treat <code>apps/desktop/src/main/services/hubCapabilities.ts</code> and <code>services/hub/examples/</code> as authoritative for field names, and the MCP tool list (<code>cmd/mcp/main.go</code>) for the stable subset.</div>
     </section>
 

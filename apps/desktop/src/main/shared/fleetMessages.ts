@@ -95,6 +95,8 @@ export interface FleetMessage {
   entries: FleetMessageEntry[];
 }
 
+export type FleetMessageAudience = 'manager' | 'ordinary-parent';
+
 /** Reply excerpts longer than this are cut (with an ellipsis). */
 const REPLY_EXCERPT_MAX = 400;
 
@@ -197,6 +199,25 @@ const TAILS: Record<FleetMessageKind, string> = {
     `polling, and do not ask it for further updates.`,
 };
 
+/** Direct parents get child lifecycle wakes without becoming Fleet Managers.
+ * Keep these tails intentionally small: no task/workflow ledger, resultSchema
+ * bookkeeping, manager_context, global fleet actions, or manager brief ritual. */
+const ORDINARY_PARENT_TAILS: Partial<Record<FleetMessageKind, string>> = {
+  'worker-finished':
+    `Inspect the child's final result and continue your own task. Use project-brief for ` +
+    `durable project knowledge, and spawn further work with spawn-agent if useful.`,
+  'worker-escalated':
+    `The child is blocked and did not complete. Inspect its escalation, resolve the decision ` +
+    `if it is within your task, then continue your own work. Use project-brief for durable ` +
+    `knowledge and spawn-agent for any follow-up.`,
+  'catch-up':
+    `Inspect each child's result and continue your own task. Use project-brief for durable ` +
+    `project knowledge, and spawn further work with spawn-agent if useful.`,
+  blocked:
+    `Inspect your blocked child's context and answer it if the decision is within your task; ` +
+    `otherwise surface the exact decision you need. Then continue your own work.`,
+};
+
 /** One entry as its bullet-body text (no leading `- `). */
 export function formatFleetEntry(e: FleetMessageEntry): string {
   const where = e.blockedOn ? e.blockedOn : `cwd ${e.cwd || '?'}`;
@@ -223,6 +244,10 @@ const FAILED_NOTE =
   `that error, NOT a result: do not record it in a brief's "## Recently" as work landed. ` +
   `Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause ` +
   `to the user if it is an account/quota problem no retry will fix.`;
+
+const ORDINARY_PARENT_FAILED_NOTE =
+  `A "FAILED" child did not complete its task. Inspect the reported error, then adjust the ` +
+  `task or start a focused follow-up with spawn-agent.`;
 
 /** Plain (non-bullet) note appended when a FAILED entry's reason is Claude's
  *  "Credit balance is too low" refusal — the one case where the actionable
@@ -296,26 +321,35 @@ export function buildReplyPrefix(entry: Pick<FleetMessageEntry, 'sessionId' | 'l
  * they are read by the manager agent, not round-tripped into the GUI card
  * (which shows the bullet excerpt).
  */
-export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageEntry[]): string {
+export function buildFleetMessage(
+  kind: FleetMessageKind,
+  entries: FleetMessageEntry[],
+  audience: FleetMessageAudience = 'manager',
+): string {
   const bullets = entries.map((e) => `- ${formatFleetEntry(e)}`);
   const extras: string[] = [];
-  for (const e of entries) {
-    if (e.reviewEvidenceId)
-      extras.push(`Review evidence — session:${e.sessionId}: ${e.reviewEvidenceId}`);
+  if (audience === 'manager') {
+    for (const e of entries) {
+      if (e.reviewEvidenceId)
+        extras.push(`Review evidence — session:${e.sessionId}: ${e.reviewEvidenceId}`);
+    }
   }
-  if (entries.some((e) => e.failed)) extras.push(FAILED_NOTE);
+  if (entries.some((e) => e.failed))
+    extras.push(audience === 'manager' ? FAILED_NOTE : ORDINARY_PARENT_FAILED_NOTE);
   if (entries.some((e) => e.failed && isCreditBalanceTooLowError(e.failed))) {
     extras.push(CREDIT_BALANCE_NOTE);
   }
   if (entries.some((e) => e.stopped)) extras.push(STOPPED_NOTE);
-  for (const e of entries) {
-    if (e.result) {
-      extras.push(`Structured result — ${e.label} (session:${e.sessionId}):\n${e.result}`);
-    } else if (e.resultError) {
-      extras.push(
-        `Structured result MISSING — ${e.label} (session:${e.sessionId}): ${e.resultError}. ` +
-          `Read the prose report below/above instead.`,
-      );
+  if (audience === 'manager') {
+    for (const e of entries) {
+      if (e.result) {
+        extras.push(`Structured result — ${e.label} (session:${e.sessionId}):\n${e.result}`);
+      } else if (e.resultError) {
+        extras.push(
+          `Structured result MISSING — ${e.label} (session:${e.sessionId}): ${e.resultError}. ` +
+            `Read the prose report below/above instead.`,
+        );
+      }
     }
   }
   for (const e of entries) {
@@ -336,8 +370,10 @@ export function buildFleetMessage(kind: FleetMessageKind, entries: FleetMessageE
     }
   }
   const head = `${headerFor(kind, entries)}\n${bullets.join('\n')}`;
-  if (extras.length === 0) return `${head}\n${TAILS[kind]}`;
-  return `${head}\n\n${extras.join('\n\n')}\n\n${TAILS[kind]}`;
+  const tail =
+    audience === 'ordinary-parent' ? (ORDINARY_PARENT_TAILS[kind] ?? TAILS[kind]) : TAILS[kind];
+  if (extras.length === 0) return `${head}\n${tail}`;
+  return `${head}\n\n${extras.join('\n\n')}\n\n${tail}`;
 }
 
 /** Bullet-body grammar: `label (session:<id>, cwd <path>|approval|question)`

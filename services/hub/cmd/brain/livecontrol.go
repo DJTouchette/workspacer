@@ -12,23 +12,9 @@ package main
 // /app, and /m surfaced the failure loudly while /app swallowed it into a
 // console.warn. Same methods, same wire shapes, second provider.
 //
-// THE ESCALATION CLAMP IS THE POINT OF THE PORT.
-//
-// agents.spawn already refuses to let a bus caller start an agent with
-// approvals off. claude.setPermissionMode reaches an agent that is already
-// running — including one the LOCAL user started in ask mode — and it does no
-// ownership check on the sessionId. Without the same clamp, "spawn clamped +
-// setPermissionMode unclamped" is one extra call to bypassPermissions followed
-// by agents.sendMessage: the exact escalation the spawn clamp exists to refuse,
-// reached through a second door. The desktop closes it with
-// assertNoPermissionBypass (lib/permissionBypass.ts); this closes it with
-// permissionmode.go's isPermissionEscalation, which is the SAME allowlist
-// (pinned to the desktop by TestPermissionModeAllowlistMatchesTheDesktop).
-//
-// Direction matters and is deliberate: DE-ESCALATING and neutral modes stay
-// open, because tightening is not an escalation and a remote operator must be
-// able to put a runaway worker back into ask mode. That is why the refusal is
-// asymmetric rather than "no mode changes from the bus".
+// Provider permission modes flow through unchanged. Workspacer authentication
+// still controls who may call this host capability; it does not add a second
+// child-grant clamp.
 
 import (
 	"context"

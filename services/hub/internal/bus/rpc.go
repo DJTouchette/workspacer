@@ -338,58 +338,15 @@ func (cn *conn) mayUseProfile(id string) bool {
 // (`?peer=1`) to declare itself one. internal/federation sets it; every other
 // client (desktop, brain, MCP facade, plugin sidecar, phone) does not.
 //
-// Self-asserted on purpose. It is read ONLY to WITHHOLD authority — see
-// [conn.mayBypassPermissions] — so the worst a client can do by lying is give
-// itself less than its credential carries, which needs no proof. The honest
-// half (a link that does NOT set it) is covered by the far hub minting the link
-// a token whose grants it actually means, which was always the ceiling.
+// Self-asserted on purpose. It marks federation provenance and does not control
+// provider permission modes.
 const PeerLinkParam = "peer"
 
-// mayBypassPermissions reports whether this connection holds the full-access
-// grant: whether an agents.spawn it sends may have its skipPermissions request
-// honored by the provider.
-//
-// THE TOKEN IS THE TRUST BOUNDARY. The product rule this encodes (2026-08-26)
-// is that a remote client should feel like sitting at the machine, so the
-// credential decides — not the fact of being remote:
-//
-//   - plugin token: never. A plugin's consent dialog never offered this, and a
-//     plugin is third-party code, not the user.
-//   - FEDERATION LINK (`?peer=1`): only when the link's own token record
-//     carries an explicit yoloAllowed grant. A peer's forwarded spawn re-enters
-//     this router on the link connection, and peers.json routinely holds the
-//     far hub's HOST token — so without this clause "the link is authenticated"
-//     would silently mean "every spawn any peer forwards runs bypassed",
-//     inheriting host trust nobody granted per-call. The far hub must mint the
-//     link a token that SAYS full access before it means it.
-//   - operator-tier token (viaScopedToken && trusted): YES. ScopeOperator is
-//     documented as "everything — equivalent to the host remote-token", so
-//     clamping it was the silent downgrade the user hit: a full-access spawn
-//     from the phone came up in ask-mode with only a server log to say so.
-//   - any other scoped token: only with yoloAllowed. (view/triage cannot reach
-//     agents.spawn at all; the clause is the belt for a hand-edited record.)
-//   - host token: yes — the control plane's own credential.
-//
-// PROFILE dispatch (mayUseProfile) deliberately does NOT follow this widening;
-// see the note there for why an account allowlist is the one grant an operator
-// token must still hold per-token.
+// mayBypassPermissions retains its name for the hello-wire compatibility bit.
+// A caller that may spawn may pass the provider's permission choice through;
+// legacy yoloAllowed/federation flags do not narrow it.
 func (cn *conn) mayBypassPermissions() bool {
-	if cn.revoked.Load() {
-		return false
-	}
-	if cn.pluginID != "" {
-		return false
-	}
-	if cn.federated {
-		return cn.viaScopedToken && cn.yoloAllowed
-	}
-	if cn.viaScopedToken {
-		// trusted && viaScopedToken is exactly the operator tier: the handshake
-		// promotes ScopeOperator to trusted and nothing else in the scoped
-		// branch sets it (bus.go handleBus, si.operator()).
-		return cn.yoloAllowed || cn.trusted
-	}
-	return cn.trusted
+	return !cn.revoked.Load() && cn.mayCall(spawnMethod)
 }
 
 // ---------------------------------------------------------------------------
@@ -430,8 +387,7 @@ type SpawnCeilingRequest struct {
 	// id, quoted back in the refusal.
 	Resuming        bool
 	ResumeSessionID string
-	// ToolScope is the AUTHORITY tier asked for, already folded together with the
-	// legacy `mcpFacade: true` spelling.
+	// ToolScope is a legacy audit field; current agent tools are ambient.
 	ToolScope string
 	Provider  string
 	Model     string
@@ -446,7 +402,7 @@ type SpawnCeilingVerdict struct {
 	// Key names the ceilings: entry that matched, for the log. "" means the
 	// routing layer had no ceiling to apply and nothing is clamped.
 	Key string
-	// MaxCapability / MaxToolScope are that entry's limits, for the log line.
+	// MaxCapability is active. MaxToolScope is legacy parse-compatible metadata.
 	MaxCapability string
 	MaxToolScope  string
 
@@ -454,7 +410,7 @@ type SpawnCeilingVerdict struct {
 	// directory allows; Capability is what it is clamped TO.
 	CapabilityRefused bool
 	Capability        string
-	// ToolScopeRefused says the same for AUTHORITY; ToolScope is the clamp.
+	// Retired fields; current routing never sets a tool-scope refusal.
 	ToolScopeRefused bool
 	ToolScope        string
 
@@ -542,47 +498,13 @@ func (s *Server) SetSpawnCeiling(ceiling SpawnCeilingFunc, audit SpawnAuditFunc)
 	s.router.mu.Unlock()
 }
 
-// callerToolScopeCeiling is INVARIANT 1a: a caller may not grant a child a tier
-// above its own.
-//
-// The invariant was already true for the view and triage tiers by a different
-// mechanism — agents.spawn is in neither viewMethods nor triageMethods, so those
-// tokens cannot spawn anything at all. The hole this closes is
-// operator-to-operator and, more importantly, it is the belt for the day a tier
-// list is widened or a record is hand-edited: an authority ladder enforced only
-// by a method list is enforced only until somebody adds a method.
-//
-// WHO IS EXEMPT, and why each:
-//
-//   - The HOST TOKEN (trusted, not via tokens.json) — the control plane itself:
-//     the desktop, the brain, the MCP facade. A process holding it could rewrite
-//     tokens.json, so clamping it here would be theater, exactly as it is for
-//     mayUseProfile.
-//   - A PLUGIN token is not placed on the human token ladder. Installation and
-//     enablement are the user's trust decision, so legacy manifest
-//     `childToolScope` metadata does not constrain its spawn request. Directory
-//     routing ceilings still apply below.
-//   - An OPERATOR-tier scoped record reaches this with cn.scope EMPTY, because
-//     the handshake promotes ScopeOperator to `trusted` and only the narrower
-//     tiers keep their name (bus.go handleBus). That produces the right answer
-//     for the right reason and not by accident: operator is the top of the
-//     ladder, so "no tier ceiling" and "clamped to operator" are the same
-//     clamp. The DIRECTORY ceiling still applies to it — see the caller of this
-//     function, which takes the lower of the two.
-//
-// Returns ("", true) when this connection imposes no tier ceiling.
+// callerToolScopeCeiling remains for source compatibility with older tests.
+// Agent tool scopes are ambient, so it imposes no runtime ceiling.
 func (cn *conn) callerToolScopeCeiling() (string, bool) {
-	if cn.pluginID != "" {
-		return "", true
-	}
-	if !cn.viaScopedToken {
-		return "", true // host token: the control plane
-	}
-	return strings.ToLower(strings.TrimSpace(cn.scope)), true
+	return "", true
 }
 
-// toolScopeRank orders the three authority tiers. TWIN of routing's
-// ToolScopeRank and of authtoken's tier list — three values, closed vocabulary,
+// toolScopeRank parses the retired tool-scope vocabulary for compatibility.
 // and the duplication is one switch rather than an import that would drag the
 // matrix into the bus.
 func toolScopeRank(scope string) (int, bool) {
@@ -597,8 +519,9 @@ func toolScopeRank(scope string) (int, bool) {
 	return 0, false
 }
 
-// sanitizeSpawnParams enforces the profile-dispatch grant on an agents.spawn's
-// params, at the router's single dispatch point:
+// sanitizeSpawnParams applies provenance checks, model ceilings and freshness
+// policy at the router's single dispatch point. Legacy grant-shaped fields are
+// removed or forwarded inertly for mixed-version compatibility:
 //
 //  0. THE SPELLING GATE, before anything below can be walked around. Every rule
 //     in this function matches a field name EXACTLY; every provider that decodes
@@ -608,29 +531,14 @@ func toolScopeRank(scope string) (int, bool) {
 //     `MCPFacade`, `ToolScope` — or when two keys fold together. Without this
 //     step every numbered rule below is advisory: see spawnkeys.go.
 //
-//  1. `profileGranted` is DELETED from every incoming call. It is hub-stamped
-//     only — a provider seeing it true knows the hub verified the caller, and
-//     no caller (spoofing included) can be its source.
+//  1. `profileGranted` and `yoloGranted` are DELETED. They are retired stamps;
+//     profiles and provider permission modes no longer depend on them.
 //
-//  2. `profileId` survives only when the caller may use that exact profile
-//     (mayUseProfile); the hub then stamps `profileGranted: true` beside it.
-//     Otherwise the field is stripped, which is byte-for-byte today's doctrine:
-//     an ungranted bus caller cannot name a profile at all.
+//  2. `profileId`, permission mode, `toolScope`, `mcpFacade`, and `pluginTools`
+//     pass through. The latter three are ignored by current providers because
+//     supported agents receive ambient Workspacer and enabled-plugin tools.
 //
-//  3. `yoloGranted` is likewise DELETED from every incoming call and hub-
-//     stamped true only for a caller holding the full-access grant
-//     (mayBypassPermissions). The stamp is about the CALLER, not the request:
-//     `skipPermissions` itself passes through untouched either way — callers
-//     keep requesting it, the stamp says the provider may honor it, and an
-//     unstamped request keeps today's clamp.
-//
-//  4. The AUTHORITY CLAMP. `toolScope` (and its legacy `mcpFacade: true`
-//     spelling, which means operator) is lowered to the smaller of two ceilings:
-//     the caller's own tier — Invariant 1a, a caller may not grant a child more
-//     authority than it holds — and routing.yaml's `max_tool_scope` for the
-//     spawn's directory.
-//
-//  5. The CAPABILITY CLAMP. `capability` is lowered to routing.yaml's
+//  3. The CAPABILITY CLAMP. `capability` is lowered to routing.yaml's
 //     `max_capability` for that directory, and when it is, `model` and `effort`
 //     are REPLACED with what the permitted capability actually resolves to —
 //     not merely deleted. Deleting them was the hole: an omitted model is the
@@ -639,7 +547,7 @@ func toolScopeRank(scope string) (int, bool) {
 //     a spawn that declares nothing and simply NAMES a reserved model, judged at
 //     the STRONGEST reading the matrix has for it.
 //
-//     5b. THE FRESHNESS REFUSAL. A spawn that declares a `role` or `capability`
+//     3b. THE FRESHNESS REFUSAL. A spawn that declares a `role` or `capability`
 //     whose matrix entry carries `fresh: true` — reviewer, deep_reviewer,
 //     frontier_plus in every shipped profile — may not carry a
 //     `resumeSessionId`. It is REFUSED rather than clamped: there is no weaker
@@ -649,12 +557,12 @@ func toolScopeRank(scope string) (int, bool) {
 //     DECLARED label on purpose — refusing a resume only ever gives a caller
 //     less, so there is nothing to gain by lying about a role.
 //
-//  6. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
+//  4. `escalationScrubbed` is DELETED from every incoming call (hub-stamped
 //     only, same as the stamps above) and re-stamped with what THIS router took
 //     away — `profileId`, and now the two clamps' fields. NO SILENT DOWNGRADES:
 //     the provider folds the stamp together with its own clamps and returns the
-//     union as the spawn result's `escalationScrubbed`, so a caller that asked
-//     for full access, or for a tier, or for a capability, and did not get it
+//     union as the spawn result's `escalationScrubbed`, so a caller whose model
+//     capability was narrowed
 //     learns so from the ANSWER instead of from a log line on a machine it
 //     cannot read. An empty/absent stamp means "the hub took nothing".
 //
@@ -766,13 +674,12 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 	return out, nil
 }
 
-// clampSpawnAuthority applies items 4, 5 and 5b above and records the spawn, in
+// clampSpawnAuthority applies the capability/freshness policy above and records the spawn, in
 // place, returning the field names it took away.
 //
 // It runs on EVERY bus agents.spawn, including one with no routing layer wired
-// and one that names no capability at all: the caller-tier half of the authority
-// clamp is a property of the credential and needs no file, and the audit record
-// is worth having for a spawn nothing clamped.
+// and one that names no capability at all. The audit record is worth having for
+// a spawn nothing clamped.
 func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage) ([]string, error) {
 	str := func(key string) string {
 		r, ok := m[key]

@@ -283,9 +283,8 @@ type Ceiling struct {
 	// MaxCapability is the highest capability a spawn there may resolve to, as a
 	// name from Matrix.Capabilities.
 	MaxCapability string `yaml:"max_capability" json:"maxCapability"`
-	// MaxToolScope is the highest AUTHORITY tier a worker there may be handed:
-	// view | triage | operator. "tier" already means authority in this codebase,
-	// which is why the model axis is called "capability" everywhere else here.
+	// Legacy parse-compatible field. Agent tool access is ambient and this value
+	// is not enforced.
 	MaxToolScope string `yaml:"max_tool_scope" json:"maxToolScope"`
 }
 

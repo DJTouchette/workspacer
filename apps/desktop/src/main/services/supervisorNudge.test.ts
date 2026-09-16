@@ -52,7 +52,12 @@ describe('supervisorNudge.onFinished', () => {
     await vi.advanceTimersByTimeAsync(2000);
     const [, text] = message.mock.calls[0] as [string, string];
     expect(text).toContain('[fleet] Worker finished');
+    expect(text).toContain("Inspect the child's final result");
+    expect(text).toContain('project-brief');
+    expect(text).toContain('spawn-agent');
     expect(text).not.toContain('manager_context');
+    expect(text).not.toContain('resultSchema');
+    expect(text).not.toContain('## Recently');
     expect(text).not.toContain('Fleet event, not a new user request');
   });
 
@@ -184,6 +189,15 @@ describe('supervisorNudge.onBlock', () => {
       kind: 'blocked',
       entries: [{ label: 'alpha: fix tests', sessionId: 'w1', blockedOn: 'approval' }],
     });
+  });
+
+  it('routes a direct ordinary parent to the child-only blocker tail', async () => {
+    supervisorNudge.onBlock(worker(), 'question', [{ sessionId: 'parent', isWakeTarget: false }]);
+    await vi.advanceTimersByTimeAsync(22_000);
+    const [target, text] = message.mock.calls[0] as [string, string];
+    expect(target).toBe('parent');
+    expect(text).toContain('your blocked child');
+    expect(text).not.toMatch(/manager_context|## Recently|respawn_with|global fleet/i);
   });
 
   it('never wakes anyone when the block clears before the debounce threshold', async () => {

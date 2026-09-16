@@ -14,14 +14,10 @@
 // holds. Nothing new is registered on the bus, so there is no new hub method to
 // classify, no new provider, and no new door.
 //
-// AND IT GOES THROUGH THE SAME SPAWN GATE. The composed spawn is handed to
-// spawnWithGrants (main.go), the exact function spawn_agent's own handler
-// calls, so the profile-dispatch grant, the config-default resolution and the
-// full-access clamp all apply identically. That matters specifically here: this
-// tool reads the ORIGINAL session's permission mode, and a hand-rolled second
-// copy of the forward path would have turned "clone this worker" into a way to
-// re-request a bypass without the grant check. The clone of a bypassed worker
-// is bypassed only if the caller's own token still carries the grant.
+// AND IT GOES THROUGH THE SAME SPAWN PATH. The composed spawn is handed to
+// spawnWithGrants (its compatibility name), the exact function spawn_agent's
+// handler calls, so defaults, routing ceilings and provider permission choices
+// behave identically. Workspacer does not add a second permission grant.
 package main
 
 import (
@@ -48,7 +44,7 @@ type respawnWithIn struct {
 	Cwd           string  `json:"cwd,omitempty" jsonschema:"override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead"`
 	Role          string  `json:"role,omitempty" jsonschema:"override the work ROLE the successor is dispatched as (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge); defaults to the original's. Set it when the redispatch changes what the worker IS — a failed implementer respawned to diagnose is a diagnostician, not an implementer"`
 	Capability    string  `json:"capability,omitempty" jsonschema:"override the model CAPABILITY the successor is dispatched at (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus); defaults to the original's. Copy it from a fresh select_model answer rather than raising it by hand — the host still clamps it to the target directory's ceiling"`
-	ToolScope     string  `json:"toolScope,omitempty" jsonschema:"facade tier for the successor (view/triage/operator). NOT inherited — a session's snapshot does not record it — so restate it if the original had one"`
+	ToolScope     string  `json:"toolScope,omitempty" jsonschema:"accepted and ignored compatibility field; supported successors receive the full Workspacer tool surface automatically"`
 	Worktree      bool    `json:"worktree,omitempty" jsonschema:"carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued"`
 }
 
@@ -261,16 +257,13 @@ func addRespawnTool(b *build) {
 					spawn.Capability = ""
 				}
 			}
-			// The original's permission mode is REQUESTED, not granted: it goes
-			// through spawnWithGrants exactly as a hand-typed skipPermissions
-			// would, so an ungranted caller's clone starts with approvals on
-			// even if the original ran bypassed. Live mode wins over the
-			// spawn-time one — it is what the worker was actually running at.
+			// Preserve the provider's live permission mode. Workspacer does not
+			// reinterpret it through a child-grant layer.
 			//
 			// Always EXPLICIT, both ways. Leaving the field nil for a
 			// non-bypassed original would hand it to spawnWithGrants' omitted
-			// path, where a granted caller's full-access grant (or the config
-			// default) would resolve it to true — silently upgrading a worker
+			// path, where the provider/config default could resolve it to true —
+			// silently upgrading a worker
 			// that deliberately ran with approvals ON. respawn_with clones the
 			// original; it does not re-decide this.
 			bypassed := permissionModeMeansBypass(
@@ -311,7 +304,7 @@ func addRespawnTool(b *build) {
 				"label":      spawn.Label,
 				"role":       spawn.Role,
 				"capability": spawn.Capability,
-				"note":       "The successor was sent the original task plus your correction. Its permission mode was re-judged by the same grant check a fresh spawn_agent gets — it is not inherited.",
+				"note":       "The successor was sent the original task plus your correction. Its live provider permission mode was preserved explicitly.",
 			}
 			// An unrecorded retry is still a successful respawn. Do not advertise
 			// empty history ids as though there were a task to resume.

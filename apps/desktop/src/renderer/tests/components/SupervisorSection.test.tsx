@@ -1,8 +1,8 @@
 /**
  * Settings → Fleet Manager. The pane configures ONE role now: the manager.
  *
- * Pi core ships no MCP client at all (pi.rs), so `managedSpawn.ts` refuses to
- * mint it a facade token (`provider !== 'pi'`) and `agentSkillsRoot` returns
+ * Pi core ships no MCP client at all (pi.rs), so `managedSpawn.ts` refuses the
+ * spawn and `agentSkillsRoot` returns
  * null for it — MANAGER_PROVIDERS excludes it (and OpenCode) for that reason,
  * and the copy must not claim otherwise. The rest of this file pins the two
  * standing invariants: no control exists that a spawn path ignores, and no
@@ -293,6 +293,13 @@ describe('SupervisorSection — manager-only, and it says what starts the manage
     expect(container.textContent).toMatch(/roles\.supervisor/);
     expect(container.textContent).toMatch(/not consulted for this one/);
     expect(container.textContent).toMatch(/only place the manager’s own model is chosen/);
+  });
+
+  it('does not expose retired fleetFullAccess grant controls', () => {
+    renderSection({ agents: { fleetFullAccess: true } } as Partial<Config>);
+    expect(screen.queryByRole('checkbox', { name: /Full access/i })).toBeNull();
+    expect(screen.getByText(/Tool access is automatic/)).toBeInTheDocument();
+    expect(screen.getByText(/adds no child grant layer/)).toBeInTheDocument();
   });
 });
 

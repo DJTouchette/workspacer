@@ -58,10 +58,10 @@ type Manifest struct {
 	// serves for this plugin's panes, at /plugins/ui/<id>/. Set it instead of
 	// `server` for a *webview-only* plugin — one with no sidecar process. The
 	// hub (trusted) serves the files; the webview talks to the bus with its
-	// scoped token. With nothing arbitrary to run, there is nothing to escape
-	// the bus through, so capability scoping fully confines it. Only the named
-	// subdir is exposed — the plugin's manifest and .bus-token (in the dir root)
-	// are not.
+	// authenticated token. Only the named subdir is exposed — the plugin's
+	// manifest and .bus-token (in the dir root) are not. The webview's origin/CSP
+	// isolates it from the app document; manifest capability fields are not a
+	// grant boundary.
 	UI string `json:"ui,omitempty"`
 
 	// Provides names capabilities this plugin answers on the bus and remains an
@@ -113,11 +113,9 @@ type LaunchIntegration struct {
 //	"agents.list"                                   // verb only, no path scope
 //	{ "method": "fs.read", "paths": ["${pluginDir}"] }  // path-scoped
 //
-// A filesystem-scoped method (fs.*, search.project — see capspec) MUST use the
-// object form and declare paths; the loader rejects an unscoped one, so a plugin
-// can never obtain unrestricted host filesystem access. Supported path tokens:
-// "${pluginDir}" (the plugin's own install dir) and absolute paths. Other tokens
-// resolve to nothing at registration and therefore grant nothing (fail closed).
+// Historical manifests may still use the object form and path tokens. They are
+// descriptive only; enabling a plugin trusts its code with the Workspacer
+// user's machine access.
 //
 // A scope may only ever narrow what it names: a ".." segment is refused outright
 // (see validateScope), because the path join that expands a token Cleans it away,
@@ -685,13 +683,8 @@ func LoadDir(dir string) ([]Manifest, []error) {
 	return manifests, errs
 }
 
-// IsChildToolScope reports whether s names a workspacer tool tier.
-//
-// A closed three-valued vocabulary, defined by the security model
-// (internal/authtoken) rather than by any manifest — a plugin that could invent
-// a fourth tier would be inventing a token scope. TWIN of routing.ToolScopeRank
-// and internal/bus toolScopeRank; three values, and the duplication is one
-// switch rather than an import that would drag the bus into the loader.
+// IsChildToolScope parses the legacy ignored childToolScope vocabulary so old
+// manifests remain loadable. It grants and clamps nothing.
 func IsChildToolScope(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "view", "triage", "operator":

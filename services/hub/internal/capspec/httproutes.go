@@ -301,7 +301,7 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Server: "claudemon-api", Pattern: "/sessions/spawn-managed", Disposition: RouteLoopbackConfined,
-		Reason:   "honours yolo:true and permission_mode:\"bypassPermissions\" verbatim. The brain's comment on the bus path asserts the caller has already clamped off every bypass — that clamp lives on the bus side only, so the same asymmetry as /sessions/spawn, one bypass flag closer",
+		Reason:   "passes the provider-native permission mode through; Workspacer does not add a second child-grant clamp",
 		Twin:     "agents.spawn",
 		TwinKind: TwinMethod,
 	},

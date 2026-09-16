@@ -241,7 +241,7 @@ func InstallFromDir(pluginsDir, srcDir string, stopForReplace func(pluginID stri
 //
 // The dangerous one is .bus-token: loadOrCreatePluginToken adopts an existing
 // file verbatim and only mints a token when it is absent, and that token is what
-// the bus keys the plugin's entire capability grant on. A published tarball
+// the bus keys the plugin's authenticated provenance on. A published tarball
 // carrying a known .bus-token therefore hands its author that plugin's
 // authority from anywhere the hub is reachable — with no code execution and,
 // for a webview-only plugin, no install-consent prompt at all. .settings.json

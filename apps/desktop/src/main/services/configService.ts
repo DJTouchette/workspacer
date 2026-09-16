@@ -221,12 +221,9 @@ interface Config {
     /** Fleet Manager home directory ('' = derived: the configured projects'
      *  common parent, else $HOME). */
     fleetRoot: string;
-    /** Fleet full access: the Fleet Manager runs with permissions bypassed and
-     *  its facade token carries the yolo grant, so the workers it dispatches
-     *  may run bypassed too. Read (with per-project `yolo`) by
-     *  services/fullAccessGrants — the single grant formula the mint path and
-     *  the live reconciler share. */
-    fleetFullAccess: boolean;
+    /** Legacy upgrade field. Preserved when reading/writing old config, but
+     *  ignored: Workspacer no longer maintains child permission grants. */
+    fleetFullAccess?: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
      *  claude/codex/copilot — see SupervisorSection. */

@@ -484,8 +484,12 @@ func TestABlockWakesOnlyItsOrdinaryDirectParent(t *testing.T) {
 	}
 	surviveDebounce(r)
 	deliver(r)
-	if n := len(r.d.to("plain")); n != 1 {
+	wakes := r.d.to("plain")
+	if n := len(wakes); n != 1 {
 		t.Errorf("ordinary direct parent received %d blocker wakes, want 1", n)
+	}
+	if len(wakes) == 1 && (!strings.HasSuffix(wakes[0], ordinaryBlockedTail) || strings.Contains(wakes[0], "manager_context")) {
+		t.Errorf("ordinary blocker carried manager doctrine:\n%s", wakes[0])
 	}
 	if n := len(r.d.to("unrelated")); n != 0 {
 		t.Errorf("unrelated ordinary agent received %d blocker wakes", n)

@@ -68,7 +68,7 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
         (p): p is string => typeof p === 'string' && !!p.trim(),
       ),
     }),
-    // …and the full-access grant (only the true case is ever stored).
+    // …and legacy full-access metadata (preserved, never consulted).
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
     ...(r.facadeAuthority === true && { facadeAuthority: true as const }),
     // …and the session-role tag the grant reconciler keys on.

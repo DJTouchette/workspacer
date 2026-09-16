@@ -210,9 +210,9 @@ describe('ordinary-agent child wakes', () => {
     hook(child, 'PermissionRequest');
 
     const recipients = vi.mocked(supervisorNudge.onBlock).mock.calls[0]?.[2] ?? [];
-    expect(recipients).toContain(parent);
-    expect(recipients).toContain(manager);
-    expect(recipients).not.toContain(unrelated);
+    expect(recipients).toContainEqual({ sessionId: parent, isWakeTarget: false });
+    expect(recipients).toContainEqual({ sessionId: manager, isWakeTarget: true });
+    expect(recipients).not.toContainEqual(expect.objectContaining({ sessionId: unrelated }));
   });
 });
 
@@ -972,15 +972,32 @@ describe('closeSession — dismissal is a verb', () => {
     expect(claudeSessionStore.getSnapshot(sid)).toBeTruthy();
   });
 
-  it('revokes a successful spawn token exactly once across close and delayed eviction', () => {
+  it('revokes a successful spawn token immediately and exactly once across close and delayed eviction', () => {
     const sid = uniqueId();
     revokeSessionFacadeTokens.mockClear();
     hook(sid, 'SessionStart');
     hook(sid, 'SessionEnd');
+    // The row/transcript remains available during the grace period, but its
+    // bearer is already dead on the live→ended edge.
+    expect(claudeSessionStore.getSnapshot(sid)?.status).toBe('ended');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledWith(sid);
     claudeSessionStore.closeSession(sid);
     vi.advanceTimersByTime(31_000);
     expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
     expect(revokeSessionFacadeTokens).toHaveBeenCalledWith(sid);
+  });
+
+  it('revokes once again when a reused session id begins and ends a new lifecycle', () => {
+    const sid = uniqueId();
+    revokeSessionFacadeTokens.mockClear();
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(2);
+    expect(revokeSessionFacadeTokens).toHaveBeenNthCalledWith(1, sid);
+    expect(revokeSessionFacadeTokens).toHaveBeenNthCalledWith(2, sid);
   });
 });
 

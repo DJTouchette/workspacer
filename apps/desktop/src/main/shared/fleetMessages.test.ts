@@ -35,6 +35,39 @@ describe('buildFleetMessage → parseFleetMessage round trip', () => {
     });
   });
 
+  it('gives ordinary direct parents concise child guidance with no manager doctrine', () => {
+    for (const kind of ['worker-finished', 'worker-escalated', 'catch-up', 'blocked'] as const) {
+      const entry =
+        kind === 'blocked'
+          ? { label: 'child', sessionId: 'w1', blockedOn: 'question' as const }
+          : {
+              ...finished,
+              ...(kind === 'worker-escalated' ? { escalation: '{"status":"blocked"}' } : {}),
+            };
+      const text = buildFleetMessage(kind, [entry], 'ordinary-parent');
+      expect(text).toContain(
+        kind === 'blocked'
+          ? 'your blocked child'
+          : kind === 'worker-escalated'
+            ? 'The child is blocked'
+            : "child's",
+      );
+      expect(text).toContain(
+        kind === 'blocked' || kind === 'worker-escalated'
+          ? 'continue your own work'
+          : 'continue your own task',
+      );
+      expect(text).not.toMatch(
+        /manager_context|resultSchema|next_workflow_step|task ledger|## Recently|respawn_with|global fleet/i,
+      );
+      if (kind !== 'blocked') {
+        expect(text).toContain('project-brief');
+        expect(text).toContain('spawn-agent');
+      }
+      expect(parseFleetMessage(text)?.kind).toBe(kind);
+    }
+  });
+
   it('replies full of the delimiters themselves cannot break parsing', () => {
     const nasty = excerptReply(
       'Merged a; b; c (session:fake, cwd /x) — last reply: not really. Review the result (get_conversation',

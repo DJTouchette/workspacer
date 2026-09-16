@@ -11,14 +11,13 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentManager } from '../src/hooks/useAgentManager';
 import { buildManagerKickoff, deriveFleetRoot, FLEET_MANAGER_NAME } from '../src/lib/fleetManager';
 
-describe('buildManagerKickoff — full-access mode', () => {
-  it('adds the full-access note only when the flag is set', () => {
-    expect(buildManagerKickoff('go', false)).not.toContain('FULL-ACCESS MODE IS ON');
-    const yolo = buildManagerKickoff('go', true);
-    expect(yolo).toContain('FULL-ACCESS MODE IS ON');
-    expect(yolo).toContain('will not stop for approval');
-    // The ask still lands at the end after the mode note.
-    expect(yolo.trimEnd().endsWith('go')).toBe(true);
+describe('buildManagerKickoff — ambient tools', () => {
+  it('contains no retired Workspacer grant doctrine', () => {
+    const kickoff = buildManagerKickoff('go');
+    expect(kickoff).not.toContain('FULL-ACCESS MODE IS ON');
+    expect(kickoff).not.toMatch(/yolo grant|per-project yolo|toolScope tier/i);
+    expect(kickoff).toContain('Provider permission modes flow through without a Workspacer grant');
+    expect(kickoff.trimEnd().endsWith('go')).toBe(true);
   });
 });
 
@@ -242,8 +241,7 @@ describe('spawnFleetManager', () => {
     // The Overview entry point used to hardcode provider 'claude', so a Fleet
     // Manager on codex was impossible. The role flags matter more than the
     // provider: without `manager` the session is never marked isWakeTarget and
-    // NO worker-finished wake is routed to it, and without `fleetFullAccess`
-    // its token is minted with no dispatch grants.
+    // NO worker-finished wake is routed to it. Ambient tools need no grant flag.
     const hook = renderHook(() => useAgentManager());
     await act(async () => {
       await hook.result.current.spawnFleetManager('status', '/home/u/Work', false, true, 'codex');
@@ -253,7 +251,6 @@ describe('spawnFleetManager', () => {
       provider: 'codex',
       transport: 'stream',
       manager: true,
-      fleetFullAccess: true,
     });
     hook.unmount();
   });
