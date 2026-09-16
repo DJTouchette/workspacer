@@ -9,6 +9,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.166.0] - 2026-09-15
+
 ### Removed
 - Removed the Intent workspace preview and its board, tracker synchronization, and
   execution lifecycle. Existing Intent data is left untouched; Fleet inbox
