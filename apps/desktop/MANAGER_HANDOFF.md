@@ -129,7 +129,7 @@ or an incorrect hash; it does not establish which.
 
 The reported error is emitted by `validateManagerArtifact` during preparation,
 before receipt-hash checking, sealing or spawn. `validateSuccessor` later checks
-the parked session identity, settings, grants and readiness; it does not parse
+the parked session lifecycle identity, settings and readiness; it does not parse
 checkpoint pointers again. An allocated successor ID alone proves no spawn or
 ownership transfer. To classify a remaining remote failure, collect only the
 offending checkpoint index/category, whether root/pointer/realpath differ in
@@ -175,14 +175,14 @@ were added after that reproduction.
 Focused verification on Linux with Node 22.22.2, private worktree dependencies,
 private temp/config directories and fixture provider/daemon boundaries:
 
-| Exact suite under `src/main/services/` | Passed | Skipped |
-| --- | ---: | ---: |
-| `managerReplacementArtifact.test.ts` | 22 | 3 |
-| `managerReplacementArtifact.windows.test.ts` | 38 | 0 |
-| `managerReplacementService.test.ts` | 19 | 0 |
-| `managerReplacement.integration.test.ts` | 1 | 0 |
-| `managerReplacementMessage.test.ts` | 1 | 0 |
-| Total | 81 | 3 |
+| Exact suite under `src/main/services/`       | Passed | Skipped |
+| -------------------------------------------- | -----: | ------: |
+| `managerReplacementArtifact.test.ts`         |     22 |       3 |
+| `managerReplacementArtifact.windows.test.ts` |     38 |       0 |
+| `managerReplacementService.test.ts`          |     19 |       0 |
+| `managerReplacement.integration.test.ts`     |      1 |       0 |
+| `managerReplacementMessage.test.ts`          |      1 |       0 |
+| Total                                        |     81 |       3 |
 
 Main and renderer typechecks, changed TypeScript formatting and
 `git diff --check` passed. The prior 59-versus-57 reports used different suite
@@ -231,7 +231,6 @@ Additional reviewer entry points: `docs/features/task-inspector.md`,
 local feature entry points, task-first all-task transfer with reservation/CAS
 protection, parked successors, and truthful recovery-required delivery status.
 The crash/acknowledgement limitation above remains accepted and unchanged.
-
 
 Combined verification on Linux, Node 22.22.2, Go 1.25.4 and Chromium
 148.0.7778.96:

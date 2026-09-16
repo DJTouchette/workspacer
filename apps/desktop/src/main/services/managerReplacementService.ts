@@ -497,7 +497,7 @@ export class ManagerReplacementService {
       )
     )
       throw new Error(
-        'Source identity, grants or fleet changed before ownership commit; old manager retained',
+        'Source lifecycle identity or fleet changed before ownership commit; old manager retained',
       );
     this.state.change(id, (op) => {
       if (!op.metadata.some((m) => m.sessionId === op.successorSessionId))
