@@ -1,7 +1,8 @@
-/** App-owned ordinary-agent skills. Installed inside the session project so
- * children inherit them without modifying the user's personal skill library.
- * Collisions remain untouched; a versioned immutable copy supports harnesses
- * without a verified project-skills convention.
+/** App-owned ordinary-agent skills. They live only under Workspacer's own
+ * versioned project directory and are pointed out to ordinary sessions through
+ * their private instruction channel. Never install them in a harness-native
+ * discovery root: a later Fleet Manager in the same project would discover
+ * that persistent copy before Workspacer had any chance to withhold it.
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -71,15 +72,46 @@ function installInto(cwd: string, dir: string): boolean {
   }
 }
 
-/** Install spawn-agent and project-brief for supported ordinary agents.
- * Claude and Codex discover project skills natively. Copilot and OpenCode get
- * a short pointer through their instruction channel. Pi has no MCP bridge, so
- * advertising tool-driven skills there would be decorative and misleading.
- */
-export function installAgentCollaborationSkills(provider: AgentProvider, cwd: string): string {
-  if (provider === 'pi') return '';
+/** Remove only native copies written by older Workspacer builds. Exact body
+ * matching is deliberate: a user-owned collision is never deleted. This is a
+ * migration defence for projects which already received the old persistent
+ * `.claude/skills` / `.agents/skills` files before manager exclusion became a
+ * hard invariant. */
+function removeLegacyNativeCopies(provider: AgentProvider, cwd: string): void {
   const native = provider === 'claude' ? '.claude' : provider === 'codex' ? '.agents' : null;
-  if (native && installInto(cwd, path.join(cwd, native, 'skills'))) return '';
+  if (!native) return;
+  for (const [rel, body] of Object.entries(files)) {
+    const file = path.join(cwd, native, 'skills', rel);
+    try {
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || fs.readFileSync(file, 'utf8') !== body)
+        continue;
+      fs.unlinkSync(file);
+      for (const dir of [path.dirname(file), path.join(cwd, native, 'skills')]) {
+        try {
+          fs.rmdirSync(dir);
+        } catch {
+          break;
+        }
+      }
+    } catch {
+      // Missing, unreadable, or user-controlled entries are left untouched.
+    }
+  }
+}
+
+/** Install and point at spawn-agent and project-brief for supported ORDINARY
+ * agents. Fleet Managers receive neither a pointer nor a native-discovery
+ * copy. Pi has no MCP bridge, so advertising tool-driven skills there would be
+ * decorative and misleading.
+ */
+export function installAgentCollaborationSkills(
+  provider: AgentProvider,
+  cwd: string,
+  manager = false,
+): string {
+  removeLegacyNativeCopies(provider, cwd);
+  if (provider === 'pi' || manager) return '';
   const root = agentCollaborationSkillsRoot(cwd);
   if (!installInto(cwd, root)) return '';
   return (

@@ -44,6 +44,7 @@ import { installManagerSkills } from './managerSkills';
 import { installResponseCardSkill } from './responseCardSkill';
 import { installAgentCollaborationSkills } from './agentCollaborationSkills';
 import { mintSessionFacadeToken, revokeSessionFacadeTokens } from './remoteTokens';
+import { ensureMcpFacadeReady } from './mcpFacadeDaemon';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
@@ -269,8 +270,16 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   }
   const cardCwd = normalizeSpawnCwd(opts.cwd);
   assertSpawnCwd(cardCwd);
+  // The app starts the facade asynchronously at boot. Agent launch is the hard
+  // boundary: never mint a session token or inject a URL until the exact
+  // facade has a connected hub and its initial plugin catalog.
+  await ensureMcpFacadeReady();
   const cardInstruction = installResponseCardSkill('claude', cardCwd);
-  const collaborationInstruction = installAgentCollaborationSkills('claude', cardCwd);
+  const collaborationInstruction = installAgentCollaborationSkills(
+    'claude',
+    cardCwd,
+    !!opts.manager,
+  );
 
   // The facade fragment is built BEFORE the argv so the structured-result
   // contract can be appended to its --append-system-prompt instead of racing it

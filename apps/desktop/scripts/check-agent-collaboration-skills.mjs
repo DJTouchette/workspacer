@@ -55,11 +55,13 @@ try {
   const { installAgentCollaborationSkills } = require(
     join(dist, 'services/agentCollaborationSkills.js'),
   );
-  assert.equal(installAgentCollaborationSkills('claude', project), '');
-  assert.equal(
-    readFileSync(join(project, '.claude/skills/spawn-agent/SKILL.md'), 'utf8'),
-    generated['spawn-agent/SKILL.md'],
-  );
+  const pointer = installAgentCollaborationSkills('claude', project);
+  const quotedSpawnPath = pointer.match(/read ("(?:[^"\\]|\\.)+") before/)?.[1];
+  assert.ok(quotedSpawnPath, `ordinary Claude spawn did not receive a skill pointer: ${pointer}`);
+  const spawnPath = JSON.parse(quotedSpawnPath);
+  assert.ok(spawnPath.includes(join('.workspacer', 'skills')));
+  assert.equal(readFileSync(spawnPath, 'utf8'), generated['spawn-agent/SKILL.md']);
+  assert.equal(installAgentCollaborationSkills('claude', project, true), '');
   assert.equal(installAgentCollaborationSkills('pi', project), '');
   console.log('Emitted ordinary-agent skills and compiled installer: passed.');
 } finally {

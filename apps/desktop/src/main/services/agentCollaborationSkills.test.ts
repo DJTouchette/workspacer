@@ -20,28 +20,30 @@ afterEach(() => {
 });
 
 describe('ordinary-agent collaboration skills', () => {
-  it.each([
-    ['claude', '.claude'],
-    ['codex', '.agents'],
-  ] as const)('installs both skills in %s project discovery roots', (provider, native) => {
-    const cwd = project();
-    expect(installAgentCollaborationSkills(provider, cwd)).toBe('');
-    for (const name of AGENT_COLLABORATION_SKILL_NAMES) {
-      const body = fs.readFileSync(path.join(cwd, native, 'skills', name, 'SKILL.md'), 'utf8');
-      expect(body).toContain(`name: ${name}`);
-    }
-  });
-
-  it.each(['copilot', 'opencode'] as const)(
-    'gives %s a pointer to the immutable app-owned skills',
+  it.each(['claude', 'codex', 'copilot', 'opencode'] as const)(
+    'gives ordinary %s sessions a pointer to immutable app-owned skills',
     (provider) => {
       const cwd = project();
       const note = installAgentCollaborationSkills(provider, cwd);
       for (const name of AGENT_COLLABORATION_SKILL_NAMES) {
         const file = path.join(agentCollaborationSkillsRoot(cwd), name, 'SKILL.md');
-        expect(fs.readFileSync(file, 'utf8')).toContain(`name: ${name}`);
+        const body = fs.readFileSync(file, 'utf8');
+        expect(body).toContain(`name: ${name}`);
         expect(note).toContain(file);
       }
+      expect(fs.existsSync(path.join(cwd, '.claude', 'skills'))).toBe(false);
+      expect(fs.existsSync(path.join(cwd, '.agents', 'skills'))).toBe(false);
+    },
+  );
+
+  it.each(['claude', 'codex', 'copilot', 'opencode'] as const)(
+    'gives %s Fleet Managers neither a pointer nor native discovery',
+    (provider) => {
+      const cwd = project();
+      expect(installAgentCollaborationSkills(provider, cwd, true)).toBe('');
+      expect(fs.existsSync(path.join(cwd, '.workspacer'))).toBe(false);
+      expect(fs.existsSync(path.join(cwd, '.claude', 'skills'))).toBe(false);
+      expect(fs.existsSync(path.join(cwd, '.agents', 'skills'))).toBe(false);
     },
   );
 
@@ -61,5 +63,20 @@ describe('ordinary-agent collaboration skills', () => {
     const note = installAgentCollaborationSkills('claude', cwd);
     expect(fs.readFileSync(file, 'utf8')).toBe('user-owned\n');
     expect(note).toContain(agentCollaborationSkillsRoot(cwd));
+  });
+
+  it('removes only an exact stale app-owned native copy before a manager starts', () => {
+    const cwd = project();
+    installAgentCollaborationSkills('claude', cwd);
+    const body = fs.readFileSync(
+      path.join(agentCollaborationSkillsRoot(cwd), 'spawn-agent', 'SKILL.md'),
+      'utf8',
+    );
+    const file = path.join(cwd, '.claude', 'skills', 'spawn-agent', 'SKILL.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body);
+
+    expect(installAgentCollaborationSkills('claude', cwd, true)).toBe('');
+    expect(fs.existsSync(file)).toBe(false);
   });
 });

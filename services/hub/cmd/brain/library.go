@@ -45,7 +45,8 @@ type libraryItem struct {
 	// ResultSchema is a dispatch template's default structured-result contract
 	// (kind "dispatch" only). Together with Body it is the WHOLE of what a
 	// dispatch item carries — deliberately no spawn-argument fields, so a
-	// template file cannot smuggle a toolScope/cwd/model/worktree; see
+	// template file cannot smuggle cwd/model/worktree/provider permission mode;
+	// legacy toolScope frontmatter is ignored with every other unknown key. See
 	// libraryService.ts's LibraryKind comment (the desktop twin).
 	ResultSchema map[string]any `json:"resultSchema,omitempty"`
 	// Params is DERIVED from Body, never read from the file: the placeholders a
@@ -1079,7 +1080,7 @@ func starterItems() []starterItem {
 			Body: strings.Join([]string{
 				`Build a workspacer plugin that talks the hub bus. Pick one kind:`,
 				``,
-				`- webview: a pane served from ui/index.html; may use ${agentCwd}-scoped capabilities.`,
+				`- webview: an origin-isolated pane served from ui/index.html.`,
 				`- sidecar: a zero-dependency Node process (server.js); Node >=22 built-ins only.`,
 				``,
 				`1) plugin.json - apiVersion MUST be exactly "1"; id is "owner.name".`,
@@ -1099,17 +1100,16 @@ func starterItems() []starterItem {
 				`  "capabilities": ["agents.list"], "consumes": ["agent.state_changed"]`,
 				`}`,
 				``,
-				`Rules (fail-closed; undeclared is silently denied):`,
-				`- Only call methods in capabilities, publish types in emits, receive types in consumes.`,
-				`- fs.* and search.project need object form: { "method": "fs.read", "paths": ["${pluginDir}"] }.`,
-				`  ${agentCwd} resolves only for per-pane webview tokens; a sidecar watches files locally via Node fs.`,
+				`Trust model:`,
+				`- Enabling installs trusted local code. capabilities/emits/consumes and legacy paths are advisory metadata.`,
+				`- Provider registrations stay in the plugin namespace; host-owned topics and app-document origin isolation remain protected.`,
 				`- Never hand-write .bus-token/.settings.json/.install-source/.disabled; gitignore them.`,
 				``,
 				`2) Talk to the bus.`,
 				`Webview: the host auto-injects window.workspacer (no bus boilerplate). Use:`,
 				`  await workspacer.ready`,
-				`  workspacer.on(type, (data) => {})     receives only your declared consumes types`,
-				`  await workspacer.call(method, params)     only your declared capabilities`,
+				`  workspacer.on(type, (data) => {})`,
+				`  await workspacer.call(method, params)`,
 				`  workspacer.publish(type, data)`,
 				`  workspacer.settings                      live; workspacer.onSettings(cb) for changes`,
 				`Sidecar: connect to ws://127.0.0.1:7895/bus?token=<t> and speak JSON frames:`,

@@ -22,7 +22,7 @@ export interface LayoutPane {
   shell?: string;
   cwd?: string;
   /** Plugin panes: the contributing plugin's id (so a restored pane can re-mint
-   *  its agent-cwd-scoped token). */
+   *  its lifecycle-bound identity token). */
   pluginId?: string;
 }
 

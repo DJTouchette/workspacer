@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"log"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -218,8 +217,8 @@ func (rt *router) registerLocalIdent(method string, h LocalIdentHandler) {
 	rt.mu.Unlock()
 }
 
-// register installs cn as the provider for each method it's allowed to provide
-// (trusted conns: all; plugins: those matched by their `provides` grant).
+// register installs cn as the provider for each method its identity may own
+// (trusted conns: all; plugins: methods in their own declared namespace).
 // Returns the methods actually registered, so the caller's ack is truthful and a
 // plugin can tell which of its requested methods were withheld.
 func (rt *router) register(cn *conn, methods []string) []string {
@@ -267,12 +266,9 @@ func (rt *router) register(cn *conn, methods []string) []string {
 	return accepted
 }
 
-// spawnMethod is the one capability whose params the router rewrites. The bus
-// is otherwise deliberately payload-blind — it routes, it doesn't interpret —
-// but profile dispatch is a per-TOKEN grant, and the token is only verifiable
-// here, so the router is the single place the grant can be turned into
-// something a provider may trust without re-verifying credentials it never
-// sees.
+// spawnMethod is the capability whose params the router rewrites for routing,
+// provenance and compatibility. Agent/plugin tool and profile grants are no
+// longer part of this boundary.
 const spawnMethod = "agents.spawn"
 
 // reportProgressMethod is the second, for the same structural reason and the
@@ -282,56 +278,13 @@ const spawnMethod = "agents.spawn"
 // thing a caller may not make about itself, so the router deletes it from every
 // caller that is not the control plane. The MCP facade, which IS the control
 // plane, stamps it from the per-request token record's `session:<id>` label
-// before the call ever reaches this connection — the same "the facade resolved
-// the session, the hub cannot" split spawn's yolo/profile grants have.
+// before the call ever reaches this connection.
 const reportProgressMethod = "agents.reportProgress"
 
-// mayUseProfile reports whether this connection may dispatch an agent under
-// the named Claude profile.
-//
-//   - host token (trusted, NOT via tokens.json): yes, any profile. This is the
-//     control plane's own credential — the desktop, the MCP facade (which
-//     enforces per-session facade-token grants itself before a profileId ever
-//     reaches its bus connection), the brain. A process holding it could
-//     rewrite tokens.json, so gating it here would be theater.
-//   - scoped user token (tokens.json), operator tier included: only ids in the
-//     record's profilesAllowed grant. Operator promotion to `trusted` grants
-//     METHODS, not profiles — the fleet-manager grant is per-token by design,
-//     so two operator sessions can hold different account sets.
-//   - plugin token: never. A plugin's consent dialog never mentioned accounts.
+// mayUseProfile follows the same ambient authority as agents.spawn. The legacy
+// profilesAllowed token field remains parse-compatible but is not enforced.
 func (cn *conn) mayUseProfile(id string) bool {
-	if id == "" || cn.revoked.Load() {
-		return false
-	}
-	if cn.pluginID != "" {
-		return false
-	}
-	if cn.federated {
-		// Same reasoning as mayBypassPermissions: a forwarded spawn arrives on
-		// the link's connection, and peers.json routinely holds the far hub's
-		// HOST token. Naming an ACCOUNT to burn is a grant the far hub must have
-		// recorded on the link's own record, not one the link inherits from
-		// being authenticated.
-		return cn.viaScopedToken && slices.Contains(cn.profilesAllowed, id)
-	}
-	if cn.viaScopedToken {
-		// DELIBERATELY NOT WIDENED to "operator tier may name any profile", even
-		// though mayBypassPermissions now is (2026-08-26). The two look alike
-		// and are not: yoloAllowed is a PERMISSION LEVEL, profilesAllowed is an
-		// ACCOUNT ALLOWLIST, and operator-tier tokens are exactly what the
-		// account allowlist is enforced against today — every per-session facade
-		// token the desktop mints (claudeSpawn.ts mintSessionFacadeToken) is
-		// operator-scoped, and only a `manager` gets a profile list at all. So
-		// "operator ⇒ any profile" would erase the fleet-manager grant wholesale
-		// and let any facade worker spawn as any of the user's Claude accounts.
-		// A profile is which identity/billing account runs the work; a bypass is
-		// how much the work may do without asking. The host token and an
-		// explicitly-granted record keep naming profiles; everyone else is told
-		// it was dropped (see sanitizeSpawnParams' escalationScrubbed stamp)
-		// rather than silently spawned under the default account.
-		return slices.Contains(cn.profilesAllowed, id)
-	}
-	return cn.trusted
+	return id != "" && !cn.revoked.Load() && cn.mayCall(spawnMethod)
 }
 
 // PeerLinkParam is the query param a FEDERATION LINK sets on its bus handshake
@@ -948,8 +901,8 @@ func (rt *router) call(caller *conn, f Frame) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: caller.callDenied(f.Method)})
 		return
 	}
-	// Verb is allowed; now enforce argument scoping (e.g. a path-scoped fs.* call
-	// must stay within the plugin's granted roots). Fails closed.
+	// Keep the compatibility authorization seam. Real authenticated agents and
+	// enabled plugins have ambient paths; manual remote tiers gate verbs.
 	if err := caller.authorize(f.Method, f.Params); err != nil {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: err.Error()})
 		return
@@ -1062,16 +1015,13 @@ func (rt *router) call(caller *conn, f Frame) {
 //     view token may call hub:work/agents.list exactly when it may call
 //     agents.list. The tier allowlists stay exact-name (never globs), and the
 //     peer-side link token is a second, independent ceiling.
-//   - plugin token: refused outright. A plugin's consented grant names what it
-//     may reach ON THIS MACHINE; silently extending `agents.list` to every
-//     configured peer would widen a consent the user never gave. If plugin
-//     federation is ever wanted, it must be a distinct, explicitly-consented
-//     grant shape — not prefix-stripping leniency.
+//   - plugin token: refused outright. Plugins are local integrations; ambient
+//     local trust does not make their identity a federation credential.
 //
 // Local argument confinement (authorize) is deliberately NOT applied: paths in
 // a federated call name the PEER's filesystem, and canonicalizing them against
 // the local one would both reject valid calls and approve invalid ones. The
-// peer enforces its own confinement against the link token's grants.
+// peer enforces its own authentication and method tier.
 func (rt *router) federatedCall(caller *conn, f Frame, peer, bare string) {
 	if bare == "fleetWorkflows.request" {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "Fleet workflows are local desktop only"})

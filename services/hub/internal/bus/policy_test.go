@@ -1274,7 +1274,7 @@ func TestAuthorizeRefusalMessages(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a path outside every root must be refused")
 	}
-	if !strings.Contains(err.Error(), "outside the plugin's granted scope") {
+	if !strings.Contains(err.Error(), "outside the legacy harness scope") {
 		t.Errorf("containment refusal = %q, want the granted-scope wording", err.Error())
 	}
 }

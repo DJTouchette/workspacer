@@ -85,6 +85,7 @@ async function probeFacadeHealth(url: string, timeoutMs = 1200): Promise<boolean
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
+let ensurePromise: Promise<void> | null = null;
 /** Set by stopMcpFacade() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
 /** True when a healthy facade owned by `workspacer serve` was adopted. */
@@ -130,6 +131,33 @@ export function startMcpFacade(): Promise<void> {
     })(),
   );
   return readyPromise;
+}
+
+/** Launch gate used by every supported agent spawn. App startup is allowed to
+ * start the facade optimistically, but no session receives its URL and no
+ * bearer token is minted until this verifies the exact facade identity, bind,
+ * hub connection, and initial plugin catalog. Re-probing after the startup
+ * promise resolves also covers an adopted facade disappearing or becoming
+ * disconnected between app boot and a later spawn. */
+export function ensureMcpFacadeReady(): Promise<void> {
+  if (ensurePromise) return ensurePromise;
+  ensurePromise = (async () => {
+    await startMcpFacade();
+    if (await probeFacadeHealth(`http://${ADDR}/health`)) return;
+
+    // A resolved startup promise is stale. Stop an owned child (or forget an
+    // adopted external listener) without letting its exit race spawn a second
+    // replacement, then run the normal start/adopt path once more.
+    await stopMcpFacade();
+    await startMcpFacade();
+    if (!(await probeFacadeHealth(`http://${ADDR}/health`))) {
+      await stopMcpFacade();
+      throw new Error('mcp facade is not connected to the hub with a ready plugin catalog');
+    }
+  })().finally(() => {
+    ensurePromise = null;
+  });
+  return ensurePromise;
 }
 
 /**

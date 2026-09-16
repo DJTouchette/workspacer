@@ -49,6 +49,8 @@ const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
 vi.mock('./agentCollaborationSkills', () => ({
   installAgentCollaborationSkills: collaborationSkills,
 }));
+const ensureMcpFacadeReady = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('./mcpFacadeDaemon', () => ({ ensureMcpFacadeReady }));
 
 vi.mock('../lib/spawnCwd', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/spawnCwd')>()),
@@ -164,7 +166,7 @@ describe('spawnManagedAgent — ordinary collaboration skills', () => {
     'runs the provider-aware installer for %s spawns',
     async (provider) => {
       await spawnManagedAgent({ provider, cwd: '/proj', transport: 'stream' });
-      expect(collaborationSkills).toHaveBeenCalledWith(provider, '/proj');
+      expect(collaborationSkills).toHaveBeenCalledWith(provider, '/proj', false);
       expect(mintSessionFacadeToken).toHaveBeenCalledWith(
         expect.any(String),
         'operator',
@@ -176,6 +178,25 @@ describe('spawnManagedAgent — ordinary collaboration skills', () => {
       expect(lastManaged().instructions).toContain('FACADE');
     },
   );
+
+  it('withholds ordinary collaboration skills from Fleet Managers', async () => {
+    await spawnManagedAgent({
+      provider: 'codex',
+      cwd: '/proj',
+      transport: 'stream',
+      manager: true,
+    });
+    expect(collaborationSkills).toHaveBeenCalledWith('codex', '/proj', true);
+  });
+
+  it('fails before minting a token when the facade readiness gate fails', async () => {
+    ensureMcpFacadeReady.mockRejectedValueOnce(new Error('facade unavailable'));
+    await expect(
+      spawnManagedAgent({ provider: 'codex', cwd: '/proj', transport: 'stream' }),
+    ).rejects.toThrow('facade unavailable');
+    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+    expect(spawnManagedMock).not.toHaveBeenCalled();
+  });
 
   it('refuses Pi visibly because its CLI has no MCP bridge', async () => {
     await expect(spawnManagedAgent({ provider: 'pi', cwd: '/proj' })).rejects.toThrow(

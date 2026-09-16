@@ -56,8 +56,8 @@ func TestBuildServePlanWiring(t *testing.T) {
 				if got := argsAfter(p.Hub.Args, "--claudemon-events"); got != "http://127.0.0.1:7891/events" {
 					t.Errorf("hub --claudemon-events = %q", got)
 				}
-				if got := argsAfter(p.Hub.Args, "--brain-scope"); got != "full" {
-					t.Errorf("hub --brain-scope = %q, want full (a headless server needs the whole surface)", got)
+				if hasFlag(p.Hub.Args, "--brain-scope") || p.Brain.Bin != "" {
+					t.Errorf("brain should stay disabled when no binary is available: hub=%v brain=%+v", p.Hub.Args, p.Brain)
 				}
 				if got := argsAfter(p.Hub.Args, "--token"); got != "tok" {
 					t.Errorf("hub --token = %q", got)
@@ -71,7 +71,7 @@ func TestBuildServePlanWiring(t *testing.T) {
 			name: "verified MCP facade is supervised and forwarded to the brain",
 			opts: func() serveOptions {
 				o := base
-				o.MCPBin, o.MCPPort = "/bin/mcp", 17897
+				o.MCPBin, o.MCPPort, o.BrainBin = "/bin/mcp", 17897, "/bin/brain"
 				return o
 			}(),
 			want: func(t *testing.T, p servePlan) {
@@ -84,8 +84,11 @@ func TestBuildServePlanWiring(t *testing.T) {
 				if got := argsAfter(p.MCP.Args, "--hub"); got != "ws://127.0.0.1:7895/bus" {
 					t.Errorf("mcp --hub = %q", got)
 				}
-				if got := argsAfter(p.Hub.Args, "--brain-mcp-facade"); got != "http://127.0.0.1:17897/mcp" {
-					t.Errorf("hub brain facade = %q", got)
+				if got := argsAfter(p.Brain.Args, "--mcp-facade"); got != "http://127.0.0.1:17897/mcp" {
+					t.Errorf("brain facade = %q", got)
+				}
+				if hasFlag(p.Hub.Args, "--brain-mcp-facade") || hasFlag(p.Hub.Args, "--brain-scope") {
+					t.Errorf("hub must not receive an unverified facade URL: %v", p.Hub.Args)
 				}
 				if len(p.MCP.Env) != 1 || p.MCP.Env[0] != "HUB_TOKEN=tok" {
 					t.Errorf("mcp env = %v", p.MCP.Env)
@@ -140,15 +143,15 @@ func TestBuildServePlanWiring(t *testing.T) {
 			},
 		},
 		{
-			name: "optional brain/plugins/webapp paths ride the hub argv",
+			name: "optional brain is launcher-owned while plugins and webapp ride hub argv",
 			opts: func() serveOptions {
 				o := base
 				o.BrainBin, o.PluginsDir, o.WebappDir = "/opt/brain", "/tmp/plugins", "/tmp/web"
 				return o
 			}(),
 			want: func(t *testing.T, p servePlan) {
-				if got := argsAfter(p.Hub.Args, "--brain-bin"); got != "/opt/brain" {
-					t.Errorf("hub --brain-bin = %q", got)
+				if p.Brain.Bin != "/opt/brain" || argsAfter(p.Brain.Args, "--scope") != "full" {
+					t.Errorf("launcher brain = %+v", p.Brain)
 				}
 				if got := argsAfter(p.Hub.Args, "--plugins-dir"); got != "/tmp/plugins" {
 					t.Errorf("hub --plugins-dir = %q", got)
@@ -182,13 +185,51 @@ func TestBuildServePlanWiring(t *testing.T) {
 func TestWaitForMCPHealthRequiresHubConnection(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "hubConnected": calls.Add(1) > 1})
+		ready := calls.Add(1) > 1
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "service": "workspacer-mcp-facade",
+			"hubConnected": ready, "pluginCatalogReady": ready,
+			"listenAddr": "127.0.0.1:7897", "hubUrl": "ws://127.0.0.1:7895/bus",
+		})
 	}))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := waitForMCPHealth(ctx, srv.URL, time.Second); err != nil {
+	if err := waitForMCPHealth(ctx, srv.URL, "127.0.0.1:7897", "ws://127.0.0.1:7895/bus", time.Second); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWaitForMCPHealthRejectsIncompleteOrWrongFacade(t *testing.T) {
+	wantListen := "127.0.0.1:17897"
+	wantHub := "ws://127.0.0.1:17895/bus"
+	base := map[string]any{
+		"status": "ok", "service": "workspacer-mcp-facade",
+		"hubConnected": true, "pluginCatalogReady": true,
+		"listenAddr": wantListen, "hubUrl": wantHub,
+	}
+	for _, mutate := range []func(map[string]any){
+		func(m map[string]any) { m["hubConnected"] = false },
+		func(m map[string]any) { m["pluginCatalogReady"] = false },
+		func(m map[string]any) { m["service"] = "wrong" },
+		func(m map[string]any) { m["listenAddr"] = "127.0.0.1:7897" },
+		func(m map[string]any) { m["hubUrl"] = "ws://127.0.0.1:7895/bus" },
+	} {
+		body := make(map[string]any, len(base))
+		for k, v := range base {
+			body[k] = v
+		}
+		mutate(body)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(body)
+		}))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		err := waitForMCPHealth(ctx, srv.URL, wantListen, wantHub, 10*time.Millisecond)
+		cancel()
+		srv.Close()
+		if err == nil {
+			t.Fatalf("accepted incomplete/wrong facade health: %#v", body)
+		}
 	}
 }
 

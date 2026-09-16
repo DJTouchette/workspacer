@@ -247,9 +247,9 @@ function refusedEscalation(
   return {
     label: permissionRefused ? 'Full access refused' : 'Request refused',
     title:
-      `This spawn asked for ${phrases.join(' and ')}, and the hub refused it — ` +
-      `the session is running as “${runningAs}”. Full access over the bus needs a token that ` +
-      'carries the grant (`workspacer token create --scope operator --full-access`).',
+      `This older spawn record says the hub refused ${phrases.join(' and ')} — ` +
+      `the session is running as “${runningAs}”. Current Workspacer forwards provider ` +
+      'permission modes without a separate token grant; respawn to use the current policy.',
   };
 }
 

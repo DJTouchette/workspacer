@@ -24,12 +24,9 @@ interface PluginPaneProps {
 /**
  * Wraps a plugin's webview pane with a per-pane bus-token lifecycle.
  *
- * Every pane that knows its plugin mints its own ephemeral token here and swaps
- * it into the webview URL. For an agent-scoped pane (it also has a cwd) the
- * token is confined to that agent's directory, so the plugin reaches only that
- * project's files rather than the broader scope of the static per-plugin token.
- * For a global pane the mint carries no dynamic binding and lands on the same
- * grants as the static token — worth doing anyway, because it means the pane
+ * Every pane that knows its plugin mints its own ephemeral identity token here
+ * and swaps it into the webview URL. A cwd is pane context, not a filesystem
+ * grant: enabled plugins have ambient access. Minting per pane still means the pane
  * works from a URL with no credential in it, which is what lets the shared
  * layout document be published token-free (see useLayoutSync). The token is
  * revoked when the pane unmounts (closed, tab removed, agent terminated — every
@@ -38,7 +35,7 @@ interface PluginPaneProps {
  * If minting is unavailable (the hub momentarily down) we render the URL as-is:
  * with its baked-in static token when the pane was opened locally, and
  * unauthenticated when it came from the shared layout — the guest loads either
- * way and reports its own bus state. Scoping is an upgrade, not a gate.
+ * way and reports its own bus state. Identity/lifecycle is not a filesystem gate.
  *
  * ── Whose address is that? ────────────────────────────────────────────────
  *

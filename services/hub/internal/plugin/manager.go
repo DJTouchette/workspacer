@@ -380,10 +380,10 @@ func randomToken() (string, error) {
 // Legacy path bindings are accepted but inert. The host injects the returned
 // token into the pane's webview URL. Revoke it with
 // RevokePaneToken when the pane closes (it is also swept if the plugin is
-// removed or the manager stops). Requires capability enforcement (reg != nil).
+// removed or the manager stops). Requires the identity registry (reg != nil).
 func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string, error) {
 	if m.reg == nil {
-		return "", fmt.Errorf("capability enforcement is off; pane tokens unavailable")
+		return "", fmt.Errorf("plugin identity registry is unavailable; pane tokens unavailable")
 	}
 	tok, err := randomToken()
 	if err != nil {
@@ -394,7 +394,7 @@ func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string
 	// interleave between the two steps. The old two-step version registered
 	// outside the lock: a Remove that ran after RegisterPluginToken but before the
 	// paneTokens insert would fail to see the token and leave it registered on the
-	// bus but untracked — an unrevocable grant leak. Re-checking m.plugins under
+	// bus but untracked — an unrevocable identity leak. Re-checking m.plugins under
 	// the same lock also means a token is never minted for an already-removed
 	// plugin. (RegisterPluginToken canonicalizes roots under the lock; the manager
 	// lock isn't hot, so the extra hold is acceptable for the atomicity it buys.)

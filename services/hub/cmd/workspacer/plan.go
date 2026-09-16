@@ -50,6 +50,10 @@ type servePlan struct {
 	Claudemon childSpec
 	Hub       childSpec
 	MCP       childSpec
+	// Brain starts only after MCPHealth has proved the exact facade is connected
+	// and its initial plugin catalog is ready. Keeping it as this launcher's
+	// child avoids handing the hub a guessed --brain-mcp-facade URL at startup.
+	Brain childSpec
 
 	// Health endpoints for the ready wait. claudemon is always on loopback (it
 	// is never bound wider), but the HUB is not: --host takes a concrete
@@ -169,14 +173,7 @@ func buildServePlan(opts serveOptions) servePlan {
 		"--addr", net.JoinHostPort(opts.Host, fmt.Sprintf("%d", opts.HubPort)),
 		"--claudemon-events", apiURL + "/events",
 		"--claudemon", apiURL,
-		"--brain-scope", "full",
 		"--token", opts.Token,
-	}
-	if mcpURL != "" {
-		hubArgs = append(hubArgs, "--brain-mcp-facade", mcpURL)
-	}
-	if opts.BrainBin != "" {
-		hubArgs = append(hubArgs, "--brain-bin", opts.BrainBin)
 	}
 	if opts.PluginsDir != "" {
 		hubArgs = append(hubArgs, "--plugins-dir", opts.PluginsDir)
@@ -202,6 +199,7 @@ func buildServePlan(opts serveOptions) servePlan {
 	}
 	hub := childSpec{Name: "hub", Bin: opts.HubBin, Args: hubArgs}
 	var mcp childSpec
+	var brain childSpec
 	mcpHealth := ""
 	if opts.MCPBin != "" {
 		mcp = childSpec{
@@ -214,6 +212,25 @@ func buildServePlan(opts serveOptions) servePlan {
 			Env: []string{"HUB_TOKEN=" + opts.Token},
 		}
 		mcpHealth = fmt.Sprintf("http://127.0.0.1:%d/health", opts.MCPPort)
+	}
+	if opts.BrainBin != "" {
+		brainArgs := []string{
+			"--hub", "ws://" + hubDial + "/bus",
+			"--claudemon", apiURL,
+			"--scope", "full",
+		}
+		// Missing facade support is honest: start the brain without MCP wiring.
+		// When present, bootStack does not launch this child until the endpoint
+		// below has passed the strict identity + readiness gate.
+		if mcpURL != "" {
+			brainArgs = append(brainArgs, "--mcp-facade", mcpURL)
+		}
+		brain = childSpec{
+			Name: "brain",
+			Bin:  opts.BrainBin,
+			Args: brainArgs,
+			Env:  []string{"HUB_TOKEN=" + opts.Token},
+		}
 	}
 
 	adv := opts.AdvertiseHost
@@ -228,6 +245,7 @@ func buildServePlan(opts serveOptions) servePlan {
 		Claudemon:       claudemon,
 		Hub:             hub,
 		MCP:             mcp,
+		Brain:           brain,
 		ClaudemonHealth: apiURL + "/health",
 		HubHealth:       fmt.Sprintf("http://%s/health", net.JoinHostPort(dialHost(opts.Host), fmt.Sprintf("%d", opts.HubPort))),
 		MCPHealth:       mcpHealth,

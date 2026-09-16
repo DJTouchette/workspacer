@@ -882,7 +882,7 @@ func newServerWithGrants(c *busclient.Client, scope authtoken.Scope, plugins []g
 	b.group = "ui"
 	addUiTools(b)
 
-	// ── Plugin-contributed tools (per-token grants; see plugins.go) ────────
+	// ── Enabled plugin-contributed tools (ambient; see plugins.go) ─────────
 	b.group = "plugins"
 	for _, p := range plugins {
 		for _, t := range p.Tools {

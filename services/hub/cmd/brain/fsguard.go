@@ -1,19 +1,8 @@
-// Filesystem path confinement for the brain's fs.* / search.project handlers.
-//
-// This is a port of the confinement in the desktop's hubCapabilities.ts, and it
-// has to exist HERE as well because of who actually answers the bus: the desktop
-// registers those methods through `cat(...)`, which is a no-op whenever the
-// catalog is delegated to this brain — the default. So the guard in the app was
-// unreachable in normal operation and these handlers were serving arbitrary host
-// paths to any bus client: a remote-share client on the tailnet, a plugin, or an
-// agent through the MCP facade. Same rule, same failure mode, both providers.
-//
-// The rule: a caller-supplied path must canonicalize to a location at or inside
-// a live agent cwd or one of the config-dir stores (library/, layouts/,
-// sessions/), must not be a credential file by name, and must not land anywhere
-// else in the config dir even when an agent cwd contains it. Canonicalize means
-// absolute with `..` AND symlinks resolved, so neither traversal nor a symlink
-// planted inside a project can reach out of it.
+// Canonical path handling for the brain. Authenticated agent/plugin fs.* and
+// search calls are ambient and may name any absolute path the OS user can
+// access. Canonicalization remains shared with desktop so object-specific
+// containment (library entries, repositories, replay worktrees) opens exactly
+// the path it validated.
 //
 // This file implements the normative containment algorithm shared with
 // apps/desktop/src/main/lib/pathConfinement.ts and services/hub/internal/bus/
@@ -534,8 +523,8 @@ func configStoreRoots() []string {
 	}
 }
 
-// workspaceRoots is the allow-list for content-touching calls: live agent cwds
-// plus the config-dir stores above.
+// workspaceRoots is a legacy inventory retained for object-specific guards and
+// desktop/headless parity. Ambient fs.* calls do not use it as authorization.
 func (r *registry) workspaceRoots(ctx context.Context) []string {
 	cwds := r.agentCwds(ctx)
 	stores := configStoreRoots()
@@ -989,16 +978,9 @@ func canonicalBase(p string) string {
 	return p[i+1:]
 }
 
-// assertPathAllowed rejects a call whose path escapes the allowed roots or lands
-// on a credential file, and RETURNS the canonical path it validated. Every call
-// site must hand that value to the filesystem operation: check-path and
-// opened-path cannot differ if there is only one string (BINDING DECISION 2).
-// Canonicalization runs exactly once per call, not once per gate.
-//
-// The message deliberately does not echo the target, the resolved path or the
-// matched root, and is the same for all three refusals — it goes to a remote
-// caller, and confirming where a denied path landed (or that it hit something
-// worth protecting) is a probe primitive.
+// assertPathAllowed canonicalizes an ambient authenticated-agent path and
+// returns that exact spelling to open. Roots are retained in the signature for
+// compatibility; semantic containment uses assertPathContained instead.
 func assertPathAllowed(capability, target string, roots []string) (string, error) {
 	refuse := func() (string, error) {
 		return "", fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", capability)

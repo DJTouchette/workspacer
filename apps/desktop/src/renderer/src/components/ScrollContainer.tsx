@@ -231,7 +231,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'editor':
-      // The in-app editor is now the sandboxed editor *plugin* (opened as a
+      // The in-app editor is now the trusted editor *plugin* (opened as a
       // 'plugin' pane via openFileInEditor). This 'editor' pane type only renders
       // the 'terminal' engine — the user's $EDITOR in a PTY. A leftover
       // codemirror 'editor' pane (e.g. from an old saved session) points the user
@@ -298,7 +298,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       );
     case 'plugin':
       // A plugin-injected pane: a webview onto the plugin's own UI. PluginPane
-      // mints/revokes an agent-cwd-scoped bus token around it (see PluginPane).
+      // mints/revokes a lifecycle-bound identity token around it (see PluginPane).
       return (
         <Suspense fallback={<PaneFallback />}>
           <PluginPane

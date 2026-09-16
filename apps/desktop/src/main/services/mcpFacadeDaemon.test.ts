@@ -99,6 +99,24 @@ beforeEach(() => {
 });
 
 describe('mcp facade spawn', () => {
+  it('restarts through the shared launch gate when a once-ready facade becomes unready', async () => {
+    fetchMock.mockReset();
+    fetchMock
+      .mockRejectedValueOnce(new Error('no listener'))
+      .mockResolvedValueOnce({ ok: true, json: async () => facadeHealth })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...facadeHealth, pluginCatalogReady: false }),
+      })
+      .mockRejectedValueOnce(new Error('old listener stopped'))
+      .mockResolvedValue({ ok: true, json: async () => facadeHealth });
+    const mod = await loadModule();
+    await mod.ensureMcpFacadeReady();
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(gracefulStop).toHaveBeenCalledWith(expect.anything(), 'mcp');
+  });
+
   it('adopts a healthy externally supervised facade and leaves it running on stop', async () => {
     fetchMock.mockReset().mockResolvedValue({ ok: true, json: async () => facadeHealth });
     const mod = await loadModule();

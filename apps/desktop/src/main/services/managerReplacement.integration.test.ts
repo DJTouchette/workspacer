@@ -20,6 +20,9 @@ vi.mock('./hubClient', () => ({ ownsHubCapability: () => true }));
 vi.mock('./agentRuntimeStatus', () => ({
   readAgentRuntimeStatus: async () => ({ claudemon: 'ready', hub: 'ready', facade: 'ready' }),
 }));
+vi.mock('./mcpFacadeDaemon', () => ({
+  ensureMcpFacadeReady: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('./hubDaemon', () => ({ isHubAdopted: () => false }));
 vi.mock('./remoteServer', () => ({
   getRemoteServer: () => null,

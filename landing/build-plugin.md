@@ -10,11 +10,11 @@ Every plugin is one of two shapes, and it's the first decision you make. The spl
 
 ### webview plugin (`ui`)
 
-Set `ui` to a subdirectory of static assets and **omit `server`**. There is no process to run: the hub (trusted) serves your files at `/plugins/ui/<id>/`, and your page opens as a pane in a webview. The webview talks to the bus over a WebSocket using a **per-plugin token the host injects into the pane URL** (`?busToken=…`), scoped to exactly the capabilities your manifest declares. Because there's no arbitrary process, there's nothing to escape the bus through, so capability scoping fully confines it.
+Set `ui` to a subdirectory of static assets and **omit `server`**. There is no process to run: the hub serves your files at `/plugins/ui/<id>/`, and your page opens as an origin-isolated pane. The webview talks to the bus over a WebSocket using a **per-plugin identity token the host injects into the pane URL** (`?busToken=…`). Enabling the plugin is the trust decision: its bus calls and filesystem paths are not restricted by manifest declarations. Browser origin/webview isolation still prevents the page from reaching the host app document directly.
 
 - Reach for it when your plugin *is* a UI: a dashboard, a panel, an editor, a rule editor.
 - Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.
-- Bundled examples (in `services/hub/examples/`): the sandboxed `editor` and the `transcript-timeline` replay pane.
+- Bundled examples (in `services/hub/examples/`): the `editor` and the `transcript-timeline` replay pane.
 
 ### sidecar plugin (`server`)
 
@@ -41,7 +41,7 @@ my-hello/
 
 ### 2. the manifest
 
-`apiVersion` MUST be `"1"` (the loader rejects anything else), `ui: "ui"` makes it webview-only, and you ask for only the caps you use:
+`apiVersion` MUST be `"1"` (the loader rejects anything else), `ui: "ui"` makes it webview-only, and `capabilities` documents the methods you expect to use:
 
 ```json
 {
@@ -60,7 +60,7 @@ my-hello/
 }
 ```
 
-`panes` contributes one pane type; `hotkeys` binds a key to open it; `capabilities` asks for the single verb `agents.list` and nothing else. Ask for only what you use: the bus rejects any call you didn't declare.
+`panes` contributes one pane type; `hotkeys` binds a key to open it; `capabilities` documents the verb this plugin expects to use. Keep declarations accurate for discovery and review, but do not treat them as an enforcement boundary.
 
 ### 3. the page
 
@@ -69,16 +69,16 @@ The host **auto-injects the Plugin SDK** into your served HTML, so `window.works
 ```js
 await window.workspacer.ready;                     // resolves when connected
 
-// receive events (only the types you declared in "consumes")
+// receive events (declare expected types in "consumes" for discovery)
 window.workspacer.on('agent.state_changed', (data) => {
   console.log('state', data.sessionId, data.mode);
 });
 
-// call a capability (only the methods you declared in "capabilities")
+// call a host capability
 const agents = await window.workspacer.call('agents.list');
 document.body.textContent = `${agents.length} agent(s) running`;
 
-// publish an event you declared in "emits"
+// publish an ordinary event (host-owned topics remain protected)
 window.workspacer.publish('command.focus_agent', { sessionId: agents[0]?.sessionId });
 
 // typed settings, delivered live
@@ -86,7 +86,7 @@ let settings = window.workspacer.settings;
 window.workspacer.onSettings((next) => { settings = next; });
 ```
 
-> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. It stays fully inside the manifest sandbox: the SDK subscribes to `*` under the hood, but **delivery is still capability-scoped**: `on(type)` only fires for events you listed in `consumes`, and `call(method)` only works for methods you listed in `capabilities`. It is a convenience wrapper over the bus, not a way around it. `window.workspacer` also exposes a live `.connected` boolean (true while the socket is up), `onStatus(connected => …)` to react to every connect/disconnect (including reconnect cycles), plus `.token` and `.url` if you need the raw connection.
+> **Plugin SDK.** The hub serves `/plugins/sdk.js` and injects `<script src="/plugins/sdk.js"></script>` (plus `window.__WKS_PLUGIN_ID__` and `window.__WKS_SETTINGS__`) into every webview's HTML, so `window.workspacer` is present with no setup. Enabled plugins are trusted: `capabilities`, `emits`, and `consumes` are compatibility/discovery metadata, not grants. The SDK subscribes to `*` under the hood; host-owned topics and provider namespace ownership are still protected. `window.workspacer` also exposes a live `.connected` boolean (true while the socket is up), `onStatus(connected => …)` to react to every connect/disconnect (including reconnect cycles), plus `.token` and `.url` if you need the raw connection.
 
 Style the page with the injected `--wks-*` theme tokens (with fallbacks, e.g. `background: var(--wks-bg-base, #1a1a1a)`) so it matches the app. The host re-injects them on every live theme switch, and also exposes `window.__WKS_THEME__` + a `wks-theme` event for canvas UIs.
 
@@ -275,7 +275,7 @@ function connect(opts = {}) {
 module.exports = { connect };
 ```
 
-Your `server.js` then reads like the webview client, with the same `ready` / `on` / `call` / `publish` / `settings` surface, and it mirrors the live connection status too (`.connected` and `onStatus(connected => …)`, firing on every drop and reconnect), so a sidecar can track the bus the same way a webview does (the bus enforces your manifest either way):
+Your `server.js` then reads like the webview client, with the same `ready` / `on` / `call` / `publish` / `settings` surface, and it mirrors live connection status too (`.connected` and `onStatus(connected => …)`, firing on every drop and reconnect). The identity preserves provenance; enabled-plugin access is ambient rather than manifest-enforced:
 
 ```js
 // server.js
@@ -346,7 +346,7 @@ Schema version is `"apiVersion": "1"` (the loader rejects anything else). The au
 - `widgets`, glanceable views for a project's widget board (see "Widgets" above). Each: `id` (unique within your plugin), `title`, `icon`, `path`, and `sizes` (any of `small` / `medium` / `large`; omitted = `["small"]`).
 - `hotkeys`, each with `id`, `default` (e.g. `ctrl+shift+a`), and `command`, which is either `open-pane:<paneType>` or `emit:<eventType>`.
 - `settings`, typed settings the host renders in Settings. Each: `key`, `label`, `type` (`boolean`/`number`/`string`/`select`), `default`, `options` (for `select`), and `help`. Delivered into the webview as `window.__WKS_SETTINGS__` + a `wks-settings` event.
-- `capabilities`, bus methods the plugin may **call**. A bare string (`"agents.list"`) for an unscoped verb, or the object form `{ "method": "fs.read", "paths": ["${pluginDir}"] }` for a filesystem-scoped one.
+- `capabilities`, advisory bus methods the plugin expects to **call**. The legacy object form `{ "method": "fs.read", "paths": ["${pluginDir}"] }` remains parse-compatible, but `paths` is not enforced.
 - `provides`, capabilities the plugin **answers** on the bus (it becomes a provider other clients can call).
 - `tools`, MCP tools the plugin contributes to agents through the workspacer facade (see "Agent tools" below). Each: `name`, `description`, optional `inputSchema` (a JSON Schema object), and `method` (a bus method covered by your `provides`).
 - `emits` / `consumes`, event types it publishes / subscribes to.
@@ -424,7 +424,7 @@ The methods the host registers today (provided by the desktop app, or headlessly
 - `notifications.post`, notify the user (`{ title, body }` at minimum). Every call lands in the in-app notification center (the bell in the top bar) and, unless the user disabled OS notifications or you pass `inAppOnly: true`, also shows a clickable desktop notification. Optional fields: `level` (`info`|`success`|`warn`|`error`), `source` (shown in the center, e.g. `"plugin:ci"`), a click target (`sessionId` to focus that agent, `paneType` to open your pane, or `url`), `key` (same-key notifications replace instead of stack), `silent` (no toast, history only).
 - `claude.approve` / `claude.answer` / `claude.signal`, resolve an approval, answer an AskUserQuestion, send a signal.
 - `sessions.snapshot` / `sessions.transcript` / `sessions.conversation`, live session state and history.
-- `fs.read` / `fs.write` / `fs.watch` / `search.project`, path-scoped file I/O and ripgrep search (object form, `paths` required).
+- `fs.read` / `fs.write` / `fs.watch` / `search.project`, file I/O and ripgrep search. Enabled plugins may name any path their process user can access; legacy manifest `paths` are advisory.
 
 List method names in `provides` and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call. For example, a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.
 
@@ -533,7 +533,7 @@ A webview plugin needs no build step: edit the files and reopen the pane. A side
 A plugin is just a folder in a git repo. To share one, push it to **its own GitHub repo** with `plugin.json` at the root, then install it by reference.
 
 - **Install** from the Plugins Manager by pasting an `owner/repo` reference (or a full URL, a `/tree/<ref>` URL, or a direct `.tar.gz` URL). work{spacer} downloads it, runs the manifest's `install` build step, and loads it.
-- Installation is the **trusted-install** model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.
+- Installation is the **trusted-install** model, like a VS Code extension: it downloads and runs code from the internet, so the confirmation shows the manifest before enabling it. Extraction is zip-slip-guarded and atomic; manifest capability/path fields do not sandbox runtime access.
 - **Updates** are version-driven. The Plugins Manager's *Check for updates* re-fetches each installed plugin's manifest from the repo it was installed from and compares the published `version` to the one on disk. It surfaces an **Update** button only when the source is genuinely newer (otherwise the button reads **Reinstall**, which pulls a fresh copy on demand). So cut a release by bumping `version` in `plugin.json` and pushing; users installed from your repo will see the update on their next check.
 - Give your repo a clear README with the manifest's declared `capabilities` so installers know what it can reach.
 

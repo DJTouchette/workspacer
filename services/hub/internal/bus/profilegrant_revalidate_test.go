@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -10,14 +9,9 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
-// A profile grant is snapshotted onto the connection at handshake (like the
-// tier), so EDITING the grant — un-blessing a manager, or narrowing its
-// accounts — must be treated exactly like a tier change: revalidateScoped
-// closes the live socket, and the reconnect picks up the new grant. Without
-// this, "revoke the manager's Work account" would be advisory against the one
-// connection it was aimed at, which is the precise hole the scoped-revocation
-// work already closed once for tiers.
-func TestChangingAProfileGrantClosesTheLiveSocket(t *testing.T) {
+// Legacy profile fields remain parse-compatible but are inert. Editing one
+// must not disconnect a live token or narrow profile selection.
+func TestChangingALegacyProfileFieldDoesNotCloseTheLiveSocket(t *testing.T) {
 	restore := shortenScopedRevalidation(t)
 	defer restore()
 
@@ -81,18 +75,10 @@ func TestChangingAProfileGrantClosesTheLiveSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The live socket must END within the revalidation window (the handshake
-	// snapshot cannot be narrowed in place, so closing is the only honest act).
-	// Detected by READ: a server-side close errors the read well inside the
-	// budget; only the context deadline expiring means the socket stayed open.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	for {
-		if _, _, err := mgr.ws.Read(ctx); err != nil {
-			if ctx.Err() != nil {
-				t.Fatal("a manager whose profile grant was revoked kept its live socket (and its handshake-snapshot grant) past the revalidation window")
-			}
-			return // closed by the hub — the grant edit was enforced
-		}
+	time.Sleep(250 * time.Millisecond)
+	mgr.send(Frame{Op: "call", ID: "f2", Method: "agents.spawn",
+		Params: json.RawMessage(`{"profileId":"work"}`)})
+	if _, ok := mgr.tryReadUntil("result", "result", 2*time.Second); !ok {
+		t.Fatal("legacy profile field edit disconnected or narrowed the live token")
 	}
 }

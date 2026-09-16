@@ -211,38 +211,9 @@ function detectDefaultShell(): string {
   return process.env.SHELL || '/bin/sh';
 }
 
-// ── Filesystem path confinement for fs.* / search.project ──────────────────
-//
-// These capabilities run in the trusted main process and, under remote sharing,
-// are reachable by a web/phone client holding the shared host token — which the
-// hub classifies as `trusted`, so its per-plugin path confinement does NOT apply.
-// Left open, a remote caller could `fs.read('/etc/passwd')` or
-// `fs.write('~/.ssh/authorized_keys')`. The desktop renderer never uses these bus
-// capabilities (it edits over the `file:*` / `search:*` IPC path instead), so
-// every bus call that reaches them is an external caller (web / remote / MCP, or a
-// plugin the hub already confined to its grant). We therefore confine them here to
-// the directories the web workspace legitimately touches:
-//
-//   - each live agent's cwd — the workspaces the editor / search / watch act on
-//   - the three config-dir subtrees the UI actually edits (library/, layouts/,
-//     sessions/) — NOT the config dir as a whole. The config dir is where
-//     remote-token, tokens.json, remote-server.json, vapid.json and every
-//     installed plugin's .bus-token / plaintext .settings.json live, so a root
-//     that spans it hands any caller the credential that would promote it to a
-//     `trusted` bus connection. Those subtrees are all the file-level access the
-//     web client ever needed; everything else in the config dir is reached
-//     through a typed capability (config.get/save, layouts.*, library.*), never
-//     through fs.*.
-//
-// The directory *picker* (fs.listDir) additionally allows browsing the home tree,
-// since its whole job is choosing a not-yet-open working directory for a new agent
-// (it only lists non-hidden directory names, never file contents). Note this also
-// intersects a plugin's own fs grant with these roots; a plugin needing fs access
-// to a root outside the workspace would need that root added here (or a per-caller
-// identity seam) — acceptable today since plugin fs grants target project files,
-// which are agent cwds. The one grant this narrowing takes away is a `${pluginDir}`
-// fs scope (that dir is under the config dir): no catalog plugin declares one, and
-// a sidecar reads its own directory with local Node fs rather than over the bus.
+// ── Canonical paths for fs.* / search.project ─────────────────────────────
+// Authenticated agent/plugin paths are ambient. The legacy root suppliers below
+// remain for object-specific containment and wire parity, not authorization.
 
 // The predicate itself now lives in ../lib/pathConfinement (canonicalizePath,
 // canonicalRoot, isWithin, pathWithinRoots, configStoreRoots, SECRET_BASENAMES,
@@ -251,18 +222,7 @@ function detectDefaultShell(): string {
 // SUPPLY — which allow-list each capability gets — because that depends on the
 // live session store.
 
-/** Workspace roots for content-touching fs.* calls: live agent cwds + config stores.
- *
- *  LIVE is load-bearing and used to be a word in this comment only: the loop
- *  below added every snapshot's cwd with no state test whatsoever, while the
- *  brain's `agentCwds()` has filtered on `snapshotLive` since it was written. So
- *  one session row granted a root on one provider and was refused by the other,
- *  permanently — and this store's only removal path is a 30-second timer armed
- *  by a SessionEnd hook, so a PTY killed without one (SIGKILL, crash, OOM) kept
- *  `status: 'active'` and kept its directory in the allow-list for the life of
- *  the app process. git.diff / fs.readImage / fs.watch / fs.unwatch are answered
- *  here even under the default catalog delegation, so that was the shipping
- *  configuration. See lib/snapshotLiveness.ts for the clause-by-clause rule. */
+/** Legacy workspace-root inventory retained for object-specific containment. */
 function workspaceRoots(): string[] {
   const roots = new Set<string>();
   for (const s of claudeSessionStore.getAllSnapshots()) {
@@ -2402,9 +2362,8 @@ export function registerHubCapabilities(): void {
   // still carries the judgement — see lib/briefResultLine for why a result
   // object alone must never become a line.
   //
-  // IT WIDENS NOTHING, which is the only question the tiering asks: same
-  // method, same operator-only reachability, same `project` path scope, same
-  // composed-and-guarded brief path. The new params are strings and JSON that
+  // IT WIDENS NOTHING: same method, same manually scoped-token reachability,
+  // and the same project-relative brief filename. The new params are strings and JSON that
   // reach only a pure string renderer; a view or triage token still cannot call
   // brief.append at all, so there is no route by which composing a line for a
   // caller grants that caller anything it did not already hold.

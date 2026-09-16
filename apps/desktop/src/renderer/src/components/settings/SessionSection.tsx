@@ -428,9 +428,9 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Pre-checks "isolated worktree" in the spawn dialog: each agent gets a fresh git worktree on
-        its own branch, so parallel agents in one repo never collide and everything scoped to the
-        agent (plugins, watchers, checks) is confined to its tree. Worktrees persist until you
-        remove them (<code>git worktree remove</code>) — they may hold uncommitted work.
+        its own branch, so parallel agents in one repo do not collide. This isolates git changes,
+        not plugin or process filesystem access. Worktrees persist until you remove them (
+        <code>git worktree remove</code>) — they may hold uncommitted work.
       </div>
 
       <Row label="Worktree location">

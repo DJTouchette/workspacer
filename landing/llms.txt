@@ -33,7 +33,7 @@ Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the c
 - [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
 - [The manifest](build-plugin.html#manifest): the `plugin.json` fields: `id`, `apiVersion` (must be `"1"`), `version` (release version; drives update detection), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `tools` (MCP tools contributed to agents via the workspacer facade), `emits`/`consumes`, `install`.
 - [The bus protocol](build-plugin.html#bus): `ws://127.0.0.1:7895/bus?token=`, the `subscribe` / `call` / `publish` / `register` ops.
-- [Capabilities & permissions](build-plugin.html#capabilities): fail-closed grants, path-scoped `fs.*` / `search.project`, common host capabilities.
+- [Capabilities & trust](build-plugin.html#capabilities): enabled plugins are trusted; manifest methods/paths are advisory except provider namespace, routing/provenance, integrity, and UI isolation boundaries.
 - [Events you can consume](build-plugin.html#events): `agent.state_changed`, `agent.snapshot`, `workflow.completed`/`failed`, `ui.*`, `fs.changed`, and what you can emit.
 - [Settings](build-plugin.html#settings): typed manifest settings; live for webviews, restart for sidecars.
 - [Developing with hot-reload](build-plugin.html#dev): dev hub, `workspacer plugin dev <dir>`.

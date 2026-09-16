@@ -34,16 +34,17 @@ Positions worth reasoning from:
   and DNS rebinding against loopback ports.
 - **A remote-share client** — the opt-in `WORKSPACER_REMOTE_SHARE` path, usually
   over Tailscale, where the bus is reachable off-host with a token.
-- **An installed plugin** — sandboxed on the filesystem, but it holds a bus
-  token and a capability grant.
+- **An installed plugin** — trusted local code running with the Workspacer
+  user's machine access. Its identity preserves provenance and lifecycle;
+  manifest methods/paths are advisory, not a sandbox.
 - **A prompt-injected agent** — model output is untrusted, and an agent reaches
   the bus through the MCP facade.
 - **Another local process or user** on a shared machine.
 
 Installing a plugin is a **trusted-install** decision, like a VS Code extension:
-a plugin ships code that runs on your machine. What is in scope is a plugin
-exceeding the grants its manifest declares, or the install flow running a build
-command without asking you first.
+a plugin ships code that runs on your machine. Authentication, provider
+namespace ownership, host-owned event provenance, webview/app-document
+isolation, archive integrity, and explicit install steps remain enforced.
 
 ## Audit history
 

@@ -136,10 +136,11 @@ session token never falls through to the untokened tier.
 
 None of this affects sessions workspacer spawns: the desktop
 (`claudeSpawn.ts` / `managedSpawn.ts`) and the headless brain
-(`cmd/brain/facade.go`) mint a per-session scoped token for every facade session
-and hand it over as part of the spawn, so their tier is unchanged under all
-three values. `deny` breaks exactly one shape of client: a hand-configured one
-that sends no token.
+(`cmd/brain/facade.go`) mint a per-session identity token for every facade
+session and hand it over as part of the spawn. Supported agents receive the
+ambient operator/plugin surface; the token identifies the session and supports
+lifecycle revocation rather than selecting a grant tier. `deny` breaks exactly
+one shape of client: a hand-configured one that sends no token.
 
 Two guards sit in front of all of it and are independent of the dial: a
 `Host`-header check (`requireHost`) that refuses DNS-rebinding requests from a
@@ -224,8 +225,8 @@ may subscribe to events (that's the view tier's stream side) but never publish o
 register as providers; a `provider` token is the mirror image — it registers and
 publishes what it registered, and subscribes to nothing. Tokens persist in `<config>/workspacer/tokens.json` (0600), next to
 the `remote-token`; the hub re-reads the file when it changes, so
-minting/revoking takes effect on the next connection without a restart (an
-already-open connection keeps its grants until it drops).
+minting/revoking needs no restart; revocation and tier/service-identity changes
+also close already-open connections.
 
 **Backward compatibility:** the persisted `remote-token` (and any token passed
 via `--token`/`$HUB_TOKEN`) has no scope record and stays fully trusted —

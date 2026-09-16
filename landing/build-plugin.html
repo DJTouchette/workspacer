@@ -150,11 +150,11 @@
 <p>A plugin extends work{spacer} with new panes, automations, and capabilities. It's a folder with a <code>plugin.json</code> manifest at its root that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts whatever it needs, and announces the contribution on the bus (<code>plugin.loaded</code>). The desktop renderer picks that up and registers your pane types, command-palette entries, and hotkeys. This page is the hands-on how-to; the shorter tour lives on the <a href="build.html#plugins">build &amp; internals</a> page.</p>
 <p>Every plugin is one of two shapes, and it's the first decision you make. The split is exactly the <code>server</code> vs <code>ui</code> field in the manifest.</p>
 <h3>webview plugin (<code>ui</code>)</h3>
-<p>Set <code>ui</code> to a subdirectory of static assets and <strong>omit <code>server</code></strong>. There is no process to run: the hub (trusted) serves your files at <code>/plugins/ui/&lt;id&gt;/</code>, and your page opens as a pane in a webview. The webview talks to the bus over a WebSocket using a <strong>per-plugin token the host injects into the pane URL</strong> (<code>?busToken=…</code>), scoped to exactly the capabilities your manifest declares. Because there's no arbitrary process, there's nothing to escape the bus through, so capability scoping fully confines it.</p>
+<p>Set <code>ui</code> to a subdirectory of static assets and <strong>omit <code>server</code></strong>. There is no process to run: the hub serves your files at <code>/plugins/ui/&lt;id&gt;/</code>, and your page opens as an origin-isolated pane. The webview uses a <strong>per-plugin identity token</strong> (<code>?busToken=…</code>). Enabling the plugin is the trust decision: manifest method/path declarations do not restrict its bus or filesystem access. Browser origin/webview isolation still prevents direct access to the host app document.</p>
 <ul>
 <li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
 <li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
-<li>Bundled examples (in <code>services/hub/examples/</code>): the sandboxed <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
+<li>Bundled examples (in <code>services/hub/examples/</code>): the <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
 </ul>
 <h3>sidecar plugin (<code>server</code>)</h3>
 <p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the host loads <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code> directly in the pane's webview).</p>
@@ -176,7 +176,7 @@
   ui/
     index.html</code></pre>
 <h3>2. the manifest</h3>
-<p>A minimal webview manifest. <code>apiVersion</code> MUST be <code>"1"</code> (the loader rejects anything else), <code>ui: "ui"</code> makes it webview-only, and you ask for only the caps you use:</p>
+<p>A minimal webview manifest. <code>apiVersion</code> MUST be <code>"1"</code> (the loader rejects anything else), <code>ui: "ui"</code> makes it webview-only, and <code>capabilities</code> documents the methods you expect to use:</p>
 <pre><code>{
   "id": "example.hello",
   "name": "Hello",
@@ -191,21 +191,21 @@
   ],
   "capabilities": ["agents.list"]
 }</code></pre>
-<p><code>panes</code> contributes one pane type; <code>hotkeys</code> binds a key to open it; <code>capabilities</code> asks for the single verb <code>agents.list</code> and nothing else. Ask for only what you use; the bus rejects any call you didn't declare.</p>
+<p><code>panes</code> contributes one pane type; <code>hotkeys</code> binds a key to open it; <code>capabilities</code> documents the verb this plugin expects to use. Keep declarations accurate for discovery and review, but do not treat them as an enforcement boundary.</p>
 <h3>3. the page</h3>
 <p>The host <strong>auto-injects the Plugin SDK</strong> into your served HTML, so <code>window.workspacer</code> is just there, with no bus WebSocket to hand-roll. Await <code>ready</code>, then <code>call</code> a capability, subscribe with <code>on</code>, <code>publish</code>, and read live <code>settings</code>. The whole client is a few lines:</p>
 <pre><code>await window.workspacer.ready;                     // resolves when connected
 
-// receive events (only the types you declared in "consumes")
+// receive events (declare expected types in "consumes" for discovery)
 window.workspacer.on('agent.state_changed', (data) =&gt; {
   console.log('state', data.sessionId, data.mode);
 });
 
-// call a capability (only the methods you declared in "capabilities")
+// call a host capability
 const agents = await window.workspacer.call('agents.list');
 document.body.textContent = `${agents.length} agent(s) running`;
 
-// publish an event you declared in "emits"
+// publish an ordinary event (host-owned topics remain protected)
 window.workspacer.publish('command.focus_agent', { sessionId: agents[0]?.sessionId });
 
 // typed settings, delivered live
@@ -440,7 +440,7 @@ const wks = connect();
 <li><code>widgets</code>, glanceable views for a project's widget board (see <a href="#widgets">widgets</a>). Each: <code>id</code> (unique within your plugin), <code>title</code>, <code>icon</code>, <code>path</code>, and <code>sizes</code> (any of <code>small</code> / <code>medium</code> / <code>large</code>; omitted = <code>["small"]</code>).</li>
 <li><code>hotkeys</code>, each with <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
 <li><code>settings</code>, typed settings the host renders in Settings. Each: <code>key</code>, <code>label</code>, <code>type</code> (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>), <code>default</code>, <code>options</code> (for <code>select</code>), <code>help</code>, and <code>secret</code> (masked write-only PAT/API-key handling, covered under Settings below). Delivered into the webview as <code>window.__WKS_SETTINGS__</code> (secrets redacted) + a <code>wks-settings</code> event.</li>
-<li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one.</li>
+<li><code>capabilities</code>, advisory bus methods the plugin expects to <strong>call</strong>. The legacy object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> remains parse-compatible, but <code>paths</code> is not enforced.</li>
 <li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
 <li><code>tools</code>, MCP tools the plugin contributes to agents through the workspacer facade (see "agent tools" below). Each: <code>name</code>, <code>description</code>, optional <code>inputSchema</code> (a JSON Schema object), and <code>method</code> (a bus method covered by your <code>provides</code>).</li>
 <li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
@@ -477,7 +477,7 @@ ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code
     <section id="capabilities" class="doc">
 <h2>capabilities &amp; permissions</h2>
 <p>Capabilities are request/reply methods. List the ones you <strong>call</strong> in <code>capabilities</code>; register the ones you <strong>answer</strong> in <code>provides</code>. These fields support discovery, routing, and provenance. They do not contain enabled plugin code, which runs with the Workspacer user's machine access.</p>
-<h3>the path-scoped rule</h3>
+<h3>legacy path metadata</h3>
 <p>The object form can document intended filesystem roots for host integrations, but it is not a security boundary. Enabled plugin code may access any path available to the Workspacer user:</p>
 <pre><code>"capabilities": [
   "agents.list",
@@ -570,7 +570,7 @@ window.addEventListener('wks-settings', (e) =&gt; { settings = e.detail; render(
 <p>A plugin is just a folder in a git repo. To share one, push it to <strong>its own GitHub repo</strong> with <code>plugin.json</code> at the root, then install it by reference.</p>
 <ul>
 <li><strong>Install</strong> from the Plugins Manager by pasting an <code>owner/repo</code> reference (or a full URL, a <code>/tree/&lt;ref&gt;</code> URL, or a direct <code>.tar.gz</code> URL). work{spacer} downloads it, runs the manifest's <code>install</code> build step, and loads it.</li>
-<li>Installation is the <strong>trusted-install</strong> model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.</li>
+<li>Installation is the <strong>trusted-install</strong> model, like a VS Code extension: it downloads and runs code from the internet, so the confirmation shows the manifest before enabling it. Extraction is zip-slip-guarded and atomic; manifest capability/path fields do not sandbox runtime access.</li>
 <li><strong>Updates</strong> are version-driven. The Plugins Manager's <em>Check for updates</em> re-fetches each installed plugin's manifest from the repo it was installed from and compares the published <code>version</code> to the one on disk. It surfaces an <strong>Update</strong> button only when the source is newer (otherwise the button reads <strong>Reinstall</strong>, which pulls a fresh copy on demand). So cut a release by bumping <code>version</code> in <code>plugin.json</code> and pushing; users installed from your repo will see the update on their next check.</li>
 <li>Give your repo a clear README with the manifest's declared <code>capabilities</code> so installers know what it can reach.</li>
 </ul>

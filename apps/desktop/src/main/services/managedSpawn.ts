@@ -57,6 +57,7 @@ import { installManagerSkills } from './managerSkills';
 import { installResponseCardSkill } from './responseCardSkill';
 import { installAgentCollaborationSkills } from './agentCollaborationSkills';
 import { notifySystem } from './systemNotice';
+import { ensureMcpFacadeReady } from './mcpFacadeDaemon';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
 import { explainUnsupportedManagedOptions } from '../lib/managedSpawnOptions';
 import { resolveSpawnModelSelection } from '../lib/spawnModel';
@@ -350,6 +351,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     if (bad) throw new Error(`spawn: ${bad}`);
   }
   const skipPermissions = !!opts.skipPermissions;
+  await ensureMcpFacadeReady();
   // Per-session authenticated operator token. The Pi refusal above keeps the
   // unsupported no-MCP harness from ever reaching this ambient facade path.
   const facadeToken = mintSessionFacadeToken(
@@ -437,7 +439,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     // a skills root, and pointed at by one line of instructions where it does not
     // (see responseCardSkill for why the split, and why nothing is pasted).
     const cardInstruction = installResponseCardSkill(provider, cwd);
-    const collaborationInstruction = installAgentCollaborationSkills(provider, cwd);
+    const collaborationInstruction = installAgentCollaborationSkills(provider, cwd, !!opts.manager);
     // Claude stream + facade: the per-session config file (token as an
     // Authorization header — a file path on argv, never the token itself, since
     // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
@@ -642,9 +644,10 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   assertSpawnCwd(cwd);
   const cardInstruction = installResponseCardSkill('codex', cwd);
-  const collaborationInstruction = installAgentCollaborationSkills('codex', cwd);
+  const collaborationInstruction = installAgentCollaborationSkills('codex', cwd, !!opts.manager);
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
+  await ensureMcpFacadeReady();
   // Same resolution as the managed path: record what actually runs, not a hole.
   // Codex carries no configured default of its own, so this is opts.model
   // trimmed today — the call is here so a future codex.defaultModel lands on

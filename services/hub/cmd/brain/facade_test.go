@@ -106,6 +106,7 @@ func TestFleetHeadlessSpawnsReceiveWorkerEscalationContract(t *testing.T) {
 			srv := rec.server()
 			defer srv.Close()
 			reg := newSpawnTestRegistry(t, srv.URL)
+			reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
 			if _, err := reg.handle(context.Background(), "agents.spawn",
 				[]byte(`{"provider":"`+provider+`","cwd":"/tmp/proj","parentSessionId":"manager-1"}`)); err != nil {
 				t.Fatal(err)
@@ -193,12 +194,20 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 			srv := rec.server()
 			defer srv.Close()
 			reg := newSpawnTestRegistry(t, srv.URL)
+			reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
 			if _, err := reg.handle(context.Background(), "agents.spawn", []byte(tc.params)); err != nil {
 				t.Fatal(err)
 			}
 			instructions, _ := rec.calls("/sessions/spawn-managed")[0].body["instructions"].(string)
 			if strings.Contains(instructions, "wks-escalation") {
 				t.Fatalf("non-worker received fleet escalation contract: %q", instructions)
+			}
+			if tc.name == "ordinary pane" {
+				if !strings.Contains(instructions, "Skill spawn-agent/SKILL.md") || !strings.Contains(instructions, "Skill project-brief/SKILL.md") {
+					t.Fatalf("ordinary agent missed collaboration skills: %q", instructions)
+				}
+			} else if strings.Contains(instructions, "Skill spawn-agent/SKILL.md") || strings.Contains(instructions, "Skill project-brief/SKILL.md") {
+				t.Fatalf("Fleet Manager received ordinary-agent skill doctrine: %q", instructions)
 			}
 		})
 	}

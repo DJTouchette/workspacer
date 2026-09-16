@@ -41,7 +41,7 @@ const writeTimeout = 5 * time.Second
 // publisher on the bus waits for. `subscribe` is also the one op with no
 // authorization check at all — deliberately open to every tier — so without a
 // cap the lowest-privilege credential the system mints (a read-only `view`
-// token, or a plugin granted nothing) could wedge the entire control plane with
+// token, or any enabled plugin) could wedge the entire control plane with
 // one ~1 MB frame. Oversized frames are rejected rather than truncated: a client
 // silently keeping a fraction of what it asked for would miss events with no way
 // to tell why.
@@ -89,7 +89,7 @@ type Frame struct {
 	// call. Without it a client can only discover its own ceiling by calling
 	// something and reading the deny error — so /m would have to offer buttons
 	// (spawn, model switch) that fail on tap. Empty for plugin connections, whose
-	// grants are per-capability rather than a tier.
+	// enabled identity has ambient calls rather than a user-token tier.
 	Scope string `json:"scope,omitempty"`
 }
 
@@ -189,14 +189,8 @@ type Server struct {
 	ptMu         sync.RWMutex
 	pluginTokens map[string]pluginIdent
 	// Live connections that presented each plugin token. UnregisterPluginToken
-	// only ever removed the token from the map above, which decides the
-	// HANDSHAKE — conn.caps is a snapshot taken once at accept time and nothing
-	// re-consulted it, so revocation was a no-op on a socket that was already
-	// open. A pane token is the only way a plugin gets ${agentCwd} roots (the
-	// static token deliberately gets none), so a plugin that held one pane socket
-	// open kept fs.read/fs.write inside that agent's cwd after the pane closed,
-	// after it was disabled, and after it was removed. The manager calls that
-	// state "an unrevocable grant leak"; this map is what makes revoking real.
+	// must close existing sockets as well as removing future handshake identity;
+	// otherwise a disabled or removed plugin keeps ambient access indefinitely.
 	pluginConns map[string]map[*conn]struct{}
 
 	// trustedHosts are Host/Origin names this hub is deliberately reached by
@@ -315,7 +309,8 @@ func pluginOwnProviderPattern(pluginID, pattern string) bool {
 		(!strings.Contains(strings.TrimPrefix(p, prefix), "*") || p == prefix+"*")
 }
 
-// canonRoots canonicalizes grant roots once at registration, DISCARDING any that
+// canonRoots is retained for compatibility tests of the retired manifest shape.
+// Runtime plugin registration ignores these roots. It DISCARDs any that
 // can't confine anything safely: empty, whitespace-only, relative (including a
 // "~" prefix, which nobody expands) or unresolvable. Handing "" to a resolver
 // would return the daemon's own working directory and silently grant it, which
@@ -345,8 +340,7 @@ func canonRoots(roots []string, pluginID, method string) []string {
 // on every connection that already presented it.
 //
 // Dropping it from pluginTokens alone governs the next handshake and nothing
-// else: conn.caps is a snapshot taken at accept time, so a socket opened one
-// millisecond earlier kept its grants for as long as it stayed open. That made
+// else, so a socket opened one millisecond earlier kept its ambient access. That made
 // every caller of this function — plugin unload, plugin removal, and
 // Manager.revokePaneTokensFor, whose own comment says it exists "so a closed
 // plugin's panes can't keep calling" — advisory rather than enforcing.
@@ -379,8 +373,8 @@ func (s *Server) UnregisterPluginToken(token string) {
 // registers the connection here afterwards. UnregisterPluginToken snapshots
 // pluginConns under the same lock and closes exactly what it finds — so a dial
 // whose lookup ran before the delete and whose track runs after it is in NEITHER
-// set: never closed, never flagged, and conn.caps is a snapshot taken at accept,
-// so it keeps its full ${agentCwd} grants for the life of the process. A plugin
+// set: never closed and never flagged, so it keeps ambient access for the life
+// of the process. A plugin
 // sidecar holding its .bus-token and reconnecting in a loop wins that race
 // trivially, which means the grant survives disable, reload and uninstall — the
 // exact state pane close and plugin removal call this function to prevent.
@@ -882,8 +876,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			// to answer claude.approve applies to every future connection and to
 			// nothing that is currently answering — which is the one situation
 			// narrowing a register grant is for.
-			if ok && si.Scope == authScope && slices.Equal(si.ProfilesAllowed, cn.profilesAllowed) &&
-				si.YoloAllowed == cn.yoloAllowed && si.FacadeAuthority == cn.facadeAuthority && slices.Equal(si.Provides, cn.provides) {
+			if ok && si.Scope == authScope && si.FacadeAuthority == cn.facadeAuthority && slices.Equal(si.Provides, cn.provides) {
 				continue
 			}
 			// Both halves, exactly as UnregisterPluginToken applies them: the
@@ -893,7 +886,7 @@ func (s *Server) revalidateScoped(ctx context.Context, cn *conn, tok, authScope 
 			cn.revoked.Store(true)
 			_ = cn.ws.CloseNow()
 			if ok && si.Scope == authScope {
-				log.Printf("[bus] scoped token %s: grant (profiles/full-access/provides) changed while connected; connection closed (reconnect picks up the new grant)", cn.tokenID)
+				log.Printf("[bus] scoped token %s: service identity or provider registration changed while connected; connection closed", cn.tokenID)
 			} else if ok {
 				log.Printf("[bus] scoped token %s: tier changed %q -> %q while connected; connection closed", cn.tokenID, authScope, si.Scope)
 			} else {
@@ -913,7 +906,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Classify the connection by the token it presents:
-	//   - a registered per-plugin token → that plugin, restricted to its caps
+	//   - a registered per-plugin token → that enabled plugin's ambient identity
 	//   - the host token (or no host token configured) → trusted, full access
 	//   - a scoped user token (tokens.json) → its tier's method allowlist;
 	//     an operator-tier token is trusted, exactly like the host token
@@ -1165,9 +1158,8 @@ func tooManyTopics(op string, n int) string {
 func (cn *conn) pumpEvents(sub *broker.Subscription, send func(Frame) error) {
 	for ev := range sub.C {
 		ev := ev
-		// Enforce the consume grant even when the plugin subscribed more
-		// broadly (e.g. "*") — the manifest's `consumes` is the ceiling on
-		// what it can ever receive, not just what it asked for.
+		// Re-check live identity/provenance policy after enqueue. Plugin manifests
+		// are advisory; host-owned and manually scoped-token topics remain gated.
 		if !cn.mayConsume(ev.Type) {
 			continue
 		}
@@ -1420,8 +1412,8 @@ func (cn *conn) helloFrame() Frame {
 // Both are "a trusted in-hub component treats this topic as authoritative
 // input". Ownership is not a per-consumer question, so it is not enforced
 // per-consumer. Plugin-defined topics (example.clock.tick, the rules engine's
-// command.*) are unclassified and stay manifest-gated: nothing in the hub reads
-// them as host state.
+// command.*) are unclassified and remain ambient for an enabled plugin: nothing
+// in the hub treats them as authoritative host state.
 func (cn *conn) mayPublish(typ string) bool {
 	if cn.revoked.Load() {
 		return false
@@ -1492,16 +1484,9 @@ func (cn *conn) mayPublish(typ string) bool {
 // fleet visibility was hiding, and plugin.log — a verbatim line of sidecar
 // stderr, whose environment carries plugin secrets in plaintext.
 //
-// PLUGINS are no longer exempt for topics the registry names. Their manifest
-// `consumes` is a real answer for a topic nobody classified — a plugin-defined
-// topic is not host state — but it was NOT an answer for pty.bytes.*: a plugin
-// with ZERO capabilities and `consumes: ["pty.bytes.*","fs.changed"]` was
-// refused sessions.attachTerminal and fs.watch on the call plane and handed both
-// capabilities' whole output here, while the install-consent dialog rendered
-// those two lines at severity=normal and hasSensitivePermission() returned
-// false. So for a classified topic the manifest is a FILTER, not a grant: a
-// guarded topic additionally requires the capability, and a host-only topic is
-// refused outright.
+// Enabled plugins receive ordinary and guarded topics ambiently. Host-only
+// topics remain provenance-protected; this is an identity boundary rather than
+// a manifest consumes grant.
 func (cn *conn) mayConsume(typ string) bool {
 	// Revocation FIRST, before the trusted short-circuit, because an
 	// operator-scoped token is promoted to trusted at handshake: a revoked
@@ -1567,7 +1552,7 @@ func (cn *conn) mayConsume(typ string) bool {
 // mayProvide reports whether this connection may register as the provider of a
 // capability method. Trusted conns (the host) provide the built-in
 // capabilities; everyone else registers only what their `provides` identity
-// boundary matches — for a plugin, validateProvides confines this to its own
+// boundary matches — for a plugin, validation confines this to its own
 // namespace; for a provider-tier token it comes from the token record.
 //
 // The revocation check is not symmetry with mayCall/mayConsume for its own
@@ -1634,87 +1619,40 @@ func (cn *conn) callDenied(method string) string {
 	return "plugin is not authorized for host-only capability " + method
 }
 
-// authorize enforces argument-level scoping for a call mayCall already admitted.
-// Plugin tokens, like user tokens, are no longer filesystem-confined by
-// Workspacer; enabled sidecars run as the user and may name arbitrary absolute
-// paths. Host-only identity gates remain in the capability handlers.
+// authorize is retained as the router seam. Every real authenticated identity
+// returns immediately: host/scoped credentials and enabled plugins all have
+// ambient path access. The compatibility branch below exists only for the old
+// anonymous capGrant unit harness; handleBus never constructs such a conn.
 func (cn *conn) authorize(method string, params json.RawMessage) error {
-	if cn.trusted {
-		return nil
-	}
-	if cn.scopeMethods != nil {
-		// Scoped user tokens are tiered by verb only (mayCall) — they are a
-		// person's credential, not a sandboxed program's, so no path confinement.
-		return nil
-	}
-	if cn.pluginID != "" {
+	if cn.trusted || cn.scopeMethods != nil || cn.pluginID != "" {
 		return nil
 	}
 	g, ok := cn.caps[method]
 	if !ok {
-		return fmt.Errorf("plugin not authorized for capability %s", method)
+		return fmt.Errorf("legacy capability harness has no method %s", method)
 	}
 	field, scoped := capspec.IsPathScoped(method)
 	if !scoped {
-		// REDUNDANT BY CONSTRUCTION, and deliberately kept. RegisterPluginToken
-		// `continue`s on capspec.MissingSpec, so such a method never lands in
-		// cn.caps, so mayCall denies it before this function is entered — and the
-		// two earlier arms (trusted, scoped) return above. There is no path that
-		// reaches this line, which is why a mutation deleting it survives the whole
-		// tree: that is what a redundant fail-closed check looks like, not a gap
-		// (plugin/manager.go expandScope's withinRoot carries the same note). It
-		// stays because the invariant it depends on lives in a DIFFERENT function,
-		// and the day someone populates caps from anywhere else this is the line
-		// that keeps an unspecced filesystem method from running unconfined.
-		// TestRegisterRefusesUnspeccedPathCapability pins the invariant itself.
-		//
-		// The test is MissingSpec, not LooksPathBearing — a method capspec
-		// deliberately leaves unconfined (with its reason on the record) is allowed
-		// through.
 		if capspec.MissingSpec(method) {
-			return fmt.Errorf("%s: named like a filesystem capability but has no capspec entry; denied to avoid running unconfined", method)
+			return fmt.Errorf("%s: path-bearing compatibility method has no capspec entry", method)
 		}
-		return nil // verb-only capability; mayCall already governs it
+		return nil
 	}
 	if len(g.fsRoots) == 0 {
-		return fmt.Errorf("%s: filesystem-scoped capability granted with no roots", method)
+		return fmt.Errorf("%s: legacy filesystem capability has no roots", method)
 	}
 	target, ok := paramString(params, field)
 	if !ok {
-		return fmt.Errorf("%s: missing %q for filesystem-scoped capability", method, field)
+		return fmt.Errorf("%s: missing %q for legacy filesystem capability", method, field)
 	}
 	within, err := pathWithinRoots(g.fsRoots, target)
 	switch {
 	case errors.Is(err, errSecretPath):
-		// The SECRET arm deliberately says nothing about the path: it reaches a
-		// remote caller, and confirming that a denied path hit something worth
-		// protecting is a probe primitive. Same wording as the brain's
-		// assertPathAllowed. The containment arm below keeps its own, path-
-		// echoing message — a plugin's grant scope is its own install-time
-		// consented data, so naming it back is not a disclosure.
 		return fmt.Errorf("%s: path is outside the allowed workspace (agent cwds + config stores)", method)
 	case err != nil:
-		// The ERRNO stays on this side. pathWithinRoots canonicalizes BEFORE it
-		// contains, and the walk fails hard on every Lstat error that is not
-		// ENOENT — so wrapping that error back to the caller answered a question
-		// the grant was supposed to gate, for paths ANYWHERE on the host:
-		//
-		//   an existing regular file  -> "not a directory"
-		//   an unreadable ancestor    -> "permission denied"
-		//   absent, or a real dir     -> the containment message below
-		//
-		// Three distinguishable replies for three out-of-root paths, none of
-		// which the plugin was granted, which is a filesystem existence/type/
-		// permission oracle for a program confined to one directory. The secret
-		// arm two lines up is deliberately non-echoing for exactly this reason;
-		// this arm was not, and it is reached FIRST, so the roots never got a
-		// say. Same verdict as being outside the scope — which is true: it is
-		// outside every root the guard could verify — logged here so the hub
-		// operator can still see why a legitimate grant stopped resolving.
-		log.Printf("[bus] plugin %q capability %q: %q did not resolve (%v) — denied as out of scope", cn.pluginID, method, target, err)
-		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
+		return fmt.Errorf("%s: path %q is outside the legacy harness scope", method, target)
 	case !within:
-		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
+		return fmt.Errorf("%s: path %q is outside the legacy harness scope", method, target)
 	}
 	return nil
 }

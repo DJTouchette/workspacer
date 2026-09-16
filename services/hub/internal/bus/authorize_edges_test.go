@@ -212,7 +212,7 @@ func TestAuthorizeGivesOneAnswerForEveryPathOutsideTheGrant(t *testing.T) {
 		}
 		// The caller's own string may be echoed — it sent it — but nothing
 		// ABOUT THE HOST may be. One sentence, for all of them.
-		want := fmt.Sprintf("fs.read: path %q is outside the plugin's granted scope", target)
+		want := fmt.Sprintf("fs.read: path %q is outside the legacy harness scope", target)
 		if err.Error() != want {
 			t.Errorf("the denial distinguishes this path from an ordinary out-of-scope one:\n  got:  %q\n  want: %q", err.Error(), want)
 		}

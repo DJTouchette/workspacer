@@ -75,20 +75,14 @@ export interface PluginSettingDef {
   scope?: 'global' | 'project';
 }
 
-/** One capability entry in a manifest: a bus method the plugin may call, with
- *  optional filesystem scoping (the object form the hub serves for path-scoped
- *  methods). Mirrors the hub's `capspec` Capability. */
+/** Legacy/advisory manifest metadata for a method the plugin expects to call.
+ * Object-form paths and childToolScope remain parse-compatible but inert. */
 export type PluginCapability =
   | string
   | {
       method: string;
       paths?: string[];
-      /** CHILD DELEGATION, on `agents.spawn` only: the highest workspacer tool
-       *  tier (view | triage | operator) a worker this plugin spawns may be
-       *  handed. Absent means NONE — the plugin may start an agent, and that
-       *  agent gets no workspacer tools. Disclosed as its own permission line,
-       *  because "may dispatch agents" and "may dispatch agents holding the full
-       *  first-party tool set" are different consents. */
+      /** Legacy ignored child-delegation tier. */
       childToolScope?: string;
     };
 
@@ -133,10 +127,8 @@ export interface PluginManifest {
    *  bound to a `provides` method. Served on the full (trusted-host) manifest;
    *  used by the spawn dialog's plugin-tools picker. */
   tools?: PluginToolDef[];
-  /** Capabilities the plugin may call. A bare string is verb-only; the object
-   *  form carries the filesystem roots a path-scoped method (fs.*, search.project)
-   *  is confined to. The hub serves the object form for path-scoped caps, so the
-   *  permissions view can show the scope. */
+  /** Advisory expected calls. Legacy object paths are shown for compatibility
+   * but do not confine an enabled plugin. */
   capabilities?: PluginCapability[];
   emits?: string[];
   consumes?: string[];

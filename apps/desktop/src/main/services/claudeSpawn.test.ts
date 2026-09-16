@@ -31,6 +31,8 @@ const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
 vi.mock('./agentCollaborationSkills', () => ({
   installAgentCollaborationSkills: collaborationSkills,
 }));
+const ensureMcpFacadeReady = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('./mcpFacadeDaemon', () => ({ ensureMcpFacadeReady }));
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -174,7 +176,19 @@ beforeEach(() => {
 describe('spawnClaudeAgent — ordinary collaboration skills', () => {
   it('installs them for every Claude PTY spawn', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
-    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj');
+    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj', false);
+  });
+
+  it('withholds ordinary collaboration skills from Fleet Managers', async () => {
+    await spawnClaudeAgent({ cwd: '/proj', manager: true });
+    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj', true);
+  });
+
+  it('fails before minting a token when the facade readiness gate fails', async () => {
+    ensureMcpFacadeReady.mockRejectedValueOnce(new Error('facade unavailable'));
+    await expect(spawnClaudeAgent({ cwd: '/proj' })).rejects.toThrow('facade unavailable');
+    expect(mintSessionFacadeToken).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
 

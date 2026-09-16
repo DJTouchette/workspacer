@@ -171,7 +171,7 @@ export interface NotificationsConfig {
 }
 
 export interface EditorConfig {
-  /** How files open: 'codemirror' (legacy value — now the sandboxed editor
+  /** How files open: 'codemirror' (legacy value — now the trusted editor
    *  plugin, falling back to the OS editor), or your $EDITOR in a 'terminal'. */
   engine: 'codemirror' | 'terminal';
   /** Command for the 'terminal' engine; the file path is appended as its last arg. */

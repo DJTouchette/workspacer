@@ -311,7 +311,9 @@ func sessionFacadeInstructions(sessionID string, p spawnParams) string {
 		fmt.Sprintf("You are running inside Workspacer session %s with access to the local workspacer MCP facade.", sessionID),
 		fmt.Sprintf("Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is %s.", scope),
 	}
-	parts = append(parts, headlessAgentCollaborationInstructions)
+	if !p.Manager {
+		parts = append(parts, headlessAgentCollaborationInstructions)
+	}
 	if scope == string(authtoken.ScopeView) {
 		parts = append(parts, "Treat workspacer tools as read-only unless another tool separately permits a change.")
 	}

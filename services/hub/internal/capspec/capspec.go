@@ -14,9 +14,9 @@ import (
 // filesystem path it operates on. The mapping still supports host-side remote
 // client policy and legacy manifest validation; it is not a plugin sandbox.
 //
-// This is the single source of truth for "which capabilities touch the
-// filesystem". Add a method here the moment it grows a path argument, or it will
-// be grantable to plugins without any path confinement.
+// This is the compatibility/drift vocabulary for "which capabilities touch the
+// filesystem". It does not grant or confine enabled plugins; semantic
+// containment inside selected repositories/library items remains provider-owned.
 var PathParam = map[string]string{
 	"fs.read":        "path",
 	"fs.readImage":   "path",
@@ -205,20 +205,15 @@ var unscopedByDecision = map[string]string{
 	// sentence below is checked against both files rather than whichever one
 	// happens to still exist.
 	//
-	// Per-plugin root confinement is the right end state, but two shipped
-	// catalog plugins declare git.status / git.numstat with no `paths`
-	// (ci-watcher and standup-digest — they CALL these methods, they do not
-	// provide them), so speccing the namespace today would deny calls that work
-	// now. Retire these entries once those manifests declare their roots.
-	"git.status":        "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
-	"git.log":           "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
-	"git.numstat":       "provider-confined to the workspace roots (guardGitCwd, in both the desktop and the brain); per-plugin scoping pending a catalog manifest update",
-	"git.commitDiff":    "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.commitNumstat": "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.stage":         "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.unstage":       "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.commit":        "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
-	"git.push":          "provider-confined to the workspace roots (guardGitCwd); per-plugin scoping pending a catalog manifest update",
+	"git.status":        "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.log":           "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.numstat":       "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.commitDiff":    "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.commitNumstat": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.stage":         "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.unstage":       "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.commit":        "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+	"git.push":          "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
 	// sessions.* take a `filename`, not a path. It is a BARE BASENAME inside
 	// <configDir>/sessions — never absolute, never a caller-chosen directory —
 	// so PathParam is the wrong tool (the bus canonicalizes a PathParam value
@@ -1160,7 +1155,7 @@ var unscopedParams = map[string]map[string]ParamDecision{
 // gitCwd is the one decision the nine provider-confined git.* methods share.
 // Written once so the nine entries cannot drift into nine subtly different
 // claims about the same guard.
-var gitCwd = ParamDecision{KindPath, "provider-confined to the workspace roots (guardGitCwd) before git runs in it; per-plugin scoping pending a catalog manifest update"}
+var gitCwd = ParamDecision{KindPath, "guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient"}
 
 // ClassifyParam answers the only question a drift detector should ask about a
 // caller param: has somebody decided what this is? It returns ParamScoped when

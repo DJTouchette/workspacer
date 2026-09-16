@@ -91,7 +91,7 @@
   // agents as an MCP tool). handler(params) may return a value or a Promise;
   // a throw/rejection becomes the caller's error reply. Registration is sent
   // now and re-sent on every reconnect; the hub silently drops methods the
-  // plugin's consented grant doesn't cover (watch the `registered` ack in the
+  // plugin's own namespace doesn't cover (watch the `registered` ack in the
   // hub log). There is no unregister op — a provider slot frees when the
   // connection drops.
   function provide(method, handler) {

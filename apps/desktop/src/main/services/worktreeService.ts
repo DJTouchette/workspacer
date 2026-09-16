@@ -1,8 +1,7 @@
 /**
  * Git-worktree support for agent spawns: give each agent its own working tree
- * so parallel agents in one repo can't trample each other, and everything
- * scoped to the agent's cwd (plugins, watchers, checks) is confined to that
- * tree.
+ * so parallel agents in one repo cannot trample each other's branches. This is
+ * git isolation, not a process/plugin filesystem sandbox.
  *
  * Worktrees are created under `agents.worktreeRoot` (default
  * `~/.workspacer/worktrees`) as `<repoName>/<slug>` on a fresh `wks/<slug>`

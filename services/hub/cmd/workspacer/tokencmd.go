@@ -116,12 +116,20 @@ func runTokenCreate(args []string) int {
 	fs := flag.NewFlagSet("workspacer token create", flag.ExitOnError)
 	scopeFlag := fs.String("scope", "", "grant tier: view | triage | operator | provider (required)")
 	label := fs.String("label", "", "human-readable label (e.g. \"dana's phone\")")
-	// Accepted only so old automation does not break during upgrade. Provider
-	// permission choices now flow through independently of bus-token metadata.
-	fullAccess := fs.Bool("full-access", false,
-		"deprecated compatibility flag (ignored; provider permission modes are not token grants)")
 	path := tokensPathFlag(fs)
-	_ = fs.Parse(args)
+	// Strip the retired flag before FlagSet sees it: old automation remains
+	// compatible, while `token create --help` no longer advertises a meaningless
+	// grant switch. It is an ignored/no-op under the ambient agent policy.
+	filtered := make([]string, 0, len(args))
+	legacyFullAccess := false
+	for _, arg := range args {
+		if arg == "--full-access" || arg == "-full-access" || strings.HasPrefix(arg, "--full-access=") || strings.HasPrefix(arg, "-full-access=") {
+			legacyFullAccess = true
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	_ = fs.Parse(filtered)
 
 	if *scopeFlag == "" {
 		fmt.Fprintln(os.Stderr, "workspacer token create: --scope is required (view | triage | operator | provider)")
@@ -140,8 +148,8 @@ func runTokenCreate(args []string) int {
 	fmt.Printf("%s\n", rec.Token)
 	fmt.Fprintf(os.Stderr, "minted %s token%s — connect with ?token=… or Authorization: Bearer …\n",
 		rec.Scope, labelSuffix(rec.Label))
-	if *fullAccess {
-		fmt.Fprintln(os.Stderr, "  note: --full-access is retained for compatibility and has no effect")
+	if legacyFullAccess {
+		fmt.Fprintln(os.Stderr, "  note: legacy --full-access was ignored (provider permission modes are independent of pairing tokens)")
 	}
 	if rec.Scope == authtoken.ScopeProvider {
 		// There is deliberately no --provides flag. A grant narrower than what

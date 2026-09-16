@@ -326,8 +326,8 @@ export function useAgentManager() {
     }) => {
       let cwd = opts.cwd;
       // Worktree isolation: carve out a fresh git worktree first and make IT
-      // the agent's home, so everything cwd-scoped (plugin pane tokens,
-      // watchers, checks) is confined to the agent's own tree. Falls back to
+      // the agent's home, so branch changes are isolated. Plugins still have
+      // ambient host access; this is git isolation, not a sandbox. Falls back to
       // the repo directory if creation fails (e.g. not a repo after all).
       // Skipped for a remote target — the cwd lives on the peer machine, so a
       // local worktree of it would be meaningless.

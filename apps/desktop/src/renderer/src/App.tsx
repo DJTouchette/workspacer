@@ -898,7 +898,7 @@ function App() {
     [addTab, insertPosition],
   );
 
-  // Open the editor. The default (CodeMirror) engine is now the sandboxed editor
+  // Open the editor. The default (CodeMirror) engine is now the trusted editor
   // *plugin* (workspacer.editor): we open its webview pane rooted at the project
   // dir, optionally on a specific file. The 'terminal' engine is unchanged — it
   // runs the user's $EDITOR (e.g. nvim) in a PTY pane. Outside an agent with no
@@ -2475,8 +2475,8 @@ function App() {
       }
 
       const url = buildPluginPaneUrl(pane, target);
-      // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint an
-      // ephemeral token confined to that cwd on mount (see PluginPane). The static
+      // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint a
+      // lifecycle-bound identity token on mount (see PluginPane). The static
       // busToken stays baked into the URL as the fallback when minting is
       // unavailable (e.g. the web build, or the hub momentarily unreachable).
       const tabId = openPaneIn(

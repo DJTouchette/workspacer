@@ -46,10 +46,9 @@ export type LibraryScope = 'global' | 'project' | 'claude';
 /** 'dispatch' is a Fleet Manager dispatch template: template TEXT with named
  *  placeholders plus an optional default resultSchema, rendered host-side at
  *  spawn (agents.spawn {template, templateParams} → lib/dispatchTemplate.ts).
- *  DELIBERATELY nothing else — no toolScope/cwd/model/worktree/skipPermissions
- *  fields exist on the kind, so a template is pure text with no trust boundary:
- *  every spawn argument still comes from the CALLER and passes the caller's
- *  clamps, and a template file can never smuggle one. */
+ *  DELIBERATELY nothing else — no cwd/model/worktree/skipPermissions fields
+ *  exist on the kind, so a template is pure text. Every spawn argument still
+ *  comes from the caller and passes the host's model/routing policy. */
 export { LIBRARY_KINDS };
 export type { LibraryKind };
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
@@ -495,7 +494,7 @@ function readDir(dir: string, scope: LibraryScope, guard: LibraryFileGuard): Lib
           ? cleanMcp(data.mcp as McpServerConfig)
           : undefined;
       // A dispatch item is TEXT plus this one default: any other frontmatter a
-      // template file carries (a toolScope, a cwd, a model, a skipPermissions…)
+      // template file carries (a legacy toolScope, a cwd, a model, a skipPermissions…)
       // is deliberately NOT modelled and never leaves this parser — spawn
       // arguments have no field to ride in, so a template cannot smuggle them.
       const text = body.replace(/^\s*\n/, '');
@@ -1130,7 +1129,7 @@ class LibraryService {
           body: [
             'Build a workspacer plugin that talks the hub bus. Pick one kind:',
             '',
-            '- webview: a pane served from ui/index.html; may use ${agentCwd}-scoped capabilities.',
+            '- webview: an origin-isolated pane served from ui/index.html.',
             '- sidecar: a zero-dependency Node process (server.js); Node >=22 built-ins only.',
             '',
             '1) plugin.json - apiVersion MUST be exactly "1"; id is "owner.name".',
@@ -1150,17 +1149,16 @@ class LibraryService {
             '  "capabilities": ["agents.list"], "consumes": ["agent.state_changed"]',
             '}',
             '',
-            'Rules (fail-closed; undeclared is silently denied):',
-            '- Only call methods in capabilities, publish types in emits, receive types in consumes.',
-            '- fs.* and search.project need object form: { "method": "fs.read", "paths": ["${pluginDir}"] }.',
-            '  ${agentCwd} resolves only for per-pane webview tokens; a sidecar watches files locally via Node fs.',
+            'Trust model:',
+            '- Enabling installs trusted local code. capabilities/emits/consumes and legacy paths are advisory metadata.',
+            '- Provider registrations stay in the plugin namespace; host-owned topics and app-document origin isolation remain protected.',
             '- Never hand-write .bus-token/.settings.json/.install-source/.disabled; gitignore them.',
             '',
             '2) Talk to the bus.',
             'Webview: the host auto-injects window.workspacer (no bus boilerplate). Use:',
             '  await workspacer.ready',
-            '  workspacer.on(type, (data) => {})     receives only your declared consumes types',
-            '  await workspacer.call(method, params)     only your declared capabilities',
+            '  workspacer.on(type, (data) => {})',
+            '  await workspacer.call(method, params)',
             '  workspacer.publish(type, data)',
             '  workspacer.settings                      live; workspacer.onSettings(cb) for changes',
             'Sidecar: connect to ws://127.0.0.1:7895/bus?token=<t> and speak JSON frames:',

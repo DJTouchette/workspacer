@@ -70,7 +70,7 @@ export interface PaneConfig {
   /** Editor panes only: absolute path of the file being edited. */
   filePath?: string;
   /** Plugin panes only: the contributing plugin's id. Lets the pane mint an
-   *  ephemeral, agent-cwd-scoped bus token on mount (and revoke it on unmount)
+   *  ephemeral, lifecycle-bound identity token on mount (and revoke it on unmount)
    *  instead of using the broader static per-plugin token. */
   pluginId?: string;
   /** Agent-watch panes only: the claudemon session that OWNS the watched
@@ -186,20 +186,15 @@ export interface AgentWorkspace {
   /** Library item ids (kind 'mcp') this agent was spawned with. Re-passed on
    *  respawn so the same servers reload. */
   mcpItemIds?: string[];
-  /** Workspacer MCP tool tier granted at spawn (view/triage/operator);
-   *  re-applied on respawn so a restart keeps the same grant. */
+  /** Legacy layout/wire field. Parsed for older saved panes but ignored:
+   * supported agents receive the ambient Workspacer tool surface. */
   toolScope?: 'view' | 'triage' | 'operator';
-  /** Plugin ids whose facade tools this agent may use; re-applied on respawn. */
+  /** Legacy layout/wire field. Enabled plugin tools are ambient. */
   pluginTools?: string[];
-  /** Spawned as THE Fleet Manager (nudge-eligible parent, profile-dispatch
-   *  grants, manager skills). Re-passed on respawn so the re-minted token
-   *  carries the manager grants (profilesAllowed + the config-resolved yolo
-   *  grant) instead of coming back bare. */
+  /** Spawned as THE Fleet Manager (nudge-eligible parent and manager skills).
+   * Re-passed on respawn to preserve that role. */
   manager?: boolean;
-  /** Manager full-access hint recorded at spawn. Advisory on respawn — the
-   *  token's actual yolo grant is config-resolved at mint in main
-   *  (services/fullAccessGrants), so a frozen value can't resurrect a grant
-   *  the user has since revoked. */
+  /** Legacy saved-layout field; provider permission mode is authoritative. */
   fleetFullAccess?: boolean;
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */

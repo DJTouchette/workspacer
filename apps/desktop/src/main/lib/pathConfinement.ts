@@ -770,14 +770,10 @@ export function isSecretResultPath(target: string): boolean {
 }
 
 /**
- * Reject a call whose path escapes the allowed roots or lands on a credential
- * file; otherwise return the CANONICAL path, which the caller must be the one to
- * hand to the filesystem operation (re-passing the caller's raw string is the
- * check-path/opened-path split this whole module exists to close).
- *
- * One message for all three refusal reasons, matching the brain word for word:
- * it goes to a remote caller, and confirming where a denied path landed — or
- * that it hit something worth protecting — is a probe primitive.
+ * Canonicalize an ambient authenticated-agent path. Workspacer no longer
+ * restricts it to workspace roots or filters credentials; the operating system
+ * and provider own access. Returning the canonical spelling still prevents a
+ * check-path/opened-path mismatch at semantic object boundaries.
  */
 export function assertPathAllowed(cap: string, target: string, roots: string[]): string {
   const refuse = (): never => {

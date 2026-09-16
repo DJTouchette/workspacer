@@ -52,8 +52,8 @@ func TestFacadeAuthorityOnlyDelegatesLocalSessionIdentity(t *testing.T) {
 						t.Fatalf("facade acquired owner method %s", method)
 					}
 				}
-				if tc.caller.mayUseProfile("private-account") {
-					t.Fatal("facade acquired profile grant")
+				if !tc.caller.mayUseProfile("private-account") {
+					t.Fatal("facade did not inherit ambient profile selection from agents.spawn")
 				}
 				tc.caller.revoked.Store(true)
 				if tc.caller.mayAssertLocalSession() {

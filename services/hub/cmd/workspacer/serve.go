@@ -188,13 +188,17 @@ type stack struct {
 	claudemon *child
 	hub       *child
 	mcp       *child
+	brain     *child
 }
 
-// shutdown stops the facade first, then hub, then claudemon. The hub can tear
-// down the brain and plugin sidecars while claudemon is still alive, and the
-// facade never reconnects through that teardown.
+// shutdown stops the launcher-owned brain first, then facade, hub, and
+// claudemon. Plugin sidecars go down with the hub while claudemon is still
+// alive, and no agent can receive a facade URL during teardown.
 func (s *stack) shutdown(logw io.Writer) {
 	fmt.Fprintln(logw, "[workspacer] shutting down…")
+	if s.brain != nil {
+		s.brain.Stop()
+	}
 	if s.mcp != nil {
 		s.mcp.Stop()
 	}
@@ -272,10 +276,18 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 		return nil, fmt.Errorf("hub failed to become healthy: %w", err)
 	}
 	if plan.MCPHealth != "" {
-		if err := waitForMCPHealth(ctx, plan.MCPHealth, readyTimeout); err != nil {
+		expectedListen := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", opts.MCPPort))
+		expectedHub := "ws://" + net.JoinHostPort(dialHost(opts.Host), fmt.Sprintf("%d", opts.HubPort)) + "/bus"
+		if err := waitForMCPHealth(ctx, plan.MCPHealth, expectedListen, expectedHub, readyTimeout); err != nil {
 			s.shutdown(logw)
 			return nil, fmt.Errorf("MCP facade failed to become ready: %w", err)
 		}
+	}
+	// The brain is the first process that can inject the facade into a spawned
+	// agent. Start it only after the strict gate above; with no MCP binary it
+	// starts without --mcp-facade and therefore advertises no invented endpoint.
+	if plan.Brain.Bin != "" {
+		s.brain = startChild(ctx, plan.Brain, logw, newRestartBackoff())
 	}
 	return s, nil
 }
@@ -283,7 +295,11 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 // waitForMCPHealth requires both an HTTP-ready facade and a live bus bridge.
 // A 200 with hubConnected:false can serve no tools and must not be advertised
 // to the brain as a usable endpoint.
-func waitForMCPHealth(ctx context.Context, url string, timeout time.Duration) error {
+func waitForMCPHealth(
+	ctx context.Context,
+	url, expectedListenAddr, expectedHubURL string,
+	timeout time.Duration,
+) error {
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
 	for {
@@ -294,16 +310,24 @@ func waitForMCPHealth(ctx context.Context, url string, timeout time.Duration) er
 		resp, err := client.Do(req)
 		if err == nil {
 			var body struct {
-				HubConnected bool `json:"hubConnected"`
+				Status             string `json:"status"`
+				Service            string `json:"service"`
+				HubConnected       bool   `json:"hubConnected"`
+				PluginCatalogReady bool   `json:"pluginCatalogReady"`
+				ListenAddr         string `json:"listenAddr"`
+				HubURL             string `json:"hubUrl"`
 			}
 			decodeErr := json.NewDecoder(resp.Body).Decode(&body)
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK && decodeErr == nil && body.HubConnected {
+			if resp.StatusCode == http.StatusOK && decodeErr == nil &&
+				body.Status == "ok" && body.Service == "workspacer-mcp-facade" &&
+				body.HubConnected && body.PluginCatalogReady &&
+				body.ListenAddr == expectedListenAddr && body.HubURL == expectedHubURL {
 				return nil
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("no bus-connected answer from %s within %s", url, timeout)
+			return fmt.Errorf("no identity-verified, bus-connected, catalog-ready answer from %s within %s", url, timeout)
 		}
 		select {
 		case <-ctx.Done():
