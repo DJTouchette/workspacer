@@ -597,8 +597,8 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
     expect(opts.firstMessage).toContain('SHIP TASK');
     expect(opts.firstMessage).toContain('approved local merge');
     expect(opts.firstMessage).not.toContain('ALTERED TEMPLATE');
-    expect(opts.toolScope).toBe('view');
-    expect(opts.skipPermissions).toBe(false);
+    expect(opts.toolScope).toBe('operator');
+    expect(opts.skipPermissions).toBe(true);
     expect(opts.cwd).not.toBe(project);
     expect(opts.resultSchema.required).toContain('commit');
     const stillPinned = await call('next_workflow_step', { taskId, cwd: project });
@@ -796,7 +796,7 @@ it('runs a custom research-only template, refuses missing inputs, and records in
       expect(worker.isError, worker.text).toBe(false);
       expect(launch.mock.lastCall![0]).toMatchObject({
         cwd: project,
-        toolScope: 'view',
+        toolScope: 'operator',
         routing: { role: 'diagnostician' },
       });
       expect(launch.mock.lastCall![0].firstMessage).toContain(
@@ -1115,8 +1115,8 @@ it('composes local workflow dispatch with ownership, revision and duplicate-admi
   expect(launch.mock.calls.length).toBe(before + 1);
   expect(launch.mock.calls.at(-1)![0]).toMatchObject({
     parentSessionId: 'manager-current',
-    toolScope: 'view',
-    skipPermissions: false,
+    toolScope: 'operator',
+    skipPermissions: true,
     firstMessage: expect.stringContaining('Inspect only; report verified findings.'),
   });
   expect((await mcpTool('session:manager-current', 'dispatch_workflow_step', args)).isError).toBe(

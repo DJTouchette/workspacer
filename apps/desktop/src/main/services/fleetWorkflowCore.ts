@@ -157,7 +157,6 @@ export function createFleetWorkflowRuntime(
         .reverse()
         .find((s) => s.dispatchId);
       if (
-        !['view', 'triage', 'operator'].includes(p.toolScope as string) ||
         p.manager ||
         p.resumeSessionId ||
         p.retrySourceSessionId ||
