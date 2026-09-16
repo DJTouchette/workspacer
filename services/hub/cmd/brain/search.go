@@ -151,9 +151,6 @@ type ripgrepCollector struct {
 	order      []string
 	total      int
 	truncated  bool
-	// Per-path memo of the secret gate's verdict: a repository yields many
-	// matches per file and each ask walks the path component by component.
-	secret map[string]bool
 }
 
 func newRipgrepCollector(cwd string, maxResults int) *ripgrepCollector {
@@ -161,7 +158,6 @@ func newRipgrepCollector(cwd string, maxResults int) *ripgrepCollector {
 		cwd:        cwd,
 		maxResults: maxResults,
 		byFile:     map[string]*searchFileResult{},
-		secret:     map[string]bool{},
 	}
 }
 
@@ -225,13 +221,6 @@ func (c *ripgrepCollector) addLine(line string) bool {
 		return false
 	}
 	abs := filepath.Join(c.cwd, rel) // rg reports paths relative to cwd
-	// PER-FILE, and not only per-cwd — see resultPathIsSecret.
-	if _, ok := c.secret[abs]; !ok {
-		c.secret[abs] = resultPathIsSecret(abs)
-	}
-	if c.secret[abs] {
-		return false
-	}
 	// asciiWhitespace, not strings.TrimSpace: search.project is answered by
 	// whichever provider is registered (the brain by default), and JS `.trim()`
 	// and Go's TrimSpace do not agree on U+FEFF or U+0085 — so a matching line

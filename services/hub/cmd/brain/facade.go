@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,24 +26,20 @@ type sessionFacade struct {
 	URL          string
 	Token        string
 	Instructions string
+	LibraryMCP   []namedMCPServer
+}
+
+type namedMCPServer struct {
+	ID     string
+	Config mcpConfig
 }
 
 func (p spawnParams) wantsFacade() bool {
-	return p.MCPFacade || strings.TrimSpace(p.ToolScope) != ""
+	return true
 }
 
 func (p spawnParams) facadeScope() (authtoken.Scope, error) {
-	if strings.TrimSpace(p.ToolScope) == "" {
-		return authtoken.ScopeOperator, nil
-	}
-	scope, err := authtoken.ParseScope(p.ToolScope)
-	if err != nil {
-		return "", fmt.Errorf("invalid toolScope %q: %w", p.ToolScope, err)
-	}
-	if scope == authtoken.ScopeProvider {
-		return "", fmt.Errorf("invalid toolScope %q: provider scope is only for capability processes", p.ToolScope)
-	}
-	return scope, nil
+	return authtoken.ScopeOperator, nil
 }
 
 func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*sessionFacade, error) {
@@ -51,7 +48,7 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	}
 	baseURL := strings.TrimSpace(r.mcpFacadeURL)
 	if baseURL == "" {
-		return nil, fmt.Errorf("workspacer MCP facade requested for session %s, but brain was started without --mcp-facade", sessionID)
+		baseURL = defaultMCPFacadeURL()
 	}
 	if err := validateSessionConfigName(sessionID); err != nil {
 		return nil, err
@@ -62,16 +59,12 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	}
 
 	role := ""
-	yoloAllowed := false
-	var profilesAllowed []string
 	switch {
 	case p.Manager:
 		role = "manager"
-		yoloAllowed = r.managerFullAccessFromConfig()
-		profilesAllowed = localProfileIDs()
 	}
 
-	rec, err := mintSessionFacadeToken(sessionID, scope, p.PluginTools, profilesAllowed, yoloAllowed, role)
+	rec, err := mintSessionFacadeToken(sessionID, scope, []string{"*"}, nil, false, role)
 	if err != nil {
 		return nil, err
 	}
@@ -79,12 +72,17 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	if err != nil {
 		return nil, err
 	}
+	mcpIDs := append([]string{}, p.MCPItemIDs...)
+	if prof := getProfile(p.ProfileID); prof != nil && prof.Provider == "" {
+		mcpIDs = append(mcpIDs, prof.MCPItemIDs...)
+	}
 	return &sessionFacade{
 		SessionID:    sessionID,
 		BaseURL:      baseURL,
 		URL:          u,
 		Token:        rec.Token,
 		Instructions: sessionFacadeInstructions(sessionID, p),
+		LibraryMCP:   selectedMCPServers(p.Cwd, mcpIDs),
 	}, nil
 }
 
@@ -145,7 +143,7 @@ func facadeURLWithToken(rawURL, token string) (string, error) {
 }
 
 func (f *sessionFacade) claudeArgs(extraInstructions string) ([]string, error) {
-	path, err := writeClaudeFacadeMCPConfig(f.SessionID, f.BaseURL, f.Token)
+	path, err := writeClaudeFacadeMCPConfig(f.SessionID, f.BaseURL, f.Token, f.LibraryMCP)
 	if err != nil {
 		return nil, err
 	}
@@ -153,11 +151,19 @@ func (f *sessionFacade) claudeArgs(extraInstructions string) ([]string, error) {
 	if strings.TrimSpace(extraInstructions) != "" {
 		instructions += "\n\n" + extraInstructions
 	}
-	return []string{
+	toolNames := []string{"mcp__workspacer"}
+	for _, server := range f.LibraryMCP {
+		toolNames = append(toolNames, "mcp__"+server.ID)
+	}
+	args := []string{
 		"--mcp-config", path,
-		"--allowedTools", "mcp__workspacer",
+		"--allowedTools", strings.Join(toolNames, ","),
 		"--append-system-prompt", instructions,
-	}, nil
+	}
+	if len(f.LibraryMCP) > 0 {
+		args = append(args, "--strict-mcp-config")
+	}
+	return args, nil
 }
 
 type claudeMCPConfig struct {
@@ -166,11 +172,14 @@ type claudeMCPConfig struct {
 
 type claudeMCPServer struct {
 	Type    string            `json:"type"`
-	URL     string            `json:"url"`
+	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
-func writeClaudeFacadeMCPConfig(sessionID string, facadeURL string, token string) (string, error) {
+func writeClaudeFacadeMCPConfig(sessionID string, facadeURL string, token string, library []namedMCPServer) (string, error) {
 	if err := validateSessionConfigName(sessionID); err != nil {
 		return "", err
 	}
@@ -183,17 +192,25 @@ func writeClaudeFacadeMCPConfig(sessionID string, facadeURL string, token string
 		return "", err
 	}
 	path := filepath.Join(dir, sessionID+".json")
-	body, err := json.MarshalIndent(claudeMCPConfig{
-		MCPServers: map[string]claudeMCPServer{
-			"workspacer": {
-				Type: "http",
-				URL:  strings.TrimSpace(facadeURL),
-				Headers: map[string]string{
-					"Authorization": "Bearer " + token,
-				},
+	servers := map[string]claudeMCPServer{
+		"workspacer": {
+			Type: "http",
+			URL:  strings.TrimSpace(facadeURL),
+			Headers: map[string]string{
+				"Authorization": "Bearer " + token,
 			},
 		},
-	}, "", "  ")
+	}
+	for _, item := range library {
+		if item.ID == "" || item.ID == "workspacer" {
+			continue
+		}
+		servers[item.ID] = claudeMCPServer{
+			Type: item.Config.Type, URL: item.Config.URL, Headers: item.Config.Headers,
+			Command: item.Config.Command, Args: item.Config.Args, Env: item.Config.Env,
+		}
+	}
+	body, err := json.MarshalIndent(claudeMCPConfig{MCPServers: servers}, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -202,6 +219,45 @@ func writeClaudeFacadeMCPConfig(sessionID string, facadeURL string, token string
 		return "", err
 	}
 	return path, nil
+}
+
+func selectedMCPServers(cwd string, ids []string) []namedMCPServer {
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			wanted[id] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	canonicalCwd, err := assertPathAllowed("agents.spawn", cwd, nil)
+	if err != nil {
+		return nil
+	}
+	guard := libraryFileGuardFor("agents.spawn", canonicalCwd)
+	byID := map[string]libraryItem{}
+	for _, item := range readLibraryDir(libraryGlobalDir(), "global", guard) {
+		if wanted[item.ID] && item.Kind == "mcp" && item.Mcp != nil {
+			byID[item.ID] = item
+		}
+	}
+	for _, item := range readLibraryDir(libraryProjectDir(canonicalCwd), "project", guard) {
+		if wanted[item.ID] && item.Kind == "mcp" && item.Mcp != nil {
+			byID[item.ID] = item
+		}
+	}
+	keys := make([]string, 0, len(byID))
+	for id := range byID {
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+	out := make([]namedMCPServer, 0, len(keys))
+	for _, id := range keys {
+		item := byID[id]
+		out = append(out, namedMCPServer{ID: id, Config: *item.Mcp})
+	}
+	return out
 }
 
 func validateSessionConfigName(sessionID string) error {
@@ -246,10 +302,7 @@ func writeFileAtomic0600(path string, data []byte) error {
 }
 
 func sessionFacadeInstructions(sessionID string, p spawnParams) string {
-	scope := strings.TrimSpace(p.ToolScope)
-	if scope == "" {
-		scope = string(authtoken.ScopeOperator)
-	}
+	scope := string(authtoken.ScopeOperator)
 	parts := []string{
 		fmt.Sprintf("You are running inside Workspacer session %s with access to the local workspacer MCP facade.", sessionID),
 		fmt.Sprintf("Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is %s.", scope),

@@ -758,31 +758,7 @@ func (rt *router) sanitizeSpawnParams(caller *conn, raw json.RawMessage) (json.R
 	delete(m, "profileGranted")
 	delete(m, "yoloGranted")
 	delete(m, "escalationScrubbed")
-	if caller.mayBypassPermissions() {
-		m["yoloGranted"] = json.RawMessage("true")
-	} else if caller.federated {
-		// Said out loud, and with the remedy in it: this is the ONE denial a
-		// correctly-credentialled operator can hit without having done anything
-		// wrong, because the ceiling is the LINK's token rather than theirs.
-		log.Printf("SECURITY: agents.spawn: full access withheld from federation link %s — a peer link inherits no host trust; mint its token with `workspacer token create --scope operator --full-access` on this machine and put THAT token in the peer's peers.json entry", caller.tokenID)
-	}
 	var scrubbed []string
-	var pid string
-	hadProfile := false
-	if r, ok := m["profileId"]; ok {
-		hadProfile = true
-		if json.Unmarshal(r, &pid) != nil {
-			pid = "" // non-string spelling: strip rather than interpret
-		}
-	}
-	if pid != "" && caller.mayUseProfile(pid) {
-		m["profileGranted"] = json.RawMessage("true")
-	} else {
-		delete(m, "profileId")
-		if hadProfile {
-			scrubbed = append(scrubbed, "profileId")
-		}
-	}
 
 	clamped, cErr := rt.clampSpawnAuthority(caller, m)
 	if cErr != nil {
@@ -832,15 +808,6 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 		return json.Unmarshal(r, &v) == nil && v
 	}
 
-	// `mcpFacade: true` is the legacy spelling of "operator tier", and folding it
-	// in HERE rather than treating it as a separate flag is load-bearing: a clamp
-	// that only rewrote `toolScope` would be walked around by one boolean.
-	wantScope := str("toolScope")
-	viaLegacyFacade := false
-	if wantScope == "" && boolAt("mcpFacade") {
-		wantScope, viaLegacyFacade = "operator", true
-	}
-
 	rawCwd := str("cwd")
 	canonical, resolved := canonicalizeRoot(rawCwd)
 
@@ -858,7 +825,6 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 			// call, and the routing layer never sees the params object.
 			Resuming:        str("resumeSessionId") != "",
 			ResumeSessionID: str("resumeSessionId"),
-			ToolScope:       wantScope,
 			Provider:        str("provider"),
 			Model:           str("model"),
 			Effort:          str("effort"),
@@ -866,67 +832,6 @@ func (rt *router) clampSpawnAuthority(caller *conn, m map[string]json.RawMessage
 	}
 
 	var scrubbed []string
-	// ---- authority: the smaller of the caller's own tier and the directory's --
-	effectiveMax, effectiveWhy := verdict.ToolScope, ""
-	if !verdict.ToolScopeRefused {
-		effectiveMax = ""
-	}
-	callerMax, mayDelegate := caller.callerToolScopeCeiling()
-	if !mayDelegate {
-		// NO CHILD TOOLS AT ALL. Today this is exactly one credential shape: a
-		// plugin whose manifest declares agents.spawn without a `childToolScope`.
-		// Every tool-bearing field goes, not just `toolScope` — a clamp that left
-		// `mcpFacade` behind would be walked around by one boolean, and
-		// `pluginTools` is a grant list that only means anything alongside a
-		// facade, so leaving it would be recording an intent nothing honours.
-		for _, key := range []string{"toolScope", "mcpFacade", "pluginTools"} {
-			if _, had := m[key]; had {
-				delete(m, key)
-				scrubbed = append(scrubbed, key)
-			}
-		}
-		if wantScope != "" || len(scrubbed) > 0 {
-			log.Printf("SECURITY: agents.spawn: caller %s (plugin %s) asked to hand its child the %q tool tier and holds no child-delegation grant — every tool field is stripped. Declare {\"method\":\"agents.spawn\",\"childToolScope\":\"view\"} in the plugin manifest and reinstall to re-obtain consent; consent to SPAWN is not consent to mint an agent holding workspacer's own tools",
-				caller.tokenID, caller.pluginID, wantScope)
-		}
-		verdict.ToolScopeRefused, verdict.ToolScope = true, ""
-		verdict.Because = append(verdict.Because, "the calling plugin holds no childToolScope grant, so its workers get no workspacer tools")
-		wantScope, effectiveMax = "", ""
-	}
-	if callerMax != "" && wantScope != "" {
-		want, wantOK := toolScopeRank(wantScope)
-		cmax, cmaxOK := toolScopeRank(callerMax)
-		if wantOK && cmaxOK && want > cmax {
-			// Take the LOWER of the two ceilings when both bite.
-			if cur, ok := toolScopeRank(effectiveMax); !ok || cmax < cur {
-				effectiveMax = callerMax
-				effectiveWhy = fmt.Sprintf(
-					"this spawn asked for the %s tool tier from a %s-tier credential — a caller cannot grant a child more authority than it holds, so the tier is clamped to %s",
-					strings.ToLower(wantScope), callerMax, callerMax)
-			}
-		}
-	}
-	if effectiveMax != "" {
-		if viaLegacyFacade {
-			// The legacy flag has no gradations, so a clamp below operator has to
-			// remove it and say the tier explicitly.
-			delete(m, "mcpFacade")
-			scrubbed = append(scrubbed, "mcpFacade")
-		}
-		if _, had := m["toolScope"]; had {
-			scrubbed = append(scrubbed, "toolScope")
-		}
-		m["toolScope"] = mustJSON(effectiveMax)
-		reasons := verdict.Because
-		if effectiveWhy != "" {
-			reasons = append(append([]string(nil), reasons...), effectiveWhy)
-		}
-		log.Printf("SECURITY: agents.spawn: tool tier clamped from %q to %q for caller %s: %s",
-			wantScope, effectiveMax, caller.tokenID, strings.Join(reasons, " | "))
-		verdict.ToolScopeRefused, verdict.ToolScope = true, effectiveMax
-		verdict.Because = reasons
-	}
-
 	// ---- capability: the directory's ceiling, and the model that went with it -
 	if verdict.CapabilityRefused && boolAt("exactModel") {
 		verdict.Denied = true

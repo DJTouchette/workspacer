@@ -597,8 +597,9 @@ type spawnParams struct {
 	// shared 1M policy. It is never serialized.
 	contextWindowSet bool
 	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
-	Effort    string `json:"effort"`
-	ProfileID string `json:"profileId"`
+	Effort     string   `json:"effort"`
+	ProfileID  string   `json:"profileId"`
+	MCPItemIDs []string `json:"mcpItemIds"`
 	// ProfileGranted is stamped by the HUB ROUTER and only by it: the hub
 	// deletes the key from every incoming agents.spawn and re-adds it iff the
 	// verified caller may dispatch under ProfileID (host token, or a tokens.json
@@ -831,61 +832,12 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 		return nil, err
 	}
 
-	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the
-	// REMOTE/web/MCP spawn path. Driving an agent is already code execution on
-	// the host, but we refuse to let a bus caller silently auto-bypass every
-	// approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
-	// still surface and can be answered remotely; a YOLO agent must be started
-	// locally. So skipPermissions is forced off, and a bypass permissionMode is
-	// dropped (other modes pass through).
-	//
-	// The two mode spellings were compared inline here, which made the invariant
-	// read as a property of spawning rather than of the MODE. It is the latter,
-	// and the desktop takes the same mode through a second door
-	// (claude.setPermissionMode) that had no clamp at all — see permissionmode.go
-	// and lib/permissionBypass.ts, one allowlist, held equal by a test.
-	//
-	// One verified exception: `yoloGranted`, which ONLY the hub router stamps
-	// (internal/bus sanitizeSpawnParams deletes the key from every incoming call
-	// and re-adds it solely for a caller whose token record carries the
-	// full-access grant, or the trusted host). Stamped, the request's own bypass
-	// fields are honored — the local user opted the caller in (the desktop's
-	// fleet-manager mint path, agents.fleetFullAccess); unstamped, the clamp is
-	// byte-for-byte yesterday's.
-	//
-	// An OMITTED skipPermissions resolves to the config default first
-	// (claude.skipPermissionsDefault / a bypass defaultPermissionMode — what the
-	// desktop spawn dialog pre-selects), and the resolved value then passes this
-	// SAME gate: a granted caller's omitted field means "the operator's default",
-	// while for an ungranted caller the default is clamped exactly like an
-	// explicit request — config defaults never escalate an ungranted token.
-	skipDefaulted := p.SkipPermissions == nil
-	if skipDefaulted {
+	// Authenticated spawns carry the provider's requested or configured
+	// permission mode unchanged. Legacy yolo/profile grant stamps are inert.
+	if p.SkipPermissions == nil {
 		p.skip = r.skipPermissionsConfigDefault()
 	} else {
 		p.skip = *p.SkipPermissions
-	}
-	if !p.YoloGranted {
-		if p.skip || isPermissionEscalation(p.PermissionMode) {
-			source := "from a bus client"
-			if skipDefaulted && p.skip {
-				source = "resolved from the config default (claude.skipPermissionsDefault / defaultPermissionMode)"
-			}
-			log.Printf("brain: agents.spawn: ignoring permission bypass %s — remote spawns never auto-bypass approvals without the hub-verified full-access grant.", source)
-		}
-		// NO SILENT DOWNGRADES. Only an EXPLICIT request counts as a downgrade:
-		// a config default that never resolves is the operator's own setting not
-		// applying to an ungranted token, not something the caller asked for and
-		// lost, and reporting it would make every ordinary ask-mode spawn claim
-		// it was scrubbed.
-		if !skipDefaulted && p.skip {
-			p.scrubbed = append(p.scrubbed, "skipPermissions")
-		}
-		p.skip = false
-		if isPermissionEscalation(p.PermissionMode) {
-			p.scrubbed = append(p.scrubbed, "permissionMode")
-			p.PermissionMode = ""
-		}
 	}
 
 	cwd := normalizeCwd(p.Cwd)
@@ -916,7 +868,7 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 		}
 		return r.spawnManagedSession(ctx, provider, cwd, p)
 	}
-	prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted)
+	prof := remoteSpawnProfile(p.ProfileID, true)
 	if prof != nil && prof.Provider != "" {
 		prof = nil
 	}
@@ -1178,9 +1130,13 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			return nil, err
 		}
 	}
-	facade, err := r.buildSessionFacade(sessionID, p)
-	if err != nil {
-		return nil, err
+	var facade *sessionFacade
+	if provider != "pi" {
+		var err error
+		facade, err = r.buildSessionFacade(sessionID, p)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.isWakeTarget() || p.routed() || p.desktopContract != "") {
 		r.meta.set(sessionID, spawnMeta{
@@ -1246,7 +1202,7 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		// SECURITY: same clamp as the PTY path — a profile's extraArgs must not
 		// smuggle a bypass flag onto the managed claude-stream argv (and
 		// configDir survives only a hub-verified profile grant).
-		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil && prof.Provider == "" {
+		if prof := remoteSpawnProfile(p.ProfileID, true); prof != nil && prof.Provider == "" {
 			if env := buildEnv(prof); len(env) > 0 {
 				req.Env = env
 			}
@@ -1256,7 +1212,7 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 		}
 	}
 	if provider == "codex" || provider == "copilot" {
-		if prof := remoteSpawnProfile(p.ProfileID, p.ProfileGranted); prof != nil && prof.Provider == provider {
+		if prof := remoteSpawnProfile(p.ProfileID, true); prof != nil && prof.Provider == provider {
 			req.Env = buildEnv(prof)
 			req.ExtraArgs = append([]string{}, prof.ExtraArgs...)
 			if provider == "codex" && prof.Preset != "" {
@@ -1752,18 +1708,7 @@ func (r *registry) profilesAdd(raw json.RawMessage) (json.RawMessage, error) {
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	// SCRUB AT WRITE TIME, not only at spawn time. Every call this brain answers
-	// arrives over the bus (the desktop's local Settings write is a separate
-	// in-process IPC path, ipc.ts CLAUDE_PROFILES_ADD, and is unaffected), and
-	// scrubBypassProfile was applied only on the BUS spawn path — so a bus caller
-	// could persist `configDir` (which becomes CLAUDE_CONFIG_DIR: settings.json,
-	// permissions.allow and hooks, i.e. commands claude runs unprompted) plus
-	// `--dangerously-skip-permissions`, and wait for the LOCAL user to pick that
-	// profile in the New Agent dialog, where nothing scrubs. The capability is
-	// classified nowhere — `configDir` is not in the params scanner's path-ish
-	// set and claude.* is not a path-bearing prefix — so neither detector saw it.
-	safe := scrubBypassProfile(&profile{ConfigDir: p.ConfigDir, ExtraArgs: p.ExtraArgs, MCPItemIDs: p.MCPItemIDs})
-	prof, err := addProfile(p.Name, safe.ConfigDir, safe.ExtraArgs, safe.MCPItemIDs)
+	prof, err := addProfile(p.Name, p.ConfigDir, p.ExtraArgs, p.MCPItemIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1780,24 +1725,6 @@ func (r *registry) profilesUpdate(raw json.RawMessage) (json.RawMessage, error) 
 	}
 	if p.ID == "" {
 		return nil, fmt.Errorf("claude.profiles.update requires { id, updates }")
-	}
-	// Same scrub as claude.profiles.add: update is the other way to plant a
-	// CLAUDE_CONFIG_DIR or a bypass flag on a profile the local user then picks.
-	if p.Updates.ConfigDir != nil || p.Updates.ExtraArgs != nil || p.Updates.MCPItemIDs != nil {
-		cur := ""
-		if p.Updates.ConfigDir != nil {
-			cur = *p.Updates.ConfigDir
-		}
-		safe := scrubBypassProfile(&profile{ConfigDir: cur, ExtraArgs: p.Updates.ExtraArgs, MCPItemIDs: p.Updates.MCPItemIDs})
-		if p.Updates.ConfigDir != nil {
-			p.Updates.ConfigDir = &safe.ConfigDir
-		}
-		if p.Updates.ExtraArgs != nil {
-			p.Updates.ExtraArgs = safe.ExtraArgs
-		}
-		if p.Updates.MCPItemIDs != nil {
-			p.Updates.MCPItemIDs = []string{}
-		}
 	}
 	prof, err := updateProfile(p.ID, p.Updates)
 	if err != nil {

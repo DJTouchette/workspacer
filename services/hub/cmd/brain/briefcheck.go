@@ -366,7 +366,7 @@ func (r *registry) briefCheckCall(ctx context.Context, raw json.RawMessage) (jso
 	if err != nil {
 		return nil, err
 	}
-	briefPath, err := assertPathAllowed("brief.check", briefPathFor(dir), roots)
+	briefPath, err := assertPathContained("brief.check", briefPathFor(dir), []string{dir})
 	if err != nil {
 		return nil, err
 	}

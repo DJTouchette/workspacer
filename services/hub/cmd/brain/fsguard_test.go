@@ -2933,3 +2933,16 @@ func TestHubStateDirsFor(t *testing.T) {
 		t.Errorf("blank config dir: got %v, want no candidates", got)
 	}
 }
+
+func TestAuthenticatedAgentPathsAreUnconfinedButSemanticContainmentRemains(t *testing.T) {
+	selected := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "file.txt")
+	got, err := assertPathAllowed("fs.read", target, []string{selected})
+	if err != nil || got == "" {
+		t.Fatalf("authenticated absolute path rejected: got %q, err %v", got, err)
+	}
+	if _, err := assertPathContained("library.read", target, []string{selected}); err == nil {
+		t.Fatal("semantic containment admitted a path outside the selected object")
+	}
+}

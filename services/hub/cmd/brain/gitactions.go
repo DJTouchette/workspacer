@@ -92,7 +92,7 @@ func (r *registry) gitMutationOperand(ctx context.Context, method, cwd, target s
 	if err != nil {
 		return "", err
 	}
-	checked, err := assertPathAllowed(method, cwd, []string{root})
+	checked, err := assertPathContained(method, cwd, []string{root})
 	if err != nil {
 		return "", err
 	}

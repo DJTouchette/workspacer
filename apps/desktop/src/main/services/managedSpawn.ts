@@ -25,7 +25,7 @@ import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore, type SessionRouting } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
+import { claudeProfiles } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { libraryService } from './libraryService';
@@ -34,12 +34,11 @@ import { configService } from './configService';
 import {
   MCP_FACADE_URL,
   managedFacadeInstructions,
-  buildSessionMcpConfig,
   facadeSessionMcpConfig,
   facadeUrlWithToken,
+  type SessionMcpServer,
 } from './mcpConfig';
 import { mintSessionFacadeToken } from './remoteTokens';
-import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import {
@@ -347,10 +346,10 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     opts.effort?.trim() ||
     (opts.manager && !opts.resumeSessionId ? resolveManagerEffort(provider) : undefined);
   const bin = resolveAgentBinary(provider, configuredBin(provider));
-  const wantsFacade = opts.mcpFacade || !!opts.toolScope;
-  // A facade session takes its requested tier, defaulting to operator (the
-  // legacy mcpFacade meaning).
-  const facadeScope: RemoteTokenScope = opts.toolScope ?? 'operator';
+  // Every supported Workspacer-launched agent gets the authenticated operator
+  // facade. Legacy tier/plugin fields remain wire-compatible but are ignored.
+  const wantsFacade = provider !== 'pi';
+  const facadeScope: RemoteTokenScope = 'operator';
   const managedId = opts.replacementSessionId || opts.resumeSessionId || randomUUID();
   // Refused out loud rather than dropped — see claudeSpawn's twin.
   const resultSchema = opts.resultSchema;
@@ -359,27 +358,18 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     if (bad) throw new Error(`spawn: ${bad}`);
   }
   const skipPermissions = !!opts.skipPermissions;
-  // Per-session scoped facade token. Pi ships no MCP client, so minting one
-  // for it would only leave a dangling live secret.
-  // A host-blessed Fleet Manager's token carries a dispatch grant for every
-  // local profile — the hub verifies it and stamps profileGranted on the
-  // worker spawn. Only `manager` gets this; a plain facade worker has no
-  // business spawning as other accounts.
-  // The yolo grant is CONFIG-RESOLVED (never a caller flag —
-  // a respawn's frozen fleetFullAccess must not resurrect a revoked grant),
-  // and the role tag lets a later config flip update it LIVE. TWIN:
-  // claudeSpawn.ts mints identically on the PTY path.
-  const facadeToken =
-    wantsFacade && provider !== 'pi'
-      ? mintSessionFacadeToken(
-          managedId,
-          facadeScope,
-          opts.pluginTools,
-          opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-          opts.manager ? managerFullAccessFromConfig() : undefined,
-          opts.manager ? 'manager' : undefined,
-        ).token
-      : undefined;
+  // Per-session authenticated operator token. Pi has no MCP client, so it gets
+  // no token; every supported provider gets the same ambient facade.
+  const facadeToken = wantsFacade
+    ? mintSessionFacadeToken(
+        managedId,
+        'operator',
+        ['*'],
+        undefined,
+        undefined,
+        opts.manager ? 'manager' : undefined,
+      ).token
+    : undefined;
   // Permission-mode vocabulary differs by family: Claude keeps its full mode
   // set (an explicit mode wins; the legacy boolean maps to bypass — same
   // resolution as the PTY path), managed providers are just ask/yolo.
@@ -415,13 +405,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
         `${picked.provider ?? 'claude'}, not ${provider}`,
     );
   }
-  const profile = rawProfile
-    ? opts.scrubProfileBypass
-      ? opts.profileGranted
-        ? scrubRemoteGrantedProfile(rawProfile)
-        : scrubBypassProfile(rawProfile)
-      : rawProfile
-    : undefined;
+  const profile = rawProfile;
   // The config root, plus (Copilot) the auth token the profile REFERENCES by
   // variable name — resolved from this process's environment here, at spawn,
   // and never stored. An unset name contributes nothing rather than an empty
@@ -466,26 +450,24 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   // Authorization header — a file path on argv, never the token itself, since
   // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
   // facadeSpawnArgs; pre-allowing mcp__workspacer matches it.
-  if (isClaudeStream && facadeToken) {
-    extraArgs.push('--mcp-config', facadeSessionMcpConfig(managedId, facadeToken));
-    extraArgs.push('--allowedTools', 'mcp__workspacer');
-  }
-  if (isClaudeStream && !wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
+  let userMcpServers: SessionMcpServer[] = [];
+  if (isClaudeStream && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
     // listWithSecrets, not list(): the config written below is what the CLI
     // actually authenticates with, and list() masks MCP env/headers. The real
     // values never leave main — the renderer sent only `mcpItemIds`.
-    const servers = libraryService
+    userMcpServers = libraryService
       .listWithSecrets(opts.cwd)
       .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
       .map((it) => ({ id: it.id, mcp: it.mcp! }));
-    const userMcp = buildSessionMcpConfig(managedId, servers);
-    if (userMcp) {
-      extraArgs.push('--mcp-config', userMcp.path, '--strict-mcp-config');
-      if (userMcp.toolNames.length) {
-        extraArgs.push('--allowedTools', userMcp.toolNames.join(','));
-      }
-    }
+  }
+  if (isClaudeStream && facadeToken) {
+    extraArgs.push('--mcp-config', facadeSessionMcpConfig(managedId, facadeToken, userMcpServers));
+    if (userMcpServers.length) extraArgs.push('--strict-mcp-config');
+    extraArgs.push(
+      '--allowedTools',
+      ['mcp__workspacer', ...userMcpServers.map((server) => `mcp__${server.id}`)].join(','),
+    );
   }
   const prepared = await prepareLaunchIntegration(
     opts.launchIntegrationId,
@@ -690,15 +672,15 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     opts.effort?.trim() ||
     (opts.manager && !opts.resumeSessionId ? resolveManagerEffort('codex') : undefined);
   const skipPermissions = !!opts.skipPermissions;
-  // The Windows rollout hybrid predates the facade wiring: it spawns a bare TUI
-  // and tails the transcript, so a manager/facade session asked for here comes
-  // up WITHOUT its tools. Said out loud rather than discovered later.
-  if (opts.manager || opts.mcpFacade || opts.toolScope) {
-    console.warn(
-      '[managedSpawn] codex (Windows rollout hybrid): the workspacer MCP facade is not wired on this path — ' +
-        'this session gets no workspacer tools (wake routing still applies)',
-    );
-  }
+  const facadeToken = mintSessionFacadeToken(
+    sessionId,
+    'operator',
+    ['*'],
+    undefined,
+    undefined,
+    opts.manager ? 'manager' : undefined,
+  ).token;
+  const facadeUrl = facadeUrlWithToken(facadeToken);
   // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
   // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
   // approval/sandbox prompts so the TUI doesn't block on them.
@@ -709,25 +691,28 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
     ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
     ...(hybridContextWindow ? ['-c', `model_context_window=${hybridContextWindow}`] : []),
+    '-c',
+    `mcp_servers.workspacer.url=${JSON.stringify(facadeUrl)}`,
     // Codex has a real hidden instruction channel even on this PTY-only
     // rollout path. Keep the task as the user turn (so transcript
     // reconstruction never displays host contract text), while the contract
     // remains present before and without a firstMessage.
-    ...(isFleetDispatchedWorker(opts) || cardInstruction || collaborationInstruction
-      ? [
-          '-c',
-          `developer_instructions=${JSON.stringify([isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '', cardInstruction, collaborationInstruction].filter(Boolean).join('\n\n'))}`,
-        ]
-      : []),
+    '-c',
+    `developer_instructions=${JSON.stringify(
+      [
+        managedFacadeInstructions({ sessionId }),
+        isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
+        cardInstruction,
+        collaborationInstruction,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    )}`,
     ...(skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
   ];
   const picked = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
   const rawProfile = profileAppliesTo(picked, 'codex') ? picked : undefined;
-  const profile = opts.scrubProfileBypass
-    ? opts.profileGranted
-      ? scrubRemoteGrantedProfile(rawProfile)
-      : scrubBypassProfile(rawProfile)
-    : rawProfile;
+  const profile = rawProfile;
   const prepared = await prepareLaunchIntegration(
     opts.launchIntegrationId,
     { agent: 'codex', cwd, model: spawnModel, resume: !!opts.resumeSessionId },

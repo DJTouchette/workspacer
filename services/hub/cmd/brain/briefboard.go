@@ -508,10 +508,10 @@ func (r *registry) briefArchiveCall(ctx context.Context, raw json.RawMessage) (j
 	// archiveOldestEntries — which takes the directory and composes both
 	// basenames itself — because the assertion is the point: it throws on an
 	// escape, and past it the directory really does contain both files.
-	if _, err := assertPathAllowed("brief.archive", briefPathFor(dir), roots); err != nil {
+	if _, err := assertPathContained("brief.archive", briefPathFor(dir), []string{dir}); err != nil {
 		return nil, err
 	}
-	if _, err := assertPathAllowed("brief.archive", briefArchivePathFor(dir), roots); err != nil {
+	if _, err := assertPathContained("brief.archive", briefArchivePathFor(dir), []string{dir}); err != nil {
 		return nil, err
 	}
 	res, err := archiveOldestEntries(dir, section, count, keep, briefTodayStamp(time.Now()))

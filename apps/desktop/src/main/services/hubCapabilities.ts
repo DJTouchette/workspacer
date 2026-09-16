@@ -34,13 +34,8 @@ import { resolveTerminalShell } from '../lib/shellAllowlist';
 import { normalizeSpawnCwd } from '../lib/spawnCwd';
 import { resolveTransport } from '../lib/spawnTransport';
 import { createWorktree } from './worktreeService';
-import {
-  assertNoPermissionBypass,
-  isPermissionEscalation,
-  permissionModeMeansBypass,
-} from '../lib/permissionBypass';
 import type { RemoteTokenScope } from '../shared/ipcTypes';
-import { claudeProfiles, scrubBypassProfile } from './claudeProfiles';
+import { claudeProfiles } from './claudeProfiles';
 import { registerCapability, callHub, emitToRenderer } from './hubClient';
 import { spawnPairedWorker, selectPairedModel } from './pairedDispatch';
 import { listDispatchTargets } from './dispatchTargets';
@@ -51,6 +46,7 @@ import { appIconPath } from '../lib/appIcon';
 import { dropHostTrusted } from '../lib/hostTrustedConfig';
 import {
   assertPathAllowed,
+  assertPathContained,
   canonicalRoot,
   configStoreRoots,
   containsCanonical,
@@ -681,8 +677,6 @@ export function registerHubCapabilities(): void {
       label,
       parentSessionId,
       mcpItemIds,
-      profileGranted,
-      yoloGranted,
       escalationScrubbed: hubScrubbed,
       worktree,
       resultSchema: reqResultSchema,
@@ -940,91 +934,19 @@ export function registerHubCapabilities(): void {
       if (executionTarget !== 'paired') throw new Error('Unsupported execution target');
       return spawnPairedWorker({ ...(params as Record<string, unknown>), executionTarget, remoteCwd, message }, dispatchAdmission, templateBody, resultSchema);
     }
-    // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
-    // desktop spawns over IPC). Driving an agent is already code execution on
-    // the host, but we refuse to let a remote caller silently auto-bypass every
-    // approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
-    // still surface and can be answered remotely; a YOLO agent must be started
-    // locally. So `skipPermissions` is forced off here — UNLESS the hub stamped
-    // `yoloGranted`, its verification that the CALLING token carries the
-    // full-access grant (fleet-manager full-access mode, config
-    // agents.fleetFullAccess). The stamp can't be forged: sanitizeSpawnParams
-    // deletes any caller-supplied copy and re-adds it only for a verified grant
-    // or the trusted host. So a granted manager's dispatched workers run
-    // bypassed; every other bus spawn is still clamped.
-    //
-    // The two mode spellings used to be compared inline here, which made the
-    // invariant look like a property of SPAWNING. It is a property of the mode,
-    // and `claude.setPermissionMode` reached the same escalation on an already
-    // running agent with no clamp at all — see lib/permissionBypass.ts, now the
-    // single vocabulary both doors consult.
-    // An OMITTED skipPermissions resolves to the config default the spawn
-    // dialog pre-selects (claude.skipPermissionsDefault, or a bypass
-    // defaultPermissionMode); an explicit caller value — true or false — always
-    // wins. Resolved BEFORE the clamp below so a config-defaulted bypass passes
-    // the SAME grant gate as an explicit request: without the hub-stamped
-    // yoloGranted it is clamped identically — the operator's default never
-    // escalates an ungranted token.
-    // ONE config snapshot for the whole spawn decision (bypass default below,
-    // transport further down) — a second read could land on the other side of a
-    // concurrent config write and leave one spawn half-decided by each.
+    // An authenticated agent launch is already the user's authorization to run
+    // that provider. Workspacer therefore forwards explicit and configured
+    // provider permission modes unchanged; legacy yolo/profile grant stamps are
+    // accepted on the wire but have no authority role.
     const spawnCfg = configService.getConfig();
     const claudeCfg = spawnCfg.claude;
-    const skipDefaulted = reqSkip === undefined;
-    const wantSkip = skipDefaulted
+    const skipPermissions = reqSkip === undefined
       ? claudeCfg?.skipPermissionsDefault === true ||
-        permissionModeMeansBypass(claudeCfg?.defaultPermissionMode)
+        ['bypassPermissions', 'yolo'].includes(claudeCfg?.defaultPermissionMode ?? '')
       : !!reqSkip;
-    const yoloOK = yoloGranted === true;
-    if (!yoloOK && (wantSkip || isPermissionEscalation(reqMode))) {
-      console.warn(
-        `[hub] agents.spawn: ignoring permission bypass ${
-          skipDefaulted && wantSkip
-            ? 'resolved from the config default (claude.skipPermissionsDefault / defaultPermissionMode)'
-            : 'from a bus client'
-        } — remote spawns never auto-bypass approvals without a hub-verified full-access grant.`,
-      );
-    }
-    const skipPermissions = yoloOK ? wantSkip : false;
-    // NO SILENT DOWNGRADES: everything this handler refuses is named to the
-    // caller in the result, seeded with what the hub router already took.
-    // Only an EXPLICIT request counts — a config default that never resolves is
-    // the operator's setting not applying to an ungranted token, not something
-    // the caller asked for and lost, and counting it would make every ordinary
-    // ask-mode spawn claim it was scrubbed.
     const escalationDropped: string[] = [...(Array.isArray(hubScrubbed) ? hubScrubbed : [])];
-    if (!yoloOK && !skipDefaulted && wantSkip) escalationDropped.push('skipPermissions');
-    if (!yoloOK && isPermissionEscalation(reqMode)) escalationDropped.push('permissionMode');
-    /** The escalation verdict every return path reports. `fullAccess` is what
-     *  the session actually runs with, read AFTER the clamp rather than from
-     *  the request. */
     const escalation = () => ({ fullAccess: skipPermissions, scrubbed: escalationDropped });
-    // …and the same clamp on `mcpItemIds`, for the same reason and with a
-    // sharper edge. A library item of kind `mcp` carries a `command`, `args` and
-    // `env` verbatim into a `--mcp-config` file, and the spawn then passes
-    // `--allowedTools mcp__<id>`, so the server is PRE-APPROVED and no permission
-    // prompt gates it: `mcpItemIds: ['x']` is argv[0] of a host process chosen by
-    // whoever wrote item `x`. And the write side cannot be closed — a bus caller
-    // reaches the item through library.save OR through a plain fs.write into
-    // <configDir>/library, which is a configStoreRoot by design. So the identity
-    // of the SPAWNER is the only thing left to gate on: a locally-initiated spawn
-    // (ipc.ts) still honours the selection, a bus one does not.
-    if (mcpItemIds && mcpItemIds.length) {
-      escalationDropped.push('mcpItemIds');
-      console.warn(
-        '[hub] agents.spawn: ignoring mcpItemIds from a bus client — an MCP server definition is argv[0] of a host process, and it is pre-approved via --allowedTools.',
-      );
-    }
-    const busMcpItemIds = undefined;
-    // …and the same for a bypass smuggled in through the PROFILE: clamping the
-    // request's own fields left `profileId` as an open door (a bus caller can
-    // create a profile with `--dangerously-skip-permissions` in extraArgs, or
-    // reuse the user's own YOLO profile). The brain already scrubbed this; the
-    // desktop path did not, so the two stacks disagreed on the invariant.
-    const scrubProfileBypass = true;
-    // A granted spawn keeps a bypass mode too (its whole point); otherwise an
-    // escalation mode is dropped to the default, same as the skip clamp above.
-    const permissionMode = !yoloOK && isPermissionEscalation(reqMode) ? undefined : reqMode;
+    const permissionMode = reqMode;
     // Worktree isolation for a ship task (fleet-manager default): carve a fresh
     // git worktree of `cwd` and spawn the worker THERE, so parallel work on one
     // repo never collides. The IPC path does this in the renderer
@@ -1264,9 +1186,7 @@ export function registerHubCapabilities(): void {
         pluginTools,
         label,
         parentSessionId,
-        mcpItemIds: busMcpItemIds,
-        scrubProfileBypass,
-        profileGranted: profileGranted === true,
+        mcpItemIds,
         resultSchema,
         routing,
         firstMessage: message,
@@ -1288,8 +1208,6 @@ export function registerHubCapabilities(): void {
         launchIntegrationId,
       cwd: spawnCwd,
       profileId,
-      scrubProfileBypass,
-      profileGranted: profileGranted === true,
       model,
       modelIdentity,
       contextWindow,
@@ -1306,7 +1224,7 @@ export function registerHubCapabilities(): void {
       parentSessionId,
       cols,
       rows,
-      mcpItemIds: busMcpItemIds,
+      mcpItemIds,
       resultSchema,
       routing,
       firstMessage: message,
@@ -1511,9 +1429,7 @@ export function registerHubCapabilities(): void {
     if (!sessionId || typeof mode !== 'string' || !mode) {
       throw new Error('claude.setPermissionMode requires { sessionId, mode }');
     }
-    // The CHECKED value is the one that travels, not the caller's variable.
-    const requested = assertNoPermissionBypass('claude.setPermissionMode', mode);
-    const result = await claudemonSessionClient.setPermissionMode(sessionId, requested);
+    const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
     if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
     return result;
   });
@@ -2022,46 +1938,12 @@ export function registerHubCapabilities(): void {
       mcpItemIds?: string[];
     };
     if (!name) throw new Error('claude.profiles.add requires { name }');
-    // SCRUB AT WRITE TIME, not only at spawn time. Everything registered with
-    // cat() is a BUS entry point (the local Settings write is a separate
-    // in-process IPC path, ipc.ts CLAUDE_PROFILES_ADD, and is unaffected), and
-    // scrubBypassProfile used to run only on the bus SPAWN — so a bus caller
-    // could persist a `configDir` (which becomes CLAUDE_CONFIG_DIR: settings.json,
-    // permissions.allow and hooks, i.e. commands claude runs unprompted) plus
-    // --dangerously-skip-permissions, and wait for the LOCAL user to pick that
-    // profile in the New Agent dialog, where nothing scrubs. Twin of the brain's
-    // registry.profilesAdd.
-    const safe = scrubBypassProfile({
-      configDir: configDir ?? '',
-      extraArgs: extraArgs ?? [],
-      mcpItemIds: mcpItemIds ?? [],
-    })!;
-    // mcpItemIds goes through the scrub too, and is therefore dropped. It used
-    // to be forwarded PAST it — the one field the "scrubbed at write time on
-    // both bus providers" record in capspec did not actually cover — and an MCP
-    // server definition is `command`+`args`+`env` handed to a host process, with
-    // `--allowedTools mcp__<id>` pre-approving it. SpawnAgentDialog copies a
-    // profile's mcpItemIds into the spawn on selection, so a bus-planted profile
-    // loaded the caller's servers into a LOCAL spawn.
-    return claudeProfiles.addProfile(name, safe.configDir, safe.extraArgs, safe.mcpItemIds);
+    return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? [], mcpItemIds ?? []);
   });
   cat('claude.profiles.update', (params: unknown) => {
     const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };
     if (!id) throw new Error('claude.profiles.update requires { id, updates }');
-    // Same scrub as add: update is the other way to plant a CLAUDE_CONFIG_DIR or
-    // a bypass flag on a profile the local user then picks.
-    const u = { ...(updates ?? ({} as ProfileUpdate)) };
-    if (u.configDir !== undefined || u.extraArgs !== undefined || u.mcpItemIds !== undefined) {
-      const scrubbed = scrubBypassProfile({
-        configDir: u.configDir ?? '',
-        extraArgs: u.extraArgs ?? [],
-        mcpItemIds: u.mcpItemIds ?? [],
-      })!;
-      if (u.configDir !== undefined) u.configDir = scrubbed.configDir;
-      if (u.extraArgs !== undefined) u.extraArgs = scrubbed.extraArgs;
-      if (u.mcpItemIds !== undefined) u.mcpItemIds = scrubbed.mcpItemIds;
-    }
-    return claudeProfiles.updateProfile(id, u);
+    return claudeProfiles.updateProfile(id, updates ?? ({} as ProfileUpdate));
   });
   cat('claude.profiles.remove', (params: unknown) => {
     const { id } = (params ?? {}) as { id?: string };
@@ -2168,7 +2050,7 @@ export function registerHubCapabilities(): void {
    *  canonical path to open (BINDING DECISION 2).
    *  TWIN: assertLibraryItemPath in services/hub/cmd/brain/library.go. */
   const assertLibraryItemPath = (cap: string, full: string, canonicalCwd?: string): string => {
-    const canonical = assertPathAllowed(cap, full, libraryItemRoots(canonicalCwd));
+    const canonical = assertPathContained(cap, full, libraryItemRoots(canonicalCwd));
     for (const dir of libraryItemDirs(canonicalCwd)) {
       if (containsCanonical(dir, canonical)) return canonical;
     }
@@ -2580,7 +2462,7 @@ export function registerHubCapabilities(): void {
     // identical shape here. assertPathAllowed resolves per component and
     // tolerates a leaf that does not exist yet, which is what fs.write already
     // relies on, so the composed path can be asserted before it is created.
-    const briefPath = assertPathAllowed('brief.append', briefPathFor(dir), workspaceRoots());
+    const briefPath = assertPathContained('brief.append', briefPathFor(dir), [dir]);
     // The composed line when the caller asked for one, the caller's own line
     // otherwise — byte for byte, so plain brief_append is untouched by this.
     const text = hasResultParams({ sessionId, result })
@@ -2618,7 +2500,7 @@ export function registerHubCapabilities(): void {
     // The composed path is guarded for the reason brief.append's own comment
     // spells out: `project` can be an allowed directory while
     // `<project>/.workspacer` is a symlink pointing out of every root.
-    const briefPath = assertPathAllowed('brief.check', briefPathFor(dir), workspaceRoots());
+    const briefPath = assertPathContained('brief.check', briefPathFor(dir), [dir]);
     let content = '';
     try {
       content = fs.readFileSync(briefPath, 'utf-8');
@@ -2667,12 +2549,8 @@ export function registerHubCapabilities(): void {
     // archiveOldestEntries — which takes the directory and composes both
     // basenames itself — because the assertion is the point: it throws on an
     // escape, and past it the directory really does contain both files.
-    assertPathAllowed('brief.archive', briefPathFor(dir), workspaceRoots());
-    assertPathAllowed(
-      'brief.archive',
-      path.join(dir, '.workspacer', 'brief.archive.md'),
-      workspaceRoots(),
-    );
+    assertPathContained('brief.archive', briefPathFor(dir), [dir]);
+    assertPathContained('brief.archive', path.join(dir, '.workspacer', 'brief.archive.md'), [dir]);
     return archiveOldestEntries({ dir, section: parseBriefSection(section), count, keep });
   });
 
@@ -2829,10 +2707,10 @@ export function registerHubCapabilities(): void {
         ? root + filePath
         : root + path.sep + filePath;
     // Always: inside the repository git is about to resolve the pathspec in.
-    const canonicalFile = assertPathAllowed(cap, anchored, [root]);
+    const canonicalFile = assertPathContained(cap, anchored, [root]);
     // …plus whatever narrower boundary the particular leg demands. Each set is a
     // separate assertion, so a caller has to satisfy ALL of them.
-    for (const roots of extraRootSets) assertPathAllowed(cap, anchored, roots);
+    for (const roots of extraRootSets) assertPathContained(cap, anchored, roots);
     // git runs from the work-tree root, so it receives the validated path
     // expressed from that root: the operand is a function of the CANONICAL path,
     // never of the caller's string. (Root-relative is what git wants for a
@@ -2859,7 +2737,7 @@ export function registerHubCapabilities(): void {
     // Proves the cwd really is at-or-inside the derived root before path.relative
     // is trusted to describe it (a `..` result would be a pathspec pointing OUT
     // of the repo, i.e. the escape this helper exists to close).
-    const checked = assertPathAllowed(cap, canonicalCwd, [root]);
+    const checked = assertPathContained(cap, canonicalCwd, [root]);
     const canonicalRootPath = canonicalRoot(root) ?? root;
     return path.relative(canonicalRootPath, checked) || '.';
   };

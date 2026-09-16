@@ -482,7 +482,7 @@ func (r *registry) briefAppendCall(ctx context.Context, raw json.RawMessage) (js
 	// anchorGitPathspec states, applied to a composed path rather than a
 	// caller-supplied one. assertPathAllowed resolves per component and tolerates
 	// a leaf that does not exist yet, which is what fs.write already relies on.
-	briefPath, err := assertPathAllowed("brief.append", briefPathFor(dir), roots)
+	briefPath, err := assertPathContained("brief.append", briefPathFor(dir), []string{dir})
 	if err != nil {
 		return nil, err
 	}

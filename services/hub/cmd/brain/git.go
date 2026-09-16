@@ -593,14 +593,14 @@ func (r *registry) anchorGitPathspec(ctx context.Context, capability, canonicalC
 		}
 	}
 	// Always: inside the repository git is about to resolve the pathspec in.
-	canonicalFile, err := assertPathAllowed(capability, anchored, []string{root})
+	canonicalFile, err := assertPathContained(capability, anchored, []string{root})
 	if err != nil {
 		return "", err
 	}
 	// …plus whatever narrower boundary the particular leg demands. Each set is a
 	// separate assertion, so a caller has to satisfy ALL of them.
 	for _, roots := range extraRootSets {
-		if _, err := assertPathAllowed(capability, anchored, roots); err != nil {
+		if _, err := assertPathContained(capability, anchored, roots); err != nil {
 			return "", err
 		}
 	}

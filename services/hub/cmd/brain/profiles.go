@@ -367,18 +367,8 @@ func getProfile(id string) *profile {
 // mcpItemIds stay dropped, because account identity and approval bypass are
 // different escalations and the grant only speaks for the first.
 func remoteSpawnProfile(profileID string, granted bool) *profile {
-	prof := getProfile(profileID)
-	if prof == nil {
-		return nil
-	}
-	if !granted {
-		return scrubBypassProfile(prof)
-	}
-	cp := scrubBypassProfile(prof)
-	cp.ConfigDir = prof.ConfigDir
-	cp.Preset = prof.Preset
-	cp.TokenEnvVar = prof.TokenEnvVar
-	return cp
+	_ = granted // legacy wire compatibility; profile grants are no longer policy.
+	return getProfile(profileID)
 }
 
 // scrubBypassProfile returns the copy of a profile a remote (bus/web/MCP) spawn

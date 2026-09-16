@@ -373,8 +373,6 @@ export function useAgentManager() {
           permissionMode: opts.permissionMode,
           skipPermissions: opts.skipPermissions,
           mcpItemIds: opts.mcpItemIds,
-          toolScope: opts.toolScope,
-          pluginTools: opts.pluginTools,
           resumeSessionId: opts.resumeSessionId,
           manager: opts.manager,
           fleetFullAccess: opts.fleetFullAccess,
@@ -420,8 +418,6 @@ export function useAgentManager() {
         permissionMode: opts.permissionMode,
         skipPermissions: opts.skipPermissions,
         mcpItemIds: opts.mcpItemIds,
-        toolScope: opts.toolScope,
-        pluginTools: opts.pluginTools,
         // Persist the role flags so a respawn re-passes them — without these a
         // revived manager re-minted its facade token with NO grants
         // (the respawn-drops-grants regression; see lib/respawnOptions.ts).
@@ -619,8 +615,6 @@ export function useAgentManager() {
           permissionMode,
           skipPermissions,
           mcpItemIds: agent.mcpItemIds,
-          toolScope: agent.toolScope,
-          pluginTools: agent.pluginTools,
           resumeSessionId,
           cols: 120,
           rows: 32,

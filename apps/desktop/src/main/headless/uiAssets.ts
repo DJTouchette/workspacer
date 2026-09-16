@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FONT_EXT, customFontFamily } from '../shared/customFonts';
 import { projectIconsDir, mimeForIcon, downloadProjectIcon } from '../services/projectIcons';
-import { assertPathAllowed } from '../lib/pathConfinement';
+import { assertPathContained } from '../lib/pathConfinement';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 const fontDir = () => path.join(os.homedir(), '.workspacer', 'fonts');
@@ -41,7 +41,7 @@ export function readUIAsset(kind: unknown, file: unknown) {
   )
     throw new Error('Invalid UI asset filename');
   const root = kind === 'font' ? fontDir() : projectIconsDir();
-  const full = assertPathAllowed('ui.asset', path.join(root, name), [root]);
+  const full = assertPathContained('ui.asset', path.join(root, name), [root]);
   const fd = fs.openSync(full, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
     const limit = kind === 'font' ? FONT_LIMIT : 2 * 1024 * 1024;
@@ -52,7 +52,7 @@ export function readUIAsset(kind: unknown, file: unknown) {
       stat.size > limit ||
       stat.ino !== current.ino ||
       stat.dev !== current.dev ||
-      assertPathAllowed('ui.asset', full, [root]) !== full
+      assertPathContained('ui.asset', full, [root]) !== full
     )
       throw new Error('UI asset changed or exceeds its size limit');
     const buffer = Buffer.alloc(limit + 1);
@@ -92,7 +92,7 @@ export function installUIFont(name: unknown, dataBase64: unknown) {
   )
     throw new Error('The file is not a supported font');
   fs.mkdirSync(fontDir(), { recursive: true });
-  const target = assertPathAllowed('desktop.installUiFont', path.join(fontDir(), file), [
+  const target = assertPathContained('desktop.installUiFont', path.join(fontDir(), file), [
     fontDir(),
   ]);
   atomicWriteFileSync(target, bytes, { mode: 0o644 });

@@ -496,11 +496,6 @@ func validate(m *Matrix) []Issue {
 		if c.MaxCapability != "" && m.RankOf(c.MaxCapability) == UnrankedCapability {
 			add("ceilings."+key, "max_capability %q has no `capability_ranks:` entry, so this ceiling compares nothing and clamps nothing", c.MaxCapability)
 		}
-		switch c.MaxToolScope {
-		case "", "view", "triage", "operator":
-		default:
-			add("ceilings."+key, "max_tool_scope %q is not an authority tier (view, triage, operator)", c.MaxToolScope)
-		}
 	}
 	if _, ok := m.Ceilings[CeilingDefaultKey]; !ok {
 		add("ceilings", "no %q entry — a directory with no entry of its own would have no ceiling", CeilingDefaultKey)

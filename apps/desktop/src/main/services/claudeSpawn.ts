@@ -26,12 +26,12 @@ import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore, type SessionRouting } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { claudeProfiles, scrubBypassProfile, scrubRemoteGrantedProfile } from './claudeProfiles';
+import { claudeProfiles } from './claudeProfiles';
 import { syncAccountTrust } from './claudeAccountSetup';
 import { resolveClaudeDefaultEffort } from './claudeEffortDefault';
 import { buildClaudeArgv, modelFromExtraArgs } from './claudeResolver';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
-import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
+import { facadeSpawnArgs, type SessionMcpServer } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
 import { resolveSpawnModelSelection } from '../lib/spawnModel';
@@ -44,7 +44,6 @@ import { installManagerSkills } from './managerSkills';
 import { installResponseCardSkill } from './responseCardSkill';
 import { installAgentCollaborationSkills } from './agentCollaborationSkills';
 import { mintSessionFacadeToken } from './remoteTokens';
-import { managerFullAccessFromConfig } from './fullAccessGrants';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
 import { buildWorkerEscalationContract, isFleetDispatchedWorker } from '../shared/workerEscalation';
 import { profileAppliesTo } from '../shared/agentProfiles';
@@ -179,11 +178,10 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     );
   }
   const rawProfile = profileAppliesTo(pickedProfile, 'claude') ? pickedProfile : undefined;
-  const profile = opts.scrubProfileBypass
-    ? opts.profileGranted
-      ? scrubRemoteGrantedProfile(rawProfile)
-      : scrubBypassProfile(rawProfile)
-    : rawProfile;
+  // Profiles are user-authored harness configuration. Once an authenticated
+  // agent is allowed to spawn, Workspacer does not second-guess or rewrite the
+  // selected profile's config root, argv, or provider permission mode.
+  const profile = rawProfile;
   const env: Record<string, string> = {};
   if (profile?.configDir) {
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
@@ -251,21 +249,21 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   // pre-allow their tools. `--strict-mcp-config` so the session sees exactly
   // these servers, not the user's global ones. Sessions with the workspacer MCP
   // facade take the facade config instead of the user's library MCP servers.
-  const wantsFacade = opts.mcpFacade || !!opts.toolScope;
-  // A facade session takes its requested tier, defaulting to operator (the
-  // legacy mcpFacade meaning).
-  const facadeScope: RemoteTokenScope = opts.toolScope ?? 'operator';
-  let userMcp: { path: string; toolNames: string[] } | null = null;
-  if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
+  // Every supported Workspacer-launched agent gets the authenticated operator
+  // facade. Legacy mcpFacade/toolScope/pluginTools inputs remain parseable but
+  // cannot narrow (or widen) this ambient capability.
+  const wantsFacade = true;
+  const facadeScope: RemoteTokenScope = 'operator';
+  let userMcpServers: SessionMcpServer[] = [];
+  if (opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
     // listWithSecrets, not list(): the config written below is what the CLI
     // actually authenticates with, and list() masks MCP env/headers. The real
     // values never leave main — the renderer sent only `mcpItemIds`.
-    const servers = libraryService
+    userMcpServers = libraryService
       .listWithSecrets(opts.cwd)
       .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
       .map((it) => ({ id: it.id, mcp: it.mcp! }));
-    userMcp = buildSessionMcpConfig(sessionId, servers);
   }
 
   // The Fleet Manager's own coordinator model. Resolved per HARNESS
@@ -300,7 +298,7 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     wantsFacade &&
     facadeSpawnArgs({
       sessionId,
-      scope: facadeScope,
+      additionalServers: userMcpServers,
       // A host-blessed Fleet Manager's token carries a dispatch grant for
       // every local profile — the hub verifies it and stamps profileGranted
       // on the worker spawn. Only `manager` gets this; a plain facade worker
@@ -315,10 +313,10 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
       // find this token and update the grant LIVE (fullAccessGrants sync).
       token: mintSessionFacadeToken(
         sessionId,
-        facadeScope,
-        opts.pluginTools,
-        opts.manager ? claudeProfiles.getProfiles().map((p) => p.id) : undefined,
-        opts.manager ? managerFullAccessFromConfig() : undefined,
+        'operator',
+        ['*'],
+        undefined,
+        undefined,
         opts.manager ? 'manager' : undefined,
       ).token,
     });
@@ -349,14 +347,12 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     // the tier server-side — the facade refuses calls outside it even if the
     // agent guesses tool names. Built above so the structured-result contract
     // can share the one --append-system-prompt.
-    ...(facadeArgs && { mcpConfig: facadeArgs.mcpConfig, allowedTools: facadeArgs.allowedTools }),
-    ...(appendSystemPrompt && { appendSystemPrompt }),
-    // User-selected MCP servers (non-facade sessions).
-    ...(userMcp && {
-      mcpConfig: userMcp.path,
-      strictMcpConfig: true,
-      allowedTools: userMcp.toolNames,
+    ...(facadeArgs && {
+      mcpConfig: facadeArgs.mcpConfig,
+      allowedTools: facadeArgs.allowedTools,
+      ...(userMcpServers.length && { strictMcpConfig: true }),
     }),
+    ...(appendSystemPrompt && { appendSystemPrompt }),
   });
   // The cwd is used exactly as written — normalizeSpawnCwd trims and nothing
   // more, deliberately (BINDING DECISION 1:

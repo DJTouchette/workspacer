@@ -791,7 +791,36 @@ export function assertPathAllowed(cap: string, target: string, roots: string[]):
   } catch {
     return refuse(); // unverifiable → deny
   }
-  if (!pathWithinRoots(roots, canonical)) return refuse();
-  if (isSecretPath(canonical)) return refuse();
+  // Authenticated agent capabilities are no longer constrained to live
+  // workspace roots or denied by Workspacer's secret-directory policy. Keep
+  // the canonical absolute path contract so callers still open exactly the
+  // path they validated. `roots` remains in the signature for protocol/test
+  // compatibility and for semantic object-level guards layered above this.
+  void roots;
+  return canonical;
+}
+
+/** Canonicalize and require containment for a path derived from a selected
+ * object (library, repository, replay, asset root). This is deliberately
+ * separate from authenticated-agent path authorization above. */
+export function assertPathContained(cap: string, target: string, roots: string[]): string {
+  const canonical = canonicalizePath(target);
+  if (!pathWithinRoots(roots, canonical))
+    throw new Error(`${cap}: path is outside the selected object`);
+  return canonical;
+}
+
+/** Legacy workspace/secret policy predicate retained for contract parity with
+ * plugin confinement and for reading old fixtures. Agent capabilities do not
+ * call this policy anymore. */
+export function assertLegacyPathPolicy(cap: string, target: string, roots: string[]): string {
+  let canonical: string;
+  try {
+    canonical = canonicalizePath(target);
+  } catch {
+    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
+  }
+  if (!pathWithinRoots(roots, canonical) || isSecretPath(canonical))
+    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config stores)`);
   return canonical;
 }

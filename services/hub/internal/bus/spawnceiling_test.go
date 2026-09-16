@@ -166,20 +166,19 @@ func TestSpawnUnderTheCeilingIsUntouchedAndStillRecorded(t *testing.T) {
 	}
 }
 
-// INVARIANT 1a: a caller may not grant a child a tier above its own. It needs no
-// routing file at all, which is why the resolver here refuses nothing.
-func TestCallerCannotGrantAToolTierAboveItsOwn(t *testing.T) {
+// Legacy tier fields remain parse-compatible but are no longer authority.
+func TestCallerTierDoesNotClampAChild(t *testing.T) {
 	permissive := func(SpawnCeilingRequest) SpawnCeilingVerdict {
 		return SpawnCeilingVerdict{Key: "default", MaxCapability: "frontier_plus", MaxToolScope: "operator"}
 	}
 	url, got, _ := ceilingServer(t, permissive)
 
 	m := spawnVia(t, url, "tok-triage-spawner", `{"cwd":"/tmp","toolScope":"operator"}`, got)
-	if m["toolScope"] != "triage" {
-		t.Errorf("a triage credential handed its child %v — a caller cannot grant more authority than it holds", m["toolScope"])
+	if m["toolScope"] != "operator" {
+		t.Errorf("legacy toolScope was rewritten: %v", m)
 	}
-	if !namesField(scrubbedList(t, m), "toolScope") {
-		t.Errorf("the tier downgrade was not reported to the caller: %v", m)
+	if namesField(scrubbedList(t, m), "toolScope") {
+		t.Errorf("legacy toolScope was reported as scrubbed: %v", m)
 	}
 	// At or below its own tier is untouched.
 	m = spawnVia(t, url, "tok-triage-spawner", `{"cwd":"/tmp","toolScope":"view"}`, got)

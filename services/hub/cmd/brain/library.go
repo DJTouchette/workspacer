@@ -237,7 +237,7 @@ func libraryItemDirs(canonicalCwd string) []string {
 // the item-directory requirement above. Returns the canonical path to open
 // (BINDING DECISION 2).
 func assertLibraryItemPath(capability, full, canonicalCwd string) (string, error) {
-	canonical, err := assertPathAllowed(capability, full, libraryItemRoots(canonicalCwd))
+	canonical, err := assertPathContained(capability, full, libraryItemRoots(canonicalCwd))
 	if err != nil {
 		return "", err
 	}

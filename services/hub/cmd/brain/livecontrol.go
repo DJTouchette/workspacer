@@ -70,12 +70,6 @@ func (r *registry) setPermissionMode(ctx context.Context, raw json.RawMessage) (
 	if p.SessionID == "" || p.Mode == "" {
 		return nil, fmt.Errorf("claude.setPermissionMode requires { sessionId, mode }")
 	}
-	if isPermissionEscalation(p.Mode) {
-		// The same sentence shape the spawn clamp uses: name the refusal, not a
-		// generic failure, so a caller cannot read it as "the daemon was busy".
-		return nil, fmt.Errorf("claude.setPermissionMode: refusing to set permission mode %q from the bus — "+
-			"a mode that stops the host asking for approvals has to be chosen locally", p.Mode)
-	}
 	res, err := r.cm.setPermissionMode(ctx, p.SessionID, p.Mode)
 	if err != nil {
 		return jsonResult(liveControlResult{OK: false, Error: err.Error()})

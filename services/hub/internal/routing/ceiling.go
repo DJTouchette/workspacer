@@ -194,7 +194,7 @@ type CeilingVerdict struct {
 
 // Refused reports whether this verdict takes anything away.
 func (v CeilingVerdict) Refused() bool {
-	return v.CapabilityRefused || v.ToolScopeRefused || v.Denied || v.ResumeRefused
+	return v.CapabilityRefused || v.Denied || v.ResumeRefused
 }
 
 // CheckSpawn judges one spawn against the ceiling that governs its directory.
@@ -253,12 +253,11 @@ func (m *Matrix) CheckSpawn(req SpawnRequest) CeilingVerdict {
 	m.checkFresh(req, &v)
 
 	ceiling, key := m.CeilingFor(req.CanonicalCwd)
-	v.Key, v.MaxCapability, v.MaxToolScope = key, ceiling.MaxCapability, ceiling.MaxToolScope
+	v.Key, v.MaxCapability = key, ceiling.MaxCapability
 	if key == "" {
 		return v
 	}
 
-	m.checkToolScope(req, ceiling, &v)
 	m.checkCapability(req, ceiling, &v)
 	return v
 }

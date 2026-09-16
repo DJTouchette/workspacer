@@ -34,6 +34,8 @@ vi.mock('../services/configService', () => ({ getConfigDir: () => state.configDi
 
 import {
   assertPathAllowed,
+  assertPathContained,
+  assertLegacyPathPolicy,
   canonicalizePath,
   configStoreRoots,
   containsCanonical,
@@ -48,6 +50,18 @@ import {
   MAX_LINK_HOPS,
   hubStateDirsFor,
 } from './pathConfinement';
+
+describe('authenticated agent paths', () => {
+  it('accepts any canonical absolute path while object containment stays explicit', () => {
+    const selected = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-selected-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-outside-'));
+    const target = path.join(outside, 'file.txt');
+    expect(assertPathAllowed('fs.read', target, [selected])).toBe(canonicalizePath(target));
+    expect(() => assertPathContained('library.read', target, [selected])).toThrow(
+      /outside the selected object/,
+    );
+  });
+});
 
 interface Case {
   name: string;
@@ -729,7 +743,7 @@ describe('path containment — cross-language contract', () => {
       const target = subst(c.target);
 
       if (c.expect === 'deny') {
-        const message = refusalMessage(() => assertPathAllowed('contract', target, roots));
+        const message = refusalMessage(() => assertLegacyPathPolicy('contract', target, roots));
         expect(message, c.why).toBe(REFUSAL);
         // Restated as the property it exists for: a remote caller learns
         // nothing about where its path landed. The sandbox path is unique per
@@ -751,7 +765,7 @@ describe('path containment — cross-language contract', () => {
       } else {
         // An allow returns the CANONICAL path — the string every call site must
         // then hand to the filesystem operation (checkUse in the fixture).
-        const canonical = assertPathAllowed('contract', target, roots);
+        const canonical = assertLegacyPathPolicy('contract', target, roots);
         expect(typeof canonical, c.why).toBe('string');
         expect(path.isAbsolute(canonical)).toBe(true);
         expect(canonicalShapeProblem(canonical), `canonical form of ${c.target}`).toBeNull();
@@ -796,7 +810,7 @@ describe('the canonical path assertPathAllowed returns', () => {
     fs.writeFileSync(path.join(real, 'x'), 'ok', 'utf-8');
     fs.symlinkSync(real, path.join(sandbox, 'root', 'inner'));
 
-    const canonical = assertPathAllowed('contract', path.join(sandbox, 'root', 'inner', 'x'), [
+    const canonical = assertLegacyPathPolicy('contract', path.join(sandbox, 'root', 'inner', 'x'), [
       path.join(sandbox, 'root'),
     ]);
     expect(canonical).toBe(path.join(real, 'x'));
@@ -815,13 +829,15 @@ describe('the canonical path assertPathAllowed returns', () => {
     // join(), not path.join(): path.join would collapse the '..' itself, which
     // is precisely the transformation under test.
     const target = [sandbox, 'root', 'link', '..', 'root', 'notes.txt'].join(path.sep);
-    const canonical = assertPathAllowed('contract', target, [path.join(sandbox, 'root')]);
+    const canonical = assertLegacyPathPolicy('contract', target, [path.join(sandbox, 'root')]);
     expect(canonical).toBe(path.join(sandbox, 'root', 'notes.txt'));
   });
 
   it('keeps a not-yet-existing tail verbatim', () => {
     const root = path.join(sandbox, 'root');
-    const canonical = assertPathAllowed('contract', path.join(root, 'a', 'b', 'new.txt'), [root]);
+    const canonical = assertLegacyPathPolicy('contract', path.join(root, 'a', 'b', 'new.txt'), [
+      root,
+    ]);
     expect(canonical).toBe(path.join(root, 'a', 'b', 'new.txt'));
   });
 

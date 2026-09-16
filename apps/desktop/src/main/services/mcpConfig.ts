@@ -91,17 +91,20 @@ export function managedFacadeInstructions(opts: {
  */
 export function facadeSpawnArgs(opts: {
   sessionId: string;
-  scope?: RemoteTokenScope;
   token?: string;
+  additionalServers?: SessionMcpServer[];
 }): { mcpConfig: string; allowedTools: string[]; appendSystemPrompt: string } {
   const mcpConfig = opts.token
-    ? facadeSessionMcpConfig(opts.sessionId, opts.token)
+    ? facadeSessionMcpConfig(opts.sessionId, opts.token, opts.additionalServers)
     : supervisorMcpConfigPath();
   const idNote = `Your own workspacer session id is ${opts.sessionId}.`;
   return {
     mcpConfig,
-    allowedTools: ['mcp__workspacer'],
-    appendSystemPrompt: `${workerRoleNote(opts.scope ?? 'operator')} ${idNote}`,
+    allowedTools: [
+      'mcp__workspacer',
+      ...(opts.additionalServers ?? []).map((server) => `mcp__${server.id}`),
+    ],
+    appendSystemPrompt: `${workerRoleNote('operator')} ${idNote}`,
   };
 }
 
@@ -129,7 +132,11 @@ export function supervisorMcpConfigPath(): string {
  * param) keeps the token out of argv — the file rides `--mcp-config <path>`,
  * and /proc/<pid>/cmdline is world-readable where argv is not.
  */
-export function facadeSessionMcpConfig(sessionId: string, token: string): string {
+export function facadeSessionMcpConfig(
+  sessionId: string,
+  token: string,
+  additionalServers: SessionMcpServer[] = [],
+): string {
   const built = buildSessionMcpConfig(sessionId, [
     {
       id: 'workspacer',
@@ -139,6 +146,7 @@ export function facadeSessionMcpConfig(sessionId: string, token: string): string
         headers: { Authorization: `Bearer ${token}` },
       } as McpServerConfig,
     },
+    ...additionalServers.filter((server) => server.id !== 'workspacer'),
   ]);
   if (!built) throw new Error('facadeSessionMcpConfig: failed to build facade entry');
   return built.path;

@@ -270,7 +270,7 @@ describe('F-line form', () => {
       target: { value: 'Review project' },
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Work', exact: true }));
-    fireEvent.change(screen.getByLabelText('Workspacer tools'), { target: { value: 'view' } });
+    expect(screen.queryByLabelText('Workspacer tools')).not.toBeInTheDocument();
     fireEvent.click(advancedButton());
     expect(screen.queryByLabelText('Workspacer tools')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Advanced overrides')).toHaveTextContent('Review project');
@@ -285,7 +285,6 @@ describe('F-line form', () => {
       expect.objectContaining({
         name: 'Review project',
         profileId: 'work-uuid',
-        toolScope: 'view',
         model: 'sonnet',
         transport: 'stream',
       }),

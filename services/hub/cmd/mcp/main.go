@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -984,14 +983,6 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	if in.WorkflowStepID != "" && in.ToolScope == "" {
 		in.ToolScope = "operator"
 	}
-	if in.ProfileID != "" && !slices.Contains(b.profiles, in.ProfileID) {
-		return &mcp.CallToolResult{
-			IsError: true,
-			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
-				"profile %q is not granted to this session token (profilesAllowed: %v). Omit profileId to spawn under the default account, or ask the workspacer user to bless this session with that profile.",
-				in.ProfileID, b.profiles)}},
-		}, nil, nil
-	}
 	// An OMITTED skipPermissions resolves to the workspacer config
 	// default (claude.skipPermissionsDefault / a bypass
 	// defaultPermissionMode) — the same default the desktop spawn dialog
@@ -1023,7 +1014,7 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	skipDefaulted := in.SkipPermissions == nil
 	skip := false
 	if skipDefaulted {
-		skip = b.yolo || configSkipPermissionsDefault(ctx, b)
+		skip = configSkipPermissionsDefault(ctx, b)
 	} else {
 		skip = *in.SkipPermissions
 	}
@@ -1094,17 +1085,6 @@ func spawnWithGrants(ctx context.Context, b *build, method string, in spawnAgent
 	// whose grant was missing. A config-defaulted bypass is clamped by
 	// the SAME gate (its own log spelling): the operator's default never
 	// escalates an ungranted token.
-	if !b.yolo {
-		if skip {
-			source := "requested"
-			if skipDefaulted {
-				source = "config-defaulted (claude.skipPermissionsDefault / defaultPermissionMode)"
-			}
-			log.Printf("spawn_agent: %s skipPermissions without the full-access grant — clamped (token %s, new agent %q)",
-				source, tokenLabelFrom(ctx), in.Label)
-		}
-		skip = false
-	}
 	in.SkipPermissions = &skip
 	m := method
 	peer := in.takeHub()
@@ -1627,7 +1607,7 @@ type spawnAgentIn struct {
 	ModelIdentity   string   `json:"modelIdentity,omitempty" jsonschema:"canonical provider model identity without a Claude [1m] marker. Pair with contextWindow. During mixed-version rollout model is also sent as the legacy executable companion; omit both to use the configured/provider default"`
 	ContextWindow   *uint64  `json:"contextWindow,omitempty" jsonschema:"spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, defaults to the shared contract’s fresh-Codex request). Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism"`
 	Effort          string   `json:"effort,omitempty" jsonschema:"reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)"`
-	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to dispatch under (optional; refused unless your session token's profilesAllowed grant lists this exact id — see list_profiles for ids)"`
+	ProfileID       string   `json:"profileId,omitempty" jsonschema:"workspacer provider profile id to dispatch under (optional; see list_profiles for ids)"`
 	SkipPermissions *bool    `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions; omit and it resolves to a bypass when your session carries the full-access grant (the operator turned on full access for the fleet/supervisor, whose stated meaning is that the agents you dispatch skip approvals), else to the workspacer config default (claude.skipPermissionsDefault / a bypass defaultPermissionMode). An explicit true/false always wins — pass false to dispatch one worker with approvals on. Honored — whether requested, granted or config-defaulted — only when your session's token carries the full-access grant (the hub verifies and stamps it; ungranted requests spawn with approvals on, and remote/federated peer spawns are re-judged by the peer's own hub)"`
 	Label           string   `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"parent session for static/non-session controllers. Session-authenticated callers are always recorded as the parent by the host; a conflicting value is ignored"`

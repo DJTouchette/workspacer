@@ -286,6 +286,17 @@ func TestCheckSpawnClampsTheToolScope(t *testing.T) {
 	}
 }
 
+func TestCheckSpawnIgnoresLegacyToolScopeCeilings(t *testing.T) {
+	m, err := Load("test.yaml", []byte("ceilings:\n  default: { max_capability: frontier, max_tool_scope: view }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := m.CheckSpawn(SpawnRequest{CanonicalCwd: t.TempDir(), ToolScope: "operator"})
+	if v.ToolScopeRefused || v.ToolScope != "" || v.MaxToolScope != "" {
+		t.Fatalf("legacy tool-scope ceiling still influenced the verdict: %+v", v)
+	}
+}
+
 // The ceiling is looked up on a path that is ALREADY canonical, and this test
 // exists to keep that precondition visible: hand CheckSpawn the unresolved
 // spelling and the capped directory is missed entirely. The enforcement site is

@@ -58,12 +58,6 @@ export function buildRespawnSpawnOptions(
     permissionMode: agent.permissionMode,
     skipPermissions: agent.skipPermissions,
     mcpItemIds: agent.mcpItemIds,
-    // A card saved as a supervisor (the retired fleet role) has no toolScope of
-    // its own — the role implied 'operator'. Heal it here so respawning an old
-    // supervisor card revives an operator-tier facade agent instead of one with
-    // no workspacer tools at all.
-    toolScope: agent.toolScope ?? (legacySupervisorRecord(agent) ? 'operator' : undefined),
-    pluginTools: agent.pluginTools,
     // Role flag: the re-minted facade token's grants (profilesAllowed, the
     // config-resolved yolo grant, the role tag) all hang off it.
     manager: agent.manager,
@@ -72,11 +66,4 @@ export function buildRespawnSpawnOptions(
     cols: 120,
     rows: 32,
   };
-}
-
-/** A card persisted before the supervisor role was removed: the flags are gone
- *  from AgentWorkspace, but the saved JSON still carries them. */
-function legacySupervisorRecord(agent: AgentWorkspace): boolean {
-  const legacy = agent as AgentWorkspace & { supervisor?: boolean; kind?: string };
-  return legacy.supervisor === true || legacy.kind === 'supervisor';
 }

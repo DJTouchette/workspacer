@@ -13,7 +13,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { configService } from '../services/configService';
-import { assertPathAllowed, canonicalRoot, containsCanonical } from '../lib/pathConfinement';
+import {
+  assertPathAllowed,
+  assertPathContained,
+  canonicalRoot,
+  containsCanonical,
+} from '../lib/pathConfinement';
 import {
   worktreeInfo,
   createWorktree,
@@ -208,7 +213,7 @@ function watchWorkflow(sessionId: string): string | undefined {
   }
   for (const candidate of candidates) {
     try {
-      const checked = assertPathAllowed('desktop.workflowAgentConversation', candidate, roots);
+      const checked = assertPathContained('desktop.workflowAgentConversation', candidate, roots);
       if (!fs.statSync(checked).isFile()) continue;
       workflowWatcher.attach(sessionId, checked, (update) => {
         emit('workflow.update', { sessionId, ...update });
@@ -656,7 +661,7 @@ export async function desktopHostCall(
         `agent-${agentId.replace(/^agent-/, '')}.jsonl`,
       );
       try {
-        assertPathAllowed(method, target, [root]);
+        assertPathContained(method, target, [root]);
       } catch {
         return null;
       }

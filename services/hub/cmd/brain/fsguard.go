@@ -1007,11 +1007,21 @@ func assertPathAllowed(capability, target string, roots []string) (string, error
 	if err != nil {
 		return refuse()
 	}
-	if !pathWithinRootsCanonical(roots, ct) {
-		return refuse()
-	}
-	if pathIsSecretCanonical(ct) {
-		return refuse()
+	// Authenticated agent calls may operate on any absolute directory. Retain
+	// canonicalization so check-path and opened-path remain identical; semantic
+	// containment (library item under its library, git pathspec under its repo,
+	// replay path under its worktree) remains at the object-specific call sites.
+	_ = roots
+	return ct, nil
+}
+
+// assertPathContained is for paths derived inside a selected object. Unlike
+// authenticated-agent authorization, semantic repository/library/replay
+// containment remains enforced.
+func assertPathContained(capability, target string, roots []string) (string, error) {
+	ct, err := canonicalizePath(target)
+	if err != nil || !pathWithinRootsCanonical(roots, ct) {
+		return "", fmt.Errorf("%s: path is outside the selected object", capability)
 	}
 	return ct, nil
 }
