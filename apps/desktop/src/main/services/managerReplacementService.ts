@@ -413,7 +413,7 @@ export class ManagerReplacementService {
       );
     const current = this.host.source(o.sourceSessionId, o.paneId);
     if (JSON.stringify(current) !== JSON.stringify(o.launch))
-      throw new Error('Manager settings, identity or grants changed during preparation');
+      throw new Error('Manager settings or lifecycle identity changed during preparation');
     if (!this.host.readyForTransfer(o.sourceSessionId))
       throw new Error('A task dispatch reservation is still active; ownership was not transferred');
     const currentWorkers = this.host

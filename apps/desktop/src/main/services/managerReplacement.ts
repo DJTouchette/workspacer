@@ -17,7 +17,7 @@ import { spawnManagedAgent } from './managedSpawn';
 import { managerReplacementState, type ManagerLaunch } from './managerReplacementState';
 import { managerRequests } from './managerRequestService';
 import { ManagerReplacementService } from './managerReplacementService';
-import { sessionFacadeGrantFingerprint, revokeSessionFacadeTokens } from './remoteTokens';
+import { sessionFacadeIdentityFingerprint, revokeSessionFacadeTokens } from './remoteTokens';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
 import {
   MANAGER_REPLACEMENT_UNAVAILABLE,
@@ -40,7 +40,7 @@ function source(id: string, paneId?: string): ManagerLaunch {
   assertLocalHost();
   const session = claudeSessionStore.getSnapshot(id);
   const recorded = managerReplacementState.launch(id);
-  const grants = sessionFacadeGrantFingerprint(id);
+  const grants = sessionFacadeIdentityFingerprint(id);
   if (
     !session ||
     session.status === 'ended' ||
@@ -130,11 +130,11 @@ async function validateSuccessor(id: string, launch: ManagerLaunch): Promise<voi
     !s?.isWakeTarget ||
     s.status === 'ended' ||
     s.hub ||
-    sessionFacadeGrantFingerprint(id) !== launch.grants ||
+    sessionFacadeIdentityFingerprint(id) !== launch.grants ||
     managerLaunchConfiguration(launch.options) !== launch.configuration
   )
     throw new Error(
-      'Successor identity, liveness, cwd, provider or operator grants do not match the source',
+      'Successor identity, liveness, cwd, provider or lifecycle fingerprint do not match the source',
     );
   const actual = managerReplacementState.launch(id)?.options;
   if (

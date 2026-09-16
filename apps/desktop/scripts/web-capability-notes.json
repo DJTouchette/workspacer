@@ -321,7 +321,7 @@
     "status": "browser equivalent"
   },
   "pluginPaneToken": {
-    "detail": "Guarded /plugins/pane-token routes; mint/revoke for scoped plugin panes.",
+    "detail": "Guarded /plugins/pane-token routes; mint/revoke ephemeral plugin pane identities.",
     "status": "HTTP wired"
   },
   "pricingGetRates": {
@@ -341,7 +341,7 @@
     "status": "HTTP wired"
   },
   "revokePluginPaneToken": {
-    "detail": "Guarded /plugins/pane-token routes; mint/revoke for scoped plugin panes.",
+    "detail": "Guarded /plugins/pane-token routes; revoke ephemeral plugin pane identities.",
     "status": "HTTP wired"
   },
   "saveClipboardImage": {

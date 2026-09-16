@@ -8,7 +8,7 @@ Normal completion requires no final confirmation.
 ## Supported boundary
 
 - An owned local desktop manager using stream transport, with recorded launch
-  provenance and manager/operator grants. Missing provenance and custom launch
+  provenance and manager lifecycle identity. Missing provenance and custom launch
   integrations return unavailable rather than guessing launch settings.
 - The desktop must own `agents.spawn`, `agents.sendMessage`, `agents.reparent`
   and `fleetWorkflows.request` on the hub. Remote-client mode, an adopted

@@ -152,8 +152,8 @@ interface PaneCallbacks {
   workspaceAgents?: { sessionId?: string }[];
   appCwd?: string;
   /** The owning agent's CURRENT working tree when it differs from its home cwd
-   *  (e.g. a git worktree entered mid-session). Agent-scoped plugin panes
-   *  re-scope to it live. */
+   *  (e.g. a git worktree entered mid-session). Agent-associated plugin panes
+   *  follow it as live project context. */
   agentLiveCwd?: string;
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];

@@ -9,7 +9,7 @@ import {
   type ReplacementMetadata,
 } from '../services/managerReplacementState';
 import { managerLaunchConfiguration } from '../services/managerLaunchConfiguration';
-import { sessionFacadeGrantFingerprint } from '../services/remoteTokens';
+import { sessionFacadeIdentityFingerprint } from '../services/remoteTokens';
 import { dispatchHistoryStore } from '../services/dispatchHistoryStore';
 import { managerRequests } from '../services/managerRequestService';
 import { buildManagerKickoff } from '../shared/managerDoctrine';
@@ -36,7 +36,7 @@ async function refresh(receiptSessionId?: string): Promise<string> {
 function source(id: string, paneId?: string): ManagerLaunch {
   const row = snapshot(id),
     recorded = state.launch(id),
-    grants = sessionFacadeGrantFingerprint(id);
+    grants = sessionFacadeIdentityFingerprint(id);
   if (
     !row ||
     row.status === 'ended' ||
@@ -187,10 +187,10 @@ const service = new ManagerReplacementService(state, {
       s.cwd !== launch.options.cwd ||
       s.provider !== launch.options.provider ||
       s.hub ||
-      sessionFacadeGrantFingerprint(id) !== launch.grants ||
+      sessionFacadeIdentityFingerprint(id) !== launch.grants ||
       managerLaunchConfiguration(launch.options) !== launch.configuration
     )
-      throw new Error('Successor identity, liveness or grants do not match source');
+      throw new Error('Successor identity, liveness or lifecycle fingerprint do not match source');
     if (op && !op.transferIntent && s.user_prompts !== 0)
       throw new Error('Successor must report zero user prompts before transfer');
     if (
@@ -266,8 +266,8 @@ export async function replacementRequest(request: ManagerReplacementRequest, bin
   return result;
 }
 export function rememberManager(sessionId: string, options: ManagerLaunch['options']) {
-  const grants = sessionFacadeGrantFingerprint(sessionId);
-  if (!grants) throw new Error('Manager operator grant was not recorded');
+  const grants = sessionFacadeIdentityFingerprint(sessionId);
+  if (!grants) throw new Error('Manager lifecycle identity was not recorded');
   state.rememberLaunch(sessionId, {
     options,
     grants,

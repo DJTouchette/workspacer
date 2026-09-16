@@ -21,6 +21,7 @@ export interface ReplacementMetadata {
 }
 export interface ManagerLaunch {
   options: ManagedSpawnOptions;
+  /** Legacy wire name: non-secret manager lifecycle identity fingerprint. */
   grants: string;
   configuration?: string;
 }

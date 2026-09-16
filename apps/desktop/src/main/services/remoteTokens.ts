@@ -238,8 +238,8 @@ export function revokeRemoteToken(token: string): RemoteTokenRecord {
   return removed;
 }
 
-/** Non-secret launch invariant. Legacy selection/grant fields are omitted. */
-export function sessionFacadeGrantFingerprint(sessionId: string): string | undefined {
+/** Non-secret manager lifecycle invariant. Legacy selection/grant fields are omitted. */
+export function sessionFacadeIdentityFingerprint(sessionId: string): string | undefined {
   const r = readTokens().find((r) => r.label === SESSION_LABEL_PREFIX + sessionId);
   if (!r || r.scope !== 'operator' || r.role !== 'manager') return undefined;
   return crypto
@@ -247,3 +247,6 @@ export function sessionFacadeGrantFingerprint(sessionId: string): string | undef
     .update(JSON.stringify({ scope: r.scope, role: r.role }))
     .digest('hex');
 }
+
+/** @deprecated Compatibility spelling for mixed-version replacement journals. */
+export const sessionFacadeGrantFingerprint = sessionFacadeIdentityFingerprint;

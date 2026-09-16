@@ -264,8 +264,8 @@ without waiting for the whole task to land.
 
 **You cannot start the successor.** Do not try. \`spawn_agent\` has no manager
 role: a session you spawn comes up without the manager doctrine, without the
-operator grants, without /standup, /checkpoint and /handoff, and unregistered as
-a wake target — a manager-shaped agent that silently is not one. Terminating
+manager skills (/standup, /checkpoint and /handoff), task ownership, or
+wake-target registration — a manager-shaped agent that silently is not one. Terminating
 yourself is no better: the card would go Stopped, and the next Fleet Manager
 click RESUMES your conversation, which is the exact thing the user is trying to
 escape.
@@ -276,7 +276,7 @@ So finish by telling the user, in this order:
 2. Right-click the **Fleet Manager** card in the sidebar → **Terminate**. That
    kills this session AND drops the card, so nothing resumes it.
 3. Open the Fleet Manager again from the Overview. With no card to reuse, it
-   spawns a genuinely fresh session — new context, same role, same grants,
+   spawns a genuinely fresh session — new context, same manager role and lifecycle identity,
    re-minted from current config — and reads the handoff on its first turn,
    whose first instruction is to adopt your workers so their wakes follow it.
 
