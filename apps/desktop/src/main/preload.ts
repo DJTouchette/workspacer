@@ -761,8 +761,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enabled: boolean,
   ): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_SET_PLUGIN_ENABLED, { id, enabled }),
-  // Per-pane scoped token for an agent-scoped plugin pane (confines the webview
-  // to the agent's cwd). Returns null on failure → caller keeps the static token.
+  // Per-pane identity token. agentCwd is compatibility metadata, not a
+  // filesystem confinement boundary. null on failure keeps the static token.
   pluginPaneToken: (pluginId: string, agentCwd?: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.HUB_PLUGIN_PANE_TOKEN, pluginId, agentCwd),
   revokePluginPaneToken: (token: string): Promise<void> =>

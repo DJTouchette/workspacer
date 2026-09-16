@@ -10,7 +10,7 @@ assert "os.chown(token_path, 10002, 10002)" in source, 'hub-only power isolation
 assert "dict(we, HUB_TOKEN=mcp['token']), 10001" in source, 'separate worker MCP credential missing'
 assert "--nodes-file', ''" in source, 'unexpected node supervision policy'
 assert 'WKS_NETWORK_ADMIN_SOCKET' not in source, 'network adapter already installed'
-anchor = "    he.update(HUB_TOKEN=host, WORKSPACER_PLUGIN_SANDBOX='enforce')\n"
+anchor = "    he.update(HUB_TOKEN=host)\n"
 assert source.count(anchor) == 1, 'unrecognized hub environment'
 source = source.replace(anchor, anchor + '''    # The root helper can only inspect/control this node's fixed HTTPS proxy.
     # Its socket is 0600 for the hub UID; workers never see the Tailscale socket.

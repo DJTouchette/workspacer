@@ -92,10 +92,9 @@ func rpcServerWith(t *testing.T) (string, *Server) {
 	return hs.URL, srv
 }
 
-// TestCallNotAuthorized pins capability enforcement: a plugin connection (per-
-// plugin token) calling a capability it did NOT declare receives an "error"
-// frame whose Error contains "not authorized".
-func TestCallNotAuthorized(t *testing.T) {
+// TestPluginMayCallUndeclaredOrdinaryCapability pins ambient plugin access: a
+// legacy manifest capability list does not narrow an enabled plugin token.
+func TestPluginMayCallUndeclaredOrdinaryCapability(t *testing.T) {
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
 	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.list"}}, capspec.EventGrants{}) // not agents.spawn
@@ -103,11 +102,8 @@ func TestCallNotAuthorized(t *testing.T) {
 	caller := dialClientToken(t, url, "plug-tok")
 	caller.send(Frame{Op: "call", ID: "auth1", Method: "agents.spawn"})
 	e := caller.readUntil("error")
-	if e.ID != "auth1" {
-		t.Fatalf("correlation id = %q, want auth1", e.ID)
-	}
-	if !strings.Contains(e.Error, "not authorized") {
-		t.Fatalf("error = %q, want it to contain \"not authorized\"", e.Error)
+	if e.ID != "auth1" || !strings.Contains(e.Error, "no provider") {
+		t.Fatalf("call was denied before ordinary routing: %+v", e)
 	}
 }
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { pluginRequirement, type PluginManifest } from '../types/plugin';
 import { AlertTriangle } from './icons';
-import { PluginPermissions } from './plugin/PluginPermissions';
 
 interface PluginInstallDialogProps {
   onClose: () => void;
@@ -223,29 +222,30 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                 </span>
               </div>
 
-              {/* Itemized permissions — what the plugin can do on the bus, so
-                  the install click is informed consent (the hub enforces
-                  exactly these). */}
               <div
                 style={{
                   marginTop: 12,
-                  paddingTop: 10,
-                  borderTop: '1px solid var(--wks-border-subtle)',
+                  padding: '9px 10px',
+                  borderRadius: 'var(--wks-radius-sm)',
+                  border: '1px solid var(--wks-warning)',
+                  background: 'var(--wks-bg-input)',
+                  color: 'var(--wks-text-secondary)',
+                  fontSize: '0.68rem',
+                  lineHeight: 1.5,
+                  display: 'flex',
+                  gap: 7,
+                  alignItems: 'flex-start',
                 }}
               >
-                <div
-                  style={{
-                    fontSize: '0.64rem',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    color: 'var(--wks-text-muted)',
-                    marginBottom: 8,
-                  }}
-                >
-                  Permissions it's requesting
-                </div>
-                <PluginPermissions manifest={preview} />
+                <AlertTriangle
+                  size={13}
+                  strokeWidth={2}
+                  style={{ color: 'var(--wks-warning)', flexShrink: 0, marginTop: 1 }}
+                />
+                <span>
+                  If enabled, this plugin runs as your user. It may access files anywhere on this
+                  machine and use Workspacer features. Install only plugins you trust.
+                </span>
               </div>
 
               {req && (
@@ -296,10 +296,10 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
               fontWeight: 600,
             }}
           >
-            <AlertTriangle size={12} strokeWidth={2} /> Runs code from the internet.
+            <AlertTriangle size={12} strokeWidth={2} /> Full machine access.
           </span>{' '}
-          Installing starts the plugin's process on your machine — like a VS Code extension. Only
-          install plugins you trust.
+          Installing and enabling starts the plugin as your user — like a VS Code extension. It is
+          not sandboxed by Workspacer.
         </div>
 
         {error && (

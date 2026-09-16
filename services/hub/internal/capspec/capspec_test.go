@@ -604,9 +604,7 @@ func TestDesktopCapabilitiesAllScoped(t *testing.T) {
 // host command execution, and whose absence made agents.sendMessage's own excuse
 // ("what bounds it is the agent's own tool approvals") unfalsifiable.
 //
-// The repo already had exactly this shape for the human-facing list —
-// pluginPermissions.test.ts's "labels every capability the main process actually
-// registers". The machine-enforced list had no counterpart.
+// This is the machine-enforced completeness list for desktop capabilities.
 func TestDesktopCapabilitiesAllClassified(t *testing.T) {
 	data := mustReadRepoFile(t, desktopCapabilitiesSrc...)
 	matches := capNameRe.FindAllStringSubmatch(string(data), -1)

@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
@@ -65,8 +64,10 @@ type Manifest struct {
 	// are not.
 	UI string `json:"ui,omitempty"`
 
-	// Provides: capabilities this plugin answers on the bus.
-	// Capabilities: capabilities it may call (each optionally path-scoped).
+	// Provides names capabilities this plugin answers on the bus and remains an
+	// enforced own-namespace identity boundary. Capabilities/emits/consumes are
+	// legacy advisory metadata retained for manifest compatibility; enabling a
+	// plugin grants its authenticated token the ordinary bus/event surface.
 	Provides     []string     `json:"provides,omitempty"`
 	Capabilities []Capability `json:"capabilities,omitempty"`
 	Emits        []string     `json:"emits,omitempty"`
@@ -74,9 +75,7 @@ type Manifest struct {
 
 	// Tools: MCP tools this plugin contributes to the workspacer facade, each
 	// bound to a `provides` method the plugin answers. Presentation only — the
-	// AUTHORITY is the provides grant (consent-pinned like every other bus
-	// declaration): a tool whose method the pin does not cover is withheld from
-	// the facade, and the bus would refuse the registration anyway.
+	// method must remain in the plugin's own declared provider namespace.
 	Tools []ToolDef `json:"tools,omitempty"`
 
 	// Install: a one-time setup command (argv) run in the plugin dir after a
@@ -105,8 +104,9 @@ type LaunchIntegration struct {
 	PrepareMethod string   `json:"prepareMethod"`
 }
 
-// Capability is one entry of a manifest's "capabilities": a bus method the
-// plugin may call, optionally confined to filesystem paths.
+// Capability is one legacy advisory entry describing a bus method and paths a
+// plugin expects to use. It is parsed for compatibility but no longer grants or
+// confines an enabled plugin token.
 //
 // Two JSON forms are accepted:
 //
@@ -125,33 +125,15 @@ type LaunchIntegration struct {
 type Capability struct {
 	Method string   `json:"method"`
 	Paths  []string `json:"paths,omitempty"`
-	// ChildToolScope is the CHILD-DELEGATION grant on `agents.spawn`:
-	//
-	//	{ "method": "agents.spawn", "childToolScope": "view" }
-	//
-	// It names the highest workspacer tool tier (view | triage | operator) a
-	// worker this plugin spawns may be handed. OMITTED MEANS NONE: the spawn
-	// still happens, but `toolScope`, the legacy `mcpFacade` flag and
-	// `pluginTools` are stripped from it, so the child gets no facade at all.
-	//
-	// WHY IT IS SEPARATE FROM `agents.spawn` ITSELF. Consenting to agents.spawn
-	// says a plugin may START an agent. It does not say it may mint one holding
-	// first-party operator tools — approve, spawn, config, terminals — which is
-	// what `mcpFacade: true` used to mean, unclamped, because a plugin has no
-	// rung on the authority ladder to compare against. This is that rung, and
-	// it is consent-pinned like every other declaration: adding it to
-	// plugin.json after install is dropped until the user re-consents.
+	// ChildToolScope is retained as inert compatibility metadata.
 	ChildToolScope string `json:"childToolScope,omitempty"`
 }
 
 // ToolDef is one MCP tool a plugin contributes to the workspacer facade: a
 // name, description and input schema for the model, bound to a bus method the
 // plugin itself answers. The facade forwards a call of the tool as a plain
-// capability call of `method`; the plugin must have registered it (op
-// "register"), which the bus only permits inside the manifest's consent-pinned
-// `provides`. The AUTHORITY is therefore the provides grant — this struct is
-// presentation, and a tool whose method the pin does not cover is withheld
-// from the facade (see Manager.ConsentedTools).
+// capability call of `method`; the plugin must have registered it in its own
+// namespace.
 type ToolDef struct {
 	// Name of the tool as the model sees it, namespaced by the facade
 	// (`<plugin id>_<name>`, sanitized). Lowercase [a-z0-9_], starting with a
@@ -443,30 +425,9 @@ func (m *Manifest) Validate() error {
 			}
 		}
 	}
-	for _, c := range m.Capabilities {
-		if c.Method == "" {
-			return fmt.Errorf("capability with empty method")
-		}
-		// A filesystem-scoped capability must declare paths — otherwise it would
-		// grant unrestricted host filesystem access, which is exactly what the
-		// sandbox exists to prevent.
-		if _, scoped := capspec.IsPathScoped(c.Method); scoped && len(c.Paths) == 0 {
-			return fmt.Errorf("capability %q is filesystem-scoped and must declare \"paths\"", c.Method)
-		}
-		for _, p := range c.Paths {
-			if err := validateScope(p); err != nil {
-				return fmt.Errorf("capability %q: %w", c.Method, err)
-			}
-		}
-		if c.ChildToolScope != "" {
-			if c.Method != "agents.spawn" {
-				return fmt.Errorf("capability %q declares \"childToolScope\" — that grant is only meaningful on \"agents.spawn\", which is the only method that hands a child a tool tier", c.Method)
-			}
-			if !IsChildToolScope(c.ChildToolScope) {
-				return fmt.Errorf("capability %q: childToolScope %q is not a workspacer tool tier (view, triage, operator)", c.Method, c.ChildToolScope)
-			}
-		}
-	}
+	// Legacy capabilities/emits/consumes/path/childToolScope fields are
+	// intentionally not validated as authority. They are advisory metadata and
+	// must not prevent an otherwise valid enabled plugin from loading.
 	for _, p := range m.Provides {
 		if err := validateProvides(m.ID, p); err != nil {
 			return err

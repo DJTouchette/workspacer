@@ -451,15 +451,9 @@ It is **empty by default**, and that is a decision rather than an omission: this
 the always-on machine holding a credential that spends money, and a plugin sidecar
 is arbitrary code with a bus connection.
 
-If you do install one, it runs confined. `WORKSPACER_PLUGIN_SANDBOX=enforce` is set
-in `fly.toml`, and `enforce` **refuses to start a sidecar** on a platform with no
-confinement mechanism rather than running it unconfined. The Linux mechanism is
-bubblewrap, installed in this image for that reason.
-
-**Unverified:** whether `bwrap` works inside a Fly Firecracker guest, which needs
-unprivileged user namespaces. Because no plugin ships here, a wrong answer surfaces
-as a clear refusal the first time someone installs one, not as a silent unconfined
-sidecar. Fall back with `WORKSPACER_PLUGIN_SANDBOX=best-effort` if that happens.
+If you do install one, it runs as the hub user without Workspacer filesystem or
+network confinement. Treat install/enable as granting user-level machine access
+and install only plugins you trust.
 
 `WKS_HUB_PLUGIN_ORIGIN_ENABLED=1` adds a second `tailscale serve` rule on **8443**
 and passes `--plugin-origin`. Without a second origin, `/app` must frame a
@@ -692,13 +686,12 @@ Unusually for `deploy/fly/`, the first list is not empty.
 4. **Tailnet IP and MagicDNS stability across a restart.** §10 checks 1 and 2.
 5. **Web Push end to end.** §10 check 9. A dead subscription is silent on both
    ends; this is the check most worth actually doing.
-6. **Whether `bwrap` works in a Firecracker guest** (§9). Fails closed.
-7. **Whether a stopped node's TCP connection is severed cleanly.** Inherited from
+6. **Whether a stopped node's TCP connection is severed cleanly.** Inherited from
    the node's runbook §12.7 — if a dead machine goes silent rather than sending
    RST/FIN, the hub keeps a zombie provider registered. The wake contract's
    two-layer fix (hub-side eviction + brain re-registration) is built; it has not
    been exercised against a real stopped Fly machine.
-8. **Cost.** The brief budgets ~$6/month for `shared-cpu-1x`/1GB always-on. **I
+7. **Cost.** The brief budgets ~$6/month for `shared-cpu-1x`/1GB always-on. **I
    did not verify Fly's current rate** — treat that as the brief's number, not a
    measured one. Add the volume (the node's runbook cites $0.15/GB/mo, so ~$0.15
    here) and note that snapshots bill separately.

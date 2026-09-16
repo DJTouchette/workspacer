@@ -276,10 +276,9 @@ func TestValidateTools(t *testing.T) {
 	}
 }
 
-// ConsentedTools narrows to the PIN, not the manifest: a tool whose method
-// rides a provides pattern added after consent is withheld from the facade
-// until reinstall/reload re-baselines the pin.
-func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
+// Enabled plugin tools are ambient. Legacy grant-pin files are not consulted;
+// disabling or uninstalling the plugin is what removes its tools.
+func TestEnabledToolsIgnoreLegacyGrantPins(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := filepath.Join(dir, "acme")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
@@ -294,9 +293,6 @@ func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
 			{Name: "search", Description: "D.", Method: "acme.search"},
 		},
 	}
-	// Pin consents to the manifest as-is.
-	ensureGrantPin(mf)
-
 	mgr := NewManager(newCapture(), nil)
 	mgr.AddAll([]Manifest{mf})
 	defer mgr.Stop()
@@ -306,8 +302,13 @@ func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
 		t.Fatalf("expected the consented tool, got %+v", got)
 	}
 
-	// The plugin later self-amends provides + tools (plugin.json is inside its
-	// own write root). The new tool's method is NOT in the pin → withheld.
+	// A stale legacy pin is inert: newly declared own-namespace tools appear.
+	if err := os.MkdirAll(filepath.Join(dir, ".grants"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".grants", "acme.json"), []byte(`{"provides":["acme.search"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	mf2 := mf
 	mf2.Provides = []string{"acme.search", "acme.escalate"}
 	mf2.Tools = append(mf2.Tools, ToolDef{Name: "escalate", Description: "D.", Method: "acme.escalate"})
@@ -316,8 +317,8 @@ func TestConsentedToolsNarrowedByGrantPin(t *testing.T) {
 	defer mgr2.Stop()
 
 	got2 := mgr2.ConsentedTools()
-	if len(got2) != 1 || len(got2[0].Tools) != 1 || got2[0].Tools[0].Name != "search" {
-		t.Fatalf("post-consent tool must be withheld, got %+v", got2)
+	if len(got2) != 1 || len(got2[0].Tools) != 2 || got2[0].Tools[1].Name != "escalate" {
+		t.Fatalf("legacy pin narrowed enabled tools: %+v", got2)
 	}
 
 	// Disabled plugins contribute nothing.

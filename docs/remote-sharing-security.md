@@ -19,8 +19,8 @@ Relevant code:
   address, token, and `getRemoteShareInfo`.
 - `services/hub/cmd/hub/main.go` + `services/hub/internal/bus/bus.go` — the bus,
   token auth, and which routes are guarded.
-- `services/hub/internal/plugin/manager.go` +
-  `services/hub/internal/sandbox/sandbox.go` — plugin sidecar confinement.
+- `services/hub/internal/plugin/manager.go` — plugin identity, lifecycle, and
+  direct sidecar launch.
 - `services/hub/cmd/mcp/main.go` — the MCP facade (loopback-only).
 
 ---
@@ -185,19 +185,11 @@ These are real limitations, stated plainly:
   capability surface, which mirrors what the bus exposes. **Anyone with the link
   effectively has a shell on your machine.** This is the point of the feature,
   but it means the link is as sensitive as SSH access.
-- **Windows plugin sidecars run UNSANDBOXED.** Plugin sidecars are launched
-  under OS filesystem confinement on Linux (`bwrap` / bubblewrap) and macOS
-  (`sandbox-exec` / Seatbelt), which restrict a sidecar to writing only its own
-  plugin directory. **Windows has no such mechanism** — `sandbox.Wrap` returns
-  the command unchanged ("no filesystem sandbox mechanism on windows"), so on
-  Windows a sidecar runs with the full privileges of the workspacer process.
-  - The confinement mode is set by `WORKSPACER_PLUGIN_SANDBOX`: `off` (no
-    confinement), `best-effort` (default — confine where a mechanism exists,
-    else run plain), or `enforce` (fail closed — refuse to start a sidecar on a
-    platform with no mechanism). On Windows, `best-effort` runs sidecars
-    unconfined; only `enforce` will refuse to start them at all.
-  - This is a defence-in-depth layer for *plugins*, separate from the remote
-    token. It does not constrain what an authenticated bus client can do.
+- **Enabled plugins run as the Workspacer user.** Workspacer does not sandbox
+  sidecar filesystem or network access. Installation and enablement are the
+  trust decision, like enabling an editor extension; use only plugins you trust.
+  Authentication, plugin identity, revocation, host-event provenance and
+  host-only external actions remain enforced independently.
 
 ---
 

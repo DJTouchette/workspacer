@@ -101,6 +101,18 @@ func TestManagerRemoveReturnsDir(t *testing.T) {
 	}
 }
 
+func TestSidecarCommandRunsDirectlyAsUser(t *testing.T) {
+	m := NewManager(newCapture(), nil)
+	mf := Manifest{ID: "acme.direct", Server: &ServerSpec{
+		Command: "./bin/${os}-${arch}/server${exe}",
+		Args:    []string{"--root", "/any/absolute/path"},
+	}}
+	cmd, args := m.sidecarCommand(mf)
+	if cmd == "" || len(args) != 2 || args[1] != "/any/absolute/path" {
+		t.Fatalf("direct sidecar command = %q %v", cmd, args)
+	}
+}
+
 // SetStreamSidecarLogs(true) makes the manager spawn sidecars with LogLines set,
 // so each sidecar's stdout is published as a plugin.log event (what `plugin dev`
 // prints). Verified end-to-end: a real sidecar writes a known line and we see it.

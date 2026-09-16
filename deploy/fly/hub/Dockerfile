@@ -18,12 +18,11 @@
 # deploy/fly/node/Dockerfile is the workspacer BASE image: Debian trixie,
 # kernel-mode Tailscale, tini, the `wks` user at 10001:10001, the operational
 # toolkit, and the daemons. Its contract is deploy/fly/node/BASE_IMAGE.md. This
-# layer adds exactly three things the hub needs and the node does not:
+# layer adds exactly two things the hub needs and the node does not:
 #
 #   1. the `hub` binary          — the base builds brain, workspacer and
 #                                  claudemon, but not this. See the note below.
 #   2. dist/web                  — the full React renderer, served at /app/
-#   3. bubblewrap                — the Linux plugin-sandbox mechanism
 #
 # plus its own entrypoint and bootstrap, at /usr/local/lib/wks-hub/, beside the
 # node's rather than over them. The base's copies stay exactly where they are:
@@ -205,21 +204,6 @@ LABEL org.opencontainers.image.title="workspacer-hub" \
       org.opencontainers.image.source="https://github.com/djtouchette/workspacer" \
       org.opencontainers.image.licenses="MIT" \
       dev.workspacer.node.role="hub"
-
-# bubblewrap is the Linux mechanism internal/sandbox uses to confine plugin
-# sidecars (exec.LookPath("bwrap")), and without it WORKSPACER_PLUGIN_SANDBOX=
-# enforce refuses to start any sidecar at all — which on this machine is the
-# correct fail-closed behaviour but a poor default. One ~100KB package makes
-# `enforce` a real setting rather than a blanket refusal. It is a security
-# mechanism the hub needs, not an application toolchain, so it belongs here and
-# not in the base.
-#
-# Unpinned, per base rule 5: this image is rebuilt to pick up Debian security
-# updates, and a pinned version breaks the moment the archive rotates.
-# hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends bubblewrap && \
-    rm -rf /var/lib/apt/lists/*
 
 COPY --from=hubfiles /out/hub /usr/local/bin/hub
 

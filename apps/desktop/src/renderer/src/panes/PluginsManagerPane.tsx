@@ -5,8 +5,6 @@ import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
 import PluginCatalogDialog from '../components/PluginCatalogDialog';
 import { pluginRequirement } from '../types/plugin';
 import type { PluginUpdateStatus } from '../types/plugin';
-import { hasSensitivePermission } from '../lib/pluginPermissions';
-import { PluginPermissions } from '../components/plugin/PluginPermissions';
 import { Blocks, AlertTriangle, RefreshCw } from '../components/icons';
 
 interface SidecarStatus {
@@ -19,22 +17,6 @@ function useSidecarStates(): Record<string, SidecarStatus> {
   const [states, setStates] = useState<Record<string, SidecarStatus>>({});
   useEffect(() => {
     const off = window.electronAPI.onHubEvent?.((ev) => {
-      // A REFUSED sidecar never gets a supervisor, so no sidecar.* event is
-      // ever emitted for it — and the fallback below is the optimistic
-      // "starting", i.e. an in-progress label for a process that will never be
-      // started. `plugin.sandbox.refused` is the only signal that exists for
-      // that outcome (WORKSPACER_PLUGIN_SANDBOX=enforce on a host with no
-      // confinement mechanism), and nothing consumed it.
-      if (ev.type === 'plugin.sandbox.refused') {
-        const d = ev.data as { id?: string; reason?: string } | undefined;
-        if (d?.id) {
-          setStates((prev) => ({
-            ...prev,
-            [d.id as string]: { state: 'refused', err: d.reason },
-          }));
-        }
-        return;
-      }
       if (!ev.type?.startsWith('sidecar.')) return;
       const d = ev.data as { name?: string; state?: string; err?: string } | undefined;
       if (d?.name && d?.state) {
@@ -57,7 +39,6 @@ function stateColor(s: string | undefined): string {
     case 'unhealthy':
       return 'var(--wks-warning)';
     case 'crashed':
-    case 'refused':
       return 'var(--wks-error)';
     case 'stopped':
     case 'disabled':
@@ -106,7 +87,6 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const [showExamples, setShowExamples] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
   // Per-plugin update status (id → status), populated by an on-demand check
   // against each plugin's install source. Empty until the first check returns.
   const [updates, setUpdates] = useState<Record<string, PluginUpdateStatus>>({});
@@ -139,13 +119,6 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   }, [pluginIdsKey, checkUpdates]);
 
   const updateCount = Object.values(updates).filter((u) => u.hasUpdate).length;
-  const togglePerms = (id: string) =>
-    setPermsOpen((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
   const remove = async (id: string) => {
     if (!window.confirm(`Remove plugin "${id}"? This stops its server and deletes it.`)) return;
     setBusyId(id);
@@ -179,6 +152,13 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
 
   // Toggle the plugin's disabled marker; the hub starts/stops the sidecar.
   const toggle = async (id: string, currentlyDisabled: boolean) => {
+    if (
+      currentlyDisabled &&
+      !window.confirm(
+        `Enable plugin "${id}"? Enabled plugins run as your user, may access files anywhere on this machine, and may use Workspacer features.`,
+      )
+    )
+      return;
     setBusyId(id);
     try {
       const res = await window.electronAPI.setPluginEnabled?.(id, currentlyDisabled);
@@ -314,6 +294,34 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
         </button>
       </div>
 
+      {plugins.length > 0 && (
+        <div
+          style={{
+            margin: '12px 16px 0',
+            padding: '9px 11px',
+            borderRadius: 'var(--wks-radius-sm)',
+            background: 'var(--wks-bg-input)',
+            border: '1px solid var(--wks-warning)',
+            color: 'var(--wks-text-secondary)',
+            fontSize: '0.68rem',
+            lineHeight: 1.5,
+            display: 'flex',
+            gap: 7,
+            alignItems: 'flex-start',
+          }}
+        >
+          <AlertTriangle
+            size={13}
+            strokeWidth={2}
+            style={{ color: 'var(--wks-warning)', flexShrink: 0, marginTop: 1 }}
+          />
+          <span>
+            Enabled plugins run as your user. They may access files anywhere on this machine and use
+            Workspacer features, so enable only plugins you trust.
+          </span>
+        </div>
+      )}
+
       {plugins.length === 0 && (
         <div
           style={{
@@ -445,44 +453,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                 {hasServer && req.warn && (
                   <span style={{ color: 'var(--wks-warning)' }}>{req.label}</span>
                 )}
-                <button
-                  onClick={() => togglePerms(p.id)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    padding: 0,
-                    cursor: 'pointer',
-                    fontSize: '0.66rem',
-                    fontFamily: 'inherit',
-                    color: 'var(--wks-accent)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 3,
-                  }}
-                >
-                  {hasSensitivePermission(p) && (
-                    <AlertTriangle
-                      size={10}
-                      strokeWidth={2}
-                      style={{ color: 'var(--wks-warning)' }}
-                    />
-                  )}
-                  {permsOpen.has(p.id) ? 'Hide permissions' : 'Permissions'}
-                </button>
               </div>
-              {permsOpen.has(p.id) && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    padding: '8px 10px',
-                    borderRadius: 'var(--wks-radius-sm)',
-                    background: 'var(--wks-bg-input)',
-                    border: '1px solid var(--wks-border-subtle)',
-                  }}
-                >
-                  <PluginPermissions manifest={p} compact />
-                </div>
-              )}
               {crashErr && (
                 <div
                   style={{

@@ -1510,14 +1510,11 @@ Stated plainly so nobody mistakes silence for verification.
     against a machine that stays `stopped`; `fly machine start` is a separate
     command. A deploy still resets the rootfs, so deploy deliberately — just not
     out of fear that it will wake something.
-11. **Whether `bwrap` works in a Firecracker guest.** Needs unprivileged user
-    namespaces. Fails closed, so a wrong answer surfaces as a clear refusal the
-    first time someone installs a plugin.
-12. **Shared-CPU throttling under real builds.** `shared-cpu-4x` gets 20 ms per
+11. **Shared-CPU throttling under real builds.** `shared-cpu-4x` gets 20 ms per
     80 ms, about 25% of one core sustained once the 500 s burst balance drains.
     For a box whose job is compiling Go this is the number most likely to make
     it feel broken, and it is easily mistaken for noisy neighbours.
-13. **Upload time for the two deploys.** Unmeasured, and it is the dominant term
+12. **Upload time for the two deploys.** Unmeasured, and it is the dominant term
     in the wall clock for Part B.
 14. **arm64, and a Fly remote builder.** Both builds were amd64 and local.
 15. **Artifact mode against a REAL GitHub release.** Everything above was proved

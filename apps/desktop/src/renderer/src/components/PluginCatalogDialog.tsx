@@ -232,7 +232,8 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
             </a>
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-muted)', marginTop: 3 }}>
-            Every install shows the plugin's real manifest and permissions before anything runs.
+            Enabled plugins run as your user and may access this machine. Install only plugins you
+            trust.
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
             <input
@@ -405,7 +406,11 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span
-                      title={caps.length ? `Declares: ${caps.join(', ')}` : 'No capabilities'}
+                      title={
+                        caps.length
+                          ? `Integrates with: ${caps.join(', ')}`
+                          : 'No declared integrations'
+                      }
                       style={{
                         fontSize: '0.64rem',
                         color: 'var(--wks-text-faint)',
@@ -416,8 +421,8 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
                       }}
                     >
                       {caps.length === 0
-                        ? 'no permissions'
-                        : `${caps.length} permission${caps.length === 1 ? '' : 's'}`}
+                        ? 'no declarations'
+                        : `${caps.length} integration${caps.length === 1 ? '' : 's'}`}
                     </span>
                     <div style={{ flex: 1 }} />
                     <button

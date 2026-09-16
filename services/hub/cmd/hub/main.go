@@ -37,7 +37,6 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/push"
 	"github.com/djtouchette/workspacer-hub/internal/quiescence"
 	"github.com/djtouchette/workspacer-hub/internal/routing"
-	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 	"github.com/djtouchette/workspacer-hub/internal/usageprefs"
 )
@@ -280,10 +279,6 @@ func pluginReloadHandler(add pluginAdder) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		// An explicit, host-authority reload of a directory the caller named is
-		// a human act on this manifest — `workspacer plugin dev` is the caller —
-		// so it re-baselines the consented authority. A BOOT load does not.
-		plugin.RebaselineGrantPin(m)
 		add.Add(m)
 		log.Printf("reloaded plugin %s from %s", m.ID, body.Dir)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": m.ID})
@@ -805,13 +800,9 @@ func main() {
 	srv.RegisterLocalIdent("nodes.sleep", nodesSleep(ctx, sup))
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
-	// manager registers per-plugin bus tokens with srv so capability calls are
-	// scoped to what each plugin declared.
+	// manager registers per-plugin bus tokens with srv for identity and
+	// revocation. Enabled plugins receive the ordinary bus surface.
 	mgr := plugin.NewManager(b, srv)
-	// Sidecars launch under OS filesystem confinement. WORKSPACER_PLUGIN_SANDBOX
-	// = off | best-effort (default) | enforce. Enforce refuses to start a sidecar
-	// on a platform with no confinement mechanism (fail closed).
-	mgr.SetSandboxMode(sandbox.ParseMode(os.Getenv("WORKSPACER_PLUGIN_SANDBOX")))
 	if *sidecarNode != "" {
 		mgr.SetSidecarNode(*sidecarNode)
 	}
@@ -842,12 +833,9 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(mgr.Tokens())
 	}))
-	// Mint an ephemeral, capability-scoped token for one open plugin pane, with
-	// dynamic scopes (e.g. ${agentCwd}) bound to this pane's agent. The trusted
-	// host calls this when it opens an agent-scoped plugin pane and injects the
-	// returned token into that pane's webview URL — so the webview gets the
-	// plugin's capabilities confined to that agent's working directory, instead
-	// of the static per-plugin token (which has no dynamic filesystem reach).
+	// Mint an ephemeral identity token for one open plugin pane. The trusted host
+	// calls this when it opens an agent-scoped pane and injects the token into the
+	// webview URL. Legacy dynamic bindings are accepted but inert.
 	// Token-guarded: only the trusted host may mint.
 	srv.AddRoute("/plugins/pane-token", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1104,10 +1092,6 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		// The install dialog put this manifest's capabilities in front of a
-		// human, so this is the moment its authority is (re)consented — see
-		// plugin.RebaselineGrantPin. Every OTHER load may only narrow.
-		plugin.RebaselineGrantPin(m)
 		mgr.Add(m)
 		log.Printf("installed plugin %s from %s", m.ID, body.URL)
 		_ = json.NewEncoder(w).Encode(m)
@@ -1218,7 +1202,6 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		plugin.RebaselineGrantPin(m)
 		mgr.Add(m)
 		log.Printf("added example plugin %s", m.ID)
 		_ = json.NewEncoder(w).Encode(m)

@@ -35,12 +35,10 @@ func jsonParams(t *testing.T, m map[string]any) json.RawMessage {
 	return b
 }
 
-// TestEditorPaneTokenSandbox is the end-to-end proof of the editor extraction:
-// the real editor manifest, run through the plugin manager's per-pane token
-// minting and the real bus, is confined to the agent's project directory. A
-// read inside the project is routed to the provider; a read outside it is
-// rejected by the bus and never reaches the provider.
-func TestEditorPaneTokenSandbox(t *testing.T) {
+// TestEditorPaneTokenHasAmbientFilesystemAccess proves legacy pane path bindings
+// are inert: the real editor manifest may call fs.read both inside and outside
+// the agent cwd once the plugin is enabled.
+func TestEditorPaneTokenHasAmbientFilesystemAccess(t *testing.T) {
 	b := broker.New()
 	srv := bus.NewServer(b)
 	srv.SetToken("host") // distinguishes the trusted provider from the plugin token
@@ -69,7 +67,7 @@ func TestEditorPaneTokenSandbox(t *testing.T) {
 		t.Fatalf("PaneToken: %v", err)
 	}
 
-	// Trusted provider answers fs.read. It must only ever see the in-scope call.
+	// Trusted provider answers fs.read and records an out-of-project call.
 	prov := dialBus(t, wsURL+"?token=host")
 	defer prov.CloseNow()
 	readUntil(t, prov, "hello")
@@ -118,21 +116,20 @@ func TestEditorPaneTokenSandbox(t *testing.T) {
 		t.Fatalf("in-scope read: got id %q, want in", r.ID)
 	}
 
-	// A read outside the project → rejected by the bus.
+	// A read outside the project is also routed: Workspacer no longer applies a
+	// filesystem-root grant to enabled plugins.
 	send(t, cl, bus.Frame{Op: "call", ID: "out", Method: "fs.read",
 		Params: jsonParams(t, map[string]any{"path": "/etc/passwd"})})
-	e := readUntil(t, cl, "error")
-	if e.ID != "out" {
-		t.Fatalf("out-of-scope read: got id %q, want out", e.ID)
-	}
-	if !strings.Contains(e.Error, "outside") {
-		t.Fatalf("error = %q, want it to mention being outside scope", e.Error)
+	if r := readUntil(t, cl, "result"); r.ID != "out" {
+		t.Fatalf("ambient read: got id %q, want out", r.ID)
 	}
 
-	// And the provider must never have been handed the out-of-scope path.
 	select {
 	case leaked := <-sawOutside:
-		t.Fatalf("out-of-scope path %q reached the provider — confinement breached", leaked)
-	default:
+		if leaked != "/etc/passwd" {
+			t.Fatalf("provider saw %q, want /etc/passwd", leaked)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ambient absolute path never reached the provider")
 	}
 }

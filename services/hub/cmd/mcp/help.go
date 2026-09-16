@@ -628,9 +628,9 @@ These steer the user's DESKTOP screen — use them deliberately.
   headless/remote-only setup nothing consumes these.`),
 	"plugins": strings.TrimSpace(`
 Plugin tools are contributed by installed workspacer plugins and forwarded to
-the plugin's own sidecar. They appear only when your session was granted them
-at spawn (pluginTools). Errors like "no provider" mean the plugin is not
-running.`),
+the plugin's own sidecar. Tools from every enabled plugin appear automatically;
+disabled or uninstalled plugins disappear after the catalog refresh. Errors
+like "no provider" mean the plugin is not running.`),
 }
 
 // addHelpTool registers the help tool on a tier's server, rendering from that

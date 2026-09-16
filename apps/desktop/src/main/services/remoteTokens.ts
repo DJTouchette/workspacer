@@ -57,8 +57,8 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     scope: r.scope as RemoteTokenScope,
     label: typeof r.label === 'string' ? r.label : undefined,
     created: typeof r.created === 'string' ? r.created : new Date(0).toISOString(),
-    // Preserve, or a rewrite of tokens.json would silently strip every
-    // session token's plugin grants.
+    // Preserve the legacy inert selection so rewriting tokens.json remains
+    // lossless across versions.
     ...(Array.isArray(r.plugins) && {
       plugins: r.plugins.filter((p): p is string => typeof p === 'string' && !!p.trim()),
     }),

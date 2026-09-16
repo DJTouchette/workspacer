@@ -265,11 +265,9 @@ type Record struct {
 	Scope   Scope     `json:"scope"`
 	Label   string    `json:"label,omitempty"`
 	Created time.Time `json:"created"`
-	// Plugins lists the plugin ids whose contributed MCP-facade tools this
-	// token may use (opt-in per token; empty = none). Read only by the facade —
-	// the hub bus ignores it, because plugin-provided methods are gated by the
-	// PROVIDING plugin's own grants, and a scoped token's Methods() never
-	// includes a plugin namespace.
+	// Plugins is a legacy per-session selection retained for persisted-token
+	// compatibility. The facade ignores it: every authenticated agent receives
+	// tools from every enabled plugin.
 	Plugins []string `json:"plugins,omitempty"`
 	// ProfilesAllowed lists the Claude profile ids this token may dispatch
 	// agents under: an agents.spawn naming a profileId in this list keeps it

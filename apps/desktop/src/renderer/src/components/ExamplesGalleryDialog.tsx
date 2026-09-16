@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { pluginRequirement, type PluginManifest } from '../types/plugin';
-import { hasSensitivePermission } from '../lib/pluginPermissions';
-import { PluginPermissions } from './plugin/PluginPermissions';
 import { AlertTriangle } from './icons';
 
 interface ExamplesGalleryDialogProps {
@@ -33,14 +31,6 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(() => new Set(installedIds));
   const [error, setError] = useState<string | null>(null);
-  const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
-  const togglePerms = (id: string) =>
-    setPermsOpen((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -73,6 +63,12 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
   }, []);
 
   const add = async (id: string) => {
+    if (
+      !window.confirm(
+        `Add plugin "${id}"? Enabled plugins run as your user, may access files anywhere on this machine, and may use Workspacer features.`,
+      )
+    )
+      return;
     setBusyId(id);
     setError(null);
     try {
@@ -134,7 +130,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
         </div>
         <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
           Bundled with the app — adding one copies it locally, no download. Sidecar examples need
-          the runtime noted on each.
+          the runtime noted on each. Enabled plugins run as your user and may access this machine.
         </div>
 
         {error && (
@@ -239,30 +235,6 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                         {req.warn && <AlertTriangle size={11} strokeWidth={2} />}
                         {req.label}
                       </span>
-                      <button
-                        onClick={() => togglePerms(m.id)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          fontSize: '0.66rem',
-                          fontFamily: 'inherit',
-                          color: 'var(--wks-accent)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 3,
-                        }}
-                      >
-                        {hasSensitivePermission(m) && (
-                          <AlertTriangle
-                            size={10}
-                            strokeWidth={2}
-                            style={{ color: 'var(--wks-warning)' }}
-                          />
-                        )}
-                        {permsOpen.has(m.id) ? 'Hide permissions' : 'Permissions'}
-                      </button>
                     </div>
                   </div>
                   <button
@@ -285,19 +257,6 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                     {isAdded ? 'Added' : busy ? 'Adding…' : 'Add'}
                   </button>
                 </div>
-                {permsOpen.has(m.id) && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      padding: '8px 10px',
-                      borderRadius: 'var(--wks-radius-sm)',
-                      background: 'var(--wks-bg-input)',
-                      border: '1px solid var(--wks-border-subtle)',
-                    }}
-                  >
-                    <PluginPermissions manifest={m} compact />
-                  </div>
-                )}
               </div>
             );
           })}

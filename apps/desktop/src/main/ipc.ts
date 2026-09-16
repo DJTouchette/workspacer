@@ -695,11 +695,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
   };
-  // Mint an ephemeral, capability-scoped bus token for one agent-scoped plugin
-  // pane, with ${agentCwd} bound to that agent's working directory. The renderer
-  // injects it into the pane's webview URL so the plugin is confined to that
-  // project's files instead of getting the static per-plugin token's (broader)
-  // scope. Returns null on any failure — the renderer falls back to the static token.
+  // Mint an ephemeral identity token for one plugin pane. agentCwd remains on
+  // the compatibility wire but no longer confines plugin filesystem access.
+  // Returns null on failure — the renderer falls back to the static token.
   ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN, async (_event, pluginId: string, agentCwd?: string) => {
     try {
       // Short timeout: PluginPane holds its webview blank until this resolves,

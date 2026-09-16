@@ -130,7 +130,7 @@ func loadedManager(t *testing.T, reg TokenRegistrar, mf Manifest) *Manager {
 	return m
 }
 
-func TestPaneTokenResolvesAgentCwd(t *testing.T) {
+func TestPaneTokenLegacyAgentCwdBindingIsInert(t *testing.T) {
 	reg := newFakeRegistrar()
 	mf := Manifest{
 		ID:  "acme.editor",
@@ -150,14 +150,8 @@ func TestPaneTokenResolvesAgentCwd(t *testing.T) {
 	if !ok {
 		t.Fatal("pane token was not registered with the bus")
 	}
-	// fs.read should now be scoped to the resolved agent cwd.
-	roots := rootsOf(grants, "fs.read")
-	if len(roots) != 1 || roots[0] != absTestPath("work", "project") {
-		t.Fatalf("fs.read roots = %v, want [/work/project]", roots)
-	}
-	// The verb-only capability is still present, with no roots.
-	if r := rootsOf(grants, "agents.list"); len(r) != 0 {
-		t.Fatalf("agents.list should have no roots, got %v", r)
+	if len(grants) != 0 {
+		t.Fatalf("legacy agentCwd binding created grants: %v", grants)
 	}
 }
 

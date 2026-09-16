@@ -5,7 +5,12 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 source = path.read_text()
-anchor = "    he.update(HUB_TOKEN=host, WORKSPACER_PLUGIN_SANDBOX='enforce')\n"
+source = source.replace(
+    "    he.update(HUB_TOKEN=host, WORKSPACER_PLUGIN_SANDBOX='enforce')\n",
+    "    he.update(HUB_TOKEN=host)\n",
+    1,
+)
+anchor = "    he.update(HUB_TOKEN=host)\n"
 assert source.count(anchor) == 1, "unrecognized combined supervisor; refusing to replace it"
 addition = '''    # Power configuration is root-installed, and its credential is readable
     # only by the hub UID. Worker and agent environments still come from we.

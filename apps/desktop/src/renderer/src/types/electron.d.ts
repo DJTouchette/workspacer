@@ -595,8 +595,8 @@ export interface ElectronAPI extends RoutingAPI {
     id: string,
     enabled: boolean,
   ) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
-  /** Mint an ephemeral, capability-scoped bus token for an agent-scoped plugin
-   *  pane (confines the webview to the agent's cwd). null on failure. */
+  /** Mint an ephemeral identity token for a plugin pane. The cwd argument is
+   *  retained for compatibility but does not confine plugin filesystem access. */
   pluginPaneToken?: (pluginId: string, agentCwd?: string) => Promise<string | null>;
   /** Revoke a pane token minted by pluginPaneToken (on pane close). */
   revokePluginPaneToken?: (token: string) => Promise<void>;

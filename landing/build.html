@@ -405,7 +405,6 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 <li><code>plugin.loaded</code> / <code>plugin.unloaded</code>, a plugin was loaded or removed.</li>
 <li><code>plugin.settings.changed</code>, a plugin's settings were edited in Settings.</li>
 <li><code>plugin.install.progress</code>, progress frames during an install.</li>
-<li><code>plugin.sandboxed</code> / <code>plugin.unsandboxed</code> / <code>plugin.sandbox.refused</code>, sandbox-state transitions for a plugin.</li>
 <li><code>ui.pane.opened</code> / <code>ui.pane.focused</code> / <code>ui.tab.focused</code>, renderer activity naming which pane or tab the user is looking at (subscribe to <code>ui.*</code> to follow focus).</li>
 <li><code>fs.changed</code>, a file you're watching changed (paired with the <code>fs.watch</code> capability).</li>
 <li><code>git.changed</code>, a repo's git state changed (what the Review pane listens to).</li>

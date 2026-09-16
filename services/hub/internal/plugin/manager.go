@@ -13,47 +13,21 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
-	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
-// grantsFor translates a manifest's declared capabilities into bus grants,
-// resolving each path-scoped capability's roots against the plugin's own
-// directory. This is the static, load-time grant: dynamic scopes like
-// ${agentCwd} aren't bound here and so resolve to nothing — the static
-// per-plugin token gets no filesystem reach for them. PaneToken binds those
-// per open pane.
+// grantsFor is retained as an internal compatibility seam for tests and older
+// callers. Plugin capabilities and path scopes are advisory metadata now: an
+// authenticated, enabled plugin token receives the ordinary bus surface.
 func grantsFor(mf Manifest) []capspec.Grant {
-	return grantsWithBindings(mf, nil)
+	return nil
 }
 
-// grantsWithBindings resolves a manifest's capabilities into grants using the
-// plugin's directory plus any extra bindings the caller supplies (e.g.
-// {"agentCwd": "/path"} when minting a token for an agent-scoped pane).
+// grantsWithBindings intentionally ignores legacy path bindings. Pane tokens
+// still identify and revoke a plugin webview, but do not create a narrower
+// filesystem authority than its sidecar token.
 func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
-	// The manifest is NOT the authority. plugin.json lives inside the sandbox's
-	// only write root, so the sidecar can rewrite its own capability list and the
-	// hub would re-derive a larger grant on the SAME persisted token. Narrow to
-	// the consented surface recorded outside the plugin dir — see grantpin.go.
-	// Every token-minting path (static, pane, settings re-Add) funnels through
-	// here and eventGrantsFor, so this is the one place it has to happen.
-	mf = consentedManifest(mf)
-	bindings := map[string]string{"pluginDir": mf.Dir}
-	for k, v := range extra {
-		bindings[k] = v
-	}
-	out := make([]capspec.Grant, 0, len(mf.Capabilities))
-	for _, c := range mf.Capabilities {
-		if c.Method == "" {
-			continue
-		}
-		out = append(out, capspec.Grant{
-			Method:         c.Method,
-			FSRoots:        resolveRoots(c.Paths, bindings),
-			ChildToolScope: c.ChildToolScope,
-		})
-	}
-	return out
+	return nil
 }
 
 // eventGrantsFor lifts a manifest's declared pub/sub + provider surface into the
@@ -62,9 +36,6 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 // of (provides). Verbatim from the manifest — the patterns are matched at the
 // bus with the same syntax as subscription topics.
 func eventGrantsFor(mf Manifest) capspec.EventGrants {
-	// Same reason as grantsWithBindings: emits/consumes/provides are declared in
-	// the file the plugin itself can write.
-	mf = consentedManifest(mf)
 	// Provides is re-checked here, not just in Validate: a plugin already on
 	// disk from before this rule, or one added through a path that skipped
 	// validation, must still not be able to claim a core method. Offending
@@ -81,8 +52,6 @@ func eventGrantsFor(mf Manifest) capspec.EventGrants {
 		provides = append(provides, p)
 	}
 	return capspec.EventGrants{
-		Emits:    mf.Emits,
-		Consumes: mf.Consumes,
 		Provides: provides,
 	}
 }
@@ -282,10 +251,9 @@ type Publisher interface {
 	Publish(event.Envelope)
 }
 
-// TokenRegistrar lets the manager bind a per-plugin bus token to the plugin's
-// declared capability grants, so the bus can scope what each plugin may call and
-// confine its filesystem reach. The bus Server implements this. nil is allowed
-// (capability enforcement disabled).
+// TokenRegistrar lets the manager bind a revocable bus token to a plugin
+// identity and its own-namespace provider declarations. Legacy grant arguments
+// remain in the interface for compatibility and are inert in the bus.
 type TokenRegistrar interface {
 	RegisterPluginToken(token, pluginID string, grants []capspec.Grant, events capspec.EventGrants)
 	UnregisterPluginToken(token string)
@@ -300,15 +268,10 @@ type Manager struct {
 
 	mu      sync.Mutex
 	plugins map[string]*loaded
-	// Ephemeral per-pane tokens (token → plugin id), minted by PaneToken with
-	// dynamic scopes resolved (e.g. ${agentCwd}). Tracked so they can be revoked
+	// Ephemeral per-pane identity tokens (token → plugin id), minted by PaneToken.
+	// Tracked so they can be revoked
 	// on pane close and swept when their plugin is removed/stopped.
 	paneTokens map[string]string
-
-	// How sidecars are launched under OS-level filesystem confinement. Default
-	// best-effort (confine when the platform supports it, else run plain). Set by
-	// the hub from WORKSPACER_PLUGIN_SANDBOX.
-	sandboxMode sandbox.Mode
 
 	// Whether each sidecar's stdout/stderr is streamed line-by-line onto the bus
 	// as plugin.log events. Off by default (production `serve`); the hub turns it
@@ -333,23 +296,14 @@ type loaded struct {
 }
 
 // NewManager creates a manager that publishes lifecycle events to pub and binds
-// per-plugin bus tokens via reg (nil to disable capability enforcement).
+// per-plugin identity tokens via reg (nil disables plugin bus tokens).
 func NewManager(pub Publisher, reg TokenRegistrar) *Manager {
 	return &Manager{
-		pub:         pub,
-		reg:         reg,
-		plugins:     make(map[string]*loaded),
-		paneTokens:  make(map[string]string),
-		sandboxMode: sandbox.ModeBestEffort,
+		pub:        pub,
+		reg:        reg,
+		plugins:    make(map[string]*loaded),
+		paneTokens: make(map[string]string),
 	}
-}
-
-// SetSandboxMode sets how sidecars are launched under filesystem confinement
-// (off / best-effort / enforce). Call before loading plugins.
-func (m *Manager) SetSandboxMode(mode sandbox.Mode) {
-	m.mu.Lock()
-	m.sandboxMode = mode
-	m.mu.Unlock()
 }
 
 // SetSidecarNode points `node` sidecars at an explicit runtime binary. The
@@ -400,13 +354,10 @@ func (m *Manager) SetStreamSidecarLogs(v bool) {
 	m.mu.Unlock()
 }
 
-// sandboxSidecar resolves how to launch mf's sidecar under the current mode,
-// emits a lifecycle event, and reports whether it should start at all (false
-// means refused — enforce mode on a platform with no confinement mechanism).
-func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, run bool) {
-	m.mu.Lock()
-	mode := m.sandboxMode
-	m.mu.Unlock()
+// sidecarCommand resolves the manifest command directly. Enabled plugins run as
+// the current user; Workspacer no longer wraps or refuses sidecars based on an
+// OS sandbox mode.
+func (m *Manager) sidecarCommand(mf Manifest) (command string, args []string) {
 	// Expand ${os}/${arch}/${exe} so a manifest can name a prebuilt per-platform
 	// binary (e.g. ./bin/${os}-${arch}/server${exe}) instead of a single command
 	// that only runs on the OS it was committed from.
@@ -417,37 +368,7 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 	if override := m.sidecarNodeOverride(mf); override != "" {
 		cmd = override
 	}
-	// A sidecar may write only its own plugin directory (a private temp is added
-	// by the mechanism). Reads stay open so it can load its interpreter/libraries.
-	res := sandbox.Wrap(cmd, cmdArgs, sandbox.Policy{WriteRoots: []string{mf.Dir}})
-	switch sandbox.Decide(mode, res.Available) {
-	case sandbox.RunSandboxed:
-		m.pub.Publish(event.New("plugin.sandboxed", "hub", map[string]string{"id": mf.ID, "mechanism": res.Mechanism}))
-		return res.Path, res.Args, true
-	case sandbox.Refuse:
-		// The LOUDEST of the three outcomes and, until now, the only silent one:
-		// a refusal is permanent (no supervisor is ever constructed, so no
-		// sidecar.running / sidecar.crashed event is emitted either) and the
-		// Plugins pane, which derives its state from those events alone, shows
-		// the optimistic default "starting" forever — an in-progress label for a
-		// process that will never be started. The best-effort branch below
-		// prints a 300-byte warning for a situation that still runs.
-		log.Printf("[plugin] REFUSED to start sidecar %q: WORKSPACER_PLUGIN_SANDBOX=enforce and no confinement mechanism is available (%s). This plugin's server will NOT run; install bubblewrap (Linux) or set WORKSPACER_PLUGIN_SANDBOX=best-effort to run it unconfined.", mf.ID, res.Note)
-		m.pub.Publish(event.New("plugin.sandbox.refused", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
-		return "", nil, false
-	default: // RunUnsandboxed
-		if mode != sandbox.ModeOff {
-			// best-effort + no available mechanism: the sidecar is ACTUALLY running
-			// unconfined and nothing else makes that visible. Warn loudly so the
-			// operator sees the risk in the hub output, not just on the bus.
-			log.Printf("[plugin] WARNING: sidecar %q is running WITHOUT sandboxing (no confinement mechanism available on this platform / mode=best-effort: %s) — it has full access to your files and network. Set WORKSPACER_PLUGIN_SANDBOX=enforce to refuse unconfined plugins.", mf.ID, res.Note)
-			m.pub.Publish(event.New("plugin.unsandboxed", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
-		} else {
-			// mode=off: the operator explicitly turned sandboxing off — one quiet note.
-			log.Printf("[plugin] sidecar %q running unsandboxed (WORKSPACER_PLUGIN_SANDBOX=off)", mf.ID)
-		}
-		return cmd, cmdArgs, true
-	}
+	return cmd, cmdArgs
 }
 
 // randomToken mints a fresh URL-safe bus token.
@@ -459,11 +380,9 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// PaneToken mints an ephemeral, capability-scoped bus token for one open pane of
-// a plugin, resolving the plugin's dynamic path scopes (e.g. ${agentCwd}) with
-// bindings the trusted host supplies for that pane. The host injects the
-// returned token into the pane's webview URL; the webview then has exactly the
-// plugin's capabilities, confined to this pane's resolved roots. Revoke it with
+// PaneToken mints an ephemeral identity token for one open pane of a plugin.
+// Legacy path bindings are accepted but inert. The host injects the returned
+// token into the pane's webview URL. Revoke it with
 // RevokePaneToken when the pane closes (it is also swept if the plugin is
 // removed or the manager stops). Requires capability enforcement (reg != nil).
 func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string, error) {
@@ -618,10 +537,6 @@ func (m *Manager) Add(mf Manifest) {
 	// host). A webview-only plugin has no sidecar but still needs a token, and a
 	// widget-only plugin (ui + widgets, no panes) needs one just as much.
 	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0 || len(mf.Widgets) > 0) {
-		// Trust on first load: a plugin the hub has never seen gets its declared
-		// surface recorded as consented. Done HERE and not inside the grant
-		// derivation, so deriving a grant stays side-effect free.
-		ensureGrantPin(mf)
 		l.token = loadOrCreatePluginToken(mf.Dir)
 		if l.token != "" {
 			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf), eventGrantsFor(mf))
@@ -647,25 +562,20 @@ func (m *Manager) Add(mf Manifest) {
 		if m.sidecarNodeOverride(mf) != "" {
 			env = append(env, "ELECTRON_RUN_AS_NODE=1")
 		}
-		// Launch under OS filesystem confinement (bwrap / sandbox-exec). In
-		// enforce mode on a platform without a mechanism, run is false and the
-		// sidecar is not started.
-		cmd, cmdArgs, run := m.sandboxSidecar(mf)
-		if run {
-			m.mu.Lock()
-			logLines := m.streamSidecarLogs
-			m.mu.Unlock()
-			l.sup = supervisor.New(supervisor.Spec{
-				Name:      mf.ID,
-				Command:   cmd,
-				Args:      cmdArgs,
-				Dir:       mf.Dir, // run the sidecar in its own plugin directory
-				Env:       env,
-				HealthURL: healthURL(mf.Server),
-				LogLines:  logLines,
-			}, m.pub)
-			startNew = l.sup.Start
-		}
+		cmd, cmdArgs := m.sidecarCommand(mf)
+		m.mu.Lock()
+		logLines := m.streamSidecarLogs
+		m.mu.Unlock()
+		l.sup = supervisor.New(supervisor.Spec{
+			Name:      mf.ID,
+			Command:   cmd,
+			Args:      cmdArgs,
+			Dir:       mf.Dir, // run the sidecar in its own plugin directory
+			Env:       env,
+			HealthURL: healthURL(mf.Server),
+			LogLines:  logLines,
+		}, m.pub)
+		startNew = l.sup.Start
 	}
 
 	m.mu.Lock()
@@ -686,9 +596,8 @@ func (m *Manager) Add(mf Manifest) {
 		}
 		// Sweep the previous incarnation's ephemeral pane tokens, mirroring
 		// Remove. Without this, disabling a plugin (SetEnabled→Add with Disabled)
-		// leaves its open webviews holding live bus grants, and reloading with
-		// reduced capabilities leaves panes on the OLD, broader grants. The host
-		// re-mints pane tokens against the new manifest when panes reopen.
+		// leaves its open webviews holding a live plugin identity. The host re-mints
+		// pane tokens against the new enabled plugin when panes reopen.
 		m.revokePaneTokensFor(mf.ID)
 	}
 
@@ -794,18 +703,16 @@ func (m *Manager) List() []Manifest {
 	return out
 }
 
-// PluginTools is one plugin's consented facade-tool surface, served to the MCP
+// PluginTools is one enabled plugin's facade-tool surface, served to the MCP
 // facade via the hub-local `plugins.tools` method.
 type PluginTools struct {
 	PluginID string    `json:"pluginId"`
 	Tools    []ToolDef `json:"tools"`
 }
 
-// ConsentedTools returns every enabled plugin's contributed facade tools,
-// narrowed to what the grant pin actually consents to: a tool is included only
-// when the CONSENTED provides patterns cover its method — the same narrowing
-// grantsWithBindings/eventGrantsFor apply to the grants themselves, so the
-// facade can never advertise a tool whose registration the bus would refuse.
+// ConsentedTools returns every enabled plugin's contributed facade tools. The
+// historical name is retained for wire/source compatibility; installation and
+// enablement are now the trust decision and legacy grant pins are inert.
 func (m *Manager) ConsentedTools() []PluginTools {
 	m.mu.Lock()
 	manifests := make([]Manifest, 0, len(m.plugins))
@@ -819,11 +726,10 @@ func (m *Manager) ConsentedTools() []PluginTools {
 		if mf.Disabled || len(mf.Tools) == 0 {
 			continue
 		}
-		consented := consentedManifest(mf)
 		tools := make([]ToolDef, 0, len(mf.Tools))
 		for _, t := range mf.Tools {
-			if !event.MatchesAny(consented.Provides, t.Method) {
-				log.Printf("SECURITY: plugin %s: withholding facade tool %q — its method %q is not covered by the consented provides patterns.", mf.ID, t.Name, t.Method)
+			if !event.MatchesAny(mf.Provides, t.Method) {
+				log.Printf("SECURITY: plugin %s: withholding facade tool %q — its method %q is not covered by the plugin's own-namespace provides patterns.", mf.ID, t.Name, t.Method)
 				continue
 			}
 			tools = append(tools, t)

@@ -13,7 +13,7 @@ then waking from a phone only works while the desktop is on.
 | File | What it is |
 |---|---|
 | `RUNBOOK.md` | Provisioning, the reachability argument, the persistence map, and what is *not* verified |
-| `Dockerfile` | A short layer on the node base: the `hub` binary, `dist/web`, bubblewrap, and this entrypoint. `--build-arg WKS_INSTALL=artifact` takes `hub` + `web` out of a release bundle instead, skipping both the Go stage and the (slow) Vite build |
+| `Dockerfile` | A short layer on the node base: the `hub` binary, `dist/web`, and this entrypoint. `--build-arg WKS_INSTALL=artifact` takes `hub` + `web` out of a release bundle instead, skipping both the Go stage and the (slow) Vite build |
 | `Dockerfile.dockerignore` | Build context is the repo root; this keeps it to `services/hub` + `apps/desktop` |
 | `fly.toml` | Region, sizing, volume, `restart.policy = "always"`, and **no `[http_service]`** — each with the reasoning inline |
 | `entrypoint.sh` | PID 1: boot log → bootstrap → tailscaled → `tailscale serve` → `hub`, plus a loopback health watchdog |

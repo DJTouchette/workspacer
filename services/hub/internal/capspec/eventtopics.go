@@ -395,21 +395,6 @@ var eventTopics = []EventTopic{
 		Reason:      "secrets ARE redacted to __WKS_SECRET__ here, but every NON-secret value (endpoints, org/repo names, absolute paths) is verbatim, and the equivalent READ — /plugins/settings — is guard()ed to the host token. Two planes disagreeing about one document is the exact defect this file exists to end, and the call plane's answer is the stricter one",
 	},
 	{
-		Pattern:     "plugin.sandboxed",
-		Disposition: TopicHostOnly,
-		Reason:      "which OS confinement mechanism a sidecar got. The confinement inventory of the host is not fleet state",
-	},
-	{
-		Pattern:     "plugin.sandbox.refused",
-		Disposition: TopicHostOnly,
-		Reason:      "why a sandbox could not be applied — the negative half of the confinement inventory",
-	},
-	{
-		Pattern:     "plugin.unsandboxed",
-		Disposition: TopicHostOnly,
-		Reason:      "announces which sidecars are running with NO filesystem confinement, and why. That is a target list: it names the process to attack and states that nothing will contain it",
-	},
-	{
 		Pattern:     "plugin.install.progress",
 		Disposition: TopicHostOnly,
 		Reason:      "echoes body.URL VERBATIM from the host-authority POST /plugins/install request (hostOnlyRoute: not even an operator-tier scoped token may call it), with no normalization before the echo. Host-only input must not become view-visible output just because the progress of a long operation is convenient to broadcast",

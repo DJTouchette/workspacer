@@ -93,19 +93,16 @@ type Frame struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// pluginIdent is the identity a per-plugin bus token resolves to: which plugin,
-// and the grants it holds — the capabilities it may call, each with optional
-// filesystem scoping.
+// pluginIdent is the identity a per-plugin bus token resolves to. caps remains
+// only as a private compatibility/test shape; runtime plugin access is ambient.
 type pluginIdent struct {
 	id     string
 	caps   map[string]capGrant
 	events capspec.EventGrants
 }
 
-// capGrant is what a plugin token may do with one capability. fsRoots, when
-// non-empty, confines a path-scoped call (fs.*, search.project) to targets
-// inside one of these canonical roots; empty means the method carries no path to
-// confine (driving, observation, notifications, …).
+// capGrant is a legacy internal shape retained while persisted manifest fields
+// remain parse-compatible. RegisterPluginToken does not populate it.
 type capGrant struct {
 	fsRoots []string
 	// childToolScope is the CHILD-DELEGATION grant, meaningful only on
@@ -298,46 +295,33 @@ func NewServer(b *broker.Broker) *Server {
 	return s
 }
 
-// RegisterPluginToken maps a per-plugin bus token to the plugin's id and the
-// grants it holds. Filesystem roots are canonicalized once here (symlinks + ..
-// resolved) so the per-call containment check doesn't re-walk them; a root that
-// can't be canonicalized is dropped, since it can't safely grant anything.
-// Idempotent; called by the plugin manager on load.
+// RegisterPluginToken maps a per-plugin bus token to the plugin's identity.
+// Legacy capability, filesystem, emit, consume, and child-delegation grants are
+// accepted for source compatibility but are intentionally inert. `provides`
+// remains an identity boundary: a plugin may only register methods in its own
+// namespace, with the router's first-registration-wins rule unchanged.
 func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Grant, events capspec.EventGrants) {
 	if token == "" {
 		return
 	}
-	set := make(map[string]capGrant, len(grants))
-	for _, g := range grants {
-		if g.Method == "" {
-			continue
+	provides := make([]string, 0, len(events.Provides))
+	for _, pattern := range events.Provides {
+		if pluginOwnProviderPattern(pluginID, pattern) {
+			provides = append(provides, pattern)
+		} else {
+			log.Printf("[bus] SECURITY: plugin %q cannot register provider pattern %q outside its own namespace", pluginID, pattern)
 		}
-		// Fail closed on the drift capspec exists to prevent: a method whose name
-		// marks it filesystem-scoped (fs.*, search.*) but that has no PathParam
-		// entry would be admitted by authorize() with NO path confinement. Refuse
-		// to grant it at all rather than grant it unconfined, and log so the
-		// missing spec is visible instead of becoming a silent privilege escape.
-		if capspec.MissingSpec(g.Method) {
-			log.Printf("[bus] SECURITY: refusing to grant %q to plugin %q — it is named like a filesystem capability but has no internal/capspec.PathParam entry, so it would run unconfined. Add it to capspec (with the params field carrying its path) before granting it.", g.Method, pluginID)
-			continue
-		}
-		child := strings.ToLower(strings.TrimSpace(g.ChildToolScope))
-		if child != "" {
-			if g.Method != spawnMethod {
-				log.Printf("[bus] plugin %q: ignoring childToolScope %q on %q — that grant only means anything on %q, the one method that hands a child a tool tier", pluginID, child, g.Method, spawnMethod)
-				child = ""
-			} else if _, ok := toolScopeRank(child); !ok {
-				// FAIL CLOSED on a tier nobody can rank: an unreadable
-				// delegation grant is no delegation grant, never an unclamped one.
-				log.Printf("[bus] SECURITY: plugin %q: refusing childToolScope %q on %q — it is not a tool tier (view, triage, operator), so it cannot be compared and the plugin delegates NO tools", pluginID, child, g.Method)
-				child = ""
-			}
-		}
-		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots, pluginID, g.Method), childToolScope: child}
 	}
 	s.ptMu.Lock()
-	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set, events: events}
+	s.pluginTokens[token] = pluginIdent{id: pluginID, events: capspec.EventGrants{Provides: provides}}
 	s.ptMu.Unlock()
+}
+
+func pluginOwnProviderPattern(pluginID, pattern string) bool {
+	p := strings.TrimSpace(pattern)
+	prefix := pluginID + "."
+	return pluginID != "" && p != prefix && strings.HasPrefix(p, prefix) &&
+		(!strings.Contains(strings.TrimPrefix(p, prefix), "*") || p == prefix+"*")
 }
 
 // canonRoots canonicalizes grant roots once at registration, DISCARDING any that
@@ -1427,9 +1411,8 @@ func (cn *conn) helloFrame() Frame {
 }
 
 // mayPublish reports whether this connection may publish an event of the given
-// type. Trusted conns publish anything; a plugin may publish only types matched
-// by its manifest's `emits`, and NOBODY but a trusted conn may publish a topic
-// capspec classifies — those are host state.
+// type. Enabled plugins may publish ordinary plugin-defined events without a
+// manifest grant. Classified host state remains provenance-protected.
 //
 // The manifest used to be the whole answer, and a manifest is a statement about
 // what a plugin WANTS to emit, not about who OWNS the topic. Two proven chains
@@ -1499,7 +1482,7 @@ func (cn *conn) mayPublish(typ string) bool {
 		// two honest providers.
 		return spec.Publisher != "" && cn.mayProvide(spec.Publisher)
 	}
-	return event.MatchesAny(cn.emits, typ)
+	return cn.pluginID != ""
 }
 
 // mayConsume reports whether an event of the given type may be delivered to this
@@ -1586,16 +1569,12 @@ func (cn *conn) mayConsume(typ string) bool {
 			return true
 		}
 	}
-	if !event.MatchesAny(cn.consumes, typ) {
-		return false
-	}
 	if !classified {
 		return true
 	}
 	switch spec.Disposition {
 	case capspec.TopicGuardedBy:
-		_, held := cn.caps[spec.Method]
-		return held
+		return true
 	case capspec.TopicHostOnly:
 		return false
 	default:
@@ -1605,10 +1584,9 @@ func (cn *conn) mayConsume(typ string) bool {
 
 // mayProvide reports whether this connection may register as the provider of a
 // capability method. Trusted conns (the host) provide the built-in
-// capabilities; everyone else registers only what their `provides` grant
-// matches — for a plugin that grant comes from its manifest (bounded by
-// install-time consent AND by validateProvides, which confines a plugin to its
-// OWN namespace), and for a provider-tier token from the token record.
+// capabilities; everyone else registers only what their `provides` identity
+// boundary matches — for a plugin, validateProvides confines this to its own
+// namespace; for a provider-tier token it comes from the token record.
 //
 // The revocation check is not symmetry with mayCall/mayConsume for its own
 // sake. Without it, a socket whose credential was revoked mid-flight could
@@ -1636,11 +1614,10 @@ func (cn *conn) providerTier() bool {
 	return cn.scopeMethods != nil && cn.scope == providerScope
 }
 
-// mayCall reports whether this connection is allowed to invoke method at all
-// (the verb check). Trusted connections (the host / MCP facade) may call
-// anything; a scoped user token may call only methods matching its tier's
-// patterns; a plugin may call only the capabilities it was granted. Argument
-// scoping (which paths) is a separate step — see authorize.
+// mayCall reports whether this connection is allowed to invoke method at all.
+// Enabled plugin tokens may call ordinary capabilities ambiently; handlers that
+// require host identity (jobs, billable/external actions, desktop services)
+// still enforce that stronger boundary from CallerIdentity.
 func (cn *conn) mayCall(method string) bool {
 	// Revocation first, and before the trusted short-circuit is irrelevant here
 	// only because a trusted conn never carries a plugin token: a revoked
@@ -1660,8 +1637,7 @@ func (cn *conn) mayCall(method string) bool {
 	if cn.scopeMethods != nil {
 		return event.MatchesAny(cn.scopeMethods, method)
 	}
-	_, ok := cn.caps[method]
-	return ok
+	return cn.pluginID != ""
 }
 
 // callDenied renders the error for a call mayCall refused, naming what the
@@ -1673,14 +1649,13 @@ func (cn *conn) callDenied(method string) string {
 	if cn.scopeMethods != nil {
 		return fmt.Sprintf("not authorized: method %q is outside this token's %q scope (mint a broader token with `workspacer token create`)", method, cn.scope)
 	}
-	return "plugin not authorized for capability " + method
+	return "plugin is not authorized for host-only capability " + method
 }
 
 // authorize enforces argument-level scoping for a call mayCall already admitted.
-// Trusted conns are unrestricted. For a path-scoped method, the call's path is
-// canonicalized and must fall inside the grant's roots; anything that can't be
-// verified (missing field, no roots, resolution error) is denied — fail closed.
-// Non-path methods pass straight through.
+// Plugin tokens, like user tokens, are no longer filesystem-confined by
+// Workspacer; enabled sidecars run as the user and may name arbitrary absolute
+// paths. Host-only identity gates remain in the capability handlers.
 func (cn *conn) authorize(method string, params json.RawMessage) error {
 	if cn.trusted {
 		return nil
@@ -1688,6 +1663,9 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 	if cn.scopeMethods != nil {
 		// Scoped user tokens are tiered by verb only (mayCall) — they are a
 		// person's credential, not a sandboxed program's, so no path confinement.
+		return nil
+	}
+	if cn.pluginID != "" {
 		return nil
 	}
 	g, ok := cn.caps[method]

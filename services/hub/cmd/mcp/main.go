@@ -95,8 +95,8 @@ func main() {
 	if *untokened != untokenedDeny {
 		log.Printf("mcp untokened access dialed to %q — any local process with no credential gets the %s tier", *untokened, *untokened)
 	}
-	// Plugin-contributed tools: poll the hub's consented surface and graft it
-	// onto per-token servers (opt-in via each session token's plugin grants).
+	// Plugin-contributed tools: poll the hub's enabled surface and graft every
+	// tool onto every authenticated agent server.
 	catalog := newPluginCatalog(client)
 	go catalog.run(ctx)
 	mux := newMux(newServerCache(client, catalog, tierServers(client)), client, gate)
@@ -120,8 +120,8 @@ func main() {
 
 // newMux builds the facade's HTTP router. /mcp and /sse resolve each request's
 // credential to its token record via the authGate and serve that record's
-// server — the tier (view/triage/operator), plus any plugin tools the record
-// grants; /health stays open (unauthenticated) so liveness probes work without
+// server — the tier (view/triage/operator), plus every enabled plugin tool;
+// /health stays open (unauthenticated) so liveness probes work without
 // a secret.
 func newMux(cache *serverCache, client *busclient.Client, gate *authGate) *http.ServeMux {
 	getServer := func(r *http.Request) *mcp.Server {
@@ -330,9 +330,8 @@ func presentedToken(r *http.Request) string {
 }
 
 // resolveRecord maps a request to the token record governing it: the tier it
-// may use plus any per-token plugin grants. The static token and the untokened
-// loopback default both synthesize a plain operator record — NO plugin grants;
-// plugin tools are strictly opt-in per session token. The static compare is
+// may use. The legacy per-token plugin list is inert; enabled plugin tools are
+// ambient for every authenticated record. The static compare is
 // constant-time to avoid leaking the token via timing; store lookups are
 // mtime-gated reads of tokens.json.
 func (g *authGate) resolveRecord(r *http.Request) (authtoken.Record, bool) {
@@ -353,8 +352,7 @@ func (g *authGate) resolveRecord(r *http.Request) (authtoken.Record, bool) {
 		case untokenedOperator:
 			return authtoken.Record{Scope: authtoken.ScopeOperator}, true
 		case untokenedView:
-			// Read-only tier, and — like every synthesized record — NO plugin
-			// grants; plugin tools stay strictly opt-in per session token.
+			// Read-only first-party tier; enabled plugin tools are still ambient.
 			return authtoken.Record{Scope: authtoken.ScopeView}, true
 		default: // deny, or the zero value — fail closed
 			return authtoken.Record{}, false
@@ -1613,7 +1611,7 @@ type spawnAgentIn struct {
 	ParentSessionId string   `json:"parentSessionId,omitempty" jsonschema:"parent session for static/non-session controllers. Session-authenticated callers are always recorded as the parent by the host; a conflicting value is ignored"`
 	MCPFacade       bool     `json:"mcpFacade,omitempty" jsonschema:"legacy: give the new agent the FULL workspacer tool set (operator tier); prefer toolScope"`
 	ToolScope       string   `json:"toolScope,omitempty" jsonschema:"give the new agent the workspacer tools at a tier: view (observe-only — right for summarizer workers), triage (view + approve/reply/interrupt), or operator (everything)"`
-	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"plugin ids whose contributed tools the new agent may use (requires toolScope); omit for none"`
+	PluginTools     []string `json:"pluginTools,omitempty" jsonschema:"legacy inert plugin selection; enabled plugin tools are included automatically"`
 	Worktree        bool     `json:"worktree,omitempty" jsonschema:"run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note"`
 	// Message is the new agent's FIRST PROMPT, carried by the spawn itself.
 	// Before this existed a dispatch was always two calls — spawn, wait for the

@@ -528,16 +528,6 @@ else
   log "  is unaffected. Rebuild with --build-arg WKS_WITH_WEBAPP=1 to include it."
 fi
 
-# Plugin sidecars run confined. `enforce` refuses to start a sidecar on a
-# platform with no confinement mechanism (fail closed) — the right posture for
-# the machine that holds a token which spends money. The mechanism on Linux is
-# bubblewrap, installed in this image for exactly this reason. UNVERIFIED on Fly:
-# bwrap needs unprivileged user namespaces, which a Firecracker guest kernel may
-# or may not allow. No plugin ships here by default, so if it is wrong the first
-# person to install one gets a clear refusal rather than a silent unconfined
-# sidecar. Set WORKSPACER_PLUGIN_SANDBOX=best-effort to fall back.
-export WORKSPACER_PLUGIN_SANDBOX="${WORKSPACER_PLUGIN_SANDBOX:-enforce}"
-
 log "starting hub on ${HUB_BIND}:${HUB_PORT} (brain-scope off, trusted-host=${TRUSTED_HOSTS:-<none>})"
 as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
   XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" \

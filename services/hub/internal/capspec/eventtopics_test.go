@@ -1,7 +1,6 @@
 package capspec
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -496,148 +495,28 @@ func firstOf(a, b map[string]string, key string) string {
 	return fmt.Sprintf("<unknown site for %q>", key)
 }
 
-// THE CROSS-LANGUAGE CONTRACT. contracts/event-topic-consent-cases.json is the
-// shared fixture; this test binds the ENFORCING copy (eventtopics.go) to it and
-// apps/desktop/.../tests/pluginPermissions.test.ts binds the DISCLOSING copy
-// (pluginPermissions.ts) to the same file, so neither side can move alone.
-//
-// The renderer's table used to be a hand copy of the TopicGuardedBy rows and
-// nothing else: all nine host-only rows were absent, so a manifest declaring
-// `consumes: ["plugin.log", "sidecar.*"]` rendered to the user at severity
-// NORMAL — for one verbatim unredacted line of a sidecar's stderr, and for the
-// host's process-supervision state. The predecessor of this test could not
-// notice, because it only ever looked for the guarded rows it already knew
-// about: a table checking the subset of itself it remembered.
-type topicConsentFixture struct {
-	SeverityByDisposition map[string]string `json:"severityByDisposition"`
-	Topics                []struct {
-		Pattern     string `json:"pattern"`
-		Disposition string `json:"disposition"`
-		Method      string `json:"method"`
-	} `json:"topics"`
-}
-
-func TestEventTopicRegistryMatchesTheConsentFixture(t *testing.T) {
-	var fx topicConsentFixture
-	raw := mustReadRepoFile(t, "contracts", "event-topic-consent-cases.json")
-	if err := json.Unmarshal(raw, &fx); err != nil {
-		t.Fatalf("contracts/event-topic-consent-cases.json: %v", err)
-	}
-	if len(fx.Topics) < 22 {
-		t.Fatalf("the fixture holds %d topics — it shrank, and every row it loses stops being described to the user at all", len(fx.Topics))
-	}
-
-	type row struct{ disposition, method string }
-	want := map[string]row{}
-	for _, r := range fx.Topics {
-		want[r.Pattern] = row{r.Disposition, r.Method}
-	}
-	byDisposition := map[string]int{}
-	for _, r := range EventTopics() {
-		byDisposition[string(r.Disposition)]++
-		w, ok := want[r.Pattern]
-		if !ok {
-			t.Errorf("the registry classifies %q and contracts/event-topic-consent-cases.json does not. The consent dialog is generated from that fixture, so this topic is currently described to the user as an ordinary line whatever the hub does with it — add the row to the fixture (and to pluginPermissions.ts, whose own test reads it).", r.Pattern)
-			continue
-		}
-		if w.disposition != string(r.Disposition) || w.method != r.Method {
-			t.Errorf("%q is %q/%q here and %q/%q in the fixture — the enforcing copy and the disclosing copy disagree about the same topic, which is the drift this fixture exists to make impossible",
-				r.Pattern, r.Disposition, r.Method, w.disposition, w.method)
-		}
-		delete(want, r.Pattern)
-	}
-	for pattern, w := range want {
-		t.Errorf("the fixture classifies %q as %q and this registry says nothing about it — the consent dialog is describing a topic the hub does not govern, or a row was renamed on this side only", pattern, w.disposition)
-	}
-	for _, d := range []EventTopicDisposition{TopicGuardedBy, TopicHostOnly, TopicOpenByDecision} {
-		if byDisposition[string(d)] == 0 {
-			t.Errorf("no row uses disposition %q, so the fixture comparison above is checking two dispositions at most", d)
-		}
-	}
-
-	// The fixture's severity mapping is normative for the renderer, and it is
-	// the half a "fix" would be tempted to edit: declaring host-only NORMAL
-	// makes the TypeScript sweep pass with plugin.log rendering as an ordinary
-	// line again. Pin it from this side too — the two files are then each
-	// other's guard.
-	for disposition, severity := range map[string]string{
-		string(TopicGuardedBy):      "sensitive",
-		string(TopicHostOnly):       "sensitive",
-		string(TopicOpenByDecision): "normal",
-	} {
-		if got := fx.SeverityByDisposition[disposition]; got != severity {
-			t.Errorf("the fixture renders a %q topic at severity %q, want %q. A consume line for a topic no capability can unlock must not read as ordinary: the dialog is consent, and under-warning is the failure mode that matters.", disposition, got, severity)
-		}
-	}
-}
-
-// And the source of the disclosing copy itself, so a row cannot be lost from the
-// renderer while the fixture and the hub still agree. The semantic assertion —
-// what each row RENDERS as — is in pluginPermissions.test.ts, which reads the
-// same fixture; this is the cheap net that fails in the Go suite too, because
-// the renderer table is a security surface and "the other language's CI would
-// have caught it" is how a partial copy stayed shipped.
-func TestConsentDialogNamesEveryClassifiedTopic(t *testing.T) {
-	body := string(mustReadRepoFile(t, "apps", "desktop", "src", "renderer", "src", "lib", "pluginPermissions.ts"))
-	if !strings.Contains(body, "EVENT_TOPIC_RULES") {
-		t.Fatal("pluginPermissions.ts no longer exports EVENT_TOPIC_RULES — the consent dialog has stopped describing which consume lines reach classified topics, and this guard is reading nothing")
-	}
-	checked := map[EventTopicDisposition]int{}
-	for _, r := range EventTopics() {
-		checked[r.Disposition]++
-		if !strings.Contains(body, "pattern: '"+r.Pattern+"'") {
-			t.Errorf("the install-consent dialog has no row for %q (%s). A manifest asking for this topic renders as an ordinary line.", r.Pattern, r.Disposition)
-			continue
-		}
-		switch r.Disposition {
-		case TopicGuardedBy:
-			if !strings.Contains(body, "method: '"+r.Method+"'") {
-				t.Errorf("%q is guarded by %q and the dialog never names that capability, so the line cannot say what is behind the topic", r.Pattern, r.Method)
-			}
-		case TopicHostOnly:
-			if !strings.Contains(body, "'host-only'") {
-				t.Errorf("%q is host-only and pluginPermissions.ts does not know that disposition exists — the nine rows no capability can unlock are the ones that used to render as ordinary", r.Pattern)
-			}
-		}
-	}
-	if checked[TopicGuardedBy] < 4 || checked[TopicHostOnly] < 8 {
-		t.Fatalf("checked %d guarded and %d host-only rows — the registry lost rows and this cross-check went vacuous", checked[TopicGuardedBy], checked[TopicHostOnly])
-	}
-}
-
-// THE THIRD CHECK, AND WHY IT IS NOT A FOURTH TABLE.
-//
-// Round 7 shipped the event plane with two tables that check each other:
-// eventtopics.go (enforcing) and contracts/event-topic-consent-cases.json
-// (disclosing), plus pluginPermissions.ts reading the fixture. Its own verifier
-// named the residual precisely — the answer key is HAND-WRITTEN, so a
-// coordinated three-place edit passes every check. Restating that limitation
-// would be worth nothing, and deriving one table from the other would be worth
-// less: three copies of one opinion agree even faster than two.
-//
-// So this check does not read a table at all. It reads WHERE THE CODE PUBLISHES
+// This check does not read a presentation table. It reads WHERE THE CODE PUBLISHES
 // the topic, and holds the disposition to that:
 //
 //	a topic published only from the sidecar/plugin control plane —
-//	internal/plugin, internal/supervisor, internal/sandbox — is host-only.
+//	internal/plugin and internal/supervisor — is host-only.
 //
 // That rule is not a restatement, it is a different kind of evidence. Those
-// packages exist to start, confine and configure sidecar processes; everything
+// packages exist to start and configure sidecar processes; everything
 // they broadcast is a fact about how this HOST runs programs (a manifest, an
-// argv, a confinement mechanism, a process id, one verbatim line of a sidecar's
+// argv, a process id, one verbatim line of a sidecar's
 // stderr), and no capability at any tier returns any of it. Downgrading
 // plugin.loaded to open-by-decision in all three tables now still fails here,
 // because the third witness is manager.go's own package path — a place the
 // downgrade would have to MOVE the publisher to, not merely edit.
 //
-// It covers eight of the nine host-only rows (plugin.install.progress is
+// It covers five of the six host-only rows (plugin.install.progress is
 // published from cmd/hub and is out of scope; its own row explains why it is
 // host-only). Coverage is asserted below rather than assumed, so the rule
 // cannot quietly stop matching anything.
 var hostControlPlanePackages = []string{
 	"hub/internal/plugin/",
 	"hub/internal/supervisor/",
-	"hub/internal/sandbox/",
 }
 
 func TestHostOnlyIsDerivedFromWhereTheCodePublishes(t *testing.T) {
@@ -679,8 +558,8 @@ func TestHostOnlyIsDerivedFromWhereTheCodePublishes(t *testing.T) {
 	// The rule must still MATCH something, or a moved file turns this into a
 	// loop over nothing that reports PASS — the failure mode every scan-based
 	// guard in this repo has had at least once.
-	if covered < 8 {
-		t.Fatalf("the control-plane rule matched only %d topics (want >= 8: the plugin.* family plus sidecar.*). Either those publishers moved, or the scan stopped resolving them, and this independent check is now checking nothing", covered)
+	if covered < 5 {
+		t.Fatalf("the control-plane rule matched only %d topics (want >= 5: the plugin.* family plus sidecar.*). Either those publishers moved, or the scan stopped resolving them, and this independent check is now checking nothing", covered)
 	}
 }
 

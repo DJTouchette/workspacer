@@ -3,14 +3,10 @@
 // Installed workspacer plugins may declare `tools` in their manifest — MCP
 // tool definitions bound to bus methods the plugin itself answers (its
 // `provides`). The hub serves the CONSENTED surface via the hub-local
-// `plugins.tools` method (pin-narrowed, so nothing is listed the bus would
-// refuse to let the plugin register); this file polls that catalog and grafts
-// the tools onto per-token servers.
-//
-// Opt-in per session, never ambient: a plugin tool is exposed only to a
-// request whose scoped token lists the plugin (authtoken.Record.Plugins) —
-// installed-plugin tools do not tax every connected agent's context, and the
-// untokened loopback default gets none.
+// `plugins.tools` method. This file polls that catalog and grafts every enabled
+// plugin tool onto every authenticated agent server. Plugin installation and
+// enablement are the user's trust decision; the legacy per-session `plugins`
+// token field remains parse-compatible but no longer narrows the catalog.
 package main
 
 import (
@@ -38,19 +34,19 @@ type pluginToolDef struct {
 	Method      string          `json:"method"`
 }
 
-// pluginTools is one plugin's consented tool surface (plugin.PluginTools).
+// pluginTools is one enabled plugin's tool surface (plugin.PluginTools).
 type pluginTools struct {
 	PluginID string          `json:"pluginId"`
 	Tools    []pluginToolDef `json:"tools"`
 }
 
 // catalogPollInterval is how often the facade re-asks the hub for the
-// consented tool surface. Install/enable/reload of a plugin shows up within
+// enabled tool surface. Install/enable/reload of a plugin shows up within
 // one interval; a token's plugin GRANTS apply instantly (they live in
 // tokens.json, resolved per request).
 const catalogPollInterval = 15 * time.Second
 
-// pluginCatalog is the facade's view of the hub's consented plugin-tool
+// pluginCatalog is the facade's view of the hub's enabled plugin-tool
 // surface, refreshed by polling `plugins.tools` over the trusted bus
 // connection. gen increments only when the surface actually changes, so the
 // server cache can key on it.
@@ -118,10 +114,9 @@ func (pc *pluginCatalog) snapshot() (map[string][]pluginToolDef, int) {
 	return pc.byID, pc.gen
 }
 
-// serverCache hands out the MCP server for a resolved token: the plain tier
-// server when the token record carries no per-token grants, or a
-// tier+grants server built on demand and cached by (scope, granted plugins,
-// granted profiles, catalog generation). The cache is flushed whenever the
+// serverCache hands out the MCP server for a resolved token, cached by (scope,
+// profile/full-access grants, catalog generation). Every server includes every
+// enabled catalog plugin. The cache is flushed whenever the
 // catalog generation moves, so a plugin reload/uninstall retires its tools
 // within one poll interval.
 type serverCache struct {
@@ -140,17 +135,14 @@ func newServerCache(c *busclient.Client, catalog *pluginCatalog, base map[authto
 
 // serverFor returns the server a resolved token record should be served.
 func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
-	if len(rec.Plugins) == 0 && len(rec.ProfilesAllowed) == 0 && !rec.YoloAllowed {
-		if s := sc.base[rec.Scope]; s != nil {
-			return s
-		}
-		return newDeniedServer() // unknown scope record: fail closed, no tools
-	}
 	if sc.base[rec.Scope] == nil {
 		return newDeniedServer()
 	}
 	byID, gen := sc.catalog.snapshot()
-	granted := grantedPlugins(rec.Plugins, byID)
+	enabled := enabledPlugins(byID)
+	if len(enabled) == 0 && len(rec.ProfilesAllowed) == 0 && !rec.YoloAllowed {
+		return sc.base[rec.Scope]
+	}
 	// Profiles and the full-access grant join the cache key so two records at
 	// the same tier with different spawn grants can never share a spawn tool —
 	// each grant check is closed over the build, so a shared server IS a shared
@@ -159,7 +151,7 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	if rec.YoloAllowed {
 		yoloKey = "1"
 	}
-	key := string(rec.Scope) + "|" + strings.Join(granted, ",") +
+	key := string(rec.Scope) + "|" + strings.Join(enabled, ",") +
 		"|" + strings.Join(rec.ProfilesAllowed, ",") + "|" + yoloKey + "|" + strconv.Itoa(gen)
 
 	sc.mu.Lock()
@@ -172,7 +164,7 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 		return s
 	}
 	var defs []grantedPluginTools
-	for _, id := range granted {
+	for _, id := range enabled {
 		defs = append(defs, grantedPluginTools{PluginID: id, Tools: byID[id]})
 	}
 	s := newServerWithGrants(sc.c, rec.Scope, defs, rec.ProfilesAllowed, rec.YoloAllowed)
@@ -180,24 +172,11 @@ func (sc *serverCache) serverFor(rec authtoken.Record) *mcp.Server {
 	return s
 }
 
-// grantedPlugins resolves a token's plugin grant list against the catalog:
-// exact ids that exist, or every catalog plugin when the grant is "*"
-// (supervisor convenience). Sorted for a stable cache key.
-func grantedPlugins(grants []string, byID map[string][]pluginToolDef) []string {
-	set := map[string]bool{}
-	for _, g := range grants {
-		if g == "*" {
-			for id := range byID {
-				set[id] = true
-			}
-			continue
-		}
-		if _, ok := byID[g]; ok {
-			set[g] = true
-		}
-	}
-	out := make([]string, 0, len(set))
-	for id := range set {
+// enabledPlugins returns every plugin in the live catalog, sorted for a stable
+// cache key. Disabled and uninstalled plugins are absent from the catalog.
+func enabledPlugins(byID map[string][]pluginToolDef) []string {
+	out := make([]string, 0, len(byID))
+	for id := range byID {
 		out = append(out, id)
 	}
 	sort.Strings(out)

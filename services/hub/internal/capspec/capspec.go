@@ -337,11 +337,10 @@ var unscopedByDecision = map[string]string{
 // {fs., search., library., git.}. It returns false for every claude.*,
 // sessions.*, config.*, layouts.*, app.*, analytics.*, providers.* and replay.*
 // method no matter what that method does — so 27 of the 73 registered
-// capabilities were classified nowhere at all, and six of those were ones the
-// app's OWN consent list (CAP_LABELS in pluginPermissions.ts) marks
-// `sensitive: true`. claude.approve and claude.gate — an approval-OVERRIDE pair
-// that composes with agents.sendMessage into arbitrary host command execution —
-// were two of them, and a brand-new `claude.autoApprove` capability, registered
+// capabilities were classified nowhere at all. claude.approve and claude.gate —
+// an approval-OVERRIDE pair that composes with agents.sendMessage into arbitrary
+// host command execution — were two of them, and a brand-new
+// `claude.autoApprove` capability, registered
 // and dispatched and byte-for-byte claude.approve under another name, could be
 // added with the whole Go module green.
 //
@@ -398,20 +397,16 @@ var inertMethods = map[string]string{
 	"fleet.quiescence":              "no params at all. It reports whether this machine's fleet is at rest, and a named blocker per reason when it is not. Every value in the answer is derived by the hub from state it already holds or already serves — session rows (the same ones agents.list and sessions.snapshots return to this tier), the job SCHEDULE (times and action kinds, never a spec: the argv stays behind the trusted-only jobs.* RPCs), the peer names federation.peers already discloses, and a description of each live bus connection that names no credential and no address. It composes nothing: the answer is a reading, and every action anyone takes on it happens outside this process. Admitted to the VIEW tier (authtoken viewMethods) for the same reason federation.peers is — the phone and the web renderer can already derive most of it by polling the snapshot feed they receive anyway, one call at a time",
 	"nodes.list":                    "no params. It returns the hub's REMOTE NODE registry — one row per node with a label, a state (available / waking / stopped / unreachable), the time it entered that state, the time its provider last answered, a sentence of detail, whether this hub can wake it, and a count of consecutive failed wakes. It composes nothing and it is a projection rather than a redaction: nodes.NodeView is a separate struct built by naming what goes IN, so the registry record's credential-bearing half (the cloud API token, the path of the file holding it, the app name, the machine id, the API endpoint) is absent by construction rather than by a strip list that re-opens itself every time the record grows a field. Admitted to the VIEW tier (authtoken viewMethods) for the reason federation.peers is: it is the tombstone signal for a target that has gone quiet, and withholding it makes a sleeping node read to the user as a broken one — which is the exact failure the four-state model exists to prevent",
 	"federation.peers":              "no params; returns each configured peer hub's name, connected bit, and last-seen timestamp. Registered only when federation is configured. A disclosure decision: the peer NAMES are already stamped on every forwarded agent.* event the same callers receive, and the connected bit is the tombstone signal hub.peer.* broadcasts anyway. Admitted to the VIEW tier (authtoken viewMethods) so the /m PWA and web renderer can seed the federated fleet — the same tier already receives the stamped events it explains",
-	"plugins.tools":                 "no params; returns the consented facade-tool metadata (tool name/description/schema + the plugin bus method each forwards to) for enabled plugins. A disclosure decision, not a confinement one: the same method names are already visible to any caller that can invoke them, and the pin narrowing (Manager.ConsentedTools) means nothing is listed that the bus would refuse to let the plugin register. Deliberately NOT in any scoped tier — the MCP facade reads it over its trusted connection and applies its own per-token plugin grants",
+	"plugins.tools":                 "no params; returns facade-tool metadata (tool name/description/schema + the plugin bus method each forwards to) for enabled plugins. A disclosure decision, not a confinement one: the MCP facade reads it over its trusted connection and exposes the enabled catalog ambiently to authenticated agent sessions. Provider registration remains confined to each plugin's own namespace",
 	"push.key":                      "no params; returns the VAPID PUBLIC key, which every subscriber needs and which discloses nothing",
 	"push.list":                     "no params; lists stored subscriptions. Operator-only by construction — it appears in neither scoped tier",
 	"push.test":                     "no params; sends one canned notification to every registered subscription so a phone can answer \"is push reaching me at all\" without reading hub logs. Nothing about the message is caller-supplied — title and body are literals in RPCTest — so there is no text a caller can put on someone's lock screen, which is the shape that made a forged agent.snapshot worth closing. It is a SEND trigger available to the triage tier, bounded by the same recipient set every other push already goes to: subscriptions this hub stored, still-valid credential, endpoint already validated by validatePushEndpoint at subscribe time. The tier that may subscribe may already provoke real pushes by approving or answering, so this adds no reach it lacked — only a way to test it deliberately",
-	// NOT here, deliberately: "notify.post" and "agents.kill". Both appear in the
-	// renderer's plugin-consent list (pluginPermissions.ts) and are registered by
+	// NOT here, deliberately: "notify.post" and "agents.kill" are registered by
 	// NO provider — not the brain's registry, not hubCapabilities.ts through either
 	// door, not cmd/hub's RegisterLocal. An inert record on a name nobody serves is
 	// worse than no record: MissingSpec reports it specced, so the day somebody
 	// implements it the bus grants it unconfined and no guard fires.
 	// TestInertMethodsAreActuallyRegistered keeps them out.
-	// The consent list advertising them is a separate, real drift — the user is
-	// asked to grant "Terminate agents" for a capability that does not exist — and
-	// belongs to whoever owns that surface, not to this table.
 }
 
 // Classified reports whether SOMEBODY has decided what this method is: the bus

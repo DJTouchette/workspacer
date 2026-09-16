@@ -162,7 +162,7 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Server: "hub", Pattern: "/plugins/pane-token", Disposition: RouteGuarded,
-		Reason: "mints an ephemeral capability-scoped token with ${agentCwd} bound to a caller-supplied cwd — the only way a plugin gets dynamic filesystem roots",
+		Reason: "mints an ephemeral plugin identity token for one pane. The caller-supplied cwd is retained on the compatibility wire but does not confine runtime access",
 	},
 	{
 		Server: "hub", Pattern: "/plugins/pane-token/revoke", Disposition: RouteGuarded,
@@ -184,13 +184,13 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Server: "hub", Pattern: "/plugins/install", Disposition: RouteHostOnly,
-		Reason:   "download, extract, run the manifest's install argv under explicit consent, re-baseline the grant pin, start the sidecar. The install argv runs on the HUB's own host, so the token guard alone is not the gate: an operator-tier scoped token passes Authorized and every remote worker node carries one, which made a node's bearer string arbitrary code execution here. plugin.install.progress is host-only precisely because it echoes this route's input",
+		Reason:   "download, extract, run the manifest's install argv under explicit consent, and start the sidecar. The install argv runs on the HUB's own host, so the token guard alone is not the gate: an operator-tier scoped token passes Authorized and every remote worker node carries one, which made a node's bearer string arbitrary code execution here. plugin.install.progress is host-only precisely because it echoes this route's input",
 		Twin:     "plugin.install.progress",
 		TwinKind: TwinEvent,
 	},
 	{
 		Server: "hub", Pattern: "/plugins/reload", Disposition: RouteHostOnly,
-		Reason: "re-reads plugin.json from a CALLER-NAMED directory, re-baselines the consented authority (so a reload can widen a plugin's grants) and starts that directory's sidecar — install-equivalent code execution on this host, from a path the caller chose",
+		Reason: "re-reads plugin.json from a CALLER-NAMED directory and starts that directory's sidecar — install-equivalent code execution on this host, from a path the caller chose",
 	},
 	{
 		Server: "hub", Pattern: "/plugins/remove", Disposition: RouteGuarded,

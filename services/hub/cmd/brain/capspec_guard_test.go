@@ -62,9 +62,7 @@ func TestSpawnStaysDeliberatelyUnscoped(t *testing.T) {
 // execution. A brand-new `claude.autoApprove`, registered and dispatched and
 // byte-for-byte claude.approve under another name, passed the whole Go module.
 //
-// The repo already had this shape for the HUMAN-facing list —
-// pluginPermissions.test.ts's "labels every capability the main process actually
-// registers". The machine-enforced list had none.
+// This is the machine-enforced completeness list for brain capabilities.
 func TestBrainMethodsAllClassified(t *testing.T) {
 	r := newRegistry(newClaudemonClient("http://unused"))
 	seen := map[string]bool{}

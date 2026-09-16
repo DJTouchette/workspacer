@@ -78,8 +78,8 @@ func connectTo(t *testing.T, ctx context.Context, server *mcp.Server) *mcp.Clien
 }
 
 // TestPluginToolBridge proves the whole plugin-tool chain: the hub-side
-// catalog method feeds the facade's poller, a token's plugin grant surfaces
-// the tool on that token's server (and only that one), and calling the tool
+// catalog method feeds the facade's poller, every authenticated tier surfaces
+// the enabled tool without a per-session grant, and calling the tool
 // forwards to the plugin's bus method.
 func TestPluginToolBridge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -123,18 +123,18 @@ func TestPluginToolBridge(t *testing.T) {
 
 	cache := newServerCache(client, catalog, tierServers(client))
 
-	// A view token WITH the plugin grant sees the tool (and help lists it).
-	granted := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeView, Plugins: []string{"djtouchette.jira"}})
-	cs := connectTo(t, ctx, granted)
+	// A plain view token sees the enabled plugin tool (and help lists it).
+	ambient := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeView})
+	cs := connectTo(t, ctx, ambient)
 	tools, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
 	if !hasTool(tools.Tools, "djtouchette_jira_search") {
-		t.Fatalf("granted server missing plugin tool: %v", toolNames(tools.Tools))
+		t.Fatalf("ambient server missing plugin tool: %v", toolNames(tools.Tools))
 	}
 	if hasTool(tools.Tools, "spawn_agent") {
-		t.Errorf("plugin grant must not widen the tier: view server has spawn_agent")
+		t.Errorf("ambient plugin tools must not widen the first-party tier: view server has spawn_agent")
 	}
 
 	// The call forwards to the plugin's bus method with the raw arguments.
@@ -153,32 +153,47 @@ func TestPluginToolBridge(t *testing.T) {
 		t.Errorf("call did not forward to the plugin method with params: %s", text)
 	}
 
-	// help on the granted server lists the plugins group.
+	// help lists the ambient plugins group.
 	help, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "help", Arguments: map[string]any{"topic": "plugins"}})
 	if err != nil {
 		t.Fatalf("help plugins: %v", err)
 	}
 	if !strings.Contains(textOf(help), "djtouchette_jira_search") {
-		t.Errorf("help does not list the granted plugin tool: %s", textOf(help))
+		t.Errorf("help does not list the ambient plugin tool: %s", textOf(help))
 	}
 
-	// No plugin grant → no plugin tool, even at operator. Opt-in, not ambient.
-	ungrantedOp := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator})
-	cs2 := connectTo(t, ctx, ungrantedOp)
+	// Operator sees the same enabled plugin tool without a per-session grant.
+	operator := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeOperator})
+	cs2 := connectTo(t, ctx, operator)
 	tools2, err := cs2.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatalf("ListTools operator: %v", err)
 	}
-	if hasTool(tools2.Tools, "djtouchette_jira_search") {
-		t.Errorf("ungranted operator token must not see plugin tools")
+	if !hasTool(tools2.Tools, "djtouchette_jira_search") {
+		t.Errorf("plain operator token missing ambient plugin tool")
 	}
 
-	// A "*" grant resolves to every catalog plugin.
-	starServer := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeTriage, Plugins: []string{"*"}})
-	cs3 := connectTo(t, ctx, starServer)
+	// Legacy plugin selections are inert; an explicit unrelated id sees the same
+	// enabled catalog as an empty or wildcard field.
+	legacySelection := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeTriage, Plugins: []string{"missing.plugin"}})
+	cs3 := connectTo(t, ctx, legacySelection)
 	tools3, _ := cs3.ListTools(ctx, nil)
 	if !hasTool(tools3.Tools, "djtouchette_jira_search") {
-		t.Errorf("star grant did not resolve to catalog plugins: %v", toolNames(tools3.Tools))
+		t.Errorf("legacy selection narrowed ambient catalog: %v", toolNames(tools3.Tools))
+	}
+
+	// Catalog removal (disable/uninstall) invalidates the cache and removes the
+	// tool from the next resolved server.
+	catalog.mu.Lock()
+	catalog.byID = map[string][]pluginToolDef{}
+	catalog.raw = "[]"
+	catalog.gen++
+	catalog.mu.Unlock()
+	withoutPlugin := cache.serverFor(authtoken.Record{Scope: authtoken.ScopeView})
+	cs4 := connectTo(t, ctx, withoutPlugin)
+	tools4, _ := cs4.ListTools(ctx, nil)
+	if hasTool(tools4.Tools, "djtouchette_jira_search") {
+		t.Errorf("disabled/uninstalled plugin tool survived catalog refresh")
 	}
 }
 

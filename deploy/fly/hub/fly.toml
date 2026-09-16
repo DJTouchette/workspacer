@@ -104,11 +104,6 @@ kill_timeout = 30
   WKS_HUB_PLUGIN_ORIGIN_ENABLED = "1"
   WKS_HUB_PLUGIN_ORIGIN_PORT    = "8443"
 
-  # Plugin sidecars run confined; `enforce` refuses to start one on a platform
-  # with no confinement mechanism (fail closed). See the Dockerfile on why
-  # bubblewrap is installed and RUNBOOK.md §9 on why no plugin ships here.
-  WORKSPACER_PLUGIN_SANDBOX = "enforce"
-
 # Secrets — NOT here, `fly secrets set` (see RUNBOOK.md step 4):
 #   TAILSCALE_AUTHKEY  non-ephemeral, reusable, pre-authorized, tagged
 #   HUB_TOKEN          the pairing credential. Optional: bootstrap.sh mints one

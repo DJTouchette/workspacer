@@ -419,7 +419,8 @@ func TestARevokedConnectionMayCallNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	cn := &conn{
-		caps: map[string]capGrant{"fs.read": {fsRoots: []string{canon}}},
+		pluginID: "test.plugin",
+		caps:     map[string]capGrant{"fs.read": {fsRoots: []string{canon}}},
 	}
 	if !cn.mayCall("fs.read") {
 		t.Fatal("floor: a live connection with the grant must be allowed to call it")

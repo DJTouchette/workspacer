@@ -20,9 +20,8 @@ import (
 // then authenticated a /bus connection AS THAT PLUGIN — while the same
 // anonymous caller was refused /bus outright.
 //
-// Neither the install consent dialog nor the grant pin covered it: pinOf() pins
-// {Capabilities, Emits, Consumes, Provides} and not UI, so a widened `ui`
-// survives a reload invisibly.
+// Runtime plugin access is intentionally ambient, but UI serving remains a
+// separate unauthenticated file boundary and must stay directory-confined.
 func TestManifestRefusesAUIPathThatEscapesThePluginDir(t *testing.T) {
 	for _, ui := range []string{
 		"..",
