@@ -27,7 +27,6 @@ type Services = Pick<
   | 'claudeProfilesUpdate'
   | 'claudeProfilesRemove'
   | 'saveConfig'
-  | 'intentWorkspaceRequest'
   | 'agentSuggestTitle'
   | 'providerReadiness'
   | 'agentRuntimeStatus'
@@ -39,10 +38,6 @@ export function desktopServices(
   call: <T>(method: string, params: unknown, timeout?: number) => Promise<T>,
 ): Services {
   return {
-    // Secure Windows file work runs outside the owner event loop and may need
-    // several bounded native operations. Match the hub's server-owned budget.
-    intentWorkspaceRequest: (request) =>
-      call('desktop.intentWorkspaceRequest', { request }, 180_000),
     sessionGrantReconcile: (sessionId, role) =>
       call('desktop.sessionGrantReconcile', { sessionId, role }),
     agentSuggestTitle: (request) => call('desktop.agentSuggestTitle', { request }, 30_000),

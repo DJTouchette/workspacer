@@ -24,38 +24,6 @@ type helpIn struct {
 // groupGuidance is the per-group usage text — the "how", where the tool
 // descriptions carry only the "what". Written for the model.
 var groupGuidance = map[string]string{
-	"intents": strings.TrimSpace(`
-For a Jira ticket, list_jira_connections({projectRoot}) returns the enabled project
-connections and their versions. Use create_intent_from_jira with the selected
-integrationId, expectedIntegrationVersion, issue key or browse URL, and a new
-operationId UUID. Reuse the same operationId and arguments on retries. The host
-fetches Jira, then saves the Draft and its pinned source together. Failed imports
-leave no intent; a successful retry returns the original result. Review the
-imported summary/description with the user, then use update_intent to refine the
-outcome, constraints and success criteria. Do not infer completion from Jira status.
-An existing intent can still have Jira attached through its Sources view.
-
-Use create_intent when the user asks you to capture planned work on the Work board.
-Collect the outcome, constraints and one success criterion per line first. Creation
-always saves Draft; it does not activate work or switch the user's screen.
-The response contains workspace.id, revision and updatedAt. The board refreshes
-automatically. Keep the ID and use get_intent instead of creating another copy.
-If creation times out, use list_intents to check before retrying: creation is not
-idempotent. These tools use the connected host's project directories and storage.
-
-Put gathered research, file references, design notes, decisions and open questions
-in add_intent_context. Supply a sourceId UUID and reuse it with identical content
-on retries. The text appears under Sources as a manual reference. A URL is only
-provenance; this tool does not fetch it or publish anything to an external service.
-Keep observations distinct from assumptions and do not include credentials.
-
-Read get_intent before update_intent and pass both expectedRevision and
-expectedUpdatedAt. Omitted fields are preserved; an empty string clears a field.
-A stale edit fails; reread and reconcile it. Requirement changes on Active intents
-can steer their existing manager through the host's normal revision workflow.
-These tools do not activate, verify, approve or complete work. Human review remains
-in Work. All intent tools currently require operator scope because the owner RPC
-also contains write operations; do not widen that entire method to view/triage.`),
 	"observe": strings.TrimSpace(`
 Use evidence already supplied in a fleet wake first; do not reread its report.
 For an explicit status request, list_agents is the cheap overview; inspect only the needed session.

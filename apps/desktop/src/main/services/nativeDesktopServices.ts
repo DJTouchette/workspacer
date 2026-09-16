@@ -1,4 +1,3 @@
-import { nativeIntentAutomation, ensureNativeIntentAutomation } from './intentAutomationNative';
 /** Browser owner requests hosted by a running native desktop. The headless
  * process uses the same service implementations with its own lifecycle source.
  */
@@ -23,9 +22,6 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildManagerKickoff } from '../shared/managerDoctrine';
 import { configService } from './configService';
 import './briefBoardService'; // installs the native SQLite recent-directory source
-import { intentWorkspaceRequest } from './intentWorkspaceStore';
-import { deliverIntentDirection } from './intentDirectionDelivery';
-import { deliverIntentControl } from './intentControlDelivery';
 
 configureNativeDesktopRuntime(
   workflow,
@@ -40,15 +36,6 @@ export async function nativeDesktopService(
 ): Promise<unknown> {
   const p = (raw ?? {}) as Record<string, unknown>;
   switch (method) {
-    case 'desktop.intentWorkspaceRequest':
-      ensureNativeIntentAutomation();
-      return intentWorkspaceRequest(
-        p.request,
-        claudeSessionStore.getAllSnapshots(),
-        deliverIntentDirection,
-        deliverIntentControl,
-        nativeIntentAutomation,
-      );
     case 'desktop.sessionGrantReconcile': {
       const session =
         typeof p.sessionId === 'string' ? claudeSessionStore.getSnapshot(p.sessionId) : undefined;

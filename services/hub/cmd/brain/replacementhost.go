@@ -66,15 +66,6 @@ type replacementMetadata struct {
 }
 
 func (r *registry) replacementHostCall(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-	if method == "intent.spawn" {
-		return r.spawnIntentManager(ctx, params)
-	}
-	if method == "intent.send" {
-		return r.sendIntentDirection(ctx, params)
-	}
-	if method == "intent.interrupt" {
-		return r.interruptIntentExecution(ctx, params)
-	}
 	if method == "launch.prepare" {
 		if r.callHub == nil {
 			return nil, fmt.Errorf("hub callback unavailable")

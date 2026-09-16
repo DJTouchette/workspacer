@@ -28,18 +28,9 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
     unreleased: true,
     sections: [
       {
-        title: 'Added',
+        title: 'Removed',
         items: [
-          '**Intent workspaces keep a feature together across agent sessions.** Enable Intent workspaces (preview) in Settings → Layout to capture outcomes and constraints, link executions, review criterion evidence, steer with durable delivery receipts, and retain artifacts, annotations, screenshot walkthroughs, and alternative decisions. Stable projects support multiple repositories and explicit root relocation without moving files or rewriting fleet settings.',
-          '**Review external requirements and reusable project knowledge deliberately.** Manual sources, Jira Cloud, and Azure DevOps retain accepted snapshots and source drift, with explicit reviewed comment publishing. Rivet captures pin document versions and promote findings only after review. Future execution packets include accepted context; older packets remain unchanged.',
-          '**Windows supports retained intent files and Rivet operations.** A bundled native Windows file helper guards against reparse points and concurrent path changes; no extra installation is required. Service receipts, user assessments, and verified evidence remain separate throughout the workflow.',
-        ],
-      },
-      {
-        title: 'Changed',
-        items: [
-          '**Active intents can run through a dedicated manager.** Activate saved work with a time limit, answer questions, pause or resume execution, and review reported results. Status transitions now preserve the requirements revision and its evidence; changes to requirements retain a new revision. Uncertain execution requests require inspection instead of automatic replay.',
-          '**Work has a clearer overview and responsive navigation.** Compact keyboard tabs, a collapsible mobile work list, searchable project work, and clearer status and evidence summaries make large features easier to follow. Drafts, retry identities, and review bases survive navigation and lost responses.',
+          'Removed the Intent workspace preview and its board, tracker synchronization, and execution lifecycle. Existing Intent data is left untouched; Fleet inbox requests, tracked tasks, workflows, and task references remain available.',
         ],
       },
     ],

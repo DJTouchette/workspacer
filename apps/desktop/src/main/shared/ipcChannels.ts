@@ -238,7 +238,6 @@ export const IPC = {
   HTML_CARD_READ_DIFF: 'html-card:read-diff',
 
   // ── Brief board (BoardPane) ──
-  INTENT_WORKSPACE_REQUEST: 'intent-workspace:request',
   BRIEF_BOARD_LOAD: 'brief-board:load', // invoke: every project's brief as cards
   BRIEF_BOARD_MOVE: 'brief-board:move', // invoke: drag a card to a column (or Archive)
 

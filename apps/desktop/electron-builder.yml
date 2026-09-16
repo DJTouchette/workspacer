@@ -34,8 +34,6 @@ files:
   - '!**/*.d.ts'
 
 asarUnpack:
-  # Node WorkerThread must load a real file in packaged Electron.
-  - dist/headless/intent-file-worker.cjs
   - node_modules/better-sqlite3/**
   # ripgrep binary must live outside the asar so it can be executed.
   - node_modules/@vscode/ripgrep/**
@@ -71,8 +69,6 @@ linux:
       to: hub/claudemon
     - from: dist/headless/desktop-host.cjs
       to: hub/desktop-host.cjs
-    - from: dist/headless/intent-file-worker.cjs
-      to: hub/intent-file-worker.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -98,8 +94,6 @@ win:
       to: hub/claudemon.exe
     - from: dist/headless/desktop-host.cjs
       to: hub/desktop-host.cjs
-    - from: dist/headless/intent-file-worker.cjs
-      to: hub/intent-file-worker.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -125,8 +119,6 @@ mac:
       to: hub/claudemon
     - from: dist/headless/desktop-host.cjs
       to: hub/desktop-host.cjs
-    - from: dist/headless/intent-file-worker.cjs
-      to: hub/intent-file-worker.cjs
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

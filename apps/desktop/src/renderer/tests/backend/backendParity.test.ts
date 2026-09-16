@@ -74,7 +74,6 @@ vi.mock('../../src/backend/hubBusClient', () => ({
 // subscriptions, and hub-core plumbing (layout doc, __publish) all count.
 const BUS_BACKED = [
   'filePickerList',
-  'intentWorkspaceRequest',
   'keepWarmHeartbeats',
   'agentSuggestTitle',
   'onConfigChanged',
@@ -240,70 +239,6 @@ function repoFile(...segments: string[]): string {
 }
 
 describe('backend parity — every ElectronAPI method is triaged into one bucket', () => {
-  it('routes intent workspace requests to the selected host and propagates conflicts', async () => {
-    const api = createWebBackend('token', 'ws://intent-host/bus');
-    const request = { action: 'list' } as const;
-    usageBusCall.mockResolvedValueOnce({ action: 'list', workspaces: [] });
-    expect(await api.intentWorkspaceRequest!(request)).toEqual({ action: 'list', workspaces: [] });
-    expect(usageBusCall).toHaveBeenCalledWith(
-      'desktop.intentWorkspaceRequest',
-      { request },
-      'ws://intent-host/bus',
-    );
-    usageBusCall.mockRejectedValueOnce(new Error('Workspace changed elsewhere'));
-    await expect(api.intentWorkspaceRequest!(request)).rejects.toThrow('changed elsewhere');
-  });
-
-  it('routes project tracker operations to the selected hub without dropping CAS or provenance references', async () => {
-    const api = createWebBackend('token', 'ws://tracker-owner/bus');
-    const reference = {
-      integrationId: 'j',
-      expectedIntegrationVersion: 3,
-      objectType: 'issue' as const,
-      identifier: 'TEAM-1',
-    };
-    const integration = {
-      provider: 'jira' as const,
-      name: 'Team',
-      baseUrl: 'https://team.atlassian.net',
-      defaultProjectKey: '',
-      repository: '',
-      credentialEnv: 'WORKSPACER_SOURCE_TEAM',
-      enabled: true,
-    };
-    const requests = [
-      { action: 'integrations' as const, id: 'w' },
-      {
-        action: 'saveIntegration' as const,
-        id: 'w',
-        integrationId: 'j',
-        expectedVersion: 2,
-        operationId: 'op',
-        integration,
-      },
-      {
-        action: 'removeIntegration' as const,
-        id: 'w',
-        integrationId: 'j',
-        expectedVersion: 3,
-        operationId: 'remove',
-      },
-      { action: 'previewSource' as const, id: 'w', reference },
-      { action: 'attachSource' as const, id: 'w', sourceId: 's', expectedRevision: 1, reference },
-    ];
-    for (const request of requests) {
-      usageBusCall.mockResolvedValueOnce({ action: request.action });
-      expect(await api.intentWorkspaceRequest!(request)).toEqual({ action: request.action });
-      expect(usageBusCall).toHaveBeenLastCalledWith(
-        'desktop.intentWorkspaceRequest',
-        { request },
-        'ws://tracker-owner/bus',
-      );
-    }
-    usageBusCall.mockRejectedValueOnce(new Error('Integration changed'));
-    await expect(api.intentWorkspaceRequest!(requests[4])).rejects.toThrow('Integration changed');
-  });
-
   it('routes request-tagged chat through the real desktop bridge without changing ordinary bus chat', async () => {
     const receipt = { ok: false, requestId: 'host-request', delivery: 'unknown', mode: 'unknown' };
     const prepare = vi.fn().mockResolvedValue({ available: true, requestId: 'host-request' });

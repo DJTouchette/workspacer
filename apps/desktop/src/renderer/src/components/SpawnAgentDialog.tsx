@@ -90,8 +90,6 @@ interface SpawnAgentDialogProps {
   defaultWorktree?: boolean;
   /** User-authored task handed over by the caller, editable before dispatch. */
   defaultPrompt?: string;
-  /** Caller-owned context included alongside the editable task at dispatch. */
-  contextNote?: string;
   requireTask?: boolean;
   onSpawn: (opts: {
     cwd: string;
@@ -179,7 +177,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCodexTransport,
   defaultWorktree,
   defaultPrompt,
-  contextNote,
   requireTask = false,
   onSpawn,
   onCancel,
@@ -1411,17 +1408,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
           {hasTaskHandoff && (
             <div style={{ marginTop: 24, width: '100%', maxWidth: 560 }}>
-              {contextNote && (
-                <p
-                  style={{
-                    fontSize: '0.8rem',
-                    color: 'var(--wks-text-secondary)',
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {contextNote}
-                </p>
-              )}
               <label htmlFor="first-task" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
                 What should this agent do?
               </label>

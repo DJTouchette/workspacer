@@ -22,26 +22,6 @@ beforeEach(() => {
 });
 
 describe('first-use spawn outcome', () => {
-  it('reports the actual worktree directory to the accepted-session callback', async () => {
-    const { result } = renderHook(() => useAgentManager());
-    const ready = vi.fn().mockResolvedValue(undefined);
-    api.worktreeCreate = vi
-      .fn()
-      .mockResolvedValue({ ok: true, path: '/repo-worktree', branch: 'feature/export' });
-    await act(async () => {
-      await result.current.spawnAgent({
-        cwd: '/repo',
-        provider: 'codex',
-        worktree: true,
-        onSessionReady: ready,
-      });
-    });
-    expect(ready).toHaveBeenCalledExactlyOnceWith('real-session', '/repo-worktree');
-    expect(result.current.agents.find((agent) => agent.sessionId === 'real-session')?.cwd).toBe(
-      '/repo-worktree',
-    );
-  });
-
   for (const failure of ['reject', undefined, null, '', ' ', {}, { sessionId: 'wrong-shape' }]) {
     it(`leaves roster and selection untouched for ${JSON.stringify(failure)}`, async () => {
       const { result } = renderHook(() => useAgentManager());

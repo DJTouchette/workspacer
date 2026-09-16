@@ -140,6 +140,14 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     configService.reloadConfig();
   });
 
+  it('loads legacy Intent configuration without changing ordinary UI settings', () => {
+    expect(configService.getConfig().ui).not.toHaveProperty('intentWorkspaces');
+    mockedFs.readFileSync.mockReturnValue('ui:\n  mode: focus\n  intentWorkspaces: true\n');
+    expect(configService.reloadConfig().ui.mode).toBe('focus');
+    configService.saveConfig({ ui: { theme: 'light' } } as any);
+    expect(configService.getConfig().ui).toMatchObject({ mode: 'focus', theme: 'light' });
+  });
+
   it('merges nested object keys without clobbering sibling keys', () => {
     // Save only ui.theme; ui.animations and other siblings must survive.
     configService.saveConfig({ ui: { theme: 'light' } as any });
@@ -346,16 +354,6 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
 
   it('defaults ui.mode to fleet', () => {
     expect(configService.getConfig().ui.mode).toBe('fleet');
-  });
-
-  it('defaults intent workspaces off and preserves the choice alongside focus mode', () => {
-    expect(configService.getConfig().ui.intentWorkspaces).toBe(false);
-    configService.saveConfig({ ui: { mode: 'focus', intentWorkspaces: true } } as any);
-    expect(configService.getConfig().ui).toMatchObject({ mode: 'focus', intentWorkspaces: true });
-    // Saves re-read disk under the shared lock. Reflect the first persisted write.
-    mockedFs.readFileSync.mockReturnValue('ui:\n  mode: focus\n  intentWorkspaces: true\n');
-    configService.saveConfig({ ui: { intentWorkspaces: false } } as any);
-    expect(configService.getConfig().ui).toMatchObject({ mode: 'focus', intentWorkspaces: false });
   });
 
   it('saves a new scripts entry without touching other top-level keys', () => {

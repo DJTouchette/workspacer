@@ -1,6 +1,3 @@
-import { startIntentAutomationRuntime } from '../services/intentAutomationRuntime';
-import type { IntentAutomationEffects } from '../services/intentAutomationStore';
-import { resolveManagerProvider } from '../lib/roleProviders';
 import { createWorkflowTelemetry } from '../services/workflowTelemetryCore';
 import { listPickerEntries, readFileBytes } from './files';
 import { hostCall } from './hostBridge';
@@ -15,8 +12,6 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { intentWorkspaceRequest } from '../services/intentWorkspaceStore';
-import { captureHeadlessIntentSessions } from './intentObservations';
 import { configService } from '../services/configService';
 import { assertPathAllowed, canonicalRoot, containsCanonical } from '../lib/pathConfinement';
 import {
@@ -246,63 +241,12 @@ function liveOwner(context: HostContext, id: string) {
   return owner;
 }
 
-const headlessIntentAutomation: IntentAutomationEffects = {
-  async spawn(cwd, label, message) {
-    const provider = resolveManagerProvider();
-    const result = await hostCall<{ sessionId?: string; messageQueued?: boolean }>('intent.spawn', {
-      cwd,
-      label,
-      message,
-      provider,
-    });
-    if (!result?.sessionId || result.messageQueued !== true)
-      throw new Error(
-        `Manager launch or kickoff unconfirmed. Inspect session ${result?.sessionId || 'list'}.`,
-      );
-    return { sessionId: result.sessionId, hub: '', cwd, label, provider };
-  },
-  send: (target, text) =>
-    hostCall('intent.send', { sessionId: target.sessionId, hub: target.hub, text }),
-  async interrupt(target) {
-    const descendants = new Set([target.sessionId]);
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const session of currentContext.snapshots)
-        if (
-          (session.hub || '') === target.hub &&
-          session.parentSessionId &&
-          descendants.has(session.parentSessionId) &&
-          !descendants.has(session.sessionId)
-        ) {
-          descendants.add(session.sessionId);
-          changed = true;
-        }
-    }
-    for (const sessionId of descendants) {
-      const receipt = await hostCall<{ status: string; detail: string }>('intent.interrupt', {
-        sessionId,
-        hub: target.hub,
-      });
-      if (receipt.status !== 'accepted') return receipt;
-    }
-    return {
-      status: 'accepted',
-      detail: 'Interrupt requested for the manager and its current workers.',
-    };
-  },
-};
-let intentRuntimeStarted = false;
-
 export async function desktopHostCall(
   method: string,
   params: Params,
   context: HostContext,
 ): Promise<unknown> {
   currentContext = context;
-  if (!nativeSnapshot && !intentRuntimeStarted) {
-    intentRuntimeStarted = true;
-    startIntentAutomationRuntime(() => currentContext.snapshots, headlessIntentAutomation);
-  }
   ensureRuntime();
   if (context.daemonURL) configureCompletionDaemonURL(context.daemonURL);
   if (context.templates) {
@@ -672,42 +616,6 @@ export async function desktopHostCall(
         throw new Error('Worker result validation expired');
       return pending.commit();
     }
-    case 'desktop.intentWorkspaceRequest':
-      return intentWorkspaceRequest(
-        params.request,
-        context.snapshots,
-        async (target, packet) => {
-          if (!target.hub) {
-            await ensureReplacementReady();
-            try {
-              managerReplacementState.assertAvailable(target.sessionId);
-            } catch (error) {
-              return { status: 'failed', detail: `${String(error)} No message was sent.` };
-            }
-          }
-          return managerReplacementState.admitted(target.hub ? [] : [target.sessionId], () =>
-            hostCall('intent.send', { sessionId: target.sessionId, hub: target.hub, text: packet }),
-          );
-        },
-        async (target, kind, packet) => {
-          if (!target.hub) {
-            await ensureReplacementReady();
-            try {
-              managerReplacementState.assertAvailable(target.sessionId);
-            } catch (error) {
-              return { status: 'failed', detail: `${String(error)} No control was sent.` };
-            }
-          }
-          return managerReplacementState.admitted(target.hub ? [] : [target.sessionId], () =>
-            hostCall(kind === 'continue' ? 'intent.send' : 'intent.interrupt', {
-              sessionId: target.sessionId,
-              hub: target.hub,
-              text: packet,
-            }),
-          );
-        },
-        headlessIntentAutomation,
-      );
     case 'desktop.loadBriefBoard':
       return loadBoard();
     case 'desktop.moveBriefCard':
@@ -758,11 +666,6 @@ export async function desktopHostCall(
         : workflowWatcher.readAgentConversation(sessionId, runId, agentId);
     }
     case 'internal.observe': {
-      try {
-        await captureHeadlessIntentSessions(context.snapshots, context.daemonURL);
-      } catch (error) {
-        console.warn('[intent-workspaces] observation unavailable', error);
-      }
       if (!nativeSnapshot) await ensureReplacementReady();
       for (const s of context.snapshots) {
         if (watchWorkflow(s.sessionId) && s.status !== 'ended' && s.ambientState !== 'idle')

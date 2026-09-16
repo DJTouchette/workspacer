@@ -1,7 +1,6 @@
 pub mod account_usage;
 pub mod conversation;
 pub mod handoff;
-mod intent_report;
 pub mod permission_mode;
 pub mod pricing;
 pub mod state;

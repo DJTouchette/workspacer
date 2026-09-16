@@ -5,7 +5,6 @@ import {
 } from '../shared/managerReplacement';
 import { managerReplacementState, type ReplacementMetadata } from './managerReplacementState';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
-import { captureIntentWorkspaceSessions } from './intentWorkspaceStore';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
@@ -2271,11 +2270,6 @@ class ClaudeSessionStore {
     // orphans its workers exactly as a crashed one does.
     const dying = this.sessions.get(sessionId);
     if (dying) {
-      // Capture before removing the row, including explicit close without a
-      // SessionEnd hook. The capture service detaches it before its first await.
-      void captureIntentWorkspaceSessions([{ ...dying, status: 'ended' }]).catch((err) => {
-        console.warn('[intent-workspaces] close observation unavailable', err);
-      });
       try {
         dispatchHistoryStore.observe({ ...dying, status: 'ended' });
         dispatchHistoryStore.flush();
@@ -2505,9 +2499,6 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
-    void captureIntentWorkspaceSessions([session], [...this.sessions.values()]).catch((err) => {
-      console.warn('[intent-workspaces] observation unavailable', err);
-    });
     try {
       dispatchHistoryStore.observe(session);
     } catch (err) {

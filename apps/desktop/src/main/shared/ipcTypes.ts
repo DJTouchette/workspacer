@@ -563,8 +563,6 @@ export interface AppConfig {
     guiFontScale?: number;
     diffView?: 'stacked' | 'inline' | 'split';
     mode?: 'fleet' | 'focus';
-    /** Opt-in project-owned intent workspaces; independent of fleet/focus. */
-    intentWorkspaces?: boolean;
   };
   terminal: {
     shell: string;

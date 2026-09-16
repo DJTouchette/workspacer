@@ -5,9 +5,6 @@ import { useRef, useCallback, useState, useEffect, useMemo, lazy, Suspense, memo
 import { ChevronRight } from 'lucide-react';
 import './App.css';
 import NavBar from './components/NavBar';
-import IntentWorkspaces from './components/IntentWorkspaces';
-import { launchIntentExecution, type IntentLaunchTarget } from './lib/intentExecution';
-import type { IntentWorkspace, IntentSessionRef } from '../../main/shared/intentWorkspace';
 import SideBar from './components/SideBar';
 import { SidebarResizeHandle } from './components/SidebarResizeHandle';
 import { SIDEBAR_RAIL_WIDTH, resolveSidebarWidth } from './lib/sidebarWidth';
@@ -49,7 +46,6 @@ import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
 import {
   BROWSER_OPEN_EVENT,
-  requestOpenInBrowser,
   markdownPathFromFileUrl,
   previewFileAllowed,
   type BrowserOpenTarget,
@@ -353,9 +349,6 @@ function App() {
   // chrome; 'focus' strips down to the piloted agent. A lens, not a layout —
   // switching modes must never remount panes or touch sessions.
   const { manifest: uiManifest, toggle: toggleUiMode } = useUiMode();
-  const [workSurfaceOpen, setWorkSurfaceOpen] = useState(false);
-  const intentWorkspacesEnabled = config.ui?.intentWorkspaces === true;
-  const workSurfaceVisible = intentWorkspacesEnabled && workSurfaceOpen;
   useTheme();
 
   // Shared-layout hydration gate (tmux-style mirror). Until the hub's layout
@@ -479,12 +472,6 @@ function App() {
   // First message carried into the new-agent view (the command palette can hand
   // over what you typed). Pre-fills the agent's composer, not sent. Cleared on close.
   const [spawnDialogPrompt, setSpawnDialogPrompt] = useState<string | null>(null);
-  const [intentLaunchTarget, setIntentLaunchTarget] = useState<IntentLaunchTarget | null>(null);
-  const [intentExecutionRefresh, setIntentExecutionRefresh] = useState(0);
-  const [intentExecutionNotice, setIntentExecutionNotice] = useState<{
-    workspaceId: string;
-    text: string;
-  }>();
   const [showLayouts, setShowLayouts] = useState(false);
   const [showRemote, setShowRemote] = useState(false);
   const [showLibraryPanel, setShowLibraryPanel] = useState(false);
@@ -837,7 +824,6 @@ function App() {
     [config.panes, saveConfig],
   );
   const toggleFleet = useCallback(() => {
-    setWorkSurfaceOpen(false);
     // In focus mode the Fleet Deck never mounts — instead of a dead key, the
     // toggle is an escape hatch: switch the UI mode to 'fleet' and open it.
     if (!uiManifest.fleetDeck) {
@@ -1060,7 +1046,6 @@ function App() {
   }, [addTab, insertPosition, scrollToTab, openMarkdownPreview]);
 
   const openSettings = useCallback(() => {
-    setWorkSurfaceOpen(false);
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
     if (existing) {
       setActiveTabId(existing.id);
@@ -1143,9 +1128,6 @@ function App() {
   }, [config.keybindings?.shortcuts, commandLayerCfg.enabled]);
 
   const activeTab = getActiveTab();
-  useEffect(() => {
-    setWorkSurfaceOpen(false);
-  }, [activeAgentId, activeTabId]);
 
   // --- Agent handlers (defined before useKeyboardNav so it can bind them) ---
   // Latest attention feed, read via a ref so handleSelectAgent (defined before
@@ -1153,7 +1135,6 @@ function App() {
   const attentionRef = useRef<AttentionFeed | null>(null);
   const handleSelectAgent = useCallback(
     (id: string) => {
-      setWorkSurfaceOpen(false);
       // Opening an agent IS triaging it: clear that agent's inbox notifications
       // (sidebar dot/glyph + the "needs you" count) so they don't linger after
       // you've clicked through to deal with it. A genuinely new request resurfaces
@@ -1218,7 +1199,6 @@ function App() {
       /** Pre-fills the new agent's composer (not sent) — see spawnAgent. */
       initialPrompt?: string;
       kickoffMessage?: string;
-      onSessionReady?: (sessionId: string, executionCwd: string) => Promise<void>;
       /** Federation: spawn on this peer hub (main may ignore until the bus
        *  route lands) — see spawnAgent. */
       targetHub?: string;
@@ -1266,83 +1246,8 @@ function App() {
     [spawnAgent, recordRecentDir, welcomeTask, dismissWelcome],
   );
 
-  // --- Intent workspace execution ---
-  const startIntentAgent = useCallback((workspace: IntentWorkspace) => {
-    setIntentLaunchTarget({ workspace, executionId: crypto.randomUUID() });
-    setSpawnDialogCwd(workspace.projectRoot);
-    setSpawnDialogPrompt('Implement this intent and report the evidence for its success criteria.');
-    setShowSpawnDialog(true);
-  }, []);
-
-  const handleIntentSpawn = useCallback(
-    async (opts: Parameters<typeof spawnAgent>[0]) => {
-      const target = intentLaunchTarget;
-      if (!target || !intentWorkspacesEnabled || !window.electronAPI.intentWorkspaceRequest)
-        throw new Error('Intent execution is unavailable.');
-      // A resumed conversation uses the explicit tracking-link flow in this preview.
-      if (opts.resumeSessionId) throw new Error('Use Link agent to associate an existing session.');
-      const result = await launchIntentExecution(
-        target,
-        opts.kickoffMessage || '',
-        window.electronAPI.intentWorkspaceRequest,
-        async (message, onReady) => {
-          await handleSpawnAgent({
-            ...opts,
-            name: opts.name || target.workspace.title,
-            kickoffMessage: message,
-            onSessionReady: (sessionId, cwd) =>
-              onReady({
-                sessionId,
-                hub: opts.targetHub || '',
-                label: opts.name || target.workspace.title,
-                provider: opts.provider || 'claude',
-                cwd,
-              }),
-          });
-        },
-      ).catch((error) => {
-        postNotification({
-          title: 'Could not record intent launch',
-          body: 'No new agent was dispatched. Check the host connection and refresh the saved intent before retrying.',
-          source: 'workspacer',
-        });
-        throw error;
-      });
-      setIntentExecutionNotice({
-        workspaceId: target.workspace.id,
-        text:
-          result.warning || `Agent linked to intent revision ${result.execution.intentRevision}.`,
-      });
-      setIntentExecutionRefresh((value) => value + 1);
-      setIntentLaunchTarget(null);
-      setShowSpawnDialog(false);
-      setSpawnDialogCwd(null);
-      setSpawnDialogPrompt(null);
-      if (result.warning) {
-        setWorkSurfaceOpen(true);
-        postNotification({
-          title: 'Intent execution needs attention',
-          body: result.warning,
-          source: 'workspacer',
-        });
-      }
-    },
-    [intentLaunchTarget, intentWorkspacesEnabled, handleSpawnAgent],
-  );
-
-  const openIntentSession = useCallback(
-    (session: IntentSessionRef) => {
-      const agent = agents.find(
-        (agent) =>
-          (agent.sessionId === session.sessionId || agent.lastSessionId === session.sessionId) &&
-          (agent.hub || '') === session.hub,
-      );
-      if (agent) handleSelectAgent(agent.id);
-    },
-    [agents, handleSelectAgent],
-  );
-
   // --- Layout templates ---
+
   // Snapshot the current (non-global) agents as a reusable layout: directories
   // + their pane arrangement, stripped of live session ids.
   const captureLayout = useCallback((): LayoutAgent[] => {
@@ -1428,7 +1333,6 @@ function App() {
 
   /** Home means the dashboard, not the global workspace's last selected tab. */
   const openOverview = useCallback(() => {
-    setWorkSurfaceOpen(false);
     setShowCommandPalette(false);
     setViewLevel('piloting');
     const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'overview', 'Overview');
@@ -1542,7 +1446,6 @@ function App() {
   // Every entry point to the spawn dialog goes through here so a renderer stall
   // reported around the dialog's mount can name what triggered it.
   const openSpawnDialog = useCallback(() => {
-    setIntentLaunchTarget(null);
     markUiEvent('open-spawn-dialog');
     setShowSpawnDialog(true);
   }, []);
@@ -1551,7 +1454,6 @@ function App() {
   // Kept separate from openSpawnDialog because that one is wired straight to
   // onClick handlers, which would feed a MouseEvent into any parameter it grew.
   const openSpawnDialogWithPrompt = useCallback((prompt: string) => {
-    setIntentLaunchTarget(null);
     setSpawnDialogPrompt(prompt.trim() || null);
     markUiEvent('open-spawn-dialog');
     setShowSpawnDialog(true);
@@ -2903,8 +2805,7 @@ function App() {
           inboxOpen={inboxOpen}
           openInbox={openInbox}
           closeInbox={closeInbox}
-          // Work covers the active agent's pane: keep its attention items open.
-          viewLevel={workSurfaceVisible ? 'fleet' : effectiveViewLevel}
+          viewLevel={effectiveViewLevel}
           setViewLevel={setViewLevel}
           onOpenAgent={handleSelectAgent}
           onRespawnAgent={respawnAgent}
@@ -3014,12 +2915,7 @@ function App() {
                 <NavBar
                   tabs={tabs}
                   activeTabId={activeTabId}
-                  onOpenWork={intentWorkspacesEnabled ? () => setWorkSurfaceOpen(true) : undefined}
-                  workActive={workSurfaceVisible}
-                  onTabClick={(id) => {
-                    setWorkSurfaceOpen(false);
-                    handleTabClick(id);
-                  }}
+                  onTabClick={handleTabClick}
                   onAddTab={handleAddTab}
                   onCloseTab={removeTab}
                   onRenameTab={handleNavBarRename}
@@ -3037,7 +2933,6 @@ function App() {
                 className="app-content"
                 style={{
                   // Panes sit flush under the tab bar's divider (mockup layout).
-                  visibility: workSurfaceVisible ? 'hidden' : undefined,
                   marginTop: `${navHeight}px`,
                   marginLeft: `${contentLeft}px`,
                 }}
@@ -3074,51 +2969,6 @@ function App() {
                   />
                 )}
               </div>
-
-              {intentWorkspacesEnabled && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: navHeight,
-                    left: contentLeft,
-                    right: 0,
-                    bottom: 0,
-                    zIndex: 80,
-                    display: workSurfaceVisible ? 'block' : 'none',
-                  }}
-                >
-                  <ErrorBoundary label="Intent workspaces" variant="region">
-                    <IntentWorkspaces
-                      projects={config.projects}
-                      defaultRoot={agentCwd || appCwd}
-                      onClose={() => setWorkSurfaceOpen(false)}
-                      onOpenUrl={(url) => {
-                        setWorkSurfaceOpen(false);
-                        requestOpenInBrowser({ url });
-                      }}
-                      execution={{
-                        visible: workSurfaceVisible,
-                        refreshKey: intentExecutionRefresh,
-                        notice: intentExecutionNotice,
-                        sessions: Object.values(snapshotBySession),
-                        candidates: agents
-                          .filter(
-                            (agent) => !agent.global && (agent.sessionId || agent.lastSessionId),
-                          )
-                          .map((agent) => ({
-                            sessionId: (agent.sessionId || agent.lastSessionId)!,
-                            hub: agent.hub || '',
-                            label: agent.name.slice(0, 240),
-                            provider: agent.provider || 'claude',
-                            cwd: agent.cwd,
-                          })),
-                        onStart: startIntentAgent,
-                        onOpenSession: openIntentSession,
-                      }}
-                    />
-                  </ErrorBoundary>
-                </div>
-              )}
 
               <ShortcutOverlay
                 visible={showHelp}
@@ -3338,15 +3188,9 @@ function App() {
                   defaultWorktree={config.agents?.spawnInWorktree ?? false}
                   requireTask={welcomeTask}
                   defaultPrompt={spawnDialogPrompt ?? undefined}
-                  contextNote={
-                    intentLaunchTarget
-                      ? `Starts work for “${intentLaunchTarget.workspace.title}” using saved intent revision ${intentLaunchTarget.workspace.revision}. The intent and project guidance are included with your task.`
-                      : undefined
-                  }
-                  onSpawn={intentLaunchTarget ? handleIntentSpawn : handleSpawnAgent}
+                  onSpawn={handleSpawnAgent}
                   onCancel={() => {
                     setWelcomeTask(false);
-                    setIntentLaunchTarget(null);
                     setShowSpawnDialog(false);
                     setSpawnDialogCwd(null);
                     setSpawnDialogPrompt(null);
@@ -3385,19 +3229,16 @@ function App() {
               {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane.
           Never mounts in focus mode (manifest.fleetDeck). */}
-              {!workSurfaceVisible &&
-                uiManifest.fleetDeck &&
-                viewLevel === 'fleet' &&
-                agents.some((a) => !a.global) && (
-                  <FleetDeck
-                    top={navHeight}
-                    left={contentLeft}
-                    onOpenOverview={openOverview}
-                    onOpenRecentAgents={openRecentAgentsPane}
-                    onTerminateAgent={handleTerminateAgent}
-                    onEnsureAgentChat={ensureAgentChat}
-                  />
-                )}
+              {uiManifest.fleetDeck && viewLevel === 'fleet' && agents.some((a) => !a.global) && (
+                <FleetDeck
+                  top={navHeight}
+                  left={contentLeft}
+                  onOpenOverview={openOverview}
+                  onOpenRecentAgents={openRecentAgentsPane}
+                  onTerminateAgent={handleTerminateAgent}
+                  onEnsureAgentChat={ensureAgentChat}
+                />
+              )}
 
               {/* Triage Inbox — top-level drawer, reachable from any agent. */}
               <InboxDrawer />

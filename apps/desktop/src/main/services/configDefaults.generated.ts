@@ -23,7 +23,6 @@ export const CONFIG_DEFAULTS = {
     uiFontScale: 1,
     diffView: 'stacked',
     mode: 'fleet',
-    intentWorkspaces: false,
   },
   terminal: {
     shell: '',

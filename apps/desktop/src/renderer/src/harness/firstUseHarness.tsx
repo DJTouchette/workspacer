@@ -8,10 +8,6 @@ import {
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '../App.css';
-import {
-  buildIntentContext,
-  buildIntentDirectionContext,
-} from '../../../main/shared/intentWorkspace';
 import { CONFIG_DEFAULTS } from '../hooks/configDefaults.generated';
 const params = new URLSearchParams(location.search);
 let config: any = structuredClone(CONFIG_DEFAULTS);
@@ -228,8 +224,6 @@ const api = {
   },
 });
 (window as any).firstUse = {
-  buildIntentContext,
-  buildIntentDirectionContext,
   requests: () => [...requests.values()],
   calls,
   notice: (notice: any) => {

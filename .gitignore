@@ -50,4 +50,3 @@ apps/desktop/test-results/
 
 # Built shared headless desktop service companion
 /services/hub/desktop-host.cjs
-/services/hub/intent-file-worker.cjs

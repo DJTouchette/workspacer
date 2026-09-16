@@ -70,8 +70,6 @@ export interface UIConfig {
    *  (minimal — rail sidebar, no inspector rail / Fleet Deck). Absent = fleet.
    *  See lib/uiMode.ts for the per-mode manifest. */
   mode?: 'fleet' | 'focus';
-  /** Opt-in project-owned intent workspaces; independent of fleet/focus. */
-  intentWorkspaces?: boolean;
   /** What the pane-creation menus (in-pane "Split into…" + the "+" new-tab
    *  dropdown) list. Each id is a built-in pane type ('claude' | 'terminal' |
    *  'browser' | 'review' | 'library') or a plugin pane's `type`. Absent = the

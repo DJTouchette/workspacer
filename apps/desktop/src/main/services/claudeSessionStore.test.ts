@@ -18,16 +18,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import { DatabaseSync } from 'node:sqlite';
-vi.mock('./intentWorkspaceStore', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./intentWorkspaceStore')>()),
-  captureIntentWorkspaceSessions: vi.fn().mockResolvedValue(undefined),
-}));
-import {
-  captureIntentWorkspaceSessions,
-  captureIntentSessions,
-  IntentWorkspaceStore,
-} from './intentWorkspaceStore';
 
 vi.mock('electron', () => ({ BrowserWindow: class {} }));
 vi.mock('./agentNotifier', () => ({ agentNotifier: { notifyOnTransition: vi.fn() } }));
@@ -77,81 +67,10 @@ function hook(sessionId: string, hookName: string, cwd = '/proj'): void {
 beforeEach(() => {
   vi.useFakeTimers();
   writeHistoryMock.mockClear();
-  vi.mocked(captureIntentWorkspaceSessions).mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   vi.useRealTimers();
-});
-
-describe('intent capture without a renderer window', () => {
-  it('saves late conversation text and explicit close before the native row disappears', () => {
-    const db = new DatabaseSync(':memory:');
-    try {
-      const store = new IntentWorkspaceStore(db);
-      const created = store.request({
-        action: 'create',
-        projectRoot: '/proj',
-        fields: {
-          title: 'Feature',
-          outcome: '',
-          constraints: '',
-          successCriteria: '',
-          sourceUrl: '',
-          status: 'draft',
-        },
-      });
-      if (created.action !== 'create') throw new Error('Expected workspace');
-      const sid = uniqueId();
-      store.request({
-        action: 'attachSession',
-        id: created.workspace.id,
-        expectedRevision: 1,
-        session: { sessionId: sid, hub: '', label: 'Worker', provider: 'claude', cwd: '/proj' },
-      });
-      vi.mocked(captureIntentWorkspaceSessions).mockImplementation(async (sessions) => {
-        store.capture(captureIntentSessions(sessions));
-      });
-      hook(sid, 'SessionStart');
-      hook(sid, 'UserPromptSubmit');
-      hook(sid, 'Stop');
-      claudeSessionStore.applyConversationDelta({
-        session_id: sid,
-        seq: 1,
-        reset: false,
-        items: [{ type: 'assistant_text', text: 'Feature implemented and checked.' }],
-      } as never);
-      claudeSessionStore.closeSession(sid);
-      expect(claudeSessionStore.getSnapshot(sid)).toBeFalsy();
-      expect(store.request({ action: 'executions', id: created.workspace.id })).toMatchObject({
-        executions: [
-          { lastObservation: { state: 'stopped', summary: 'Feature implemented and checked.' } },
-        ],
-      });
-    } finally {
-      vi.mocked(captureIntentWorkspaceSessions).mockReset().mockResolvedValue(undefined);
-      db.close();
-    }
-  });
-
-  it('logs capture failures without interrupting native lifecycle updates', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      vi.mocked(captureIntentWorkspaceSessions).mockRejectedValueOnce(
-        new Error('Capture disk unavailable'),
-      );
-      const sid = uniqueId();
-      hook(sid, 'SessionEnd');
-      await Promise.resolve();
-      expect(claudeSessionStore.getSnapshot(sid)?.status).toBe('ended');
-      expect(warning).toHaveBeenCalledWith(
-        '[intent-workspaces] observation unavailable',
-        expect.objectContaining({ message: 'Capture disk unavailable' }),
-      );
-    } finally {
-      warning.mockRestore();
-    }
-  });
 });
 
 // The only token figure a managed (non-Claude) session has is DERIVED — pct ×

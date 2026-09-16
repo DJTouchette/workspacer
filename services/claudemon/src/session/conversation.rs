@@ -313,34 +313,6 @@ impl ConversationStore {
         }
     }
 
-    /// Data-only final assistant report, bounded in UTF-16 units for native parity.
-    /// Never clones a transcript or serializes tool payloads.
-    pub fn completion_source(&self, session_id: &str) -> serde_json::Value {
-        let log = self.logs.get(session_id);
-        let last = log.as_ref().and_then(|l| {
-            l.items.iter().rev().find(|item| {
-                matches!(
-                    item,
-                    ConversationItem::AssistantText { .. } | ConversationItem::UserMessage { .. }
-                )
-            })
-        });
-        let (text, interrupted) = match last {
-            Some(ConversationItem::AssistantText { text, .. }) => (
-                text.as_str(),
-                text.contains("[Request interrupted by user]"),
-            ),
-            Some(ConversationItem::UserMessage { text, .. }) => {
-                ("", text.contains("[Request interrupted by user]"))
-            }
-            _ => ("", false),
-        };
-        let (bounded, redacted, truncated) = super::intent_report::bound(text);
-        serde_json::json!({"projection": "intent-completion-source/v1", "sessionId": session_id,
-            "text": bounded, "truncated": truncated, "interrupted": interrupted,
-            "redactionVersion": 1, "redacted": redacted})
-    }
-
     pub fn has_conversation(&self, session_id: &str) -> bool {
         self.logs
             .get(session_id)
@@ -1265,58 +1237,6 @@ fn parse_created_task_id(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn completion_source_bounds_and_excludes_transcript_payloads() {
-        let conv = super::ConversationStore::new();
-        assert_eq!(conv.completion_source("missing")["text"], "");
-        conv.push(
-            "completion",
-            vec![
-                super::ConversationItem::UserMessage {
-                    text: "USER SECRET".into(),
-                    timestamp: None,
-                },
-                super::ConversationItem::ToolResult {
-                    tool_use_id: "t".into(),
-                    content: "TOOL SECRET".into(),
-                    is_error: false,
-                    timestamp: None,
-                },
-                super::ConversationItem::AssistantText {
-                    text: " Verbatim final\nreport ".into(),
-                    timestamp: None,
-                },
-            ],
-        );
-        let source = conv.completion_source("completion");
-        assert_eq!(source["text"], " Verbatim final\nreport ");
-        assert!(!source.to_string().contains("SECRET"));
-        conv.push(
-            "completion",
-            vec![super::ConversationItem::UserMessage {
-                text: "[Request interrupted by user]".into(),
-                timestamp: None,
-            }],
-        );
-        let source = conv.completion_source("completion");
-        assert_eq!(source["text"], "");
-        assert_eq!(source["interrupted"], true);
-        conv.push(
-            "completion",
-            vec![super::ConversationItem::AssistantText {
-                text: "😀".repeat(3000),
-                timestamp: None,
-            }],
-        );
-        let source = conv.completion_source("completion");
-        assert_eq!(
-            source["text"].as_str().unwrap().encode_utf16().count(),
-            4000
-        );
-        assert_eq!(source["truncated"], true);
-        assert!(source.to_string().len() < 26000);
-    }
-
     use super::*;
     use serde_json::json;
 

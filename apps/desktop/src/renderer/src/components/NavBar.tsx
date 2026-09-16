@@ -29,8 +29,6 @@ const MENU_DIVIDER: React.CSSProperties = {
 
 interface NavBarProps {
   tabs: TabConfig[];
-  onOpenWork?: () => void;
-  workActive?: boolean;
   activeTabId: string;
   onTabClick: (id: string) => void;
   onAddTab?: (
@@ -60,8 +58,6 @@ interface NavBarProps {
 
 const NavBar: React.FC<NavBarProps> = ({
   tabs,
-  onOpenWork,
-  workActive = false,
   activeTabId,
   onTabClick,
   onAddTab,
@@ -170,38 +166,8 @@ const NavBar: React.FC<NavBarProps> = ({
           overflow: 'hidden',
         }}
       >
-        {onOpenWork && (
-          <button
-            type="button"
-            style={
-              {
-                WebkitAppRegion: 'no-drag',
-                display: 'flex',
-                alignItems: 'center',
-                height: 28,
-                padding: '0 12px',
-                marginRight: 6,
-                border: 'none',
-                borderRadius: 'var(--wks-radius-md)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                flexShrink: 0,
-                background: workActive ? 'var(--wks-accent-bg)' : 'transparent',
-                color: workActive ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
-              } as React.CSSProperties
-            }
-            className={`wks-tab${workActive ? ' is-active' : ''}`}
-            onClick={onOpenWork}
-            aria-pressed={workActive}
-            title="Open intent workspaces"
-          >
-            Work
-          </button>
-        )}
         {tabs.map((tab, idx) => {
-          const isActive = !workActive && tab.id === activeTabId;
+          const isActive = tab.id === activeTabId;
           const singlePane = tab.panes.length === 1;
           const firstPaneType = tab.panes[0]?.type ?? 'terminal';
           const firstPaneProvider = tab.panes[0]?.provider;

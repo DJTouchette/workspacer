@@ -22,10 +22,6 @@ func ProviderTimeout(method string, base time.Duration) time.Duration {
 		budget = 6 * time.Minute
 	case "claude.handoffAgentBrief":
 		budget = 3 * time.Minute
-	case "desktop.intentWorkspaceRequest":
-		// File-backed intent actions use a bounded worker on Windows; native
-		// path validation, comparison and write can span multiple helper calls.
-		budget = 3 * time.Minute
 	case "desktop.managerRequestSend", "desktop.worktreeRemove":
 		budget = time.Minute
 	}

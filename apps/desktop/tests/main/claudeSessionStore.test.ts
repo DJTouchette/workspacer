@@ -15,9 +15,6 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as path from 'path';
-vi.mock('../../src/main/services/intentWorkspaceStore', () => ({
-  captureIntentWorkspaceSessions: vi.fn().mockResolvedValue(undefined),
-}));
 
 // ── Mock sidecar modules before importing the store ──────────────────────────
 

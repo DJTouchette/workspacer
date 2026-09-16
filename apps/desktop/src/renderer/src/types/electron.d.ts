@@ -713,9 +713,6 @@ export interface ElectronAPI extends RoutingAPI {
 
   /** The brief board (BoardPane). One swimlane per project, plus the manager's
    *  own fleet lane. Absent on web — the board writes to local files. */
-  intentWorkspaceRequest?: (
-    request: import('../../../main/shared/intentWorkspace').IntentWorkspaceRequest,
-  ) => Promise<import('../../../main/shared/intentWorkspace').IntentWorkspaceResponse>;
   loadBriefBoard?: () => Promise<BoardData>;
   /** The drag, and it is a real write: a column move relocates the entry's
    *  lines inside `.workspacer/brief.md`; `to: 'archive'` moves them out into

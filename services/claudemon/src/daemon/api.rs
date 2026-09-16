@@ -1364,7 +1364,6 @@ async fn get_transcript(
 struct ConversationQuery {
     /// Versioned, fixed-budget internal status-summary projection.
     summary_source: Option<u8>,
-    completion_source: Option<u8>,
     /// Return only items *after* this sequence number (1-based). Lets a client
     /// poll cheap incremental deltas — e.g. a supervisor digesting just the new
     /// turns since it last looked, instead of the whole transcript every time.
@@ -1398,12 +1397,6 @@ async fn get_conversation(
         {
             conv.push(&id, replayed);
         }
-    }
-    if let Some(version) = q.completion_source {
-        if version != 1 {
-            return (StatusCode::BAD_REQUEST, "unsupported completion projection").into_response();
-        }
-        return Json(conv.completion_source(&id)).into_response();
     }
     if let Some(version) = q.summary_source {
         if version != 1 {
@@ -2368,54 +2361,6 @@ mod tests {
         assert_eq!(v["session_id"], "nope");
         assert_eq!(v["seq"], 0);
         assert_eq!(v["items"], json!([]));
-    }
-
-    #[tokio::test]
-    async fn get_conversation_completion_source_is_versioned_and_bounded() {
-        let state = test_state();
-        state.conv.push(
-            "final-1",
-            vec![ConversationItem::AssistantText {
-                text: "Final report".into(),
-                timestamp: None,
-            }],
-        );
-        let (status, body) = request(
-            state.clone(),
-            get("/sessions/final-1/conversation?completion_source=1"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let value: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(value["projection"], "intent-completion-source/v1");
-        assert_eq!(value["text"], "Final report");
-        assert_eq!(value["truncated"], false);
-        assert_eq!(value["redactionVersion"], 1);
-        assert_eq!(value["redacted"], false);
-        state.conv.push(
-            "credential",
-            vec![ConversationItem::AssistantText {
-                text: format!("{}sk-0123456789abcdef", ".".repeat(3992)),
-                timestamp: None,
-            }],
-        );
-        let (status, body) = request(
-            state.clone(),
-            get("/sessions/credential/conversation?completion_source=1"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let value: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(value["text"], format!("{}[redacte", ".".repeat(3992)));
-        assert_eq!(value["redacted"], true);
-        assert_eq!(value["truncated"], true);
-        assert!(!String::from_utf8(body).unwrap().contains("012345"));
-        let (status, _) = request(
-            state,
-            get("/sessions/final-1/conversation?completion_source=2"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
