@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -445,11 +446,15 @@ func TestHeadlessSessionEndRevokesFacadeTokenOncePerLifecycle(t *testing.T) {
 	}
 	store := newSessionStore()
 	revokes := 0
-	store.onEnd = func(id string) {
+	lifecycleEdges := 0
+	store.onEnd = func(string) { lifecycleEdges++ }
+	store.onEndedRetry = func(id string) bool {
 		revokes++
 		if err := revokeSessionFacadeToken(id); err != nil {
 			t.Errorf("revoke: %v", err)
+			return false
 		}
+		return true
 	}
 	reg.store = store
 	store.set("lifecycle", json.RawMessage(`{"session_id":"lifecycle","mode":"input"}`))
@@ -458,10 +463,70 @@ func TestHeadlessSessionEndRevokesFacadeTokenOncePerLifecycle(t *testing.T) {
 	if revokes != 1 {
 		t.Fatalf("end revokes = %d, want exactly 1", revokes)
 	}
+	if lifecycleEdges != 1 {
+		t.Fatalf("lifecycle end effects = %d, want exactly 1", lifecycleEdges)
+	}
 	for _, row := range mustLoadTokens(t) {
 		if row.Token == rec.Token {
 			t.Fatal("ended lifecycle retained facade token")
 		}
+	}
+}
+
+func TestHeadlessSessionEndRetriesTransientFacadeTokenSaveFailure(t *testing.T) {
+	rec, err := mintSessionFacadeToken("retry-revoke", authtoken.ScopeOperator, []string{"*"}, nil, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalSave := saveSessionFacadeTokens
+	t.Cleanup(func() { saveSessionFacadeTokens = originalSave })
+	saveCalls := 0
+	saveSessionFacadeTokens = func(path string, rows []authtoken.Record) error {
+		saveCalls++
+		if saveCalls == 1 {
+			return errors.New("injected transient token-store failure")
+		}
+		return originalSave(path, rows)
+	}
+
+	store := newSessionStore()
+	lifecycleEdges := 0
+	revokeAttempts := 0
+	store.onEnd = func(string) { lifecycleEdges++ }
+	store.onEndedRetry = func(id string) bool {
+		revokeAttempts++
+		return revokeSessionFacadeToken(id) == nil
+	}
+
+	store.set("retry-revoke", json.RawMessage(`{"session_id":"retry-revoke","mode":"input"}`))
+	store.set("retry-revoke", json.RawMessage(`{"session_id":"retry-revoke","mode":"stopped"}`))
+	if lifecycleEdges != 1 || revokeAttempts != 1 || saveCalls != 1 {
+		t.Fatalf("first stop: lifecycle=%d attempts=%d saves=%d, want 1/1/1", lifecycleEdges, revokeAttempts, saveCalls)
+	}
+	if got := loadSessionToken(t, "retry-revoke"); got.Token != rec.Token {
+		t.Fatalf("failed revocation removed or replaced token: got %q want %q", got.Token, rec.Token)
+	}
+
+	// A duplicate stopped observation is not a new lifecycle edge, but it must
+	// retry the failed persistent cleanup.
+	store.set("retry-revoke", json.RawMessage(`{"session_id":"retry-revoke","mode":"stopped"}`))
+	if lifecycleEdges != 1 || revokeAttempts != 2 || saveCalls != 2 {
+		t.Fatalf("retry stop: lifecycle=%d attempts=%d saves=%d, want 1/2/2", lifecycleEdges, revokeAttempts, saveCalls)
+	}
+	for _, row := range mustLoadTokens(t) {
+		if row.Token == rec.Token {
+			t.Fatal("successful retry retained facade token")
+		}
+	}
+
+	// Persistent success is remembered across an SSE reconnect/reseed; the
+	// repeated ended row is neither a new lifecycle edge nor another revoke.
+	store.seed(map[string]json.RawMessage{
+		"retry-revoke": json.RawMessage(`{"session_id":"retry-revoke","mode":"stopped"}`),
+	})
+	if lifecycleEdges != 1 || revokeAttempts != 2 || saveCalls != 2 {
+		t.Fatalf("post-success duplicate: lifecycle=%d attempts=%d saves=%d, want 1/2/2", lifecycleEdges, revokeAttempts, saveCalls)
 	}
 }
 

@@ -84,9 +84,9 @@ export interface BriefCheckReport {
 /**
  * Is this session row one a Now line could still legitimately be about?
  *
- * Deliberately NOT `snapshotGrantsFsRoot`: that predicate answers a SECURITY
- * question ("may this row hand out a filesystem root") and refuses a federated
- * row and a bare terminal for reasons that have nothing to do with this one. A
+ * Deliberately not `snapshotIsLocalLiveSession`: that predicate answers whether
+ * a row is both local and live, and refuses a federated row and a bare terminal
+ * for reasons that have nothing to do with this one. A
  * dispatch on a peer hub is a live dispatch, and refusing it here would flag a
  * perfectly current Now line.
  *

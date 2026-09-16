@@ -220,9 +220,8 @@ var unscopedByDecision = map[string]string{
 	// one; it now canonicalizes and re-contains like sessionFilePath.
 	"layouts.save":   "id is a bare name slugged into <configDir>/layouts/<slug>.yaml and re-contained there by both providers (layoutFilePath / layoutService), never a caller-chosen directory",
 	"layouts.delete": "same as layouts.save",
-	// config.save writes <configDir>/config.yaml — the file fs.write is refused
-	// on by the secret gate in all three containment copies. It takes no path at
-	// all; what it needs is not confinement but a HOST-TRUSTED key list, because
+	// config.save writes <configDir>/config.yaml. It takes no path at all; its
+	// boundary is a HOST-TRUSTED key list, because
 	// two of its keys are process identifiers rather than settings:
 	// agents.binaries (argv[0] of every spawned agent) and claude.profiles
 	// (configDir → CLAUDE_CONFIG_DIR, extraArgs → --dangerously-skip-permissions).

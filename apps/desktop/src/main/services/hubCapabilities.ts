@@ -51,7 +51,7 @@ import {
   configStoreRoots,
   containsCanonical,
 } from '../lib/pathConfinement';
-import { snapshotGrantsFsRoot } from '../lib/snapshotLiveness';
+import { snapshotIsLocalLiveSession } from '../lib/snapshotLiveness';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
@@ -226,7 +226,7 @@ function detectDefaultShell(): string {
 function workspaceRoots(): string[] {
   const roots = new Set<string>();
   for (const s of claudeSessionStore.getAllSnapshots()) {
-    if (s.cwd && snapshotGrantsFsRoot(s)) roots.add(s.cwd);
+    if (s.cwd && snapshotIsLocalLiveSession(s)) roots.add(s.cwd);
   }
   for (const r of configStoreRoots()) roots.add(r);
   return [...roots];

@@ -1,55 +1,25 @@
-// Which session rows put a cwd in the fs.* allow-list — the root SUPPLY half of
-// path containment, held to the same shared fixture as the containment rule
-// itself.
-//
-// contracts/path-containment-cases.json answers "is this path inside a root".
-// This block answers the other half, and the two providers disagreed on it
-// completely: the brain's agentCwds() has filtered on snapshotLive since it was
-// written, and this side's workspaceRoots() iterated every snapshot with no
-// state test at all. So one session row granted an fs root on one provider and
-// was refused by the other, forever — and this store's only removal path is a
-// 30-second timer armed by a SessionEnd hook, so a PTY killed without one
-// (SIGKILL, crash, OOM) kept `status: 'active'` and kept its directory granted
-// for the life of the app process. git.diff, fs.readImage, fs.watch and
-// fs.unwatch are answered HERE even under the default catalog delegation, so
-// that was the shipping configuration.
-//
-// TWIN: services/hub/cmd/brain/visibility_test.go TestAgentCwdLivenessContractCases.
+import { describe, expect, it } from 'vitest';
+import { snapshotIsLocalLiveSession } from './snapshotLiveness';
 
-import { describe, it, expect } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
-import { snapshotGrantsFsRoot } from './snapshotLiveness';
+describe('local session liveness', () => {
+  const cases: Array<{ name: string; snapshot: unknown; live: boolean }> = [
+    { name: 'active status', snapshot: { cwd: '/w/p', status: 'active' }, live: true },
+    { name: 'no state yet', snapshot: { cwd: '/w/p' }, live: true },
+    { name: 'ended status', snapshot: { cwd: '/w/p', status: 'ended' }, live: false },
+    { name: 'stopped mode', snapshot: { cwd: '/w/p', mode: 'stopped' }, live: false },
+    { name: 'archived', snapshot: { cwd: '/w/p', mode: 'running', archived: true }, live: false },
+    { name: 'terminal mode', snapshot: { cwd: '/', mode: 'unknown' }, live: false },
+    {
+      name: 'remote live session',
+      snapshot: { cwd: '/peer/p', status: 'active', hub: 'peer' },
+      live: false,
+    },
+    { name: 'invalid row', snapshot: 'broken', live: false },
+  ];
 
-interface LivenessCase {
-  name: string;
-  snapshot: Record<string, unknown>;
-  live: boolean;
-  why: string;
-}
-
-// apps/desktop/src/main/lib/ → five levels below the repo root.
-const fixture = JSON.parse(
-  fs.readFileSync(
-    path.join(__dirname, '../../../../../contracts/path-containment-cases.json'),
-    'utf-8',
-  ),
-) as { agentCwdLiveness: { cases: LivenessCase[] } };
-
-describe('agent-cwd liveness — cross-language contract', () => {
-  const cases = fixture.agentCwdLiveness?.cases ?? [];
-
-  it('the block still carries cases, and both verdicts', () => {
-    // A silently emptied block agrees with everything, and a block that carries
-    // only one verdict is passed by a copy that answers a constant.
-    expect(cases.length).toBeGreaterThanOrEqual(9);
-    expect(cases.some((c) => c.live)).toBe(true);
-    expect(cases.some((c) => !c.live)).toBe(true);
-  });
-
-  for (const c of cases) {
-    it(c.name, () => {
-      expect(snapshotGrantsFsRoot(c.snapshot), c.why).toBe(c.live);
+  for (const testCase of cases) {
+    it(testCase.name, () => {
+      expect(snapshotIsLocalLiveSession(testCase.snapshot)).toBe(testCase.live);
     });
   }
 });

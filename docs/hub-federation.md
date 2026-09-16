@@ -259,17 +259,15 @@ brings them back live, with no loss of layout state across the gap.
 
 Everywhere that consumes `agent.*` events.
 
-This is the phase that will be underestimated. Path-bearing capabilities
-(`fs.*`, `search.project`, `git.*`) operate on the *local* filesystem; a remote
-session's `cwd` is meaningless locally, and the confinement logic in
-`hubCapabilities.ts` derives its roots from snapshot cwds
-(`snapshotGrantsFsRoot`). A remote session must not contribute local filesystem
-roots — that is a security-relevant bug, not a cosmetic one. Sweep for anything
-that reads a session cwd, opens a file, or runs git, and make it hub-aware or
-explicitly local-only.
+Path-bearing capabilities operate on the machine that answers the call. A peer
+session's `cwd` is meaningless on the local machine, so
+`snapshotIsLocalLiveSession` excludes hub-stamped rows from local-directory UI
+and routing context. Authenticated agents still have ambient host-path access;
+this is machine provenance, not a filesystem grant. Sweep anything that reads a
+session cwd, opens a file, or runs git and route it to the owning hub or hide it.
 
-*Done when:* a remote session in the fleet contributes no local fs roots, and
-capabilities that can't act on it are hidden rather than failing on click.
+*Done when:* a remote session is never mistaken for a local directory, and
+capabilities that cannot act on its machine are hidden rather than failing.
 
 ## Open questions
 
@@ -372,8 +370,8 @@ What shipped, and where reality corrected the proposal:
   session store with a `hub` field on the snapshot (session ids are UUIDs;
   cross-hub collision is accepted as negligible). Everything downstream —
   sidebar, Triage Inbox, attention — then works off the existing snapshot
-  flow, with action routing branching on `hub`. Remote sessions contribute NO
-  local filesystem roots (`snapshotGrantsFsRoot` excludes them) and their
+  flow, with action routing branching on `hub`. Remote sessions are excluded
+  from local-directory context by `snapshotIsLocalLiveSession`, and their
   cwd-bound panes (terminal, git review, editor) are hidden.
 - **Harness:** `services/hub/scripts/federation-harness.sh` runs the fake
   second PC — a peer hub on :8895 with synthetic agents republished every 2s —

@@ -17,8 +17,8 @@
  *     usable remote cards via an explicit mapping that leaks no wire
  *     internals; ended ones (layout ghosts / stopped claudemon rows) finalize
  *     a held session or stay invisible;
- *   - security: snapshotGrantsFsRoot refuses any hub-stamped snapshot, so a
- *     remote cwd can never enter the fs.* allow-list (workspaceRoots).
+ *   - locality: snapshotIsLocalLiveSession refuses hub-stamped snapshots, so a
+ *     peer cwd is never projected as a local session directory.
  *
  * Strategy (mirrors claudeSessionStore.test.ts): mock every side-effect
  * collaborator, drive the REAL store through the bridge by capturing the
@@ -93,7 +93,7 @@ import {
   stopFederationBridge,
   listFederationPeers,
 } from './federationBridge';
-import { snapshotGrantsFsRoot } from '../lib/snapshotLiveness';
+import { snapshotIsLocalLiveSession } from '../lib/snapshotLiveness';
 
 // A minimal but complete remote snapshot as the peer's publisher would send it.
 function remoteSnap(sessionId: string, extra: Record<string, unknown> = {}) {
@@ -482,7 +482,7 @@ describe('ingest — sparse rows (headless-brain peers)', () => {
     expect(raw.session_id).toBeUndefined();
     expect(raw.updated_at).toBeUndefined();
     // A remote cwd still grants no local fs root, sparse or not.
-    expect(snapshotGrantsFsRoot(snap)).toBe(false);
+    expect(snapshotIsLocalLiveSession(snap)).toBe(false);
     // And it is never republished onto the bus (it came from the bus).
     expect(publishSnapshot).not.toHaveBeenCalled();
   });
@@ -561,16 +561,22 @@ describe('ingest — sparse rows (headless-brain peers)', () => {
 });
 
 describe('security — remote snapshots grant no local fs roots', () => {
-  it('snapshotGrantsFsRoot refuses a hub-stamped snapshot in any live state', () => {
+  it('snapshotIsLocalLiveSession refuses a hub-stamped snapshot in any live state', () => {
     // The same row WITHOUT the stamp is live (that is what makes this a test
     // of the hub clause and not of some other refusal).
-    expect(snapshotGrantsFsRoot({ cwd: '/peer/proj', status: 'active' })).toBe(true);
-    expect(snapshotGrantsFsRoot({ cwd: '/peer/proj', status: 'active', hub: 'work' })).toBe(false);
-    expect(snapshotGrantsFsRoot({ cwd: '/peer/proj', mode: 'input', hub: 'work' })).toBe(false);
+    expect(snapshotIsLocalLiveSession({ cwd: '/peer/proj', status: 'active' })).toBe(true);
+    expect(snapshotIsLocalLiveSession({ cwd: '/peer/proj', status: 'active', hub: 'work' })).toBe(
+      false,
+    );
+    expect(snapshotIsLocalLiveSession({ cwd: '/peer/proj', mode: 'input', hub: 'work' })).toBe(
+      false,
+    );
     // Fail closed on a wrong-typed stamp too ("will not decode" clause).
-    expect(snapshotGrantsFsRoot({ cwd: '/peer/proj', status: 'active', hub: 42 })).toBe(false);
+    expect(snapshotIsLocalLiveSession({ cwd: '/peer/proj', status: 'active', hub: 42 })).toBe(
+      false,
+    );
     // Empty string means local — unchanged verdict.
-    expect(snapshotGrantsFsRoot({ cwd: '/p', status: 'active', hub: '' })).toBe(true);
+    expect(snapshotIsLocalLiveSession({ cwd: '/p', status: 'active', hub: '' })).toBe(true);
   });
 
   it('an ingested remote session is refused by the fs-root predicate end to end', async () => {
@@ -579,7 +585,7 @@ describe('security — remote snapshots grant no local fs roots', () => {
     await emitAndFlush({ type: 'agent.snapshot', hub: 'work', data: remoteSnap(sid) });
     const snap = claudeSessionStore.getSnapshot(sid)!;
     expect(snap.cwd).toBe('/peer/proj');
-    expect(snapshotGrantsFsRoot(snap)).toBe(false);
+    expect(snapshotIsLocalLiveSession(snap)).toBe(false);
   });
 });
 
@@ -742,6 +748,6 @@ describe('canonical selection slice — federation transparency', () => {
     const snap = claudeSessionStore.getSnapshot(id)!;
     expect(snap.hub).toBe('beta');
     expect(snap.resolvedContextWindow).toBe(1_000_000);
-    expect(snapshotGrantsFsRoot(snap)).toBe(false);
+    expect(snapshotIsLocalLiveSession(snap)).toBe(false);
   });
 });

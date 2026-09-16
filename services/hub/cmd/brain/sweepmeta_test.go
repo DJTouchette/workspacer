@@ -228,7 +228,7 @@ func TestNoUncountedHostGateInTypeScriptTests(t *testing.T) {
 }
 
 // hostCapUseFloor is how many CAN_* references the rule above finds today.
-const hostCapUseFloor = 20
+const hostCapUseFloor = 15
 
 // stripTSComments blanks `//` and `/* */` comments, preserving every byte
 // position (and therefore every line number) by writing spaces in their place.

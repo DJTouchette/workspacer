@@ -161,38 +161,6 @@ func newRipgrepCollector(cwd string, maxResults int) *ripgrepCollector {
 	}
 }
 
-// resultPathIsSecret reports whether a file search.project is about to return
-// bytes from must be dropped because fs.read would refuse it.
-//
-// assertPathAllowed answers about a path the CALLER named. This answers about a
-// path the HOST discovered while serving a call whose only caller-supplied
-// coordinate was a directory: search.project hands its cwd to ripgrep and
-// returns matching lines out of whatever the walker chose to open.
-//
-// That is the whole composition. The cwd is guarded and nothing else is, and
-// which files inside it get opened is decided by ripgrep's hidden/ignore walker
-// — whose policy is A FILE INSIDE THE SEARCHED DIRECTORY. `<cwd>/.ignore` is an
-// ordinary dotfile to every guard here (no credential basename, no `.git`
-// component, inside the root), so fs.write accepts it, and the next
-// search.project returns matching lines out of `.git/config` and
-// `.settings.json` — the two files the secret gate exists to refuse. Bytes
-// written as DATA by one confined call became the READ POLICY of the next.
-//
-// The durable invariant is not "make ripgrep ignore .ignore" — its walker has
-// several such files and their precedence is its business — but that the set of
-// files a capability may return CONTENT from cannot exceed fs.read's. So the
-// same predicate is applied per result path. Unverifiable → drop, the guard's
-// own posture.
-//
-// TWIN: isSecretResultPath in apps/desktop/src/main/lib/pathConfinement.ts.
-func resultPathIsSecret(abs string) bool {
-	canonical, err := canonicalizePath(abs)
-	if err != nil {
-		return true
-	}
-	return pathIsSecretCanonical(canonical)
-}
-
 // addLine folds one `rg --json` line in. Returns true once the result cap is
 // reached, meaning the caller should stop reading. Every submatch on a line
 // becomes its own result (a line with N occurrences yields N columns) — keeping

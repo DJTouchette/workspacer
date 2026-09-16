@@ -58,7 +58,6 @@ Runtime limits: HTTP handler tests used a real loopback HTTP server with fixture
 - `apps/desktop/src/renderer/src/components/claude/UsageDetailDialog.tsx`
 - `apps/desktop/src/renderer/src/harness/usagePacingHarness.tsx`
 - `apps/desktop/src/renderer/src/hooks/useUsageReport.ts`
-- `apps/desktop/src/renderer/src/lib/pluginPermissions.ts`
 - `apps/desktop/src/renderer/src/lib/usagePacing.ts`
 - `apps/desktop/src/renderer/src/panes/OverviewPane.tsx`
 - `apps/desktop/src/renderer/tests/backend/backendParity.test.ts`

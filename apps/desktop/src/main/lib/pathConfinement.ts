@@ -732,43 +732,6 @@ export function isSecretPath(canonicalTarget: string): boolean {
  * True when a path a capability is ABOUT TO RETURN BYTES FROM must be dropped,
  * because `fs.read` would refuse it.
  *
- * `assertPathAllowed` answers about a path the CALLER named. This answers about
- * a path the HOST discovered while serving a call whose only caller-supplied
- * coordinate was a directory — `search.project`, which hands its cwd to ripgrep
- * and returns matching lines out of whatever the walker chose to open.
- *
- * That distinction is the whole composition. search.project applies
- * assertPathAllowed to its cwd and to nothing else, and delegates per-file
- * exclusion to ripgrep's hidden/ignore walker — whose policy is A FILE INSIDE
- * THE SEARCHED DIRECTORY. `.ignore` is an ordinary dotfile: not a credential
- * basename, no `.git` component, inside the root, so `fs.write` accepts it. Two
- * calls, each correctly confined:
- *
- *     fs.write       <root>/.ignore   with "!*\n!**\/*\n"
- *     search.project { cwd: <root> }
- *
- * and the second returns matching lines out of `<root>/.git/config` and
- * `<root>/.settings.json` — the two files the secret gate exists to refuse.
- * Bytes written as DATA by one confined call became the READ POLICY of the next.
- *
- * The durable invariant is not "make ripgrep ignore `.ignore`" (its walker has
- * several such files and their precedence is its business): it is that the set
- * of files a capability can return CONTENT from may not exceed `fs.read`'s. So
- * the gate is applied per result path, here, by the same predicate.
- *
- * Unverifiable → drop, the same posture as the guard: a path we cannot resolve
- * is a path we cannot prove is allowed.
- *
- * TWIN: resultPathIsSecret in cmd/brain/search.go.
- */
-export function isSecretResultPath(target: string): boolean {
-  try {
-    return isSecretPath(canonicalizePath(target));
-  } catch {
-    return true;
-  }
-}
-
 /**
  * Canonicalize an ambient authenticated-agent path. Workspacer no longer
  * restricts it to workspace roots or filters credentials; the operating system

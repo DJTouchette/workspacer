@@ -101,8 +101,7 @@ func configDirFor(goos string) string {
 // /home/<user>, so the desktop and the TUI went on using the real config dir
 // while a headless `workspacer serve` quietly used a different one: config,
 // profiles, layouts, sessions and the token store all split in two, and
-// downstream in fsguard the relative root was DISCARDED, which turns the
-// config-dir half of the secret gate off for the whole process.
+// downstream path/config consumers then resolved different state directories.
 //
 // "" is the refusal, and it is deliberate: an empty config dir is unverifiable
 // everywhere it is consumed and therefore fail-closed, where a relative one
@@ -667,10 +666,8 @@ const asciiWhitespace = " \t\n\v\f\r"
 // It deliberately does NOT expand '~' (BINDING DECISION 1, fsguard.go's header).
 // It used to, and the desktop twin never did, so `agents.spawn {"cwd":"~"}` was
 // $HOME on this provider and the literal string "~" on the other. That is not
-// cosmetic: the stored session cwd is what agentCwds() feeds into
-// workspaceRoots(), so one caller string turned the ENTIRE home tree into an
-// fs.* root here and into nothing at all there — the same allowed-by-one-
-// provider / denied-by-the-other split the tilde rule exists to close.
+// cosmetic: the same spawn selected different host directories on the two
+// providers, so every cwd-relative operation and displayed path diverged.
 //
 // It also does NOT check existence or fall back to $HOME. The desktop's
 // terminals.create used to (`fs.existsSync(cwd) ? cwd : os.homedir()`), which
@@ -693,9 +690,7 @@ const asciiWhitespace = " \t\n\v\f\r"
 //	                     LineTerminator in JS — the same split, the other way.
 //
 // A BOM is exactly what a path pasted out of a Windows editor or read from a
-// UTF-8-with-BOM file carries, and this cwd is the string that lands in
-// workspaceRoots(), so "$HOME is a root" versus "a nonexistent directory is a
-// root" is the difference. Neither language's built-in is portable, so both
+// UTF-8-with-BOM file carries. Neither language's built-in is portable, so both
 // copies trim the ASCII whitespace set and nothing else; every other code point
 // is an ordinary character in a filename, which is what it is on the filesystem.
 func normalizeCwd(p string) string {

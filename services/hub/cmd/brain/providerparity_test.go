@@ -201,33 +201,12 @@ func TestSessionsForDirCannotClimbOutOfTheProjectsDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// library.*: derivedRootSet, and claude ids that are basenames.
+// library.* selected-object integrity, and claude ids that are basenames.
 
-// TestLibraryDerivedRootSetIsTheItemRoots reads the corpus's `derivedRootSet`
-// column and holds the brain to it.
-//
-// The `methods` block's rootSet pins which allow-list the caller's `cwd` is
-// checked against; derivedRootSet pins the SECOND, narrower list the paths
-// composed from that cwd are checked against — [<configDir>/library, cwd]. The
-// brain used r.workspaceRoots(ctx) for the derived write, which contains every
-// OTHER live agent's cwd and all three config stores, so a directory symlink at
-// the derived location (an ordinary permitted fs.write, and the form a git clone
-// carries verbatim) sent the write into a second project and into
-// <configDir>/sessions — where the desktop, on the item roots, refused.
-func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
-	fx := loadContractFixture(t)
-	derived := map[string]string{}
-	for _, m := range fx.Methods {
-		if m.DerivedRootSet != "" {
-			derived[m.Method] = m.DerivedRootSet
-		}
-	}
-	for _, method := range []string{"library.list", "library.save", "library.remove"} {
-		if derived[method] != "item" {
-			t.Fatalf("the corpus must declare derivedRootSet=item for %s (got %q) — without it nothing says the derived paths get their own, narrower list", method, derived[method])
-		}
-	}
-
+// Authenticated agents may choose any cwd. Once library.save composes an item
+// below that selected project, however, the derived path must remain inside the
+// selected library object. This is semantic containment, not a workspace grant.
+func TestLibraryDerivedPathsStayInsideTheSelectedLibrary(t *testing.T) {
 	cfg := tempConfigHome(t)
 	projA, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -237,8 +216,9 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// BOTH are live agent cwds, so both are inside the WORKSPACE roots. Only
-	// projA is inside the item roots for a call naming projA.
+	// Both projects are known sessions, but only projA is the object selected by
+	// this call. A symlink must not redirect its derived item into projB or host
+	// configuration state.
 	reg := registryWithCwds(t, projA, projB)
 
 	if err := os.MkdirAll(filepath.Join(projA, ".workspacer"), 0o755); err != nil {
@@ -254,7 +234,7 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 		body := `{"scope":"project","cwd":` + jsonStr(projA) + `,"id":"pwn","title":"t","kind":"prompt","body":"OWNED"}`
 		res, err := reg.handle(context.Background(), "library.save", json.RawMessage(body))
 		if err == nil {
-			t.Errorf("library.save with cwd=%s wrote through a symlink into %s and returned %s — the derived destination must be confined to the item roots, not the workspace roots", projA, target, res)
+			t.Errorf("library.save with cwd=%s wrote through a symlink into %s and returned %s — the derived destination must stay inside the selected library", projA, target, res)
 		}
 		if data, err := os.ReadFile(filepath.Join(target, "pwn.md")); err == nil {
 			t.Errorf("library.save landed bytes in %s: %q", target, data)
@@ -277,7 +257,7 @@ func TestLibraryDerivedRootSetIsTheItemRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(item); err == nil {
-		t.Error("save and remove are on different root sets again: the brain created an item its own remove will not delete")
+		t.Error("save and remove disagree about the selected library: the brain created an item its own remove will not delete")
 	}
 }
 

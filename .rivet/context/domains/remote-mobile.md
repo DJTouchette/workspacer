@@ -55,7 +55,10 @@ Five screens behind four tabs — Fleet, Needs You, Chat, Inspector (Flows/Agent
 
 ## Hand-authored notes (2026-08-23) — desktop vocabulary follows the PWA, with named exceptions
 
-- **The desktop renderer's fleet vocabulary now matches `/m`'s, and future UI copy should keep following `/m`, not the other way round.** `/m` moved to fleet-manager language first (commit `8d5db890`): state badges Working→"In flight", Idle→"Standing by", Finished→"Landed"; verb Spawn→Dispatch; inbox tab "Needs you"→"Waiting". The desktop renderer (SideBar, FleetDeck, AgentCard, AttentionCard, InboxDrawer, OverviewPane, SpawnAgentDialog, HomeSpace, AskPane, NotificationsSection, ClaudeProfilesSection, JobsSection, LibraryPane, Onboarding, CommandPalette, `shortcuts.ts`, `pluginPermissions.ts`, `useAttentionFeed`, `AgentWatchPane`) was then renamed to match. **Three exceptions are deliberate, not oversights — keep them if sweeping vocabulary again**: (1) `WorkingTimer.tsx`'s "Working" verb stayed — no PWA equivalent exists, and renaming it broke 8+ test assertions while mismatching the component's own name; (2) InboxDrawer's "Review" tab and the bigdiff "Review"/"Review changes" labels stayed put despite the PWA saying "Landed" — "Review" is already a distinct, load-bearing feature name elsewhere (the git-diff `ReviewPane` / paneMenu `'review'` pane type), and renaming would create ambiguity between two unrelated "Review" concepts; (3) "agent" as the general noun was NOT swapped to "worker" anywhere — matches the PWA's own restraint (only the state/verb vocabulary moved, not every noun). Approval/question language ("Needs approval", "Waiting for input") was untouched by the PWA and so left alone on desktop too.
+- **The desktop renderer's fleet vocabulary matches `/m`'s.** State badges use
+  “In flight”, “Standing by” and “Landed”; the primary verb is “Dispatch” and
+  the inbox says “Waiting”. Keep “Review” for the distinct git-diff feature and
+  keep “agent” as the general noun. Approval/question language remains separate.
 
 ## Hand-authored notes (2026-08-23) — `attentionFor` kinds are shared across differently-shaped payloads
 

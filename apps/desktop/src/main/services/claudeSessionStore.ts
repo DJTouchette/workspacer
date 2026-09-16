@@ -1932,8 +1932,8 @@ class ClaudeSessionStore {
   // by these methods: no hook events, deltas, statusLines or watcher updates
   // ever carry a remote id, so none of the local side-effect machinery
   // (history/analytics writes, eviction/Stop timers, facade tokens, notifier,
-  // supervisor nudges) can touch them. snapshotGrantsFsRoot refuses hub-set
-  // rows, so a remote cwd never becomes a local fs root.
+  // supervisor nudges) can touch them. snapshotIsLocalLiveSession refuses
+  // hub-stamped rows, so a peer cwd is never projected as a local directory.
 
   /** Upsert one remote session from the peer's snapshot wire shape. */
   upsertRemoteSession(hub: string, snap: RemoteSnapshotWire): void {

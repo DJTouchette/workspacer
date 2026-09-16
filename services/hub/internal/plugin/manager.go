@@ -112,17 +112,10 @@ func expandScope(p string, bindings map[string]string) string {
 			// canonicalizes and re-contains, this one used to return whatever it
 			// was handed.
 			//
-			// `${agentCwd}` is bound by the trusted host from the pane it is
-			// opening, and that pane is read out of the SHARED LAYOUT DOCUMENT,
-			// which a non-trusted bus caller may write (layout.set). So the
-			// document decided the plugin sandbox's own boundary: an agent with
-			// `cwd: "/"` and a plugin pane produced a token whose fsRoots were
-			// ["/"], and — since a volume root contains everything below it
-			// (BINDING DECISION 3) — the bus's per-plugin path confinement, the
-			// ONE guard that is per-caller rather than per-host, then admitted
-			// every path on the machine. The sibling branch already refuses
-			// exactly this shape (`${pluginDir}/all` with `all -> /`); a bare
-			// token got there without a symlink.
+			// Legacy compatibility only: enabled plugins now have ambient host
+			// access, so the expanded path is routing/diagnostic metadata and
+			// never an authorization boundary. Keep deterministic validation for
+			// older manifests without describing the result as a sandbox.
 			//
 			// Resolved, not lexical, for the same reason the sibling is: the
 			// binding may be a symlink to the root. Unresolvable → grant nothing,
@@ -142,17 +135,8 @@ func expandScope(p string, bindings map[string]string) string {
 		if !withinRoot(base, full) {
 			return ""
 		}
-		// …and the same containment again, CANONICALLY, because the lexical test
-		// above is not the last word: the bus canonicalizes every grant root at
-		// registration (BINDING DECISION 2), so a symlink SHIPPED INSIDE the
-		// plugin's own directory relocates the root after this function has
-		// approved it. `${pluginDir}/all` with `<pluginDir>/all -> /` passed the
-		// lexical test, canonicalized to "/", and — since a volume root contains
-		// everything below it (BINDING DECISION 3) — granted the plugin fs.write
-		// on ~/.claude/settings.json (hooks are arbitrary commands),
-		// ~/.ssh/authorized_keys and /etc. `/plugins/install` clones a repository
-		// verbatim, so the link arrives with the plugin; the plugin's own sidecar
-		// can equally create it before a pane token is minted.
+		// Canonical legacy metadata stays beneath the binding it names. This is
+		// semantic placeholder integrity, not an enabled-plugin permission check.
 		//
 		// A subpath may only NARROW the binding it names, and "narrow" has to
 		// mean where it LANDS, not how it is spelled. Cheap: once per declared
@@ -167,26 +151,9 @@ func expandScope(p string, bindings map[string]string) string {
 		return full
 	}
 	if filepath.IsAbs(p) {
-		// An absolute scope used to pass through unexamined, on install-time
-		// consent alone: a manifest declaring fs.read on the config dir could
-		// read remote-token and reconnect as a TRUSTED bus connection, which
-		// drops per-plugin scoping and unlocks /plugins/install — arbitrary
-		// commands. Refuse the scope here, at manifest resolution, where it is
-		// cheaper than a per-call check and visible in the load log.
-		//
-		// This does NOT replace the bus's per-call secret gate (policy.go
-		// pathIsSecret): a symlink planted into the config dir AFTER install
-		// would make an innocuous-looking scope reach it, and that resolution
-		// only happens at call time. Both ship.
-		//
-		// The ${…} branch above is deliberately NOT checked here: ${pluginDir}
-		// resolves inside <config>/plugins/<id>, so checking it would drop every
-		// such grant at load time. Note the per-call gate still refuses those
-		// paths (the config dir minus library/ layouts/ sessions/ is secret by
-		// location, plugins/** included), so a plugin that wants its own data
-		// through fs.* is refused at call time rather than at load time — the
-		// place to fix that, if it ever needs fixing, is the shared rule in
-		// contracts/path-containment-cases.json, not a second opinion here.
+		// Absolute path declarations are retained as inert manifest metadata.
+		// Canonicalizing them keeps diagnostics and old serialized shapes stable;
+		// enabled plugins are trusted and the bus does not enforce this list.
 		canon, ok := bus.CanonicalizeRoot(p)
 		if !ok {
 			// Unresolvable (a component that is not a directory, an unreadable

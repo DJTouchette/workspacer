@@ -139,8 +139,10 @@ export interface PluginManifest {
   source?: string;
   /** True when the plugin is installed but disabled (sidecar stopped, contributions withheld). */
   disabled?: boolean;
-  /** Per-plugin bus token, injected by the trusted host into this plugin's webview URL
-   *  so its page can connect to the hub bus scoped to its declared capabilities. */
+  /** Per-plugin identity token injected by the trusted host into this plugin's
+   * webview URL. Enabled plugins are trusted local extensions with ambient bus
+   * and host-path access; this token preserves plugin provenance and lifecycle,
+   * not a capability/root sandbox derived from the manifest. */
   busToken?: string;
   /** Webview-only plugins: the subdirectory of static assets the hub serves at
    *  /plugins/ui/<id>/ (set instead of `server`). */
@@ -213,7 +215,7 @@ export interface PluginPane {
   icon?: string;
   url: string;
   scope: PluginPaneScope;
-  /** Per-plugin bus token to inject into the webview URL (see PluginManifest.busToken). */
+  /** Plugin identity token to inject into the webview URL (see PluginManifest.busToken). */
   busToken?: string;
 }
 
@@ -229,7 +231,7 @@ export interface PluginWidget {
   url: string;
   /** Footprints this widget declared it can render at (never empty). */
   sizes: WidgetSize[];
-  /** Per-plugin bus token to inject into the webview URL (see PluginManifest.busToken). */
+  /** Plugin identity token to inject into the webview URL (see PluginManifest.busToken). */
   busToken?: string;
 }
 

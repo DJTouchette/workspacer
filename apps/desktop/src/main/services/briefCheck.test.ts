@@ -125,7 +125,7 @@ describe('a FINISHED session counts as gone', () => {
     [{ sessionId: LIVE, status: 'active' }, true],
     // Unknown-shaped and federated rows count as LIVE here: this predicate's
     // failure mode to avoid is flagging a line that is fine, the opposite of
-    // snapshotGrantsFsRoot's.
+    // snapshotIsLocalLiveSession's.
     [{ sessionId: LIVE }, true],
     [{ sessionId: LIVE, hub: 'peer' }, true],
   ])('isLiveDispatch(%j) === %s', (snap, want) => {

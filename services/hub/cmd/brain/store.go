@@ -18,12 +18,21 @@ type sessionStore struct {
 	mu      sync.RWMutex
 	m       map[string]json.RawMessage // session_id -> snapshot JSON (claudemon's shape)
 	desktop map[string]json.RawMessage // workflow enrichment retained across daemon updates
+	// endRetry records ended-session cleanup callbacks that have completed
+	// durably. A failed callback is removed again so the next duplicate stopped
+	// snapshot (including an SSE reseed) retries it. A later live snapshot starts
+	// a new lifecycle and clears the success marker.
+	endRetry map[string]bool
 
 	// onChange is invoked (outside the lock) after a set, to publish the update.
 	onChange func(id string, snap json.RawMessage)
 	// onEnd is invoked once per live→ended lifecycle (and for ended rows first
-	// observed during seed), so per-session credentials can be revoked promptly.
+	// observed during seed). It is for edge-triggered lifecycle side effects.
 	onEnd func(id string)
+	// onEndedRetry is invoked on ended observations until it reports durable
+	// success. It is deliberately separate from onEnd: persistence retries must
+	// not duplicate manager wakes or other lifecycle edge effects.
+	onEndedRetry func(id string) bool
 	// enrich, if set, overlays name/parent/etc. onto each snapshot as it lands.
 	enrich func(json.RawMessage) json.RawMessage
 	// onSeed is invoked (outside the lock) with the whole seeded set, which
@@ -42,7 +51,26 @@ func (s *sessionStore) applyEnrich(snap json.RawMessage) json.RawMessage {
 }
 
 func newSessionStore() *sessionStore {
-	return &sessionStore{m: map[string]json.RawMessage{}}
+	return &sessionStore{m: map[string]json.RawMessage{}, endRetry: map[string]bool{}}
+}
+
+func (s *sessionStore) beginEndedRetryLocked(id string) bool {
+	if s.onEndedRetry == nil || s.endRetry[id] {
+		return false
+	}
+	// Reserve the attempt so concurrent duplicate observations cannot run the
+	// same persistent side effect twice. Failure clears this reservation below.
+	s.endRetry[id] = true
+	return true
+}
+
+func (s *sessionStore) finishEndedRetry(id string, succeeded bool) {
+	if succeeded {
+		return
+	}
+	s.mu.Lock()
+	delete(s.endRetry, id)
+	s.mu.Unlock()
 }
 
 // seed replaces the whole store without firing onChange — used for the initial
@@ -53,7 +81,12 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 		enriched[id] = s.applyEnrich(snap)
 	}
 	s.mu.Lock()
+	endedEdges := make([]string, 0)
 	for id, snap := range enriched {
+		previous, existed := s.m[id]
+		if snapshotEnded(snap) && (!existed || !snapshotEnded(previous)) {
+			endedEdges = append(endedEdges, id)
+		}
 		enriched[id] = s.mergeDesktopLocked(id, snap)
 	}
 	for id := range s.desktop {
@@ -64,16 +97,33 @@ func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
 	s.m = enriched
 	cb := s.onSeed
 	onEnd := s.onEnd
+	onEndedRetry := s.onEndedRetry
+	retryIDs := make([]string, 0)
+	for id, snap := range enriched {
+		if snapshotEnded(snap) {
+			if s.beginEndedRetryLocked(id) {
+				retryIDs = append(retryIDs, id)
+			}
+		} else {
+			delete(s.endRetry, id)
+		}
+	}
+	for id := range s.endRetry {
+		if _, exists := enriched[id]; !exists {
+			delete(s.endRetry, id)
+		}
+	}
 	s.mu.Unlock()
 	if cb != nil {
 		cb(enriched)
 	}
 	if onEnd != nil {
-		for id, snap := range enriched {
-			if snapshotEnded(snap) {
-				onEnd(id)
-			}
+		for _, id := range endedEdges {
+			onEnd(id)
 		}
+	}
+	for _, id := range retryIDs {
+		s.finishEndedRetry(id, onEndedRetry(id))
 	}
 }
 
@@ -86,13 +136,22 @@ func (s *sessionStore) set(id string, snap json.RawMessage) {
 	s.m[id] = snap
 	cb := s.onChange
 	onEnd := s.onEnd
-	becameEnded := snapshotEnded(snap) && (!existed || !snapshotEnded(previous))
+	onEndedRetry := s.onEndedRetry
+	ended := snapshotEnded(snap)
+	becameEnded := ended && (!existed || !snapshotEnded(previous))
+	if !ended {
+		delete(s.endRetry, id)
+	}
+	retryEnded := ended && s.beginEndedRetryLocked(id)
 	s.mu.Unlock()
 	if cb != nil {
 		cb(id, snap)
 	}
 	if becameEnded && onEnd != nil {
 		onEnd(id)
+	}
+	if retryEnded {
+		s.finishEndedRetry(id, onEndedRetry(id))
 	}
 }
 
@@ -173,6 +232,7 @@ func (s *sessionStore) remove(id string) {
 	s.mu.Lock()
 	delete(s.m, id)
 	delete(s.desktop, id)
+	delete(s.endRetry, id)
 	s.mu.Unlock()
 }
 

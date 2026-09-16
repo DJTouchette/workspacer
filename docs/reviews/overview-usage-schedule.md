@@ -211,10 +211,8 @@ asserts the highlight moves.
   `SessionSection.tsx`, `primitives.tsx`
 - `apps/desktop/src/renderer/src/harness/usagePacingHarness.tsx`
 - `apps/desktop/src/renderer/src/hooks/useUsageReport.ts`
-- `apps/desktop/src/renderer/src/lib/pluginPermissions.ts`
 - `apps/desktop/src/renderer/src/types/electron.d.ts`
 - `apps/desktop/src/renderer/tests/backend/backendParity.test.ts`,
-  `tests/pluginPermissions.test.ts`,
   `tests/components/usagePacingSurfaces.test.tsx`,
   `tests/components/usageScheduleRow.test.tsx` (new)
 - `apps/desktop/tests/e2e/usagePacing.test.ts`

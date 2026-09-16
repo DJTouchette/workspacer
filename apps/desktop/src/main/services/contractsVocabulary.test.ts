@@ -67,12 +67,9 @@ interface VerdictDef {
 interface BlockSpec {
   why?: string;
   required?: string[];
-  /** Closes the field set from the other side. A field NAME the loaders act on
-   *  was closed by nothing: renaming `configDirVia` by one character left every
-   *  suite green, because encoding/json and JSON.parse both ignore an unknown
-   *  key — and that field is uniquely SILENT, since dropping the symlink
-   *  indirection flips no verdict, so both cases kept passing while exercising
-   *  nothing they claimed to. */
+  /** Closes the field set from the other side. Both encoding/json and JSON.parse
+   * ignore unknown keys, so a one-character field typo otherwise removes a case
+   * precondition without any loader noticing. */
   optional?: string[];
   /** The same, for the sub-keys of a field whose shape is a SCHEMA
    *  (path-containment's `tree`) rather than a data payload (deepmerge's
@@ -396,9 +393,9 @@ describe('the vocabulary guard is falsifiable', () => {
       name: 'a case field name is mis-spelled by one character',
       check: 'unknown-fields',
       mutate: (d) => {
-        const row = rowsAt(d, 'cases').find((c) => 'configDirVia' in c)!;
-        row.configDirVla = row.configDirVia;
-        delete row.configDirVia;
+        const row = rowsAt(d, 'cases').find((c) => 'needsSymlinks' in c)!;
+        row.needsSymLinks = row.needsSymlinks;
+        delete row.needsSymlinks;
       },
     },
     {
@@ -476,8 +473,8 @@ describe('the vocabulary guard is falsifiable', () => {
       name: 'a declared block is renamed away',
       check: 'blocks-exist',
       mutate: (d) => {
-        d.checkUseRenamed = d.checkUse;
-        delete d.checkUse;
+        d.casesRenamed = d.cases;
+        delete d.cases;
       },
     },
     {
@@ -546,21 +543,17 @@ describe('the two corpus-vocabulary loaders are one guard', () => {
     }
   });
 
-  it('the three per-loader containment vocabulary tests are all still there', () => {
+  it('the active cross-language path contract loaders are still there', () => {
     const twins: Array<[string, string]> = [
-      ['services/hub/cmd/brain/fsguard_test.go', 'TestFixtureVocabularyIsClosed'],
-      ['services/hub/internal/bus/policy_test.go', 'TestFixtureVocabularyIsClosed'],
-      [
-        'apps/desktop/src/main/lib/pathConfinement.test.ts',
-        "describe('the fixture vocabulary is closed'",
-      ],
+      ['services/hub/cmd/brain/fsguard_test.go', 'TestActivePathContractCases'],
+      ['apps/desktop/src/main/lib/pathConfinement.test.ts', "describe('active path contract'"],
     ];
     for (const [rel, needle] of twins) {
       const full = path.join(__dirname, '../../../../..', rel);
       expect(fs.existsSync(full), `${rel} is gone`).toBe(true);
       expect(
         fs.readFileSync(full, 'utf-8').includes(needle),
-        `${rel} no longer contains ${needle} — one of the three vocabulary loaders has been removed and the other two would not notice`,
+        `${rel} no longer contains ${needle} — one of the active path loaders has been removed`,
       ).toBe(true);
     }
   });

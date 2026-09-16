@@ -229,12 +229,10 @@ cross-project state only — it is its memory across restarts.
 
 ## Gotchas
 
-- **Two hand-copied option literals used to drop `manager`.** `ipc.ts` and
-  `hubCapabilities.ts`' `agents.spawn` each rebuilt the spawn options by hand
-  and silently omitted `manager`/`fleetFullAccess`, so NO bus-spawned Fleet
-  Manager ever came up as `isSupervisor` and its workers finished into the
-  void. `main/lib/managedSpawnOptions.ts` now owns the mapping — add new
-  role-bearing fields there, not in a call-site literal.
+- **Do not hand-copy spawn option literals.** `main/lib/managedSpawnOptions.ts`
+  owns the mapping so role/parent/provider metadata reaches every transport.
+  Legacy `fleetFullAccess` may still parse during upgrades but is inert and must
+  not be reintroduced as a facade grant.
 - **The MCP facade path is the one that matters.** The manager dispatches every
   worker through `MCP facade → agents.spawn` (the bus), never through the
   desktop IPC path. Test changes there.

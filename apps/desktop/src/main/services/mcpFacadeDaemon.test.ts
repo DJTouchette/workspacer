@@ -3,12 +3,11 @@
  * visible from the outside once the process is up:
  *   - the bus token travels in the environment, not argv, because
  *     /proc/<pid>/cmdline is world-readable while the token file is 0600;
- *   - WKS_MCP_TOKEN is NOT set. Setting it arms cmd/mcp's bearer check on /mcp
- *     and /sse, and no client can send that header yet (mcpConfig.ts's
- *     supervisor entry has no `headers`; managedSpawn passes claudemon a bare
- *     URL string), so arming it silently strips every mcp__workspacer__ tool
- *     from the supervisor and its workers. The assertion below is a tripwire:
- *     whoever sets it has to land the two client sides in the same change.
+ *   - WKS_MCP_TOKEN is NOT a shared process credential. Each launched session
+ *     gets its own lifecycle-bound identity bearer in the generated MCP URL;
+ *     the facade verifies that token per request. Untokened access is a
+ *     separate explicit compatibility dial. The assertion below prevents a
+ *     shared secret from accidentally replacing those per-session identities.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';

@@ -268,5 +268,10 @@ func revokeSessionFacadeToken(id string) error {
 	if !removed {
 		return nil
 	}
-	return authtoken.Save(file, kept)
+	return saveSessionFacadeTokens(file, kept)
 }
+
+// Injected only by the persistence-retry regression. Keeping the seam at the
+// final atomic write proves a duplicate stopped observation retries an actual
+// failed revocation rather than merely retrying an in-memory callback.
+var saveSessionFacadeTokens = authtoken.Save

@@ -517,8 +517,8 @@ func TestTheVocabularyGuardIsFalsifiable(t *testing.T) {
 			doc["newIdeas"] = []any{map[string]any{"name": "x"}}
 		}},
 		{"a declared block is renamed away", "blocks-exist", func(doc map[string]any) {
-			doc["checkUseRenamed"] = doc["checkUse"]
-			delete(doc, "checkUse")
+			doc["casesRenamed"] = doc["cases"]
+			delete(doc, "cases")
 		}},
 		{"a declared reason stops being exercised", "reason-vocabulary-used", func(doc map[string]any) {
 			for _, row := range casesOf(doc, "sessionFilenames", "cases") {
@@ -539,9 +539,9 @@ func TestTheVocabularyGuardIsFalsifiable(t *testing.T) {
 		}},
 		{"a case field name is mis-spelled by one character", "unknown-fields", func(doc map[string]any) {
 			for _, row := range casesOf(doc, "cases") {
-				if v, ok := row["configDirVia"]; ok {
-					delete(row, "configDirVia")
-					row["configDirVla"] = v
+				if v, ok := row["needsSymlinks"]; ok {
+					delete(row, "needsSymlinks")
+					row["needsSymLinks"] = v
 					return
 				}
 			}
@@ -638,9 +638,8 @@ func TestBothCorpusVocabularyLoadersExist(t *testing.T) {
 		path  string
 		needs []string
 	}{
-		{filepath.Join("services", "hub", "cmd", "brain", "fsguard_test.go"), []string{"TestFixtureVocabularyIsClosed"}},
-		{filepath.Join("services", "hub", "internal", "bus", "policy_test.go"), []string{"TestFixtureVocabularyIsClosed"}},
-		{filepath.Join("apps", "desktop", "src", "main", "lib", "pathConfinement.test.ts"), []string{"describe('the fixture vocabulary is closed'"}},
+		{filepath.Join("services", "hub", "cmd", "brain", "fsguard_test.go"), []string{"TestActivePathContractCases"}},
+		{filepath.Join("apps", "desktop", "src", "main", "lib", "pathConfinement.test.ts"), []string{"describe('active path contract'"}},
 	} {
 		src, err := sweepguard.ReadRepoFile(strings.Split(filepath.ToSlash(twin.path), "/")...)
 		if err != nil {

@@ -29,7 +29,9 @@ last_reviewed: 2026-08-16
 - Both SSE loops (`spawn_events` for `/events`, `spawn_status_lines` for `/statusline/stream`) own independent reconnect-with-backoff (500ms → 8s cap); a mid-stream `Disconnected` is only emitted if `Connected` was previously sent, so a never-connected daemon doesn't spuriously flip UI state.
 - `read_pty_stream` distinguishes `StreamEnd::Disconnected` (retry) from `StreamEnd::NoPty` (404 — an external/observed session with no PTY; caller must not retry and instead falls back to transcript view via `AppMsg::TerminalUnavailable` → `App::mark_no_terminal`).
 - `apps/tui/src/bus.rs`'s `run()` loop fails all in-flight `Command::Call`s with `Err("bus disconnected")` on any WS drop before reconnecting — callers can hang if they don't handle that `Err` path.
-- `Driver::spawn_managed` over the bus **forces approvals on** even when `yolo` is requested — a capability gap only exercised over REST (see comment in `apps/tui/src/bus.rs`).
+- Legacy `yolo` flags are not a Workspacer grant. The provider permission mode
+  sent by the TUI is ordinary launch configuration, while authenticated
+  Workspacer/plugin tools remain ambient.
 - HTTP plumbing (`get_json`/`post_json`/`post_status`) opens a fresh `TcpStream` per call with `Connection: close`; no connection pooling, no timeout wrapper visible — a hung claudemon can block a request indefinitely.
 - `App::dispatch`/`git_dispatch` are fire-and-refresh: on success they toast + re-pull the list/transcript; on error they only toast — no retry, no rollback beyond `SendFailed` restoring the composer text for message sends specifically.
 

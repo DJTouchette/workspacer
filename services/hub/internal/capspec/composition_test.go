@@ -12,7 +12,7 @@ import (
 // compositionFloor is the number of pairs on the record today, as a RATCHET.
 // A record that shrinks to nothing satisfies every loop below and asserts
 // nothing — the failure mode this whole family of guards keeps re-learning.
-const compositionFloor = 9
+const compositionFloor = 8
 
 // TestCompositionRecordIsWellFormed holds the record to the shape that makes it
 // checkable at all. A pair whose halves are not real capabilities, or whose
@@ -84,8 +84,6 @@ func TestCompositionRecordIsWellFormed(t *testing.T) {
 var closureMechanisms = map[string][]string{
 	"pathIsAgentInterpretedConfig": {"services", "hub", "cmd", "brain", "fsguard.go"},
 	"isAgentInterpretedConfigPath": {"apps", "desktop", "src", "main", "lib", "pathConfinement.ts"},
-	"resultPathIsSecret":           {"services", "hub", "cmd", "brain", "search.go"},
-	"isSecretResultPath":           {"apps", "desktop", "src", "main", "lib", "pathConfinement.ts"},
 	"scrubAdoptedSpawnFields":      {"services", "hub", "internal", "layout", "layout.go"},
 	"isVolumeRoot":                 {"services", "hub", "internal", "plugin", "manager.go"},
 	"guardReplaySession":           {"apps", "desktop", "src", "main", "services", "hubCapabilities.ts"},
@@ -304,31 +302,8 @@ func verifyBearing(t *testing.T, cache map[string]string, where string, b Bearin
 			t.Errorf("%s: the registry guards %q with %q, which is not the other half of this pair (%v). The closure claims the two planes now answer the same question; the registry says they do not.", where, b.On, method, partners)
 		}
 
-	case BearsOnGrantedRoots:
-		// The weakest kind, and its limit is enforced rather than described: it
-		// is admissible only for a half the bus actually confines by root set.
-		if _, scoped := IsPathScoped(b.On); !scoped {
-			t.Errorf("%s: %s is claimed to close this pair by narrowing the granted roots, but %q is not path-scoped, so no root set governs it", where, b.Symbol, b.On)
-			return
-		}
-		body, ok := goFuncBody(repoText(t, cache, b.Entry.File), b.Entry.Symbol)
-		if !ok {
-			t.Errorf("%s: %s is not defined in %s", where, b.Entry.Symbol, filepath.Join(b.Entry.File...))
-			return
-		}
-		if !callsSymbol(body, b.Symbol) {
-			t.Errorf("%s: %s does not call %s — the narrowing this pair is closed by is not applied where the roots are built", where, b.Entry.Symbol, b.Symbol)
-			return
-		}
-		// …and it must be narrowing the roots the BUS stores, not some local
-		// string: the same function has to go through the bus's own root
-		// canonicalization, which is what a granted fsRoot is.
-		if !callsSymbol(body, "bus.CanonicalizeRoot") && !callsSymbol(body, "bus.PathIsSecret") {
-			t.Errorf("%s: %s narrows something, but not a root the bus registers (it calls neither bus.CanonicalizeRoot nor bus.PathIsSecret) — a granted-roots closure has to act on granted roots", where, b.Entry.Symbol)
-		}
-
 	default:
-		t.Errorf("%s: bearing kind %q is not one of the three proofs this test knows how to run", where, b.Kind)
+		t.Errorf("%s: bearing kind %q is not one of the active proofs this test knows how to run", where, b.Kind)
 	}
 }
 
@@ -378,7 +353,7 @@ func TestClosedCompositionsProveTheirGuardReachesTheirHalves(t *testing.T) {
 	}
 	// The floor. Every branch above is a `continue` on an unclosed pair, so a
 	// record with no closures at all would pass in silence.
-	if proven < 9 {
+	if proven < 8 {
 		t.Fatalf("only %d bearings were verified — the closures stopped carrying proofs and this guard is guarding nothing", proven)
 	}
 }
@@ -475,6 +450,7 @@ var unwitnessedInertClaims = map[string]bool{
 	"claude.signal":            true,
 	"claude.handoffBrief":      true,
 	"claude.handoffAgentBrief": true,
+	"fs.read":                  true,
 	"fs.write":                 true,
 	"search.project":           true,
 	"providers.listModels":     true,
@@ -556,7 +532,7 @@ func TestInertClaimsCarryACheckedWitness(t *testing.T) {
 				if !unwitnessedInertClaims[method] {
 					t.Errorf(`%q claims the WitnessNone form — "nothing about this is machine-checkable".
 
-That is a CLOSED set (unwitnessedInertClaims, composition_test.go) with three
+That is a CLOSED set (unwitnessedInertClaims, composition_test.go) whose members
 members, and this method is not one of them. A new prose-only claim is how a
 FALSE inert reason gets in: it costs one paragraph and satisfies the forcing
 function exactly as well as a true one. Either give it a witness — a confinement

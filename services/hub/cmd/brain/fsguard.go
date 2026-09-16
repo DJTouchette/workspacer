@@ -6,8 +6,9 @@
 //
 // This file implements the normative containment algorithm shared with
 // apps/desktop/src/main/lib/pathConfinement.ts and services/hub/internal/bus/
-// policy.go; contracts/path-containment-cases.json is the fixture all three are
-// held to. Three decisions are load-bearing and each one has shipped as a bug:
+// policy.go retains a legacy compatibility copy, while
+// contracts/path-containment-cases.json holds the active desktop/brain behavior.
+// Two decisions are load-bearing:
 //
 //  1. NO TILDE EXPANSION, at any layer that handles a caller-supplied path. The
 //     brain used to expandTilde() every guarded path while TypeScript did not, so
@@ -17,15 +18,14 @@
 //  2. RESOLVE PER COMPONENT, and hand the RESULT to the filesystem. Every
 //     whole-path helper (filepath.Abs, Clean, Join on caller input,
 //     EvalSymlinks, Dir on caller input) collapses ".." textually BEFORE any
-//     symlink is read, so with one directory symlink inside any allowed root the
+//     symlink is read, so with one directory symlink inside a selected object the
 //     guard validated ${ROOT}/token while the handler opened ${OUTSIDE}/token.
 //     canonicalizePath walks component by component and assertPathAllowed
 //     returns what it validated so there is exactly one string per request.
-//  3. A ROOT THAT IS A VOLUME ROOT CONTAINS EVERYTHING BELOW IT. within("/",
-//     "/etc/passwd") used to be true on the bus and false here — same inputs,
-//     opposite verdicts. Refusing was not fail-closed, it was wrong containment.
-//     The secret gate below is what still refuses the credentials under such a
-//     root, and it is unaffected by that widening.
+//
+// Legacy workspace/secret helpers below remain for serialized compatibility and
+// selected-object utilities; assertPathAllowed does not use them as agent or
+// plugin authorization.
 package main
 
 import (
@@ -533,9 +533,8 @@ func (r *registry) workspaceRoots(ctx context.Context) []string {
 	return append(roots, stores...)
 }
 
-// browseRoots is the wider allow-list for the directory picker (fs.listDir):
-// the home tree, so a user can navigate to a project before an agent runs in it,
-// but still not `/etc` or another user's home.
+// browseRoots is legacy directory-picker context: known local sessions plus the
+// home tree. Authenticated path authorization is ambient and does not consult it.
 func (r *registry) browseRoots(ctx context.Context) []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -544,9 +543,8 @@ func (r *registry) browseRoots(ctx context.Context) []string {
 	return append(r.workspaceRoots(ctx), home)
 }
 
-// spawnSetupRoots adds explicitly configured projects for directory browsing
-// and model discovery before a project's first agent starts. It does not grant
-// fs.read/fs.write or library access to inactive projects.
+// spawnSetupRoots adds configured projects to pre-spawn discovery context. It
+// does not grant or restrict filesystem authority.
 func (r *registry) spawnSetupRoots(ctx context.Context) []string {
 	roots := r.browseRoots(ctx)
 	if r.cfg != nil {

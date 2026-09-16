@@ -84,14 +84,6 @@ const (
 	// method half. This one is checked in-process rather than textually, because
 	// the registry IS the mechanism.
 	BearsInTopicRegistry BearingKind = "topic-registry"
-	// BearsOnGrantedRoots — the guard narrows the ROOT SET the bus confines every
-	// path-scoped capability to, rather than sitting on one method's own path.
-	// Deliberately the weakest kind, and its limit is stated rather than hidden:
-	// it proves the guard governs the roots a path-scoped half is confined to, not
-	// that it governs that half in particular. It is admissible only for a half
-	// [IsPathScoped] actually returns true for, which is what keeps a fabricated
-	// pair between two non-path capabilities from reaching for it.
-	BearsOnGrantedRoots BearingKind = "granted-roots"
 )
 
 // Site is one link: a symbol and the repo-relative file that must contain it.
@@ -127,7 +119,6 @@ type Bearing struct {
 var (
 	desktopCapsFile   = []string{"apps", "desktop", "src", "main", "services", "hubCapabilities.ts"}
 	brainHandlersFile = []string{"services", "hub", "cmd", "brain", "handlers.go"}
-	brainFsguardFile  = []string{"services", "hub", "cmd", "brain", "fsguard.go"}
 	brainSearchFile   = []string{"services", "hub", "cmd", "brain", "search.go"}
 	brainProvFile     = []string{"services", "hub", "cmd", "brain", "providers.go"}
 	brainGitFile      = []string{"services", "hub", "cmd", "brain", "git.go"}
@@ -135,7 +126,6 @@ var (
 	hubMainFile       = []string{"services", "hub", "cmd", "hub", "main.go"}
 	hubNodesFile      = []string{"services", "hub", "cmd", "hub", "nodes.go"}
 	hubUsagePrefsFile = []string{"services", "hub", "cmd", "hub", "usageprefs.go"}
-	hubPluginMgrFile  = []string{"services", "hub", "internal", "plugin", "manager.go"}
 	hubPushFile       = []string{"services", "hub", "internal", "push", "push.go"}
 	hubPushEndptFile  = []string{"services", "hub", "internal", "push", "endpoint.go"}
 )
@@ -144,23 +134,6 @@ var (
 // and nothing between the call and the guard.
 func argBearing(symbol, on string, file []string) Bearing {
 	return Bearing{Kind: BearsAtCallSite, On: on, Symbol: symbol, Entry: Site{symbol, file}, ByArg: true}
-}
-
-// secretGateBearing is the fs secret gate reached from a capability's own
-// assertPathAllowed call: assertPathAllowed → pathIsSecretCanonical →
-// pathIsAgentInterpretedConfig. The last hop is the arm that refuses a provider
-// CLI's hooks/permissions/plugin files, which is what closes the
-// write-then-interpret pairs.
-func secretGateBearing(on string, entryFile []string) Bearing {
-	return Bearing{
-		Kind: BearsAtCallSite, On: on, Symbol: "pathIsAgentInterpretedConfig",
-		Entry: Site{"assertPathAllowed", entryFile}, ByArg: true,
-		Chain: []Site{
-			{"assertPathAllowed", brainFsguardFile},
-			{"pathIsSecretCanonical", brainFsguardFile},
-			{"pathIsAgentInterpretedConfig", brainFsguardFile},
-		},
-	}
 }
 
 // Composition is one recorded pair.
@@ -222,18 +195,6 @@ var compositions = []Composition{
 			Kind: BearsAtCallSite, On: "layout.set", Symbol: "scrubAdoptedSpawnFields",
 			Entry: Site{"setScrubbed", hubLayoutFile},
 			Chain: []Site{{"setScrubbed", hubLayoutFile}, {"scrubAdoptedSpawnFields", hubLayoutFile}},
-		}},
-	},
-	{
-		Name:     "legacy plugin path bindings cannot turn a layout value into a filesystem root grant",
-		Shape:    ShapeWidenThenUse,
-		A:        "layout.set",
-		B:        "fs.read",
-		Crossing: "historical manifests could bind ${agentCwd} into fsRoots. Enabled plugins now receive ambient authenticated host paths, so these roots are inert compatibility metadata rather than a sandbox boundary.",
-		ClosedBy: "the runtime no longer derives plugin filesystem authority from manifest roots; expandScope and isVolumeRoot remain only as legacy compatibility validation",
-		Bearings: []Bearing{{
-			Kind: BearsOnGrantedRoots, On: "fs.read", Symbol: "isVolumeRoot",
-			Entry: Site{"expandScope", hubPluginMgrFile},
 		}},
 	},
 	{
@@ -508,7 +469,10 @@ var compositionInert = map[string]InertClaim{
 	"routing.preferences.reset":    {Reason: "WRITE-THEN-INTERPRET: sparse typed policy only, composed by routing.Service, never host YAML. WIDEN-THEN-USE: host model classification and freshness floors are retained, no ranks, ceilings or tool scope are accepted. routingPreferencesTrusted requires authenticated host operator authority, excludes scoped operator and peer-link callers. CAS validates before atomic install.", Witnesses: []Witness{guarded(argBearing("routingPreferencesTrusted", "routing.preferences.reset", []string{"services", "hub", "cmd", "hub", "routingpreferences.go"}))}},
 	"routing.preview":              {Reason: "Pure selection reads bounded usage and cached provider snapshots; writes no audit, events, config or sessions. Canonical `cwd` selects a trusted ceiling but no mappings or paths are returned.", Witnesses: []Witness{paramsClassified("cwd")}},
 	// ── recorded halves; listed for the guard's own completeness check ──────
-	"fs.read": recordedHalf,
+	"fs.read": {
+		Reason:    "reads the absolute path chosen by an authenticated operator agent. Directory grants and secret-path filters were intentionally removed; the caller already holds host file authority. NOTHING HERE IS MACHINE-CHECKED because ambient host access is the product contract.",
+		Witnesses: []Witness{noWitness},
+	},
 	"fs.write": {
 		Reason:    "writes the absolute path chosen by an authenticated operator agent. Directory grants and secret-path filters were intentionally removed; the caller already holds host file authority and no later Workspacer guard treats the write as a lesser trust class. NOTHING HERE IS MACHINE-CHECKED because unrestricted host file access is the product contract.",
 		Witnesses: []Witness{noWitness},
@@ -586,7 +550,7 @@ var compositionInert = map[string]InertClaim{
 		Reason:    "writes caller bytes to a FRESHLY CREATED, hub-named 0600 file under os.TempDir()/workspacer-uploads — a directory nothing in the host reads as config, code, argv or policy, with the caller's `name` param reduced to its allowlisted image/pdf extension (its per-param decision is on the record) so no executable class lands. WRITE-THEN-INTERPRET: the only downstream reader is an agent, and only if a caller also names the path via agents.sendMessage — which is the tier's one AcceptedIn pair, whose excuse (the agent's own tool approvals gate what a message makes it read) covers an uploaded image exactly as it covers any pre-existing host path a message names. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session, and no guard consults the upload directory; the returned path is information, not authority",
 		Witnesses: []Witness{paramsClassified("name")},
 	},
-	"fleetWorkflows.request": {Reason: "WRITE-THEN-INTERPRET: definitions contribute only template text and result contracts to existing agents.spawn, whose router ceilings and permission grants still apply. The `cwd` selects project policy; `callerSessionId` is facade-stamped and task ownership is checked. Host-known step kind narrows the already router-clamped scope and derives worktree isolation. Generic config writers cannot change selections. WIDEN-THEN-USE: no grants, executable paths, models or capabilities in definitions; edits only affect new pinned tasks and never launch agents.", Witnesses: []Witness{paramsClassified("cwd", "callerSessionId")}},
+	"fleetWorkflows.request": {Reason: "WRITE-THEN-INTERPRET: definitions contribute only template text and result contracts to existing agents.spawn, whose router model/cost ceilings still apply. The `cwd` selects project policy; `callerSessionId` is facade-stamped and task ownership is checked. Host-known step kind derives worktree isolation. Generic config writers cannot change selections. WIDEN-THEN-USE: no executable paths, models or capabilities in definitions; edits only affect new pinned tasks and never launch agents.", Witnesses: []Witness{paramsClassified("cwd", "callerSessionId")}},
 	"agents.reportProgress": {
 		Reason:    "WRITE-THEN-INTERPRET: `note` is read as instruction, by an AGENT — but that crossing is already fully available to any caller holding agents.sendMessage, whose recorded pair covers it, and this method reaches strictly less of it. The caller cannot pick the reader (the host derives it from the caller's own parentSessionId), cannot suppress the host-composed header that says the sender is still running, and cannot exceed one 500-char line per 60s. WIDEN-THEN-USE: it changes no grant, root set, permission mode, approval gate or session — the only state it touches is its own in-memory per-session budget, which nothing else consults, and `callerSessionId` selects the caller rather than a target",
 		Witnesses: []Witness{paramsClassified("note", "callerSessionId")},
@@ -766,7 +730,7 @@ var compositionInert = map[string]InertClaim{
 		Witnesses: []Witness{gitCwdGuard("git.unstage"), narrows("git.stage")},
 	},
 	"git.commit": {
-		Reason:    "records a commit in a repo guardGitCwd('git.commit', …) confines — its one classified caller value is that `cwd`. A commit message is not interpreted by anything in this system, and hooks in .git/hooks are refused by the secret gate that covers .git",
+		Reason:    "guardGitCwd selects the repository named by `cwd`; a commit message is not interpreted by Workspacer, and git owns hook/config behavior under the authenticated user's ambient host authority",
 		Witnesses: []Witness{gitCwdGuard("git.commit"), paramsClassified("cwd")},
 	},
 	"git.push": {
@@ -774,7 +738,7 @@ var compositionInert = map[string]InertClaim{
 		Witnesses: []Witness{gitCwdGuard("git.push")},
 	},
 	"git.diff": {
-		Reason:    "reads file contents out of the repo at a cwd guardGitCwd('git.diff', …) confines, and its result-path secret gate is the recorded fs.write→search.project pair's closer applied to the same read-set invariant",
+		Reason:    "guardGitCwd selects the repository named by `cwd`; untracked operands are anchored inside that selected work tree so a derived path cannot switch semantic objects",
 		Witnesses: []Witness{gitCwdGuard("git.diff"), brainGitCwdGuard("git.diff", "gitDiffCall")},
 	},
 	"fs.watch": {
