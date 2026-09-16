@@ -15,7 +15,10 @@ import (
 func TestHeadlessAgentCollaborationSkillsInstallImmutablePointerOnly(t *testing.T) {
 	cwd := t.TempDir()
 	note := installHeadlessAgentCollaborationSkills("codex", cwd, false)
-	root := filepath.Join(cwd, ".workspacer", "skills", headlessAgentCollaborationSkillsVersion)
+	root, ok := safeHeadlessSkillRoot(cwd)
+	if !ok {
+		t.Fatal("temporary project root was rejected")
+	}
 	if !strings.Contains(note, strconv.Quote(filepath.Join(root, "spawn-agent", "SKILL.md"))) ||
 		!strings.Contains(note, strconv.Quote(filepath.Join(root, "project-brief", "SKILL.md"))) {
 		t.Fatalf("pointer note = %q", note)

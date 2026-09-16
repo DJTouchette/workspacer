@@ -318,7 +318,10 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 				if err := json.Unmarshal([]byte(params), &input); err != nil {
 					t.Fatal(err)
 				}
-				root := filepath.Join(filepath.Clean(input.Cwd), ".workspacer", "skills", headlessAgentCollaborationSkillsVersion)
+				root, ok := safeHeadlessSkillRoot(input.Cwd)
+				if !ok {
+					t.Fatal("ordinary pane cwd was rejected as a skill root")
+				}
 				if !strings.Contains(instructions, strconv.Quote(filepath.Join(root, "spawn-agent", "SKILL.md"))) ||
 					!strings.Contains(instructions, strconv.Quote(filepath.Join(root, "project-brief", "SKILL.md"))) {
 					t.Fatalf("ordinary agent missed collaboration skills: %q", instructions)

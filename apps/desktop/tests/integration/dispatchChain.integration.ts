@@ -638,7 +638,7 @@ it('executes two selected policies through authenticated facade, desktop spawn, 
     const review = await mcpSpawn(manager, reviewArgs);
     expect(review.isError, review.text).toBe(false);
     expect(review.value.sessionId).not.toBe(implementation.value.sessionId);
-    expect(launch.mock.lastCall![0].toolScope).toBe('view');
+    expect(launch.mock.lastCall![0].toolScope).toBe('operator');
     await finish(review.value.sessionId, {
       verdict: 'changes required',
       blocking: ['A reported blocker remains'],
