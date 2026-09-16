@@ -950,7 +950,7 @@
 <section id="dispatch" class="alt"><div class="wrap">
   <div class="sec-head">
     <div class="h2"><span class="hash">#</span>how a task <span class="g">lands</span></div>
-    <p class="sec-sub">Every dispatch is one of two shapes, and the manager picks. A <em>ship</em> task changes code. A <em>scout</em> task only looks. They are dispatched differently, and that difference is enforced by the hub rather than requested in a prompt.</p>
+    <p class="sec-sub">Every dispatch is one of two workflow contracts, and the manager picks. A <em>ship</em> task changes code in an isolated worktree. A <em>scout</em> task is instructed to investigate without editing. Workspacer records the distinction, but the coding agent's native permissions remain the execution boundary.</p>
   </div>
   <div class="arch quad">
     <div class="tile node">
@@ -1083,7 +1083,7 @@
   </div>
   <div class="tile tree">
     <div class="row"><span class="name">terminal</span><span class="desc">a real xterm and PTY shell scoped to the agent cwd</span></div>
-    <div class="row"><span class="name">editor</span><span class="desc">sandboxed CodeMirror with project search, optional vim mode, and a file tree, or your own <code>$EDITOR</code> in a terminal pane</span></div>
+    <div class="row"><span class="name">editor</span><span class="desc">origin-isolated CodeMirror with project search, optional vim mode, and a file tree, or your own <code>$EDITOR</code> in a terminal pane</span></div>
     <div class="row"><span class="name">review</span><span class="desc">git status, diff, stage, commit, and push in the app</span></div>
     <div class="row"><span class="name">board</span><span class="desc">every brief the fleet keeps as topic cards, one lane per project. The drag does the work: dropping a card on Archive moves it out of the brief and into <code>brief.archive.md</code></span></div>
     <div class="row"><span class="name">browser</span><span class="desc">embedded webview with nav, bookmarks, app mode, themed to match</span></div>

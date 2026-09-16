@@ -47,7 +47,7 @@ account can reach it, as can a container sharing the host network namespace. So
 the facade **refuses credential-less callers** — `-untokened deny` is the
 shipped default, and `/mcp` and `/sse` answer 401 to a request presenting no
 token (`/health` stays open). Sessions workspacer spawns are unaffected: each
-carries a per-session scoped token minted at spawn (`remoteTokens.ts` /
+carries a per-session bearer minted at spawn (`remoteTokens.ts` /
 `cmd/brain/facade.go`), presented as an `Authorization` header on its generated
 `--mcp-config` or as `?t=` on the URL. A hand-configured client mints its own
 with `workspacer token create --scope operator`.

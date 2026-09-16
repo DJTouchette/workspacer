@@ -124,8 +124,7 @@ const (
 	// are paragraphs, and it stays that way: it is the desktop's byte-exact
 	// string, and the manager agent has to read the same instruction whichever
 	// host composed the wake.
-	fleetBlockedTail = "Inspect the blocked agent's context. Resolve an in-scope decision with send_message; " +
-		"otherwise surface the exact decision needed, then stop without polling."
+	fleetBlockedTail = "Run a /supervise pass: gather the context and notify me with a recommendation."
 
 	// Ordinary direct parents receive lifecycle wakes without becoming Fleet
 	// Managers. Keep their guidance free of task/workflow ledgers, resultSchema

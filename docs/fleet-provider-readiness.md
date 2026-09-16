@@ -24,7 +24,7 @@ a launch gate. CLI discovery and runtime/facade health retain their contracts.
 | Claude PTY | Unavailable: its legacy launcher resolver differs from stream |
 | OpenCode | Unsupported: `--pure` is not a no-tools boundary |
 | Copilot | Unsupported: tool filters do not establish isolation from all plugins/hooks, and CLI session state persists |
-| Pi | Unsupported: stricter isolation contract not verified |
+| Pi | Unsupported: Pi is not an admitted Workspacer spawn because its CLI has no MCP bridge |
 | Windows/script launchers except the exact verified Codex wrapper | Unsupported |
 | Adopted daemons, remote/web, missing owner/capabilities, selected profiles/integrations | Unsupported/unchecked; never borrow another account's result |
 

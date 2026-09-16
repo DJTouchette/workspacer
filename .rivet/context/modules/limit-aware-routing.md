@@ -46,8 +46,9 @@ separate refusable capability (`agents.spawn`).
 Two rules DO bind, and both live in `sanitizeSpawnParams` (`services/hub/internal/bus/rpc.go`),
 injected from `services/hub/cmd/hub/main.go`'s `SetSpawnCeiling`:
 
-- **The per-directory ceiling.** `ceilings:` caps `max_capability` and
-  `max_tool_scope` by absolute directory, longest matching ancestor wins. A
+- **The per-directory ceiling.** `ceilings:` caps `max_capability` by absolute
+  directory, longest matching ancestor wins. Legacy `max_tool_scope` parses but
+  is ignored because supported agents receive ambient tools. A
   clamped capability also drops the model and effort the caller named.
 - **The freshness refusal.** A spawn declaring a `role` or `capability` whose
   active-profile entry carries `fresh: true` (the review capabilities in every

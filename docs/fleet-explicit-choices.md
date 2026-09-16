@@ -21,7 +21,7 @@ this automatically for `modelSelection` and identifies the receipt as
 Directory model ceilings still apply. If a ceiling would substitute another
 model, an exact-model spawn is refused before launch and the refusal is audited. Launch providers also reject model substitutions
 reported by an adopted older hub before starting a worker.
-Filesystem access, profile grants, permission bypass grants, task ownership and
+Filesystem access, provider profiles and permission modes, task ownership and
 review-worker freshness remain enforced. Explicit model selection does not
 retroactively alter an already-running worker or erase recorded outcomes.
 Paired/federated exact-model requests require an updated peer stack advertising

@@ -55,7 +55,7 @@ func main() {
 	// triage for attention-handlers, operator for supervisors — instead of the
 	// whole surface. The store is mtime-gated, so mint/revoke take effect on the
 	// next request without restarting the facade.
-	tokensPath := flag.String("tokens", authtoken.DefaultPath(), "scoped capability-token file (tokens.json) for per-session facade tiers")
+	tokensPath := flag.String("tokens", authtoken.DefaultPath(), "token file (tokens.json) for manual scoped credentials and per-session bearer identities")
 	// untokened is the dial on credential-less requests, and it SHIPS AT deny:
 	// a caller with no credential at all gets 401, not the fleet. operator
 	// restores the historical open-on-loopback behavior for a hand-configured
@@ -256,9 +256,9 @@ func hostIsLoopback(name string) bool {
 // Two credential kinds, opposite lifetimes:
 //   - static (-mcp-token / WKS_MCP_TOKEN): the facade-wide secret. Matching it
 //     is operator — it exists to guard non-loopback binds, same as before.
-//   - store (tokens.json): per-session scoped tokens the desktop mints at
-//     spawn. A match grants that record's TIER (view/triage/operator), which is
-//     both the tool list the client sees and the calls it may make.
+//   - store (tokens.json): manual scoped credentials plus per-session bearers.
+//     Supported spawned agents are minted at operator; view/triage remain
+//     explicit manual/remote credentials.
 //
 // No credential at all is governed by the untokened dial (-untokened /
 // WKS_MCP_UNTOKENED) — DENY by default: a caller presenting nothing gets 401,
@@ -295,7 +295,7 @@ const (
 //
 // Nothing legitimate regresses, because nothing legitimate is credential-less:
 // every session the desktop or the brain spawns with the facade carries a
-// per-session scoped token (an Authorization header on the PTY/claude-stream
+// per-session bearer (an Authorization header on the PTY/claude-stream
 // --mcp-config file, a ?t= query param for the URL-only codex/opencode/copilot
 // registrations). A hand-configured local MCP client — the one shape that WAS
 // credential-less — mints its own with `workspacer token create --scope
@@ -1207,8 +1207,7 @@ func sessionPermissionMode(ctx context.Context, c *busclient.Client, method, ses
 // claude.defaultPermissionMode that means bypass. Read through the hub's
 // config.get so the facade and the provider can't disagree about the config.
 // Fail closed: an unreachable or garbled config resolves to false (approvals
-// on). The result still passes the grant clamp in addSpawnTool; this only
-// answers "what is the default", never "may this session have it".
+// on). This resolves the provider default; Workspacer adds no separate grant.
 func configSkipPermissionsDefault(ctx context.Context, b *build) bool {
 	raw, err := b.call(ctx, "config.get", nil)
 	if err != nil {

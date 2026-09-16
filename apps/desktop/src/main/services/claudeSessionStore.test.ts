@@ -999,6 +999,32 @@ describe('closeSession — dismissal is a verb', () => {
     expect(revokeSessionFacadeTokens).toHaveBeenNthCalledWith(1, sid);
     expect(revokeSessionFacadeTokens).toHaveBeenNthCalledWith(2, sid);
   });
+
+  it('retries a transient persistent revoke failure on duplicate terminal edges', () => {
+    const sid = uniqueId();
+    revokeSessionFacadeTokens.mockReset();
+    revokeSessionFacadeTokens.mockImplementationOnce(() => {
+      throw new Error('disk temporarily unavailable');
+    });
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
+
+    hook(sid, 'SessionEnd');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(2);
+    claudeSessionStore.closeSession(sid);
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reset successful revocation for arbitrary late hooks', () => {
+    const sid = uniqueId();
+    revokeSessionFacadeTokens.mockReset();
+    hook(sid, 'SessionStart');
+    hook(sid, 'SessionEnd');
+    hook(sid, 'Stop');
+    hook(sid, 'SessionEnd');
+    expect(revokeSessionFacadeTokens).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ── The routing block (agents.spawn role / capability / decisionId) ─────────

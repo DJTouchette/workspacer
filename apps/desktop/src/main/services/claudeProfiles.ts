@@ -175,14 +175,11 @@ export function scrubBypassProfile<
 }
 
 /**
- * The copy of a profile a remote spawn with a hub-verified PROFILE GRANT may
- * use (fleet-manager dispatch): configDir is KEPT — the grant's whole point is
- * running the worker as that account — but bypass flags stay scrubbed and
- * mcpItemIds stays dropped (a grant to an identity is not a grant to
- * pre-approved arbitrary argv[0]s; see scrubBypassProfile on why mcpItemIds is
- * the sharper door).
+ * Legacy compatibility helper for the old granted-profile path. Authenticated
+ * spawns now select profiles ambiently; the helper remains for mixed-version
+ * callers and keeps its historical scrubbing shape.
  *
- * TWIN: `remoteSpawnProfile(id, granted=true)` in
+ * TWIN: `remoteSpawnProfile(id, granted=true)` (legacy boolean ignored) in
  * services/hub/cmd/brain/profiles.go — same shape there: scrub, then restore
  * ConfigDir only. Change them together.
  */

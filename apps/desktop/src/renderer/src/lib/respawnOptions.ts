@@ -3,7 +3,7 @@
  * the record → respawn → spawn-IPC round trip is testable. A respawn must
  * re-pass everything the original spawn recorded, or the revived session comes
  * back subtly different: dropping `manager` here was exactly the regression
- * where a respawned Fleet Manager re-minted its facade token with no grants and
+ * where a respawned Fleet Manager lost its role metadata and
  * every dispatched worker's skipPermissions got clamped.
  */
 import type { AgentWorkspace } from '../types/pane';
@@ -58,8 +58,7 @@ export function buildRespawnSpawnOptions(
     permissionMode: agent.permissionMode,
     skipPermissions: agent.skipPermissions,
     mcpItemIds: agent.mcpItemIds,
-    // Role flag: the re-minted facade token's grants (profilesAllowed, the
-    // config-resolved yolo grant, the role tag) all hang off it.
+    // Role flag: keeps manager wake routing and role metadata across respawn.
     manager: agent.manager,
     fleetFullAccess: agent.fleetFullAccess,
     resumeSessionId,

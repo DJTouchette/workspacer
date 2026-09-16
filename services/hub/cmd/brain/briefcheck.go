@@ -345,12 +345,9 @@ func withoutLivenessChecks(rep briefCheckReport, why string) briefCheckReport {
 // briefCheckCall is the capability. It READS and returns; nothing in this path
 // can write.
 //
-// Confinement is brief.append's, unchanged and for the same reason: `project`
-// is the caller's only path input, it is held to the workspace roots fs.write
-// takes, and the COMPOSED path is asserted too — `project` can be a legitimate
-// allowed directory while `<project>/.workspacer` is a symlink pointing out of
-// every root, and a guard that only ever resolved `project` answers yes,
-// truthfully, about a path that is not the one being opened.
+// Path handling mirrors brief.append: project is canonicalized under ambient
+// authenticated host authority, then the composed brief path is contained to
+// that selected project so a nested symlink cannot redirect the semantic file.
 func (r *registry) briefCheckCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Project string `json:"project"`

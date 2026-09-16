@@ -57,25 +57,18 @@ var PathParam = map[string]string{
 	// anchorGitPathspec, in hubCapabilities.ts and in cmd/brain/git.go.
 	"git.diff": "cwd",
 	// brief.append writes into <project>/.workspacer/brief.md. The caller's
-	// only path input is `project`, and the BASENAME is composed by the
-	// provider, so this reaches strictly less than fs.write does within the
-	// same root — but it is still a write to a caller-chosen directory, which
-	// is exactly the shape this table exists to confine. Entered here rather
-	// than excused in unscopedByDecision precisely because "it can only write
-	// one filename" is an argument about the file, not about the directory.
+	// only path input is project and the basename is provider-composed. These
+	// PathParam rows remain schema classification; enabled plugin paths are
+	// ambient and the provider performs semantic object containment.
 	"brief.append": "project",
 	// brief.archive is the same shape one verb over: it takes the same `project`
 	// directory, composes both .workspacer basenames itself, and moves entries
 	// from the brief into the archive beside it. Two files rather than one, both
-	// still named by the provider, so the caller-chosen value to confine is again
-	// the directory and nothing else.
+	// still named by the provider, so project remains the classified directory.
 	"brief.archive": "project",
 	// brief.check READS the same document its two siblings write, and takes the
-	// same single `project` directory to find it. It is confined here rather
-	// than excused as "it only reads" for the reason the whole table exists: an
-	// unconfined read of <caller-chosen dir>/.workspacer/brief.md is still a
-	// read outside the workspace roots, and the composed path is asserted by
-	// the provider on top of this, exactly as brief.append's is.
+	// same single project directory to find it. The provider canonicalizes the
+	// ambient path and contains the composed brief file to that project.
 	"brief.check": "project",
 }
 
@@ -147,27 +140,16 @@ var unscopedByDecision = map[string]string{
 	// security argument for routing.yaml's `ceilings:` block.
 	"routing.select":        "the caller supplies a WORK DESCRIPTION — a role, a ticket id, a difficulty/risk/decision-density classification, an optional provider and account, and a cwd — and gets back a (provider, model, effort, capability, mode) with the reasons. Nothing it carries reaches a sink: `cwd` is not opened, joined or statted (it selects which per-directory entry of the hub's OWN routing.yaml applies, exactly as nodes.wake's `id` selects a row of the hub's own nodes.json), `provider`/`account`/`profileId` SELECT rows of the usage document claudemon already serves, and `role` selects a key of the matrix file. The call starts nothing and writes nothing — it is a table lookup over a hub-owned file plus one read of claudemon's /usage/report, and every action anybody takes on the answer happens through a SEPARATE, refusable capability (agents.spawn), which is why an advisory answer is not an authorization. What it DISCLOSES is model names, capability names, a routing mode and a per-window utilization percentage for the caller's own subscription: no credential, no path, no argv. Deliberately NOT in any scoped tier (authtoken viewMethods/triageMethods) — §18 and §40 of the design are explicit that only the supervisor/control plane invokes a routing decision, and the tier lists are how this repo says that; ScopeOperator.Methods() returns [\"*\"], so the Fleet Manager gets it and a phone token does not",
 	"claude.sessionsForDir": "cwd is encoded into a ~/.claude/projects slug by the provider (claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component); the caller's string is never opened as a path",
-	"replay.open":           "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd",
-	// The sentence used to stop at "containment is structural", and the structure
-	// was standing on a grant nobody re-consulted. sessionId is not an ownership
-	// token: it is CALLER-CHOSEN at open, the entries map is process-global, its
-	// only eviction is an explicit replay.close, and replay.* sits outside the
-	// bus's per-plugin fsRoots scoping. So a worktree cut while a session was
-	// live went on serving that repository's bytes AFTER the session stopped —
-	// at which point fs.read on the same directory is refused and a fresh
-	// replay.open on it is refused — to any caller that knew the id, and
-	// agents.list / sessions.snapshots hand ids out while classified inert. The
-	// bus handlers now re-run replay.open's own containment on the entry's
-	// recorded ORIGIN cwd before every read/diff/seek (guardReplaySession).
-	"replay.read": "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), and fsRoots would be scoping the wrong namespace — but the WORKTREE's own authorization is re-checked per call, because the grant that authorized replay.open is not a grant that lasts: guardReplaySession re-runs assertPathAllowed on the recorded origin cwd (timelineReplayService.originCwd)",
-	"replay.diff": "same as replay.read — a coordinate inside a service-owned worktree, not a host path, with the same per-call re-check of the origin cwd's grant",
+	"replay.open":           "canonicalizes the caller-selected repository before cutting a disposable worktree; authenticated path access is ambient rather than workspace-root confined",
+	"replay.read":           "the path is a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside), while guardReplaySession re-canonicalizes the recorded origin",
+	"replay.diff":           "same as replay.read — a coordinate inside a service-owned worktree, not an arbitrary host path",
 	// replay.seek is the WRITE leg of the block above and the only one of the
 	// four that had no entry at all. `ops` is not a path-shaped name, its file
 	// path lives a level deeper (ops[].input.file_path) behind a NAMED type, and
 	// replay.* is not a path-bearing prefix — so nothing on either side could
 	// reach it, and "decided and safe" was indistinguishable from "nobody
 	// looked" for the one leg that puts caller-supplied bytes on disk.
-	"replay.seek": "the ops carry a file_path and content, but both are re-anchored inside the service-owned worktree by containInWorktree (timelineReplayService), which resolves per component and writes the RESULT — the escape it closed was a committed symlink that made the join and the write two different files. Like replay.read/diff it also re-checks the origin cwd's grant per call (guardReplaySession), because the worktree outlives the session that authorized cutting it",
+	"replay.seek": "the ops carry a file_path and content, but both are re-anchored inside the service-owned worktree by containInWorktree (timelineReplayService), which resolves per component and writes the RESULT; guardReplaySession also re-canonicalizes the recorded origin",
 	// The claude.* CONTROL family. None of these carries a path, which is why
 	// LooksPathBearing is false for all of them and MissingSpec never asked —
 	// and until `mode`, `effort`, `text`, `answers` and `option` entered the
@@ -196,8 +178,8 @@ var unscopedByDecision = map[string]string{
 	// derives the destination from that session's own parentSessionId.
 	"agents.reportProgress": "`note` is prompt text for an agent that is already running — agents.sendMessage's reach — and the containment is that the caller cannot choose WHO reads it. There is no recipient param: the caller supplies `callerSessionId`, the host looks that session up in its own store and delivers to its parentSessionId or refuses, so the only pair this can ever connect is (a tracked session, whatever dispatched it). `callerSessionId` is not a caller value on the path an agent actually uses either — the MCP facade stamps it from the per-request token record's `session:<id>` label, and the hub bus deletes it from every untrusted caller's params (sanitizeReportProgressParams), so a scoped or plugin token cannot name a session at all and lands on the no-identity refusal. Bounded in volume as well as reach: one line, flattened, capped at 500 chars, one per 60s, 20 per session for life",
 	"agents.sendMessage":    "text is a prompt for an agent that is already running; there is no path to confine, so holding the capability is the gate. The older wording — 'the agent's own tool approvals are the gate' — named a bound that only holds for a caller which cannot also RESOLVE those approvals, and the triage tier holds claude.approve. See Compositions(): agents.sendMessage + claude.approve is recorded, accepted for triage, and machine-checked against every other tier",
-	// The rest of git.*: every one takes a mandatory absolute `cwd` and the
-	// provider already contains it to the workspace roots (guardGitCwd). There
+	// The rest of git.*: every one takes a mandatory absolute `cwd` and each
+	// provider canonicalizes it before use (guardGitCwd). There
 	// are now TWO providers of the read-only half — the desktop's
 	// hubCapabilities.ts and the headless brain's cmd/brain/git.go, the one that
 	// answers on a remote node — and both spell that guard the same way over the
@@ -890,8 +872,8 @@ type ParamStatus string
 const (
 	// ParamUnclassified — nobody has said what this param is. Fail closed.
 	ParamUnclassified ParamStatus = "unclassified"
-	// ParamScoped — it IS the method's PathParam field; the bus confines it to
-	// the caller's granted roots.
+	// ParamScoped — legacy schema classification for a PathParam field. Enabled
+	// plugins have ambient paths; this no longer creates a runtime grant.
 	ParamScoped ParamStatus = "scoped"
 	// ParamExcused — deliberately unconfined, with a kind and a written reason.
 	ParamExcused ParamStatus = "excused"
@@ -982,7 +964,7 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"cwd": {KindPath, "encoded into a ~/.claude/projects slug by claudeProjectDirName, which refuses '', '.' and '..' so the slug is always ONE plain component; the caller's string is never opened as a path"},
 	},
 	"replay.open": {
-		"cwd": {KindPath, "confined by the provider to the same workspace roots git.* uses (assertPathAllowed in hubCapabilities.ts), because it cuts a worktree from the repo at cwd"},
+		"cwd": {KindPath, "canonicalized by the provider before it cuts a disposable worktree from the selected repository; authenticated path access is ambient"},
 	},
 	"replay.read": {
 		"path": {KindPath, "a repo-relative coordinate inside a worktree the replay service itself created and keyed by sessionId; containment is structural (resolveInside)"},
@@ -1026,9 +1008,9 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	"git.status": {"cwd": gitCwd},
 	"git.log":    {"cwd": gitCwd},
 	"git.diff": {
-		// git.diff's `cwd` is the SCOPED one (PathParam); only `path` needs a
+		// git.diff's cwd has a legacy PathParam classification; only path needs a
 		// decision here.
-		"path": {KindPath, "an optional pathspec git interprets INSIDE the repo at cwd, and the provider confines it against the work-tree root git will actually resolve it in (workRoot via anchorGitPathspec), not the cwd the caller passed; the `untracked` leg is additionally held to the workspace roots"},
+		"path": {KindPath, "an optional pathspec contained to the work-tree root git will actually resolve it in (workRoot via anchorGitPathspec), not the raw cwd spelling"},
 	},
 	"git.numstat": {"cwd": gitCwd},
 	"git.commitDiff": {
@@ -1041,21 +1023,20 @@ var unscopedParams = map[string]map[string]ParamDecision{
 		"hash": {KindArgv, "same assertCommitHash gate as git.commitDiff — hex only, so it can never be an option-shaped argv element"},
 	},
 	// git.stage/git.unstage's `path` used to be excused as "a pathspec inside the
-	// confined repo; git resolves it relative to the work-tree root the guard
+	// selected repo; git resolves it relative to the work-tree root the guard
 	// returned" — a sentence that named the guard's cwd and then described a
 	// DIFFERENT directory. `git add` runs from the derived work-tree root, and
 	// nothing checked the pathspec at all, so `backend/prod-key.pem` (or no
 	// pathspec, i.e. `git add -A` over the whole repository) indexed files
-	// outside every allowed root, and a path-less `git.diff {staged}` handed
-	// their full contents back. The staging leg now gets the same boundary the
-	// untracked-diff leg got.
+	// outside the selected subtree. The staging leg now uses explicit repository
+	// object containment.
 	"git.stage": {
 		"cwd":  gitCwd,
-		"path": {KindPath, "anchored on the work-tree root git will actually resolve it in and then held to the ordinary workspace roots (anchorGitPathspec in hubCapabilities.ts), because staging a file that is not in HEAD is what makes its full content readable through git.diff{staged}; with no path the call is bounded to the guarded cwd (cwdPathspec) instead of running `git add -A` from the root"},
+		"path": {KindPath, "anchored and contained to the work-tree root git will actually resolve it in; with no path the call is bounded to the canonical cwd instead of widening to the root"},
 	},
 	"git.unstage": {
 		"cwd":  gitCwd,
-		"path": {KindPath, "same anchorGitPathspec treatment as git.stage, and the path-less form is likewise bounded to the guarded cwd by cwdPathspec — `git reset -q HEAD` from the derived root drops the index of a whole repository the caller was granted one directory of"},
+		"path": {KindPath, "same repository object containment as git.stage; the path-less form is likewise bounded to the canonical cwd by cwdPathspec"},
 	},
 	"git.commit": {"cwd": gitCwd},
 	"git.push":   {"cwd": gitCwd},
@@ -1152,14 +1133,14 @@ var unscopedParams = map[string]map[string]ParamDecision{
 	},
 }
 
-// gitCwd is the one decision the nine provider-confined git.* methods share.
+// gitCwd is the one decision the nine canonicalized git.* methods share.
 // Written once so the nine entries cannot drift into nine subtly different
 // claims about the same guard.
 var gitCwd = ParamDecision{KindPath, "guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient"}
 
 // ClassifyParam answers the only question a drift detector should ask about a
-// caller param: has somebody decided what this is? It returns ParamScoped when
-// the bus itself confines the value, ParamExcused with the recorded kind and
+// caller param: has somebody decided what this is? ParamScoped is retained for
+// legacy schema classification; ParamExcused carries the recorded kind and
 // reason when it is deliberately unconfined, and ParamUnclassified — the zero
 // value — otherwise.
 //
@@ -1168,7 +1149,7 @@ var gitCwd = ParamDecision{KindPath, "guardGitCwd canonicalizes cwd before git r
 // name must not become classified by accident.
 func ClassifyParam(method, param string) (ParamStatus, ParamDecision) {
 	if field, scoped := PathParam[method]; scoped && field == param {
-		return ParamScoped, ParamDecision{KindPath, "confined by the bus to the caller's granted fsRoots"}
+		return ParamScoped, ParamDecision{KindPath, "legacy PathParam classification; enabled plugin paths are ambient"}
 	}
 	_, excused := unscopedByDecision[method]
 	_, scoped := PathParam[method]

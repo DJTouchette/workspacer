@@ -440,7 +440,7 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 <h4>filesystem &amp; search (ambient for enabled plugins)</h4>
 <p>The object form can document intended roots using <code>${pluginDir}</code>, <code>${agentCwd}</code>, or an absolute path. It is not a security boundary: enabled plugin code may access the host as the Workspacer user.</p>
 <ul>
-<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.append</code> / <code>fs.copy</code>, file I/O confined to your declared paths.</li>
+<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.append</code> / <code>fs.copy</code>, host file I/O. Enabled plugins are trusted code; manifest paths document intent but do not confine access.</li>
 <li><code>fs.listEntries</code> / <code>fs.listDir</code> / <code>fs.realpath</code>, browse and resolve within scope.</li>
 <li><code>fs.watch</code> / <code>fs.unwatch</code>, watch for external changes (delivered back as the <code>fs.changed</code> event).</li>
 <li><code>search.project</code> (ripgrep-backed, scoped to a <code>cwd</code>), and the broader <code>search.files</code> / <code>search.everything</code>.</li>
@@ -487,7 +487,7 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
   }
 }</code></pre>
 <p>Clients whose MCP registration is a bare URL and can't send headers (codex's <code>-c</code> overrides, <code>opencode.json</code>) append the token as <code>?t=&lt;token&gt;</code> instead.</p>
-<p>Every supported Workspacer-spawned agent receives the full operator tool set plus every enabled plugin tool. Its bearer token (an <code>Authorization</code> header, or <code>?t=</code> for URL-only clients) supplies session identity and is revoked when the session ends; it is not a grant selector. Legacy <code>toolScope</code>, plugin-selection, profile-grant, and yolo-grant fields remain parseable but inert. Pi is refused because it has no MCP bridge.</p>
+<p>Every supported Workspacer-spawned agent receives the full operator tool set plus every enabled plugin tool. Its bearer token (an <code>Authorization</code> header, or <code>?t=</code> for URL-only clients) supplies session identity and is revoked when the session ends; it is not a grant selector. Legacy <code>toolScope</code>, plugin-selection, profile-grant, and yolo-grant fields remain parseable but inert. Desktop and headless spawns both verify the facade's identity, bind, hub connection, and initial plugin catalog immediately before minting that token. Pi is refused because it has no MCP bridge.</p>
 <p><strong>A request with no credential at all is refused with <code>401</code>.</strong> The facade speaks plain HTTP on loopback, and loopback is reachable by every process and every user account on the machine (and by a container sharing the host network namespace), so "whoever reached the port" is not an identity and gets no tools. Before 0.160 it got the whole operator set; that is what changed. A DNS-rebinding <code>Host</code> guard and a fail-closed non-loopback bind policy were already in place and are unchanged.</p>
 <p>The dial is <code>facade.untokenedAccess</code> in <code>config.yaml</code> (the binary's <code>-untokened</code> flag / <code>WKS_MCP_UNTOKENED</code>), with three positions:</p>
 <ul>

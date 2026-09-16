@@ -67,15 +67,15 @@ package main
 // have left a headless manager writing exactly the mistranscribed `session:`
 // references the feature exists to eliminate. See briefresult.go.
 //
-// CONFINEMENT. The caller's ONE path input is `project`, and it is held by
-// fsguard.go's assertPathAllowed over the same workspaceRoots() fs.write takes
-// — then the brief path is composed under the CANONICAL directory the guard
+// PATH SHAPE. The caller's one path input is project. It is canonicalized under
+// ambient authenticated host authority, then the brief path is composed under
+// the CANONICAL directory the helper
 // returned, never under the caller's string. Resolving the guard's answer
 // rather than re-joining the request is what stops a symlinked project dir from
-// being re-interpreted after the check (BINDING DECISION 2, the same rule
+// being re-interpreted after canonicalization (BINDING DECISION 2, the same rule
 // git.go's guardGitCwd states). The caller never names a file: both path
 // components are literals in this file, so this reaches strictly less than
-// fs.write does within the same root.
+// fs.write does within the selected project.
 //
 // AND THAT LAST SENTENCE IS NOT THE WHOLE GUARD, which is the part the desktop
 // twin gets wrong. "The caller cannot name a file" bounds the BASENAME. It says

@@ -25,7 +25,9 @@ func newSpawnTestRegistry(t *testing.T, srvURL string) *registry {
 	tempConfigHome(t)
 	t.Setenv("PATH", "")
 	t.Setenv("WKS_CLAUDE_BIN", "")
-	return newRegistry(newClaudemonClient(srvURL))
+	reg := newRegistry(newClaudemonClient(srvURL))
+	reg.facadeHealthProbe = func(string, string) bool { return true }
+	return reg
 }
 
 func TestSpawnForwardsArgvAndReturnsSessionID(t *testing.T) {

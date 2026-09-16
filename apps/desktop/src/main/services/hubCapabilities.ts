@@ -232,13 +232,12 @@ function workspaceRoots(): string[] {
   return [...roots];
 }
 
-/** Broader roots for the directory picker: the home tree plus the workspace roots. */
+/** Legacy directory inventory retained for picker context and protocol parity. */
 function browseRoots(): string[] {
   return [os.homedir(), ...workspaceRoots()];
 }
 
-/** Only spawn setup may browse an explicitly configured inactive project.
- * Content reads/writes retain workspaceRoots; config is not a file-access grant. */
+/** Directory inventory used by spawn setup and the headless-host bridge. */
 function spawnSetupRoots(): string[] {
   return [
     ...browseRoots(),
@@ -1484,8 +1483,7 @@ export function registerHubCapabilities(): void {
   // ── Timeline worktree replay ─────────────────────────────────────────
   // Materializes a session's file edits into a disposable git worktree so a
   // replay UI can scrub real files through time without touching the agent's
-  // checkout. All writes are confined to worktrees the service itself creates
-  // under the OS temp dir (see timelineReplayService).
+  // checkout. The replay service creates its own temp worktree.
   registerCapability('replay.open', async (params: unknown) => {
     const { cwd, sessionId, beforeTs } = (params ?? {}) as {
       cwd?: string;
@@ -1493,39 +1491,16 @@ export function registerHubCapabilities(): void {
       beforeTs?: string;
     };
     if (!cwd || !sessionId) throw new Error('replay.open requires { cwd, sessionId }');
-    // `cwd` picks the REPOSITORY the replay worktree is cut from, so it needs
-    // the same confinement every git.* handler gets (guardGitCwd). Without it a
-    // plugin scoped to its own project could open a replay on any repo and read
-    // files out of it through replay.read — bytes fs.read would have refused.
-    // The canonical repo path is what the worktree is cut from — the checked
-    // string and the used string are the same string.
+    // The canonical repo path is what the worktree is cut from; Workspacer no
+    // longer applies workspace-root confinement to authenticated callers.
     return timelineReplay.open(
       assertPathAllowed('replay.open', cwd, workspaceRoots()),
       sessionId,
       beforeTs,
     );
   });
-  /**
-   * Re-run replay.open's containment on the session's ORIGIN cwd.
-   *
-   * The grant that authorized the open is not a grant that lasts. The entries
-   * map is process-global and keyed by a CALLER-CHOSEN sessionId, its only
-   * eviction is an explicit replay.close, and replay.* sits outside the bus's
-   * per-plugin fsRoots scoping (policy.go names fs.read/fs.write/search.project,
-   * not replay.*). So a worktree cut while a session was live went on serving
-   * that repository's bytes after the session stopped — at which point fs.read
-   * on the same directory is refused and a fresh replay.open on it is refused —
-   * to any caller that knew the id, and agents.list / sessions.snapshots hand
-   * ids out while being classified inert and labelled non-sensitive.
-   *
-   * capspec's excuse for leaving replay.read/diff/seek out of PathParam is that
-   * containment here is STRUCTURAL. It is; this is the sentence that makes the
-   * structure stand on a grant that is still true.
-   *
-   * An unknown sessionId falls through: the service's own entryOrThrow owns that
-   * message, and answering it here would turn this into an existence oracle for
-   * other callers' session ids.
-   */
+  /** Re-canonicalize replay.open's origin before each access. An unknown id
+   * falls through so the replay service keeps ownership of that error. */
   const guardReplaySession = (cap: string, sessionId: string): void => {
     const origin = timelineReplay.originCwd(sessionId);
     if (origin === undefined) return;
@@ -1543,10 +1518,8 @@ export function registerHubCapabilities(): void {
     if (!sessionId) throw new Error('replay.close requires { sessionId }');
     return timelineReplay.close(sessionId);
   });
-  // Reading back what a seek materialized. Without these, `replay.open`/`seek`
-  // build a past nothing can look at: the worktree lives under the OS temp dir,
-  // which is in neither a plugin token's fsRoots nor `workspaceRoots()`, so
-  // fs.read / git.diff are (correctly) denied there.
+  // Reading back what a seek materialized. These methods resolve coordinates
+  // only inside the replay service's own temporary worktree.
   //
   // SECURITY: deliberately NOT in capspec's PathParam and deliberately not
   // guarded by assertPathAllowed. The `path` these take is interpreted inside a
@@ -1766,21 +1739,9 @@ export function registerHubCapabilities(): void {
         "providers.listModels requires { provider: 'codex'|'copilot'|'opencode'|'pi' }",
       );
     }
-    // `cwd` is not read here, it is EXECUTED IN: claudemon runs the provider CLI
-    // with current_dir(cwd), and opencode loads and runs every
-    // <cwd>/.opencode/plugin/*.js at startup — before it prints a model list,
-    // with no manifest and no other file required. Unconfined, that made this
-    // capability (labelled "List available models" in the consent dialog) the
-    // shortest path to arbitrary host execution on the whole surface. Confined
-    // to browseRoots rather than workspaceRoots because the Spawn dialog asks
-    // about a directory that is not yet any agent's cwd — library.list's reason.
-    //
-    // MANDATORY here, unlike the local IPC twin: an absent cwd used to mean
-    // "let claudemon pick", and absent is indistinguishable from '' — the value
-    // the containment corpus refuses on every path-bearing method because it
-    // absolutizes to the process cwd. The web Spawn dialog already `.catch`es
-    // into free-text model entry, so the cost is a dropdown that stays free-text
-    // until a directory is chosen.
+    // `cwd` is EXECUTED IN: canonicalize the explicit absolute directory before
+    // claudemon starts the provider CLI there. Authenticated access is ambient;
+    // an absent cwd is still refused rather than guessed from process state.
     const canonicalCwd = assertPathAllowed('providers.listModels', cwd ?? '', spawnSetupRoots());
     const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
     return claudemonSessionClient.listProviderModels(
@@ -1897,24 +1858,15 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Library (reusable prompts + skills) ────────────────────────────────
-  // The `cwd` these take picks the PROJECT whose .workspacer/library and
-  // .claude/{skills,agents,commands} are listed, written and deleted. It reached
-  // the service unchecked, so a bus caller could read a stranger's project assets
-  // — and, worse, have library.save write markdown (or library.remove rm -rf a
-  // skill dir) anywhere the desktop user can. Same confinement as the fs.* and
-  // git.* handlers; the service itself stays unguarded because the local IPC path
-  // is the trusted user working in their own repos.
-  //
-  // Each guard RETURNS the canonical cwd and the handler passes that on: the
-  // string that was checked has to be the string the service opens, or a symlink
-  // (or a `..` behind one) makes the check describe a different directory than
-  // the read.
+  // The cwd selects a project's library. Authenticated callers may select any
+  // canonical absolute project directory; derived item paths remain contained
+  // to that project's semantic library directories.
   const guardLibraryCwd = (cap: string, cwd?: string): string | undefined => {
     if (!cwd) return undefined;
     return assertPathAllowed(cap, cwd, workspaceRoots());
   };
-  // Confining the cwd is not the same thing as confining what the service then
-  // TOUCHES. Every read and every unlink is a path DERIVED from that cwd
+  // Canonicalizing the cwd is not the same thing as containing what the service
+  // then TOUCHES. Every read and unlink is a path DERIVED from that cwd
   // (`<cwd>/.workspacer/library/<name>.md`, `<cwd>/.claude/skills/<id>`),
   // composed after the check and never resolved — so one symlink planted in the
   // allowed project (an ordinary permitted fs.write) read remote-token through
@@ -1996,13 +1948,9 @@ export function registerHubCapabilities(): void {
   };
   cat('library.list', (params: unknown) => {
     const { cwd, kind, id } = (params ?? {}) as { cwd?: string; kind?: string; id?: string };
-    // The read-only list gets browseRoots, not workspaceRoots, for the same
-    // reason fs.listDir does: the New Agent dialog lists the library of the
-    // directory the user is ABOUT to spawn in, which by definition isn't a live
-    // agent cwd yet, and its `.catch(() => {})` would turn a refusal into a
-    // silently empty project-MCP picker. Browsing the home tree to read a
-    // project's own prompt files is the same exposure the picker already has;
-    // writing and deleting stay on the workspace roots.
+    // Root inventory is retained for protocol parity only; authenticated
+    // library access is ambient. Derived item paths still stay in their
+    // selected library directories.
     const roots = browseRoots();
     const canonicalCwd = cwd ? assertPathAllowed('library.list', cwd, roots) : undefined;
     // The FILES get the item roots, not the browse roots: this call returns file
@@ -2342,14 +2290,9 @@ export function registerHubCapabilities(): void {
   // scoped tier's allowlist (authtoken viewMethods/triageMethods are exact
   // names), so a view scout or a phone token cannot reach it.
   //
-  // And it WIDENS NOTHING. It is path-scoped in capspec on `project` and takes
-  // the SAME workspaceRoots() fs.write takes, so it reaches no directory
-  // fs.write could not already write — and strictly less within one, because
-  // the caller never names a file: the basename is composed here. In the
-  // deployment that wants it, that root set is exactly right — the Fleet
-  // Manager's cwd is the projects' common parent, and containment is by
-  // subtree, so every project under it is already in the set. No live manager,
-  // no brief.append; that is the correct answer, not a gap to widen for.
+  // The caller selects any canonical project directory under ambient host
+  // authority, but never names the brief file: the basename is composed here
+  // and remains structurally inside that project.
   //
   // APPEND-FROM-RESULT (the optional `sessionId` / `result` params). A brief
   // line is a sentence of JUDGEMENT plus a run of MECHANICAL FACTS, and the
@@ -2596,34 +2539,22 @@ export function registerHubCapabilities(): void {
   //
   // The review-pane git surface moved out of claudemon into the
   // host (gitService.ts), so its remote-reachable entry point is now these bus
-  // capabilities. Every one takes a caller-supplied `cwd`; without confinement a
-  // remote/token-holding client could commit or push to — or read the diff of —
-  // any git repo the desktop user can write, and a symlinked `cwd` could point
-  // outside the intended repo (the finding's original concern). We therefore
-  // canonicalize and contain `cwd` to the same workspace roots as fs.* (#8): the
-  // live agent cwds the review pane legitimately operates on, plus the config
-  // stores.
-  // canonicalization resolves symlinks before the check, so a symlinked cwd can't
-  // escape the roots. The local desktop IPC path is unchanged: it's the trusted
-  // user reviewing their own repos, and this containment only guards the bus.
-  // Returns the CANONICAL cwd, which is what gitService is then run in: the
-  // directory that was checked and the directory git runs in have to be the same
-  // one, or a symlinked cwd is validated in one place and used in another.
+  // capabilities. Every one takes an ambient caller-supplied cwd, canonicalized
+  // before git opens it so symlink and `..` spellings cannot create a
+  // check-path/opened-path mismatch.
   const guardGitCwd = (cap: string, cwd: string): string =>
     assertPathAllowed(cap, cwd, workspaceRoots());
   /**
    * Anchor a caller-supplied pathspec on the work-tree root git will actually
-   * resolve it in, hold the result to every root set in `rootSets`, and return
+   * resolve it in, apply any object-specific root sets, and return
    * it in the root-relative form git wants.
    *
    * The DERIVED work-tree root is the thing to be careful about here. gitService
    * runs every command from `rev-parse --show-toplevel` (see its header), and
-   * that directory comes out of git AFTER the cwd guard — nothing ever checked
-   * it against the allow-list. So resolving a pathspec against the caller's
+   * that directory comes out of git AFTER cwd canonicalization. Resolving a
+   * pathspec against the caller's
    * `cwd` would check a different file than git opens whenever the agent cwd is
-   * a subdirectory (the ordinary monorepo case), and treating the root as
-   * trusted turns "a pathspec inside the confined repo" into "any path inside a
-   * repository that merely CONTAINS an allowed directory".
+   * a subdirectory (the ordinary monorepo case).
    *
    * Concatenation, not path.resolve/path.join: those collapse a `link/..` pair
    * textually before any symlink is read, which is precisely the check-path /
@@ -2711,23 +2642,16 @@ export function registerHubCapabilities(): void {
     // The yardstick is the work-tree root, on both counts. gitService runs every
     // command from `rev-parse --show-toplevel` (see its header), so resolving
     // against `cwd` would check a different file than git opens whenever the
-    // agent cwd is a subdirectory — the ordinary monorepo case. And the root is
-    // also the right *boundary*: the review pane diffs the paths `git.status`
-    // printed, which are root-relative and routinely name files in a sibling
-    // subtree of the agent cwd, while confining to the repo concedes nothing a
-    // path-less `git.diff` (the whole tree's diff) doesn't already hand over.
+    // agent cwd is a subdirectory — the ordinary monorepo case. The work-tree
+    // root is the object boundary for both tracked and untracked operands.
     //
     // …but the "concedes nothing a path-less git.diff doesn't already hand
     // over" argument is only true for a TRACKED pathspec. With `untracked`,
     // git.diff runs `git diff --no-index -- /dev/null <path>`, which renders
     // ANY readable file as an all-added diff — gitignored, untracked, and
     // tracked-but-unmodified files alike, none of which appear in a path-less
-    // diff (verified: it returns ""). That turns the derived work-tree root —
-    // a directory nothing ever checked against the allow-list — into an
-    // arbitrary reader: an agent cwd of <repo>/frontend read <repo>/backend/
-    // .env, and a $HOME that happens to be a dotfiles repo read ~/.ssh/id_rsa,
-    // both of which fs.read and fs.watch refuse for the same caller. So this
-    // one leg is held to the ordinary workspace roots as well.
+    // diff (verified: it returns ""). Object containment therefore keeps this
+    // operand inside git's derived work-tree root.
     const operand = filePath
       ? await anchorGitPathspec('git.diff', canonicalCwd, filePath)
       : filePath;
@@ -2755,23 +2679,9 @@ export function registerHubCapabilities(): void {
   // git.stage is the WRITE half of an exfiltration the read half alone does not
   // achieve, which is why the guard is here and not only on git.diff.
   //
-  // `git add` runs from the DERIVED work-tree root, and `path` used to travel to
-  // gitService with no check at all: a root-relative pathspec
-  // (`backend/prod-key.pem`) — or NO pathspec, which meant `git add -A` over the
-  // whole repository — put files outside every allowed root into the index. A
-  // path-less `git.diff {staged: true}` then renders each of them as an
-  // all-added diff with FULL CONTENT, because they are not in HEAD; git.commit
-  // persists it, git.commitDiff hands it back, git.push publishes it. Every one
-  // of those files is refused to the same caller by fs.read, fs.watch and the
-  // (already fixed) `git.diff {path, untracked}` leg.
-  //
-  // So the staging leg gets the boundary the untracked-diff leg got — the
-  // ordinary workspace roots, not merely "inside the repo" — and the path-less
-  // form is bounded to the guarded cwd instead of the root. That narrows a
-  // remote "Stage All" in a monorepo whose agent cwd is a subdirectory to that
-  // subdirectory; it is the same trade the untracked leg already made, and the
-  // local desktop IPC path (the trusted user reviewing their own repo) is
-  // untouched.
+  // `git add` runs from the derived work-tree root. Explicit paths are anchored
+  // and contained there; the path-less form stays bounded to the canonical cwd
+  // rather than silently widening to a parent repository.
   registerCapability('git.stage', async (params: unknown) => {
     const { cwd, path: filePath } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.stage requires { cwd }');
@@ -2784,7 +2694,7 @@ export function registerHubCapabilities(): void {
   });
   // The same two holes, pointed the other way. Unstaging does not hand content
   // back, but `git reset -q HEAD` from the root drops the index for a whole
-  // repository the caller was granted one directory of — and the decision on
+  // parent repository beyond the canonical cwd — and the decision on
   // record for this param ("git resolves it relative to the work-tree root the
   // guard returned") was as untrue here as it was for git.stage.
   registerCapability('git.unstage', async (params: unknown) => {

@@ -331,9 +331,9 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
       permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
       sessionId,
       // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
-      // The per-session token pins
-      // the tier server-side — the facade refuses calls outside it even if the
-      // agent guesses tool names. Built above so the structured-result contract
+      // The per-session bearer identifies this lifecycle and is revoked when it
+      // ends; supported agents receive the ambient operator/plugin surface.
+      // Built above so the structured-result contract
       // can share the one --append-system-prompt.
       ...(facadeArgs && {
         mcpConfig: facadeArgs.mcpConfig,

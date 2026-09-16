@@ -181,9 +181,7 @@ const TAILS: Record<FleetMessageKind, string> = {
   'catch-up':
     `Review each (get_conversation with sinceSeq), update the project brief's "## Recently", ` +
     `and report the outcome with session:<id> references. Then STOP again.`,
-  blocked:
-    `Inspect the blocked agent's context. Resolve an in-scope decision with send_message; ` +
-    `otherwise surface the exact decision needed, then stop without polling.`,
+  blocked: `Run a /supervise pass: gather the context and notify me with a recommendation.`,
   threshold:
     `This is the notify_when you armed, and it has now fired and been DISCARDED — watches are ` +
     `one-shot, so nothing further will arrive unless you arm another. Decide: let it run, ` +

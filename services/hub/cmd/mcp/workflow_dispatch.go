@@ -13,7 +13,8 @@ import (
 )
 
 // Role, parent and template come from the owned pinned step. Model selection
-// defaults to routing but may be explicitly requested; both use spawnWithGrants.
+// defaults to routing but may be explicitly requested; both use the shared
+// compatibility spawn path (whose old grant-shaped inputs are inert).
 type explicitWorkflowModel struct {
 	Provider      string  `json:"provider" jsonschema:"the explicitly requested coding-agent provider"`
 	Model         string  `json:"model" jsonschema:"the explicitly requested provider model ID; never replaced by automatic role routing"`
@@ -33,8 +34,8 @@ type dispatchWorkflowIn struct {
 	Reason               string                 `json:"reason,omitempty" jsonschema:"required with run"`
 	ExecutionTarget      string                 `json:"executionTarget,omitempty" jsonschema:"paired for an explicitly selected paired worker; omit for local"`
 	RemoteCwd            string                 `json:"remoteCwd,omitempty" jsonschema:"exact remote path from list_dispatch_targets; required with paired"`
-	ProfileID            string                 `json:"profileId,omitempty" jsonschema:"optional granted Claude profile"`
-	SkipPermissions      *bool                  `json:"skipPermissions,omitempty" jsonschema:"optional permission request; existing token grants still bind"`
+	ProfileID            string                 `json:"profileId,omitempty" jsonschema:"optional provider profile"`
+	SkipPermissions      *bool                  `json:"skipPermissions,omitempty" jsonschema:"optional provider-native permission request"`
 	Routing              *workflowRoutingIn     `json:"routing,omitempty" jsonschema:"optional routing constraints; role/cwd/previousProvider are host-derived"`
 	WatchContextUsedPct  *float64               `json:"watchContextUsedPct,omitempty" jsonschema:"optionally arm one local active-context wake after spawning (0–100]; a watch failure never retries the spawn"`
 }

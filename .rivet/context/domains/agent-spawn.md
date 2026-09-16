@@ -41,10 +41,10 @@ Agents spawn via two independent transports: Electron IPC (`claude:spawn`) and h
 - **Exhaustive `provider` cases**: Managed vs. PTY dispatch must be exhaustive. Desktop (ipc.ts ~line 190) checks `provider !== 'claude'` for managed, then resolves transport. Hub mirrors this (handlers.go ~line 381). Adding a new provider without updating both is a silent no-op.
 - **Default permission modes differ by family**: Claude defaults to `'default'` (PTY or stream); managed providers default to `'ask'`. The distinction lives in managedSpawn.ts lines 143–150 (TS) and handlers.go lines 482–490 (Go). Swapping or omitting this mapping breaks approval flow.
 
-## Hand-authored notes (2026-08-16) — tool tiers, plugin tools, targetHub, profile scrub
+## Hand-authored notes (updated 2026-09-16) — ambient tools, targetHub, profiles
 
-- **New spawn options `toolScope: 'view'|'triage'|'operator'` and `pluginTools: string[]`** ride both transports (ClaudeSpawnOptions/ManagedSpawnOptions, `ipc.ts` `claude:spawn`, `hubCapabilities.ts` `agents.spawn` ~L263/355/383) plus the facade's own `spawn_agent`. When set, the desktop mints a per-session scoped facade token (`remoteTokens.ts` `mintSessionFacadeToken`, label `session:<id>`, revoked at store eviction, swept at boot, hidden from the pairing UI) and writes it into `session-mcp/<id>.json` (0600, Authorization header for claude; `?t=` URL for codex/opencode; pi gets nothing). Spawn-param sync is now a FOUR-place concern: desktop TS helpers, hub-capability boundary, brain Go, and the facade's `spawn_agent` — the brain deliberately **declines** `toolScope`/`pluginTools` (documented in `services/hub/cmd/brain/parity_test.go` `spawnParamsDeclined`: headless cannot mint the token). See `modules/mcp-tool-facade.md`.
-- **Spawn dialog**: Advanced grew a "workspacer" tier select + per-plugin tool pills (fed by `listHubPlugins` manifests' `tools`), with a deviations chip; `toolScope`/`pluginTools` persist on `AgentWorkspace` and re-apply on respawn. Library-MCP selection is dropped (with a visible hint) when a tier is set. The supervise skill now spawns summarizer workers with `toolScope: "view"` (`supervisorSkill.ts` ~L73).
+- **Supported spawned agents receive ambient Workspacer and enabled-plugin tools.** Legacy `toolScope`, `pluginTools`, profile-grant and yolo-grant fields remain parseable but inert. Desktop and headless both mint a lifecycle-bound identity bearer and verify exact facade health before mint/injection. Manual remote credentials still have view/triage/operator/provider tiers. See `modules/mcp-tool-facade.md`.
+- **Ordinary collaboration skills are pointer-only and versioned.** Desktop and headless generate from the same assets/hash, install under `<cwd>/.workspacer/skills/<hash>/`, and inject only file pointers. Managers and Pi receive neither installation nor pointers.
 - **`targetHub` routes a spawn to a federated peer**: Machine picker in the spawn dialog → `useAgentManager` → `ipc.ts` calls `hub:<peer>/agents.spawn` (pinned by `ipcFederationRouting.test.ts`); worktree creation is skipped when `targetHub` is set (the worktree would be on the wrong machine). The workspace records `hub` so respawn re-routes. See `modules/hub-federation.md`.
 - **Profile-based permission bypass is scrubbed in the helpers, not just the boundary** (security fix 2026-07-30): `agents.spawn` clamped `skipPermissions`/`permissionMode` on the request but passed `profileId` through, and a bus caller could create a profile whose `extraArgs` carry `--dangerously-skip-permissions` (`claude.profiles.add` is itself a capability). The Go brain already scrubbed (`profiles.go` `scrubBypassArgs`); the desktop now ports it as `scrubBypassArgs`/`scrubBypassProfile` in `claudeProfiles.ts` (tested by `scrubBypass.test.ts`), applied via the `scrubProfileBypass` option honored by BOTH `claudeSpawn.ts` and `managedSpawn.ts` — the boundary decides, the helper enforces, so a future spawn entry point can't forget.
 
@@ -141,9 +141,9 @@ Agents spawn via two independent transports: Electron IPC (`claude:spawn`) and h
   rule governs `lib/draftAgent.ts`, whose bus event carries a brief ID rather than
   text so free text cannot enter that path at all.
 - **Dispatch templates (`kind: 'dispatch'`) are text-only BY CONSTRUCTION.** A
-  template carries template text + an optional default `resultSchema` and NO
+  template carries template text + an optional default `resultSchema` and no
   spawn-argument fields, so a template file cannot smuggle
-  `toolScope`/`cwd`/`model`/`worktree` — the no-trust-boundary property is pinned
+  `cwd`/`model`/`worktree` — the no-trust-boundary property is pinned
   in `libraryDispatch.test.ts` (TS) and `TestLibraryDispatchRoundTrip` (Go).
   Rendering is host-side in `hubCapabilities` `agents.spawn` via
   `main/lib/dispatchTemplate.ts`, which deliberately does NOT reuse the renderer's

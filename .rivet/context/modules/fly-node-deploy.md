@@ -151,8 +151,9 @@ disagreed and printed a false `STATE LOSS` on every genuinely-first node boot.
 ## MCP on a node needs two tokens, and they are not the same token
 
 The node's MCP facade is real (image builds/copies `mcp`, the entrypoint
-supervises it, and the brain mints per-session scoped facade tokens for
-`mcpFacade`/`toolScope`/`supervisor` spawns — implemented 2026-08-27). The
+supervises it, and the brain verifies facade health before minting each
+session's lifecycle-bound identity bearer). Supported agents receive ambient
+operator/plugin tools; legacy spawn scope selectors are inert. The
 remaining operational wrinkle is **token topology**: a provider-scoped
 `HUB_TOKEN` is right for `brain`, while the facade's own OUTBOUND bus connection
 may need `WKS_MCP_HUB_TOKEN`. Get this wrong and agents authenticate to the local

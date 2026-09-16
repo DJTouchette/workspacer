@@ -55,7 +55,7 @@ here is dead code:
   see `modules/hub-process-supervision.md`.
 - **`components/settings/SupervisorSection.tsx` is Settings → Fleet Manager.**
   Its header documents the collapse from two roles to one.
-- **"Ask the Fleet" survives as a plain `toolScope: 'triage'` spawn**
+- **"Ask the Fleet" survives as a plain ordinary-agent spawn**
   (`useAgentManager.spawnAskAgent`, `panes/AskPane.tsx`) opening in
   `~/.workspacer`. It is no longer a role and has no settings of its own.
 
@@ -75,7 +75,7 @@ host wakes it. That wake is the feature this module exists to deliver.
   `useAgentManager.spawnFleetManager(ask, root, …)`. It is reuse-by-name
   (`FLEET_MANAGER_NAME = 'Fleet Manager'`): a live manager is messaged, a
   stopped card is respawned/resumed, otherwise a fresh one is spawned with
-  `transport: 'stream'`, `toolScope: 'operator'`, `manager: true` and
+  `transport: 'stream'`, `manager: true` and
   `kickoffMessage: buildManagerKickoff(ask, fullAccess)`. The command palette
   and a bus/MCP caller (`agents.spawn` with `manager: true`) reach the same
   spawn bodies.
@@ -103,10 +103,9 @@ host wakes it. That wake is the feature this module exists to deliver.
   or `$CODEX_HOME/skills`, same SKILL.md format) and *removes* `RETIRED_NAMES =
   ['bearings', 'stow', 'supervise']`. Called from both `claudeSpawn.ts` and
   `managedSpawn.ts`, gated on `opts.manager`.
-- **Grants.** `fleetFullAccess` is a record-fidelity hint on the wire; the
-  token's actual yolo grant is config-resolved at mint by
-  `apps/desktop/src/main/services/fullAccessGrants.ts`, which is the single
-  formula and flips live in both directions.
+- **Authority.** `manager: true` controls role/wake routing only. Supported
+  agents receive ambient Workspacer/plugin tools, while full-access and profile
+  choices flow as provider configuration rather than session-token grants.
 
 ## The wake path: a worker finishes → the manager is invoked
 

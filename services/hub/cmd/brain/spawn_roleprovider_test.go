@@ -42,6 +42,7 @@ func roleProviderRig(t *testing.T, cfg map[string]any) (*registry, func(string) 
 	// A facade spawn needs the facade URL; without one the spawn is refused
 	// before it ever reaches the provider split.
 	reg.mcpFacadeURL = srv.URL + "/mcp"
+	reg.facadeHealthProbe = func(string, string) bool { return true }
 	return reg, func(path string) []recordedCall {
 		var out []recordedCall
 		for _, c := range calls {

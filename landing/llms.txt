@@ -22,7 +22,7 @@
 - [How agents are driven](build.html#providers): the two integration tiers and each provider's managed adapter.
 - [Writing a plugin (overview)](build.html#plugins): the short tour of the plugin system.
 - [Hub federation](build.html#federation): link two machines' hubs so one UI covers both fleets. Hub-stamped events, `hub:<peer>/<method>` calls, peers.json, tombstones.
-- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools. Tiered per session token (view/triage/operator), a `help` tool per tier, plugin-contributed tools, and UI navigation (focus agents, open panes, open the built-in browser).
+- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools. Spawned agents receive the ambient operator/plugin surface through lifecycle-bound identity tokens; manual clients may still use view/triage/operator credentials. Includes registry-derived help and UI navigation.
 
 ## Build a plugin
 

@@ -80,33 +80,20 @@ export interface ReplayReadResult {
 interface ReplayEntry {
   /** The real repository's work-tree root (where `worktree add` runs). */
   root: string;
-  /**
-   * The CANONICAL cwd `replay.open` was guarded on — the string
-   * assertPathAllowed returned, not the one the caller sent.
-   *
-   * Kept so the grant can be RE-CHECKED, because a grant is a fact about the
-   * present and this entry outlives the one that created it. replay.open is
-   * confined to workspaceRoots(); the entries map is process-global, keyed by a
-   * CALLER-CHOSEN sessionId, and its only eviction is an explicit replay.close.
-   * So once a session stopped — snapshotGrantsFsRoot then refuses it, fs.read on
-   * the repo is refused, a fresh replay.open on the same cwd is refused —
-   * replay.read went on serving that repository's bytes to anyone who knew the
-   * id, and agents.list/sessions.snapshots (both classified inert, both
-   * sensitive:false) hand the ids out. capspec's excuse for leaving replay.read
-   * unconfined calls the containment "structural"; it was, but it was structure
-   * built on a grant nobody re-consulted.
-   */
+  /** The canonical cwd supplied to replay.open. Retained so every later replay
+   * operation resolves from the same repository identity rather than a caller
+   * spelling that may contain symlinks. */
   originCwd: string;
   /** The disposable worktree this service created. */
   dir: string;
   baseCommit: string;
   /**
-   * The repo-relative offset of the CWD replay.open was guarded on, '' when the
-   * guarded cwd IS the repo root. Every path replay.* resolves is confined to
+   * The repo-relative offset of the canonical CWD, '' when it IS the repo root.
+   * Every path replay.* resolves is confined to
    * this subtree of the worktree, not merely to the worktree.
    *
-   * The worktree is cut from `rev-parse --show-toplevel`, a root DERIVED from
-   * the guarded cwd and never itself checked against the allow-list — so with an
+   * The worktree is cut from `rev-parse --show-toplevel`, a root derived from
+   * the canonical cwd — so with an
    * agent cwd of <repo>/frontend the checkout was the WHOLE repository and
    * replay.read handed back the committed content of <repo>/backend/prod-key.pem,
    * a file in no agent cwd and no config store that fs.read and fs.watch refuse

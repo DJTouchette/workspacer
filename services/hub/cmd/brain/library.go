@@ -131,28 +131,20 @@ func allowAnyLibraryFile(path string) (string, bool) { return path, true }
 // exactly two places: the global store (<configDir>/library) and the project the
 // caller named.
 //
-// library.list checks its cwd against the BROWSE roots — workspace roots plus
-// the whole home tree — because the New Agent dialog lists the library of a
-// directory no agent is running in yet. Handing those same roots to the PER-FILE
-// guard turned the derived-path fix into an arbitrary home-directory reader: a
-// `<cwd>/.workspacer/library/a.md -> ~/.ssh/id_rsa` symlink (the ordinary
-// real-world form — git stores symlinks verbatim, so a clone carries them)
-// canonicalized inside $HOME, passed the guard, and came back as an item Body,
-// while fs.read of the identical path is refused. browseRoots exists for
-// fs.listDir, which returns directory NAMES; library.list returns file BODIES.
+// The cwd is ambient and canonicalized. Per-file containment is deliberately
+// narrower: a library item must resolve inside the selected project's library
+// directories or the global library store.
 //
 // SAVE USES THIS LIST TOO. It did not, and that was a live divergence from the
 // desktop twin: saveLibrary/saveLibraryClaude guarded their derived destination
-// against r.workspaceRoots(ctx) — EVERY live agent cwd plus all three config
-// stores — while hubCapabilities.ts guarded it against these item roots. So a
+// against broad legacy roots while hubCapabilities.ts guarded it against these
+// item roots. So a
 // `<projA>/.workspacer/library -> <projB>` directory symlink (an ordinary
-// permitted fs.write, and the form a git clone carries verbatim) let one bus
+// symlink (and the form a git clone carries verbatim) let one bus
 // call with cwd=<projA> write attacker markdown into a SECOND project, and into
 // <configDir>/sessions, on the copy that actually answers under
 // DELEGATE_CATALOG_TO_BRAIN — while the desktop refused the identical call. The
-// bus's own scoping makes it worse rather than better: capspec.PathParam
-// ["library.save"] is "cwd", so the legacy containment corpus can evaluate
-// on the cwd alone and everything past it is the provider's job.
+// Derived item containment therefore stays the provider's job.
 //
 // It also left the brain disagreeing with ITSELF: save wrote items that its own
 // remove (already on the item roots) then refused to delete.
@@ -719,17 +711,14 @@ type libraryInput struct {
 }
 
 // saveLibrary writes one library item. It is a registry method because the
-// project/claude scopes write relative to a CALLER-SUPPLIED cwd, which has to go
-// through the same fsguard containment as fs.write — the caller is a bus client,
-// and "where do I put this file" is not a question it gets to answer freely.
-// (No caller reaching here is unprivileged today: they all hold terminals.create
-// or a trusted conn. The point is that the two path-taking surfaces can't drift
-// apart, the way the fs.* guard drifted from the desktop's.)
+// project/claude scopes write relative to a caller-supplied cwd. Authenticated
+// callers may select any canonical absolute project directory; derived item
+// paths remain contained to the selected semantic library directory.
 func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryItem, error) {
 	if in.Scope == "claude" {
 		return r.saveLibraryClaude(ctx, in)
 	}
-	// The cwd is confined FIRST, against the workspace roots, and the canonical
+	// The cwd is canonicalized first, and that exact
 	// answer is what the destination is composed from — same two-step as the
 	// desktop's guardLibraryCwd + guardLibraryFile. Composing from the caller's
 	// raw string and checking only the result would let filepath.Join Clean a
@@ -749,7 +738,7 @@ func (r *registry) saveLibrary(ctx context.Context, in libraryInput) (*libraryIt
 	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
 	full := filepath.Join(dir, id+".md")
 	// Checked BEFORE MkdirAll, so a denied save leaves no directories behind.
-	// The ITEM roots, not the workspace roots: where a library item may
+	// The item roots are object containment: where a library item may
 	// legitimately live is the global store plus the project the caller named,
 	// and nothing else — see libraryItemRoots.
 	canonical, err := assertLibraryItemPath("library.save", full, canonicalCwd)

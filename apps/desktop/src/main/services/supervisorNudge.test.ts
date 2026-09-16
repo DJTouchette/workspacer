@@ -184,7 +184,9 @@ describe('supervisorNudge.onBlock', () => {
     const [target, text] = message.mock.calls[0] as [string, string];
     expect(target).toBe('sup');
     expect(text).toContain('[supervisor]');
-    expect(text).toContain("Inspect the blocked agent's context");
+    expect(text).toContain(
+      'Run a /supervise pass: gather the context and notify me with a recommendation.',
+    );
     expect(parseFleetMessage(text)).toEqual({
       kind: 'blocked',
       entries: [{ label: 'alpha: fix tests', sessionId: 'w1', blockedOn: 'approval' }],

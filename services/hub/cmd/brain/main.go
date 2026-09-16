@@ -40,6 +40,7 @@ func main() {
 	defer reg.desktopServices.close()
 	reg.scope = *scope
 	reg.mcpFacadeURL = *mcpFacadeURL
+	reg.mcpFacadeHubURL = *hubURL
 	methods := reg.methodsForScope(*scope)
 	bus := newBusClient(*hubURL, *token, methods, reg.handle)
 

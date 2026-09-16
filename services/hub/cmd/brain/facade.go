@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -53,6 +54,17 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 		// manufacture a loopback URL that has no listener behind it.
 		return nil, nil
 	}
+	probe := r.facadeHealthProbe
+	if probe == nil {
+		probe = probeSessionFacadeHealth
+	}
+	// The URL is only startup configuration, never a lifetime lease. Verify the
+	// exact listener on every spawn before creating a bearer or writing it into
+	// argv/config. A later healthy spawn recovers automatically after a facade
+	// restart because no failure is cached here.
+	if !probe(baseURL, strings.TrimSpace(r.mcpFacadeHubURL)) {
+		return nil, nil
+	}
 	if err := validateSessionConfigName(sessionID); err != nil {
 		return nil, err
 	}
@@ -60,6 +72,7 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 	if err != nil {
 		return nil, err
 	}
+	skillPointer := installHeadlessAgentCollaborationSkills(p.Provider, p.Cwd, p.Manager)
 
 	role := ""
 	switch {
@@ -85,9 +98,53 @@ func (r *registry) buildSessionFacade(sessionID string, p spawnParams) (*session
 		BaseURL:      baseURL,
 		URL:          u,
 		Token:        rec.Token,
-		Instructions: sessionFacadeInstructions(sessionID, p),
+		Instructions: sessionFacadeInstructions(sessionID, p, skillPointer),
 		LibraryMCP:   selectedMCPServers(p.Cwd, mcpIDs),
 	}, nil
+}
+
+type sessionFacadeHealth struct {
+	Status             string `json:"status"`
+	Service            string `json:"service"`
+	HubConnected       bool   `json:"hubConnected"`
+	PluginCatalogReady bool   `json:"pluginCatalogReady"`
+	ListenAddr         string `json:"listenAddr"`
+	HubURL             string `json:"hubUrl"`
+}
+
+// probeSessionFacadeHealth converts the configured MCP endpoint to its open
+// health endpoint and proves identity, bind, live bus connection and catalog
+// readiness. It deliberately has a short independent timeout: a spawn may omit
+// Workspacer tools when the facade is down, but must never mint a token for an
+// unverified listener or hang behind a stale cached URL.
+func probeSessionFacadeHealth(rawURL, expectedHubURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	expectedListen := u.Host
+	u.Path = "/health"
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	client := &http.Client{Timeout: 1200 * time.Millisecond}
+	resp, err := client.Get(u.String())
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var health sessionFacadeHealth
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return false
+	}
+	return health.Status == "ok" &&
+		health.Service == "workspacer-mcp-facade" &&
+		health.HubConnected && health.PluginCatalogReady &&
+		health.ListenAddr == expectedListen &&
+		(expectedHubURL == "" || health.HubURL == expectedHubURL)
 }
 
 func mintSessionFacadeToken(sessionID string, scope authtoken.Scope, pluginsAllowed []string, profilesAllowed []string, yoloAllowed bool, role string) (authtoken.Record, error) {
@@ -305,14 +362,14 @@ func writeFileAtomic0600(path string, data []byte) error {
 	return nil
 }
 
-func sessionFacadeInstructions(sessionID string, p spawnParams) string {
+func sessionFacadeInstructions(sessionID string, p spawnParams, skillPointer string) string {
 	scope := string(authtoken.ScopeOperator)
 	parts := []string{
 		fmt.Sprintf("You are running inside Workspacer session %s with access to the local workspacer MCP facade.", sessionID),
 		fmt.Sprintf("Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is %s.", scope),
 	}
-	if !p.Manager {
-		parts = append(parts, headlessAgentCollaborationInstructions)
+	if skillPointer != "" {
+		parts = append(parts, skillPointer)
 	}
 	if scope == string(authtoken.ScopeView) {
 		parts = append(parts, "Treat workspacer tools as read-only unless another tool separately permits a change.")

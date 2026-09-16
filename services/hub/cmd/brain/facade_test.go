@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +14,106 @@ import (
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
+
+func TestHeadlessFacadeHealthIsCheckedForEverySpawnBeforeMinting(t *testing.T) {
+	rec := newRecorder()
+	claudemon := rec.server()
+	defer claudemon.Close()
+	healthy := true
+	const hubURL = "ws://127.0.0.1:7895/bus"
+	var facade *httptest.Server
+	facade = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		u, _ := url.Parse(facade.URL)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "service": "workspacer-mcp-facade",
+			"hubConnected": healthy, "pluginCatalogReady": healthy,
+			"listenAddr": u.Host, "hubUrl": hubURL,
+		})
+	}))
+	defer facade.Close()
+
+	reg := newRegistry(newClaudemonClient(claudemon.URL))
+	reg.mcpFacadeURL = facade.URL + "/mcp"
+	reg.mcpFacadeHubURL = hubURL
+	before := len(mustLoadTokens(t))
+
+	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"codex","cwd":"/tmp/proj"}`)); err != nil {
+		t.Fatal(err)
+	}
+	first := rec.calls("/sessions/spawn-managed")[0].body
+	if _, ok := first["mcp"]; !ok {
+		t.Fatalf("healthy facade was not injected: %+v", first)
+	}
+	if got := len(mustLoadTokens(t)); got != before+1 {
+		t.Fatalf("healthy spawn token count = %d, want %d", got, before+1)
+	}
+
+	healthy = false
+	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"codex","cwd":"/tmp/proj"}`)); err != nil {
+		t.Fatal(err)
+	}
+	second := rec.calls("/sessions/spawn-managed")[1].body
+	if _, ok := second["mcp"]; ok {
+		t.Fatalf("down facade URL was injected: %+v", second)
+	}
+	if got := len(mustLoadTokens(t)); got != before+1 {
+		t.Fatalf("unhealthy spawn minted a token: got %d, want %d", got, before+1)
+	}
+
+	healthy = true
+	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"codex","cwd":"/tmp/proj"}`)); err != nil {
+		t.Fatal(err)
+	}
+	third := rec.calls("/sessions/spawn-managed")[2].body
+	if _, ok := third["mcp"]; !ok {
+		t.Fatalf("recovered facade was not injected: %+v", third)
+	}
+	if got := len(mustLoadTokens(t)); got != before+2 {
+		t.Fatalf("recovered spawn token count = %d, want %d", got, before+2)
+	}
+}
+
+func TestStandaloneWrongOrDisconnectedFacadeMintsNoToken(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+	}{
+		{"wrong service", map[string]any{"status": "ok", "service": "not-workspacer", "hubConnected": true, "pluginCatalogReady": true}},
+		{"disconnected", map[string]any{"status": "ok", "service": "workspacer-mcp-facade", "hubConnected": false, "pluginCatalogReady": true}},
+		{"catalog not ready", map[string]any{"status": "ok", "service": "workspacer-mcp-facade", "hubConnected": true, "pluginCatalogReady": false}},
+		{"wrong bind", map[string]any{"status": "ok", "service": "workspacer-mcp-facade", "hubConnected": true, "pluginCatalogReady": true, "listenAddr": "127.0.0.1:1"}},
+		{"wrong hub", map[string]any{"status": "ok", "service": "workspacer-mcp-facade", "hubConnected": true, "pluginCatalogReady": true, "hubUrl": "ws://127.0.0.1:1/bus"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder()
+			claudemon := rec.server()
+			defer claudemon.Close()
+			var facade *httptest.Server
+			facade = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				u, _ := url.Parse(facade.URL)
+				body := map[string]any{"listenAddr": u.Host, "hubUrl": "ws://127.0.0.1:7895/bus"}
+				for k, v := range tc.body {
+					body[k] = v
+				}
+				_ = json.NewEncoder(w).Encode(body)
+			}))
+			defer facade.Close()
+			reg := newRegistry(newClaudemonClient(claudemon.URL))
+			reg.mcpFacadeURL = facade.URL + "/mcp"
+			reg.mcpFacadeHubURL = "ws://127.0.0.1:7895/bus"
+			before := len(mustLoadTokens(t))
+			if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"provider":"codex","cwd":"/tmp/proj"}`)); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := rec.calls("/sessions/spawn-managed")[0].body["mcp"]; ok {
+				t.Fatal("unverified facade was injected")
+			}
+			if got := len(mustLoadTokens(t)); got != before {
+				t.Fatalf("unverified facade minted token: %d -> %d", before, got)
+			}
+		})
+	}
+}
 
 func TestSpawnManagedInjectsWorkspacerFacade(t *testing.T) {
 	rec := newRecorder()
@@ -195,7 +298,11 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 			defer srv.Close()
 			reg := newSpawnTestRegistry(t, srv.URL)
 			reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
-			if _, err := reg.handle(context.Background(), "agents.spawn", []byte(tc.params)); err != nil {
+			params := tc.params
+			if tc.name == "ordinary pane" {
+				params = fmt.Sprintf(`{"provider":"codex","cwd":%q}`, t.TempDir())
+			}
+			if _, err := reg.handle(context.Background(), "agents.spawn", []byte(params)); err != nil {
 				t.Fatal(err)
 			}
 			instructions, _ := rec.calls("/sessions/spawn-managed")[0].body["instructions"].(string)
@@ -203,10 +310,13 @@ func TestHeadlessFleetContractExcludesOrdinaryPanesAndManagers(t *testing.T) {
 				t.Fatalf("non-worker received fleet escalation contract: %q", instructions)
 			}
 			if tc.name == "ordinary pane" {
-				if !strings.Contains(instructions, "Skill spawn-agent/SKILL.md") || !strings.Contains(instructions, "Skill project-brief/SKILL.md") {
+				if !strings.Contains(instructions, ".workspacer") || !strings.Contains(instructions, "spawn-agent/SKILL.md") || !strings.Contains(instructions, "project-brief/SKILL.md") {
 					t.Fatalf("ordinary agent missed collaboration skills: %q", instructions)
 				}
-			} else if strings.Contains(instructions, "Skill spawn-agent/SKILL.md") || strings.Contains(instructions, "Skill project-brief/SKILL.md") {
+				if strings.Contains(instructions, "# Spawn an agent") || strings.Contains(instructions, "---\nname:") {
+					t.Fatalf("ordinary prompt embedded skill bodies: %q", instructions)
+				}
+			} else if strings.Contains(instructions, "spawn-agent/SKILL.md") || strings.Contains(instructions, "project-brief/SKILL.md") {
 				t.Fatalf("Fleet Manager received ordinary-agent skill doctrine: %q", instructions)
 			}
 		})
@@ -265,6 +375,7 @@ func TestSpawnManagerFacadeTokenHasAmbientOperatorAuthorityWithoutLegacyGrants(t
 	}
 	reg := newRegistry(newClaudemonClient(srv.URL))
 	reg.mcpFacadeURL = "http://127.0.0.1:7897/mcp"
+	reg.facadeHealthProbe = func(string, string) bool { return true }
 
 	if _, err := reg.handle(context.Background(), "agents.spawn",
 		[]byte(`{"provider":"opencode","cwd":"/tmp/proj","manager":true,"toolScope":"operator"}`)); err != nil {

@@ -144,6 +144,7 @@ func TestPairedDispatchHostFixture(t *testing.T) {
 	reg = newRegistry(newClaudemonClient(daemon.URL))
 	reg.scope = "full"
 	reg.mcpFacadeURL = daemon.URL + "/mcp"
+	reg.facadeHealthProbe = func(string, string) bool { return true }
 	reg.meta = newMetaStore()
 	reg.store = newSessionStore()
 	reg.store.enrich = func(raw json.RawMessage) json.RawMessage { return enrichAndCompat(raw, reg.meta) }

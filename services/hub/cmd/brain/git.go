@@ -542,16 +542,13 @@ func gitReadError(res gitResult, fallback string) error {
 
 // ── confinement ─────────────────────────────────────────────────────────────
 
-// guardGitCwd confines a caller-supplied `cwd` to the workspace roots and
-// returns the CANONICAL directory git is then run in.
+// guardGitCwd canonicalizes a caller-supplied cwd and returns the exact
+// directory git is then run in. Authenticated path access is ambient.
 //
 // TWIN: guardGitCwd in hubCapabilities.ts. Every git.* capability takes a
-// caller-supplied cwd; without confinement a bus/token client could read the
-// diff of any git repo this daemon's user can reach, and a symlinked cwd could
-// point outside the intended repo. Canonicalization resolves symlinks BEFORE the
-// check, and the canonical answer is what runGit is handed, so the directory
-// that was checked and the directory git runs in are one string (BINDING
-// DECISION 2).
+// caller-supplied cwd. Canonicalization resolves symlinks before use, and the
+// canonical answer is what runGit receives, so validation and execution share
+// one string.
 func (r *registry) guardGitCwd(ctx context.Context, capability, cwd string) (string, error) {
 	return assertPathAllowed(capability, cwd, r.workspaceRoots(ctx))
 }

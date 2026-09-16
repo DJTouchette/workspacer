@@ -276,12 +276,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: AgentSpawnRequest) => {
     // Federation: a spawn aimed at a peer machine routes over the bus as a
     // qualified agents.spawn — never a local spawn wearing the wrong cwd.
-    // The PEER applies its own remote-caller clamps (skipPermissions forced
-    // off, escalating modes dropped, mcpItemIds ignored), which is correct:
-    // this machine is a remote caller there. The new session then arrives
+    // The peer applies its own routing limits and provider configuration. The
+    // new session then arrives
     // back through the federation ingest as a hub-stamped card. Local-only
-    // knobs (profileId, mcpItemIds, facade toolScope — the peer's facade is
-    // its own) are deliberately not forwarded.
+    // knobs (profileId and mcpItemIds — the peer owns those local catalogs) are
+    // deliberately not forwarded. Legacy facade toolScope is inert.
     if (opts.targetHub?.trim()) {
       if (opts.launchIntegrationId)
         throw new Error('Launch integrations currently require a local desktop session');

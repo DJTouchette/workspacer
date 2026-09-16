@@ -27,13 +27,13 @@ try {
     resolve(desktop, '../../services/hub/cmd/brain/agent_collaboration_skills_generated.go'),
     'utf8',
   );
-  for (const name of ['project-brief', 'spawn-agent']) {
-    const escaped = JSON.stringify(`Skill ${name}/SKILL.md:\n${generated[`${name}/SKILL.md`]}`);
+  for (const name of ['project-brief', 'spawn-agent'])
     assert.ok(
-      headless.includes(escaped.slice(1, -1)),
-      `Regenerate headless collaboration guidance after changing ${name}`,
+      headless.includes(JSON.stringify(generated[`${name}/SKILL.md`])),
+      `Regenerate headless collaboration asset after changing ${name}`,
     );
-  }
+  assert.ok(headless.includes('headlessAgentCollaborationSkillsVersion'));
+  assert.ok(!headless.includes('headlessAgentCollaborationInstructions'));
   const dist = join(scratch, 'dist');
   execFileSync(
     process.execPath,

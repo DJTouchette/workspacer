@@ -62,7 +62,7 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     ...(Array.isArray(r.plugins) && {
       plugins: r.plugins.filter((p): p is string => typeof p === 'string' && !!p.trim()),
     }),
-    // Same preservation rule for the fleet-manager profile grant.
+    // Same preservation rule for legacy inert profile metadata.
     ...(Array.isArray(r.profilesAllowed) && {
       profilesAllowed: r.profilesAllowed.filter(
         (p): p is string => typeof p === 'string' && !!p.trim(),
@@ -71,7 +71,7 @@ function normalizeRecord(raw: unknown): RemoteTokenRecord | null {
     // …and legacy full-access metadata (preserved, never consulted).
     ...(r.yoloAllowed === true && { yoloAllowed: true as const }),
     ...(r.facadeAuthority === true && { facadeAuthority: true as const }),
-    // …and the session-role tag the grant reconciler keys on.
+    // …and the session-role tag used for manager wake routing.
     ...(r.role === 'manager' && { role: r.role }),
     // …and the provider tier's REGISTER grant. Same preservation rule as the
     // four above, and the one with the sharpest failure: this record belongs to

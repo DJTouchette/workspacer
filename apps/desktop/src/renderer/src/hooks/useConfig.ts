@@ -300,7 +300,7 @@ export interface Config {
     fleetRoot?: string;
     /** Full-access dispatch: when true, the Fleet Manager and the workers it
      *  dispatches run with permissions bypassed (no per-action approvals) — the
-     *  manager's session token carries a hub-verified yolo grant. Default off:
+     *  manager dispatches may request provider-native full access. Default off:
      *  workers prompt, and the manager approves in-repo actions per its
      *  doctrine. Trade-off is speed vs. a human gate on every command. */
     fleetFullAccess?: boolean;

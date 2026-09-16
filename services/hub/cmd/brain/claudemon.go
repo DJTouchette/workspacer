@@ -172,10 +172,8 @@ type spawnManagedReq struct {
 	Effort string `json:"effort,omitempty"`
 	// Resolved launcher binary (falls back to the provider name daemon-side).
 	Bin string `json:"bin,omitempty"`
-	// YOLO / skip approvals. False from the brain for every bus caller except a
-	// hub-stamped full-access spawn (yoloGranted — see the security clamp in the
-	// spawn handler): the clamp zeroes skipPermissions unless the hub verified
-	// the caller's token grant.
+	// Provider-native YOLO / skip approvals, resolved from the explicit request
+	// or configured default. Workspacer adds no separate grant.
 	Yolo bool `json:"yolo"`
 	// Managed providers register the Workspacer MCP facade through their own
 	// config path. Claude stream receives the facade through ExtraArgs instead.

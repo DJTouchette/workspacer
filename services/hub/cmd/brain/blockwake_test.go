@@ -603,6 +603,10 @@ func TestABlockAlreadyOpenAtBootWakesNobody(t *testing.T) {
 // on the parse side, so a blocked entry that also carried a cwd would be
 // unparseable rather than merely verbose.
 func TestTheBlockedWakeIsTheDesktopsExactShape(t *testing.T) {
+	const establishedManagerTail = "Run a /supervise pass: gather the context and notify me with a recommendation."
+	if fleetBlockedTail != establishedManagerTail {
+		t.Fatalf("manager blocked doctrine changed: %q", fleetBlockedTail)
+	}
 	got := buildFleetMessage(fleetBlockedHeader, fleetBlockedTail, []fleetEntry{
 		{Label: "rust worker", SessionID: "w1", BlockedOn: "approval"},
 		{Label: "go worker", SessionID: "w2", BlockedOn: "question"},

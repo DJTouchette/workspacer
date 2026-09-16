@@ -225,24 +225,24 @@ var compositions = []Composition{
 		}},
 	},
 	{
-		Name:     "a plugin pane's ${agentCwd} binding comes out of the shared layout document, so that document sets the plugin sandbox's own boundary",
+		Name:     "legacy plugin path bindings cannot turn a layout value into a filesystem root grant",
 		Shape:    ShapeWidenThenUse,
 		A:        "layout.set",
 		B:        "fs.read",
-		Crossing: "the bus's per-plugin path confinement is the ONE guard that is per-caller rather than per-host, and its root set is bound from the pane the host is opening — a pane read out of the shared layout document. An agent with cwd '/' produced a pane token whose fsRoots were ['/'], and a volume root contains everything below it, so the plugin's fs.* capabilities then admitted every path on the machine. Neither call is wrong: layout.set writes an opaque document and PaneToken faithfully binds what the trusted host hands it.",
-		ClosedBy: "expandScope refuses a bare-token binding that RESOLVES to a volume root (internal/plugin/manager.go isVolumeRoot), the narrowing the subpath branch already had",
+		Crossing: "historical manifests could bind ${agentCwd} into fsRoots. Enabled plugins now receive ambient authenticated host paths, so these roots are inert compatibility metadata rather than a sandbox boundary.",
+		ClosedBy: "the runtime no longer derives plugin filesystem authority from manifest roots; expandScope and isVolumeRoot remain only as legacy compatibility validation",
 		Bearings: []Bearing{{
 			Kind: BearsOnGrantedRoots, On: "fs.read", Symbol: "isVolumeRoot",
 			Entry: Site{"expandScope", hubPluginMgrFile},
 		}},
 	},
 	{
-		Name:     "replay.open cuts a worktree under a grant; replay.read keeps serving it after the grant is revoked",
+		Name:     "replay coordinates remain structurally inside the service-owned worktree",
 		Shape:    ShapeWidenThenUse,
 		A:        "replay.open",
 		B:        "replay.read",
-		Crossing: "replay.open is confined to workspaceRoots because it cuts a worktree from the repo at cwd; replay.read is excused on the grounds that containment is 'structural'. It was — but keyed by a CALLER-CHOSEN sessionId in a process-global map whose only eviction is an explicit close. Once the session stopped, fs.read on the repo was refused and a fresh replay.open on it was refused, and replay.read went on returning its bytes to anyone who knew the id — which agents.list and sessions.snapshots hand out while classified inert.",
-		ClosedBy: "guardReplaySession in hubCapabilities.ts re-runs replay.open's own containment on the entry's recorded origin cwd before every read/diff/seek",
+		Crossing: "replay.open accepts an ambient authenticated repository path, while read/diff/seek accept only coordinates inside the disposable worktree it created.",
+		ClosedBy: "resolveInside/containInWorktree provide object containment and guardReplaySession re-canonicalizes the recorded origin before each operation",
 		Bearings: []Bearing{argBearing("guardReplaySession", "replay.read", desktopCapsFile)},
 	},
 	{
@@ -447,8 +447,8 @@ var noWitness = Witness{Kind: WitnessNone}
 // recorded pair.
 var recordedHalf = InertClaim{}
 
-// pathGuard is the fs confinement bearing: assertPathAllowed called with the
-// method's own name, in the desktop provider.
+// pathGuard is the canonicalization bearing: assertPathAllowed called with the
+// method's own name in the desktop provider. It is not a workspace grant.
 func pathGuard(method string) Witness {
 	return guarded(argBearing("assertPathAllowed", method, desktopCapsFile))
 }
@@ -461,7 +461,7 @@ func gitCwdGuard(method string) Witness {
 }
 
 // brainGitCwdGuard is the SAME claim about the SECOND provider, and it exists
-// because the sentence "provider-confined to the workspace roots (guardGitCwd)"
+// because the sentence "provider-canonicalized before git opens it (guardGitCwd)"
 // stopped being about one file.
 //
 // The read-only half of git.* was ported into cmd/brain so a headless node can
@@ -534,52 +534,52 @@ var compositionInert = map[string]InertClaim{
 
 	// ── reads that produce no durable state ────────────────────────────────
 	"fs.readImage": {
-		Reason:    "returns decoded image bytes to the caller and writes nothing. Its path is confined by the same assertPathAllowed('fs.readImage', …) call fs.read makes, and no interpreter sits downstream: nothing in the host re-reads an image as configuration",
+		Reason:    "returns decoded image bytes from an authenticated caller-selected path canonicalized by assertPathAllowed and writes nothing; no interpreter sits downstream",
 		Witnesses: []Witness{pathGuard("fs.readImage")},
 	},
 	"fs.listEntries": {
-		Reason:    "returns names and types under a root confined by assertPathAllowed('fs.listEntries', …). Composed with fs.write it is the shell-shaped pair the round-5 record already closes at the CONTAINMENT level (one predicate, 137 cases); it writes nothing itself and no guard consults its output",
+		Reason:    "returns names and types under an authenticated caller-selected path canonicalized by assertPathAllowed; it writes nothing itself and no guard consults its output",
 		Witnesses: []Witness{pathGuard("fs.listEntries")},
 	},
 	"fs.listDir": {
-		Reason:    "the same enumeration as fs.listEntries with a different result shape and the same assertPathAllowed('fs.listDir', …) confinement; identical reasoning",
+		Reason:    "the same ambient authenticated enumeration as fs.listEntries with a different result shape and the same assertPathAllowed canonicalization; identical reasoning",
 		Witnesses: []Witness{pathGuard("fs.listDir")},
 	},
 	"fs.unwatch": {
-		Reason:    "removes a watcher this caller installed — the undo of fs.watch, confined by the same assertPathAllowed('fs.unwatch', …) call. It can only ever SHRINK what fs.changed carries, and no guard consults the watcher set",
+		Reason:    "removes a watcher this caller installed — the undo of fs.watch over the same ambient path canonicalized by assertPathAllowed. It can only ever SHRINK what fs.changed carries",
 		Witnesses: []Witness{pathGuard("fs.unwatch"), narrows("fs.watch")},
 	},
 	// ── writes whose destination is fixed by the provider ──────────────────
 	"brief.append": {
-		Reason:    "appends ONE line to a section of <project>/.workspacer/brief.md and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.append', …) confines to the same workspace roots fs.write takes, and the provider composes the basename — so unlike fs.write there is no caller-chosen filename to aim at an interpreted one (.claude/settings.json, .opencode/plugin/*.js, a ripgrep .ignore), which is what all three recorded fs.write pairs turn on. The bytes it writes are prose an AGENT reads, not config, code or argv any host process reads, and that is not a new crossing: influencing what an agent is told is already fully available to the same operator tier through agents.sendMessage, whose own record covers it. It is additive-only by construction (services/briefService), so it cannot even rewrite a line another writer put there",
+		Reason:    "appends one line to <project>/.workspacer/brief.md: assertPathAllowed canonicalizes the ambient project directory and the provider composes the basename. It is additive-only and writes prose",
 		Witnesses: []Witness{pathGuard("brief.append")},
 	},
 	"brief.archive": {
-		Reason:    "moves entries from <project>/.workspacer/brief.md into brief.archive.md beside it, and can do nothing else: the caller names the project DIRECTORY, which assertPathAllowed('brief.archive', …) confines to the same workspace roots brief.append takes, and the provider composes both basenames, so there is no caller-chosen filename to aim at an interpreted one. It cannot even name an entry, since it takes a count off the oldest end of one named section, and the bytes it moves are prose an AGENT reads, unchanged, from one file to another the same agent can already read. Nothing downstream reads either file as config, code or argv",
+		Reason:    "moves entries from <project>/.workspacer/brief.md into brief.archive.md: assertPathAllowed canonicalizes the ambient project directory and the provider composes both basenames. It cannot name an arbitrary file",
 		Witnesses: []Witness{pathGuard("brief.archive")},
 	},
 	"brief.check": {
-		Reason:    "READS <project>/.workspacer/brief.md and reports which of its '## Now' entries name sessions this host no longer knows about. It writes nothing at all — not the brief, not an index, not a marker — so it composes with nothing: its output is a list of line numbers and the entries' own text, handed to a model that then decides for itself. The caller names the project DIRECTORY, which assertPathAllowed('brief.check', …) confines to the same workspace roots its two writing siblings take, and the provider composes the basename, so there is no caller-chosen filename. The bytes it returns are prose the same operator tier can already read with fs.read inside the same roots, and the session ids it matches against are the ones agents.list serves that tier verbatim; no guard anywhere consults a brief",
+		Reason:    "reads <project>/.workspacer/brief.md under an ambient project directory canonicalized by assertPathAllowed and reports stale Now entries. It writes nothing and the provider composes the basename",
 		Witnesses: []Witness{pathGuard("brief.check")},
 	},
 	"git.status": {
-		Reason:    "runs `git status` in a cwd guardGitCwd('git.status', …) confines to the workspace roots, and returns text. Writes nothing; the porcelain output is not read as policy by anything",
+		Reason:    "runs git status in a caller-selected cwd canonicalized by guardGitCwd and returns text. Writes nothing",
 		Witnesses: []Witness{gitCwdGuard("git.status"), brainGitCwdGuard("git.status", "gitStatusCall")},
 	},
 	"git.log": {
-		Reason:    "reads commit metadata out of a repo guardGitCwd('git.log', …) confines, and returns it. Writes nothing, changes no state, and no guard in the system consults commit history when deciding anything",
+		Reason:    "reads commit metadata from a caller-selected repo canonicalized by guardGitCwd. Writes nothing and changes no state",
 		Witnesses: []Witness{gitCwdGuard("git.log"), brainGitCwdGuard("git.log", "gitLogCall")},
 	},
 	"git.numstat": {
-		Reason:    "reads per-file change counts for a commit range in a repo guardGitCwd('git.numstat', …) confines. Numbers to a UI: nothing is written, and nothing downstream reads the result as configuration or argv",
+		Reason:    "reads per-file change counts from a caller-selected repo canonicalized by guardGitCwd. Nothing is written",
 		Witnesses: []Witness{gitCwdGuard("git.numstat"), brainGitCwdGuard("git.numstat", "gitNumstatCall")},
 	},
 	"git.commitDiff": {
-		Reason:    "reads one commit's patch text out of a repo guardGitCwd('git.commitDiff', …) confines, under the same result-path secret gate git.diff has, so it cannot return bytes fs.read would refuse. Writes nothing",
+		Reason:    "reads one commit's patch text from a caller-selected repo canonicalized by guardGitCwd. Authenticated path access is ambient; it writes nothing",
 		Witnesses: []Witness{gitCwdGuard("git.commitDiff")},
 	},
 	"git.commitNumstat": {
-		Reason:    "reads one commit's change counts in a repo guardGitCwd('git.commitNumstat', …) confines — the per-commit twin of git.numstat, with the same absence of a writer and of a downstream interpreter",
+		Reason:    "reads one commit's change counts from a caller-selected repo canonicalized by guardGitCwd; it writes nothing",
 		Witnesses: []Witness{gitCwdGuard("git.commitNumstat")},
 	},
 	"files.upload": {

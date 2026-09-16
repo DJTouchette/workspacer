@@ -67,7 +67,7 @@ type Manifest struct {
 	// Provides names capabilities this plugin answers on the bus and remains an
 	// enforced own-namespace identity boundary. Capabilities/emits/consumes are
 	// legacy advisory metadata retained for manifest compatibility; enabling a
-	// plugin grants its authenticated token the ordinary bus/event surface.
+	// plugin receives the ordinary bus/event surface.
 	Provides     []string     `json:"provides,omitempty"`
 	Capabilities []Capability `json:"capabilities,omitempty"`
 	Emits        []string     `json:"emits,omitempty"`
@@ -145,8 +145,8 @@ type ToolDef struct {
 	// "object"`). Optional; omitted means "any object".
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 	// Method is the bus method the tool call forwards to. Must be matched by
-	// one of the manifest's `provides` patterns (and is therefore confined to
-	// the plugin's own namespace).
+	// one of the manifest's `provides` patterns (an enforced provider-identity
+	// namespace, not a caller capability grant).
 	Method string `json:"method"`
 }
 
@@ -550,8 +550,8 @@ func hasWindowsDrive(p string) bool {
 // wins at hub boot or across any provider restart.
 //
 // The rule: a plugin may answer only methods under `<its id>.`. Anything else —
-// a wildcard, a bare method, another plugin's namespace — needs a host-side
-// grant, which is not something a manifest can give itself. Nothing in the
+// a wildcard, a bare method, another plugin's namespace — requires host-owned
+// provider registration, which a manifest cannot self-assert. Nothing in the
 // public catalog or the bundled examples declares `provides` at all, so this
 // rejects no plugin that exists today.
 func validateProvides(pluginID, pattern string) error {
@@ -571,17 +571,14 @@ func validateProvides(pluginID, pattern string) error {
 	}
 	return fmt.Errorf(
 		"provides %q must name a method in this plugin's own namespace (%q or %q); "+
-			"answering a core capability requires a host-side grant, not a self-declaration",
+			"answering a core capability requires host-owned registration, not a self-declaration",
 		pattern, prefix+"<method>", prefix+"*")
 }
 
-// validateScope rejects a declared path scope that could resolve somewhere other
-// than the place it appears to name. Only ".." is caught here: expanding a token
-// joins it with the binding, and the join Cleans the "..", so "${pluginDir}/../.."
-// silently lands on the config directory — which holds remote-token, and a plugin
-// that can read that promotes itself to a trusted bus connection. Refusing the
-// manifest means the escape never reaches a grant; expandScope re-checks so a
-// manifest that arrived some other way still can't get out.
+// validateScope preserves strict parsing for legacy advisory path metadata.
+// Runtime access is ambient, but accepting misleading traversal spellings in a
+// manifest would make the displayed intent untrustworthy. expandScope retains
+// the same compatibility validation for manifests loaded through older paths.
 func validateScope(p string) error {
 	if hasDotDotSegment(p) {
 		return fmt.Errorf("path scope %q must not contain a %q segment", p, "..")

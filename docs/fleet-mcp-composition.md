@@ -30,12 +30,12 @@ and uncertain admission can still require separate turns.
 `dispatch_workflow_step` requires `taskId`, the local task `cwd`, the exact
 `stepId`, and `expectedTaskRevision`. Supply the pinned template's task-specific
 `templateParams`; optional fields include a label, explicit conditional
-`run`/`reason`, routing constraints, a granted profile, permission preference,
+`run`/`reason`, routing constraints, a provider profile, permission preference,
 and a local context watch.
 
 The tool derives role, template, stage, predecessor dispatch, parent identity,
 and the reviewer's previous provider. It uses the existing router and
-`spawnWithGrants`, then the ordinary `agents.spawn` bus route and desktop
+the shared compatibility spawn helper, then the ordinary `agents.spawn` bus route and desktop
 `managerDispatch(workflowSpawn(...))` guards. It does not introduce a second
 spawn implementation or a model/permission override.
 

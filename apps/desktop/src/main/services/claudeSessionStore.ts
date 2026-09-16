@@ -1412,7 +1412,10 @@ class ClaudeSessionStore {
       // name work instead of sticking to the empty string forever.
       session.cwd = cwd;
     }
-    if (hookName !== 'SessionEnd' && session.status === 'ended') {
+    // Only a proven lifecycle boundary re-arms token revocation. Late Stop,
+    // tool, or status hooks can arrive after SessionEnd and still belong to the
+    // ended process.
+    if (hookName === 'SessionStart' && session.status === 'ended') {
       this.facadeTokenRevoked.delete(sessionId);
     }
 
@@ -2334,7 +2337,6 @@ class ClaudeSessionStore {
     // the first terminal edge (managed crash/no hook), so keep the same
     // idempotent cleanup here without delaying ordinary revocation for 30s.
     this.revokeFacadeTokenOnce(sessionId);
-    this.facadeTokenRevoked.delete(sessionId);
     for (const timers of [this.statusLineTimers, this.managedHistoryTimers, this.pendingFlush]) {
       const t = timers.get(sessionId);
       if (t) {
@@ -2407,9 +2409,11 @@ class ClaudeSessionStore {
 
   private revokeFacadeTokenOnce(sessionId: string): void {
     if (this.facadeTokenRevoked.has(sessionId)) return;
-    this.facadeTokenRevoked.add(sessionId);
     try {
       revokeSessionFacadeTokens(sessionId);
+      // Record only a successfully persisted deletion. A disk failure must
+      // remain retryable on duplicate SessionEnd, close, or eviction.
+      this.facadeTokenRevoked.add(sessionId);
     } catch (err) {
       console.warn(`[claudeSessionStore] facade token revoke failed for ${sessionId}:`, err);
     }

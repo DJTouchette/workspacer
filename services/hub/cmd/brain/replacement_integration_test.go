@@ -126,6 +126,7 @@ func TestHeadlessManagerReplacementEndToEnd(t *testing.T) {
 	r.store.enrich = func(raw json.RawMessage) json.RawMessage { return enrichAndCompat(raw, r.meta) }
 	r.desktopServices.bundle = bundle
 	r.mcpFacadeURL = srv.URL + "/mcp"
+	r.facadeHealthProbe = func(string, string) bool { return true }
 	defer r.desktopServices.close()
 	call := func(method string, params any) json.RawMessage {
 		t.Helper()

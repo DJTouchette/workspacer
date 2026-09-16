@@ -25,6 +25,7 @@ const facadeHealth = {
 };
 const fetchMock = vi.fn();
 const gracefulStop = vi.fn().mockResolvedValue(undefined);
+let restartDelay: number | null = null;
 
 vi.mock('../lib/daemonUtils', () => ({
   killStaleListener: (...a: unknown[]) => killStaleListener(...a),
@@ -39,7 +40,7 @@ vi.mock('../lib/daemonUtils', () => ({
     markStarted() {}
     reset() {}
     nextDelay() {
-      return null; // never restart in tests
+      return restartDelay;
     }
   },
 }));
@@ -96,6 +97,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   gracefulStop.mockClear();
   mockConfig = {};
+  restartDelay = null;
 });
 
 describe('mcp facade spawn', () => {
@@ -126,6 +128,33 @@ describe('mcp facade spawn', () => {
     expect(killStaleListener).not.toHaveBeenCalled();
     await mod.stopMcpFacade();
     expect(gracefulStop).toHaveBeenCalledWith(null, 'mcp');
+  });
+
+  it('cancels a stale owned-child restart when an external facade is adopted', async () => {
+    vi.useFakeTimers();
+    restartDelay = 50;
+    try {
+      const mod = await loadModule();
+      await mod.startMcpFacade();
+      const owned = spawnMock.mock.results[0]?.value as EventEmitter;
+
+      // The owned process crashes and schedules a restart. Before its timer
+      // fires, a later explicit start sees workspacer serve's healthy facade.
+      owned.emit('exit', 1, null);
+      fetchMock.mockReset().mockResolvedValue({ ok: true, json: async () => facadeHealth });
+      await mod.startMcpFacade();
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(killStaleListener).toHaveBeenCalledTimes(1);
+      // Stopping an adopted listener only clears local state; there is no
+      // owned child left for gracefulStop to terminate.
+      await mod.stopMcpFacade();
+      expect(gracefulStop).toHaveBeenLastCalledWith(null, 'mcp');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

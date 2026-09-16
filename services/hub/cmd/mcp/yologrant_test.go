@@ -15,15 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Full-access dispatch, facade half. The facade multiplexes every session
-// token over ONE trusted bus connection, so the hub stamps `yoloGranted` for
-// that host-token conn regardless of which session is riding it — the
-// per-record YoloAllowed grant can only be honored HERE, where resolveRecord
-// resolved the token. Twin of profilegrant_test.go, but the ungranted path
-// DEGRADES silently (skipPermissions clamped off) rather than refusing, matching
-// the "remote spawns never auto-bypass" doctrine. These tests run the real
-// chain: MCP client → spawn_agent handler → busclient → a REAL hub bus → an
-// echoing provider, and read what the provider actually received.
+// Legacy full-access metadata, facade half. Provider permission requests flow
+// through for authenticated spawns; YoloAllowed/yoloGranted must neither clamp
+// the request nor reappear as authoritative stamps.
 
 // yoloGrantSession builds a facade server for one record's full-access grant
 // against a live hub with an echoing agents.spawn provider.
@@ -63,15 +57,7 @@ func spawnEchoParams(t *testing.T, ctx context.Context, cs *mcp.ClientSession, a
 	return params
 }
 
-// TestSpawnAgentClampsSkipPermissionsForAnUngrantedSession: a session token
-// WITHOUT the full-access grant has skipPermissions clamped to false BEFORE the
-// forward, so the hub's yoloGranted stamp (which it applies to the facade's
-// host-token conn regardless) never meets a live bypass request. The clamp is
-// silent — the spawn still succeeds, just with approvals on.
-// TestSpawnAgentForwardsSkipPermissionsForAGrantedSession: a session token WITH
-// the full-access grant forwards skipPermissions untouched → the hub stamps
-// yoloGranted → the provider (here, the echo) receives the live request. The
-// positive half, end to end.
+// skipPermissions flows through with no separate Workspacer grant stamp.
 func TestSpawnAgentForwardsSkipPermissionsWithoutAGrantStamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -79,23 +65,14 @@ func TestSpawnAgentForwardsSkipPermissionsWithoutAGrantStamp(t *testing.T) {
 	cs := yoloGrantSession(t, ctx, true)
 	params := spawnEchoParams(t, ctx, cs, map[string]any{"cwd": "/tmp", "skipPermissions": true})
 	if params["skipPermissions"] != true {
-		t.Fatalf("granted session's skipPermissions must ride through the facade: %v", params)
+		t.Fatalf("skipPermissions did not ride through the facade: %v", params)
 	}
 	if _, stamped := params["yoloGranted"]; stamped {
 		t.Fatalf("obsolete yolo grant stamp reached the provider: %v", params)
 	}
 }
 
-// TestSpawnAgentClampLogsTheStrip: the clamp degrades the CALLER silently (the
-// spawn still succeeds, approvals on), but the strip itself must be loggable —
-// a dropped bypass was previously undiagnosable. One line, naming the calling
-// token (label from the request context; "untokened" over the in-memory test
-// transport) and the requested agent label; and NO line when nothing was
-// requested, so the log only speaks when a bypass was actually dropped.
-// TestServerCacheSeparatesYoloGrants: two records at the same tier with
-// different full-access grants must never share a server — the clamp is closed
-// over the build, so a shared server IS a shared grant. Also pins that a
-// yolo-only record does NOT collapse onto the shared (clamped) tier server.
+// Legacy YoloAllowed metadata does not change the server cache key.
 func TestServerCacheIgnoresLegacyYoloGrants(t *testing.T) {
 	client := busclient.New("ws://127.0.0.1:0/bus", "")
 	cache := newServerCache(client, newPluginCatalog(client), tierServers(client))

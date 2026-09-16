@@ -24,6 +24,17 @@ const finished: FleetMessageEntry = {
 };
 
 describe('buildFleetMessage → parseFleetMessage round trip', () => {
+  it('keeps the established manager blocked doctrine byte-exact', () => {
+    const text = buildFleetMessage('blocked', [
+      { label: 'child', sessionId: 'w1', blockedOn: 'question' },
+    ]);
+    expect(text).toBe(
+      '[supervisor] An agent is now blocked on a decision:\n' +
+        '- child (session:w1, question)\n' +
+        'Run a /supervise pass: gather the context and notify me with a recommendation.',
+    );
+  });
+
   it('worker-finished survives, including a flattened reply excerpt', () => {
     const text = buildFleetMessage('worker-finished', [finished]);
     expect(text).toContain('[fleet] Worker finished');

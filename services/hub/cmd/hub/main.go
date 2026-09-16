@@ -446,9 +446,8 @@ func main() {
 				// Carried so a host-authority refusal can NAME the token it
 				// turned away in the hub log (hostOnlyRoute). Authorizes nothing.
 				Label: rec.Label,
-				// The spawn grants ride the ident so the router can enforce
-				// them per call (agents.spawn profileId strip/stamp, and the
-				// full-access `yoloGranted` stamp).
+				// Legacy spawn-grant fields remain on the record for lossless
+				// compatibility but no longer narrow profiles or permissions.
 				ProfilesAllowed: rec.ProfilesAllowed,
 				YoloAllowed:     rec.YoloAllowed,
 				FacadeAuthority: rec.FacadeAuthority && rec.Scope == authtoken.ScopeOperator,

@@ -21,7 +21,7 @@ installed on demand from **Plugins → Browse examples**.
 ```
 
 The method must be an exact entry in `provides`, within the plugin's namespace.
-Existing scoped bus registration and plugin consent apply. `launchIntegration`
+Existing authenticated bus registration and plugin enablement apply. `launchIntegration`
 requires a sidecar; webview-only plugins cannot contribute it. Sidecars already
 run as the OS user, so install only ones you trust.
 

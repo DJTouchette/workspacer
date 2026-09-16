@@ -15,12 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Profile-aware dispatch, facade half (FLEET_MANAGER_SPIKE §6a). The facade
-// multiplexes every session token over ONE trusted bus connection, so the hub
-// can only see the facade's credential — the per-record profilesAllowed check
-// has to happen here, where resolveRecord resolved the token. These tests run
-// the real chain: in-memory MCP client → spawn_agent handler → busclient → a
-// REAL hub bus (whose router stamps profileGranted) → an echoing provider.
+// Legacy profile metadata, facade half. Profiles are ambient for authenticated
+// spawns; persisted profilesAllowed/profileGranted shapes must neither narrow
+// the call nor reappear as authoritative stamps.
 
 // spawnGrantSession builds a facade server for one record's grants against a
 // live hub with an echoing agents.spawn provider, and returns the MCP session.
@@ -53,13 +50,7 @@ func callSpawn(t *testing.T, ctx context.Context, cs *mcp.ClientSession, args ma
 	return text, res.IsError
 }
 
-// TestSpawnAgentRefusesAnUngrantedProfile: the refusal happens IN the facade —
-// nothing is forwarded, so the error names the grant rather than echoing a
-// degraded spawn (silently landing on the default account is the failure mode
-// this exists to prevent).
-// TestSpawnAgentForwardsAGrantedProfileAndTheHubStamps: the positive half,
-// end to end — a granted id passes the facade, rides the facade's trusted bus
-// connection, and arrives at the provider WITH the hub's profileGranted stamp.
+// The selected profile flows end to end with no separate grant stamp.
 func TestSpawnAgentForwardsProfileWithoutAGrantStamp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -67,7 +58,7 @@ func TestSpawnAgentForwardsProfileWithoutAGrantStamp(t *testing.T) {
 	cs := spawnGrantSession(t, ctx, []string{"work", "personal"})
 	text, isErr := callSpawn(t, ctx, cs, map[string]any{"cwd": "/tmp", "profileId": "work"})
 	if isErr {
-		t.Fatalf("granted profileId was refused: %s", text)
+		t.Fatalf("selected profileId was refused: %s", text)
 	}
 	var echo struct {
 		Method string          `json:"method"`
@@ -84,18 +75,14 @@ func TestSpawnAgentForwardsProfileWithoutAGrantStamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if params["profileId"] != "work" {
-		t.Fatalf("provider did not receive the granted profileId: %v", params)
+		t.Fatalf("provider did not receive the selected profileId: %v", params)
 	}
 	if _, stamped := params["profileGranted"]; stamped {
 		t.Fatalf("obsolete profile grant stamp reached the provider: %v", params)
 	}
 }
 
-// TestSpawnAgentCallerCannotSupplyProfileGranted: profileGranted is not a tool
-// input at all — the schema has no such property, so a session cannot even
-// SPEAK the stamp toward the facade; and if a permissive client got it through,
-// the hub deletes caller-supplied copies before any provider sees them (pinned
-// on the hub side by TestProfileGrantSpoofedFieldsNeverReachTheProvider).
+// The retired profileGranted compatibility stamp is not a public tool input.
 func TestSpawnAgentCallerCannotSupplyProfileGranted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -111,16 +98,14 @@ func TestSpawnAgentCallerCannotSupplyProfileGranted(t *testing.T) {
 		}
 		schema, _ := json.Marshal(tl.InputSchema)
 		if strings.Contains(string(schema), "profileGranted") {
-			t.Fatalf("spawn_agent's input schema must not offer profileGranted (hub-stamped only): %s", schema)
+			t.Fatalf("spawn_agent's input schema must not offer retired profileGranted: %s", schema)
 		}
 		return
 	}
 	t.Fatal("spawn_agent tool not found on an operator server")
 }
 
-// TestServerCacheSeparatesProfileGrants: two records at the same tier with
-// different account grants must never share a server — the grant check is
-// closed over the build, so a shared server IS a shared grant.
+// Legacy profile metadata does not change the server cache key.
 func TestServerCacheIgnoresLegacyProfileGrants(t *testing.T) {
 	client := busclient.New("ws://127.0.0.1:0/bus", "")
 	cache := newServerCache(client, newPluginCatalog(client), tierServers(client))

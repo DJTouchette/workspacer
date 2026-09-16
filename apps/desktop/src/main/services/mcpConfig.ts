@@ -84,7 +84,8 @@ export function managedFacadeInstructions(opts: {
  * compatibility with manually constructed external facade configs.
  *
  * When `token` is set the config is a per-session file carrying it as an
- * Authorization header, so the facade serves the session its tier; without a
+ * Authorization header, so the facade identifies and can revoke the session;
+ * supported spawned agents receive the ambient operator/plugin surface. Without a
  * token the shared untokened config is used (legacy operator default).
  *
  * Centralised here so the desktop (ipc) and bus (hubCapabilities) spawn paths

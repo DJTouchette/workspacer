@@ -15,12 +15,12 @@ import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
  * cmd/mcp ships `-untokened deny`, so a local process presenting nothing gets
  * 401 rather than the whole operator tool surface. Nothing here has to pass a
  * flag for that — the binary's own default is the source of truth, and every
- * session this app spawns with the facade already carries a per-session scoped
+ * session this app spawns with the facade already carries a per-session bearer
  * token (see mcpConfig.ts / remoteTokens.ts). The optional config key
  * `facade.untokenedAccess` (operator | view | deny) is the dial on that
  * default, passed through as --untokened; `operator` is the explicit opt-in for
- * a hand-configured local MCP client that cannot carry a token. Per-session
- * scoped tokens keep their tiers under every setting.
+ * a hand-configured local MCP client that cannot carry a token. Spawned-agent
+ * bearers always receive the ambient operator/plugin surface.
  *
  * Mirrors hubDaemon.ts (binary resolution, health poll, restart backoff). Fully
  * optional from the rest of the app's point of view: if it fails to start, only
@@ -90,7 +90,16 @@ let ensurePromise: Promise<void> | null = null;
 let intentionalStop = false;
 /** True when a healthy facade owned by `workspacer serve` was adopted. */
 let adoptedExternal = false;
+/** Fence every owned-child/restart attempt. A timer or exit handler from an
+ * older generation must never disturb a listener adopted by a newer start. */
+let generation = 0;
+let restartTimer: NodeJS.Timeout | null = null;
 const backoff = new RestartBackoff();
+
+function cancelScheduledRestart(): void {
+  if (restartTimer) clearTimeout(restartTimer);
+  restartTimer = null;
+}
 
 function exeName(): string {
   return process.platform === 'win32' ? 'mcp.exe' : 'mcp';
@@ -106,6 +115,8 @@ function mcpBinaryPath(): string {
 /** Spawn the facade. Idempotent — repeat calls return the existing ready promise. */
 export function startMcpFacade(): Promise<void> {
   if (readyPromise) return readyPromise;
+  cancelScheduledRestart();
+  const myGeneration = ++generation;
   intentionalStop = false;
   readyPromise = observeRuntimeStart(
     'facade',
@@ -114,6 +125,7 @@ export function startMcpFacade(): Promise<void> {
       // healthy listener before considering stale-port cleanup; otherwise the
       // desktop kills the CLI's child and two supervisors fight over :7897.
       if (await probeFacadeHealth(`http://${ADDR}/health`)) {
+        if (myGeneration !== generation) return;
         adoptedExternal = true;
         backoff.reset();
         console.log(`[mcp] adopted healthy external facade at ${ADDR}`);
@@ -127,7 +139,7 @@ export function startMcpFacade(): Promise<void> {
         );
       }
       adoptedExternal = false;
-      await launch(bin);
+      await launch(bin, myGeneration);
     })(),
   );
   return readyPromise;
@@ -168,8 +180,8 @@ export function ensureMcpFacadeReady(): Promise<void> {
  *
  * It is still not handed to the facade, and that is now a shrug rather than a
  * gap. A facade-wide static secret was only ever one way to answer "who may
- * call this". The per-session scoped tokens answer it better (a tier per
- * session, revoked when the session ends) and the binary's `-untokened deny`
+ * call this". The per-session bearers answer it better (an identity per
+ * lifecycle, revoked when the session ends) and the binary's `-untokened deny`
  * default answers the rest — a caller with no credential gets 401 — so there is
  * nothing left for a static token to close. Setting it would only ADD a shared,
  * long-lived operator credential in a file, which is strictly weaker than what
@@ -215,7 +227,10 @@ function untokenedAccessSetting(): 'operator' | 'view' | 'deny' | null {
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
-function launch(bin: string): Promise<void> {
+function launch(bin: string, launchGeneration: number): Promise<void> {
+  if (launchGeneration !== generation || intentionalStop || adoptedExternal) {
+    return Promise.resolve();
+  }
   killStaleListener(PORT, 'mcp', bin);
 
   const args = ['--addr', ADDR, '--hub', hubBusUrl()];
@@ -239,19 +254,21 @@ function launch(bin: string): Promise<void> {
 
   console.log(`[mcp] spawning ${bin} (addr ${ADDR}, hub ${hubBusUrl()})`);
   backoff.markStarted();
-  child = spawn(bin, args, daemonSpawnOptions(env));
+  const launchedChild = spawn(bin, args, daemonSpawnOptions(env));
+  child = launchedChild;
 
   const healthAbort = new AbortController();
 
-  child.stdout?.on('data', (d) => process.stdout.write(`[mcp] ${d}`));
-  child.stderr?.on('data', (d) => process.stderr.write(`[mcp] ${d}`));
-  child.on('exit', (code, signal) => {
+  launchedChild.stdout?.on('data', (d) => process.stdout.write(`[mcp] ${d}`));
+  launchedChild.stderr?.on('data', (d) => process.stderr.write(`[mcp] ${d}`));
+  launchedChild.on('exit', (code, signal) => {
     console.log(`[mcp] exited code=${code} signal=${signal}`);
-    child = null;
+    if (child === launchedChild) child = null;
     noteRuntimePhase('facade', 'failed');
-    readyPromise = null;
+    if (launchGeneration === generation) readyPromise = null;
     healthAbort.abort();
-    if (!intentionalStop) scheduleRestart(bin);
+    if (!intentionalStop && launchGeneration === generation && !adoptedExternal)
+      scheduleRestart(bin, launchGeneration);
   });
 
   return (async () => {
@@ -265,14 +282,14 @@ function launch(bin: string): Promise<void> {
       // A process that merely bound the port but never became our connected,
       // catalog-ready facade is not adoptable. Tear down the process we own;
       // the exit handler retains the normal restart/backoff policy.
-      await gracefulStop(child, 'mcp');
+      await gracefulStop(launchedChild, 'mcp');
       throw error;
     }
   })();
 }
 
 /** Respawn after an unexpected exit, with exponential backoff. */
-function scheduleRestart(bin: string): void {
+function scheduleRestart(bin: string, launchGeneration: number): void {
   const delay = backoff.nextDelay();
   if (delay === null) {
     console.error(
@@ -281,14 +298,18 @@ function scheduleRestart(bin: string): void {
     return;
   }
   console.warn(`[mcp] unexpected exit — restarting in ${delay}ms`);
-  setTimeout(() => {
-    if (intentionalStop || child) return; // stopped, or already back up
-    readyPromise = observeRuntimeStart('facade', launch(bin));
+  cancelScheduledRestart();
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    if (intentionalStop || child || adoptedExternal || launchGeneration !== generation) return;
+    readyPromise = observeRuntimeStart('facade', launch(bin, launchGeneration));
     readyPromise.catch((err) => console.error('[mcp] restart failed health check:', err));
   }, delay);
 }
 
 export function stopMcpFacade(): Promise<void> {
+  ++generation;
+  cancelScheduledRestart();
   intentionalStop = true;
   backoff.reset();
   adoptedExternal = false;

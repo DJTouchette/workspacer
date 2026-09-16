@@ -1,5 +1,5 @@
 /**
- * Filesystem path confinement — the desktop copy of the shared containment rule.
+ * Canonical path handling — the desktop copy of the shared path algorithm.
  *
  * Extracted out of services/hubCapabilities.ts so the cross-language contract
  * (contracts/path-containment-cases.json) can pin the predicate itself rather
@@ -10,9 +10,9 @@
  * copies must agree;
  * the fixture is what keeps them agreeing.
  *
- * The rule, in one line: canonicalize the caller's path per component, require
- * the result to sit at or inside one of the allowed roots, then refuse it anyway
- * if it is a credential.
+ * Authenticated agent/plugin file tools now accept any canonical absolute path
+ * the OS user can access. The older workspace/secret predicate remains below
+ * only for inert compatibility fixtures and explicit object-containment helpers.
  *
  * Two properties are load-bearing and easy to lose in a refactor:
  *

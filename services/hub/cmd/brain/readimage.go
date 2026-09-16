@@ -28,12 +28,10 @@ package main
 //     shipping a 12 MP photo through a WebSocket to draw a 56px tile is what
 //     the thumbnail exists to avoid.
 //
-// THE ALLOWLIST IS THE SECOND HALF OF THE CONFINEMENT and is why this file
-// cannot be "read the file, base64 it". assertPathAllowed holds the path to the
-// workspace roots, but within a root the extension allowlist is what stops this
-// capability being a general-purpose file reader with a data: URL wrapper — a
-// caller could otherwise base64 any file in an agent cwd through a method whose
-// name says "image". The desktop's MIME_BY_EXT doubles as that allowlist and
+// THE ALLOWLIST PRESERVES THE METHOD'S TYPE and is why this file cannot be
+// "read the file, base64 it". Authenticated paths are ambient, but the extension
+// list stops this image method becoming a general-purpose data-URL reader. The
+// desktop's MIME_BY_EXT doubles as that allowlist and
 // says so; the same list is here, minus the entries no browser renders, because
 // this provider only ever takes the inline path.
 //

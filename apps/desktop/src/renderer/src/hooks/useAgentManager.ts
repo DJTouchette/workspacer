@@ -301,7 +301,7 @@ export function useAgentManager() {
       worktree?: boolean;
       /** Fleet Manager: routes worker-finished/blocked nudges to this session
        *  (isWakeTarget spawn meta) — its role rides the kickoff message.
-       *  Implies toolScope operator. */
+       *  Manager role affects wake routing, not the ambient tool surface. */
       manager?: boolean;
       /** Legacy compatibility field; ignored by Workspacer. */
       fleetFullAccess?: boolean;
@@ -418,8 +418,8 @@ export function useAgentManager() {
         skipPermissions: opts.skipPermissions,
         mcpItemIds: opts.mcpItemIds,
         // Persist the role flags so a respawn re-passes them — without these a
-        // revived manager re-minted its facade token with NO grants
-        // (the respawn-drops-grants regression; see lib/respawnOptions.ts).
+        // revived manager keeps its role metadata and wake routing
+        // (see lib/respawnOptions.ts).
         manager: opts.manager,
         fleetFullAccess: opts.fleetFullAccess,
         sessionId,
@@ -467,7 +467,7 @@ export function useAgentManager() {
       try {
         // Everything the record persisted rides along — including the
         // manager role flags, so a revived Fleet Manager re-mints
-        // its facade token with its grants intact (lib/respawnOptions.ts).
+        // its manager role intact (lib/respawnOptions.ts).
         sessionId = await window.electronAPI.spawnClaude({
           ...buildRespawnSpawnOptions(agent, resumeSessionId),
           ...(message && { message }),

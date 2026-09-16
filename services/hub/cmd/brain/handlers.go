@@ -42,6 +42,13 @@ type registry struct {
 	// when callers request mcpFacade/toolScope/supervisor. Empty means disabled,
 	// and such spawns fail loudly instead of starting without the requested tools.
 	mcpFacadeURL string
+	// mcpFacadeHubURL is the exact bus identity the facade must report before a
+	// spawn may receive its URL. Set from the brain's own --hub value; empty is
+	// retained only for narrow tests/embedders which cannot name the bus.
+	mcpFacadeHubURL string
+	// facadeHealthProbe is injectable only so spawn tests do not need a second
+	// HTTP daemon. Production registries always use probeSessionFacadeHealth.
+	facadeHealthProbe func(string, string) bool
 
 	// remote holds the dispatches OTHER hubs are executing here — the peer half
 	// of remote worker dispatch (remotedispatch.go). Nil in catalog scope, which
@@ -82,7 +89,7 @@ func (r *registry) visibleSnapshots(ctx context.Context) []json.RawMessage {
 const brainProbeMethod = "brain.info"
 
 func newRegistry(cm *claudemonClient) *registry {
-	r := &registry{cm: cm, cfg: newConfigService()}
+	r := &registry{cm: cm, cfg: newConfigService(), facadeHealthProbe: probeSessionFacadeHealth}
 	r.desktopServices.onEvent = r.desktopEvent
 	r.desktopServices.onHostCall = r.replacementHostCall
 	return r
@@ -420,11 +427,9 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		// and under the default catalog delegation these are the copies that
 		// run — the desktop's guarded twin never sees the call.
 		//
-		// BROWSE roots, not workspace: the New Agent dialog lists the library of
-		// the directory the user is ABOUT to spawn in, which by definition is not
-		// yet a live agent cwd, and the caller's `.catch(() => {})` turned the
-		// refusal into a silently empty project-MCP picker. Reading is the widest
-		// this gets — library.save/remove stay on the workspace roots.
+		// The roots inventory is retained for protocol parity; authenticated
+		// library access is ambient. Derived item paths remain contained to the
+		// selected semantic library directories.
 		roots := r.browseRoots(ctx)
 		cwd := p.Cwd
 		if cwd != "" {
@@ -607,21 +612,18 @@ type spawnParams struct {
 	// provider permission mode now flows through without a Workspacer grant.
 	YoloGranted bool `json:"yoloGranted"`
 	// EscalationScrubbed is stamped by the HUB ROUTER and only by it (it deletes
-	// any incoming copy first, same contract as the two stamps above): the
-	// spawn-escalation fields the ROUTER already took away before this call
-	// arrived — today just `profileId`, when the caller's token may not name
-	// that account. spawn() folds it together with its OWN clamps and returns
-	// the union in the result, so a caller that asked for full access and did
-	// not get it learns so from the answer. See internal/bus sanitizeSpawnParams.
+	// any incoming copy first): model/capability fields the routing ceiling
+	// changed before this call arrived. The result echoes that clamp so an
+	// explicit model choice never degrades silently.
 	EscalationScrubbed []string `json:"escalationScrubbed"`
-	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
-	// clamped off for bus callers — see the security rule in spawn().
+	// Claude permission mode (default/acceptEdits/plan/…). This is provider
+	// configuration; Workspacer does not add a separate permission grant.
 	PermissionMode string `json:"permissionMode"`
 	// Tri-state on the wire: nil = the caller omitted the field, which resolves
 	// to the config default (claude.skipPermissionsDefault / a bypass
 	// defaultPermissionMode) — the same default the desktop spawn dialog
 	// pre-selects. An explicit true/false always wins. spawn() folds this into
-	// `skip` after the grant clamp; downstream reads that, never the pointer.
+	// `skip` during spawn resolution; downstream reads that, never the pointer.
 	SkipPermissions *bool  `json:"skipPermissions"`
 	ResumeSessionID string `json:"resumeSessionId"`
 	Cols            int    `json:"cols"`
@@ -642,16 +644,10 @@ type spawnParams struct {
 	// fixed on the desktop: a bus-spawned Fleet Manager came up invisible to the
 	// wake router, so its workers finished into the void.
 	//
-	// NOT A PRIVILEGE BY ITSELF, deliberately. When a facade is configured and
-	// requested, `manager` widens the locally minted session token the same way
-	// the desktop does (profile ids, config-resolved yolo grant, role tag), but
-	// those grants are resolved from this host's config at mint time. A bus
-	// client asserting `manager:true` alone gains a wake subscription for the
-	// agent it was already authorized to spawn and nothing else: it does not
-	// touch skip, PermissionMode, ProfileGranted or YoloGranted, and the bypass
-	// clamp in spawn() below is untouched by it. If this field ever grows a
-	// direct privilege implication, it must move behind the same hub-verified
-	// stamp as YoloGranted rather than staying caller-set.
+	// NOT A PRIVILEGE BY ITSELF, deliberately. A bus client asserting
+	// `manager:true` gains manager wake routing and role metadata for the agent
+	// it was already authorized to spawn; it does not change profiles, provider
+	// permission mode, Workspacer tools, plugins, or filesystem reach.
 	Manager bool `json:"manager"`
 	// RemoteOrigin is per-dispatch provenance stamped by the DISPATCHING hub's
 	// router (internal/bus/remotedispatch.go) on a federated agents.spawn. It is
@@ -663,8 +659,8 @@ type spawnParams struct {
 	// NOT CALLER-SETTABLE. The peer's own sanitizeSpawnParams deletes this key
 	// from every non-federated caller, so a local client here cannot manufacture
 	// a dispatch whose callbacks would be addressed at another machine's
-	// manager. It carries no grant of any kind — the link token remains the
-	// ceiling on everything this spawn may do.
+	// manager. It carries no additional authority; the authenticated link still
+	// controls whether the call reaches this host.
 	RemoteOrigin *remoteOriginParam `json:"remoteOrigin"`
 	// ── the routing wire ──────────────────────────────────────────────────
 	//
@@ -713,7 +709,7 @@ type spawnParams struct {
 	// text to the session it just created.
 	Message string `json:"message"`
 	// skip is the RESOLVED skipPermissions — caller's explicit value or the
-	// config default, then clamped by spawn()'s grant gate. Unexported so it can
+	// config default. Unexported so it can
 	// never arrive on the wire; the spawn legs read this, not SkipPermissions.
 	skip bool
 	// scrubbed accumulates what spawn() itself clamped, seeded from the router's
@@ -731,9 +727,8 @@ func (p spawnParams) routed() bool {
 }
 
 // escalationScrubbed is the union of what the hub router took away before this
-// call arrived and what spawn() clamped here — the full answer to "did the
-// escalation I asked for survive?", which is what makes the downgrade visible
-// to the caller instead of only to this process's log.
+// call arrived and what spawn() adjusted here — the full answer to "did the
+// requested model/capability survive?", which makes a routing downgrade visible.
 func (p spawnParams) escalationScrubbed() []string {
 	if len(p.EscalationScrubbed) == 0 {
 		return p.scrubbed
@@ -900,11 +895,9 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 	}
 
 	// SECURITY: the clamp above only sanitizes the request fields. A caller can
-	// still point at a local profile whose extraArgs pin a bypass flag
-	// (--dangerously-skip-permissions / --permission-mode bypassPermissions),
-	// which buildArgv would append verbatim — defeating the clamp. Scrub the
-	// profile's bypass flags on this remote path too (configDir survives only a
-	// hub-verified profile grant — see remoteSpawnProfile).
+	// A local profile may carry provider permission arguments. Profile selection
+	// and permission mode now flow through as provider configuration rather than
+	// a second Workspacer grant system.
 	// Resume reopens an existing transcript; a fresh spawn pins a new id so our
 	// id, claude's id, and the transcript filename all agree.
 	resume := p.ResumeSessionID != ""
@@ -1388,8 +1381,7 @@ func (r *registry) claudeSpawnModel(requested, identity string, window *uint64) 
 // skipPermissions is asking for: the same config default the desktop spawn
 // dialog pre-selects — claude.skipPermissionsDefault, or a
 // claude.defaultPermissionMode that means bypass. Callers still pass the result
-// through the grant clamp in spawn(); this only answers "what is the default",
-// never "may this caller have it".
+// through spawn resolution; this answers the configured provider default.
 func (r *registry) skipPermissionsConfigDefault() bool {
 	claude, _ := r.cfg.get()["claude"].(map[string]any)
 	if skip, _ := claude["skipPermissionsDefault"].(bool); skip {
@@ -2094,17 +2086,13 @@ func (r *registry) gitLogCall(ctx context.Context, raw json.RawMessage) (json.Ra
 // ordinary monorepo case), and the root is also the right BOUNDARY for a tracked
 // pathspec — the review pane diffs the paths `git.status` printed, which are
 // root-relative and routinely name files in a sibling subtree of the agent cwd,
-// while confining to the repo concedes nothing a path-less `git.diff` (the whole
-// tree's diff) does not already hand over.
+// while object containment to the repo matches the scope of path-less git.diff.
 //
 // …but that last argument is only true for a TRACKED pathspec. `--no-index`
 // renders ANY readable file as an all-added diff — gitignored, untracked, and
 // tracked-but-unmodified alike, none of which appear in a path-less diff. That
-// turns the DERIVED work-tree root — a directory nothing ever checked against
-// the allow-list — into an arbitrary reader: an agent cwd of <repo>/frontend
-// reading <repo>/backend/.env, or a $HOME that happens to be a dotfiles repo
-// reading ~/.ssh/id_rsa, both of which fs.read refuses for the same caller. So
-// this one leg is held to the ordinary workspace roots as well.
+// can otherwise turn a pathspec into a host-file reader. The operand therefore
+// remains structurally contained to git's derived work-tree root.
 func (r *registry) gitDiffCall(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Cwd       string `json:"cwd"`
