@@ -636,7 +636,9 @@ test('keyboard Tab stays in welcome and dispatch, including cancel and permissio
   await page.keyboard.press('Tab');
   await openFirstTask(page);
   await page.keyboard.press('Shift+Tab');
-  await expect(dialog(page).getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await expect(
+    dialog(page).getByRole('button', { name: 'Close new agent', exact: true }),
+  ).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('What should this agent do?')).toBeFocused();
   await page.keyboard.type('Keyboard-only task');
@@ -645,13 +647,15 @@ test('keyboard Tab stays in welcome and dispatch, including cancel and permissio
     await page.keyboard.press('Tab');
     foundPermissions = await page.evaluate(
       () =>
-        document.activeElement?.tagName === 'SELECT' &&
-        !!document.activeElement?.textContent?.includes('Full access'),
+        document.activeElement?.tagName === 'BUTTON' &&
+        document.activeElement?.textContent === 'Ask to approve',
     );
     if (foundPermissions) break;
   }
   expect(foundPermissions).toBe(true);
-  expect(await page.evaluate(() => (document.activeElement as HTMLSelectElement).value)).toBe('');
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-pressed'))).toBe(
+    'true',
+  );
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Welcome' })).toBeVisible();
   await assertNoAgentWrites(page);
