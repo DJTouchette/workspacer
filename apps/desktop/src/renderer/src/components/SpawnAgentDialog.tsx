@@ -3,12 +3,10 @@ import { useAgentRuntimeStatus } from '../hooks/useAgentRuntimeStatus';
 import type { WorktreeInfo } from '../types/electron';
 import { containDialogTab } from '../lib/dialogKeyboard';
 import { spawnFailureMessage } from '../lib/spawnFailure';
-import { ProjectMark } from './ProjectMark';
 import { resolveProject } from '../lib/projectIdentity';
-import { projectKey } from '../lib/projectKey';
 import type { ProjectIdentity } from '../hooks/useConfig';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, X, GitBranch, RefreshCw, CornerDownLeft, AlertTriangle } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
@@ -165,8 +163,7 @@ interface ProviderModel {
 
 /**
  * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
- * workspace page — a blank agent about to be born — not a floating modal:
- * an F-line project rule and word controls, with a task field for dispatches.
+ * workspace dialog with a provider rail and a compact launch form.
  * Less common launch options remain available through Advanced.
  */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
@@ -743,7 +740,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // model, permissions, transport and context already shown in the word strip.
   const deviations: { key: string; label: string }[] = [];
   if (targetHub) deviations.push({ key: 'machine', label: `on ${targetHub}` });
-  if (name.trim()) deviations.push({ key: 'name', label: name.trim() });
   const selectedProfile = eligibleProfiles.find((p) => p.id === profileId);
   if (selectedProfile && !selectedProfile.isDefault)
     deviations.push({ key: 'profile', label: selectedProfile.name });
@@ -754,8 +750,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         eligibleLaunchPlugins.find((p) => p.id === launchIntegrationId)?.name ||
         launchIntegrationId,
     });
-  if (effort) deviations.push({ key: 'effort', label: `${effort} effort` });
-  if (useWorktree && worktreeEligible) deviations.push({ key: 'worktree', label: 'worktree' });
   if (resumeSessionId) deviations.push({ key: 'resume', label: 'resume' });
   if (mcpSel.length) deviations.push({ key: 'mcp', label: `${mcpSel.length} MCP` });
   if (customBinPath.trim()) deviations.push({ key: 'binary', label: 'custom binary' });
@@ -1037,21 +1031,24 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     key: 'permissions',
     label: 'permissions',
     control: (
-      <select
-        aria-label="Permissions"
-        value={permissionMode}
-        onChange={(e) => setPermissionMode(e.target.value)}
-        style={{
-          ...rowSelect,
-          color: bypassSelected ? 'var(--wks-error)' : rowSelect.color,
-        }}
-      >
-        {capsFor(provider).permissionModes.map((m, i) => (
-          <option key={m.id} value={i === 0 ? '' : m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
+      <div className="spawn-segments spawn-permissions" role="group" aria-label="Permissions">
+        {capsFor(provider).permissionModes.map((m, i) => {
+          const value = i === 0 ? '' : m.id;
+          const fullAccess = m.id === 'bypassPermissions' || m.id === 'yolo';
+          return (
+            <button
+              key={m.id}
+              type="button"
+              aria-pressed={permissionMode === value}
+              className={fullAccess ? 'spawn-full-access' : undefined}
+              onClick={() => setPermissionMode(value)}
+            >
+              {fullAccess && <AlertTriangle size={12} aria-hidden />}
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
     ),
   });
 
@@ -1200,8 +1197,32 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     ),
   });
 
-  // The F-line strip exposes the common decisions; everything else stays behind More.
-  const PRIMARY_KEYS = ['model', 'permissions', 'transport', 'context'];
+  // Keep common launch decisions visible; auxiliary options stay in Advanced.
+  const PRIMARY_KEYS = [
+    'worktree',
+    'name',
+    'model',
+    'effort',
+    'permissions',
+    'transport',
+    'context',
+  ];
+  rows.push({
+    key: 'name',
+    label: 'name',
+    control: (
+      <input
+        id="spawn-name"
+        aria-label="name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={keySubmit}
+        placeholder={placeholderName}
+        spellCheck={false}
+        style={inlineInput}
+      />
+    ),
+  });
   const primaryRows = PRIMARY_KEYS.flatMap((key) => rows.filter((r) => r.key === key));
   const advRows = rows.filter((r) => !PRIMARY_KEYS.includes(r.key));
 
@@ -1225,80 +1246,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         animation: 'wks-fade-in 0.25s ease-out',
       }}
     >
-      <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
+      <div className="spawn-viewport">
         <fieldset disabled={busy} className="spawn-page">
-          <div className="spawn-form">
-            {hasTaskHandoff && (
-              <div className="spawn-task">
-                <label htmlFor="first-task" className="spawn-sr-only">
-                  What should this agent do?
-                </label>
-                <textarea
-                  id="first-task"
-                  aria-required="true"
-                  aria-describedby="spawn-task-help"
-                  autoFocus
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Prose keeps Enter; only an explicit chord dispatches it.
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
-                  }}
-                  rows={2}
-                  placeholder="What should this agent do first?"
-                />
-                <div id="spawn-task-help" className="spawn-hint">
-                  A task is required. Sent once when you dispatch. Your provider’s permission
-                  choices apply.
-                </div>
-              </div>
-            )}
-
-            <div className="spawn-project-line">
-              {visibleProviders.length > 1 ? (
-                <button
-                  className="spawn-provider-mark"
-                  aria-label="Change provider"
-                  title={`${providerLabel} — choose a provider below`}
-                  onClick={() =>
-                    providerChoicesRef.current
-                      ?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
-                      ?.focus()
-                  }
-                >
-                  <AgentLogo provider={provider} size={22} />
-                </button>
-              ) : (
-                <span className="spawn-provider-mark" title={providerLabel}>
-                  <AgentLogo provider={provider} size={22} />
-                </span>
-              )}
-              <input
-                aria-label="Working directory"
-                aria-describedby="spawn-folder-status"
-                aria-invalid={repoInfo?.directory === 'invalid' || undefined}
-                autoFocus={!hasTaskHandoff}
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                onKeyDown={keySubmit}
-                placeholder="/path/to/project"
-                spellCheck={false}
-              />
-              <button
-                disabled={!!targetHub}
-                onClick={browse}
-                className="spawn-word"
-                title={
-                  targetHub
-                    ? 'Enter a path on the selected remote machine'
-                    : 'Browse for a project directory'
-                }
-              >
-                Browse…
-              </button>
-            </div>
-
-            {visibleProviders.length > 1 && (
+          <aside className="spawn-sidebar">
+            <div className="spawn-rail-label">Harness</div>{' '}
+            {
               <div
                 ref={providerChoicesRef}
                 role="group"
@@ -1310,7 +1262,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   return (
                     <button
                       key={p.value}
-                      className="spawn-word"
+                      className="spawn-provider"
                       aria-pressed={provider === p.value}
                       onClick={() => setProvider(p.value)}
                       title={
@@ -1321,168 +1273,42 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                             : 'Availability unknown'
                       }
                     >
-                      {p.label}
+                      <AgentLogo provider={p.value} size={22} />
+                      <span>{p.label}</span>
                       {p.value === 'pi' ? (
                         <span className="spawn-badge spawn-danger">UNSUPPORTED</span>
                       ) : p.missing ? (
                         <span className="spawn-badge spawn-danger">NOT INSTALLED</span>
                       ) : p.beta ? (
                         <span className="spawn-badge">BETA</span>
+                      ) : availability === 'installed' ? (
+                        <span
+                          className="spawn-dot spawn-dot-ready"
+                          aria-hidden="true"
+                          title="Installed"
+                        />
                       ) : null}
                     </button>
                   );
                 })}
               </div>
-            )}
-
-            <div className="spawn-words spawn-options" role="group" aria-label="Launch options">
-              {primaryRows.map((row) => (
-                <div
-                  key={row.key}
-                  className="spawn-option"
-                  role="group"
-                  aria-label={row.label}
-                  title={row.title}
-                >
-                  {row.control}
-                </div>
-              ))}
-              <button
-                type="button"
-                className="spawn-word spawn-more"
-                aria-label="Advanced options"
-                aria-expanded={advancedOpen}
-                aria-controls="spawn-advanced"
-                onClick={toggleAdvanced}
-              >
-                more…{' '}
-                <ChevronDown
-                  size={12}
-                  aria-hidden
-                  style={{ transform: advancedOpen ? 'rotate(180deg)' : undefined }}
-                />
-              </button>
-            </div>
-
-            {deviations.length > 0 && (
-              <div className="spawn-deviations" aria-label="Advanced overrides">
-                {deviations.map((d) => (
-                  <span key={d.key}>{d.label}</span>
-                ))}
-              </div>
-            )}
-
-            {advancedOpen && (
-              <div id="spawn-advanced" className="spawn-advanced">
-                <div className="spawn-advanced-row">
-                  <label htmlFor="spawn-name" style={quietLabel}>
-                    name
-                  </label>
-                  <input
-                    id="spawn-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onKeyDown={keySubmit}
-                    placeholder={`name it (optional) · ${placeholderName}`}
-                    spellCheck={false}
-                    style={{ ...inlineInput, width: '100%' }}
-                  />
-                </div>
-                {eligibleProfiles.length > 0 && (
-                  <div className="spawn-advanced-row">
-                    <span id="spawn-profile-label" style={quietLabel}>
-                      profile
-                    </span>
-                    <div className="spawn-words" role="group" aria-labelledby="spawn-profile-label">
-                      {eligibleProfiles.map((p) => (
-                        <button
-                          key={p.id}
-                          className="spawn-word"
-                          aria-pressed={profileId === p.id}
-                          onClick={() => setProfileId(p.id)}
-                          title={profileChipTitle(p, provider)}
-                        >
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {eligibleLaunchPlugins.length > 0 && (
-                  <div className="spawn-advanced-row">
-                    <label htmlFor="launch-integration" style={quietLabel}>
-                      Launch integration
-                    </label>
-                    <div>
-                      <select
-                        id="launch-integration"
-                        value={launchIntegrationId}
-                        onChange={(e) => setLaunchIntegrationId(e.target.value)}
-                        style={rowSelect}
-                      >
-                        <option value="">None</option>
-                        {eligibleLaunchPlugins.map((pl) => (
-                          <option key={pl.id} value={pl.id}>
-                            {pl.name || pl.id}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="spawn-hint">
-                        Applies to this session and its resumes. The selected plugin must be ready
-                        before launch.
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {advRows
-                  .filter((row) => row.key !== 'binary' || !missingProvider)
-                  .map((row) => (
-                    <div key={row.key} className="spawn-advanced-row" title={row.title}>
-                      <span style={quietLabel}>{row.label}</span>
-                      <div style={{ minWidth: 0 }}>{row.control}</div>
-                    </div>
-                  ))}
-              </div>
-            )}
-
-            {bypassSelected && (
-              <div className="spawn-hint spawn-danger">
-                {isClaude
-                  ? 'Dangerous — bypasses all approval prompts (--dangerously-skip-permissions).'
-                  : 'Dangerous — auto-approves every command and file change, no prompts.'}
-              </div>
-            )}
-
+            }{' '}
             <div id="spawn-availability" role="status" className="spawn-status">
               <div className="spawn-status-line">
                 <span
                   aria-hidden
-                  className={`spawn-dot ${missingProvider || piUnsupported || runtimeStatus.blocked || repoInfo?.directory === 'invalid' ? 'spawn-dot-error' : ''}`}
+                  className={`spawn-dot ${missingProvider || piUnsupported || runtimeStatus.blocked || repoInfo?.directory === 'invalid' ? 'spawn-dot-error' : runtimeStatus.detail.includes('runtime is ready') ? 'spawn-dot-ready' : ''}`}
                 />
-                {cwd.trim() && !targetHub && (
-                  <span className="spawn-project-identity">
-                    <ProjectMark cwd={cwd.trim()} projects={projects} size={12} />
-                    {resolveProject(cwd.trim(), projects)?.label}
-                    {!projects?.[projectKey(cwd.trim())] && <span> · unregistered folder</span>}
-                  </span>
-                )}
-                {repoInfo?.branch && <span>{repoInfo.branch}</span>}
-                {repoInfo?.directory === 'invalid' && (
-                  <span className="spawn-danger">Directory unavailable</span>
-                )}
-                {targetHub && <span>Remote folder unverified</span>}
-                {!targetHub && !repoInfo && <span>Folder unverified</span>}
-                <span>{runtimeStatus.detail.split('. ')[0]}</span>
                 <span>
-                  {targetHub
-                    ? 'Remote provider availability unknown'
+                  {repoInfo?.directory === 'invalid'
+                    ? 'Directory unavailable'
                     : piUnsupported
-                      ? 'Pi is unsupported because its CLI has no MCP bridge for the required Workspacer tools.'
+                      ? 'Provider unsupported'
                       : missingProvider
-                        ? `${providerLabel} is not installed.`
-                        : providerAvailability(detection, provider) === 'installed'
-                          ? `${providerLabel} CLI found.`
-                          : `${providerLabel} availability is unknown.`}
+                        ? `${providerLabel} not installed`
+                        : runtimeStatus.detail.includes('runtime is ready')
+                          ? 'Runtime ready'
+                          : runtimeStatus.detail.split('. ')[0]}
                 </span>
               </div>
               {!['unchecked', 'unsupported', 'responding'].includes(readiness.status.state) && (
@@ -1506,7 +1332,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   {targetHub
                     ? 'Provider availability on the selected machine is unknown.'
                     : piUnsupported
-                      ? 'Pi cannot be launched as a Workspacer agent. Choose Claude Code, Codex, GitHub Copilot, or OpenCode.'
+                      ? 'Pi is unsupported because its CLI has no MCP bridge for the required Workspacer tools. Choose Claude Code, Codex, GitHub Copilot, or OpenCode.'
                       : missingProvider
                         ? `${providerLabel} is not installed. Install its CLI, set a binary override, or choose an installed provider.`
                         : providerAvailability(detection, provider) === 'installed'
@@ -1522,27 +1348,257 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 onClick={() => {
                   refreshDetection();
                   void readiness.refresh();
+                  void runtimeStatus.refresh();
+                  setFolderCheck((n) => n + 1);
                 }}
               >
-                Check again
+                <RefreshCw size={12} aria-hidden /> Check again
               </button>
             </div>
-
-            {missingProvider && (
-              <div className="spawn-missing">
-                <div className="spawn-hint spawn-danger">
-                  Not found on PATH — set a custom path or install the CLI
+          </aside>
+          <div className="spawn-form">
+            <header className="spawn-heading">
+              <div>
+                <h1>
+                  {hasTaskHandoff
+                    ? `Dispatch ${providerLabel} agent`
+                    : `New ${providerLabel} agent`}
+                </h1>
+                <div className="spawn-binary-path">
+                  <span>{currentDetection?.resolvedPath || `${providerLabel} CLI`}</span>
+                  <button
+                    className="spawn-word"
+                    onClick={() => {
+                      if (!advancedOpen) toggleAdvanced();
+                      requestAnimationFrame(() =>
+                        document
+                          .querySelector<HTMLInputElement>(
+                            '[aria-label="Provider binary override"]',
+                          )
+                          ?.focus(),
+                      );
+                    }}
+                  >
+                    Change binary
+                  </button>
                 </div>
-                {rows.find((row) => row.key === 'binary')?.control}
               </div>
-            )}
-            {error && (
-              <div role="alert" ref={errorRef} tabIndex={-1} className="spawn-error">
-                {error}
-              </div>
-            )}
+              <button className="spawn-close" aria-label="Close new agent" onClick={onCancel}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="spawn-fields">
+              {hasTaskHandoff && (
+                <div className="spawn-task">
+                  <label htmlFor="first-task" className="spawn-sr-only">
+                    What should this agent do?
+                  </label>
+                  <textarea
+                    id="first-task"
+                    aria-required="true"
+                    aria-describedby="spawn-task-help"
+                    autoFocus
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Prose keeps Enter; only an explicit chord dispatches it.
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+                    }}
+                    rows={2}
+                    placeholder="What should this agent do first?"
+                  />
+                  <div id="spawn-task-help" className="spawn-hint">
+                    A task is required. Sent once when you dispatch. Your provider’s permission
+                    choices apply.
+                  </div>
+                </div>
+              )}
 
-            <div className="spawn-actions">
+              <label className="spawn-field-label" htmlFor="spawn-folder">
+                Folder
+              </label>
+              <div className="spawn-project-line">
+                <input
+                  id="spawn-folder"
+                  aria-label="Working directory"
+                  aria-describedby="spawn-folder-status"
+                  aria-invalid={repoInfo?.directory === 'invalid' || undefined}
+                  autoFocus={!hasTaskHandoff}
+                  value={cwd}
+                  onChange={(e) => setCwd(e.target.value)}
+                  onKeyDown={keySubmit}
+                  placeholder="/path/to/project"
+                  spellCheck={false}
+                />
+                {repoInfo?.branch && (
+                  <span className="spawn-branch">
+                    <GitBranch size={12} aria-hidden />
+                    {repoInfo.branch}
+                  </span>
+                )}
+                <button
+                  disabled={!!targetHub}
+                  onClick={browse}
+                  className="spawn-word"
+                  title={
+                    targetHub
+                      ? 'Enter a path on the selected remote machine'
+                      : 'Browse for a project directory'
+                  }
+                >
+                  Browse…
+                </button>
+              </div>
+
+              <div className="spawn-words spawn-options" role="group" aria-label="Launch options">
+                {primaryRows.map((row) => (
+                  <div
+                    key={row.key}
+                    className={`spawn-option spawn-option-${row.key}`}
+                    role="group"
+                    aria-label={`${row.label} option`}
+                    title={row.title}
+                  >
+                    <span className="spawn-field-label">
+                      {row.key === 'worktree'
+                        ? 'Checkout'
+                        : row.key === 'transport'
+                          ? 'Mode'
+                          : row.label}
+                    </span>
+                    {row.control}
+                    {row.key === 'permissions' && bypassSelected && (
+                      <div className="spawn-hint spawn-danger">
+                        Auto-approves every command and file change. No prompts.
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="spawn-word spawn-more"
+                  aria-label="Advanced options"
+                  aria-expanded={advancedOpen}
+                  aria-controls="spawn-advanced"
+                  onClick={toggleAdvanced}
+                >
+                  Advanced{' '}
+                  <ChevronDown
+                    size={12}
+                    aria-hidden
+                    style={{ transform: advancedOpen ? 'rotate(180deg)' : undefined }}
+                  />
+                </button>
+              </div>
+
+              {deviations.length > 0 && (
+                <div className="spawn-deviations" aria-label="Advanced overrides">
+                  {deviations.map((d) => (
+                    <span key={d.key}>{d.label}</span>
+                  ))}
+                </div>
+              )}
+
+              {advancedOpen && (
+                <div id="spawn-advanced" className="spawn-advanced">
+                  {eligibleProfiles.length > 0 && (
+                    <div className="spawn-advanced-row">
+                      <span id="spawn-profile-label" style={quietLabel}>
+                        profile
+                      </span>
+                      <div
+                        className="spawn-words"
+                        role="group"
+                        aria-labelledby="spawn-profile-label"
+                      >
+                        {eligibleProfiles.map((p) => (
+                          <button
+                            key={p.id}
+                            className="spawn-word"
+                            aria-pressed={profileId === p.id}
+                            onClick={() => setProfileId(p.id)}
+                            title={profileChipTitle(p, provider)}
+                          >
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {eligibleLaunchPlugins.length > 0 && (
+                    <div className="spawn-advanced-row">
+                      <label htmlFor="launch-integration" style={quietLabel}>
+                        Launch integration
+                      </label>
+                      <div>
+                        <select
+                          id="launch-integration"
+                          value={launchIntegrationId}
+                          onChange={(e) => setLaunchIntegrationId(e.target.value)}
+                          style={rowSelect}
+                        >
+                          <option value="">None</option>
+                          {eligibleLaunchPlugins.map((pl) => (
+                            <option key={pl.id} value={pl.id}>
+                              {pl.name || pl.id}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="spawn-hint">
+                          Applies to this session and its resumes. The selected plugin must be ready
+                          before launch.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {advRows
+                    .filter((row) => row.key !== 'binary' || !missingProvider)
+                    .map((row) => (
+                      <div key={row.key} className="spawn-advanced-row" title={row.title}>
+                        <span style={quietLabel}>{row.label}</span>
+                        <div style={{ minWidth: 0 }}>{row.control}</div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {missingProvider && (
+                <div className="spawn-missing">
+                  <div className="spawn-hint spawn-danger">
+                    Not found on PATH — set a custom path or install the CLI
+                  </div>
+                  {rows.find((row) => row.key === 'binary')?.control}
+                </div>
+              )}
+              {error && (
+                <div role="alert" ref={errorRef} tabIndex={-1} className="spawn-error">
+                  {error}
+                </div>
+              )}
+            </div>
+            <footer className="spawn-actions">
+              <div className="spawn-launch-summary">
+                Starts <strong>{providerLabel}</strong> in <strong>{placeholderName}</strong>
+                {repoInfo?.branch && (
+                  <>
+                    {' '}
+                    on <strong>{repoInfo.branch}</strong>
+                  </>
+                )}
+                ,{' '}
+                {useWorktree && worktreeEligible && !targetHub
+                  ? 'in an isolated worktree'
+                  : 'editing the checkout directly'}
+                {bypassSelected && (
+                  <>
+                    , with <span className="spawn-danger">full access</span>
+                  </>
+                )}
+                .
+              </div>
+              <button onClick={onCancel} disabled={busy} className="spawn-cancel">
+                Cancel <kbd aria-hidden="true">esc</kbd>
+              </button>
               <button
                 onClick={submit}
                 disabled={!canSubmit}
@@ -1558,23 +1614,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     : hasTaskHandoff
                       ? 'Dispatch agent'
                       : 'Start agent'}
+                <CornerDownLeft size={14} aria-hidden />
               </button>
-              <button onClick={onCancel} disabled={busy} className="spawn-word">
-                Cancel
-              </button>
-              <div className="spawn-shortcuts spawn-hint">
-                {hasTaskHandoff ? (
-                  <>
-                    <kbd>⌘/ctrl+enter</kbd> dispatch
-                  </>
-                ) : (
-                  <>
-                    <kbd>↵</kbd> start
-                  </>
-                )}{' '}
-                · <kbd>esc</kbd> cancel
-              </div>
-            </div>
+            </footer>
           </div>
         </fieldset>
       </div>
@@ -1605,12 +1647,14 @@ const quietLabel: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-/** Flat, borderless select inside an advanced row — the value IS the control. */
+/** Shared framed select for primary and advanced fields. */
 const rowSelect: React.CSSProperties = {
   background: 'transparent',
-  border: 'none',
+  border: '1px solid var(--wks-border-input)',
   borderRadius: 'var(--wks-radius-sm)',
-  padding: '3px 2px',
+  padding: '8px 10px',
+  width: '100%',
+  minHeight: 34,
   fontSize: '0.72rem',
   fontWeight: 400,
   fontFamily: 'inherit',
@@ -1620,13 +1664,15 @@ const rowSelect: React.CSSProperties = {
   textOverflow: 'ellipsis',
 };
 
-/** Worktree isolation toggle in Advanced. */
+/** Checkout isolation segmented control. */
 const segGroup: React.CSSProperties = {
   display: 'inline-flex',
   gap: 2,
   padding: 2,
   border: '1px solid var(--wks-border-input)',
-  borderRadius: 'var(--wks-radius-pill)',
+  borderRadius: 'var(--wks-radius-sm)',
+  width: '100%',
+  boxSizing: 'border-box',
 };
 
 /** Worktree isolation choice. */
@@ -1635,24 +1681,27 @@ const segBtn = (active: boolean): React.CSSProperties => ({
   fontWeight: 600,
   fontFamily: 'inherit',
   cursor: 'pointer',
-  padding: '3px 10px',
-  borderRadius: 'var(--wks-radius-pill)',
+  padding: '6px 10px',
+  flex: 1,
+  borderRadius: 'var(--wks-radius-sm)',
   border: 'none',
   background: active ? 'var(--wks-accent-bg)' : 'transparent',
   color: active ? 'var(--wks-accent-text)' : 'var(--wks-text-muted)',
   transition: 'background-color 0.15s, color 0.15s',
 });
 
-/** Low-chrome mono text input — underline only. */
+/** Shared mono text field. */
 const inlineInput: React.CSSProperties = {
   background: 'transparent',
-  border: 'none',
   outline: 'none',
-  borderBottom: '1px solid var(--wks-border-input)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 'var(--wks-radius-sm)',
+  width: '100%',
+  minHeight: 34,
   fontFamily: 'var(--wks-font-mono)',
   fontSize: '0.72rem',
   color: 'var(--wks-text-primary)',
-  padding: '2px 2px 4px',
+  padding: '8px 10px',
   boxSizing: 'border-box',
 };
 

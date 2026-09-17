@@ -81,6 +81,7 @@ import {
   windowExhausted,
 } from '../lib/profileFailover';
 import type { SlashItem } from '../lib/slashItems';
+import { collaborationSlashItems } from '../lib/collaborationSlashItems';
 import {
   collectEditedFiles,
   ensureTurnSnapshot,
@@ -489,6 +490,19 @@ export const useClaudePaneModel = ({
   // the run entry wins — invoking the real command beats pasting its text.
   const { items: libraryItems } = useLibrary(effectiveCwd);
   const sessionCommands = session?.statusLine?.capabilities?.inventory?.slashCommands;
+  // These pointer-only skills are absent from native discovery and the Library.
+  // Wait for attached session metadata so a manager never briefly sees them.
+  const collaborationSkills = useMemo(
+    () =>
+      session &&
+      !manager &&
+      !session.isFleetManager &&
+      !session.isWakeTarget &&
+      (session.provider ?? provider ?? 'claude') !== 'pi'
+        ? collaborationSlashItems
+        : [],
+    [session, manager, provider],
+  );
   // Key by scope:kind:id, not the bare LibraryItem.id — that id is only a
   // filename slug, so a skill and a command (or a global and a claude item) can
   // share one, which would collide React keys and the pick lookup. The composite
@@ -534,10 +548,20 @@ export const useClaudePaneModel = ({
       hint: it.description,
       kind: it.kind,
     }));
-    return [...run, ...insert];
-  }, [slashLookup, sessionCommands, commandHints]);
+    const existing = new Set([...run, ...insert].map((item) => item.label.toLowerCase()));
+    return [
+      ...run,
+      ...insert,
+      ...collaborationSkills.filter((item) => !existing.has(item.label.toLowerCase())),
+    ];
+  }, [slashLookup, sessionCommands, commandHints, collaborationSkills]);
   const handleSlashPick = useCallback(
     (key: string) => {
+      const skill = collaborationSkills.find((item) => item.id === key);
+      if (skill) {
+        setInputValue(`${skill.content}\n\n`);
+        return;
+      }
       // A session command: leave "/name " in the composer — the user appends
       // args if any and Enter sends it verbatim for the CLI to expand.
       if (key.startsWith('run:')) {
@@ -556,7 +580,7 @@ export const useClaudePaneModel = ({
       // fresh agent or copy to the clipboard.
       runLibraryItem(item, 'insert');
     },
-    [slashLookup],
+    [slashLookup, collaborationSkills],
   );
 
   // Which surfaces this pane has. The session snapshot is the authority on the

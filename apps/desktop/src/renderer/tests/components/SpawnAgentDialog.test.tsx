@@ -11,16 +11,10 @@ function renderDialog(onSpawn = vi.fn()) {
   return { onSpawn };
 }
 
-function permissionSelect(): HTMLSelectElement {
-  const found = screen
-    .getAllByRole('combobox')
-    .find((el) =>
-      Array.from((el as HTMLSelectElement).options).some(
-        (opt) => opt.textContent === 'Full access',
-      ),
-    );
-  if (!found) throw new Error('permission select not found');
-  return found as HTMLSelectElement;
+function selectedPermission(): HTMLElement {
+  return screen
+    .getByRole('group', { name: 'Permissions', exact: true })
+    .querySelector('[aria-pressed="true"]') as HTMLElement;
 }
 
 function effortSelect(): HTMLSelectElement {
@@ -139,7 +133,8 @@ describe('SpawnAgentDialog permissions', () => {
     expect(advancedButton()).toHaveAttribute('aria-expanded', 'false');
     // Model, permissions, transport and context are visible before More.
     // Only model and permissions are native selects.
-    expect(screen.queryAllByRole('combobox')).toHaveLength(2);
+    expect(screen.getByLabelText('Model', { exact: true })).toBeVisible();
+    expect(screen.getByLabelText('Effort', { exact: true })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
 
@@ -157,7 +152,7 @@ describe('SpawnAgentDialog permissions', () => {
 
     fireEvent.click(advancedButton());
 
-    expect(permissionSelect().value).toBe('');
+    expect(selectedPermission()).toHaveTextContent('Ask to approve');
   });
 
   it('keeps an explicit saved full-access opt-in sticky', async () => {
@@ -170,11 +165,11 @@ describe('SpawnAgentDialog permissions', () => {
     });
     const { onSpawn } = renderDialog();
 
-    expect(await screen.findByText(/bypasses all approval prompts/i)).toBeInTheDocument();
-    expect(permissionSelect()).toHaveValue('bypassPermissions');
+    expect(await screen.findByText(/auto-approves every command/i)).toBeInTheDocument();
+    expect(selectedPermission()).toHaveTextContent('Full access');
 
     fireEvent.click(advancedButton());
-    await waitFor(() => expect(permissionSelect().value).toBe('bypassPermissions'));
+    await waitFor(() => expect(selectedPermission()).toHaveTextContent('Full access'));
 
     fireEvent.click(screen.getByRole('button', { name: /start agent/i }));
 
@@ -193,7 +188,7 @@ describe('SpawnAgentDialog permissions', () => {
     renderDialog();
 
     expect(advancedButton()).toHaveAttribute('aria-expanded', 'true');
-    expect(permissionSelect().value).toBe('');
+    expect(selectedPermission()).toHaveTextContent('Ask to approve');
   });
 
   it('keeps effort selections harness-specific and sends the Claude selection', async () => {
@@ -252,7 +247,7 @@ describe('SpawnAgentDialog Context popover', () => {
   });
 });
 
-describe('F-line form', () => {
+describe('Provider rail form', () => {
   it.each([false, true])(
     'starts with the form and exposes common controls (task: %s)',
     (requireTask) => {
@@ -264,7 +259,7 @@ describe('F-line form', () => {
           onCancel={vi.fn()}
         />,
       );
-      expect(container.querySelector('header')).toBeNull();
+      expect(screen.getByRole('heading', { name: /Claude Code agent/ })).toBeVisible();
       expect(screen.queryByText('New Agent', { exact: true })).not.toBeInTheDocument();
       expect(
         screen.queryByText('Choose an agent and directory, then start chatting.'),
@@ -273,8 +268,10 @@ describe('F-line form', () => {
         screen.queryByText('Describe a task, choose its directory, and dispatch.'),
       ).not.toBeInTheDocument();
       expect(container.querySelector('[style*="radial-gradient"]')).toBeNull();
-      expect(container.querySelector('.spawn-page')?.firstElementChild).toHaveClass('spawn-form');
-      expect(container.querySelector('.spawn-project-line svg')).toHaveAttribute('width', '22');
+      expect(container.querySelector('.spawn-page')?.firstElementChild).toHaveClass(
+        'spawn-sidebar',
+      );
+      expect(container.querySelector('.spawn-provider svg')).toHaveAttribute('width', '22');
       expect(screen.getByLabelText('Model', { exact: true })).toBeVisible();
       expect(screen.getByLabelText('Permissions', { exact: true })).toBeVisible();
       expect(screen.getByRole('button', { name: 'terminal', exact: true })).toHaveAttribute(
@@ -282,7 +279,7 @@ describe('F-line form', () => {
         'true',
       );
       expect(screen.getByLabelText('Context settings')).toBeVisible();
-      expect(screen.queryByLabelText('name', { exact: true })).not.toBeInTheDocument();
+      expect(screen.getByLabelText('name', { exact: true })).toBeVisible();
       expect(container.querySelector('.mockbar')).toBeNull();
     },
   );
@@ -297,7 +294,7 @@ describe('F-line form', () => {
     expect(screen.queryByLabelText('Workspacer tools')).not.toBeInTheDocument();
     fireEvent.click(advancedButton());
     expect(screen.queryByLabelText('Workspacer tools')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Advanced overrides')).toHaveTextContent('Review project');
+    expect(screen.getByLabelText('name', { exact: true })).toHaveValue('Review project');
     expect(screen.getByLabelText('Advanced overrides')).toHaveTextContent('Work');
     fireEvent.change(screen.getByLabelText('Model', { exact: true }), {
       target: { value: '__custom__' },

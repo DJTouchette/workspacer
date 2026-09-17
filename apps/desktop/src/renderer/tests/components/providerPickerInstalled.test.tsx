@@ -99,14 +99,13 @@ describe('Spawn dialog provider cards', () => {
     expect(providerCard(/^Pi/)).toBeNull();
   });
 
-  it('collapses the row entirely when claude is the only harness', async () => {
+  it('keeps provider identity in the rail when only Claude is installed', async () => {
     api.providerCheckAll = vi.fn().mockResolvedValue(CLAUDE_ONLY);
     render(<SpawnAgentDialog defaultCwd="/repo" onSpawn={vi.fn()} onCancel={vi.fn()} />);
 
-    // One card is not a choice — the whole row goes, including the Claude card
-    // that would otherwise sit there permanently selected.
+    // The rail retains the installed provider logo and selection.
     await waitFor(() => expect(providerCard(/^Codex$/)).toBeNull());
-    expect(providerCard(/Claude Code/)).toBeNull();
+    expect(providerCard(/Claude Code/)).toBeTruthy();
   });
 
   it('keeps a missing harness visible when it is the pre-selected one, flagged', async () => {

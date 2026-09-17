@@ -23,6 +23,35 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: '0.167.0',
+    date: '2026-09-16',
+    unreleased: false,
+    sections: [
+      {
+        title: 'Added',
+        items: [
+          'Ordinary agents can spawn direct children and receive their progress, completion, and blocker updates. Project skills guide child spawning and atomic project-brief maintenance while Fleet Managers retain their task and workflow lifecycle.',
+          'The chat slash picker now offers `spawn-agent` and `project-brief` for ordinary Codex, Claude Code, GitHub Copilot, and OpenCode sessions, including remote chats. Selecting a skill inserts its instructions into an editable draft.',
+        ],
+      },
+      {
+        title: 'Changed',
+        items: [
+          'Redesigned New Agent with a provider-logo sidebar, a compact form for checkout, name, model, effort, permissions, mode, and context, and a launch-summary footer. The layout adapts to narrow screens and keeps extra options under Advanced.',
+          'Simplified the launch sidebar to a compact runtime indicator with expandable diagnostics and a refresh action for runtime, provider, and folder checks.',
+          'Authenticated agent sessions receive Workspacer tools and enabled plugin tools without per-session grant selection. Provider-native permission modes remain configurable; lifecycle-bound identities preserve parent routing and provenance.',
+        ],
+      },
+      {
+        title: 'Fixed',
+        items: [
+          'Kept ordinary-agent collaboration skills out of Fleet Manager discovery.',
+          'Hardened facade readiness and identity cleanup during agent launch and shutdown, and aligned collaboration behavior and tests across desktop and headless hosts.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.166.0',
     date: '2026-09-15',
     unreleased: false,

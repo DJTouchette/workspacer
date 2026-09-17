@@ -64,7 +64,9 @@ for (const viewport of [
   { width: 1280, height: 900 },
   { width: 360, height: 480 },
 ]) {
-  test(`F-line form and launch controls ${viewport.width}x${viewport.height}`, async ({ page }) => {
+  test(`Provider rail form and launch controls ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
     await page.setViewportSize(viewport);
     await page.goto(`${base}?spawn=success&runtime=ready&theme=dracula`);
     await page.evaluate(() =>
@@ -73,19 +75,14 @@ for (const viewport of [
     await page.getByRole('button', { name: "Got it — don't show again" }).click();
     await page.keyboard.press('Control+Shift+N');
     const screen = page.getByRole('dialog', { name: 'New Agent', exact: true });
-    await expect(screen.locator('header')).toHaveCount(0);
+    await expect(screen.getByRole('heading', { name: 'New Claude Code agent' })).toBeVisible();
     await expect(screen.getByText('New Agent', { exact: true })).toHaveCount(0);
     await expect(screen.locator('[style*="radial-gradient"]')).toHaveCount(0);
-    // The existing entrance animation translates the whole screen by 4px.
-    // Wait for the settled layout before measuring its top inset.
-    await expect
-      .poll(async () => (await screen.locator('.spawn-form').boundingBox())?.y)
-      .toBe(viewport.width === 360 ? 20 : 64);
-    await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeInViewport();
-    await expect(screen.locator('.spawn-project-line svg')).toHaveAttribute('width', '22');
+    await expect(screen.locator('.spawn-sidebar')).toBeVisible();
+    await expect(screen.locator('.spawn-provider svg').first()).toHaveAttribute('width', '22');
     await expect(screen.getByLabel('Working directory')).toBeFocused();
     await page.screenshot({
-      path: test.info().outputPath('f-line-form.png'),
+      path: test.info().outputPath('provider-rail-form.png'),
       animations: 'disabled',
     });
     await expect(screen.getByRole('button', { name: 'Advanced options' })).toHaveAttribute(
@@ -101,16 +98,16 @@ for (const viewport of [
         'true',
       );
     }
-    await screen.getByRole('button', { name: 'Change provider', exact: true }).click();
-    await expect(providers.getByRole('button', { name: 'Codex', exact: true })).toBeFocused();
+
     await screen.locator('.spawn-project-line').getByRole('button', { name: 'Browse…' }).click();
     await expect(screen.getByLabel('Working directory')).toHaveValue('/fixture/project');
     await screen.getByLabel('Working directory').fill('/fixture/git-folder');
     await expect(screen.locator('#spawn-folder-status')).toContainText('main');
     await screen.getByRole('button', { name: 'hybrid', exact: true }).click();
-    await screen.getByLabel('Permissions', { exact: true }).selectOption('yolo');
+    await screen.getByRole('button', { name: 'Full access', exact: true }).click();
     await screen.getByLabel('Context settings').click();
     await screen.getByLabel('Custom context tokens').fill('400000');
+    await screen.getByRole('dialog', { name: 'Context', exact: true }).scrollIntoViewIfNeeded();
     await expect(screen.getByRole('dialog', { name: 'Context', exact: true })).toBeInViewport();
     await screen.getByLabel('Context settings').click();
     await screen.getByRole('button', { name: 'Advanced options' }).click();
@@ -118,18 +115,16 @@ for (const viewport of [
     await screen.getByRole('button', { name: 'Advanced options' }).click();
     await screen.getByRole('button', { name: 'Start agent', exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({
-      path: test.info().outputPath('f-line-controls.png'),
+      path: test.info().outputPath('provider-rail-controls.png'),
       animations: 'disabled',
     });
     expect(await screen.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-    // Both ends of keyboard traversal stay in the screen, including at short heights.
-    await screen.getByRole('button', { name: 'Cancel', exact: true }).focus();
+    // Keyboard traversal wraps from the final action back to the provider rail.
+    await screen.getByRole('button', { name: 'Start agent', exact: true }).focus();
     await page.keyboard.press('Tab');
-    await expect(
-      screen.getByRole('button', { name: 'Change provider', exact: true }),
-    ).toBeFocused();
+    await expect(providers.getByRole('button').first()).toBeFocused();
     await page.keyboard.press('Shift+Tab');
-    await expect(screen.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeFocused();
     await screen.getByLabel('Working directory').press('Enter');
     await expect(screen).toHaveCount(0);
     const spawns = (await calls(page)).filter((call: any) => call.method === 'spawnClaude');
@@ -146,7 +141,7 @@ for (const viewport of [
   });
 }
 
-test('F-line form in every built-in theme', async ({ page }) => {
+test('Provider rail form in every built-in theme', async ({ page }) => {
   test.setTimeout(60000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`${base}?spawn=success&runtime=ready`);
@@ -165,12 +160,12 @@ test('F-line form in every built-in theme', async ({ page }) => {
         page.evaluate(() => document.documentElement.style.getPropertyValue('--wks-bg-base')),
       )
       .toBe(theme.bgBase);
-    await expect(screen.locator('header')).toHaveCount(0);
+    await expect(screen.getByRole('heading', { name: 'New Claude Code agent' })).toBeVisible();
     await expect(screen.locator('.spawn-project-line')).toBeInViewport();
     await expect(screen.getByRole('button', { name: 'Start agent', exact: true })).toBeInViewport();
-    await expect(screen.locator('.spawn-project-line')).toHaveCSS('box-shadow', /1px/);
+    await expect(screen.locator('.spawn-project-line')).toHaveCSS('border-top-style', 'solid');
     await page.screenshot({
-      path: test.info().outputPath(`f-line-${id}.png`),
+      path: test.info().outputPath(`provider-rail-${id}.png`),
       animations: 'disabled',
     });
   }

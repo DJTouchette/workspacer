@@ -169,6 +169,54 @@ describe('ClaudePane send pipeline', () => {
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
+  it.each(['claude', 'codex', 'copilot', 'opencode'] as const)(
+    'offers collaboration skills to ordinary %s sessions and inserts a reviewable draft',
+    (provider) => {
+      mockSession = makeSnapshot({ provider, hub: 'remote-hub' });
+      render(
+        <ClaudePane paneId="skills" title={provider} isActive cwd="/repo" provider={provider} />,
+      );
+      fireEvent.change(composer(), { target: { value: '/spawn-agent' } });
+      fireEvent.pointerDown(screen.getByRole('option', { name: /spawn-agent/ }));
+      expect(composer().value).toContain('# Spawn an agent');
+      expect(composer().value).toContain('trackTask:false');
+      expect(composer().value).not.toContain('description:');
+      expect(window.electronAPI.claudeMessage).not.toHaveBeenCalled();
+      fireEvent.change(composer(), { target: { value: '/project-brief' } });
+      fireEvent.keyDown(composer(), { key: 'Tab' });
+      expect(composer().value).toContain('# Maintain the project brief');
+      expect(window.electronAPI.claudeMessage).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['pane-manager', 'session-manager', 'wake-target', 'pi', 'loading'])(
+    'withholds collaboration picker entries for %s',
+    (mode) => {
+      mockSession =
+        mode === 'loading'
+          ? null
+          : makeSnapshot({
+              provider: mode === 'pi' ? 'pi' : 'codex',
+              isFleetManager: mode === 'session-manager',
+              isWakeTarget: mode === 'wake-target',
+            });
+      render(
+        <ClaudePane
+          paneId="skills"
+          title="Codex"
+          isActive
+          cwd="/repo"
+          provider="codex"
+          manager={mode === 'pane-manager'}
+        />,
+      );
+      for (const name of ['spawn-agent', 'project-brief']) {
+        fireEvent.change(composer(), { target: { value: `/${name}` } });
+        expect(screen.queryByRole('option', { name: new RegExp(name) })).toBeNull();
+      }
+    },
+  );
+
   it('submitting a message calls claudeMessage with the session id and the typed text', async () => {
     render(<ClaudePane paneId="p1" title="Claude" isActive cwd="/repo" />);
     fireEvent.change(composer(), { target: { value: 'fix the failing test' } });
