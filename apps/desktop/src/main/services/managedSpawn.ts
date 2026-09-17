@@ -1,3 +1,4 @@
+import { fleetSkipsPermissions } from './fleetPermissions';
 import { buildManagerInstructions } from '../shared/managerDoctrine';
 import { managerReplacementState } from './managerReplacementState';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
@@ -350,7 +351,8 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  const skipPermissions = !!opts.skipPermissions;
+  const fleetBypass = fleetSkipsPermissions(opts);
+  const skipPermissions = fleetBypass || !!opts.skipPermissions;
   await ensureMcpFacadeReady();
   // Per-session authenticated operator token. The Pi refusal above keeps the
   // unsupported no-MCP harness from ever reaching this ambient facade path.
@@ -365,10 +367,12 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   let facadeTokenOwnedByLaunch = true;
   try {
     // Permission-mode vocabulary differs by family: Claude keeps its full mode
-    // set (an explicit mode wins; the legacy boolean maps to bypass — same
-    // resolution as the PTY path), managed providers are just ask/yolo.
+    // set (Fleet full access wins, then the explicit mode and legacy boolean
+    // as on the PTY path); managed providers are just ask/yolo.
     const permissionMode = isClaudeStream
-      ? (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
+      ? fleetBypass
+        ? 'bypassPermissions'
+        : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'))
       : skipPermissions
         ? 'yolo'
         : 'ask';
@@ -682,7 +686,8 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   const spawnEffort =
     opts.effort?.trim() ||
     (opts.manager && !opts.resumeSessionId ? resolveManagerEffort('codex') : undefined);
-  const skipPermissions = !!opts.skipPermissions;
+  const fleetBypass = fleetSkipsPermissions(opts);
+  const skipPermissions = fleetBypass || !!opts.skipPermissions;
   const facadeToken = mintSessionFacadeToken(
     sessionId,
     'operator',

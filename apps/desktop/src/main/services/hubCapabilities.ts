@@ -1,3 +1,4 @@
+import { fleetSkipsPermissions } from './fleetPermissions';
 import desktopServiceMethods from '../shared/desktopServices.generated';
 import { managerDispatch, managerReplacementState } from './managerReplacementState';
 import { fleetWorkflowRequest } from './fleetWorkflowService';
@@ -876,23 +877,24 @@ export function registerHubCapabilities(): void {
     } else if (templateParams && Object.keys(templateParams).length) {
       throw new Error('agents.spawn: templateParams was passed without a template to fill');
     }
+    const spawnCfg = configService.getConfig();
+    const fleetBypass = fleetSkipsPermissions({ manager, parentSessionId }, spawnCfg.agents?.fleetFullAccess === true);
     if (executionTarget !== undefined) {
       if (executionTarget !== 'paired') throw new Error('Unsupported execution target');
-      return spawnPairedWorker({ ...(params as Record<string, unknown>), executionTarget, remoteCwd, message }, dispatchAdmission, templateBody, resultSchema);
+      return spawnPairedWorker({ ...(params as Record<string, unknown>), ...(fleetBypass ? { skipPermissions: true, permissionMode: undefined } : {}), executionTarget, remoteCwd, message }, dispatchAdmission, templateBody, resultSchema);
     }
     // An authenticated agent launch is already the user's authorization to run
     // that provider. Workspacer therefore forwards explicit and configured
     // provider permission modes unchanged; legacy yolo/profile grant stamps are
     // accepted on the wire but have no authority role.
-    const spawnCfg = configService.getConfig();
     const claudeCfg = spawnCfg.claude;
-    const skipPermissions = reqSkip === undefined
+    const skipPermissions = fleetBypass || (reqSkip === undefined
       ? claudeCfg?.skipPermissionsDefault === true ||
         ['bypassPermissions', 'yolo'].includes(claudeCfg?.defaultPermissionMode ?? '')
-      : !!reqSkip;
+      : !!reqSkip);
     const escalationDropped: string[] = [...(Array.isArray(hubScrubbed) ? hubScrubbed : [])];
     const escalation = () => ({ fullAccess: skipPermissions, scrubbed: escalationDropped });
-    const permissionMode = reqMode;
+    const permissionMode = fleetBypass ? undefined : reqMode;
     // Worktree isolation for a ship task (fleet-manager default): carve a fresh
     // git worktree of `cwd` and spawn the worker THERE, so parallel work on one
     // repo never collides. The IPC path does this in the renderer

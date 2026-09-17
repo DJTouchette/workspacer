@@ -573,6 +573,28 @@ describe('spawnManagedAgent — automatic operator facade', () => {
   });
 });
 
+describe('Fleet full access provider launches', () => {
+  it.each(['claude', 'codex', 'copilot'] as const)(
+    'bypasses %s manager approvals without granting tokens',
+    async (provider) => {
+      mockConfig = { agents: { fleetFullAccess: true } };
+      await spawnManagedAgent({
+        provider,
+        transport: 'stream',
+        cwd: '/proj',
+        manager: true,
+        skipPermissions: false,
+        permissionMode: 'default',
+      });
+      expect(lastManaged().yolo).toBe(true);
+      expect((lastMeta().settings as Payload).permissionMode).toBe(
+        provider === 'claude' ? 'bypassPermissions' : 'yolo',
+      );
+      expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
+    },
+  );
+});
+
 describe('spawnManagedAgent — manager identity without legacy grants', () => {
   it('a manager token keeps its role and omits yolo/profile grants', async () => {
     // Caller passes a stale fleetFullAccess:true (e.g. a respawn re-passing

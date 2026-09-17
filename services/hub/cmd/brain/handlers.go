@@ -647,7 +647,8 @@ type spawnParams struct {
 	// NOT A PRIVILEGE BY ITSELF, deliberately. A bus client asserting
 	// `manager:true` gains manager wake routing and role metadata for the agent
 	// it was already authorized to spawn; it does not change profiles, provider
-	// permission mode, Workspacer tools, plugins, or filesystem reach.
+	// Workspacer tools, plugins, or filesystem reach. When the user enables
+	// agents.fleetFullAccess, manager launches use provider approval bypass.
 	Manager bool `json:"manager"`
 	// RemoteOrigin is per-dispatch provenance stamped by the DISPATCHING hub's
 	// router (internal/bus/remotedispatch.go) on a federated agents.spawn. It is
@@ -818,6 +819,11 @@ func (r *registry) spawnCore(ctx context.Context, raw json.RawMessage, desktop .
 		p.skip = r.skipPermissionsConfigDefault()
 	} else {
 		p.skip = *p.SkipPermissions
+	}
+
+	if r.fleetSkipsPermissions(p) {
+		p.skip = true
+		p.PermissionMode = "" // native mode is resolved from skip for this provider
 	}
 
 	cwd := normalizeCwd(p.Cwd)

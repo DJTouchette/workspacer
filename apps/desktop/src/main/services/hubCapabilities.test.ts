@@ -1075,6 +1075,26 @@ describe('agents.spawn — dispatch', () => {
     ).toBe(true);
   });
 
+  it('reports and forwards the configured Fleet bypass for a manager worker', async () => {
+    getConfig.mockReturnValue({ agents: { fleetFullAccess: true } } as never);
+    getSnapshot.mockReturnValue({ isWakeTarget: true } as never);
+    try {
+      const result = await call('agents.spawn', {
+        provider: 'codex',
+        cwd: '/proj',
+        parentSessionId: 'manager',
+        skipPermissions: false,
+      });
+      expect(result).toMatchObject({ fullAccess: true });
+      expect(spawnManagedAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ skipPermissions: true }),
+      );
+    } finally {
+      getConfig.mockReturnValue({ agents: { binaries: { codex: '/custom/codex' } } });
+      getSnapshot.mockReturnValue(null);
+    }
+  });
+
   // The bug this dispatch was sent to find: agents.spawn is the ONLY path a
   // remote/MCP-facade Fleet Manager dispatch goes through (never the IPC
   // path), and all three of its branches used to hand-copy the spawn-options

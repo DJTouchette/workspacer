@@ -1,3 +1,4 @@
+import { fleetSkipsPermissions } from './fleetPermissions';
 import { managerReplacementState } from './managerReplacementState';
 import { prepareLaunchIntegration } from './launchIntegrations';
 /**
@@ -182,10 +183,13 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  const skipPermissions = !!opts.skipPermissions;
-  // An explicit mode wins; the legacy boolean maps to bypass. Recorded on the
-  // snapshot so the composer pill shows truth.
-  const permissionMode = opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default');
+  const fleetBypass = fleetSkipsPermissions(opts);
+  const skipPermissions = fleetBypass || !!opts.skipPermissions;
+  // Fleet full access overrides launch choices; otherwise the explicit mode
+  // wins over the legacy boolean. Record the resolved mode for the composer.
+  const permissionMode = fleetBypass
+    ? 'bypassPermissions'
+    : (opts.permissionMode ?? (skipPermissions ? 'bypassPermissions' : 'default'));
   // Whether this process will carry `--dangerously-skip-permissions` — the same
   // three inputs buildClaudeArgv resolves it from below. Recorded because Claude
   // gates *switching to* bypassPermissions on the flag, so it's what tells the

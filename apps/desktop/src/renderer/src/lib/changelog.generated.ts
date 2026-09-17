@@ -23,6 +23,21 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: '0.168.0',
+    date: '2026-09-17',
+    unreleased: false,
+    sections: [
+      {
+        title: 'Fixed',
+        items: [
+          'Restored **Full access — skip all permission prompts** under Settings → Fleet Manager. The saved preference now bypasses provider command and file-change approvals for new manager and worker launches on desktop and headless hosts.',
+          "Fleet workers follow recorded manager lineage, including nested children, while unrelated agents keep their own permission choices. Existing sessions need a restart to enable bypass; a running manager's next dispatch reads the current setting. Turning it off stops forcing bypass and preserves per-session choices.",
+          'Spawn results and session permission indicators report the effective Fleet permission mode. Workspacer and plugin tool access remains automatic; the restored setting does not reintroduce token grants.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.167.0',
     date: '2026-09-16',
     unreleased: false,

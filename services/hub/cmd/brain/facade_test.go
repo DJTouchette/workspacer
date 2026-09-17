@@ -409,8 +409,8 @@ func TestSpawnManagerFacadeTokenHasAmbientOperatorAuthorityWithoutLegacyGrants(t
 	if len(recToken.ProfilesAllowed) != 0 {
 		t.Fatalf("manager token retained obsolete profilesAllowed grant: %v", recToken.ProfilesAllowed)
 	}
-	if managed[0].body["yolo"] != false {
-		t.Fatalf("session process yolo must still be controlled by the hub stamp, got %+v", managed[0].body)
+	if managed[0].body["yolo"] != true {
+		t.Fatal("Fleet full-access preference must bypass provider approvals without token grants")
 	}
 }
 

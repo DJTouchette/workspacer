@@ -265,6 +265,18 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         }
       />
 
+      <CheckRow
+        label="Full access — skip all permission prompts"
+        checked={agents.fleetFullAccess === true}
+        onChange={(value) => patchAgents({ fleetFullAccess: value })}
+      />
+      <div style={hintStyle}>
+        The Fleet Manager and its workers run with provider approvals bypassed, including command
+        and file-change prompts. Applies to new launches; restart existing sessions to enable it.
+        The manager’s next dispatch uses this setting immediately. Turning this off stops forcing
+        full access; per-session permission choices still apply.
+      </div>
+
       <Row label="Projects root">
         <input
           value={fleetRoot}

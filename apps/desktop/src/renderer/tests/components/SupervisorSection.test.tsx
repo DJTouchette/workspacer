@@ -295,11 +295,17 @@ describe('SupervisorSection — manager-only, and it says what starts the manage
     expect(container.textContent).toMatch(/only place the manager’s own model is chosen/);
   });
 
-  it('does not expose retired fleetFullAccess grant controls', () => {
-    renderSection({ agents: { fleetFullAccess: true } } as Partial<Config>);
-    expect(screen.queryByRole('checkbox', { name: /Full access/i })).toBeNull();
+  it('saves provider full access while preserving other manager settings', () => {
+    const save = vi.fn();
+    const config = { agents: { fleetFullAccess: true, managerProvider: 'codex' } } as Config;
+    render(<SupervisorSection config={config} save={save} />);
+    const toggle = screen.getByRole('checkbox', { name: /Full access/i });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(save).toHaveBeenCalledWith({
+      agents: { fleetFullAccess: false, managerProvider: 'codex' },
+    });
     expect(screen.getByText(/Tool access is automatic/)).toBeInTheDocument();
-    expect(screen.getByText(/adds no child grant layer/)).toBeInTheDocument();
   });
 });
 

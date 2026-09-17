@@ -383,10 +383,11 @@ describe('spawnClaudeAgent — automatic operator facade', () => {
     expect(mintSessionFacadeToken.mock.calls[0][5]).toBe('manager');
   });
 
-  it('legacy fleetFullAccess config does not mint a yolo grant', async () => {
+  it('Fleet full access bypasses provider approvals without minting a yolo grant', async () => {
     getProfiles.mockReturnValue([{ id: 'default' }]);
     mockConfig.agents = { fleetFullAccess: true };
     await spawnClaudeAgent({ cwd: '/home/u/Work', manager: true, toolScope: 'operator' });
+    expect(lastArgv()).toContain('--dangerously-skip-permissions');
 
     expect(mintSessionFacadeToken.mock.calls[0][4]).toBeUndefined();
   });

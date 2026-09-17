@@ -221,8 +221,8 @@ interface Config {
     /** Fleet Manager home directory ('' = derived: the configured projects'
      *  common parent, else $HOME). */
     fleetRoot: string;
-    /** Legacy upgrade field. Preserved when reading/writing old config, but
-     *  ignored: Workspacer no longer maintains child permission grants. */
+    /** Bypass provider approval prompts for new Fleet Manager and worker
+     *  launches. This does not change Workspacer facade/token grants. */
     fleetFullAccess?: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
