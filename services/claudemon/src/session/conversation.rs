@@ -430,10 +430,10 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                         }
                     }
                 }
-                if let Err(err) = tail_one(&sessions, &conv, &state.session_id, &path).await {
+                if let Err(err) = tail_one(sessions, conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "transcript tail failed");
                 }
-                if let Err(err) = tail_subagents(&conv, &state.session_id, &path).await {
+                if let Err(err) = tail_subagents(conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "subagent tail failed");
                 }
                 }
