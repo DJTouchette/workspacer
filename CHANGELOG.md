@@ -7,6 +7,31 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Automatic cleanup of recognized, Git-ignored build and dependency folders in
+  stopped agent worktrees, with a one-hour cooldown and configurable policy.
+  Source edits, branches, live sessions and shared dependency targets are kept.
+- Agent startup and history-write timing logs, plus repeatable performance and
+  artifact-cleanup commands for diagnosis and manual reclamation.
+
+### Improved
+- Batched fleet/history updates, compact background IPC snapshots, focused
+  attention subscriptions and incremental transcript indexes reduce work when
+  many agents stream or conversations grow long.
+- Worktree launches reuse dependency discovery; concurrent model-catalog probes
+  share results and have bounded timeouts. Transcript polling advances sessions
+  fairly and avoids repeatedly scanning inactive subagent files.
+
+### Fixed
+- Dropped lifecycle events now trigger state recovery on desktop and headless
+  hosts, preventing exited agents from remaining visibly live after overload.
+- Shared history polling avoids duplicate reads, and stale fetches or queued
+  updates cannot overwrite newer session endings and task edits.
+- Worktree cleanup and provider admission share a maintenance lock so cleanup
+  cannot race an agent starting in the same working tree.
+
 ## [0.168.0] - 2026-09-17
 
 ### Fixed

@@ -1,12 +1,9 @@
 import FleetWorkflowTask from '../components/FleetWorkflowTask';
+import { useDispatchHistory } from '../hooks/useDispatchHistory';
 import type { AgentProvider } from '../types/pane';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type {
-  DispatchAttempt,
-  DispatchHistoryResponse,
-  DispatchTask,
-} from '../../../main/shared/dispatchHistory';
+import type { DispatchAttempt, DispatchTask } from '../../../main/shared/dispatchHistory';
 import { Surface } from '../components/Surface';
 import { SmallButton } from '../components/settings/primitives';
 import { FleetReview } from '../components/claude/FleetReview';
@@ -28,40 +25,11 @@ export function total(
   return `${key === 'costUSD' ? `$${n.toFixed(4)}` : key === 'wallMs' ? wall(n) : number(n)} · ${values.length === unique.length ? '' : 'partial '}${values.length}/${unique.length} reported`;
 }
 export default function RecentAgentsPane(): React.ReactElement {
-  const [data, setData] = useState<DispatchHistoryResponse>();
-  const [error, setError] = useState('');
+  const { data, error, busy, refresh } = useDispatchHistory();
   const [scope, setScope] = useState('current');
   const [project, setProject] = useState('all');
   const [status, setStatus] = useState('all');
   const [days, setDays] = useState('all');
-  const [busy, setBusy] = useState(false);
-  const generation = useRef(0);
-  async function refresh() {
-    const g = ++generation.current;
-    setBusy(true);
-    try {
-      const next = (await window.electronAPI?.dispatchHistoryRead?.()) ?? {
-        available: false as const,
-        reason: 'Recent agents history is unavailable on this backend or preload version.',
-      };
-      if (g === generation.current) {
-        setData(next);
-        setError('');
-      }
-    } catch {
-      if (g === generation.current) setError('Could not read local dispatch history.');
-    } finally {
-      if (g === generation.current) setBusy(false);
-    }
-  }
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
-    return () => {
-      clearInterval(timer);
-      generation.current++;
-    };
-  }, []);
   const owner = data?.available ? data.currentOwnerSessionId : undefined;
   const currentOwner = useRef(owner);
   currentOwner.current = owner;

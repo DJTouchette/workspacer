@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -174,6 +175,28 @@ func TestDeepMergePreservesDefaultsAndSkipsNull(t *testing.T) {
 	// Target must not be mutated.
 	if target["ui"].(map[string]any)["theme"] != "dark" {
 		t.Error("deepMerge mutated its target")
+	}
+}
+
+func TestArtifactCleanupConfigRoundTrip(t *testing.T) {
+	tempConfigHome(t)
+	c := newConfigService()
+	agents := c.get()["agents"].(map[string]any)
+	policy := agents["artifactCleanup"].(map[string]any)
+	if policy["enabled"] != true || policy["minAgeHours"] != float64(1) || agents["worktreeRoot"] != "" {
+		t.Fatalf("unexpected cleanup defaults: %#v", agents)
+	}
+	c.save(map[string]any{"agents": map[string]any{
+		"worktreeRoot":    "/custom/worktrees",
+		"artifactCleanup": map[string]any{"enabled": false, "minAgeHours": 24},
+	}})
+	c.save(map[string]any{"ui": map[string]any{"fontSize": 16}})
+	fresh := newConfigService().get()["agents"].(map[string]any)
+	if fresh["worktreeRoot"] != "/custom/worktrees" || fresh["artifactCleanup"].(map[string]any)["enabled"] != false {
+		t.Fatalf("cleanup configuration lost on save: %#v", fresh)
+	}
+	if age := fresh["artifactCleanup"].(map[string]any)["minAgeHours"]; fmt.Sprint(age) != "24" {
+		t.Fatalf("minAgeHours lost on save: %#v", age)
 	}
 }
 

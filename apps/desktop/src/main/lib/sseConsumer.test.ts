@@ -33,6 +33,39 @@ function makeFetch(chunks: Uint8Array[]) {
 /** Encode a string to UTF-8 bytes. */
 const enc = (s: string) => new TextEncoder().encode(s);
 
+it('announces each successful connection before its frames, including after clean EOF', async () => {
+  const abort = new AbortController();
+  const events: string[] = [];
+  let connects = 0;
+  const originalFetch = global.fetch;
+  global.fetch = vi.fn(async () => ({
+    ok: true,
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(enc('data: event\n\n'));
+        controller.close();
+      },
+    }),
+  })) as unknown as typeof fetch;
+  try {
+    await consumeSseStream('http://test/events', {
+      signal: abort.signal,
+      backoffInitialMs: 1,
+      onConnect() {
+        events.push('connected');
+        connects++;
+      },
+      onFrame() {
+        events.push('frame');
+        if (connects === 2) abort.abort();
+      },
+    });
+    expect(events).toEqual(['connected', 'frame', 'connected', 'frame']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 /**
  * Run the consumer with a mocked fetch and collect all onFrame calls.
  * Aborts after the first backoff cycle (after EOF, we abort immediately).

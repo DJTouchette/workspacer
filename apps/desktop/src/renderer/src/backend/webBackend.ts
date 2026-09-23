@@ -1,4 +1,5 @@
 import { requestOpenInEditor } from '../lib/editorBus';
+import { compactClaudeSnapshotForBackground } from '../lib/compactClaudeSnapshot';
 import { TASK_INSPECTOR_UNAVAILABLE } from '../../../main/shared/dispatchHistory';
 import { REQUEST_CAPTURE_UNAVAILABLE } from '../../../main/shared/managerRequests';
 import { routingAPI } from '../../../main/shared/routingPreferences';
@@ -1218,12 +1219,13 @@ export function createWebBackend(
     // The SINGULAR call is the full snapshot — it is what seeds the history
     // that later bounded windows splice onto, so it must not go through the
     // sparse overlay.
-    getClaudeSession: (sessionId) =>
+    getClaudeSession: (sessionId, background) =>
       client
         .call<ClaudeSessionSnapshot | null>(qualify(sessionId, 'sessions.snapshot'), { sessionId })
         .then((s) => {
           if (!s) return s;
           const hub = sessionHub.get(sessionId);
+          if (background) return compactClaudeSnapshotForBackground(hub ? { ...s, hub } : s);
           const seeded = seedFull(hub ? { ...s, hub } : s);
           // A pane asked for this session by id — that is what "someone is
           // watching it" means here, so start (and prime) its transcript sync,

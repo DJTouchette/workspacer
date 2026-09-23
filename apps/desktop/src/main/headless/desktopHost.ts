@@ -685,13 +685,31 @@ export async function desktopHostCall(
           .list()
           .flatMap((t) => t.attempts.map((a) => [a.sessionId, t] as const)),
       );
+      const changed: Array<{
+        snapshot: Parameters<typeof dispatchHistoryStore.observe>[0];
+        digest: string;
+      }> = [];
       for (const s of context.snapshots) {
-        const task = tracked.get(s.sessionId);
-        if (!task) continue;
-        const digest = JSON.stringify(s);
-        if (observed.get(s.sessionId) === digest) continue;
+        if (!tracked.has(s.sessionId)) continue;
+        // Transcript/tool changes are not task-history changes.
+        const historySnapshot = s as Parameters<typeof dispatchHistoryStore.observe>[0];
+        const sample = {
+          sessionId: s.sessionId,
+          status: s.status,
+          ambientState: s.ambientState,
+          hub: s.hub,
+          usage: s.usage,
+          statusLine: historySnapshot.statusLine,
+          pendingApproval: !!s.pendingApproval,
+          pendingQuestions: { length: s.pendingQuestions?.length ?? 0 },
+        } as Parameters<typeof dispatchHistoryStore.observe>[0];
+        const digest = JSON.stringify(sample);
+        if (observed.get(s.sessionId) !== digest) changed.push({ snapshot: sample, digest });
+      }
+      dispatchHistoryStore.observeBatch(changed.map((entry) => entry.snapshot));
+      // Failed commits must remain eligible for the next refresh.
+      for (const { snapshot: s, digest } of changed) {
         observed.set(s.sessionId, digest);
-        dispatchHistoryStore.observe(s as Parameters<typeof dispatchHistoryStore.observe>[0]);
         const state = s.status === 'ended' ? 'ended' : s.ambientState;
         lifecycle.set(s.sessionId, state ?? 'unknown');
       }
@@ -810,14 +828,9 @@ export async function desktopHostCall(
       return {
         available: true,
         currentOwnerSessionId: owners[0]?.sessionId,
-        tasks: dispatchHistoryStore.listForHostUser(snapshot),
-        requests: owners.flatMap((s) =>
-          dispatchHistoryStore.listRequests(s.sessionId).map((r) => ({
-            ownerSessionId: r.ownerSessionId,
-            requestId: r.requestId,
-            delivery: r.delivery,
-            resolved: !!r.intents,
-          })),
+        ...dispatchHistoryStore.readForHostUser(
+          snapshot,
+          owners.map((s) => s.sessionId),
         ),
       };
     }

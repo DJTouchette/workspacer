@@ -309,7 +309,12 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         // gives MCP-speaking agents (Codex) an AskUserQuestion tool that
         // parks a structured question in the GUI. See daemon::mcp_ask.
         .route("/mcp/ask/:session_id", post(crate::daemon::mcp_ask::handle))
-        .route("/health", get(|| async { "ok" }))
+        // Older daemons have no spawn/cleanup admission fence. Keep the health
+        // body stable; artifact cleaners must require this opt-in header.
+        .route(
+            "/health",
+            get(|| async { ([("x-workspacer-maintenance", "1")], "ok") }),
+        )
         // Bound request bodies (tool inputs, messages) so a hostile or buggy
         // local client can't push an unbounded payload through the fanout + DB.
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
@@ -396,6 +401,10 @@ async fn get_usage_report(State(store): State<SessionStore>) -> Response {
 
 #[derive(Debug, Default, Deserialize)]
 struct ListSessionsQuery {
+    /// Control-plane reconciliation after stream lag/reconnect. Return retained
+    /// state only: do not read transcripts to derive usage for the whole fleet.
+    #[serde(default)]
+    state_only: bool,
     /// Include archived (stopped + long-idle) sessions in the response. Off by
     /// default so the list shows only live and recently-active agents; the UI
     /// opts in (`?include_archived=true`) to browse older ones.
@@ -443,6 +452,7 @@ async fn list_sessions(
     let states = store.list();
     let include_archived = q.include_archived;
     let include_empty = q.include_empty;
+    let state_only = q.state_only;
     // `usage_for_path` reads each session's transcript from disk — doing it inline
     // would block a runtime worker (and its SSE streams) across N file reads, so
     // run the whole fold on the blocking pool.
@@ -466,13 +476,20 @@ async fn list_sessions(
                 if state.is_empty_stopped() && !include_empty {
                     return None;
                 }
-                let u = usage::usage_for_session(&state);
-                let mut v = published_session_value(&state, &u);
+                let mut v = if state_only {
+                    serde_json::to_value(&state).unwrap_or(Value::Null)
+                } else {
+                    let u = usage::usage_for_session(&state);
+                    let mut v = published_session_value(&state, &u);
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "usage".to_string(),
+                            serde_json::to_value(&u).unwrap_or(Value::Null),
+                        );
+                    }
+                    v
+                };
                 if let Some(obj) = v.as_object_mut() {
-                    obj.insert(
-                        "usage".to_string(),
-                        serde_json::to_value(&u).unwrap_or(Value::Null),
-                    );
                     obj.insert("archived".to_string(), Value::Bool(archived));
                 }
                 Some(v)
@@ -1555,7 +1572,12 @@ async fn event_stream(
                 }
                 Err(err) => {
                     tracing::warn!(?err, "sse subscriber lagged");
-                    None
+                    // State transitions (especially SessionEnd) may have no
+                    // later event to expose a gap. Tell consumers to reconcile
+                    // authoritative session state instead of staying stale.
+                    Some(Ok(Event::default()
+                        .event("session.resync")
+                        .data(r#"{"event":"Resync","reason":"lagged"}"#)))
                 }
             }
         })
@@ -1965,6 +1987,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_stream_signals_lag_instead_of_silently_losing_a_terminal_event() {
+        let state = test_state();
+        let response = router(state.clone()).oneshot(get("/events")).await.unwrap();
+        // Don't poll the response body until the subscription has overflowed.
+        state
+            .store
+            .register_managed("lost-exit", "/tmp/proj", "codex");
+        assert!(state.store.deregister_managed("lost-exit", 1));
+        for i in 0..300 {
+            state
+                .store
+                .register_managed(&format!("other-{i}"), "/tmp/proj", "codex");
+        }
+        let mut stream = response.into_body().into_data_stream();
+        let frame = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let frame = std::str::from_utf8(&frame).unwrap();
+        assert!(frame.contains("session.resync"), "{frame}");
+        assert!(frame.contains(r#""event":"Resync""#), "{frame}");
+        // Reconciliation can see even an unused, stopped session.
+        let (_, body) = request(
+            state,
+            get("/sessions?include_archived=true&include_empty=true"),
+        )
+        .await;
+        let rows: Vec<Value> = serde_json::from_slice(&body).unwrap();
+        assert!(rows
+            .iter()
+            .any(|row| row["session_id"] == "lost-exit" && row["mode"] == "stopped"));
+    }
+
+    #[tokio::test]
     async fn list_sessions_includes_a_registered_session_with_provider() {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
@@ -1976,6 +2033,21 @@ mod tests {
         assert_eq!(sessions[0]["session_id"], "sess-1");
         // The additive provider field is surfaced on the wire.
         assert_eq!(sessions[0]["provider"], "codex");
+    }
+
+    #[tokio::test]
+    async fn state_only_session_list_omits_transcript_derived_usage() {
+        let state = test_state();
+        state
+            .store
+            .register_managed("reconcile", "/tmp/proj", "codex");
+        let (status, body) = request(state, get("/sessions?state_only=true")).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows: Vec<Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(rows[0]["session_id"], "reconcile");
+        assert_eq!(rows[0]["mode"], "input");
+        assert!(rows[0].get("updated_at").is_some());
+        assert!(rows[0].get("usage").is_none());
     }
 
     #[tokio::test]
@@ -3837,6 +3909,58 @@ mod tests {
         let (status, _body) = request(test_state(), req).await;
         assert!(status.is_client_error(), "got {status}");
         assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn health_advertises_worktree_admission_without_changing_its_body() {
+        let response = response(test_state(), get("/health")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-workspacer-maintenance"], "1");
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn maintenance_fence_refuses_both_spawn_routes_before_registration() {
+        let root =
+            crate::testtmp::dir().join(format!("maintenance-route-{}", uuid::Uuid::new_v4()));
+        let cwd = root.join("worker/nested");
+        let gitdir = root.join("gitdir");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(root.join("worker/.git"), "gitdir: ../gitdir\n").unwrap();
+        std::fs::write(
+            gitdir.join(".workspacer-maintenance.lock"),
+            r#"{"pid":123,"token":"cleaner"}"#,
+        )
+        .unwrap();
+        let state = test_state();
+        for (route, payload) in [
+            (
+                "/sessions/spawn",
+                json!({ "argv": ["must-not-launch"], "cwd": cwd, "session_id": "fenced-pty" }),
+            ),
+            (
+                "/sessions/spawn-managed",
+                json!({ "provider": "codex", "bin": "must-not-launch", "cwd": cwd, "session_id": "fenced-managed" }),
+            ),
+        ] {
+            let (status, body) = request(state.clone(), post_json(route, payload)).await;
+            assert_eq!(
+                status,
+                StatusCode::CONFLICT,
+                "{route}: {}",
+                String::from_utf8_lossy(&body)
+            );
+            assert!(String::from_utf8_lossy(&body).contains("retry the spawn"));
+        }
+        assert!(
+            state.store.list().is_empty(),
+            "no row is published while maintenance owns the worktree"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Both routes hand back a session id BEFORE the child is known to live —

@@ -1,3 +1,4 @@
+import { createSpawnTiming } from '../shared/spawnTiming';
 import { fleetSkipsPermissions } from './fleetPermissions';
 import { buildManagerInstructions } from '../shared/managerDoctrine';
 import { managerReplacementState } from './managerReplacementState';
@@ -215,9 +216,15 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     );
   }
   managerReplacementState.assertResume(opts.resumeSessionId);
-  return managerReplacementState.admitted([opts.parentSessionId], () => spawnManaged(opts));
+  const timing = createSpawnTiming(opts.provider, opts.transport);
+  return timing.measure('launch_total', () =>
+    managerReplacementState.admitted([opts.parentSessionId], () => spawnManaged(opts, timing)),
+  );
 }
-async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
+async function spawnManaged(
+  opts: ManagedSpawnOptions,
+  timing: ReturnType<typeof createSpawnTiming>,
+): Promise<string> {
   const { provider } = opts;
   if (opts.scrubProfileBypass && opts.launchIntegrationId)
     throw new Error('Launch integrations currently require a local desktop session');
@@ -353,7 +360,8 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
   }
   const fleetBypass = fleetSkipsPermissions(opts);
   const skipPermissions = fleetBypass || !!opts.skipPermissions;
-  await ensureMcpFacadeReady();
+  timing.mark('preflight', managedId);
+  await timing.measure('facade_ready', () => ensureMcpFacadeReady());
   // Per-session authenticated operator token. The Pi refusal above keeps the
   // unsupported no-MCP harness from ever reaching this ambient facade path.
   const facadeToken = mintSessionFacadeToken(
@@ -470,10 +478,13 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
         ['mcp__workspacer', ...userMcpServers.map((server) => `mcp__${server.id}`)].join(','),
       );
     }
-    const prepared = await prepareLaunchIntegration(
-      opts.launchIntegrationId,
-      { agent: provider, cwd, model: serializedModel, resume: !!opts.resumeSessionId },
-      { env, args: extraArgs, bin },
+    timing.mark('launch_assets', managedId);
+    const prepared = await timing.measure('launch_integration', () =>
+      prepareLaunchIntegration(
+        opts.launchIntegrationId,
+        { agent: provider, cwd, model: serializedModel, resume: !!opts.resumeSessionId },
+        { env, args: extraArgs, bin },
+      ),
     );
     claudeSessionStore.setSpawnMeta(managedId, {
       cwd,
@@ -529,60 +540,63 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const sessionId = await claudemonSessionClient.spawnManaged({
-      provider,
-      cwd,
-      model: serializedModel,
-      modelIdentity: modelSelection?.model,
-      contextWindow: effectiveContextWindow,
-      effort: spawnEffort,
-      bin,
-      yolo,
-      sessionId: managedId,
-      // STATED, not implied. The daemon reads an absent key as "hybrid", which is
-      // the same thing a dropped field looks like — so a codex spawn always says
-      // which of its two shapes it is, and a wire capture is enough to tell a
-      // defaulted headless spawn from a downgraded one.
-      ...(provider === 'codex' && { transport }),
-      // Codex resume: claudemon rejoins the prior life's app-server thread and
-      // replays its rollout (headless-only; the daemon forces stream transport).
-      ...(provider === 'codex' &&
-        opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
-      // Claude stream adapter extras: the full permission mode and (on a
-      // respawn) the prior conversation to `--resume`.
-      ...(isClaudeStream && {
-        permissionMode,
-        ...(opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
-      }),
-      // The profile's config-root env and its extra argv. Sent for EVERY harness
-      // that takes profiles, not just Claude: `CODEX_HOME` / `COPILOT_HOME` are
-      // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
-      // the same argv channel. Both keys stay off the payload when empty, so a
-      // profile-less spawn is byte-identical to what it sent before.
-      ...(prepared.args.length && { extraArgs: prepared.args }),
-      ...(Object.keys(prepared.env).length && { env: prepared.env }),
-      ...(wantsFacade && {
-        // Claude stream carries the facade via the --mcp-config file above, so
-        // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
-        // override / opencode.json) and cannot send headers, so their token
-        // rides a `?t=` query param the facade also accepts. Pi is refused at
-        // the public boundary because it has no MCP client.
-        ...(!isClaudeStream && {
-          mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
+    timing.mark('session_metadata', managedId);
+    const sessionId = await timing.measure('daemon_admission', () =>
+      claudemonSessionClient.spawnManaged({
+        provider,
+        cwd,
+        model: serializedModel,
+        modelIdentity: modelSelection?.model,
+        contextWindow: effectiveContextWindow,
+        effort: spawnEffort,
+        bin,
+        yolo,
+        sessionId: managedId,
+        // STATED, not implied. The daemon reads an absent key as "hybrid", which is
+        // the same thing a dropped field looks like — so a codex spawn always says
+        // which of its two shapes it is, and a wire capture is enough to tell a
+        // defaulted headless spawn from a downgraded one.
+        ...(provider === 'codex' && { transport }),
+        // Codex resume: claudemon rejoins the prior life's app-server thread and
+        // replays its rollout (headless-only; the daemon forces stream transport).
+        ...(provider === 'codex' &&
+          opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
+        // Claude stream adapter extras: the full permission mode and (on a
+        // respawn) the prior conversation to `--resume`.
+        ...(isClaudeStream && {
+          permissionMode,
+          ...(opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
         }),
+        // The profile's config-root env and its extra argv. Sent for EVERY harness
+        // that takes profiles, not just Claude: `CODEX_HOME` / `COPILOT_HOME` are
+        // the same primitive as `CLAUDE_CONFIG_DIR`, and `codex -p <preset>` rides
+        // the same argv channel. Both keys stay off the payload when empty, so a
+        // profile-less spawn is byte-identical to what it sent before.
+        ...(prepared.args.length && { extraArgs: prepared.args }),
+        ...(Object.keys(prepared.env).length && { env: prepared.env }),
+        ...(wantsFacade && {
+          // Claude stream carries the facade via the --mcp-config file above, so
+          // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
+          // override / opencode.json) and cannot send headers, so their token
+          // rides a `?t=` query param the facade also accepts. Pi is refused at
+          // the public boundary because it has no MCP client.
+          ...(!isClaudeStream && {
+            mcp: facadeToken ? facadeUrlWithToken(facadeToken) : MCP_FACADE_URL,
+          }),
+        }),
+        // First-turn instructions: the facade role note (when this session has the
+        // facade), the fleet-worker terminal escalation contract, and the optional
+        // structured-result contract, joined so none overwrites another — the
+        // daemon takes ONE instructions string. Fleet workers get escalation even
+        // when no facade or resultSchema was requested.
+        ...(instructions && { instructions }),
+        // The dispatch prompt itself — a SEPARATE field, never folded into
+        // `instructions` above, because `instructions` alone never starts a turn
+        // (see ManagedSpawnOptions.firstMessage). The daemon prepends one to the
+        // other, so the contract still lands ahead of the task.
+        ...(opts.firstMessage && { firstMessage: opts.firstMessage }),
       }),
-      // First-turn instructions: the facade role note (when this session has the
-      // facade), the fleet-worker terminal escalation contract, and the optional
-      // structured-result contract, joined so none overwrites another — the
-      // daemon takes ONE instructions string. Fleet workers get escalation even
-      // when no facade or resultSchema was requested.
-      ...(instructions && { instructions }),
-      // The dispatch prompt itself — a SEPARATE field, never folded into
-      // `instructions` above, because `instructions` alone never starts a turn
-      // (see ManagedSpawnOptions.firstMessage). The daemon prepends one to the
-      // other, so the contract still lands ahead of the task.
-      ...(opts.firstMessage && { firstMessage: opts.firstMessage }),
-    });
+    );
     facadeTokenOwnedByLaunch = false; // the live session store owns revocation
     // The adapter emits no conversation delta until the agent first produces
     // output, and managed backends fire no Claude hooks — so register the session
@@ -621,6 +635,7 @@ async function spawnManaged(opts: ManagedSpawnOptions): Promise<string> {
         }
       }
     }
+    timing.mark('session_registered', sessionId);
     return sessionId;
   } catch (error) {
     if (facadeTokenOwnedByLaunch) {

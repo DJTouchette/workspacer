@@ -23,6 +23,22 @@ import {
 import type { ClaudeSessionState } from './claudeSessionStore';
 
 export const DISPATCH_LIMITS = { tasks: 200, attempts: 1000, bytes: 2 * 1024 * 1024 };
+export const OBSERVATION_FLUSH_MS = 250;
+type HistoryObservation = Pick<
+  ClaudeSessionState,
+  'sessionId' | 'status' | 'ambientState' | 'usage' | 'statusLine' | 'hub'
+> & { pendingApproval: unknown; pendingQuestions?: { length: number } | null };
+function observationLifecycle(s: HistoryObservation): DispatchAttempt['lifecycle'] {
+  return s.status === 'ended'
+    ? 'ended'
+    : s.pendingApproval || s.pendingQuestions?.length
+      ? 'needs-decision'
+      : s.status === 'starting'
+        ? 'starting'
+        : s.ambientState === 'idle'
+          ? 'idle'
+          : 'running';
+}
 type Owner = {
   sessionId: string;
   isWakeTarget?: boolean;
@@ -47,39 +63,142 @@ export class DispatchHistoryStore {
   private attemptsBySessionID = new Map<string, { task: DispatchTask; attempt: DispatchAttempt }>();
   private writing = false;
   private fresh = new Map<string, string>();
-  /** All writers reload under the same cross-process lock; no delayed stale flush. */
-  private transaction<T>(fn: () => T): T {
-    if (this.writing) return fn();
-    return withConfigLock(this.filename(), () => {
-      this.tasks = undefined;
-      const before = structuredClone(this.load());
-      const beforeRequests = structuredClone(this.requests);
-      const freshness = new Map(this.fresh);
-      this.writing = true;
+  private pendingObservations = new Map<string, { snapshot: HistoryObservation; at: string }>();
+  private observationTimer?: ReturnType<typeof setTimeout>;
+
+  /** The live stream queues only metrics, never transcripts or tool payloads.
+   * Repeated metrics share one disk transaction across the whole fleet. State
+   * transitions still commit immediately, including the final session update. */
+  queueObservation(s: HistoryObservation): void {
+    if (s.hub) return;
+    const previous = this.pendingObservations.get(s.sessionId)?.snapshot;
+    const priorLifecycle = previous
+      ? observationLifecycle(previous)
+      : this.attemptsBySessionID.get(s.sessionId)?.attempt.lifecycle;
+    const lifecycle = observationLifecycle(s);
+    const snapshot: HistoryObservation = {
+      sessionId: s.sessionId,
+      status: s.status,
+      ambientState: s.ambientState,
+      pendingApproval: !!s.pendingApproval,
+      pendingQuestions: { length: s.pendingQuestions?.length ?? 0 },
+      usage: structuredClone(s.usage),
+      statusLine: structuredClone(s.statusLine),
+    };
+    this.pendingObservations.set(s.sessionId, { snapshot, at: new Date().toISOString() });
+    this.scheduleObservations();
+    if (
+      lifecycle === 'ended' ||
+      (priorLifecycle !== undefined && priorLifecycle !== lifecycle) ||
+      (priorLifecycle === undefined && lifecycle === 'needs-decision') ||
+      this.pendingObservations.size >= this.limits.attempts
+    )
+      this.flush(lifecycle === 'ended' || priorLifecycle !== lifecycle ? 'lifecycle' : 'capacity');
+  }
+
+  private scheduleObservations(): void {
+    if (this.observationTimer || !this.pendingObservations.size) return;
+    this.observationTimer = setTimeout(() => {
+      this.observationTimer = undefined;
       try {
-        const result = fn();
-        this.index();
-        for (const task of this.tasks!) {
-          const prior = before.find((t) => t.taskId === task.taskId);
-          if (JSON.stringify(prior) !== JSON.stringify(task))
-            task.revision = (prior?.revision ?? 0) + 1;
-        }
-        if (
-          JSON.stringify(before) !== JSON.stringify(this.tasks) ||
-          JSON.stringify(beforeRequests) !== JSON.stringify(this.requests)
-        )
-          this.persist();
-        return structuredClone(result);
+        this.flush('timer');
       } catch (error) {
-        this.tasks = before;
-        this.requests = beforeRequests;
-        this.fresh = freshness;
-        this.index();
-        throw error;
-      } finally {
-        this.writing = false;
+        console.warn('[dispatch-history] observation batch unavailable', error);
+        this.scheduleObservations(); // retain the batch on lock/write failure
       }
-    });
+    }, OBSERVATION_FLUSH_MS);
+    this.observationTimer.unref?.();
+  }
+  /** All writers reload under the same cross-process lock; no delayed stale flush. */
+  private transaction<T>(fn: () => T, trigger = 'mutation', observations = 0): T {
+    if (this.writing) return fn();
+    const started = performance.now();
+    const sessions = this.pendingObservations.size;
+    let lockAcquired: number | undefined;
+    let writeMs = 0;
+    let wrote = false;
+    let succeeded = false;
+    try {
+      const result = withConfigLock(this.filename(), () => {
+        lockAcquired = performance.now();
+        this.tasks = undefined;
+        const before = structuredClone(this.load());
+        const beforeRequests = structuredClone(this.requests);
+        const freshness = new Map(this.fresh);
+        this.writing = true;
+        try {
+          // Replay observations onto the freshly loaded document under the lock;
+          // never write a delayed copy over another process's task edits.
+          for (const { snapshot, at } of this.pendingObservations.values()) {
+            const current = this.attemptsBySessionID.get(snapshot.sessionId)?.attempt;
+            // Another writer may have observed a later lifecycle while this
+            // sample waited. Admission is special: the first snapshot can arrive
+            // before accept(), so a newly admitted starting row still needs it.
+            if (
+              current &&
+              current.lifecycle !== 'starting' &&
+              (at < current.observedAt ||
+                (at === current.observedAt &&
+                  current.lifecycle === 'ended' &&
+                  snapshot.status !== 'ended'))
+            )
+              continue;
+            this.observe(snapshot, at);
+          }
+          const result = fn();
+          this.index();
+          const priorTasks = new Map(before.map((task) => [task.taskId, task]));
+          for (const task of this.tasks!) {
+            const prior = priorTasks.get(task.taskId);
+            if (JSON.stringify(prior) !== JSON.stringify(task))
+              task.revision = (prior?.revision ?? 0) + 1;
+          }
+          if (
+            JSON.stringify(before) !== JSON.stringify(this.tasks) ||
+            JSON.stringify(beforeRequests) !== JSON.stringify(this.requests)
+          ) {
+            const writeStarted = performance.now();
+            try {
+              this.persist();
+              wrote = true;
+            } finally {
+              writeMs = performance.now() - writeStarted;
+            }
+          }
+          this.pendingObservations.clear();
+          if (this.observationTimer) clearTimeout(this.observationTimer);
+          this.observationTimer = undefined;
+          return structuredClone(result);
+        } catch (error) {
+          this.tasks = before;
+          this.requests = beforeRequests;
+          this.fresh = freshness;
+          this.index();
+          throw error;
+        } finally {
+          this.writing = false;
+        }
+      });
+      succeeded = true;
+      return result;
+    } finally {
+      const finished = performance.now();
+      const durationMs = Math.round(finished - started);
+      if (durationMs >= 50)
+        console.warn(
+          '[dispatch-history-timing]',
+          JSON.stringify({
+            trigger,
+            sessions,
+            observations,
+            durationMs,
+            lockWaitMs: Math.round((lockAcquired ?? finished) - started),
+            writeMs: Math.round(writeMs),
+            wrote,
+            succeeded,
+          }),
+        );
+    }
   }
   constructor(
     private filename: () => string,
@@ -286,7 +405,7 @@ export class DispatchHistoryStore {
       this.validate(input);
       return;
     }
-    if (!this.writing) return this.transaction(() => this.accept(input));
+    if (!this.writing) return this.transaction(() => this.accept(input), 'admission');
     this.validate(input);
     if (!input.owner?.isWakeTarget || input.owner.status === 'ended' || input.owner.hub) return;
     const existing = this.find(input.sessionId);
@@ -386,39 +505,32 @@ export class DispatchHistoryStore {
       return undefined;
     return source;
   }
+  /** A headless refresh already supplies a fleet batch: commit its lifecycle
+   * transitions together, without delaying completion or rewriting per agent. */
+  observeBatch(snapshots: HistoryObservation[]): void {
+    const local = snapshots.filter((s) => !s.hub);
+    if (!local.length) return;
+    this.transaction(
+      () => {
+        for (const snapshot of local) this.observe(snapshot);
+      },
+      'fleet-refresh',
+      local.length,
+    );
+  }
+
   /** Absolute cumulative snapshots replace prior values. Never add process generations. */
-  observe(
-    s: Pick<
-      ClaudeSessionState,
-      | 'sessionId'
-      | 'status'
-      | 'ambientState'
-      | 'pendingApproval'
-      | 'pendingQuestions'
-      | 'usage'
-      | 'statusLine'
-      | 'hub'
-    >,
-  ): void {
-    if (!this.writing) return this.transaction(() => this.observe(s));
+  observe(s: HistoryObservation, observedAt = new Date().toISOString()): void {
     if (s.hub) return;
+    if (!this.writing) return this.transaction(() => this.observe(s, observedAt), 'observation', 1);
     const a = this.find(s.sessionId)?.attempt;
     if (!a) return;
-    const now = new Date().toISOString();
+    const now = observedAt;
     a.observedAt = now;
     this.fresh.set(a.sessionId, now);
     a.stale = false;
     a.live = s.status !== 'ended';
-    a.lifecycle =
-      s.status === 'ended'
-        ? 'ended'
-        : s.pendingApproval || s.pendingQuestions?.length
-          ? 'needs-decision'
-          : s.status === 'starting'
-            ? 'starting'
-            : s.ambientState === 'idle'
-              ? 'idle'
-              : 'running';
+    a.lifecycle = observationLifecycle(s);
     const run = this.find(s.sessionId)?.task.workflow?.steps.find(
       (r) => r.sessionId === s.sessionId,
     );
@@ -636,6 +748,26 @@ export class DispatchHistoryStore {
     }
     return copy;
   }
+  /** Tasks and request summaries from one file version and one disk read. */
+  readForHostUser(
+    session: (id: string) => { sessionId: string; status: string; hub?: string } | undefined,
+    ownerSessionIds: string[],
+  ) {
+    const tasks = this.list();
+    const owners = new Set(ownerSessionIds);
+    return {
+      tasks: tasks.map((t) => this.hostUserView(t, session)),
+      requests: this.requests
+        .filter((r) => owners.has(r.ownerSessionId))
+        .map((r) => ({
+          ownerSessionId: r.ownerSessionId,
+          requestId: r.requestId,
+          delivery: r.delivery,
+          resolved: !!r.intents,
+        })),
+    };
+  }
+
   listForHostUser(
     session: (id: string) => { sessionId: string; status: string; hub?: string } | undefined,
   ): DispatchTask[] {
@@ -861,8 +993,8 @@ export class DispatchHistoryStore {
       throw new Error('Workflow history capacity reached; active tasks cannot be evicted');
     tasks.splice(index, 1);
   }
-  flush(): void {
-    if (!this.writing) this.transaction(() => undefined);
+  flush(trigger = 'explicit'): void {
+    if (!this.writing) this.transaction(() => undefined, trigger);
   }
   private persist(): void {
     const tasks = this.load();

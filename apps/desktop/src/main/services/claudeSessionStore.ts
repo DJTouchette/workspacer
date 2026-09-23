@@ -5,6 +5,7 @@ import {
 } from '../shared/managerReplacement';
 import { managerReplacementState, type ReplacementMetadata } from './managerReplacementState';
 import { dispatchHistoryStore } from './dispatchHistoryStore';
+import { compactClaudeSnapshotForBackground } from '../shared/compactClaudeSnapshot';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
@@ -693,6 +694,7 @@ class ClaudeSessionStore {
    * compatible; until then only unrelated telemetry may pass. */
   private modelTelemetryProvenance = new Map<string, ModelTelemetryProvenance>();
   private mainWindow: BrowserWindow | null = null;
+  private detailedSessions = new Set<string>();
   // Latest workflow/subagent filesystem state per session, re-merged whenever
   // either the watcher ticks or a hook event mutates the subagent list.
   private watcherUpdates = new Map<string, WorkflowWatcherUpdate>();
@@ -1360,7 +1362,29 @@ class ClaudeSessionStore {
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
+    this.detailedSessions.clear();
+    win.webContents.on?.('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) this.detailedSessions.clear();
+    });
     this.startWakeBackstop();
+  }
+
+  /** Preload reference-counts viewers; a reload clears their old demand. */
+  watchSessionDetails(sessionId: string, watching: boolean): void {
+    if (watching) this.detailedSessions.add(sessionId);
+    else this.detailedSessions.delete(sessionId);
+  }
+
+  private sendRendererSnapshot(session: ClaudeSessionState): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    const snapshot = { ...session, ...detachPendingSlot(session) };
+    this.mainWindow.webContents.send(
+      'claude-session:update',
+      session.sessionId,
+      compactClaudeSnapshotForBackground(snapshot),
+    );
+    if (this.detailedSessions.has(session.sessionId))
+      this.mainWindow.webContents.send('claude-session:detail', session.sessionId, snapshot);
   }
 
   private wakeBackstop?: NodeJS.Timeout;
@@ -2548,7 +2572,7 @@ class ClaudeSessionStore {
 
   private pushUpdate(session: ClaudeSessionState): void {
     try {
-      dispatchHistoryStore.observe(session);
+      dispatchHistoryStore.queueObservation(session);
     } catch (err) {
       console.warn('[dispatch-history] observation unavailable', err);
     }
@@ -2560,8 +2584,7 @@ class ClaudeSessionStore {
       // re-emit it as an unlabelled local agent.snapshot (a duplicate to every
       // bus client, and an event-loop seed if this hub is itself a peer).
       if (!session.hub) publishSnapshot(() => ({ ...session, ...detachPendingSlot(session) }));
-      if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-      this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
+      this.sendRendererSnapshot(session);
       return;
     }
     // Coalescing path: schedule a single flush per session per ~16 ms window.
@@ -2585,8 +2608,7 @@ class ClaudeSessionStore {
     // the hub won't use it. Federation: remote sessions are never republished
     // (see the identical guard on the non-coalesced path above).
     if (!session.hub) publishSnapshot(() => ({ ...session, ...detachPendingSlot(session) }));
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
+    this.sendRendererSnapshot(session);
   }
 
   /**

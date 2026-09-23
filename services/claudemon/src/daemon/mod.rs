@@ -9,6 +9,7 @@ pub mod oneshot;
 #[cfg(test)]
 mod routes_contract;
 pub mod spawn;
+mod worktree_admission;
 pub mod wrapper_ws;
 
 use std::net::SocketAddr;

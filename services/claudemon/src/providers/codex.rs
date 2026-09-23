@@ -912,13 +912,19 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let result = tokio::time::timeout(std::time::Duration::from_secs(10), read)
         .await
         .context("timed out listing codex models")?;
-    let _ = child.start_kill();
+    let _ = child.kill().await;
     let mut models = result?;
-    if let Ok(output) = Command::new(bin)
-        .args(["debug", "models", "--bundled"])
-        .current_dir(cwd)
-        .output()
-        .await
+    // Optional metadata must not hold an otherwise complete catalog hostage.
+    // Dropping the timed-out output future also kills its probe process.
+    if let Ok(Ok(output)) = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        Command::new(bin)
+            .args(["debug", "models", "--bundled"])
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
     {
         if output.status.success() {
             if let Ok(raw) = serde_json::from_slice::<Value>(&output.stdout) {
@@ -1406,6 +1412,7 @@ async fn start_appserver(
     extras: &SpawnExtras,
     evidence: &mut DriverEvidence,
 ) -> anyhow::Result<(OwnedAppServer, CodexWs, String)> {
+    let startup_started = std::time::Instant::now();
     // Each managed session gets its own app-server, so threads/approvals are
     // isolated per pane.
     let port = {
@@ -1445,16 +1452,22 @@ async fn start_appserver(
     evidence.pid = Some(child.pid);
     evidence.cleanup = CleanupOutcome::Pending;
     evidence.record("appserver_started");
+    tracing::info!(session = %session_id, provider = "codex", stage = "appserver_spawned",
+        elapsed_ms = startup_started.elapsed().as_millis() as u64, "spawn-timing");
     evidence.reason = DriverExit::ReadinessFailed;
     let connect = async {
         tokio::time::timeout(std::time::Duration::from_secs(10), wait_ready(&http_base))
             .await
             .context("codex readiness timeout")??;
+        tracing::info!(session = %session_id, provider = "codex", stage = "appserver_ready",
+            elapsed_ms = startup_started.elapsed().as_millis() as u64, "spawn-timing");
         evidence.reason = DriverExit::ConnectFailed;
         let (ws, _) =
             tokio::time::timeout(std::time::Duration::from_secs(5), connect_async(&ws_url))
                 .await
                 .context("codex websocket connect timeout")??;
+        tracing::info!(session = %session_id, provider = "codex", stage = "appserver_connected",
+            elapsed_ms = startup_started.elapsed().as_millis() as u64, "spawn-timing");
         Ok::<_, anyhow::Error>(ws)
     };
     let result = tokio::select! {
@@ -1467,6 +1480,8 @@ async fn start_appserver(
     match result {
         Ok(ws) => Ok((child, ws, ws_url)),
         Err(err) => {
+            tracing::info!(session = %session_id, provider = "codex", stage = "appserver_startup",
+                elapsed_ms = startup_started.elapsed().as_millis() as u64, outcome = "error", "spawn-timing");
             evidence.cleanup = child.cleanup().await;
             evidence.exit_status = child.exit_status;
             Err(err)
@@ -1882,6 +1897,8 @@ async fn run_session(
     // live stream). The first resume can land before the TUI's thread is "running"
     // and fail, so we keep retrying until this flips true.
     let mut subscribed = false;
+    let protocol_started = std::time::Instant::now();
+    let mut readiness_logged = false;
     let mut pending_prompts: Vec<String> = Vec::new();
     // id 1 = initialize, 2 = thread/resume, 100 = thread/loaded/list poll,
     // 101 = thread/start (headless); the user's turns take ids from 3 up.
@@ -1965,6 +1982,11 @@ async fn run_session(
                             &mut pending_switch, headless,
                         ));
                         if applied.is_none() { break 'driver DriverExit::Superseded; }
+                        if subscribed && !readiness_logged {
+                            readiness_logged = true;
+                            tracing::info!(session = %session_id, provider = "codex", stage = "thread_subscribed",
+                                elapsed_ms = protocol_started.elapsed().as_millis() as u64, "spawn-timing");
+                        }
                     }
                 }
                 Some(Ok(Message::Close(_))) => break DriverExit::WebsocketClose,
@@ -2587,6 +2609,52 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stalled_optional_bundled_catalog_is_killed_without_losing_live_models() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::testtmp::dir().join(format!("codex-model-probe-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("fake-codex");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read initialize
+  read models
+  printf '%s\n' '{"id":2,"result":{"data":[{"id":"test","model":"test","displayName":"Test"}]}}'
+else
+  echo $$ > probe.pid
+fi
+exec sleep 60
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let models = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            fetch_models(&bin.to_string_lossy(), &dir.to_string_lossy()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "test");
+        let pid: i32 = std::fs::read_to_string(dir.join("probe.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed-out probe must be killed and reaped");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     // This subprocess alone becomes a subreaper. Never alter the daemon or the
     // parallel test runner's process adoption policy, and never select live PIDs.

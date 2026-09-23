@@ -212,6 +212,10 @@ interface Config {
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
+    /** Agent worktree parent; empty uses ~/.workspacer/worktrees. */
+    worktreeRoot?: string;
+    /** Reclaim generated artifacts from old stopped agent worktrees. */
+    artifactCleanup?: { enabled?: boolean; minAgeHours?: number };
     defaultWorkflowId?: string;
     workflowSelectionRevision?: number;
     /** Coding-agent backend pre-selected in the spawn dialog. */

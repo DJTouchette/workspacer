@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -24,6 +25,10 @@ use super::{SessionMode, SessionStore};
 
 const CONV_BROADCAST_CAPACITY: usize = 1024;
 const TAIL_INTERVAL: Duration = Duration::from_millis(400);
+const MAX_TAIL_READ_BYTES: u64 = 256 * 1024;
+const TAIL_CONCURRENCY: usize = 8;
+const SIDE_SCAN_INTERVAL: Duration = Duration::from_secs(2);
+const SIDE_IDLE_INTERVAL: Duration = Duration::from_secs(5);
 /// Cap on the conversation items retained in memory per session. A live
 /// session's `items` vec is its biggest allocation; without a bound a single
 /// pathologically long session (thousands of tool calls) grows it without limit
@@ -37,6 +42,14 @@ const MAX_CONVERSATION_ITEMS: usize = 5000;
 /// Keep draining a stopped session's transcript briefly — the final
 /// assistant message can flush to disk after the Stop/SessionEnd hook fires.
 const STOPPED_DRAIN_SECS: i64 = 30;
+// A disappearing/unreadable file must not retain a stopped backlog forever.
+// Allow bounded catch-up longer than the ordinary final-output drain, then
+// release the in-memory copy (the durable transcript remains the source).
+const STOPPED_MAX_DRAIN_SECS: i64 = 300;
+
+fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
+    age_secs > STOPPED_DRAIN_SECS && (!backlog || age_secs > STOPPED_MAX_DRAIN_SECS)
+}
 
 /// One structured event parsed out of the transcript, in timeline order.
 #[derive(Debug, Clone, Serialize)]
@@ -160,6 +173,9 @@ struct TailLog {
     /// TodoWrite plan, carried across batches because task edits are
     /// incremental (unlike TodoWrite's full rewrites).
     tasks: TaskFold,
+    main_backlog: bool,
+    side_files: Vec<String>,
+    side_scanned_at: Option<std::time::Instant>,
 }
 
 impl TailLog {
@@ -200,6 +216,8 @@ impl TailLog {
         // Sub-agent usage was cleared with the items — rewind those cursors so
         // the next subagent pass re-emits it into the new log.
         self.side.clear();
+        self.side_files.clear();
+        self.side_scanned_at = None;
     }
 
     /// The sequence of the first retained item, or `seq` when nothing is
@@ -242,6 +260,8 @@ impl TailLog {
 struct SideCursor {
     offset: u64,
     partial: Vec<u8>,
+    backlog: bool,
+    next_check: Option<std::time::Instant>,
 }
 
 /// Shared handle: the tailer task writes, API handlers read/subscribe.
@@ -381,9 +401,16 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
-            for state in sessions.list() {
+            let started = std::time::Instant::now();
+            // One pass per session, with bounded file reads. Independent
+            // sessions can advance while another awaits slow filesystem I/O;
+            // never overlap two passes for the same session.
+            futures::stream::iter(sessions.list()).for_each_concurrent(TAIL_CONCURRENCY, |state| {
+                let sessions = &sessions;
+                let conv = &conv;
+                async move {
                 let Some(path) = state.transcript_path.clone() else {
-                    continue;
+                    return;
                 };
                 if state.mode == SessionMode::Stopped {
                     let age = time::OffsetDateTime::now_utc() - state.updated_at;
@@ -393,8 +420,14 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                         // allocation) so it doesn't live for the daemon's life —
                         // it's re-derivable from the on-disk JSONL, and the delta
                         // stream is finished. Idempotent.
-                        conv.forget(&state.session_id);
-                        continue;
+                        // Bounded reads may still be draining a resumed large
+                        // transcript; don't discard its unread final chunks.
+                        let backlog = conv.logs.get(&state.session_id).is_some_and(|log|
+                            log.main_backlog || log.side.values().any(|cursor| cursor.backlog));
+                        if stopped_drain_finished(age.whole_seconds(), backlog) {
+                            conv.forget(&state.session_id);
+                            return;
+                        }
                     }
                 }
                 if let Err(err) = tail_one(&sessions, &conv, &state.session_id, &path).await {
@@ -403,6 +436,13 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                 if let Err(err) = tail_subagents(&conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "subagent tail failed");
                 }
+                }
+            }).await;
+            if started.elapsed() > TAIL_INTERVAL {
+                tracing::warn!(
+                    duration_ms = started.elapsed().as_millis(),
+                    "transcript tail pass exceeded interval"
+                );
             }
         }
     });
@@ -465,11 +505,9 @@ async fn tail_one(
         file.seek(SeekFrom::Start(offset)).await?;
         // Bound the read to the length we statted so `offset` stays consistent
         // even if the file grows while we read.
-        let mut chunk = Vec::with_capacity((len - offset) as usize);
-        (&mut file)
-            .take(len - offset)
-            .read_to_end(&mut chunk)
-            .await?;
+        let read_len = (len - offset).min(MAX_TAIL_READ_BYTES);
+        let mut chunk = Vec::with_capacity(read_len as usize);
+        (&mut file).take(read_len).read_to_end(&mut chunk).await?;
         offset += chunk.len() as u64;
         buf.extend_from_slice(&chunk);
     }
@@ -514,6 +552,7 @@ async fn tail_one(
         }
         entry.path = path.to_string();
         entry.offset = offset;
+        entry.main_backlog = offset < len;
         entry.partial = new_partial;
         entry.tasks = task_fold;
         if items.is_empty() && !reset {
@@ -564,31 +603,56 @@ async fn tail_subagents(
     let Some(stem) = main_path.strip_suffix(".jsonl") else {
         return Ok(());
     };
-    let dir = format!("{stem}/subagents");
-    let mut rd = match tokio::fs::read_dir(&dir).await {
-        Ok(rd) => rd,
-        Err(_) => return Ok(()), // no sub-agents (yet) — the common case
-    };
-    let mut files: Vec<String> = Vec::new();
-    while let Ok(Some(ent)) = rd.next_entry().await {
-        let p = ent.path();
-        if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Some(s) = p.to_str() {
-                files.push(s.to_string());
+    let refresh = conv.logs.get(session_id).is_none_or(|log| {
+        log.side_scanned_at
+            .is_none_or(|at| at.elapsed() >= SIDE_SCAN_INTERVAL)
+    });
+    if refresh {
+        let dir = format!("{stem}/subagents");
+        let mut files = Vec::new();
+        match tokio::fs::read_dir(&dir).await {
+            Ok(mut rd) => {
+                while let Some(ent) = rd.next_entry().await? {
+                    let p = ent.path();
+                    if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                        if let Some(s) = p.to_str() {
+                            files.push(s.to_owned());
+                        }
+                    }
+                }
             }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
         }
+        files.sort();
+        let mut log = conv.logs.entry(session_id.to_string()).or_default();
+        // Removed side files cannot make progress and must not keep a stopped
+        // session alive through a stale backlog flag or retain dead cursors.
+        log.side.retain(|file, _| files.binary_search(file).is_ok());
+        log.side_files = files;
+        log.side_scanned_at = Some(std::time::Instant::now());
     }
-    files.sort();
+    let files = conv
+        .logs
+        .get(session_id)
+        .map(|log| log.side_files.clone())
+        .unwrap_or_default();
 
     let mut items = Vec::new();
     for file in files {
         // Copy the cursor out; never hold the DashMap guard across an await.
-        let (mut offset, partial) = conv
+        let cursor = conv
             .logs
             .get(session_id)
             .and_then(|l| l.side.get(&file).cloned())
-            .map(|c| (c.offset, c.partial))
-            .unwrap_or((0, Vec::new()));
+            .unwrap_or_default();
+        if cursor
+            .next_check
+            .is_some_and(|at| at > std::time::Instant::now())
+        {
+            continue;
+        }
+        let (mut offset, partial) = (cursor.offset, cursor.partial);
         let Ok(meta) = tokio::fs::metadata(&file).await else {
             continue;
         };
@@ -601,12 +665,18 @@ async fn tail_subagents(
             buf.clear();
         }
         if len == offset {
+            if let Some(mut log) = conv.logs.get_mut(session_id) {
+                let cursor = log.side.entry(file).or_default();
+                cursor.backlog = false;
+                cursor.next_check = Some(std::time::Instant::now() + SIDE_IDLE_INTERVAL);
+            }
             continue;
         }
         let mut f = tokio::fs::File::open(&file).await?;
         f.seek(SeekFrom::Start(offset)).await?;
-        let mut chunk = Vec::with_capacity((len - offset) as usize);
-        (&mut f).take(len - offset).read_to_end(&mut chunk).await?;
+        let read_len = (len - offset).min(MAX_TAIL_READ_BYTES);
+        let mut chunk = Vec::with_capacity(read_len as usize);
+        (&mut f).take(read_len).read_to_end(&mut chunk).await?;
         offset += chunk.len() as u64;
         buf.extend_from_slice(&chunk);
 
@@ -631,8 +701,13 @@ async fn tail_subagents(
                 SideCursor {
                     offset,
                     partial: new_partial,
+                    backlog: offset < len,
+                    next_check: None,
                 },
             );
+        // Parsing remains ordered within a file, but a backlog must not monopolize
+        // the async runtime while other sessions have ready work.
+        tokio::task::yield_now().await;
     }
 
     if items.is_empty() {
@@ -1239,6 +1314,144 @@ fn parse_created_task_id(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn stopped_backlog_drain_has_a_deadline_even_if_its_file_never_recovers() {
+        assert!(!stopped_drain_finished(STOPPED_DRAIN_SECS, false));
+        assert!(stopped_drain_finished(STOPPED_DRAIN_SECS + 1, false));
+        assert!(!stopped_drain_finished(STOPPED_DRAIN_SECS + 1, true));
+        assert!(stopped_drain_finished(STOPPED_MAX_DRAIN_SECS + 1, true));
+    }
+
+    #[tokio::test]
+    async fn bounded_tail_reads_preserve_split_rows_and_make_incremental_progress() {
+        let dir = crate::testtmp::dir().join(format!("tail-budget-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        super::super::transcript::allow_root(&dir);
+        let path = dir.join("large.jsonl");
+        let text = "x".repeat(MAX_TAIL_READ_BYTES as usize + 73);
+        let row = |content: &str| {
+            json!({ "type": "user", "message": { "role": "user", "content": content } }).to_string()
+                + "\n"
+        };
+        std::fs::write(&path, row(&text) + &row("last")).unwrap();
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let mut deltas = conv.subscribe();
+        tail_one(&store, &conv, "large", &path.to_string_lossy())
+            .await
+            .unwrap();
+        assert_eq!(conv.logs.get("large").unwrap().offset, MAX_TAIL_READ_BYTES);
+        assert!(conv.logs.get("large").unwrap().main_backlog);
+        assert!(deltas.try_recv().unwrap().reset);
+        assert!(
+            conv.snapshot("large").unwrap().1.is_empty(),
+            "split JSON row is carried, not parsed prematurely"
+        );
+        tail_one(&store, &conv, "large", &path.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(!conv.logs.get("large").unwrap().main_backlog);
+        let delta = deltas.try_recv().unwrap();
+        assert!(!delta.reset);
+        assert_eq!(delta.seq, 2);
+        assert!(
+            matches!(&delta.items[0], ConversationItem::UserMessage { text: got, .. } if got == &text)
+        );
+        assert!(
+            matches!(&delta.items[1], ConversationItem::UserMessage { text, .. } if text == "last")
+        );
+        tail_one(&store, &conv, "large", &path.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(
+            deltas.try_recv().is_err(),
+            "unchanged file emits no duplicates"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sidechain_discovery_and_idle_checks_are_cached_but_eventually_refresh() {
+        let dir = crate::testtmp::dir().join(format!("tail-side-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("main/subagents")).unwrap();
+        super::super::transcript::allow_root(&dir);
+        let main = dir.join("main.jsonl");
+        let side = dir.join("main/subagents/child.jsonl");
+        std::fs::write(&main, "").unwrap();
+        let conv = ConversationStore::new();
+        let store = SessionStore::new();
+        tail_one(&store, &conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        std::fs::write(&side, "").unwrap();
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(
+            conv.logs.get("parent").unwrap().side_files.is_empty(),
+            "directory is not rescanned every tick"
+        );
+        conv.logs.get_mut("parent").unwrap().side_scanned_at = None;
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        let file = side.to_string_lossy().into_owned();
+        assert!(conv.logs.get("parent").unwrap().side[&file]
+            .next_check
+            .is_some());
+        let row = json!({ "type": "assistant", "message": { "id": "child-message", "model": "claude-fable-5", "usage": { "input_tokens": 7, "output_tokens": 3 }, "content": [] } });
+        std::fs::write(&side, row.to_string() + "\n").unwrap();
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(
+            conv.snapshot("parent").unwrap().1.is_empty(),
+            "idle file check backs off"
+        );
+        conv.logs
+            .get_mut("parent")
+            .unwrap()
+            .side
+            .get_mut(&file)
+            .unwrap()
+            .next_check = None;
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(
+            conv.snapshot("parent")
+                .unwrap()
+                .1
+                .iter()
+                .any(|item| matches!(
+                    item,
+                    ConversationItem::Usage {
+                        sidechain: true,
+                        ..
+                    }
+                )),
+            "subagent spend is eventually delivered"
+        );
+        // Disappearing side files must release cursors and backlog retention.
+        conv.logs
+            .get_mut("parent")
+            .unwrap()
+            .side
+            .get_mut(&file)
+            .unwrap()
+            .backlog = true;
+        std::fs::remove_file(&side).unwrap();
+        conv.logs.get_mut("parent").unwrap().side_scanned_at = None;
+        tail_subagents(&conv, "parent", &main.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(conv.logs.get("parent").unwrap().side.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn summary_tracks_eviction_without_mistaking_coalescing_for_history_loss() {

@@ -2,7 +2,7 @@ import React from 'react';
 import type { AttentionItem, AttentionKind } from '../../types/attention';
 import { ApprovalPrompt } from '../claude/ApprovalPrompt';
 import { QuestionPicker } from '../claude/QuestionPicker';
-import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
+import { useAttentionActions, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
 import { HubChip } from '../HubChip';
 import { Surface } from '../Surface';
 
@@ -46,7 +46,7 @@ interface Props {
  */
 export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
   const { approve, answer, openAgent, dismiss, snooze, setSelectedSig, respawn, reviewFile } =
-    useAttention();
+    useAttentionActions();
   const v = KIND_VISUAL[item.kind];
   // Finished / big-diff cards close the loop with review + respawn affordances.
   // Both are local-machine actions, so federated (remote-hub) items hide them:

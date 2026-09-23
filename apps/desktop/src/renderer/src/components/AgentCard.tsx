@@ -134,7 +134,7 @@ export const AgentCard: React.FC<Props> = ({
   prepareChat,
   timeline = false,
 }) => {
-  const { openAgent, approve, answer, feed } = useAttention();
+  const { openAgent, approve, answer, decisionsByAgent } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
   // Federation: a peer hub's agent wears a hub chip; when that peer's link is
@@ -176,8 +176,8 @@ export const AgentCard: React.FC<Props> = ({
   const activeTool = snapshot?.activeToolCalls?.[snapshot.activeToolCalls.length - 1];
   const runningSubs = (snapshot?.subagents ?? []).filter((s) => s.status === 'running').length;
   const runningWf = (snapshot?.workflows ?? []).filter((w) => w.status === 'running');
-  const approvalItem = feed.find((it) => it.agentId === agent.id && it.kind === 'approval');
-  const questionItem = feed.find((it) => it.agentId === agent.id && it.kind === 'question');
+  const approvalItem = decisionsByAgent.get(agent.id)?.approval;
+  const questionItem = decisionsByAgent.get(agent.id)?.question;
   const turns = (snapshot?.conversation ?? []).length;
 
   const working = state === 'thinking' || state === 'streaming';

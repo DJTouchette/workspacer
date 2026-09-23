@@ -218,6 +218,11 @@ export const CONFIG_DEFAULTS = {
       enabled: true,
       model: 'haiku',
     },
+    worktreeRoot: '',
+    artifactCleanup: {
+      enabled: true,
+      minAgeHours: 1,
+    },
   },
   directories: {
     recent: [],

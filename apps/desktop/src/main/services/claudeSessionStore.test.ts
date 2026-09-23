@@ -77,6 +77,51 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('selective desktop snapshot delivery', () => {
+  it('sends bounded global snapshots and full history only while a viewer requests detail', () => {
+    const send = vi.fn();
+    const on = vi.fn();
+    claudeSessionStore.setMainWindow({
+      isDestroyed: () => false,
+      webContents: { send, on },
+    } as any);
+    const id = uniqueId();
+    hook(id, 'SessionStart');
+    const snapshot = claudeSessionStore.getSnapshot(id)!;
+    for (let i = 0; i < 40; i++)
+      snapshot.conversation.push({ role: 'assistant', content: `turn ${i}`, timestamp: i });
+    claudeSessionStore.noteEffort(id, 'high');
+    vi.advanceTimersByTime(16);
+    expect(send.mock.calls.filter(([channel]) => channel === 'claude-session:detail')).toHaveLength(
+      0,
+    );
+    const background = send.mock.calls.find(
+      ([channel, sid]) => channel === 'claude-session:update' && sid === id,
+    )![2];
+    expect(background.conversation).toHaveLength(12);
+    expect(background.conversationOffset).toBe(28);
+    expect(claudeSessionStore.getSnapshot(id)!.conversation).toHaveLength(40);
+    send.mockClear();
+    claudeSessionStore.watchSessionDetails(id, true);
+    claudeSessionStore.noteEffort(id, 'low');
+    vi.advanceTimersByTime(16);
+    expect(
+      send.mock.calls.find(([channel]) => channel === 'claude-session:detail')![2].conversation,
+    ).toHaveLength(40);
+    send.mockClear();
+    claudeSessionStore.watchSessionDetails(id, false);
+    claudeSessionStore.noteEffort(id, 'high');
+    vi.advanceTimersByTime(16);
+    expect(send.mock.calls.some(([channel]) => channel === 'claude-session:detail')).toBe(false);
+    claudeSessionStore.watchSessionDetails(id, true);
+    on.mock.calls.find(([name]) => name === 'did-start-navigation')![1]({}, 'app', false, true);
+    send.mockClear();
+    claudeSessionStore.noteEffort(id, 'low');
+    vi.advanceTimersByTime(16);
+    expect(send.mock.calls.some(([channel]) => channel === 'claude-session:detail')).toBe(false);
+  });
+});
+
 // The only token figure a managed (non-Claude) session has is DERIVED — pct ×
 // window — so it inherits every error in either input. A percentage is bounded
 // by definition, but nothing upstream enforces that: claudemon reads

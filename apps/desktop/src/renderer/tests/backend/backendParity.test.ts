@@ -409,8 +409,14 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     // `platform` is a VALUE, not a method; createBridgedBackend copies it
     // explicitly (asserted below) rather than through the overlay loop.
     const NON_METHOD = new Set(['platform']);
+    // Deliberate transport capability: direct IPC separates compact fleet and
+    // active detail events. Bus backends already fold conversation windows and
+    // deltas. A stub or native overlay would make the hook abandon that stream.
+    const DIRECT_IPC_ONLY = new Set(['onClaudeSessionDetail']);
     const lost = [...preloadMethodKeys()]
-      .filter((k) => !overlaid.has(k) && !runtime.has(k) && !NON_METHOD.has(k))
+      .filter(
+        (k) => !overlaid.has(k) && !runtime.has(k) && !NON_METHOD.has(k) && !DIRECT_IPC_ONLY.has(k),
+      )
       .sort();
     expect(
       lost,
@@ -418,6 +424,9 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
         'Add each to HOST_ONLY in bridgedBackend.ts, or give the web backend a stub: ' +
         lost.join(', '),
     ).toEqual([]);
+    const ipc = { platform: 'linux', onClaudeSessionDetail: vi.fn() } as unknown as ElectronAPI;
+    expect(createBridgedBackend(ipc, 'token').onClaudeSessionDetail).toBeUndefined();
+    expect(createRemoteBackend(ipc, 'token').onClaudeSessionDetail).toBeUndefined();
   });
 
   it('every bridged host-only method really comes from the preload, not the web stub', () => {

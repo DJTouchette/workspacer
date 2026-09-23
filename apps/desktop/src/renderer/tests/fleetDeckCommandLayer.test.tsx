@@ -45,6 +45,7 @@ const h = vi.hoisted(() => {
       counts: { total: 1, needsYou: 1, byKind: {} },
       setViewLevel: vi.fn(),
       topByAgent: new Map([['a1', approvalItem]]),
+      decisionsByAgent: new Map([['a1', { approval: approvalItem }]]),
       spawnAgent: vi.fn(),
       approve,
       answer: vi.fn(),

@@ -29,6 +29,7 @@ vi.mock('electron', () => ({
       captured.ipcHandlers[channel] = handler;
     },
     send: vi.fn(),
+    removeListener: vi.fn(),
     invoke: vi.fn(() => Promise.resolve()),
   },
   webUtils: {
@@ -72,6 +73,24 @@ async function loadPreload() {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe('preload webUtils bridge', () => {
+  it('reference counts detailed viewers and unsubscribes only after the last closes', async () => {
+    const api = await loadPreload();
+    const { ipcRenderer } = await import('electron');
+    vi.mocked(ipcRenderer.send).mockClear();
+    const first = api.onClaudeSessionDetail('session', vi.fn());
+    const last = api.onClaudeSessionDetail('session', vi.fn());
+    expect(ipcRenderer.send).toHaveBeenCalledExactlyOnceWith(
+      IPC.CLAUDE_SESSION_WATCH,
+      'session',
+      true,
+    );
+    first();
+    first();
+    expect(ipcRenderer.send).toHaveBeenCalledTimes(1);
+    last();
+    expect(ipcRenderer.send).toHaveBeenLastCalledWith(IPC.CLAUDE_SESSION_WATCH, 'session', false);
+    expect(ipcRenderer.send).toHaveBeenCalledTimes(2);
+  });
   it('resolves a dropped File to its host path', async () => {
     captured.getPathForFile.mockReturnValue('/repo/shot.png');
     const api = await loadPreload();

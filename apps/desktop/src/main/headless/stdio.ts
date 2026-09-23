@@ -1,3 +1,4 @@
+import { startWorktreeArtifactCleanup } from '../services/worktreeArtifactCleanupScheduler';
 import { acceptHostResult } from './hostBridge';
 import { createInterface } from 'node:readline';
 import { desktopHostCall, setDesktopEventSink } from './desktopHost';
@@ -9,6 +10,8 @@ setDesktopEventSink((event, data) => process.stdout.write(JSON.stringify({ event
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 let active = 0;
 let closed = false;
+let stopArtifactCleanup: (() => void) | undefined;
+let daemonUrl = '';
 input.on('line', (line) => {
   let request: {
     id: string;
@@ -29,6 +32,10 @@ input.on('line', (line) => {
     input.close();
     return;
   }
+  if (typeof request.context.daemonURL === 'string' && request.context.daemonURL) {
+    daemonUrl = request.context.daemonURL;
+    stopArtifactCleanup ??= startWorktreeArtifactCleanup({ daemonUrl: () => daemonUrl });
+  }
   active++;
   void desktopHostCall(request.method, request.params ?? {}, request.context)
     .then(
@@ -48,6 +55,7 @@ input.on('line', (line) => {
     });
 });
 input.on('close', () => {
+  stopArtifactCleanup?.();
   closed = true;
   if (active === 0) process.exit();
 });

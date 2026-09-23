@@ -26,6 +26,8 @@ export interface ConsumeSseStreamOptions {
    * responsible for doing exactly what its inline loop did with the string.
    */
   onFrame: (dataString: string) => void;
+  /** Called after every successful connection, before consuming frames. */
+  onConnect?: () => void;
   /** Called when a single stream attempt errors (before backoff). Optional. */
   onError?: (err: unknown) => void;
   /** Initial backoff delay in ms. Defaults to 200. */
@@ -58,6 +60,7 @@ export async function consumeSseStream(url: string, opts: ConsumeSseStreamOption
     signal,
     accept = 'text/event-stream',
     onFrame,
+    onConnect,
     onError,
     backoffInitialMs = 200,
     backoffMaxMs = 5000,
@@ -77,6 +80,7 @@ export async function consumeSseStream(url: string, opts: ConsumeSseStreamOption
       if (!res.ok || !res.body) {
         throw new Error(`HTTP ${res.status}`);
       }
+      onConnect?.();
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

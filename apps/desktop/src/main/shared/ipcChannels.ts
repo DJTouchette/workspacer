@@ -99,6 +99,8 @@ export const IPC = {
   CLAUDE_SESSION_GET: 'claude-session:get',
   CLAUDE_SESSION_GET_ALL: 'claude-session:getAll',
   CLAUDE_SESSION_UPDATE: 'claude-session:update', // push (main → renderer)
+  CLAUDE_SESSION_DETAIL: 'claude-session:detail', // full snapshots for active viewers only
+  CLAUDE_SESSION_WATCH: 'claude-session:watch',
 
   // ── Claude session discovery ──
   CLAUDE_SESSIONS_LIST_FOR_DIR: 'claude-sessions:listForDir',

@@ -2,8 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { DispatchHistoryStore } from './dispatchHistoryStore';
+import { DispatchHistoryStore, OBSERVATION_FLUSH_MS } from './dispatchHistoryStore';
 import type { ClaudeSessionState } from './claudeSessionStore';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
+vi.mock('../lib/atomicWriteFile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/atomicWriteFile')>();
+  return { ...actual, atomicWriteFileSync: vi.fn(actual.atomicWriteFileSync) };
+});
 const owner = { sessionId: 'manager', isWakeTarget: true, status: 'active', label: 'Manager' };
 const dirs: string[] = [];
 function fixture(limits?: { tasks: number; attempts: number; bytes: number }) {
@@ -28,7 +33,220 @@ function observation(
   } as ClaudeSessionState;
 }
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+describe('batched live observations', () => {
+  it('reads all manager request summaries and tasks from one file version', () => {
+    const { store } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.requestTransaction((requests) => {
+      for (const ownerSessionId of ['manager', 'other', 'excluded'])
+        requests.push({
+          requestId: ownerSessionId,
+          ownerSessionId,
+          sourceSessionId: 'source',
+          sourceCwd: '/project',
+          createdAt: new Date().toISOString(),
+          digest: 'a'.repeat(64),
+          delivery: 'accepted',
+          attempts: [],
+          revision: 1,
+        });
+    });
+    const reads = vi.spyOn(fs, 'readFileSync');
+    const result = store.readForHostUser(() => undefined, ['manager', 'other']);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.requests.map((r) => r.ownerSessionId)).toEqual(['manager', 'other']);
+    expect(result.requests[0]).not.toHaveProperty('digest');
+  });
+
+  it('commits a headless lifecycle batch once and retries the whole batch after failure', () => {
+    const { store, filename } = fixture();
+    for (const sessionId of ['one', 'two']) store.accept({ ...admission, sessionId });
+    const batch = ['one', 'two'].map((id) => observation(id, { status: 'ended' }));
+    const writes = vi.mocked(atomicWriteFileSync).mockClear();
+    writes.mockImplementationOnce(() => {
+      throw new Error('disk unavailable');
+    });
+    expect(() => store.observeBatch(batch)).toThrow('disk unavailable');
+    expect(store.list().every((task) => task.attempts[0].lifecycle === 'starting')).toBe(true);
+    writes.mockClear();
+    store.observeBatch(batch);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(fs.readFileSync(filename, 'utf8')).tasks.every(
+        (task: any) => task.attempts[0].lifecycle === 'ended',
+      ),
+    ).toBe(true);
+  });
+
+  it('logs lock wait and write duration for an immediate lifecycle commit', () => {
+    const { store } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const times = [0, 10, 30, 90, 100];
+    vi.spyOn(performance, 'now').mockImplementation(() => times.shift() ?? 100);
+    store.queueObservation(observation('one', { status: 'ended' }));
+    expect(warn).toHaveBeenCalledWith('[dispatch-history-timing]', expect.any(String));
+    expect(JSON.parse(warn.mock.calls[0][1])).toMatchObject({
+      trigger: 'lifecycle',
+      sessions: 1,
+      durationMs: 100,
+      lockWaitMs: 10,
+      writeMs: 60,
+      wrote: true,
+      succeeded: true,
+    });
+  });
+
+  it('coalesces fleet metrics into one durable write and captures mutable input', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    for (const sessionId of ['one', 'two']) {
+      store.accept({ ...admission, sessionId });
+      store.observe(observation(sessionId, { ambientState: 'streaming' }));
+    }
+    const writes = vi.mocked(atomicWriteFileSync).mockClear();
+    const reads = vi.spyOn(fs, 'readFileSync');
+    const statusLine = { totalOutputTokens: 0 };
+    for (let i = 1; i <= 120; i++) {
+      statusLine.totalOutputTokens = i;
+      store.queueObservation(
+        observation(i % 2 ? 'one' : 'two', {
+          ambientState: 'streaming',
+          statusLine,
+        }),
+      );
+    }
+    statusLine.totalOutputTokens = 999;
+    expect(writes).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(OBSERVATION_FLUSH_MS);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveBeenCalledTimes(1);
+    const tasks = JSON.parse(fs.readFileSync(filename, 'utf8')).tasks;
+    expect(tasks.map((t: any) => t.attempts[0].metrics.outputTokens)).toEqual([119, 120]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('ignores remote snapshots and reloads only once for a burst of untracked sessions', () => {
+    vi.useFakeTimers();
+    const { store } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    const reads = vi.spyOn(fs, 'readFileSync');
+    const writes = vi.mocked(atomicWriteFileSync).mockClear();
+    for (let i = 0; i < 120; i++) store.queueObservation(observation('remote', { hub: 'peer' }));
+    expect(vi.getTimerCount()).toBe(0);
+    for (let i = 0; i < 120; i++) store.queueObservation(observation('unknown'));
+    expect(reads).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(OBSERVATION_FLUSH_MS);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it('commits idle, approval and ended transitions immediately without a stale timer replay', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.observe(observation('one', { ambientState: 'streaming' }));
+    for (const [patch, lifecycle] of [
+      [{ ambientState: 'idle' }, 'idle'],
+      [{ pendingApproval: { toolName: 'Bash' } }, 'needs-decision'],
+      [{ status: 'ended' }, 'ended'],
+    ] as const) {
+      store.queueObservation(
+        observation('one', { ambientState: 'streaming', statusLine: { totalOutputTokens: 42 } }),
+      );
+      store.queueObservation(
+        observation('one', { ...patch, statusLine: { totalOutputTokens: 43 } }),
+      );
+      const attempt = JSON.parse(fs.readFileSync(filename, 'utf8')).tasks[0].attempts[0];
+      expect(attempt.lifecycle).toBe(lifecycle);
+      expect(attempt.metrics.outputTokens).toBe(43);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  });
+
+  it('rebases queued metrics on another writer edits and discovers newly admitted attempts', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.queueObservation(observation('two', { statusLine: { totalOutputTokens: 17 } }));
+    const peer = new DispatchHistoryStore(() => filename);
+    peer.accept({ ...admission, sessionId: 'two' });
+    peer.requestTransaction((_requests, tasks) => {
+      tasks[0].title = 'Edited elsewhere';
+    });
+    store.flush();
+    const tasks = peer.list();
+    expect(tasks.find((t) => t.attempts[0].sessionId === 'one')?.title).toBe('Edited elsewhere');
+    expect(
+      tasks.find((t) => t.attempts[0].sessionId === 'two')?.attempts[0].metrics.outputTokens,
+    ).toBe(17);
+  });
+
+  it('retains queued observations after a failed write and drains them before explicit mutations', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.observe(observation('one', { ambientState: 'streaming' }));
+    store.queueObservation(
+      observation('one', { ambientState: 'streaming', statusLine: { totalOutputTokens: 99 } }),
+    );
+    vi.mocked(atomicWriteFileSync).mockImplementationOnce(() => {
+      throw new Error('disk unavailable');
+    });
+    expect(() => store.flush()).toThrow('disk unavailable');
+    // A final observation must win over the pending running snapshot.
+    store.observe(observation('one', { status: 'ended' }));
+    vi.advanceTimersByTime(OBSERVATION_FLUSH_MS);
+    const attempt = JSON.parse(fs.readFileSync(filename, 'utf8')).tasks[0].attempts[0];
+    expect(attempt.lifecycle).toBe('ended');
+    expect(attempt.metrics.outputTokens).toBe(99);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not replay an older running observation over another writer final state', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.observe(observation('one', { ambientState: 'streaming' }));
+    store.queueObservation(
+      observation('one', { ambientState: 'streaming', statusLine: { totalOutputTokens: 10 } }),
+    );
+    vi.setSystemTime(Date.now() + 10);
+    const peer = new DispatchHistoryStore(() => filename);
+    peer.observe(observation('one', { status: 'ended', statusLine: { totalOutputTokens: 20 } }));
+    store.flush();
+    const attempt = JSON.parse(fs.readFileSync(filename, 'utf8')).tasks[0].attempts[0];
+    expect(attempt.lifecycle).toBe('ended');
+    expect(attempt.metrics.outputTokens).toBe(20);
+  });
+
+  it('retries a failed background commit without losing its observation timestamp', () => {
+    vi.useFakeTimers();
+    const { store, filename } = fixture();
+    store.accept({ ...admission, sessionId: 'one' });
+    store.observe(observation('one', { ambientState: 'streaming' }));
+    const observedAt = new Date().toISOString();
+    store.queueObservation(
+      observation('one', { ambientState: 'streaming', statusLine: { totalOutputTokens: 77 } }),
+    );
+    vi.mocked(atomicWriteFileSync).mockImplementationOnce(() => {
+      throw new Error('disk unavailable');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.advanceTimersByTime(OBSERVATION_FLUSH_MS);
+    expect(warn).toHaveBeenCalled();
+    vi.advanceTimersByTime(OBSERVATION_FLUSH_MS);
+    const attempt = JSON.parse(fs.readFileSync(filename, 'utf8')).tasks[0].attempts[0];
+    expect(attempt.observedAt).toBe(observedAt);
+    expect(attempt.metrics.outputTokens).toBe(77);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 describe('private persisted dispatch history', () => {
   it('admits only accepted live local manager dispatches and never guesses membership', () => {

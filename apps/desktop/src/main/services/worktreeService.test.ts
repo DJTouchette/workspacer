@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { linkedWorktree, withWorktreeMaintenance } from './worktreeMaintenance';
 import {
   worktreeInfo,
   createWorktree,
   removeAgentWorktree,
   discoverNodeModules,
+  discoverWorktreeNodeModules,
   linkNodeModules,
   resolveWorktreeSetup,
   runWorktreeSetup,
@@ -75,6 +77,19 @@ describe('worktreeInfo', () => {
 });
 
 describe('createWorktree', () => {
+  it('does not link dependencies from a source worktree while it is being cleaned', async () => {
+    const source = await createWorktree({
+      repoCwd: repo,
+      name: 'maintenance-source',
+      rootOverride: wtRoot,
+    });
+    const linked = await linkedWorktree(source.path!);
+    await withWorktreeMaintenance(linked!.gitDir, async () => {
+      await expect(
+        createWorktree({ repoCwd: source.path!, name: 'blocked-child', rootOverride: wtRoot }),
+      ).rejects.toThrow(/maintenance/);
+    });
+  });
   it('creates a worktree on a fresh wks/<slug> branch', async () => {
     const res = await createWorktree({
       repoCwd: repo,
@@ -153,6 +168,48 @@ describe('node_modules linking', () => {
       path.join('apps', 'desktop', 'node_modules'),
       'node_modules',
     ]);
+  });
+
+  it('shares worktree dependency discovery and avoids walking ignored build directories', async () => {
+    const r = makeRepo('nm-cached', 'node_modules\ntarget/\n');
+    fs.mkdirSync(path.join(r, 'target', 'large', 'node_modules'), { recursive: true });
+    const stat = vi.spyOn(fs.promises, 'stat');
+    try {
+      const [a, b] = await Promise.all([
+        discoverWorktreeNodeModules(r),
+        discoverWorktreeNodeModules(r),
+      ]);
+      expect(a.sort()).toEqual(
+        ['apps/desktop/node_modules', 'node_modules']
+          .map((p) => p.split('/').join(path.sep))
+          .sort(),
+      );
+      expect(b.sort()).toEqual(a);
+      const calls = stat.mock.calls.length;
+      expect(stat.mock.calls.some(([p]) => String(p).includes('target'))).toBe(false);
+      // Returned arrays are not the cache itself.
+      a.push('poison');
+      expect(await discoverWorktreeNodeModules(r)).not.toContain('poison');
+      expect(stat.mock.calls.length).toBe(calls);
+      await discoverWorktreeNodeModules(r, { refresh: true });
+      expect(stat.mock.calls.length).toBeGreaterThan(calls);
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  it('refreshes dependency additions and revalidates removed cached paths before linking', async () => {
+    const r = makeRepo('nm-refresh', 'node_modules\n');
+    expect(await discoverWorktreeNodeModules(r)).toContain('node_modules');
+    fs.mkdirSync(path.join(r, 'apps', 'node_modules'));
+    expect(await discoverWorktreeNodeModules(r)).not.toContain(path.join('apps', 'node_modules'));
+    expect(await discoverWorktreeNodeModules(r, { refresh: true })).toContain(
+      path.join('apps', 'node_modules'),
+    );
+    fs.rmSync(path.join(r, 'node_modules'), { recursive: true, force: true });
+    const wt = await createWorktree({ repoCwd: r, name: 'removed-deps', rootOverride: wtRoot });
+    expect(wt.ok).toBe(true);
+    expect(fs.existsSync(path.join(wt.path!, 'node_modules'))).toBe(false);
   });
 
   it('symlinks discovered node_modules into a fresh worktree, and the tree stays clean', async () => {

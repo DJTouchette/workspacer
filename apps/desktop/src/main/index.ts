@@ -1,3 +1,4 @@
+import { startWorktreeArtifactCleanup } from './services/worktreeArtifactCleanupScheduler';
 import { enableManagerReplacementHost } from './services/managerReplacement';
 import { startProviderReadiness } from './services/providerReadinessRuntime';
 import { noteRuntimePending, noteRuntimePhase } from './services/agentRuntimeStatus';
@@ -9,6 +10,7 @@ import { registerIpcHandlers } from './ipc';
 import { getConfigDir } from './services/configService';
 import { resolveProjectIcon, mimeForIcon } from './services/projectIcons';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { dispatchHistoryStore } from './services/dispatchHistoryStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/claudemonDaemon';
@@ -361,6 +363,8 @@ function createWindow(): void {
   // spawning it anyway would just burn ports and confuse `workspacer serve`
   // running on this machine. Disconnecting relaunches the app into local mode.
   const remoteServer = getRemoteServer();
+  stopArtifactCleanup?.();
+  stopArtifactCleanup = startWorktreeArtifactCleanup({ remote: !!remoteServer });
   if (remoteServer) {
     console.log(
       `[main] remote-client mode: renderer connects to ${remoteServer.httpUrl} — local daemons not spawned`,
@@ -688,6 +692,7 @@ app.whenReady().then(() => {
 });
 
 let shuttingDown = false;
+let stopArtifactCleanup: (() => void) | undefined;
 
 /**
  * Tear everything down, letting the daemons exit *gracefully* before we quit —
@@ -696,6 +701,8 @@ let shuttingDown = false;
  * Capped so a stuck daemon can never hang the quit.
  */
 async function gracefulShutdown(): Promise<void> {
+  stopArtifactCleanup?.();
+  stopArtifactCleanup = undefined;
   // Signal renderer to save session and WAIT for its ack before tearing down
   // its backends — the save is an async IPC round-trip, and proceeding
   // immediately raced it against daemon shutdown (a lost race resurrects
@@ -748,6 +755,11 @@ async function gracefulShutdown(): Promise<void> {
   stopClaudemonConversationBridge();
   stopClaudemonEventBridge();
   stopFederationBridge();
+  try {
+    dispatchHistoryStore.flush();
+  } catch (error) {
+    console.warn('[dispatch-history] shutdown flush failed', error);
+  }
   stopHubClient();
   // Stop the daemons in parallel; each closes its stdin so its watchdog runs a
   // clean shutdown (the hub tears down sidecars first). Overall cap as a backstop.

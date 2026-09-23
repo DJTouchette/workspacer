@@ -98,6 +98,26 @@ static MODEL_CACHE: once_cell::sync::Lazy<
     std::sync::Mutex<std::collections::HashMap<String, ModelCacheEntry>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+type ModelFetchResult = Result<Vec<ModelInfo>, String>;
+type ModelFetch = tokio::sync::Mutex<Option<ModelFetchResult>>;
+// Weak entries live only as long as an overlapping group of callers. Share
+// failures as well as successes, without poisoning future retries or keeping
+// arbitrary request keys alive forever. Cancellation releases the async lock:
+// the next waiter takes over the query rather than waiting on a lost notifier.
+static MODEL_FETCHES: once_cell::sync::Lazy<
+    std::sync::Mutex<HashMap<String, std::sync::Weak<ModelFetch>>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn model_fetch(key: &str) -> Arc<ModelFetch> {
+    let mut fetches = MODEL_FETCHES.lock().unwrap_or_else(|e| e.into_inner());
+    fetches.retain(|_, fetch| fetch.strong_count() != 0);
+    if let Some(fetch) = fetches.get(key).and_then(std::sync::Weak::upgrade) {
+        return fetch;
+    }
+    let fetch = Arc::new(tokio::sync::Mutex::new(None));
+    fetches.insert(key.to_owned(), Arc::downgrade(&fetch));
+    fetch
+}
 
 /// Cached models for `key`, if present and — when `max_age` is given — younger
 /// than it. `None` age means "any age" (the stale last-known-good fallback).
@@ -135,7 +155,17 @@ pub(crate) async fn cached_or_fetch(
     if let Some(models) = model_cache_get(&key, Some(MODEL_CACHE_TTL)) {
         return Ok(models);
     }
-    match fetch.await {
+    let shared = model_fetch(&key);
+    let mut completed = shared.lock().await;
+    if let Some(result) = completed.as_ref() {
+        return result.clone().map_err(anyhow::Error::msg);
+    }
+    // A previous group may have populated the cache between the fast-path
+    // check and acquiring this key's lock.
+    if let Some(models) = model_cache_get(&key, Some(MODEL_CACHE_TTL)) {
+        return Ok(models);
+    }
+    let result = match fetch.await {
         Ok(models) => {
             model_cache_put(&key, &models);
             Ok(models)
@@ -151,7 +181,14 @@ pub(crate) async fn cached_or_fetch(
             }
             None => Err(err),
         },
-    }
+    };
+    *completed = Some(
+        result
+            .as_ref()
+            .map(Clone::clone)
+            .map_err(|err| format!("{err:#}")),
+    );
+    result
 }
 
 /// A typed update distilled from one native provider event, in the common
@@ -1299,6 +1336,67 @@ mod tests {
 
         // Unknown key → nothing cached.
         assert!(model_cache_get("test-provider:never-seen", None).is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_model_cache_misses_share_success_and_failure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for succeeds in [true, false] {
+            let calls = AtomicUsize::new(0);
+            let key = format!("test-provider:concurrent-{succeeds}");
+            let fetch = || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Both requests must enter the same in-flight group.
+                tokio::task::yield_now().await;
+                if succeeds {
+                    Ok(Vec::new())
+                } else {
+                    anyhow::bail!("offline")
+                }
+            };
+            let (a, b) = tokio::join!(
+                cached_or_fetch(key.clone(), fetch()),
+                cached_or_fetch(key.clone(), fetch())
+            );
+            assert_eq!(a.is_ok(), succeeds);
+            assert_eq!(b.is_ok(), succeeds);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            if !succeeds {
+                assert!(
+                    cached_or_fetch(key, async { Ok(Vec::new()) }).await.is_ok(),
+                    "failure must not poison later retries"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_model_fetch_releases_waiters_and_other_keys_are_independent() {
+        let key = "test-provider:cancelled-query".to_owned();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let first_key = key.clone();
+        let first = tokio::spawn(async move {
+            cached_or_fetch(first_key, async {
+                let _ = started.send(());
+                std::future::pending().await
+            })
+            .await
+        });
+        ready.await.unwrap();
+        assert!(
+            cached_or_fetch("test-provider:independent".into(), async { Ok(Vec::new()) })
+                .await
+                .is_ok()
+        );
+        first.abort();
+        let _ = first.await;
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            cached_or_fetch(key, async { Ok(Vec::new()) })
+        )
+        .await
+        .unwrap()
+        .is_ok());
     }
 
     #[test]

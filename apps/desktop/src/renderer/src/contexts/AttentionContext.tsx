@@ -22,6 +22,8 @@ interface AttentionContextValue {
   counts: { total: number; needsYou: number; byKind: Record<AttentionKind, number> };
   /** agentId → that agent's most-urgent open item; shared by SideBar + FleetDeck. */
   topByAgent: Map<string, AttentionItem>;
+  /** First approval/question in the current inbox slice, indexed once per feed. */
+  decisionsByAgent: Map<string, { approval?: AttentionItem; question?: AttentionItem }>;
 
   // Inbox drawer
   inboxOpen: boolean;
@@ -71,6 +73,40 @@ const NEEDS_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>([
   'stuck',
   'error',
 ]);
+
+type AttentionActions = Pick<
+  AttentionContextValue,
+  | 'openInbox'
+  | 'closeInbox'
+  | 'setSelectedSig'
+  | 'moveSelection'
+  | 'setViewLevel'
+  | 'approve'
+  | 'answer'
+  | 'reply'
+  | 'sendMessage'
+  | 'dismiss'
+  | 'snooze'
+  | 'openAgent'
+  | 'respawn'
+  | 'reviewFile'
+  | 'spawnAgent'
+>;
+const AttentionActionsContext = createContext<AttentionActions | null>(null);
+const AttentionAgentsContext = createContext<Map<string, AgentWorkspace> | null>(null);
+
+/** Stable routing and membership for transcript chips; excludes streaming data. */
+export function useAttentionNavigationOptional() {
+  const actions = useContext(AttentionActionsContext);
+  const agentsBySession = useContext(AttentionAgentsContext);
+  return actions && agentsBySession ? { openAgent: actions.openAgent, agentsBySession } : null;
+}
+
+export function useAttentionActions(): AttentionActions {
+  const actions = useContext(AttentionActionsContext);
+  if (!actions) throw new Error('useAttentionActions must be used within <AttentionProvider>');
+  return actions;
+}
 
 const AttentionContext = createContext<AttentionContextValue | null>(null);
 
@@ -136,6 +172,16 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     const wantNeeds = inboxFilter === 'needs';
     return allItems.filter((it) => NEEDS_KINDS.has(it.kind) === wantNeeds);
   }, [allItems, inboxFilter]);
+  const decisionsByAgent = useMemo(() => {
+    const index = new Map<string, { approval?: AttentionItem; question?: AttentionItem }>();
+    for (const item of feed) {
+      if (item.kind !== 'approval' && item.kind !== 'question') continue;
+      const decisions = index.get(item.agentId) ?? {};
+      decisions[item.kind] ??= item;
+      index.set(item.agentId, decisions);
+    }
+    return index;
+  }, [feed]);
   const [selectedSig, setSelectedSig] = useState<string | null>(null);
   // Remember the selected card's index so that when it resolves out from under
   // us we can advance to the NEXT item (same slot) rather than snapping to top.
@@ -146,6 +192,15 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   // feed tick (see the actions memo note below).
   const feedRef = useRef(feed);
   feedRef.current = feed;
+  const snapshotsRef = useRef(snapshotBySession);
+  snapshotsRef.current = snapshotBySession;
+  const selectedSigRef = useRef(selectedSig);
+  selectedSigRef.current = selectedSig;
+  const agentsBySession = useMemo(
+    () =>
+      new Map(agents.filter((agent) => agent.sessionId).map((agent) => [agent.sessionId!, agent])),
+    [agents],
+  );
 
   // Keep a valid selection as the feed shifts. If the selected card is still
   // present, just track its index; if it resolved away, advance to the item now
@@ -192,48 +247,35 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     }
   }, [allItems, viewLevel, activeAgentId, dismiss]);
 
-  const moveSelection = useCallback(
-    (delta: number) => {
-      if (feed.length === 0) return;
-      const idx = feed.findIndex((it) => it.signature === selectedSig);
-      const base = idx < 0 ? 0 : idx;
-      const next = Math.max(0, Math.min(feed.length - 1, base + delta));
-      setSelectedSig(feed[next].signature);
-    },
-    [feed, selectedSig],
-  );
+  const moveSelection = useCallback((delta: number) => {
+    const feed = feedRef.current;
+    if (feed.length === 0) return;
+    const idx = feed.findIndex((it) => it.signature === selectedSigRef.current);
+    const base = idx < 0 ? 0 : idx;
+    const next = Math.max(0, Math.min(feed.length - 1, base + delta));
+    setSelectedSig(feed[next].signature);
+  }, []);
 
-  const hasPendingQuestion = useCallback(
-    (sessionId: string) => (snapshotBySession[sessionId]?.pendingQuestions?.length ?? 0) > 0,
-    [snapshotBySession],
-  );
-
-  const approve = useCallback(
-    (item: AttentionItem, response: 'yes' | 'no' | 'always') => {
-      resolveApproval(
-        item.sessionId,
-        response,
-        hasPendingQuestion(item.sessionId),
-        snapshotBySession[item.sessionId]?.provider,
-        snapshotBySession[item.sessionId]?.transport,
-      );
-    },
-    [hasPendingQuestion, snapshotBySession],
-  );
+  const approve = useCallback((item: AttentionItem, response: 'yes' | 'no' | 'always') => {
+    const snapshot = snapshotsRef.current[item.sessionId];
+    resolveApproval(
+      item.sessionId,
+      response,
+      (snapshot?.pendingQuestions?.length ?? 0) > 0,
+      snapshot?.provider,
+      snapshot?.transport,
+    );
+  }, []);
 
   const answer = useCallback(
     (
       item: AttentionItem,
       payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
     ) => {
-      resolveAnswer(
-        item.sessionId,
-        payload,
-        snapshotBySession[item.sessionId]?.provider,
-        snapshotBySession[item.sessionId]?.transport,
-      );
+      const snapshot = snapshotsRef.current[item.sessionId];
+      resolveAnswer(item.sessionId, payload, snapshot?.provider, snapshot?.transport);
     },
-    [snapshotBySession],
+    [],
   );
 
   const reply = useCallback((item: AttentionItem, text: string) => {
@@ -328,6 +370,7 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
       feed,
       counts,
       topByAgent,
+      decisionsByAgent,
       inboxOpen,
       selectedSig,
       selectedItem,
@@ -343,6 +386,7 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
       feed,
       counts,
       topByAgent,
+      decisionsByAgent,
       inboxOpen,
       selectedSig,
       selectedItem,
@@ -352,5 +396,11 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     ],
   );
 
-  return <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>;
+  return (
+    <AttentionActionsContext.Provider value={actions}>
+      <AttentionAgentsContext.Provider value={agentsBySession}>
+        <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>
+      </AttentionAgentsContext.Provider>
+    </AttentionActionsContext.Provider>
+  );
 };

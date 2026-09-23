@@ -1,3 +1,4 @@
+import { createSpawnTiming } from '../shared/spawnTiming';
 import { fleetSkipsPermissions } from './fleetPermissions';
 import { managerReplacementState } from './managerReplacementState';
 import { prepareLaunchIntegration } from './launchIntegrations';
@@ -147,9 +148,15 @@ export interface ClaudeSpawnOptions {
  */
 export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string> {
   managerReplacementState.assertResume(opts.resumeSessionId);
-  return managerReplacementState.admitted([opts.parentSessionId], () => spawnClaude(opts));
+  const timing = createSpawnTiming('claude', 'pty');
+  return timing.measure('launch_total', () =>
+    managerReplacementState.admitted([opts.parentSessionId], () => spawnClaude(opts, timing)),
+  );
 }
-async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
+async function spawnClaude(
+  opts: ClaudeSpawnOptions,
+  timing: ReturnType<typeof createSpawnTiming>,
+): Promise<string> {
   if (opts.scrubProfileBypass && opts.launchIntegrationId)
     throw new Error('Launch integrations currently require a local desktop session');
   // A Claude PTY spawn takes CLAUDE profiles only. The picker filters on it,
@@ -277,7 +284,8 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
   // The app starts the facade asynchronously at boot. Agent launch is the hard
   // boundary: never mint a session token or inject a URL until the exact
   // facade has a connected hub and its initial plugin catalog.
-  await ensureMcpFacadeReady();
+  timing.mark('preflight', sessionId);
+  await timing.measure('facade_ready', () => ensureMcpFacadeReady());
   const cardInstruction = installResponseCardSkill('claude', cardCwd);
   const collaborationInstruction = installAgentCollaborationSkills(
     'claude',
@@ -357,10 +365,13 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
     // A profile spawn inherits the primary login's trust for this folder, or a
     // PTY parks on the invisible trust dialog (mode "unknown", dead pane).
     if (env.CLAUDE_CONFIG_DIR) syncAccountTrust(env.CLAUDE_CONFIG_DIR, cwd);
-    const prepared = await prepareLaunchIntegration(
-      opts.launchIntegrationId,
-      { agent: 'claude', cwd, model, resume: !!opts.resumeSessionId },
-      { env, args: argv.slice(1) },
+    timing.mark('launch_assets', sessionId);
+    const prepared = await timing.measure('launch_integration', () =>
+      prepareLaunchIntegration(
+        opts.launchIntegrationId,
+        { agent: 'claude', cwd, model, resume: !!opts.resumeSessionId },
+        { env, args: argv.slice(1) },
+      ),
     );
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
@@ -388,23 +399,27 @@ async function spawnClaude(opts: ClaudeSpawnOptions): Promise<string> {
       },
     });
 
-    const launched = await claudemonSessionClient.spawn({
-      argv: [argv[0], ...prepared.args],
-      cwd,
-      cols: opts.cols,
-      rows: opts.rows,
-      env: prepared.env,
-      sessionId,
-      // Explicitly, not only via `--model` on the argv: a resume re-uses the
-      // prior life's model without re-stating it, and the daemon's argv sniffing
-      // would find nothing to record for exactly the sessions that have the most
-      // history to mis-measure.
-      model: serializedModel,
-      modelIdentity: modelSelection?.model,
-      contextWindow: modelSelection?.contextWindow,
-      firstMessage: opts.firstMessage,
-    });
+    timing.mark('session_metadata', sessionId);
+    const launched = await timing.measure('daemon_admission', () =>
+      claudemonSessionClient.spawn({
+        argv: [argv[0], ...prepared.args],
+        cwd,
+        cols: opts.cols,
+        rows: opts.rows,
+        env: prepared.env,
+        sessionId,
+        // Explicitly, not only via `--model` on the argv: a resume re-uses the
+        // prior life's model without re-stating it, and the daemon's argv sniffing
+        // would find nothing to record for exactly the sessions that have the most
+        // history to mis-measure.
+        model: serializedModel,
+        modelIdentity: modelSelection?.model,
+        contextWindow: modelSelection?.contextWindow,
+        firstMessage: opts.firstMessage,
+      }),
+    );
     facadeTokenMinted = false; // the session store owns revocation from here
+    timing.mark('session_registered', launched);
     return launched;
   } catch (error) {
     if (facadeTokenMinted) {

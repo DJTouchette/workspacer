@@ -400,7 +400,15 @@ export interface ElectronAPI extends RoutingAPI {
    *  the harness's stable account id). Its PRESENCE is the capability gate for
    *  per-harness profiles — the web mirror has no local credential files. */
   claudeProfilesAccounts?: () => Promise<Record<string, ProfileAccount>>;
-  getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
+  getClaudeSession: (
+    sessionId: string,
+    background?: boolean,
+  ) => Promise<ClaudeSessionSnapshot | null>;
+  /** Direct IPC only. Bus backends keep their existing conversation fold. */
+  onClaudeSessionDetail?: (
+    sessionId: string,
+    callback: (snapshot: ClaudeSessionSnapshot) => void,
+  ) => () => void;
   getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
   /** All sessions the daemon still holds (all providers, incl. archived),
    *  enriched with names from the local history DB. Newest first. */

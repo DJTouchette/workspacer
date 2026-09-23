@@ -12,6 +12,12 @@
  */
 
 import { exec, execFile } from 'child_process';
+import { createSpawnTiming } from '../shared/spawnTiming';
+import {
+  linkedWorktree,
+  withWorktreeMaintenance,
+  recordWorktreeAllocation,
+} from './worktreeMaintenance';
 import { fleetReviewStore, reviewAllocation, type ReviewAllocation } from './fleetReviewStore';
 import { gitArgs } from '../lib/gitExec';
 import * as fs from 'fs';
@@ -90,12 +96,22 @@ export interface WorktreeRemoveResult {
 function git(
   args: string[],
   cwd: string,
+  trimOutput = true,
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     // gitArgs: see lib/gitExec.ts — .git/config is caller-writable data here.
-    execFile('git', gitArgs(args), { cwd, timeout: 15_000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: (stdout ?? '').trim(), stderr: (stderr ?? '').trim() });
-    });
+    execFile(
+      'git',
+      gitArgs(args),
+      { cwd, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        resolve({
+          ok: !err,
+          stdout: trimOutput ? (stdout ?? '').trim() : (stdout ?? ''),
+          stderr: (stderr ?? '').trim(),
+        });
+      },
+    );
   });
 }
 
@@ -174,6 +190,86 @@ export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
   return found;
 }
 
+const DEPENDENCY_DISCOVERY_TTL_MS = 30_000;
+const dependencyDiscovery = new Map<
+  string,
+  {
+    at: number;
+    value?: string[];
+    pending?: Promise<string[]>;
+  }
+>();
+
+/** Only committed parent directories can exist in a new HEAD worktree. Read
+ * that directory set from Git instead of recursively walking ignored build
+ * output; share discovery across simultaneous launches in the same repo. */
+export async function discoverWorktreeNodeModules(
+  srcRoot: string,
+  options: { refresh?: boolean } = {},
+): Promise<string[]> {
+  const root = await fs.promises.realpath(srcRoot).catch(() => path.resolve(srcRoot));
+  const cached = dependencyDiscovery.get(root);
+  if (cached?.pending) return [...(await cached.pending)];
+  if (!options.refresh && cached?.value && Date.now() - cached.at < DEPENDENCY_DISCOVERY_TTL_MS)
+    return [...cached.value];
+  const entry: { at: number; value?: string[]; pending?: Promise<string[]> } = { at: 0 };
+  dependencyDiscovery.set(root, entry);
+  // Bound retained repo metadata without disturbing work already in flight.
+  if (dependencyDiscovery.size > 32) {
+    for (const [key, value] of dependencyDiscovery) {
+      if (key !== root && !value.pending) {
+        dependencyDiscovery.delete(key);
+        break;
+      }
+    }
+  }
+  entry.pending = (async () => {
+    const tree = await git(['ls-tree', '-r', '--name-only', '-z', 'HEAD'], root, false);
+    if (!tree.ok) {
+      // Non-Git callers retain the original discovery behavior. Do not cache a
+      // failed Git read: a transient failure should recover on the next spawn.
+      dependencyDiscovery.delete(root);
+      return discoverNodeModules(root);
+    }
+    const parents = new Set(['']);
+    for (const file of tree.stdout.split('\0')) {
+      if (!file || file.split('/').some((part) => part.startsWith('.') || part === 'node_modules'))
+        continue;
+      let parent = path.dirname(file);
+      while (parent !== '.' && !parents.has(parent)) {
+        parents.add(parent);
+        parent = path.dirname(parent);
+      }
+    }
+    const candidates = [...parents];
+    const found: string[] = [];
+    for (let i = 0; i < candidates.length; i += 16) {
+      const batch = await Promise.all(
+        candidates.slice(i, i + 16).map(async (parent) => {
+          const rel = path.join(parent, 'node_modules');
+          const stat = await fs.promises.stat(path.join(root, rel)).catch(() => null);
+          return stat?.isDirectory() ? rel : null;
+        }),
+      );
+      found.push(...batch.filter((rel): rel is string => rel !== null));
+    }
+    entry.value = found;
+    entry.at = Date.now();
+    return found;
+  })();
+  try {
+    return [...(await entry.pending)];
+  } finally {
+    entry.pending = undefined;
+    // A burst across many repos can temporarily contain only pending entries.
+    // Prune again as they settle, rather than retaining that burst forever.
+    for (const [key, value] of dependencyDiscovery) {
+      if (dependencyDiscovery.size <= 32) break;
+      if (key !== root && !value.pending) dependencyDiscovery.delete(key);
+    }
+  }
+}
+
 /**
  * Best-effort: symlink the source checkout's node_modules dirs (any depth)
  * into a fresh worktree so agents come up with dependencies installed instead
@@ -186,9 +282,11 @@ export async function discoverNodeModules(srcRoot: string): Promise<string[]> {
  */
 export async function linkNodeModules(srcRoot: string, wtPath: string): Promise<string[]> {
   const linked: string[] = [];
-  for (const rel of await discoverNodeModules(srcRoot)) {
+  for (const rel of await discoverWorktreeNodeModules(srcRoot)) {
     const linkPath = path.join(wtPath, rel);
     try {
+      // A cached source can have been removed or replaced since discovery.
+      if (!(await fs.promises.stat(path.join(srcRoot, rel))).isDirectory()) continue;
       // Skip if anything already occupies the path (e.g. a committed dir).
       if (fs.existsSync(linkPath) || (await lexists(linkPath))) continue;
       // Parent must already exist in the worktree (it's a tracked dir in any
@@ -385,7 +483,17 @@ export async function createWorktree(opts: {
   rootOverride?: string;
   config?: WorktreeSetupSource;
 }): Promise<WorktreeCreateResult> {
-  const info = await worktreeInfo(opts.repoCwd);
+  const source = await linkedWorktree(opts.repoCwd);
+  return source
+    ? withWorktreeMaintenance(source.gitDir, () => createWorktreeUnlocked(opts))
+    : createWorktreeUnlocked(opts);
+}
+
+async function createWorktreeUnlocked(
+  opts: Parameters<typeof createWorktree>[0],
+): Promise<WorktreeCreateResult> {
+  const timing = createSpawnTiming('worktree');
+  const info = await timing.measure('worktree_inspect', () => worktreeInfo(opts.repoCwd));
   if (!info.isRepo || !info.root) {
     return { ok: false, error: `${opts.repoCwd} is not inside a git repository` };
   }
@@ -408,20 +516,32 @@ export async function createWorktree(opts: {
     } catch (err) {
       return { ok: false, error: `cannot create ${parent}: ${(err as Error).message}` };
     }
-    const res = await git(['worktree', 'add', '-b', branch, wtPath], info.root);
+    const res = await timing.measure('worktree_git_add', () =>
+      git(['worktree', 'add', '-b', branch, wtPath], info.root!),
+    );
     if (res.ok) {
       console.log(`[worktree] created ${wtPath} (${branch}) from ${info.root}`);
-      const review = await reviewAllocation(info.root, wtPath, branch).catch(() => undefined);
+      await recordWorktreeAllocation(
+        wtPath,
+        opts.rootOverride?.trim() ? path.resolve(opts.rootOverride.trim()) : defaultWorktreeRoot(),
+      ).catch((error) =>
+        console.warn('[worktree] allocation identity could not be recorded', error),
+      );
+      const review = await timing
+        .measure('worktree_review_allocation', () => reviewAllocation(info.root!, wtPath, branch))
+        .catch(() => undefined);
       // Give the agent working deps without an install step; best-effort.
-      await linkNodeModules(info.root, wtPath);
+      await timing.measure('worktree_dependency_links', () => linkNodeModules(info.root!, wtPath));
       // Then the project's own setup commands (deterministic, configured),
       // AFTER the auto-link so a command can replace or build on the links.
       // A setup failure is surfaced in the result, not fatal: the worktree
       // itself is fine, and the spawn paths treat worktree trouble as
       // fall-back-and-warn, never refuse-the-dispatch.
-      const setup = await runWorktreeSetup(
-        resolveWorktreeSetup(opts.config, [opts.repoCwd, info.root]),
-        { source: info.root, worktree: wtPath },
+      const setup = await timing.measure('worktree_setup', () =>
+        runWorktreeSetup(resolveWorktreeSetup(opts.config, [opts.repoCwd, info.root!]), {
+          source: info.root!,
+          worktree: wtPath,
+        }),
       );
       return { ok: true, path: wtPath, branch, setup, reviewAllocation: review };
     }

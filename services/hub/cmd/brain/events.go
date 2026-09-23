@@ -36,6 +36,10 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 		}
 		start := time.Now()
 		err := cm.streamEvents(ctx, func(name string, data []byte) {
+			if name == "session.resync" {
+				reconcileSessionStore(ctx, cm, store)
+				return
+			}
 			// claudemon names its frames "session.update" (some emit no name).
 			if name != "session.update" && name != "" {
 				return
@@ -76,6 +80,32 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 		if backoff < 10*time.Second {
 			backoff *= 2
 		}
+	}
+}
+
+// A lagged stream may have lost the last transition of an otherwise silent
+// session. Publish authoritative rows through the normal store path (including
+// its visibility/enrichment rules), without replaying historical hook events.
+func reconcileSessionStore(ctx context.Context, cm *claudemonClient, store *sessionStore) {
+	raw, err := cm.getRaw(ctx, "/sessions?include_archived=true&include_empty=true")
+	if err != nil {
+		log.Printf("brain: could not reconcile lagged session stream: %v", err)
+		return
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		log.Printf("brain: invalid session reconciliation: %v", err)
+		return
+	}
+	for _, row := range rows {
+		id := snapshotID(row)
+		if id == "" {
+			continue
+		}
+		if _, known := store.get(id); !known && snapshotEnded(row) {
+			continue
+		}
+		store.set(id, row)
 	}
 }
 

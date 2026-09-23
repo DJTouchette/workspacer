@@ -268,6 +268,16 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.customTop).toBe('keep-me');
   });
 
+  it('retains worktree cleanup configuration across unrelated partial saves', () => {
+    mockedFs.readFileSync.mockReturnValue(
+      'agents:\n  worktreeRoot: /custom/worktrees\n  artifactCleanup:\n    enabled: false\n    minAgeHours: 24\n',
+    );
+    configService.reloadConfig();
+    const cfg = configService.saveConfig({ ui: { fontSize: 16 } as any });
+    expect(cfg.agents.worktreeRoot).toBe('/custom/worktrees');
+    expect(cfg.agents.artifactCleanup).toEqual({ enabled: false, minAgeHours: 24 });
+  });
+
   it('round-trips explicit Codex provider-default null without erasing Claude', () => {
     mockedFs.readFileSync.mockReturnValue(
       'agents:\n  managerModels:\n    claude: opus\n    codex: gpt-5-codex\n  managerContextWindows:\n    claude: 1000000\n    codex: 400000\n',

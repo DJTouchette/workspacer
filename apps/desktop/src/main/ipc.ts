@@ -4,6 +4,7 @@ import { providerReadinessService } from './services/providerReadinessRuntime';
 import { fleetWorkflowRequest } from './services/fleetWorkflowService';
 import { readAgentRuntimeStatus } from './services/agentRuntimeStatus';
 import { dispatchHistoryStore } from './services/dispatchHistoryStore';
+import { compactClaudeSnapshotForBackground } from './shared/compactClaudeSnapshot';
 import { fleetReviewStore } from './services/fleetReviewStore';
 import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { windowFor } from './shared/modelContextWindows';
@@ -1292,12 +1293,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC.CLAUDE_SESSION_GET,
-    (_event, sessionId: string): ClaudeSessionSnapshot | null =>
-      claudeSessionStore.getSnapshot(sessionId),
+    (_event, sessionId: string, background?: boolean): ClaudeSessionSnapshot | null => {
+      const snapshot = claudeSessionStore.getSnapshot(sessionId);
+      return snapshot && background === true
+        ? compactClaudeSnapshotForBackground(snapshot)
+        : snapshot;
+    },
   );
 
   ipcMain.handle(IPC.CLAUDE_SESSION_GET_ALL, (): ClaudeSessionSnapshot[] => {
-    return claudeSessionStore.getAllSnapshots();
+    return claudeSessionStore.getAllSnapshots().map(compactClaudeSnapshotForBackground);
+  });
+  ipcMain.on(IPC.CLAUDE_SESSION_WATCH, (event, sessionId: unknown, watching: unknown) => {
+    if (
+      event.sender !== mainWindow.webContents ||
+      typeof sessionId !== 'string' ||
+      !sessionId ||
+      typeof watching !== 'boolean'
+    )
+      return;
+    claudeSessionStore.watchSessionDetails(sessionId, watching);
   });
 
   // terminal:write — writes go through MessagePort directly
@@ -1491,26 +1506,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
   ipcMain.handle(IPC.DISPATCH_HISTORY_READ, () => {
     if (isRemoteClientMode()) return { available: false, reason: TASK_INSPECTOR_UNAVAILABLE };
-    const currentOwner = claudeSessionStore
-      .getAllSnapshots()
+    const snapshots = claudeSessionStore.getAllSnapshots();
+    const currentOwner = snapshots
       .filter((s) => s.isWakeTarget && s.status !== 'ended' && !s.hub)
       .sort((a, b) => b.startedAt - a.startedAt)[0];
     return {
       available: true,
       currentOwnerSessionId: currentOwner?.sessionId,
-      requests: claudeSessionStore
-        .getAllSnapshots()
-        .filter((s) => s.isWakeTarget && !s.hub)
-        .flatMap((s) =>
-          dispatchHistoryStore.listRequests(s.sessionId).map((r) => ({
-            ownerSessionId: r.ownerSessionId,
-            requestId: r.requestId,
-            delivery: r.delivery,
-            resolved: !!r.intents,
-          })),
-        ),
-      tasks: dispatchHistoryStore.listForHostUser(
+      ...dispatchHistoryStore.readForHostUser(
         (id) => claudeSessionStore.getSnapshot(id) ?? undefined,
+        snapshots.filter((s) => s.isWakeTarget && !s.hub).map((s) => s.sessionId),
       ),
     };
   });

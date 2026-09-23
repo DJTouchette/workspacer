@@ -41,6 +41,7 @@ interface PortWaiter {
 }
 
 const terminalPorts = new Map<string, IPort>();
+const detailedSessionViewers = new Map<string, number>();
 const portWaiters = new Map<string, Array<PortWaiter>>();
 
 /** Timeout (ms) before a getPort() promise is rejected if the port never arrives. */
@@ -489,11 +490,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeProfilesAccounts: (): Promise<Record<string, ProfileAccount>> =>
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ACCOUNTS),
 
-  getClaudeSession: (sessionId: string): Promise<ClaudeSessionSnapshot | null> =>
-    ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET, sessionId),
+  getClaudeSession: (
+    sessionId: string,
+    background?: boolean,
+  ): Promise<ClaudeSessionSnapshot | null> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET, sessionId, ...(background ? [true] : [])),
 
   getAllClaudeSessions: (): Promise<ClaudeSessionSnapshot[]> =>
     ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET_ALL),
+
+  onClaudeSessionDetail: (
+    sessionId: string,
+    callback: (snapshot: ClaudeSessionSnapshot) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      id: string,
+      snapshot: ClaudeSessionSnapshot,
+    ) => {
+      if (id === sessionId) callback(snapshot);
+    };
+    ipcRenderer.on(IPC.CLAUDE_SESSION_DETAIL, handler);
+    const viewers = detailedSessionViewers.get(sessionId) ?? 0;
+    detailedSessionViewers.set(sessionId, viewers + 1);
+    if (!viewers) ipcRenderer.send(IPC.CLAUDE_SESSION_WATCH, sessionId, true);
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      ipcRenderer.removeListener(IPC.CLAUDE_SESSION_DETAIL, handler);
+      const remaining = (detailedSessionViewers.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) detailedSessionViewers.set(sessionId, remaining);
+      else {
+        detailedSessionViewers.delete(sessionId);
+        ipcRenderer.send(IPC.CLAUDE_SESSION_WATCH, sessionId, false);
+      }
+    };
+  },
 
   onClaudeSessionUpdate: (
     callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void,

@@ -327,6 +327,8 @@ export interface Config {
     spawnInWorktree?: boolean;
     /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */
     worktreeRoot?: string;
+    /** Automatic generated-artifact cleanup for old stopped worktrees. */
+    artifactCleanup?: { enabled?: boolean; minAgeHours?: number };
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries?: {
       claude?: string;

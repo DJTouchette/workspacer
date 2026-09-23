@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { compactClaudeSnapshotForBackground } from '../lib/compactClaudeSnapshot';
+import { reconcileConversationTurns } from '../lib/conversationIndex';
 
 interface UseClaudeSessionOptions {
   /** The claudemon session_id this hook tracks (formerly the PTY id) */
@@ -31,109 +32,119 @@ export function useClaudeSession({
   active = true,
 }: UseClaudeSessionOptions): UseClaudeSessionReturn {
   const [session, setSession] = useState<ClaudeSessionSnapshot | null>(null);
-  const idRef = useRef(ptySessionId);
-  idRef.current = ptySessionId;
+  const reloadRef = useRef<() => void>(() => {});
+  const applySnapshot = useCallback((snapshot: ClaudeSessionSnapshot) => {
+    setSession((previous) => {
+      if (
+        !previous ||
+        previous.sessionId !== snapshot.sessionId ||
+        (previous.conversationOffset ?? 0) !== (snapshot.conversationOffset ?? 0)
+      )
+        return snapshot;
+      return {
+        ...snapshot,
+        conversation: reconcileConversationTurns(
+          previous.conversation,
+          snapshot.conversation ?? [],
+        ),
+      };
+    });
+  }, []);
 
-  // Coalescing state for the inactive case: hold the newest snapshot and flush
-  // a compact copy on a slow timer so status stays roughly live without
-  // retaining full transcripts for hidden panes.
-  const activeRef = useRef(active);
-  const pendingRef = useRef<ClaudeSessionSnapshot | null>(null);
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Incremented each time ptySessionId changes so a stale async response
-  // (from an earlier id) is silently dropped instead of overwriting newer state.
-  const generationRef = useRef(0);
-
-  // When the pane becomes active again, flush the latest snapshot immediately
-  // so the user never sees stale state on the pane they just navigated to.
   useEffect(() => {
-    activeRef.current = active;
-    if (!active) {
-      pendingRef.current = null;
-      setSession((prev) => (prev ? compactClaudeSnapshotForBackground(prev) : prev));
+    let disposed = false;
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending: ClaudeSessionSnapshot | null = null;
+    setSession((previous) => {
+      if (!ptySessionId || previous?.sessionId !== ptySessionId) return null;
+      return active ? previous : compactClaudeSnapshotForBackground(previous);
+    });
+    if (!ptySessionId) {
+      reloadRef.current = () => {};
       return;
     }
-    if (pendingRef.current) {
-      setSession(pendingRef.current);
-      pendingRef.current = null;
-    }
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = null;
-    }
-    const id = idRef.current;
-    if (!id) return;
-    const gen = ++generationRef.current;
-    window.electronAPI.getClaudeSession(id).then((snap) => {
-      if (gen !== generationRef.current) return;
-      if (snap) setSession(snap as ClaudeSessionSnapshot);
-    });
-  }, [active]);
-
-  useEffect(() => {
-    const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId, snapshot) => {
-      if (sessionId === idRef.current || snapshot.sessionId === idRef.current) {
-        const snap = snapshot as ClaudeSessionSnapshot;
-        if (activeRef.current) {
-          setSession(snap);
-          return;
-        }
-        // Off-screen: keep only a bounded background snapshot, flushed on a slow cadence.
-        pendingRef.current = compactClaudeSnapshotForBackground(snap);
-        if (!flushTimerRef.current) {
-          flushTimerRef.current = setTimeout(() => {
-            flushTimerRef.current = null;
-            if (pendingRef.current) {
-              setSession(pendingRef.current);
-              pendingRef.current = null;
-            }
-          }, INACTIVE_FLUSH_MS);
-        }
+    const receive = (snapshot: ClaudeSessionSnapshot) => {
+      if (disposed) return;
+      revision++;
+      if (active || snapshot.status === 'ended') {
+        pending = null;
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        applySnapshot(active ? snapshot : compactClaudeSnapshotForBackground(snapshot));
+        return;
       }
-    });
-    return () => {
-      unsub();
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = null;
-      }
+      pending = compactClaudeSnapshotForBackground(snapshot);
+      if (!timer)
+        timer = setTimeout(() => {
+          timer = undefined;
+          if (!disposed && pending) applySnapshot(pending);
+          pending = null;
+        }, INACTIVE_FLUSH_MS);
     };
-  }, []);
-
-  useEffect(() => {
-    // The tracked id changed (or cleared). Drop the previous session's snapshot
-    // immediately — otherwise a pane re-pointed at a session that has no
-    // snapshot yet, or detached to null, keeps rendering the old session's
-    // state (its status, pending prompts, etc.). The fetch below repopulates
-    // when the new id does have a snapshot.
-    setSession(null);
-    pendingRef.current = null;
-    if (!ptySessionId) return;
-    const gen = ++generationRef.current;
-    window.electronAPI.getClaudeSession(ptySessionId).then((snap) => {
-      if (gen !== generationRef.current) return; // stale or unmounted
-      if (snap) {
-        const next = snap as ClaudeSessionSnapshot;
-        setSession(activeRef.current ? next : compactClaudeSnapshotForBackground(next));
-      }
-    });
-    return () => {
-      // Increment so any in-flight promise from this ptySessionId is ignored
-      generationRef.current++;
+    // Only the direct IPC backend has a separate full-detail stream. The bus
+    // backend retains its existing conversation-window/delta reconciliation.
+    const detail = active && window.electronAPI.onClaudeSessionDetail;
+    const unsubscribe = detail
+      ? detail(ptySessionId, (snapshot) => receive(snapshot as ClaudeSessionSnapshot))
+      : window.electronAPI.onClaudeSessionUpdate((id, snapshot) => {
+          if (id === ptySessionId || snapshot.sessionId === ptySessionId)
+            receive(snapshot as ClaudeSessionSnapshot);
+        });
+    const reload = () => {
+      const requestedRevision = ++revision;
+      window.electronAPI
+        .getClaudeSession(ptySessionId, !active)
+        .then((snapshot) => {
+          // A later streamed update wins over an older in-flight full fetch.
+          if (disposed || !snapshot) return;
+          if (revision !== requestedRevision) {
+            // A bus window can arrive before its initial full-history fetch.
+            // Keep that newer window/metadata but recover only the missing
+            // prefix; never replace its overlapping turns with older content.
+            if (active && !detail)
+              setSession((current) => {
+                const full = snapshot as ClaudeSessionSnapshot;
+                if (
+                  !current ||
+                  current.sessionId !== full.sessionId ||
+                  current.executionEngine?.generation !== full.executionEngine?.generation
+                )
+                  return current;
+                const start = current.conversationOffset ?? 0;
+                const fullStart = full.conversationOffset ?? 0;
+                const prefix = start - fullStart;
+                if (prefix <= 0 || prefix > (full.conversation?.length ?? 0)) return current;
+                return {
+                  ...current,
+                  conversation: [...full.conversation.slice(0, prefix), ...current.conversation],
+                  conversationOffset: fullStart,
+                  conversationUserOffset: full.conversationUserOffset,
+                };
+              });
+            return;
+          }
+          pending = null;
+          if (timer) clearTimeout(timer);
+          timer = undefined;
+          const next = snapshot as ClaudeSessionSnapshot;
+          applySnapshot(active ? next : compactClaudeSnapshotForBackground(next));
+        })
+        .catch((error) => {
+          if (!disposed) console.warn('[session] snapshot refresh failed', error);
+        });
     };
-  }, [ptySessionId]);
+    reloadRef.current = reload;
+    reload();
+    return () => {
+      disposed = true;
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+      pending = null;
+      reloadRef.current = () => {};
+    };
+  }, [ptySessionId, active, applySnapshot]);
 
-  const refresh = useCallback(() => {
-    if (!idRef.current) return;
-    const gen = ++generationRef.current;
-    window.electronAPI.getClaudeSession(idRef.current).then((snap) => {
-      if (gen !== generationRef.current) return; // stale or unmounted
-      if (snap) {
-        const next = snap as ClaudeSessionSnapshot;
-        setSession(activeRef.current ? next : compactClaudeSnapshotForBackground(next));
-      }
-    });
-  }, []);
-
+  const refresh = useCallback(() => reloadRef.current(), []);
   return { session, refresh };
 }

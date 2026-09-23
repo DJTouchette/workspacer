@@ -31,6 +31,7 @@ vi.mock('../src/contexts/AttentionContext', () => ({
     answer: () => {},
     sendMessage: () => {},
     feed: [],
+    decisionsByAgent: new Map(),
   }),
 }));
 vi.mock('../src/hooks/usePageVisible', () => ({ usePageVisible: () => true }));

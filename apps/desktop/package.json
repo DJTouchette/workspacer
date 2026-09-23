@@ -35,6 +35,7 @@
     "test": "npm run test:main && npm run test:renderer && npm run test:headroom",
     "test:main": "vitest run",
     "audit:fleet-context": "python3 scripts/fleet-context-audit.py",
+    "bench:agent-load": "node scripts/bench-agent-load.mjs",
     "audit:web": "node scripts/web-capability-audit.mjs",
     "test:dispatch-chain": "tsc -p tsconfig.dispatch-chain.json && vitest run --config vitest.dispatch-chain.config.ts",
     "test:renderer": "cd src/renderer && npx vitest run",
@@ -53,7 +54,9 @@
     "check:agent-collaboration-skills": "node scripts/check-agent-collaboration-skills.mjs",
     "check:response-card-discovery": "python3 scripts/check-response-card-discovery.py",
     "test:headroom": "node --test ../../services/hub/examples/headroom/adapter.test.mjs",
-    "test:desktop-host": "npm run build:desktop-host && node scripts/test-desktop-services.mjs"
+    "test:desktop-host": "npm run build:desktop-host && node scripts/test-desktop-services.mjs",
+    "cleanup:agents": "node scripts/cleanup-agent-artifacts.mjs",
+    "test:cleanup-agents": "node --test scripts/cleanup-agent-artifacts.test.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

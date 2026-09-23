@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
  * here). Malformed JSON is skipped, and start/stop behave like the other bridges.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let capturedOpts: any;
 const consumeSseStream = vi.fn(async (_url: string, opts: any) => {
@@ -22,11 +22,13 @@ vi.mock('../lib/sseConsumer', () => ({
 const applyExecutionEngine = vi.fn();
 const applyManagedMode = vi.fn();
 const handleHookEvent = vi.fn();
+const getSnapshot = vi.fn();
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {
     applyManagedMode: (...a: unknown[]) => applyManagedMode(...a),
     applyExecutionEngine: (...a: unknown[]) => applyExecutionEngine(...a),
     handleHookEvent: (...a: unknown[]) => handleHookEvent(...a),
+    getSnapshot: (...a: unknown[]) => getSnapshot(...a),
   },
 }));
 
@@ -41,9 +43,174 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   capturedOpts = undefined;
   stopClaudemonEventBridge();
+  getSnapshot.mockReturnValue({ status: 'active' });
+});
+
+afterEach(() => {
+  stopClaudemonEventBridge();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('claudemonEventBridge', () => {
+  it('reconciles a lost final exit on connect and every reconnect', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ session_id: 's1', mode: 'stopped', provider: 'codex' }],
+    });
+    vi.stubGlobal('fetch', fetch);
+    await startClaudemonEventBridge();
+    capturedOpts.onConnect();
+    await vi.waitFor(() => expect(handleHookEvent).toHaveBeenCalledTimes(1));
+    capturedOpts.onConnect();
+    await vi.waitFor(() => expect(handleHookEvent).toHaveBeenCalledTimes(2));
+    expect(handleHookEvent).toHaveBeenLastCalledWith({
+      hook_event_name: 'SessionEnd',
+      session_id: 's1',
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      'http://daemon/sessions?include_archived=true&include_empty=true&state_only=true',
+      expect.anything(),
+    );
+  });
+
+  it('recovers pending decisions on lag without touching PTY, remote or unknown rows', async () => {
+    const pending = { kind: 'approval', tool: 'shell', raw: {} };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [
+          { session_id: 's1', provider: 'claude', transport: 'stream', mode: 'approval', pending },
+          { session_id: 'pty', provider: 'claude', transport: 'pty', mode: 'responding' },
+          { session_id: 'remote', provider: 'codex', mode: 'stopped' },
+          { session_id: 'unknown', provider: 'codex', mode: 'stopped' },
+        ],
+      }),
+    );
+    getSnapshot.mockImplementation((id) =>
+      id === 'unknown' ? null : { status: 'active', hub: id === 'remote' ? 'peer' : undefined },
+    );
+    await startClaudemonEventBridge();
+    capturedOpts.onFrame(JSON.stringify({ event: 'Resync', reason: 'lagged' }));
+    await vi.waitFor(() => expect(applyManagedMode).toHaveBeenCalledTimes(1));
+    expect(applyManagedMode).toHaveBeenCalledWith(
+      's1',
+      'approval',
+      expect.objectContaining({ pending }),
+    );
+    expect(handleHookEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite live frames with an older in-flight reconciliation', async () => {
+    let finish!: (value: unknown) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    );
+    await startClaudemonEventBridge();
+    capturedOpts.onConnect();
+    capturedOpts.onFrame(
+      JSON.stringify({
+        event: 'Managed',
+        session_id: 's1',
+        state: { mode: 'responding', provider: 'codex' },
+      }),
+    );
+    finish({
+      ok: true,
+      json: async () => [{ session_id: 's1', mode: 'stopped', provider: 'codex' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handleHookEvent).not.toHaveBeenCalled();
+    expect(applyManagedMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let queued pre-lag frames hide a newer terminal snapshot', async () => {
+    let finish!: (value: unknown) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    );
+    await startClaudemonEventBridge();
+    capturedOpts.onFrame('{"event":"Resync"}');
+    const queued = {
+      event: 'Managed',
+      session_id: 's1',
+      state: {
+        mode: 'responding',
+        provider: 'codex',
+        updated_at: '2026-09-23T12:00:00.000000001Z',
+      },
+    };
+    capturedOpts.onFrame(JSON.stringify(queued));
+    finish({
+      ok: true,
+      json: async () => [
+        {
+          session_id: 's1',
+          mode: 'stopped',
+          provider: 'codex',
+          updated_at: '2026-09-23T12:00:00.000000002Z',
+        },
+      ],
+    });
+    await vi.waitFor(() => expect(handleHookEvent).toHaveBeenCalledTimes(1));
+    // A still-queued frame arriving after the snapshot cannot resurrect it.
+    capturedOpts.onFrame(JSON.stringify(queued));
+    expect(applyManagedMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces repeated lag recovery and cancels an in-flight result on stop', async () => {
+    let finish!: (value: unknown) => void;
+    const fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    await startClaudemonEventBridge();
+    capturedOpts.onConnect();
+    capturedOpts.onFrame('{"event":"Resync"}');
+    capturedOpts.onFrame('{"event":"Resync"}');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    stopClaudemonEventBridge();
+    finish({
+      ok: true,
+      json: async () => [{ session_id: 's1', mode: 'stopped', provider: 'codex' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(handleHookEvent).not.toHaveBeenCalled();
+  });
+
+  it('retries failed state recovery even when no further events arrive', async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({
+        ok: true,
+        json: async () => [{ session_id: 's1', mode: 'stopped', provider: 'codex' }],
+      });
+    vi.stubGlobal('fetch', fetch);
+    await startClaudemonEventBridge();
+    capturedOpts.onConnect();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(handleHookEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('subscribes to the daemon /events endpoint', async () => {
     await startClaudemonEventBridge();
     expect(consumeSseStream.mock.calls[0][0]).toBe('http://daemon/events');

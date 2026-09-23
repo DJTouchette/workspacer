@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { taskDependencyState, taskOutcomeAccepted } from '../../../main/shared/managerRequests';
 import { Check, ChevronRight, Copy, ExternalLink, FolderOpen, Pencil } from 'lucide-react';
 import { Surface } from './Surface';
+import { useDispatchHistory } from '../hooks/useDispatchHistory';
 import { inputStyle, SmallButton } from './settings/primitives';
 import { openTaskWorkflowSettings } from '../lib/settingsBus';
 import {
@@ -15,7 +16,6 @@ import {
   taskSkipDisabledReason,
   type DispatchAttempt,
   type DispatchTask,
-  type DispatchHistoryResponse,
   type TaskLinks,
   type TaskEditRequest,
   type TaskOpenRequest,
@@ -207,41 +207,15 @@ export default function TaskInspector({
   remote?: boolean;
   projectCwd?: string;
 }) {
-  const [data, setData] = useState<DispatchHistoryResponse>();
-  const [error, setError] = useState('');
+  const { data, error, refresh: reload, updateTask: update } = useDispatchHistory(remote);
   const [selected, setSelected] = useState(taskId ?? '');
   const [all, setAll] = useState(false);
   const [project, setProject] = useState<string>();
-  const generation = useRef(0);
-  const reload = useCallback(async () => {
-    const id = ++generation.current;
-    try {
-      const result = remote
-        ? { available: false as const, reason: TASK_INSPECTOR_UNAVAILABLE }
-        : ((await window.electronAPI?.dispatchHistoryRead?.()) ?? {
-            available: false as const,
-            reason: TASK_INSPECTOR_UNAVAILABLE,
-          });
-      if (id === generation.current) {
-        setData(result);
-        setError('');
-      }
-    } catch (e) {
-      if (id === generation.current) setError(String(e));
-    }
-  }, [remote]);
   useEffect(() => {
-    setData(undefined);
     setSelected(taskId ?? '');
     setAll(false);
     setProject(undefined);
-    void reload();
-    const timer = setInterval(() => void reload(), 3000);
-    return () => {
-      generation.current++;
-      clearInterval(timer);
-    };
-  }, [reload, taskId, sessionId]);
+  }, [taskId, sessionId, remote]);
   const tasks = data?.available ? data.tasks : [];
   const isManager = manager || (!!sessionId && tasks.some((t) => t.ownerSessionId === sessionId));
   const scope =
@@ -255,12 +229,6 @@ export default function TaskInspector({
     if (!selected && firstChoice) setSelected(firstChoice);
   }, [selected, firstChoice]);
   const task = choices.find((t) => t.taskId === selected) ?? (!selected ? choices[0] : undefined);
-  const update = (next: DispatchTask) => {
-    generation.current++;
-    setData((d) =>
-      d?.available ? { ...d, tasks: d.tasks.map((t) => (t.taskId === next.taskId ? next : t)) } : d,
-    );
-  };
   const projects = Array.from(
     new Set([...tasks.map((t) => t.projectCwd), ...(selectedProject ? [selectedProject] : [])]),
   );

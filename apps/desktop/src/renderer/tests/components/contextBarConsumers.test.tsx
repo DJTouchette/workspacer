@@ -6,7 +6,12 @@ import { SessionStatusBar } from '../../src/components/claude/SessionStatusBar';
 import type { AgentWorkspace } from '../../src/types/pane';
 
 vi.mock('../../src/contexts/AttentionContext', () => ({
-  useAttention: () => ({ openAgent: () => {}, sendMessage: () => {}, feed: [] }),
+  useAttention: () => ({
+    openAgent: () => {},
+    sendMessage: () => {},
+    feed: [],
+    decisionsByAgent: new Map(),
+  }),
 }));
 vi.mock('../../src/hooks/usePageVisible', () => ({ usePageVisible: () => true }));
 vi.mock('../../src/hooks/useGitBranch', () => ({ useGitBranch: () => '' }));

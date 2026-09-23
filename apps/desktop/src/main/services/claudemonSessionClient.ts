@@ -330,6 +330,7 @@ class ClaudemonSessionClient {
     try {
       const res = await fetch(
         `${CLAUDEMON_API_URL}/providers/${provider}/models${qs ? `?${qs}` : ''}`,
+        { signal: AbortSignal.timeout(20_000) },
       );
       if (!res.ok) return [];
       const body = (await res.json()) as {

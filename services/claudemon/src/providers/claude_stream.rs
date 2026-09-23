@@ -988,7 +988,7 @@ struct ParkedCanUse {
 /// What we're waiting on for a control request *we* sent to the CLI.
 #[derive(Debug)]
 enum PendingControl {
-    Initialize,
+    Initialize(std::time::Instant),
     Interrupt,
     SetModel { model: String },
     SetPermissionMode(ManagedPermissionSwitch),
@@ -1249,6 +1249,7 @@ async fn run_session(
     cfg: SpawnConfig,
 ) -> anyhow::Result<()> {
     let session_id = cfg.session_id.clone();
+    let startup_started = std::time::Instant::now();
     let argv = build_argv(&cfg);
     let mut child = Command::new(&cfg.bin)
         .args(&argv)
@@ -1324,7 +1325,7 @@ async fn run_session(
         &mut next_ctl,
         &mut pending_controls,
         json!({ "subtype": "initialize", "hooks": null }),
-        PendingControl::Initialize,
+        PendingControl::Initialize(startup_started),
     );
 
     let mut cur_mode = SessionMode::Input;
@@ -1575,10 +1576,13 @@ fn handle_line(
                         .to_string()
                 });
             match (pending, error) {
-                (PendingControl::Initialize, None) => {
-                    tracing::debug!(session = %session_id, "claude stream: initialized");
+                (PendingControl::Initialize(started), None) => {
+                    tracing::info!(session = %session_id, provider = "claude", stage = "provider_initialized",
+                        elapsed_ms = started.elapsed().as_millis() as u64, outcome = "ok", "spawn-timing");
                 }
-                (PendingControl::Initialize, Some(err)) => {
+                (PendingControl::Initialize(started), Some(err)) => {
+                    tracing::info!(session = %session_id, provider = "claude", stage = "provider_initialized",
+                        elapsed_ms = started.elapsed().as_millis() as u64, outcome = "error", "spawn-timing");
                     tracing::warn!(session = %session_id, error = %err, "claude stream: initialize failed");
                 }
                 (PendingControl::Interrupt, err) => {

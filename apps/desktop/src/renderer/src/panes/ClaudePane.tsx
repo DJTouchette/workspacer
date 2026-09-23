@@ -38,7 +38,7 @@ import type { AgentProvider } from '../types/pane';
 import { SessionChatView } from './SessionChatView';
 
 // ── Sub-components ──
-import { countUserSends } from '../../../main/shared/conversationCount';
+import { createConversationIndexer } from '../lib/conversationIndex';
 import {
   buildReplyPrefix,
   REPLY_PREFIX_RE,
@@ -1549,6 +1549,12 @@ export const useClaudePaneModel = ({
     ],
   );
 
+  const authoritativeIndexer = useRef(createConversationIndexer());
+  const authoritativeIndex = useMemo(
+    () => authoritativeIndexer.current(session?.conversation ?? []),
+    [session?.conversation],
+  );
+
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
@@ -1566,8 +1572,7 @@ export const useClaudePaneModel = ({
     // agree on what a user send is: conversationApplier also pushes a synthetic
     // "nameless command card" (role:'user', command.name === '') for orphaned
     // command_output whose invocation scrolled out, and that is not a send.
-    const userCount =
-      (session?.conversationUserOffset ?? 0) + countUserSends(session?.conversation ?? []);
+    const userCount = (session?.conversationUserOffset ?? 0) + authoritativeIndex.userCount;
     if (userCount < consumedUserCountRef.current) {
       // The conversation reset under the same session id (managed-provider
       // restart starts a fresh provider-side thread). Re-baseline the consumed
@@ -1610,6 +1615,7 @@ export const useClaudePaneModel = ({
   }, [
     session?.conversation,
     session?.conversationUserOffset,
+    authoritativeIndex.userCount,
     session?.ambientState,
     optimisticLoading,
   ]);
@@ -1623,6 +1629,8 @@ export const useClaudePaneModel = ({
     if (optimisticMessages.length === 0) return base;
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
+  const displayIndexer = useRef(createConversationIndexer());
+  const conversationIndex = useMemo(() => displayIndexer.current(conversation), [conversation]);
   const chatController = useMemo(
     () => ({
       send: handleSend,
@@ -2146,8 +2154,13 @@ export const useClaudePaneModel = ({
     [workflows],
   );
   const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(
-    () => anchorWork(conversation, finishedSubagents, finishedWorkflows),
-    [conversation, finishedSubagents, finishedWorkflows],
+    () => anchorWork([], finishedSubagents, finishedWorkflows, conversationIndex),
+    [
+      conversationIndex.agentCalls,
+      conversationIndex.workflowCalls,
+      finishedSubagents,
+      finishedWorkflows,
+    ],
   );
   const liveSubagents = useMemo(
     () => [...subagents.filter((s) => s.status === 'running'), ...unanchoredSubagents],
@@ -2161,18 +2174,10 @@ export const useClaudePaneModel = ({
   // Show active + completed tool calls, excluding any already in conversation
   // turns (from JSONL transcript) to avoid duplication while keeping history
   const liveToolCalls = useMemo(() => {
-    const conversationToolIds = new Set<string>();
-    for (const turn of conversation) {
-      if (turn.toolCalls) {
-        for (const tc of turn.toolCalls) {
-          conversationToolIds.add(tc.id);
-        }
-      }
-    }
     return [...activeToolCalls, ...completedToolCalls].filter(
-      (tc) => !conversationToolIds.has(tc.id),
+      (tc) => !conversationIndex.toolIds.has(tc.id),
     );
-  }, [activeToolCalls, completedToolCalls, conversation]);
+  }, [activeToolCalls, completedToolCalls, conversationIndex.toolIds]);
 
   // Auto-scroll: a ResizeObserver on the content column follows EVERY kind of
   // growth — streaming text (which grows an existing bubble without changing

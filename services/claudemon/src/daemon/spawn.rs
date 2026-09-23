@@ -277,6 +277,10 @@ pub async fn handle(
     if let Some(problem) = cwd_problem(&payload.cwd) {
         return (StatusCode::BAD_REQUEST, problem).into_response();
     }
+    let _worktree_admission = match super::worktree_admission::WorktreeAdmission::acquire(&payload.cwd) {
+        Ok(guard) => guard,
+        Err(err) => return (StatusCode::CONFLICT, format!("Worktree maintenance or another launch is in progress, or its admission lock is unavailable; retry the spawn after it finishes: {err}")).into_response(),
+    };
 
     let input_provider = payload.rollout_provider.as_deref().unwrap_or("claude");
     let argv_model = model_from_argv(&payload.argv, input_provider);
@@ -620,6 +624,10 @@ pub async fn handle_managed(
     if let Some(problem) = cwd_problem(&payload.cwd) {
         return (StatusCode::BAD_REQUEST, problem).into_response();
     }
+    let _worktree_admission = match super::worktree_admission::WorktreeAdmission::acquire(&payload.cwd) {
+        Ok(guard) => guard,
+        Err(err) => return (StatusCode::CONFLICT, format!("Worktree maintenance or another launch is in progress, or its admission lock is unavailable; retry the spawn after it finishes: {err}")).into_response(),
+    };
     // Default before normalization/persistence so direct, model-less managed
     // Codex callers receive the same request as desktop and hub callers.
     // `normalize_model_input` permits this Codex-only model-less pair.

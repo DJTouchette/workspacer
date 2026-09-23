@@ -22,7 +22,7 @@ import {
 import { claudeColors as colors } from '../claude-shared';
 import { Surface } from '../Surface';
 import { StructuredResultCard } from './StructuredResultCard';
-import { useAttentionOptional } from '../../contexts/AttentionContext';
+import { useAttentionNavigationOptional } from '../../contexts/AttentionContext';
 import { TurnStamp } from './ConversationMessage';
 
 /** Per-kind presentation: overline text, icon, and the Surface tone rail. */
@@ -105,8 +105,8 @@ function basename(p: string): string {
 /** `session:<id>` as a chip. Clickable (focuses the worker's workspace) when
  *  the fleet still knows the session; plain otherwise (ended and gone). */
 const SessionChip: React.FC<{ sessionId: string }> = ({ sessionId }) => {
-  const attention = useAttentionOptional();
-  const agent = attention?.agents.find((a) => a.sessionId === sessionId);
+  const attention = useAttentionNavigationOptional();
+  const agent = attention?.agentsBySession.get(sessionId);
   const short = sessionId.length > 10 ? `${sessionId.slice(0, 8)}…` : sessionId;
   const style: React.CSSProperties = {
     display: 'inline-flex',

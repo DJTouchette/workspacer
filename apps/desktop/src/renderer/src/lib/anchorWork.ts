@@ -33,10 +33,11 @@ export function anchorWork(
   conversation: ConversationTurn[],
   subagents: SubagentInfo[],
   workflows: WorkflowRunInfo[],
+  indexed?: { agentCalls: ToolCall[]; workflowCalls: ToolCall[] },
 ): AnchoredWork {
-  const agentCalls: ToolCall[] = [];
-  const workflowCalls: ToolCall[] = [];
-  for (const turn of conversation) {
+  const agentCalls: ToolCall[] = indexed?.agentCalls ?? [];
+  const workflowCalls: ToolCall[] = indexed?.workflowCalls ?? [];
+  for (const turn of indexed ? [] : conversation) {
     for (const tc of turn.toolCalls ?? []) {
       if (tc.name === 'Agent') agentCalls.push(tc);
       else if (tc.name === 'Workflow') workflowCalls.push(tc);

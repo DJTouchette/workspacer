@@ -4,6 +4,7 @@ import {
   useManagerReplacementStatus,
 } from '../lib/managerReplacement';
 import { spawnFailureMessage } from '../lib/spawnFailure';
+import { createSpawnTiming } from '../../../main/shared/spawnTiming';
 import { postNotification } from '../lib/notificationBus';
 import { clearSessionChatUiState } from './useSessionChatUiState';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -325,6 +326,7 @@ export function useAgentManager() {
       targetHub?: string;
     }) => {
       let cwd = opts.cwd;
+      const timing = createSpawnTiming(opts.provider ?? 'claude', opts.transport);
       // Worktree isolation: carve out a fresh git worktree first and make IT
       // the agent's home, so branch changes are isolated. Plugins still have
       // ambient host access; this is git isolation, not a sandbox. Falls back to
@@ -333,10 +335,12 @@ export function useAgentManager() {
       // local worktree of it would be meaningless.
       if (opts.worktree && !opts.targetHub && window.electronAPI.worktreeCreate) {
         try {
-          const wt = await window.electronAPI.worktreeCreate({
-            repoCwd: opts.cwd,
-            name: opts.name?.trim() || deriveAgentName(opts.cwd),
-          });
+          const wt = await timing.measure('worktree_and_setup', () =>
+            window.electronAPI.worktreeCreate!({
+              repoCwd: opts.cwd,
+              name: opts.name?.trim() || deriveAgentName(opts.cwd),
+            }),
+          );
           if (wt.ok && wt.path) {
             cwd = wt.path;
             console.log(`[Agent] spawning in worktree ${wt.path} (${wt.branch})`);
@@ -381,7 +385,9 @@ export function useAgentManager() {
           cols: 120,
           rows: 32,
         };
-        sessionId = await window.electronAPI.spawnClaude(spawnOpts);
+        sessionId = await timing.measure('spawn_ipc_roundtrip', () =>
+          window.electronAPI.spawnClaude(spawnOpts),
+        );
       } catch (err) {
         throw new Error(spawnFailureMessage(opts.provider ?? 'claude', err));
       }
@@ -443,6 +449,7 @@ export function useAgentManager() {
       ]);
       await opts.onSessionReady?.(sessionId);
       setActiveAgentId(agent.id);
+      timing.mark('workspace_committed', sessionId);
       return agent.id;
     },
     [],
