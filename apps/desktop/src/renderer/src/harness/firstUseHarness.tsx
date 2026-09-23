@@ -123,6 +123,9 @@ const api = {
     Object.keys(snapshots).filter((id) => snapshots[id].status !== 'stopped'),
   getAllClaudeSessions: async () => Object.values(snapshots),
   getClaudeSession: async (id: string) => structuredClone(snapshots[id] ?? null),
+  // This fixture models the bus/legacy update stream. Do not let the Proxy's
+  // generic on* no-op masquerade as native IPC's optional detail capability.
+  onClaudeSessionDetail: undefined,
   onClaudeSessionUpdate: (fn: (id: string, snapshot: any) => void) => {
     listeners.add(fn);
     return () => listeners.delete(fn);
