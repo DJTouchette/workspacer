@@ -120,6 +120,8 @@ var (
 
 	// `${CLAUDEMON_API_URL}/sessions/${id}/model` in a template literal.
 	tsClaudemonBaseRe = regexp.MustCompile("\\$\\{CLAUDEMON_API_URL\\}([^`'\"]*)")
+	// Artifact cleanup receives a daemon base from the scheduler/CLI.
+	tsCleanupBaseRe = regexp.MustCompile("\\$\\{daemonUrl\\}([^`'\"]*)")
 	// `http://127.0.0.1:${API_PORT}/health` — claudemonDaemon.ts's own probe,
 	// which builds the base rather than importing it.
 	tsApiPortRe = regexp.MustCompile("\\$\\{API_PORT\\}([^`'\"]*)")
@@ -141,6 +143,11 @@ var (
 // HTTP to claudemon appears here, and TestEveryClaudemonCallerFileIsEnumerated
 // holds the list to a repo-wide scan so it cannot quietly fall behind.
 var claudemonCallers = []callerScan{
+	{
+		file: "apps/desktop/src/main/services/worktreeArtifactCleanup.ts", server: "claudemon-api",
+		what: "artifact cleanup negotiates maintenance support and reads authoritative session liveness",
+		res:  []*regexp.Regexp{tsCleanupBaseRe}, floor: 2,
+	},
 	// ---- Rust: the terminal client (the one that rotted) -----------------
 	{
 		file: "apps/tui/src/claudemon.rs", server: "claudemon-api",
@@ -315,28 +322,30 @@ var claudemonRouteCallers = map[string]string{
 // fine" is not checkable, and an exemption with no sentence behind it is where
 // the next dead caller will hide.
 var claudemonNonCallers = map[string]string{
-	"apps/desktop/src/renderer/src/harness/htmlCardHarness.tsx": "isolated hostile-card security fixture; its loopback URL is an intentional blocked request, not a production daemon client",
-	"apps/desktop/src/main/lib/daemonUtils.ts":                  "declares the PORTS registry and the shared health-poll helper; it composes no claudemon path of its own",
-	"apps/desktop/src/main/services/mcpFacadeDaemon.ts":         "supervises the MCP facade on :7897 and probes ITS /health, not claudemon's",
-	"apps/desktop/src/renderer/src/lib/changelog.generated.ts":  "generated release-note prose that quotes endpoint names; it makes no request",
-	"apps/tui/src/main.rs":                                      "parses the --claudemon base URL and hands it to claudemon.rs; it builds no path",
-	"services/claudemon/src/daemon/api.rs":                      "the API router itself — the served side of this contract, scanned by httproutes_test.go",
-	"services/claudemon/src/daemon/hook.rs":                     "the hook router itself",
-	"services/claudemon/src/daemon/wrapper_ws.rs":               "the /wrapper/:id upgrade handler — the served side; the 127.0.0.1:7891 spellings in it are a doc comment and origin-guard test inputs",
-	"services/claudemon/src/tui/preview.rs":                     "a screenshot harness that constructs the watch TUI against a loopback base and renders it without making a request",
-	"services/claudemon/src/daemon/mod.rs":                      "binds the two listeners and records API_BASE; the callback URLs are composed in the provider adapters, which are enumerated above",
-	"services/claudemon/src/wrapper/mod.rs":                     "appends /{session_id} to the base cli.rs supplies; that composition is declared on the cli.rs row's suffix",
-	"services/hub/cmd/brain/main.go":                            "parses the --claudemon flag and constructs the client; every path lives in claudemon.go",
-	"services/hub/cmd/hub/brain.go":                             "passes the claudemon base URL through to the supervised brain as an argv element",
-	"services/hub/cmd/workspacer/serve.go":                      "holds the default claudemon port for the launcher's spawn plan; it makes no request",
-	"services/hub/internal/capspec/httproutes.go":               "the route registry this file compares against",
-	"services/hub/internal/claudemon/bridge.go":                 "consumes whatever SSE URL it is handed; the URL is composed by cmd/hub/main.go, which is enumerated above",
+	"apps/desktop/src/main/services/worktreeArtifactCleanupScheduler.ts": "builds the daemon base and delegates health/session request paths to the enumerated worktreeArtifactCleanup client",
+	"apps/desktop/src/renderer/src/harness/htmlCardHarness.tsx":          "isolated hostile-card security fixture; its loopback URL is an intentional blocked request, not a production daemon client",
+	"apps/desktop/src/main/lib/daemonUtils.ts":                           "declares the PORTS registry and the shared health-poll helper; it composes no claudemon path of its own",
+	"apps/desktop/src/main/services/mcpFacadeDaemon.ts":                  "supervises the MCP facade on :7897 and probes ITS /health, not claudemon's",
+	"apps/desktop/src/renderer/src/lib/changelog.generated.ts":           "generated release-note prose that quotes endpoint names; it makes no request",
+	"apps/tui/src/main.rs":                                               "parses the --claudemon base URL and hands it to claudemon.rs; it builds no path",
+	"services/claudemon/src/daemon/api.rs":                               "the API router itself — the served side of this contract, scanned by httproutes_test.go",
+	"services/claudemon/src/daemon/hook.rs":                              "the hook router itself",
+	"services/claudemon/src/daemon/wrapper_ws.rs":                        "the /wrapper/:id upgrade handler — the served side; the 127.0.0.1:7891 spellings in it are a doc comment and origin-guard test inputs",
+	"services/claudemon/src/tui/preview.rs":                              "a screenshot harness that constructs the watch TUI against a loopback base and renders it without making a request",
+	"services/claudemon/src/daemon/mod.rs":                               "binds the two listeners and records API_BASE; the callback URLs are composed in the provider adapters, which are enumerated above",
+	"services/claudemon/src/wrapper/mod.rs":                              "appends /{session_id} to the base cli.rs supplies; that composition is declared on the cli.rs row's suffix",
+	"services/hub/cmd/brain/main.go":                                     "parses the --claudemon flag and constructs the client; every path lives in claudemon.go",
+	"services/hub/cmd/hub/brain.go":                                      "passes the claudemon base URL through to the supervised brain as an argv element",
+	"services/hub/cmd/workspacer/serve.go":                               "holds the default claudemon port for the launcher's spawn plan; it makes no request",
+	"services/hub/internal/capspec/httproutes.go":                        "the route registry this file compares against",
+	"services/hub/internal/claudemon/bridge.go":                          "consumes whatever SSE URL it is handed; the URL is composed by cmd/hub/main.go, which is enumerated above",
 }
 
 // claudemonBaseMarkers are the spellings a file uses to reach for a claudemon
 // listener. A file containing one of these is claimed by the discovery test:
 // it is a declared caller, or a declared non-caller with a reason.
 var claudemonBaseMarkers = []string{
+	"loadWorktreeCleanupState",
 	"CLAUDEMON_API_URL",
 	"CLAUDEMON_HOOK_URL",
 	"PORTS.claudemonApi",
