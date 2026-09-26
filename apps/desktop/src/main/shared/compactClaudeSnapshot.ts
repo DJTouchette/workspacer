@@ -53,6 +53,8 @@ export interface CompactableApproval {
 
 /** The snapshot slice compaction reads and rewrites. */
 export interface CompactableSnapshot {
+  sessionId?: string;
+  hub?: string;
   conversation?: CompactableTurn[];
   conversationOffset?: number;
   conversationUserOffset?: number;
@@ -99,17 +101,22 @@ function compactPayload(value: unknown, maxChars = MAX_PAYLOAD_CHARS): unknown {
  * it. The overwhelming majority of that work re-derives an identical result for
  * an entry that was already final several hundred ticks ago.
  *
- * Object identity can't be the key: snapshots arrive over IPC, so every tick
+ * Object identity can't be the only key: snapshots arrive over IPC, so every tick
  * delivers structurally-cloned objects with fresh identities and a WeakMap
  * would never hit. These entries carry their own immutable identity instead.
  */
 const MAX_MEMO_ENTRIES = 1024;
 const compactMemo = new Map<string, unknown>();
+// The producer retains settled objects between ticks. Large fleets exhaust
+// the bounded wire memo in one sweep; reuse these objects without retaining
+// them past the source session's lifetime.
+const objectMemo = new WeakMap<object, { key: string; value: unknown }>();
 
-function memoized<T>(key: string, compute: () => T): T {
-  const hit = compactMemo.get(key);
-  if (hit !== undefined) return hit as T;
-  const value = compute();
+function memoized<T>(source: object, key: string, compute: () => T): T {
+  const local = objectMemo.get(source);
+  if (local?.key === key) return local.value as T;
+  const value = (compactMemo.get(key) as T | undefined) ?? compute();
+  objectMemo.set(source, { key, value });
   compactMemo.set(key, value);
   if (compactMemo.size > MAX_MEMO_ENTRIES) {
     // Evict a chunk at a time; Map iterates in insertion order, so this drops
@@ -123,7 +130,7 @@ function memoized<T>(key: string, compute: () => T): T {
   return value;
 }
 
-function compactToolCall(tool: CompactableToolCall): CompactableToolCall {
+function compactToolCall(tool: CompactableToolCall, scope: string): CompactableToolCall {
   const compute = (): CompactableToolCall => ({
     ...tool,
     input: compactPayload(tool.input),
@@ -132,23 +139,27 @@ function compactToolCall(tool: CompactableToolCall): CompactableToolCall {
   // A running tool's response is still filling in, so only settled calls are
   // safe to memo — and those are the ones that pile up.
   if (tool.status === 'running') return compute();
-  return memoized(`t|${tool.id}|${tool.status}|${tool.completedAt ?? 0}`, compute);
+  return memoized(tool, `${scope}|t|${tool.id}|${tool.status}|${tool.completedAt ?? 0}`, compute);
 }
 
-function compactConversationTurn(turn: CompactableTurn): CompactableTurn {
+function compactConversationTurn(turn: CompactableTurn, scope: string): CompactableTurn {
   return {
     ...turn,
     content: truncateString(turn.content ?? ''),
-    toolCalls: turn.toolCalls?.map(compactToolCall),
+    toolCalls: turn.toolCalls?.map((tool) => compactToolCall(tool, scope)),
   };
 }
 
-function compactFileChange(change: CompactableFileChange): CompactableFileChange {
+function compactFileChange(change: CompactableFileChange, scope: string): CompactableFileChange {
   // A recorded file change is immutable — it's a hook event that already fired.
-  return memoized(`f|${change.timestamp}|${change.toolName}|${change.path}`, () => ({
-    ...change,
-    input: compactPayload(change.input, 1000),
-  }));
+  return memoized(
+    change,
+    `${scope}|f|${change.timestamp}|${change.toolName}|${change.path}`,
+    () => ({
+      ...change,
+      input: compactPayload(change.input, 1000),
+    }),
+  );
 }
 
 function compactPendingApproval(
@@ -171,11 +182,13 @@ function compactPendingApproval(
  * there multiplies memory use across long-running sessions.
  */
 export function compactClaudeSnapshotForBackground<T extends CompactableSnapshot>(snapshot: T): T {
+  // Provider tool ids and file paths need not be unique across agents/hubs.
+  const scope = JSON.stringify([snapshot.hub ?? '', snapshot.sessionId ?? '']);
   const fullConversation = snapshot.conversation ?? [];
   const keptConversation = tail(fullConversation, MAX_BACKGROUND_CONVERSATION_TURNS);
   return {
     ...snapshot,
-    conversation: keptConversation.map(compactConversationTurn),
+    conversation: keptConversation.map((turn) => compactConversationTurn(turn, scope)),
     // Accumulates across repeated compaction so global turn indices
     // (conversationOffset + array index) stay stable for consumers that key
     // or anchor by index (ClaudePane's conversation keys, turn snapshots).
@@ -188,14 +201,14 @@ export function compactClaudeSnapshotForBackground<T extends CompactableSnapshot
     conversationUserOffset:
       (snapshot.conversationUserOffset ?? 0) +
       countUserSends(fullConversation.slice(0, fullConversation.length - keptConversation.length)),
-    activeToolCalls: tail(snapshot.activeToolCalls ?? [], MAX_BACKGROUND_ACTIVE_TOOLS).map(
-      compactToolCall,
+    activeToolCalls: tail(snapshot.activeToolCalls ?? [], MAX_BACKGROUND_ACTIVE_TOOLS).map((tool) =>
+      compactToolCall(tool, scope),
     ),
     completedToolCalls: tail(snapshot.completedToolCalls ?? [], MAX_BACKGROUND_COMPLETED_TOOLS).map(
-      compactToolCall,
+      (tool) => compactToolCall(tool, scope),
     ),
-    fileChanges: tail(snapshot.fileChanges ?? [], MAX_BACKGROUND_FILE_CHANGES).map(
-      compactFileChange,
+    fileChanges: tail(snapshot.fileChanges ?? [], MAX_BACKGROUND_FILE_CHANGES).map((change) =>
+      compactFileChange(change, scope),
     ),
     pendingApproval: compactPendingApproval(snapshot.pendingApproval),
     // The compacted pieces are structural supersets of what T declares (every

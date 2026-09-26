@@ -23,6 +23,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - Worktree launches reuse dependency discovery; concurrent model-catalog probes
   share results and have bounded timeouts. Transcript polling advances sessions
   fairly and avoids repeatedly scanning inactive subagent files.
+- Large fleets reuse compacted tool and file-change payloads across updates,
+  avoiding repeated serialization when many agents are active.
 
 ### Fixed
 - Dropped lifecycle events now trigger state recovery on desktop and headless
@@ -31,6 +33,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   updates cannot overwrite newer session endings and task edits.
 - Worktree cleanup and provider admission share a maintenance lock so cleanup
   cannot race an agent starting in the same working tree.
+- Concurrent agents can start in the same linked worktree without rejecting
+  each other's launches; cleanup remains blocked until registration completes.
+- Background snapshot caches keep tool and file-change results separate across
+  agents and remote hubs.
 
 ## [0.168.0] - 2026-09-17
 

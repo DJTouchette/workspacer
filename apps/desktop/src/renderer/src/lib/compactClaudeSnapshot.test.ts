@@ -96,6 +96,68 @@ describe('compactClaudeSnapshotForBackground', () => {
       completedAt: 2,
     });
 
+    it('does not reserialize settled payloads when a fleet exceeds the wire memo capacity', () => {
+      let serializations = 0;
+      const input = {
+        toJSON() {
+          serializations++;
+          return { content: 'x'.repeat(8000) };
+        },
+      };
+      const fleet = Array.from({ length: 50 }, (_, agent) =>
+        snapshot({
+          sessionId: `load-${agent}`,
+          completedToolCalls: Array.from({ length: 20 }, (_, i) => ({
+            ...settledTool(`load-tool-${i}`),
+            input,
+          })),
+          fileChanges: Array.from({ length: 80 }, (_, i) => ({
+            path: `load-${i}.ts`,
+            toolName: 'Write',
+            timestamp: i,
+            input,
+          })),
+        }),
+      );
+      fleet.forEach(compactClaudeSnapshotForBackground);
+      expect(serializations).toBe(5000);
+      serializations = 0;
+      fleet.forEach(compactClaudeSnapshotForBackground);
+      expect(serializations).toBe(0);
+    });
+
+    it('keeps identically named tool calls and file changes isolated by session and hub', () => {
+      for (const [sessionId, hub, content] of [
+        ['isolation-a', '', 'first'],
+        ['isolation-b', '', 'second'],
+        ['isolation-a', 'peer', 'remote'],
+      ]) {
+        const compact = compactClaudeSnapshotForBackground(
+          snapshot({
+            sessionId,
+            hub,
+            completedToolCalls: [{ ...settledTool('same-tool'), input: { content } }],
+            fileChanges: [
+              { path: 'same.ts', toolName: 'Write', timestamp: 10, input: { content } },
+            ],
+          }),
+        );
+        expect(compact.completedToolCalls[0].input).toEqual({ content });
+        expect(compact.fileChanges[0].input).toEqual({ content });
+      }
+    });
+
+    it('invalidates object reuse when a settled tool gets a new completion', () => {
+      const tool = settledTool('completion-revised');
+      const original = snapshot({ completedToolCalls: [tool] });
+      const first = compactClaudeSnapshotForBackground(original);
+      tool.completedAt++;
+      tool.response = 'updated';
+      const second = compactClaudeSnapshotForBackground(original);
+      expect(first.completedToolCalls[0].response).toBe('contents');
+      expect(second.completedToolCalls[0].response).toBe('updated');
+    });
+
     it('reuses the compacted form of a settled tool call across ticks', () => {
       const first = compactClaudeSnapshotForBackground(
         snapshot({ completedToolCalls: [settledTool('memo-1')] }),

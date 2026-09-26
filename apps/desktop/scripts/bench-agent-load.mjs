@@ -145,6 +145,43 @@ try {
       });
     }
   }
+  // A full fleet sweep exceeds the bounded wire-identity memo. Production
+  // retains settled tool/file objects between ticks; measure that actual path
+  // as well as the IPC clone proxy above.
+  const fleetCompaction = [];
+  for (const agents of [1, 50, 200]) {
+    const fleet = Array.from({ length: agents }, (_, agent) => ({
+      sessionId: `bench-${agents}-${agent}`,
+      conversation: [],
+      completedToolCalls: Array.from({ length: 20 }, (_, tool) => ({
+        id: `bench-${agents}-${agent}-${tool}`,
+        status: 'complete',
+        completedAt: tool,
+        input: { content: 'x'.repeat(8000) },
+        response: { content: 'y'.repeat(8000) },
+      })),
+      fileChanges: Array.from({ length: 80 }, (_, change) => ({
+        path: `bench-${agents}-${agent}-${change}.ts`,
+        toolName: 'Write',
+        timestamp: change,
+        input: { content: 'z'.repeat(8000) },
+      })),
+    }));
+    fleet.forEach(compactClaudeSnapshotForBackground);
+    const samples = [];
+    for (let tick = 0; tick < 20; tick++) {
+      const start = performance.now();
+      fleet.forEach(compactClaudeSnapshotForBackground);
+      samples.push(performance.now() - start);
+    }
+    samples.sort((a, b) => a - b);
+    fleetCompaction.push({
+      agents,
+      ticks: samples.length,
+      medianMsPerFleetTick: round(samples[Math.floor(samples.length / 2)]),
+      p95MsPerFleetTick: round(samples[Math.ceil(samples.length * 0.95) - 1]),
+    });
+  }
   console.log(
     JSON.stringify(
       {
@@ -153,6 +190,7 @@ try {
         platform: process.platform,
         history,
         snapshots,
+        fleetCompaction,
       },
       null,
       2,

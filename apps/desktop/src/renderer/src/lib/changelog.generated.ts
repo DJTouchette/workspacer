@@ -39,6 +39,7 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
         items: [
           'Batched fleet/history updates, compact background IPC snapshots, focused attention subscriptions and incremental transcript indexes reduce work when many agents stream or conversations grow long.',
           'Worktree launches reuse dependency discovery; concurrent model-catalog probes share results and have bounded timeouts. Transcript polling advances sessions fairly and avoids repeatedly scanning inactive subagent files.',
+          'Large fleets reuse compacted tool and file-change payloads across updates, avoiding repeated serialization when many agents are active.',
         ],
       },
       {
@@ -47,6 +48,8 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
           'Dropped lifecycle events now trigger state recovery on desktop and headless hosts, preventing exited agents from remaining visibly live after overload.',
           'Shared history polling avoids duplicate reads, and stale fetches or queued updates cannot overwrite newer session endings and task edits.',
           'Worktree cleanup and provider admission share a maintenance lock so cleanup cannot race an agent starting in the same working tree.',
+          "Concurrent agents can start in the same linked worktree without rejecting each other's launches; cleanup remains blocked until registration completes.",
+          'Background snapshot caches keep tool and file-change results separate across agents and remote hubs.',
         ],
       },
     ],
