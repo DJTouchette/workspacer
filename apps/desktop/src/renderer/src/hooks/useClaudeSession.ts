@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { compactClaudeSnapshotForBackground } from '../lib/compactClaudeSnapshot';
 import { reconcileConversationTurns } from '../lib/conversationIndex';
@@ -18,6 +18,8 @@ interface UseClaudeSessionOptions {
 interface UseClaudeSessionReturn {
   session: ClaudeSessionSnapshot | null;
   refresh: () => void;
+  /** The current activation has finished fetching its full conversation. */
+  detailReady: boolean;
 }
 
 /** How often an inactive (off-screen) pane flushes its latest snapshot. */
@@ -32,6 +34,8 @@ export function useClaudeSession({
   active = true,
 }: UseClaudeSessionOptions): UseClaudeSessionReturn {
   const [session, setSession] = useState<ClaudeSessionSnapshot | null>(null);
+  const activation = useMemo(() => ({}), [ptySessionId, active]);
+  const [readyActivation, setReadyActivation] = useState<object | null>(null);
   const reloadRef = useRef<() => void>(() => {});
   const applySnapshot = useCallback((snapshot: ClaudeSessionSnapshot) => {
     setSession((previous) => {
@@ -132,6 +136,9 @@ export function useClaudeSession({
         })
         .catch((error) => {
           if (!disposed) console.warn('[session] snapshot refresh failed', error);
+        })
+        .finally(() => {
+          if (!disposed && active) setReadyActivation(activation);
         });
     };
     reloadRef.current = reload;
@@ -143,8 +150,8 @@ export function useClaudeSession({
       pending = null;
       reloadRef.current = () => {};
     };
-  }, [ptySessionId, active, applySnapshot]);
+  }, [ptySessionId, active, applySnapshot, activation]);
 
   const refresh = useCallback(() => reloadRef.current(), []);
-  return { session, refresh };
+  return { session, refresh, detailReady: readyActivation === activation };
 }

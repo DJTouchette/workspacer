@@ -27,6 +27,7 @@ import { anchorWork } from '../lib/anchorWork';
 import { reportAttachmentFailures, uploadAttachments } from '../lib/attachmentUpload';
 import { bracketedPasteSubmit } from '../lib/bracketedPaste';
 import { distanceFromContentEnd, tailPadForAnchor } from '../lib/chatScroll';
+import { useChatReadingPosition } from '../hooks/useChatReadingPosition';
 import { onChatScroll } from '../lib/chatScrollBus';
 import { clearTokenCache } from '../lib/diff/highlight';
 import { createRemoteConversationSync } from '../lib/federation';
@@ -424,7 +425,10 @@ export const useClaudePaneModel = ({
     return () => clearTimeout(id);
   }, [sessionId, spawnError]);
 
-  const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+  const { session, detailReady = true } = useClaudeSession({
+    ptySessionId: sessionId,
+    active: isActive,
+  });
 
   // Federation: a REMOTE session's snapshot carries only the peer's compacted
   // conversation window (or none at all for a headless-brain peer). Poking the
@@ -880,20 +884,6 @@ export const useClaudePaneModel = ({
     if (!isActive || viewMode !== 'gui') return;
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [viewMode, isActive, isReady]);
-
-  // Jump to the latest message whenever the GUI view opens — the scroll
-  // container is freshly mounted on each GUI switch, so land at the bottom
-  // (instant, no smooth animation) rather than wherever it last rendered.
-  useEffect(() => {
-    if (viewMode !== 'gui') return;
-    const snap = () => {
-      const c = scrollContainerRef.current;
-      if (c) c.scrollTop = c.scrollHeight;
-    };
-    // Two frames: one for the GUI subtree to mount, one for content layout.
-    const id = requestAnimationFrame(() => requestAnimationFrame(snap));
-    return () => cancelAnimationFrame(id);
-  }, [viewMode]);
 
   // Reveal the terminal cleanly when this pane becomes active (or switches to
   // Term view). Switching agents toggles the workspace display:none → block,
@@ -1650,6 +1640,18 @@ export const useClaudePaneModel = ({
   // reconciles in place instead of remounting the whole conversation.
   const convOffset = session?.conversationOffset ?? 0;
   const hasOlderMessages = conversation.length > visibleCount;
+  const reading = useChatReadingPosition({
+    sessionId,
+    active: isActive && viewMode === 'gui' && detailReady,
+    turns: session?.conversation ?? [],
+    offset: convOffset,
+    containerRef: scrollContainerRef,
+    stickToBottomRef,
+    scrollTopRef,
+    tailPadRef,
+    visibleCount,
+    setVisibleCount,
+  });
 
   // Restoring a prior session (resume spawn or attach): the daemon replays the
   // transcript a beat after the session appears, so an empty conversation here
@@ -2193,9 +2195,9 @@ export const useClaudePaneModel = ({
   // where the send put it.
   const followTail = useCallback(() => {
     const container = scrollContainerRef.current;
-    if (!container) return;
+    if (!container || !isActive || viewMode !== 'gui') return;
     measureTailPad();
-    if (!stickToBottomRef.current) return;
+    if (!reading.canFollow.current || !stickToBottomRef.current) return;
     // Flag before the write: the scroll event this queues must not be read as
     // the user scrolling away (see handleScroll). Cleared by that handler, with
     // a macrotask backstop for the case where scrollTop doesn't actually move
@@ -2206,7 +2208,7 @@ export const useClaudePaneModel = ({
     setTimeout(() => {
       programmaticScrollRef.current = false;
     }, 0);
-  }, [measureTailPad]);
+  }, [measureTailPad, isActive, viewMode]);
 
   useEffect(() => {
     if (viewMode !== 'gui') return;
@@ -2346,6 +2348,26 @@ export const useClaudePaneModel = ({
       const gi = convOffset + li; // global index for stable keys
       emitCards(gi);
       const calls = turn.toolCalls ?? [];
+      if (gi === reading.unread) {
+        flushWork();
+        items.push(
+          <div
+            key="unread"
+            data-chat-unread
+            role="separator"
+            aria-label="New since your last visit"
+            style={{
+              color: 'var(--wks-accent-text)',
+              borderTop: '1px solid var(--wks-border-active)',
+              padding: '8px 0',
+              fontSize: '0.66rem',
+              fontFamily: 'var(--wks-font-mono)',
+            }}
+          >
+            New since your last visit
+          </div>,
+        );
+      }
 
       if (turn.role === 'user') {
         flushWork();
@@ -2444,7 +2466,11 @@ export const useClaudePaneModel = ({
     return items.map((item) =>
       React.isValidElement(item) && sessionId ? (
         <ChatUiScope.Provider key={item.key} value={{ sessionId, turn: String(item.key) }}>
-          {item}
+          {/^(msg|work|chg)-\d+$/.test(String(item.key)) ? (
+            <div data-chat-anchor={String(item.key)}>{item}</div>
+          ) : (
+            item
+          )}
         </ChatUiScope.Provider>
       ) : (
         item
@@ -2455,6 +2481,7 @@ export const useClaudePaneModel = ({
   }, [
     conversation,
     optimisticMessages,
+    reading.unread,
     convOffset,
     resolvedQuestions,
     visibleCount,
@@ -2471,18 +2498,8 @@ export const useClaudePaneModel = ({
     handleReply,
   ]);
 
-  useLayoutEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container || !isActive || stickToBottomRef.current) return;
-    programmaticScrollRef.current = true;
-    container.scrollTop = scrollTopRef.current;
-    const timer = setTimeout(() => {
-      programmaticScrollRef.current = false;
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [isActive, sessionId, conversation, visibleCount]);
-
   return {
+    reading,
     isManager,
     requestCaptureStatus,
     managerHandoffBusy,

@@ -19,7 +19,8 @@ import '../App.css';
 const SESSION_ID = 'pin-harness-session';
 
 /** A long transcript, so the pane is scrolled well past its first turn. */
-const conversation = Array.from({ length: 40 }, (_, i) => ({
+const params = new URLSearchParams(location.search);
+const conversation = Array.from({ length: 40 + Number(params.get('extra') ?? 0) }, (_, i) => ({
   role: i % 2 === 0 ? 'user' : 'assistant',
   content:
     i % 2 === 0
@@ -29,7 +30,10 @@ const conversation = Array.from({ length: 40 }, (_, i) => ({
   toolCalls: [],
 }));
 
-const snapshot: any = {
+if (params.has('grow'))
+  conversation[39].content += ' New text arrived while you were away.'.repeat(20);
+
+let snapshot: any = {
   sessionId: SESSION_ID,
   cwd: '/work/harness',
   status: 'running',
@@ -46,12 +50,33 @@ const snapshot: any = {
   pendingQuestions: null,
 };
 
+const detailListeners = new Set<(snapshot: any) => void>();
+window.addEventListener('harness:append-reply', () => {
+  snapshot = {
+    ...snapshot,
+    conversation: [
+      ...snapshot.conversation,
+      {
+        role: 'assistant',
+        content: 'A new reply while you were away.',
+        timestamp: Date.now(),
+        toolCalls: [],
+      },
+    ],
+  };
+  detailListeners.forEach((listener) => listener(snapshot));
+});
+
 // Installed BEFORE importing anything that touches it at module scope. The pin
 // arms inside the send handler and the optimistic turn renders locally, so the
 // backend only has to accept the send without throwing.
 (window as any).electronAPI = new Proxy(
   {
     platform: 'linux',
+    onClaudeSessionDetail: (_id: string, listener: (snapshot: any) => void) => {
+      detailListeners.add(listener);
+      return () => detailListeners.delete(listener);
+    },
     // The pane reads nested config (theme, terminal link handling) and throws on
     // a bare `{}`. Imported lazily so the stub is still installed before any
     // module that touches electronAPI at import time.
@@ -94,6 +119,7 @@ document.documentElement.style.setProperty('--wks-font-mono', 'ui-monospace, mon
 const noop = () => {};
 
 function Harness(): React.ReactElement {
+  const [active, setActive] = React.useState(true);
   return (
     <ConfigProvider>
       <NotificationsProvider>
@@ -109,18 +135,26 @@ function Harness(): React.ReactElement {
           onOpenAgent={noop}
           attention={{ items: [], counts: {} } as any}
         >
+          <button onClick={() => setActive((value) => !value)}>
+            {active ? 'Switch away' : 'Return to agent'}
+          </button>
           {/* The pane sizes itself with flex:1, so every ancestor needs a
               definite height and min-height:0 or the scroll container collapses
               to zero and there is nothing to measure. */}
           <div
             className="app-root"
-            style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: active ? 'flex' : 'none',
+              flexDirection: 'column',
+            }}
           >
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <ClaudePane
                 paneId="pin-harness-pane"
                 title="Harness"
-                isActive
+                isActive={active}
                 cwd="/work/harness"
                 attachSessionId={SESSION_ID}
                 transport="stream"

@@ -138,3 +138,113 @@ test('scrolling up after a send is not undone by the next follow tick', async ({
   const afterTick = await geometry(page);
   expect(afterTick.scrollTop).toBeLessThan(afterTick.maxScroll - 200);
 });
+
+async function readingAnchor(page: Page) {
+  return page.evaluate(() => {
+    const first = document.querySelector<HTMLElement>('[data-chat-anchor]');
+    if (!first) return { key: '', offset: 0 };
+    let container = first.parentElement!;
+    while (!/(auto|scroll)/.test(getComputedStyle(container).overflowY))
+      container = container.parentElement!;
+    const top = container.getBoundingClientRect().top;
+    const anchor = [...container.querySelectorAll<HTMLElement>('[data-chat-anchor]')].find(
+      (el) => el.getBoundingClientRect().bottom > top + 1,
+    )!;
+    return { key: anchor.dataset.chatAnchor, offset: anchor.getBoundingClientRect().top - top };
+  });
+}
+
+test('reloading restores the message being read instead of jumping to latest', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await openPane(page);
+  await page.mouse.move(550, 400);
+  await page.mouse.wheel(0, -1400);
+  await page.waitForTimeout(700);
+  const before = await readingAnchor(page);
+  await page.reload();
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
+  await expect.poll(async () => (await readingAnchor(page)).key).toBe(before.key);
+  expect(Math.abs((await readingAnchor(page)).offset - before.offset)).toBeLessThan(3);
+});
+
+test('returning to new turns preserves your place and offers a jump to new activity', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await openPane(page);
+  const before = await readingAnchor(page);
+  await page.goto(`${URL}?extra=8`);
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Jump to new', exact: true })).toBeVisible();
+  await expect.poll(async () => (await readingAnchor(page)).key).toBe(before.key);
+  await page.getByRole('button', { name: 'Jump to new', exact: true }).click();
+  await expect(page.locator('[data-chat-unread]')).toBeInViewport();
+  await page.getByRole('button', { name: 'Latest', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Jump to new', exact: true })).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const g = await geometry(page);
+      return g.maxScroll - g.scrollTop;
+    })
+    .toBeLessThan(3);
+});
+
+test('a reply that grows while away is marked new even without another turn', async ({ page }) => {
+  await openPane(page);
+  await page.goto(`${URL}?grow=1`);
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Jump to new', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Jump to new', exact: true }).click();
+  await expect(page.locator('[data-chat-unread]')).toBeInViewport();
+  await expect(page.locator('[data-chat-unread] ~ [data-chat-anchor]')).toHaveAttribute(
+    'data-chat-anchor',
+    'msg-39',
+  );
+});
+
+test('switching away restores an older reading position after compact history expands', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await openPane(page);
+  await page.mouse.move(550, 400);
+  await page.mouse.wheel(0, -2200);
+  await page.waitForTimeout(700);
+  const before = await readingAnchor(page);
+  await page.getByRole('button', { name: 'Switch away', exact: true }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Return to agent', exact: true }).click();
+  await expect.poll(async () => (await readingAnchor(page)).key).toBe(before.key);
+  expect(Math.abs((await readingAnchor(page)).offset - before.offset)).toBeLessThan(3);
+  await expect(page.getByRole('button', { name: 'Jump to new', exact: true })).toHaveCount(0);
+});
+
+test('restores a bookmark older than the default rendered page', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto(`${URL}?extra=120`);
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
+  const older = page.getByRole('button', { name: /Load .*earlier messages/ });
+  await older.click();
+  await page.locator('[data-chat-anchor="msg-65"]').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(700);
+  const before = await readingAnchor(page);
+  await page.reload();
+  await page.getByRole('button', { name: 'GUI', exact: true }).click();
+  await expect.poll(async () => (await readingAnchor(page)).key).toBe(before.key);
+  expect(Math.abs((await readingAnchor(page)).offset - before.offset)).toBeLessThan(3);
+});
+
+test('an unfocused window does not mark incoming replies as read', async ({ page }) => {
+  await openPane(page);
+  const saved = () => page.evaluate(() => localStorage.getItem('workspacer:chat-reading:v1'));
+  const before = await saved();
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.waitForTimeout(100);
+  await page.evaluate(() => window.dispatchEvent(new Event('harness:append-reply')));
+  await page.waitForTimeout(500);
+  expect(await saved()).toBe(before);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Jump to new', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Jump to new', exact: true }).click();
+  await expect(page.locator('[data-chat-unread]')).toBeInViewport();
+});

@@ -1,3 +1,4 @@
+import { SmallButton } from '../components/settings/primitives';
 import { ManagerHandoffStatus } from '../components/claude/ManagerHandoffStatus';
 import { FirstTaskGuidance } from '../components/FirstTaskGuidance';
 import '@xterm/xterm/css/xterm.css';
@@ -29,6 +30,7 @@ import { CONVERSATION_PAGE_SIZE, type useClaudePaneModel } from './ClaudePane';
 /** The single chat/compose/inspection renderer. Lifecycle and transport remain in ClaudePane. */
 export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
   const {
+    reading,
     isManager,
     requestCaptureStatus,
     managerHandoffBusy,
@@ -235,6 +237,29 @@ export function SessionChatView(model: ReturnType<typeof useClaudePaneModel>) {
                   } as React.CSSProperties
                 }
               >
+                {reading.unread !== null && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 16px',
+                      fontSize: '0.72rem',
+                      color: 'var(--wks-text-secondary)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>New activity since your last visit</span>
+                    <SmallButton label="Jump to new" onClick={reading.jumpToNew} />
+                    <SmallButton
+                      label="Latest"
+                      onClick={() => {
+                        reading.clearUnread();
+                        scrollToBottom();
+                      }}
+                    />
+                  </div>
+                )}
                 {/* Conversation scroll area */}
                 <div
                   ref={scrollContainerRef}
