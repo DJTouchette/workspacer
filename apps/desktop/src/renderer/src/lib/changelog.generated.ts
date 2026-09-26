@@ -23,9 +23,9 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
-    version: 'Unreleased',
-    date: '',
-    unreleased: true,
+    version: '0.169.0',
+    date: '2026-09-26',
+    unreleased: false,
     sections: [
       {
         title: 'Added',

@@ -7,7 +7,7 @@ rolling `nightly` prerelease tracks `master` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.169.0] - 2026-09-26
 
 ### Added
 - Automatic cleanup of recognized, Git-ignored build and dependency folders in
